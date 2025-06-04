@@ -8,8 +8,8 @@ services:
     depends_on:
       - backend
 
-    # volumes:
-    #   - ./frontend/public:/app/public   
+    volumes:
+      - ./frontend/public:/app/public
 
   backend:
     build:

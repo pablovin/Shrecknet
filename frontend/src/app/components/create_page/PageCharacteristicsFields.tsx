@@ -39,18 +39,22 @@ export default function PageCharacteristicsFields({
   const [conceptNames, setConceptNames] = useState({});
   const [pageName, setPageName] = useState(pageNameProp || "");
 
-  // Fetch page name if not provided
+  // Fetch or update the page name
   useEffect(() => {
     async function fetchName() {
-      if (!pageID || pageNameProp) return;
+      if (!pageID) return;
       try {
         const pages = await getPages(token, { id: pageID });
         if (pages?.length) setPageName(pages[0].name);
       } catch {}
     }
-    if (!pageName && pageID && token) fetchName();
-    if (pageNameProp) setPageName(pageNameProp);
-  }, [pageID, pageNameProp, token, pageName]);
+
+    if (pageNameProp !== undefined) {
+      setPageName(pageNameProp || "");
+    } else if (!pageName && pageID && token) {
+      fetchName();
+    }
+  }, [pageID, pageNameProp, token]);
 
   useEffect(() => {
     async function loadPageRefs() {

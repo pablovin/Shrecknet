@@ -253,6 +253,7 @@ export default function PageForm({
           onChange={(key, val) => setFields((prev) => ({ ...prev, [key]: val }))}
           pageID={initialValues?.id ?? null}
           gameworldID={selectedWorld.id}
+          pageName={pageName}
         />
       )}
 

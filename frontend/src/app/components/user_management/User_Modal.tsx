@@ -10,8 +10,14 @@ import { M3FloatingInput } from "../template/M3FloatingInput";
 import Image from "next/image";
 async function uploadAvatar(file, userId) {
   const customFileName = userId.toString();
-  const imageUrl = await uploadImage(file, "avatars", userId.toString(), customFileName);
-  return imageUrl;
+  const imageUrl = await uploadImage(
+    file,
+    "avatars",
+    userId.toString(),
+    customFileName
+  );
+  // Append a cache buster so the browser doesn't show a cached avatar
+  return `${imageUrl}?v=${Date.now()}`;
 }
 
 export default function UserModal({

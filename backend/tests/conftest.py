@@ -26,20 +26,6 @@ async def test_engine():
     yield engine
     await engine.dispose()
 
-@pytest.fixture
-async def async_session(test_engine):
-    async_session_maker = sessionmaker(
-        bind=test_engine, class_=AsyncSession, expire_on_commit=False
-    )
-    async with async_session_maker() as session:
-        yield session
-
-@pytest.fixture
-async def session():
-    async with async_session() as session:
-        yield session
-
-
 @pytest_asyncio.fixture
 async def session(test_engine):
     async_session_maker = sessionmaker(
@@ -49,9 +35,9 @@ async def session(test_engine):
         yield session
 
 @pytest.fixture(autouse=True)
-def override_get_session(monkeypatch, async_session):
+def override_get_session(monkeypatch, session):
     async def _override():
-        yield async_session
+        yield session
     monkeypatch.setattr("app.database.get_session", _override)
 
 @pytest_asyncio.fixture

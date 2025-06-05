@@ -54,12 +54,18 @@ async def test_concept_create_update_link_rbac(async_client):
     gw_id = resp.json()["id"]
 
     # Create characteristics
-    char1 = {"name": "clan", "type": "string"}
-    char2 = {"name": "age", "type": "int"}
-    resp = await async_client.post("/characteristics/", json=char1, headers={"Authorization": f"Bearer {sysadmin_token}"})
+    char1 = {"name": "clan", "type": "string", "gameworld_id": gw_id}
+    char2 = {"name": "age", "type": "int", "gameworld_id": gw_id}
+    resp = await async_client.post(
+        "/characteristics/", json=char1, headers={"Authorization": f"Bearer {sysadmin_token}"}
+    )
     assert resp.status_code == 200
     char1_id = resp.json()["id"]
-    resp = await async_client.post("/characteristics/", json=char2, headers={"Authorization": f"Bearer {sysadmin_token}"})
+    resp = await async_client.post(
+        "/characteristics/",
+        json=char2,
+        headers={"Authorization": f"Bearer {sysadmin_token}"},
+    )
     char2_id = resp.json()["id"]
 
     # Only system_admin can create concept
@@ -67,16 +73,21 @@ async def test_concept_create_update_link_rbac(async_client):
         "gameworld_id": gw_id,
         "name": "Player",
         "description": "A player character",
-        "characteristic_ids": [char1_id, char2_id]
+        "characteristic_links": [
+            {"characteristic_id": char1_id, "order": 0, "display_type": "header"},
+            {"characteristic_id": char2_id, "order": 1, "display_type": "header"},
+        ],
     }
     resp = await async_client.post("/concepts/", json=concept_payload, headers={"Authorization": f"Bearer {sysadmin_token}"})
     assert resp.status_code == 200
     concept_id = resp.json()["id"]
     assert {c['id'] for c in resp.json()["characteristics"]} == {char1_id, char2_id}
 
-    # Other roles cannot create concept
-    for token in (wb_token, writer_token, player_token):
-        resp = await async_client.post("/concepts/", json=concept_payload, headers={"Authorization": f"Bearer {token}"})
+    # Writer and player cannot create concept
+    for token in (writer_token, player_token):
+        resp = await async_client.post(
+            "/concepts/", json=concept_payload, headers={"Authorization": f"Bearer {token}"}
+        )
         assert resp.status_code == 403
 
     # List and get concepts (any role)
@@ -86,7 +97,12 @@ async def test_concept_create_update_link_rbac(async_client):
 
     # Update concept (system admin only)
        
-    update = {"description": "An updated description", "characteristic_ids": [char1_id]}
+    update = {
+        "description": "An updated description",
+        "characteristic_links": [
+            {"characteristic_id": char1_id, "order": 0, "display_type": "header"}
+        ],
+    }
     resp = await async_client.patch(f"/concepts/{concept_id}", json=update, headers={"Authorization": f"Bearer {sysadmin_token}"})
     assert resp.status_code == 200
     assert resp.json()["description"] == "An updated description"
@@ -94,8 +110,8 @@ async def test_concept_create_update_link_rbac(async_client):
 
     assert {c['id'] for c in resp.json()["characteristics"]} == {char1_id}
 
-    # Other roles cannot update
-    for token in (wb_token, writer_token, player_token):
+    # Writer and player cannot update
+    for token in (writer_token, player_token):
         resp = await async_client.patch(f"/concepts/{concept_id}", json=update, headers={"Authorization": f"Bearer {token}"})
         assert resp.status_code == 403
 

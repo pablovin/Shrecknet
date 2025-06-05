@@ -1,26 +1,42 @@
 import re
-from app.models.model_page import Page
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-
-from app.database import async_session_maker
-from app.crud.crud_page import get_page
 
 from app.models.model_page import Page, PageCharacteristicValue
 from app.models.model_characteristic import Characteristic
 
+from app.database import async_session_maker
+from app.crud.crud_page import get_page
+
 CROSSLINK_RE = re.compile(r'/worlds/\d+/concept/\d+/page/(\d+)')
 
 from bs4 import BeautifulSoup
-import re
 
 
-async def remove_page_refs_from_characteristics(deleted_page: Page):
+async def remove_page_refs_from_characteristics(
+    deleted_page: Page | int, *, session: AsyncSession | None = None
+):
     """
     Remove references to the deleted page in any PageCharacteristicValue
     for characteristics of type 'page_ref' that point to the same concept as the deleted page.
     """    
-    async with async_session_maker() as session:
-        # 1. Find all characteristics of type "page_ref" whose ref_concept_id matches the deleted page's concept_id
+    own_session = session is None
+    if own_session:
+        async with async_session_maker() as session:
+            await _remove_page_refs_from_characteristics(session, deleted_page)
+    else:
+        await _remove_page_refs_from_characteristics(session, deleted_page)
+
+
+async def _remove_page_refs_from_characteristics(session: AsyncSession, deleted_page: Page | int):
+    if isinstance(deleted_page, Page):
+        deleted_page = await get_page(session, deleted_page.id)
+    else:
+        deleted_page = await get_page(session, deleted_page)
+
+        if not deleted_page:
+            return
+
         result = await session.execute(
             select(Characteristic).where(
                 (Characteristic.type == "page_ref") &
@@ -52,36 +68,59 @@ async def remove_page_refs_from_characteristics(deleted_page: Page):
                     await session.commit()
                     await session.flush()
 
-async def remove_crosslinks_to_page(deleted_page_id: int):    
-    async with async_session_maker() as session:
-        # Get all pages except the one being deleted
-        result = await session.execute(
-            select(Page).where(Page.id != deleted_page_id)
-        )
-        all_pages = result.scalars().all()
-        link_pattern = re.compile(rf'/worlds/\d+/concept/\d+/page/{deleted_page_id}\b')
-
-        for page in all_pages:
-            soup = BeautifulSoup(page.content or "", "html.parser")
-            content_changed = False
-
-            # Find all links that match the deleted page
-            for a in soup.find_all("a", href=True):
-                if link_pattern.search(a["href"]):
-                    # Remove the <a> tag, but keep the text inside
-                    a.replace_with(a.get_text())
-                    content_changed = True
-
-            if content_changed:
-                page.content = str(soup)
-                await session.commit()
-                await session.flush()
+async def remove_crosslinks_to_page(
+    deleted_page_id: int, *, session: AsyncSession | None = None
+):
+    own_session = session is None
+    if own_session:
+        async with async_session_maker() as session:
+            await _remove_crosslinks_to_page(session, deleted_page_id)
+    else:
+        await _remove_crosslinks_to_page(session, deleted_page_id)
 
 
-async def auto_crosslink_page_content(page):
+async def _remove_crosslinks_to_page(session: AsyncSession, deleted_page_id: int):
+    # Get all pages except the one being deleted
+    result = await session.execute(
+        select(Page).where(Page.id != deleted_page_id)
+    )
+    all_pages = result.scalars().all()
 
-    async with async_session_maker() as session:
+    link_pattern = re.compile(rf'/worlds/\d+/concept/\d+/page/{deleted_page_id}\b')
+
+    for page in all_pages:
+        soup = BeautifulSoup(page.content or "", "html.parser")
+        content_changed = False
+
+        # Find all links that match the deleted page
+        for a in soup.find_all("a", href=True):
+            if link_pattern.search(a["href"]):
+                # Remove the <a> tag, but keep the text inside
+                a.replace_with(a.get_text())
+                content_changed = True
+
+        if content_changed:
+            page.content = str(soup)
+            await session.commit()
+            await session.flush()
+
+
+async def auto_crosslink_page_content(
+    page: Page | int, *, session: AsyncSession | None = None
+):
+    own_session = session is None
+    if own_session:
+        async with async_session_maker() as session:
+            await _auto_crosslink_page_content(session, page)
+    else:
+        await _auto_crosslink_page_content(session, page)
+
+
+async def _auto_crosslink_page_content(session: AsyncSession, page: Page | int):
+    if isinstance(page, Page):
         page = await get_page(session, page.id)
+    else:
+        page = await get_page(session, page)
         print (f"Page allows autocrosslinl: {page.allow_crosslinks} ")
         print (f"Page allows crossworld: {page.allow_crossworld} ")
         if not page.allow_crosslinks:
@@ -169,21 +208,30 @@ async def auto_crosslink_page_content(page):
                         import traceback; traceback.print_exc()            
 
 
-async def auto_crosslink_batch(new_page: Page):
-    """
-    When a new page is created, update all existing pages to link to it, if relevant.
-    """
-    # Get all candidate pages
-    async with async_session_maker() as session:
-        new_session_age = await get_page(session, new_page.id)
+async def auto_crosslink_batch(
+    new_page_id: int, *, session: AsyncSession | None = None
+):
+    """Update existing pages to link to the newly created page."""
+    own_session = session is None
+    if own_session:
+        async with async_session_maker() as session:
+            await _auto_crosslink_batch(session, new_page_id)
+    else:
+        await _auto_crosslink_batch(session, new_page_id)
 
-        candidate_pages = await session.execute(
-            select(Page)
-            .where(Page.ignore_crosslink == False)
-            .where(Page.id != new_session_age.id)
-        )
-        candidate_pages = candidate_pages.scalars().all()
 
-    # For each candidate, update its content if needed
+async def _auto_crosslink_batch(session: AsyncSession, new_page_id: int):
+    new_page = await get_page(session, new_page_id)
+    if not new_page:
+        return
+
+    candidate_pages = await session.execute(
+        select(Page)
+        .where(Page.ignore_crosslink == False)
+        .where(Page.id != new_page.id)
+    )
+    candidate_pages = candidate_pages.scalars().all()
+
     for page in candidate_pages:
-        await auto_crosslink_page_content(page)
+        await _auto_crosslink_page_content(session, page)
+

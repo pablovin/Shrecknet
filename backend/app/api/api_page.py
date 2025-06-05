@@ -23,8 +23,13 @@ from app.crud.crud_page import (
 from datetime import datetime, timezone
 from app.dependencies import get_current_user, require_role
 
-from fastapi import BackgroundTasks
-from app.crud.crud_page_links_update import auto_crosslink_page_content, auto_crosslink_batch, remove_crosslinks_to_page, remove_page_refs_from_characteristics
+
+from app.task_queue import (
+    queue_auto_crosslink_page_content,
+    queue_auto_crosslink_batch,
+    queue_remove_crosslinks_to_page,
+    queue_remove_page_refs_from_characteristics,
+)
 
 PageCharacteristicValueUpdate.model_rebuild()
 PageCharacteristicValueRead.model_rebuild()    
@@ -47,7 +52,6 @@ router = APIRouter(prefix="/pages", tags=["Pages"], dependencies=[Depends(get_cu
 @router.post("/", response_model=PageRead)
 async def create_page_endpoint(
     page: PageCreate,
-    background_tasks: BackgroundTasks,
     user: User = Depends(require_role(UserRole.writer)),
     session: AsyncSession = Depends(get_session),
 ):
@@ -82,7 +86,7 @@ async def create_page_endpoint(
 
      # Schedule background crosslink update only if this page allows
     if not db_page.ignore_crosslink:
-        background_tasks.add_task(auto_crosslink_batch, db_page)
+        await queue_auto_crosslink_batch(db_page.id, session=session)
 
     return response
 
@@ -124,7 +128,6 @@ async def read_page(
 async def update_page_endpoint(
     page_id: int,
     updates: PageUpdate,
-    background_tasks: BackgroundTasks,     
     user: User = Depends(require_role(UserRole.writer)),
     session: AsyncSession = Depends(get_session),
 ):
@@ -160,16 +163,14 @@ async def update_page_endpoint(
     response = PageRead.model_validate({**db_page.model_dump(), "values": values})
 
     print ("Page was updated with the right values, now going into auto_crosslink!")
-    # Schedule background link update for this page
-    background_tasks.add_task(auto_crosslink_page_content, db_page)
+    await queue_auto_crosslink_page_content(db_page.id, session=session)
 
     return response
 
 @router.delete("/{page_id}")
 async def delete_page_endpoint(
     page_id: int,
-    background_tasks: BackgroundTasks,  
-    user: User = Depends(require_role(UserRole.writer)),    
+    user: User = Depends(require_role(UserRole.writer)),
     session: AsyncSession = Depends(get_session),
 ):
     db_page = await get_page(session, page_id)
@@ -180,8 +181,8 @@ async def delete_page_endpoint(
         raise HTTPException(status_code=403, detail="You are not allowed to delete this page.")
     await delete_page(session, page_id)
 
-    background_tasks.add_task(remove_page_refs_from_characteristics, db_page)
-    background_tasks.add_task(remove_crosslinks_to_page, page_id)
+    await queue_remove_page_refs_from_characteristics(db_page.id, session=session)
+    await queue_remove_crosslinks_to_page(page_id, session=session)
     
     return {"ok": True}
 

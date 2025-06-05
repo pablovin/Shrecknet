@@ -30,7 +30,17 @@ async def test_characteristic_create_rbac(async_client):
     sysadmin_token = await register_and_login(async_client, SYSTEM_ADMIN)
     writer_token = await register_and_login(async_client, WRITER)
 
-    char_payload = {"name": "discipline", "type": "string"}
+    # create a gameworld for the characteristic
+    gw_payload = {"name": "World", "system": "dnd", "description": "", "logo": ""}
+    resp = await async_client.post(
+        "/gameworlds/",
+        json=gw_payload,
+        headers={"Authorization": f"Bearer {sysadmin_token}"},
+    )
+    assert resp.status_code == 200, resp.text
+    gw_id = resp.json()["id"]
+
+    char_payload = {"name": "discipline", "type": "string", "gameworld_id": gw_id}
 
     # Only system_admin can create
     resp = await async_client.post("/characteristics/", json=char_payload, headers={"Authorization": f"Bearer {sysadmin_token}"})
@@ -41,7 +51,10 @@ async def test_characteristic_create_rbac(async_client):
     assert resp.status_code == 403
 
     # List characteristics (any role)
-    resp = await async_client.get("/characteristics/", headers={"Authorization": f"Bearer {writer_token}"})
+    resp = await async_client.get(
+        f"/characteristics/?gameworld_id={gw_id}",
+        headers={"Authorization": f"Bearer {writer_token}"},
+    )
     assert resp.status_code == 200
     assert any(c["id"] == char_id for c in resp.json())
 

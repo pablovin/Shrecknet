@@ -1,5 +1,5 @@
 import os
-from typing import List
+from typing import List, Union
 
 try:
     from chromadb.errors import ChromaError
@@ -12,7 +12,10 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain.docstore.document import Document
 from langchain_chroma import Chroma
 import requests
+
 from pdfminer.high_level import extract_text as pdf_extract_text
+from pdfminer.high_level import extract_pages as pdf_extract_pages
+from pdfminer.layout import LTTextContainer
 
 from app.models.model_specialist_source import SpecialistSource
 from app.models.model_agent import Agent
@@ -32,6 +35,21 @@ _text_splitter = RecursiveCharacterTextSplitter(
     length_function=lambda txt: len(txt.split()),
 )
 
+def chunk_pages_with_word_overlap(pages: List[str], overlap_words: int = 50) -> List[str]:
+    chunks = []
+
+    for i, page in enumerate(pages):
+        page = page.strip()
+        if i == 0:
+            chunks.append(page)
+        else:
+            prev_words = pages[i - 1].strip().split()
+            tail_words = prev_words[-overlap_words:] if len(prev_words) >= overlap_words else prev_words
+            tail_text = " ".join(tail_words)
+            combined = f"{tail_text} {page}"
+            chunks.append(combined.strip())
+
+    return chunks
 
 def _safe_add_documents(collection: Chroma, docs: List[Document]) -> None:
     """Add documents in batches, splitting further on 413 errors."""
@@ -131,12 +149,23 @@ def _get_collection(agent_id: int) -> Chroma:
         embedding_function=_embedding_fn,
     )
 
+def _extract_pdf_by_page(pdf_path: str) -> List[str]:
+    pages_text = []
 
-def _load_source(src: SpecialistSource) -> str:
+    for page_layout in pdf_extract_pages(pdf_path):
+        page_text = ""
+        for element in page_layout:
+            if isinstance(element, LTTextContainer):
+                page_text += element.get_text()
+        pages_text.append(page_text.strip())
+
+    return pages_text
+
+def _load_source(src: SpecialistSource) -> str | list[str]:
     if src.type == "file" and src.path:
         if src.path.lower().endswith(".pdf"):
             try:
-                return pdf_extract_text(src.path)
+                return _extract_pdf_by_page(src.path)
             except Exception:
                 return ""
         try:
@@ -167,11 +196,15 @@ async def rebuild_agent(session: AsyncSession, agent_id: int) -> int:
         text = _load_source(src)
         if not text:
             continue
-        split_docs = _text_splitter.create_documents([text])
-        for i, d in enumerate(split_docs):
-            d.metadata["source_id"] = src.id
-            d.metadata["chunk_index"] = i
-            docs.append(d)
+
+        chunks = chunk_pages_with_word_overlap(text, overlap_words=50)
+        for i, chunk in enumerate(chunks):
+            doc = Document(
+                page_content=chunk,
+                metadata={"source_id": src.id, "chunk_index": i}
+            )
+            docs.append(doc)
+    
     if docs:
         _safe_add_documents(collection, docs)
 
@@ -275,16 +308,22 @@ async def rebuild_agent_with_progress(
     for idx, src in enumerate(sources, start=1):
         if progress_callback:
             progress_callback(f"reading document {src.name} {idx}/{total}")
-        text = _load_source(src)
+        text: Union[str, list[str]] = _load_source(src)
         if not text:
             continue
         if progress_callback:
             progress_callback(f"creating chunks of document {src.name} {idx}/{total}")
-        split_docs = _text_splitter.create_documents([text])
-        for i, d in enumerate(split_docs):
-            d.metadata["source_id"] = src.id
-            d.metadata["chunk_index"] = i
-            docs.append(d)
+        if isinstance(text, list):
+            chunks = chunk_pages_with_word_overlap(text, overlap_words=50)
+        else:
+            chunks = [text.strip()]  # fallback: treat whole text as one chunk
+        for i, chunk in enumerate(chunks):
+            doc = Document(
+                page_content=chunk,
+                metadata={"source_id": src.id, "chunk_index": i}
+            )
+            docs.append(doc)
+        
     if docs:
         if progress_callback:
             progress_callback(f"embedding documents {len(docs)}")

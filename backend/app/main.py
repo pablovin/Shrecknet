@@ -12,6 +12,7 @@ from .api import (
     api_agent,
     api_specialist,
     api_backup,
+    api_library,
 )
 from contextlib import asynccontextmanager
 
@@ -93,6 +94,7 @@ app.include_router(api_vectordb.router)
 app.include_router(api_agent.router)
 app.include_router(api_specialist.router)
 app.include_router(api_backup.router)
+app.include_router(api_library.router)
 
 
 

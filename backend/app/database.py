@@ -47,6 +47,12 @@ def _migrate(conn):
         if "name" not in columns:
             conn.execute(text("ALTER TABLE specialistsource ADD COLUMN name TEXT"))
 
+    # -- LibraryItem table --
+    if "libraryitem" not in inspector.get_table_names():
+        conn.execute(text(
+            "CREATE TABLE libraryitem (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, system TEXT, description TEXT, path TEXT, added_at DATETIME NOT NULL)"
+        ))
+
 async def get_session() -> AsyncSession:
     async with async_session_maker() as session:
         yield session

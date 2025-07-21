@@ -1,8 +1,8 @@
 "use client";
 import AuthGuard from "../components/auth/AuthGuard";
 import DashboardLayout from "../components/DashboardLayout";
-import { hasRole } from "../lib/roles";
 import { useAuth } from "../components/auth/AuthProvider";
+import useRoleRedirect from "../hooks/useRoleRedirect";
 import { useLibraryItems } from "../lib/useLibraryItems";
 import { useState } from "react";
 import { startLibraryVectorJob } from "../lib/libraryAPI";
@@ -23,13 +23,8 @@ export default function LibraryPage() {
   const [embeddingId, setEmbeddingId] = useState<number | null>(null);
   const [toastMsg, setToastMsg] = useState("");
 
-  if (!hasRole(user?.role, "system admin")) {
-    return (
-      <DashboardLayout>
-        <div className="p-10 text-2xl text-red-600 font-bold">Not authorized</div>
-      </DashboardLayout>
-    );
-  }
+  const allowed = useRoleRedirect("system admin");
+  if (!allowed) return null;
 
   function handleEdit(item) {
     setSelected(item);

@@ -3,7 +3,7 @@ import { useState } from "react";
 import { useParams } from "next/navigation";
 import DashboardLayout from "@/app/components/DashboardLayout";
 import { useAuth } from "@/app/components/auth/AuthProvider";
-import { hasRole } from "@/app/lib/roles";
+import useRoleRedirect from "@/app/hooks/useRoleRedirect";
 import { useWorlds } from "@/app/lib/userWorlds";
 import { useConcepts } from "@/app/lib/useConcept";
 import { useCharacteristics } from "@/app/lib/userCharacteristic";
@@ -69,13 +69,8 @@ export default function WorldBuilderAdminPage() {
 
   console.log(enrichedConcept);
 
-  if (!hasRole(user?.role, "world builder") && !hasRole(user?.role, "system admin")) {
-    return (
-      <DashboardLayout>
-        <div className="p-10 text-2xl text-red-600 font-bold">Not authorized</div>
-      </DashboardLayout>
-    );
-  }
+  const allowed = useRoleRedirect("world builder");
+  if (!allowed) return null;
 
   if (worldsLoading) {
     return (

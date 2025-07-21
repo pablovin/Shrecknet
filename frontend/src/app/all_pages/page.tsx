@@ -3,7 +3,7 @@ import { useState } from "react";
 import AuthGuard from "../components/auth/AuthGuard";
 import DashboardLayout from "../components/DashboardLayout";
 import { useAuth } from "../components/auth/AuthProvider";
-import { hasRole } from "../lib/roles";
+import useRoleRedirect from "../hooks/useRoleRedirect";
 import { useWorlds } from "../lib/userWorlds";
 import { useConcepts } from "../lib/useConcept";
 import { usePages } from "../lib/usePage";
@@ -26,13 +26,8 @@ export default function AllPagesPage() {
   const [search, setSearch] = useState("");
   const [selectedPages, setSelectedPages] = useState<number[]>([]);
 
-  if (!hasRole(user?.role, "writer") && !hasRole(user?.role, "system admin")) {
-    return (
-      <DashboardLayout>
-        <div className="p-10 text-2xl text-red-600 font-bold">Not authorized</div>
-      </DashboardLayout>
-    );
-  }
+  const allowed = useRoleRedirect("writer");
+  if (!allowed) return null;
 
   const worldMap: Record<number, any> = {};
   worlds.forEach((w) => {

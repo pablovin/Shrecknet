@@ -5,7 +5,7 @@ import { useSearchParams } from "next/navigation";
 import AuthGuard from "../components/auth/AuthGuard";
 import DashboardLayout from "../components/DashboardLayout";
 import { useAuth } from "../components/auth/AuthProvider";
-import { hasRole } from "../lib/roles";
+import useRoleRedirect from "../hooks/useRoleRedirect";
 import { useAgents } from "../lib/useAgents";
 import { useWorlds } from "../lib/userWorlds";
 import { usePages } from "../lib/usePage";
@@ -74,13 +74,8 @@ function AgentWriterPageContent() {
     return () => clearInterval(interval);
   }, [jobs, token]);
 
-  if (!hasRole(user?.role, "writer")) {
-    return (
-      <DashboardLayout>
-        <div className="p-10 text-2xl text-red-600 font-bold">{t('not_authorized')}</div>
-      </DashboardLayout>
-    );
-  }
+  const allowed = useRoleRedirect("writer");
+  if (!allowed) return null;
 
   const writerAgents = agents.filter(a => a.task === "page writer");
   const worldsMap = Object.fromEntries(worlds.map(w => [w.id, w]));

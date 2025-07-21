@@ -3,7 +3,7 @@ import { useState, useRef, FormEvent } from "react";
 import AuthGuard from "../components/auth/AuthGuard";
 import DashboardLayout from "../components/DashboardLayout";
 import { useAuth } from "../components/auth/AuthProvider";
-import { hasRole } from "../lib/roles";
+import useRoleRedirect from "../hooks/useRoleRedirect";
 import { useAgents } from "../lib/useAgents";
 import { ChatMessage, chatTest } from "../lib/agentAPI";
 import Image from "next/image";
@@ -17,13 +17,8 @@ export default function ChatTestPage() {
   const [loading, setLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  if (!hasRole(user?.role, "system admin")) {
-    return (
-      <DashboardLayout>
-        <div className="p-10 text-2xl text-red-600 font-bold">Not authorized</div>
-      </DashboardLayout>
-    );
-  }
+  const allowed = useRoleRedirect("system admin");
+  if (!allowed) return null;
 
   const availableAgents = agents.filter(a => a.vector_db_update_date);
 

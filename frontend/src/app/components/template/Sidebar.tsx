@@ -69,6 +69,13 @@ export default function Sidebar({ mobileOpen = false, setMobileOpen = () => {} }
       show: true,
     },
     {
+      label: t("notes"),
+      icon: <FileText fontSize="medium" />,
+      href: "/user_notes",
+      external: false,
+      show: true,
+    },
+    {
       label: t("see_all_pages"),
       icon: <FileText fontSize="medium" />,
       href: "/all_pages",

@@ -9,7 +9,7 @@ class UserNoteBase(SQLModel):
     tags: List[str] = []
     gameworld_id: Optional[int] = None
     shared_with_user_ids: List[int] = []
-    contributors: List[Dict] = []
+    contributors: Optional[List[Dict]] = None
     locked_by_user_id: Optional[int] = None
     locked_at: Optional[datetime] = None
 

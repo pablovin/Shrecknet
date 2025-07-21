@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     celery_result_backend: str = "redis://localhost:6379/0"
     vector_db_url: str = "localhost"
     vector_db_port: str = "8001"
+    root_path: str = ""
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 settings = Settings()

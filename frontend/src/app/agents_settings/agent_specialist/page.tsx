@@ -1,19 +1,15 @@
 "use client";
 import { useState } from "react";
-import { Bot, Sparkles, Wand2, Search } from "lucide-react";
+import { Bot, Sparkles, Search, Database, CheckCircle2, XCircle } from "lucide-react";
 import AuthGuard from "../../components/auth/AuthGuard";
 import DashboardLayout from "../../components/DashboardLayout";
 import { useAuth } from "../../components/auth/AuthProvider";
 import { hasRole } from "../../lib/roles";
 import { useAgents } from "../../lib/useAgents";
 import { useWorlds } from "../../lib/userWorlds";
-import { useSpecialistJobs } from "../../lib/useSpecialistJobs";
 import { useAgentLibraryItems } from "../../lib/useAgentLibraryItems";
-import { startVectorJob } from "../../lib/specialistAPI";
 import AgentModal from "../../components/agents/AgentModal";
 import AgentItemModal from "../../components/agents/AgentItemModal";
-import ExportVectorDBModal from "../../components/agents/ExportVectorDBModal";
-import ImportVectorDBModal from "../../components/agents/ImportVectorDBModal";
 import { FileText, FileImage, FileArchive, FileVideo, FileAudio, File } from "lucide-react";
 
 
@@ -111,107 +107,33 @@ function AgentAvatar({ name, logo }) {
 }
 
 // ----- Job Status -----
-function JobStatusScroll({ jobs }) {
-  if (!jobs || !jobs.length) return null;
-  const active = jobs.filter(j => j.status === "queued" || j.status === "processing" || j.status === "running");
-  const finished = jobs.filter(j => j.status === "done" || j.status === "error").slice(-3);
-
-  const render = job => {
-    if (job.status === "processing" || job.status === "running") return (<><span className="animate-pulse">⏳</span> Running</>);
-    if (job.status === "queued") return (<><span>🕓</span> Queued</>);
-    if (job.status === "done") return (<><span>✅</span> Done</>);
-    if (job.status === "error") return (<><span>❌</span> Error</>);
-    return <>🔄 {job.status}</>;
-  };
-
-  const renderProgress = job => {
-    if (job.progress) {
-      return <div className="text-xs text-indigo-700 ml-5">{job.progress}</div>;
-    }
-    return null;
-  };
-
-  const renderDocs = job => {
-    if (job.documents_indexed !== undefined && job.documents_indexed !== null) {
-      return (
-        <div className="text-xs text-gray-700 ml-5">
-          Documents indexed: <span className="font-semibold">{job.documents_indexed}</span>
-        </div>
-      );
-    }
-    return null;
-  };
-
-  const renderTime = job => {
-    const start = job.start_time ? new Date(job.start_time) : null;
-    const end = job.end_time ? new Date(job.end_time) : null;
-    let dur = "";
-    if (start && end) {
-      const diff = (end.getTime() - start.getTime()) / 1000;
-      dur = ` (${Math.round(diff)}s)`;
-    }
-    return (
-      <div className="text-xs text-gray-500 ml-5">
-        Start: {start ? start.toLocaleString() : "?"}
-        {end && <> | End: {end.toLocaleString()}{dur}</>}
-      </div>
-    );
-  };
-
-  return (
-    <div className="bg-purple-50 border border-indigo-200 rounded-xl p-2 mt-2 shadow-inner">
-      <div className="font-semibold text-yellow-900 mb-1 flex items-center gap-1">
-        <Wand2 className="w-4 h-4 text-yellow-600" /> Vector Update Progress
-      </div>
-      {active.length > 0 && (
-        <>
-          <div className="font-semibold text-indigo-700">Active Jobs:</div>
-          <ul className="pl-3 text-sm text-yellow-900 mb-2">
-            {active.map((j, idx) => (
-              <li key={j.job_id || idx} className="mb-1">
-                {render(j)}
-                {renderProgress(j)}
-                {renderTime(j)}
-              </li>
-            ))}
-          </ul>
-        </>
-      )}
-      {finished.length > 0 && (
-        <>
-          <div className="font-semibold text-indigo-700 mt-2">Recent Jobs:</div>
-          <ul className="pl-3 text-sm text-yellow-900">
-            {finished.map((j, idx) => (
-              <li key={j.job_id || idx} className="mb-1">
-                {render(j)}
-                {renderDocs(j)}
-                {renderTime(j)}
-              </li>
-            ))}
-          </ul>
-        </>
-      )}
-    </div>
-  );
-}
 
 // ----- Item Cards -----
-function ItemCard({ item, onRemove }) {
+function ItemCard({ item, onRemove, selected, onSelect }) {
   return (
     <div className="border border-[var(--primary)] bg-[var(--card)] rounded-2xl p-4 shadow-lg flex flex-col gap-1">
       <div className="flex items-center gap-2 mb-1">
         <div className="bg-[var(--accent)] rounded-full p-2 flex items-center justify-center shadow-inner">
           {getFileIcon(item.path)}
         </div>
-        <div className="font-semibold text-[var(--primary)] truncate">{item.name}</div>
+        <div className="font-semibold text-[var(--primary)] truncate flex-1">{item.name}</div>
+        <input type="checkbox" className="accent-[var(--primary)]" checked={selected} onChange={onSelect} />
       </div>
       {/* <div className="text-sm break-all mb-1">
         {item.path}
       </div> */}
-      <div className="flex items-center justify-between">
-        <span className="text-xs text-[var(--muted-foreground)]">
-          Added: {item.added_at ? new Date(item.added_at).toLocaleString() : "—"}
-        </span>
+      <div className="text-xs text-[var(--muted-foreground)] flex items-center gap-1">
+        <span>Added: {item.added_at ? new Date(item.added_at).toLocaleString() : "—"}</span>
+      </div>
+      <div className="flex items-center justify-between mt-1">
+        <div className="text-xs flex items-center gap-1">
+          <Database className="w-4 h-4" />
+          {item.vector_db_update_date ? (
+            <span className="flex items-center gap-1 text-green-700"><CheckCircle2 className="w-4 h-4" /> {new Date(item.vector_db_update_date).toLocaleDateString()}</span>
+          ) : (
+            <span className="flex items-center gap-1 text-red-700"><XCircle className="w-4 h-4" /> none</span>
+          )}
+        </div>
         <button
           className="px-2 py-1 text-xs rounded-xl font-bold bg-red-600 text-white hover:bg-red-700 shadow transition"
           onClick={() => onRemove(item)}
@@ -227,15 +149,27 @@ function ItemCard({ item, onRemove }) {
 function SpecialistAgentCard({
   agent,
   worlds,
-  jobs,
   onEdit,
-  onRebuild,
   setItemModal,
-  onExport,
-  onImport,
 }) {
   const { items, mutate: refreshItems } = useAgentLibraryItems(agent.id);
   const { token } = useAuth();
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
+
+  function toggleSelect(id:number) {
+    setSelectedIds(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]);
+  }
+
+  async function removeSelected() {
+    if (selectedIds.length === 0) return;
+    if (!confirm("Remove selected items from agent?")) return;
+    const { unlinkAgentItem } = await import("../../lib/specialistAPI");
+    for (const id of selectedIds) {
+      await unlinkAgentItem(agent.id, id, token || "");
+    }
+    setSelectedIds([]);
+    refreshItems();
+  }
 
   async function removeItem(item) {
     if (!confirm("Remove item from agent?")) return;
@@ -260,19 +194,33 @@ function SpecialistAgentCard({
         </div>
         <div className="flex gap-2 flex-wrap">
           <button className="px-3 py-1 rounded-lg font-semibold text-white bg-indigo-600 hover:bg-indigo-800 transition text-sm shadow" onClick={onEdit}>Edit</button>
-          <button className="px-3 py-1 rounded-lg font-semibold text-purple-700 bg-purple-200 hover:bg-yellow-300 transition text-sm shadow border border-purple-300" onClick={onRebuild}>Rebuild Vector</button>
-          <button className="px-3 py-1 rounded-lg font-semibold text-white bg-sky-600 hover:bg-sky-800 transition text-sm shadow" onClick={() => setItemModal({agentId: agent.id})}>Add Item</button>
-          <button className="px-3 py-1 rounded-lg font-semibold text-white bg-emerald-600 hover:bg-emerald-800 transition text-sm shadow" onClick={onExport}>Export DB</button>
-          <button className="px-3 py-1 rounded-lg font-semibold text-white bg-amber-600 hover:bg-amber-800 transition text-sm shadow" onClick={onImport}>Import DB</button>
+          <button className="px-3 py-1 rounded-lg font-semibold text-white bg-sky-600 hover:bg-sky-800 transition text-sm shadow" onClick={() => setItemModal({agentId: agent.id})}>Add Library</button>
         </div>
       </div>
-      {jobs && <JobStatusScroll jobs={jobs} />}
       {items && items.length > 0 && (
-        <div className="mt-3 grid sm:grid-cols-2 md:grid-cols-3 gap-3">
-          {items.map(it => (
-            <ItemCard key={it.id} item={it} onRemove={(i) => removeItem(i)} />
-          ))}
-        </div>
+        <>
+          <div className="mt-3 grid sm:grid-cols-2 md:grid-cols-3 gap-3">
+            {items.map(it => (
+              <ItemCard
+                key={it.id}
+                item={it}
+                onRemove={(i) => removeItem(i)}
+                selected={selectedIds.includes(it.id)}
+                onSelect={() => toggleSelect(it.id)}
+              />
+            ))}
+          </div>
+          {selectedIds.length > 0 && (
+            <div className="mt-3">
+              <button
+                className="px-4 py-2 rounded-xl bg-red-600 text-white hover:bg-red-700 shadow"
+                onClick={removeSelected}
+              >
+                Remove Selected
+              </button>
+            </div>
+          )}
+        </>
       )}
     </div>
   );
@@ -283,12 +231,9 @@ export default function SpecialistSettingsPage() {
   const { user, token } = useAuth();
   const { agents, mutate } = useAgents();
   const { worlds } = useWorlds();
-  const { jobs } = useSpecialistJobs();
   const [modalOpen, setModalOpen] = useState(false);
   const [itemModal, setItemModal] = useState<{agentId:number}|null>(null);
   const [selectedAgent, setSelectedAgent] = useState(null as any);
-  const [exportAgent, setExportAgent] = useState(null as any);
-  const [importAgent, setImportAgent] = useState(null as any);
   const [success, setSuccess] = useState("");
   const [npcFlavor, setNpcFlavor] = useState("Manage your specialist agents and their library items here.");
   const [npcQuote] = useState(npcQuotes[Math.floor(Math.random()*npcQuotes.length)]);
@@ -302,13 +247,6 @@ export default function SpecialistSettingsPage() {
   }
 
   const specialists = agents.filter(a => a.task === "specialist");
-  const jobsByAgent = jobs.reduce<Record<number, any[]>>((acc,j)=>{ if(!acc[j.agent_id]) acc[j.agent_id]=[]; acc[j.agent_id].push(j); return acc; },{});
-
-  async function handleRebuild(agentId:number) {
-    setNpcFlavor("Rebuilding vectors...");
-    await startVectorJob(agentId, token||"");
-    setNpcFlavor("Job queued!");
-  }
 
   return (
     <AuthGuard>
@@ -335,12 +273,8 @@ export default function SpecialistSettingsPage() {
                   key={agent.id}
                   agent={agent}
                   worlds={worlds}
-                  jobs={jobsByAgent[agent.id]}
                   onEdit={() => { setSelectedAgent(agent); setModalOpen(true); }}
-                  onRebuild={() => handleRebuild(agent.id)}
                   setItemModal={setItemModal}
-                  onExport={() => setExportAgent(agent)}
-                  onImport={() => setImportAgent(agent)}
                 />
               ))}
             </div>
@@ -359,19 +293,6 @@ export default function SpecialistSettingsPage() {
                 agentId={itemModal.agentId}
                 onClose={()=>setItemModal(null)}
                 onSaved={()=>{}}
-              />
-            )}
-            {exportAgent && (
-              <ExportVectorDBModal
-                agent={exportAgent}
-                onClose={()=>setExportAgent(null)}
-              />
-            )}
-            {importAgent && (
-              <ImportVectorDBModal
-                agent={importAgent}
-                onClose={()=>setImportAgent(null)}
-                onImported={()=>{}}
               />
             )}
           </div>

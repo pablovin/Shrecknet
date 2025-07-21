@@ -6,7 +6,7 @@ import { useAuth } from "../components/auth/AuthProvider";
 import { useState } from "react";
 import { useTranslation } from "@/app/hooks/useTranslation";
 import ImportWorldModal from "../components/importexport/ImportWorldModal";
-import { Download, Upload, Users2, Bot, PenLine, FileDown, FileUp } from "lucide-react";
+import { Download, Upload, Users2, Bot, PenLine, FileDown, FileUp, BookOpenText } from "lucide-react";
 import Link from "next/link";
 import ExportWorldModal from "../components/importexport/ExportWorldModal";
 import ImportBackupModal from "../components/importexport/ImportBackupModal";
@@ -142,6 +142,24 @@ export default function UserManagementPage() {
                   setTimeout(() => setSuccess(''), 2000);
                 }}
               />
+            </div>
+
+            {/* Library Admin Area */}
+            <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl shadow-sm p-6 w-full flex flex-col gap-2">
+              <div className="flex items-center gap-2 mb-2">
+                <BookOpenText className="w-6 h-6 text-[var(--primary)]" />
+                <div className="text-[var(--primary)] font-bold text-lg">Library Admin</div>
+              </div>
+              <div className="text-[var(--foreground)]/80 text-sm mb-3">
+                Manage your collection of rulebooks and supplements.
+              </div>
+              <Link
+                href="/library_admin"
+                className="inline-flex items-center gap-2 px-5 py-2 rounded-xl font-bold bg-[var(--primary)] text-[var(--primary-foreground)] shadow hover:bg-[var(--accent)] hover:text-[var(--background)] border border-[var(--primary)] transition w-fit"
+              >
+                <BookOpenText className="w-5 h-5" />
+                Go to Library Admin
+              </Link>
             </div>
 
             {/* Agents Settings Area */}

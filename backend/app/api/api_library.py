@@ -1,8 +1,10 @@
 from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException
+from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from pathlib import Path
 from uuid import uuid4
 import json
+import os
 
 from app.database import get_session
 from app.models.model_user import User, UserRole
@@ -60,6 +62,20 @@ async def read_library_item(item_id: int, session: AsyncSession = Depends(get_se
     if not item:
         raise HTTPException(status_code=404, detail="Item not found")
     return item
+
+
+@router.get("/{item_id}/download")
+async def download_library_item(
+    item_id: int,
+    session: AsyncSession = Depends(get_session),
+):
+    item = await get_item(session, item_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="Item not found")
+    if not item.path or not os.path.isfile(item.path):
+        raise HTTPException(status_code=404, detail="File not found")
+    filename = Path(item.path).name
+    return FileResponse(path=item.path, filename=filename)
 
 @router.patch("/{item_id}", response_model=LibraryItemRead)
 async def update_library_item_endpoint(

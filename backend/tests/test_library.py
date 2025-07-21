@@ -62,6 +62,14 @@ async def test_library_crud(async_client, tmp_path):
     assert resp.status_code == 200
     assert any(it["id"] == item_id for it in resp.json())
 
+    # download
+    resp = await async_client.get(
+        f"/library/{item_id}/download",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert resp.status_code == 200
+    assert resp.text == "hello"
+
     # update
     resp = await async_client.patch(
         f"/library/{item_id}",

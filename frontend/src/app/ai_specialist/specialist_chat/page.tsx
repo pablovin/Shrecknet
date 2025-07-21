@@ -3,20 +3,19 @@ export const dynamic = "force-dynamic";
 import DashboardLayout from "../../components/DashboardLayout";
 import AuthGuard from "../../components/auth/AuthGuard";
 import { useSearchParams } from "next/navigation";
-import { Suspense, useState, useEffect, useRef, FormEvent } from "react";
+import { Download, File } from "lucide-react";
 import Image from "next/image";
 import { useAuth } from "../../components/auth/AuthProvider";
 import { useAgentById } from "../../lib/useAgentById";
 import {
   chatWithSpecialist,
   getSpecialistHistory,
-  downloadSource,
 } from "../../lib/specialistAPI";
 import type { ChatMessage } from "../../lib/specialistAPI";
-import { useSpecialistSources } from "../../lib/useSpecialistSources";
+import { useAgentLibraryItems } from "../../lib/useAgentLibraryItems";
 import { downloadBlob } from "../../lib/importExportAPI";
 import { motion } from "framer-motion";
-import { BookOpen, Download, Link2, File } from "lucide-react";
+import { Download, File } from "lucide-react";
 import ModalContainer from "../../components/template/modalContainer";
 import { clearSpecialistHistory } from "../../lib/specialistAPI";
 import { getPage } from "../../lib/pagesAPI";
@@ -94,7 +93,6 @@ function AgentAnimatedAvatar({ logo, emote = "normal" }: { logo?: string; emote?
 }
 
 export function TomeCard({ src, onDownload }) {
-  const isFile = src.type === "file";
   return (
     <motion.div
       className="
@@ -111,32 +109,15 @@ export function TomeCard({ src, onDownload }) {
       }}
     >
       <div className="flex items-center gap-2 w-full">
-        {isFile ? (
-          <File className="w-4 h-4 text-fuchsia-600" />
-        ) : (
-          <Link2 className="w-4 h-4 text-indigo-600" />
-        )}
+        <File className="w-4 h-4 text-fuchsia-600" />
         <span className="font-semibold text-[15px] text-neutral-800">{src.name}</span>
         <div className="ml-auto">
-          {isFile ? (
-             <button
-             className="mt-2 text-xs text-white bg-fuchsia-600 hover:bg-fuchsia-700 px-2 py-1 rounded"
-             onClick={() => onDownload(src.id!, src.path?.split("/").pop() || "source")}
-           >
-             <Download className="w-4 h-4 inline" /> {('download')}
-           </button>
-          ) : src.url ? (
-            <a
-              href={src.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              title={t('open_link')}
-              className="rounded-full hover:bg-indigo-50 p-1"
-              onClick={e => e.stopPropagation()}
-            >
-              <BookOpen className="w-4 h-4 text-indigo-500 group-hover:scale-110 transition" />
-            </a>
-          ) : null}
+          <button
+            className="mt-2 text-xs text-white bg-fuchsia-600 hover:bg-fuchsia-700 px-2 py-1 rounded"
+            onClick={() => onDownload(src.id, src.path?.split("/").pop() || "item")}
+          >
+            <Download className="w-4 h-4 inline" />
+          </button>
         </div>
       </div>
     </motion.div>
@@ -189,7 +170,7 @@ function SpecialistChatPageContent() {
   const searchParams = useSearchParams();
   const agentId = parseInt(searchParams.get("agent") || "0");
   const { agent } = useAgentById(agentId);
-  const { sources } = useSpecialistSources(agentId);
+  const { items: sources } = useAgentLibraryItems(agentId);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [allMessages, setAllMessages] = useState<ChatMessage[]>([]);
   const [showHistoryModal, setShowHistoryModal] = useState(false);
@@ -290,10 +271,11 @@ function SpecialistChatPageContent() {
     setLoading(false);
   }
 
-  async function handleDownload(sourceId: number, filename: string) {
+  async function handleDownload(itemId: number, filename: string) {
     setShowDownloadModal(true);
     try {
-      const blob = await downloadSource(agentId, sourceId, token || "");
+      const { downloadLibraryItem } = await import("../../lib/libraryAPI");
+      const blob = await downloadLibraryItem(itemId, token || "");
       downloadBlob(blob, filename);
     } catch (err) {
       // You can trigger an emote or show a toast here!

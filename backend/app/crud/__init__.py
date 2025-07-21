@@ -12,6 +12,7 @@ from . import crud_specialist_vectordb
 from . import crud_specialist_agent
 from . import crud_library_item
 from . import crud_library_vectordb
+from . import crud_agent_library_item
 try:
     from . import crud_vectordb
 except Exception:  # pragma: no cover - optional dependency
@@ -36,6 +37,7 @@ __all__ = [
     "crud_specialist_agent",
     "crud_library_item",
     "crud_library_vectordb",
+    "crud_agent_library_item",
 ]
 if crud_vectordb:
     __all__.append("crud_vectordb")

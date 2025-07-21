@@ -59,6 +59,12 @@ def _migrate(conn):
         if "cover_url" not in columns:
             conn.execute(text("ALTER TABLE libraryitem ADD COLUMN cover_url TEXT"))
 
+    # -- AgentLibraryItem table --
+    if "agentlibraryitem" not in inspector.get_table_names():
+        conn.execute(text(
+            "CREATE TABLE agentlibraryitem (agent_id INTEGER NOT NULL REFERENCES agent(id), item_id INTEGER NOT NULL REFERENCES libraryitem(id), added_at DATETIME NOT NULL, PRIMARY KEY (agent_id, item_id))"
+        ))
+
 async def get_session() -> AsyncSession:
     async with async_session_maker() as session:
         yield session

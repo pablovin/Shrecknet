@@ -4,7 +4,7 @@ import { Bot, Sparkles, Search, Database, CheckCircle2, XCircle } from "lucide-r
 import AuthGuard from "../../components/auth/AuthGuard";
 import DashboardLayout from "../../components/DashboardLayout";
 import { useAuth } from "../../components/auth/AuthProvider";
-import { hasRole } from "../../lib/roles";
+import useRoleRedirect from "../../hooks/useRoleRedirect";
 import { useAgents } from "../../lib/useAgents";
 import { useWorlds } from "../../lib/userWorlds";
 import { useAgentLibraryItems } from "../../lib/useAgentLibraryItems";
@@ -238,13 +238,8 @@ export default function SpecialistSettingsPage() {
   const [npcFlavor, setNpcFlavor] = useState("Manage your specialist agents and their library items here.");
   const [npcQuote] = useState(npcQuotes[Math.floor(Math.random()*npcQuotes.length)]);
 
-  if (!hasRole(user?.role, "world builder") && !hasRole(user?.role, "system admin")) {
-    return (
-      <DashboardLayout>
-        <div className="p-10 text-2xl text-red-600 font-bold">Not authorized</div>
-      </DashboardLayout>
-    );
-  }
+  const allowed = useRoleRedirect("world builder");
+  if (!allowed) return null;
 
   const specialists = agents.filter(a => a.task === "specialist");
 

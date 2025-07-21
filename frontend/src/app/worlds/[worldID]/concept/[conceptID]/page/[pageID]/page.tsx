@@ -18,6 +18,7 @@ import HeaderSection from "@/app/components/see_page/HeaderSection";
 import BodySection from "@/app/components/see_page/BodySection";
 import EditableContent from "@/app/components/editor/EditableContent";
 import WorldBreadcrumb from "@/app/components/worlds/WorldBreadCrump";
+import useRoleRedirect from "@/app/hooks/useRoleRedirect";
 import { useTranslation } from "@/app/hooks/useTranslation";
 import { hasRole } from "@/app/lib/roles";
 import ModalContainer from "@/app/components/template/modalContainer";
@@ -122,13 +123,8 @@ export default function PageView() {
     window.dispatchEvent(new CustomEvent("openChatPanel", { detail }));
   }
 
-  if (!hasRole(user?.role, "player")) {
-    return (
-      <DashboardLayout>
-        <div className="p-10 text-2xl text-red-600 font-bold">Not authorized</div>
-      </DashboardLayout>
-    );
-  }
+  const allowed = useRoleRedirect("player");
+  if (!allowed) return null;
 
   async function handleSaveContent(newContent) {
     if (!pageId || !token) return;

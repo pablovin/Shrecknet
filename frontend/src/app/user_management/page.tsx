@@ -1,8 +1,8 @@
 "use client";
 import AuthGuard from "../components/auth/AuthGuard";
 import DashboardLayout from "../components/DashboardLayout";
-import { hasRole } from "../lib/roles";
 import { useAuth } from "../components/auth/AuthProvider";
+import useRoleRedirect from "../hooks/useRoleRedirect";
 import UserGrid from "../components/user_management/User_Grid";
 import UserModal from "../components/user_management/User_Modal";
 import { useUsers } from "../lib/useUsers";
@@ -17,13 +17,8 @@ export default function UserManagementPage() {
   const [modalOpen, setModalOpen] = useState(false);
   const [success, setSuccess] = useState(""); 
 
-  if (!hasRole(user?.role, "system admin")) {
-    return (
-      <DashboardLayout>
-        <div className="p-10 text-2xl text-red-600 font-bold">Not authorized</div>
-      </DashboardLayout>
-    );
-  }
+  const allowed = useRoleRedirect("system admin");
+  if (!allowed) return null;
 
   // Filtering logic
   const filteredUsers = (users || []).filter(u =>

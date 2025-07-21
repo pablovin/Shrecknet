@@ -3,8 +3,8 @@ import { useState } from "react";
 import { Sparkles, Wand2, BookOpenText, Search } from "lucide-react";
 import AuthGuard from "../../components/auth/AuthGuard";
 import DashboardLayout from "../../components/DashboardLayout";
-import { hasRole } from "../../lib/roles";
 import { useAuth } from "../../components/auth/AuthProvider";
+import useRoleRedirect from "../../hooks/useRoleRedirect";
 import { useAgents } from "../../lib/useAgents";
 import { useWorlds } from "../../lib/userWorlds";
 import AgentModal from "../../components/agents/AgentModal";
@@ -283,13 +283,8 @@ export default function AgentsGuildhallPage() {
     npcQuotes[Math.floor(Math.random() * npcQuotes.length)]
   );
 
-  if (!hasRole(user?.role, "world builder") && !hasRole(user?.role, "system admin")) {
-    return (
-      <DashboardLayout>
-        <div className="p-10 text-2xl text-red-600 font-bold">Not authorized</div>
-      </DashboardLayout>
-    );
-  }
+  const allowed = useRoleRedirect("world builder");
+  if (!allowed) return null;
 // Filter/search logic
 const filtered = agents.filter((a) =>
   a.name?.toLowerCase().includes(search.toLowerCase())

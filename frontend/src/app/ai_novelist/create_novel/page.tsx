@@ -3,7 +3,7 @@ export const dynamic = "force-dynamic";
 import DashboardLayout from "../../components/DashboardLayout";
 import AuthGuard from "../../components/auth/AuthGuard";
 import { useAuth } from "../../components/auth/AuthProvider";
-import { hasRole } from "../../lib/roles";
+import useRoleRedirect from "../../hooks/useRoleRedirect";
 import { useSearchParams, useRouter } from "next/navigation";
 import { Suspense, useEffect, useState, useMemo, useRef } from "react";
 import { useAgentById } from "../../lib/useAgentById";
@@ -541,15 +541,8 @@ function CreateNovelPageContent() {
     router.push(`/ai_novelist/create_novel?agent= ${agentId}`);
   }
 
-  if (!hasRole(user?.role, "writer")) {
-    return (
-      <DashboardLayout>
-        <div className="p-10 text-2xl text-red-600 font-bold">
-          Not authorized
-        </div>
-      </DashboardLayout>
-    );
-  }
+  const allowed = useRoleRedirect("writer");
+  if (!allowed) return null;
 
   return (
     <AuthGuard>

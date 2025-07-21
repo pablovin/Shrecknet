@@ -19,7 +19,7 @@ function LoginPageContent() {
 
   useEffect(() => {
     if (!loading && user) {
-      router.replace("/worlds");
+      router.replace("/main");
     }
   }, [loading, user, router]);
 

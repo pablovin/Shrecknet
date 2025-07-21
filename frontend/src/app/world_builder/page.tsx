@@ -2,8 +2,8 @@
 import AuthGuard from "../components/auth/AuthGuard";
 import DashboardLayout from "../components/DashboardLayout";
 import DashboardWorlds from "../components/worlds/DashboardWorlds";
-import { hasRole } from "../lib/roles";
 import { useAuth } from "../components/auth/AuthProvider";
+import useRoleRedirect from "../hooks/useRoleRedirect";
 import { useWorlds } from "../lib/userWorlds";
 
 export default function WorldBuilderPage() {
@@ -11,13 +11,8 @@ export default function WorldBuilderPage() {
   const { user } = useAuth();
 
   // Only "world builder" and "system admin" can access
-  if (!hasRole(user?.role, "world builder") && !hasRole(user?.role, "system admin")) {
-    return (
-      <DashboardLayout>
-        <div className="p-10 text-2xl text-red-600 font-bold">Not authorized</div>
-      </DashboardLayout>
-    );
-  }
+  const allowed = useRoleRedirect("world builder");
+  if (!allowed) return null;
 
   return (
     <AuthGuard>

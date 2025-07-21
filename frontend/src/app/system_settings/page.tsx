@@ -4,7 +4,7 @@ import DashboardLayout from "../components/DashboardLayout";
 import { useAuth } from "../components/auth/AuthProvider";
 import { useState } from "react";
 import { useTranslation } from "@/app/hooks/useTranslation";
-import { hasRole } from "../lib/roles";
+import useRoleRedirect from "../hooks/useRoleRedirect";
 import ImportWorldModal from "../components/importexport/ImportWorldModal";
 import ExportWorldModal from "../components/importexport/ExportWorldModal";
 import ImportBackupModal from "../components/importexport/ImportBackupModal";
@@ -59,6 +59,10 @@ export default function AdminDashboardPage() {
     }
   }
 
+
+  const allowed = useRoleRedirect("system admin");
+  if (!allowed) return null;
+
   // --- Data aggregation for dashboard charts ---
   const rulebookCounts = libraryItems.reduce<Record<string, number>>((acc, it) => {
     acc[it.system] = (acc[it.system] || 0) + 1;
@@ -98,13 +102,7 @@ export default function AdminDashboardPage() {
   }, {});
   const userData = Object.entries(roleCounts).map(([label, value]) => ({ label, value }));
 
-  if (!hasRole(user?.role, "system admin")) {
-    return (
-      <DashboardLayout>
-        <div className="p-10 text-2xl text-red-600 font-bold">Not authorized</div>
-      </DashboardLayout>
-    );
-  }
+
 
   return (
     <AuthGuard>

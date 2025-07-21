@@ -13,6 +13,7 @@ import GroupRoundedIcon from "@mui/icons-material/GroupRounded";
 import CasinoRoundedIcon from "@mui/icons-material/CasinoRounded";
 import BuildRoundedIcon from "@mui/icons-material/BuildRounded";
 import SettingsRoundedIcon from "@mui/icons-material/SettingsRounded";
+import HomeIcon from "@mui/icons-material/HomeRounded";
 import PersonEditAlt1RoundedIcon from "@mui/icons-material/EditRounded";
 import { Bot, BookOpenText, FileText, PenLine, Sparkles } from "lucide-react";
 
@@ -43,6 +44,13 @@ export default function Sidebar({ mobileOpen = false, setMobileOpen = () => {} }
       icon: <CasinoRoundedIcon fontSize="medium" />,
       href: "https://foundry.shrecknet.club",
       external: true,
+      show: true,
+    },
+    {
+      label: t("home"),
+      icon: <HomeIcon fontSize="medium" />,
+      href: "/main",
+      external: false,
       show: true,
     },
     {

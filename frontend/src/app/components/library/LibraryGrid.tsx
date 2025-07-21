@@ -15,6 +15,13 @@ export default function LibraryGrid({ items, onItemClick, onEmbed, jobsByItem, e
           <div className="text-lg font-bold text-[var(--primary)] text-center truncate w-full mb-1 pointer-events-none">
             {it.name}
           </div>
+          {it.cover_url && (
+            <img
+              src={it.cover_url.startsWith("/") ? it.cover_url : `/${it.cover_url}`}
+              alt="cover"
+              className="w-full h-40 object-cover rounded-lg mb-2 pointer-events-none"
+            />
+          )}
           <div className="text-xs text-[var(--foreground)]/60 text-center truncate w-full mb-2 pointer-events-none">
             {it.system}
           </div>

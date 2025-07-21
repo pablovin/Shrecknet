@@ -40,6 +40,19 @@ async def delete_item(session: AsyncSession, item_id: int) -> bool:
             os.remove(item.path)
         except Exception:
             pass
+    if item.cover_url:
+        folder = os.path.dirname(item.cover_url)
+        if os.path.isdir(folder):
+            try:
+                import shutil
+                shutil.rmtree(folder)
+            except Exception:
+                pass
+    try:
+        from app.crud import crud_library_vectordb
+        crud_library_vectordb.delete_item_vectors(item_id)
+    except Exception:
+        pass
     await session.delete(item)
     await session.commit()
     return True

@@ -40,11 +40,27 @@ async def create_library_item(
     dest_path = dest_dir / f"{safe_name}{ext}"
     with open(dest_path, "wb") as out:
         out.write(await file.read())
+
+    cover_url = None
+    if ext.lower() == ".pdf":
+        try:
+            from pdf2image import convert_from_path
+
+            cover_dir = Path("uploads") / "library" / safe_name
+            cover_dir.mkdir(parents=True, exist_ok=True)
+            cover_path = cover_dir / "cover.png"
+            images = convert_from_path(str(dest_path), first_page=1, last_page=1)
+            if images:
+                images[0].save(cover_path, "PNG")
+                cover_url = str(cover_path)
+        except Exception:
+            cover_url = None
     item = LibraryItem(
         name=name,
         system=system,
         description=description,
         path=str(dest_path),
+        cover_url=cover_url,
     )
     return await create_item(session, item)
 

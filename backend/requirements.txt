@@ -28,3 +28,5 @@ email-validator==2.1.1
 torchvision
 pillow
 pdfminer.six
+pdf2image
+reportlab

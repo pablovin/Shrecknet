@@ -1,6 +1,8 @@
 from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from pathlib import Path
+from uuid import uuid4
+import json
 
 from app.database import get_session
 from app.models.model_user import User, UserRole
@@ -14,6 +16,8 @@ from app.crud.crud_library_item import (
     delete_item,
 )
 from app.dependencies import get_current_user, require_role
+from app.task_queue import task_rebuild_library_vectors
+from app.config import settings
 
 LibraryItemRead.model_rebuild()
 
@@ -80,3 +84,41 @@ async def delete_library_item_endpoint(
     if not ok:
         raise HTTPException(status_code=404, detail="Item not found")
     return {"ok": True}
+
+
+@router.post("/{item_id}/embed_async")
+async def embed_library_item_async(
+    item_id: int,
+    user: User = Depends(require_role(UserRole.system_admin)),
+):
+    job_id = uuid4().hex
+    job_dir = Path(settings.library_job_dir)
+    job_dir.mkdir(parents=True, exist_ok=True)
+    job_path = job_dir / f"{job_id}.json"
+    with open(job_path, "w") as f:
+        json.dump({"status": "queued", "item_id": item_id, "job_type": "rebuild_library_vectors"}, f)
+    task_rebuild_library_vectors.delay(item_id, job_id)
+    return {"job_id": job_id}
+
+
+@router.get("/vector_jobs/{job_id}")
+async def library_vector_job_status(job_id: str):
+    job_path = Path(settings.library_job_dir) / f"{job_id}.json"
+    if not job_path.is_file():
+        raise HTTPException(status_code=404, detail="Job not found")
+    with open(job_path) as f:
+        data = json.load(f)
+    return data
+
+
+@router.get("/vector_jobs")
+async def list_library_vector_jobs():
+    job_dir = Path(settings.library_job_dir)
+    job_dir.mkdir(parents=True, exist_ok=True)
+    jobs = []
+    for p in job_dir.glob("*.json"):
+        with open(p) as f:
+            data = json.load(f)
+        data["job_id"] = p.stem
+        jobs.append(data)
+    return jobs

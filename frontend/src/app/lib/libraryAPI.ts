@@ -39,3 +39,20 @@ export async function deleteLibraryItem(id: number, token: string) {
   if (!res.ok) throw await res.text();
   return await res.json();
 }
+
+export async function startLibraryVectorJob(id: number, token: string) {
+  const res = await fetch(`${API_URL}/library/${id}/embed_async`, {
+    method: "POST",
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) throw await res.text();
+  return await res.json();
+}
+
+export async function listLibraryVectorJobs(token: string) {
+  const res = await fetch(`${API_URL}/library/vector_jobs`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) throw await res.text();
+  return await res.json();
+}

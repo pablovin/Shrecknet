@@ -50,8 +50,12 @@ def _migrate(conn):
     # -- LibraryItem table --
     if "libraryitem" not in inspector.get_table_names():
         conn.execute(text(
-            "CREATE TABLE libraryitem (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, system TEXT, description TEXT, path TEXT, added_at DATETIME NOT NULL)"
+            "CREATE TABLE libraryitem (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, system TEXT, description TEXT, path TEXT, added_at DATETIME NOT NULL, vector_db_update_date DATETIME)"
         ))
+    else:
+        columns = [c["name"] for c in inspector.get_columns("libraryitem")]
+        if "vector_db_update_date" not in columns:
+            conn.execute(text("ALTER TABLE libraryitem ADD COLUMN vector_db_update_date DATETIME"))
 
 async def get_session() -> AsyncSession:
     async with async_session_maker() as session:

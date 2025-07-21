@@ -64,7 +64,7 @@ def task_sync_page_ref_attributes(page_id: int):
     asyncio.run(sync_page_ref_attributes(page_id))
 
 from app.crud.crud_page_analysis import analyze_pages_bulk
-from app.api.api_agent import get_agent
+from app.crud.crud_agent import get_agent
 from app.crud.crud_page import get_page, update_page, get_pages
 from app.database import async_session_maker
 from app.config import settings

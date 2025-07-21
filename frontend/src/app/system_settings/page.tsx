@@ -7,6 +7,7 @@ import { useState } from "react";
 import { useTranslation } from "@/app/hooks/useTranslation";
 import ImportWorldModal from "../components/importexport/ImportWorldModal";
 import { Download, Upload, Users2, Bot, PenLine, FileDown, FileUp, BookOpenText } from "lucide-react";
+import { History } from "lucide-react";
 import Link from "next/link";
 import ExportWorldModal from "../components/importexport/ExportWorldModal";
 import ImportBackupModal from "../components/importexport/ImportBackupModal";
@@ -177,6 +178,24 @@ export default function UserManagementPage() {
               >
                 <Bot className="w-5 h-5" />
                 Go to Agent Settings
+              </Link>
+            </div>
+
+            {/* Background Jobs Area */}
+            <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl shadow-sm p-6 w-full flex flex-col gap-2">
+              <div className="flex items-center gap-2 mb-2">
+                <History className="w-6 h-6 text-[var(--primary)]" />
+                <div className="text-[var(--primary)] font-bold text-lg">Background Jobs</div>
+              </div>
+              <div className="text-[var(--foreground)]/80 text-sm mb-3">
+                View and manage background job history.
+              </div>
+              <Link
+                href="/background_jobs"
+                className="inline-flex items-center gap-2 px-5 py-2 rounded-xl font-bold bg-[var(--primary)] text-[var(--primary-foreground)] shadow hover:bg-[var(--accent)] hover:text-[var(--background)] border border-[var(--primary)] transition w-fit"
+              >
+                <History className="w-5 h-5" />
+                Open Background Jobs
               </Link>
             </div>
 

@@ -2,16 +2,15 @@ from datetime import datetime, timezone
 from typing import List
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.future import select
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.messages import HumanMessage
 from langgraph.graph import Graph
 
 from app.config import settings
 from app.models.model_agent import Agent
-from app.models.model_specialist_source import SpecialistSource
-from .crud_specialist_vectordb import query_agent
+from app.models.model_library_item import LibraryItem
+from .crud_agent_library_item import get_items as get_agent_items, get_item_ids
+from .crud_library_vectordb import query_items
 from .crud_agent import ensure_personality_prompts
 
 openai_model = settings.open_ai_model
@@ -30,23 +29,17 @@ async def chat_with_specialist(
         raise ValueError("Agent unavailable")
 
     query = messages[-1].get("content", "") if messages else ""
-    docs = query_agent(agent_id, query, max(n_results, 5))
+    items = await get_agent_items(session, agent_id)
+    item_ids = [it.id for it in items]
+    docs = query_items(item_ids, query, max(n_results, 5))
 
-    # Map source ids to names
-    src_ids = {d.get("source_id") for d in docs if d.get("source_id") is not None}
-    sources_lookup = {}
-    if src_ids:
-        result = await session.execute(
-            select(SpecialistSource).where(SpecialistSource.id.in_(src_ids))
-        )
-        for src in result.scalars().all():
-            sources_lookup[src.id] = src.name or f"Source {src.id}"
+    name_lookup = {it.id: it.name for it in items}
 
     sources = []
     context_parts = []
     for d in docs:
-        sid = d.get("source_id")
-        name = sources_lookup.get(sid, f"Source {sid}")
+        iid = d.get("item_id")
+        name = name_lookup.get(iid, f"Item {iid}")
         sources.append({"name": name})
         context_parts.append(f"[{name}]\n{d['document']}")
     context = "\n\n".join(context_parts)

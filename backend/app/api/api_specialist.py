@@ -13,8 +13,12 @@ from app.crud import (
     crud_specialist_source,
     crud_specialist_vectordb,
     crud_chat_history,
+    crud_agent_library_item,
+    crud_library_item,
 )
 from app.crud.crud_specialist_agent import chat_with_specialist
+from app.models.model_library_item import LibraryItem
+from app.schemas.schema_library_item import LibraryItemRead
 from app.models.model_specialist_source import SpecialistSource
 from app.schemas.schema_specialist_source import SpecialistSourceCreate, SpecialistSourceRead
 from pydantic import BaseModel
@@ -23,6 +27,29 @@ from app.config import settings
 from fastapi import Response
 
 router = APIRouter(prefix="/specialist_agents", tags=["SpecialistAgents"], dependencies=[Depends(get_current_user)])
+
+@router.get("/{agent_id}/items", response_model=list[LibraryItemRead])
+async def list_items(agent_id: int, session: AsyncSession = Depends(get_session)):
+    return await crud_agent_library_item.get_items(session, agent_id)
+
+class ItemLink(BaseModel):
+    item_id: int
+
+@router.post("/{agent_id}/items", response_model=LibraryItemRead)
+async def add_item(agent_id: int, payload: ItemLink, session: AsyncSession = Depends(get_session)):
+    await crud_agent_library_item.add_item(session, agent_id, payload.item_id)
+    item = await crud_library_item.get_item(session, payload.item_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="Item not found")
+    return item
+
+@router.delete("/{agent_id}/items/{item_id}")
+async def remove_item(agent_id: int, item_id: int, session: AsyncSession = Depends(get_session)):
+    ok = await crud_agent_library_item.delete_item(session, agent_id, item_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Item not found")
+    return {"ok": True}
+
 
 @router.post("/{agent_id}/sources", response_model=SpecialistSourceRead)
 async def add_source(agent_id: int, payload: SpecialistSourceCreate, session: AsyncSession = Depends(get_session)):

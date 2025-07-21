@@ -56,3 +56,11 @@ export async function listLibraryVectorJobs(token: string) {
   if (!res.ok) throw await res.text();
   return await res.json();
 }
+
+export async function downloadLibraryItem(id: number, token: string) {
+  const res = await fetch(`${API_URL}/library/${id}/download`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) throw await res.text();
+  return await res.blob();
+}

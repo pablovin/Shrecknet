@@ -73,7 +73,7 @@ async def rebuild_item_with_progress(
     docs: List[Document] = []
     total = len(chunks)
     for idx, chunk in enumerate(chunks, start=1):
-        docs.append(Document(page_content=chunk, metadata={"chunk_index": idx}))
+        docs.append(Document(page_content=chunk, metadata={"chunk_index": idx, "item_id": item_id}))
         if progress_cb:
             progress_cb(idx, total)
 
@@ -89,3 +89,39 @@ def delete_item_vectors(item_id: int) -> None:
     """Remove the vector DB collection for a library item."""
     collection = _get_collection(item_id)
     _delete_collection(f"library_{item_id}", collection)
+
+
+def query_item(item_id: int, query: str, n_results: int = 5) -> list[dict]:
+    """Query a single library item collection."""
+    collection = _get_collection(item_id)
+    retrieved = collection.max_marginal_relevance_search(query, k=n_results * 4)
+    results: list[dict] = []
+    for doc in retrieved:
+        meta = doc.metadata or {}
+        meta["item_id"] = item_id
+        results.append({"document": doc.page_content, **meta})
+    return results[:n_results]
+
+
+def query_items(item_ids: list[int], query: str, n_results: int = 5) -> list[dict]:
+    """Query multiple library item collections and combine results."""
+    combined: list[dict] = []
+    for iid in item_ids:
+        combined.extend(query_item(iid, query, n_results))
+
+    items: dict[int, dict] = {}
+    for doc in combined:
+        iid = doc.get("item_id")
+        entry = items.setdefault(
+            iid,
+            {"document_parts": [], "metadata": {k: v for k, v in doc.items() if k not in {"document", "item_id", "chunk_index"}}},
+        )
+        entry["document_parts"].append((doc.get("chunk_index", 0), doc["document"]))
+
+    results: list[dict] = []
+    for item in items.values():
+        parts = sorted(item["document_parts"], key=lambda x: x[0])
+        full = " ".join(p[1] for p in parts)
+        results.append({"document": full, **item["metadata"]})
+
+    return results[:n_results]

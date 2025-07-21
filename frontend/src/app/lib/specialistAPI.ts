@@ -2,65 +2,42 @@ import { API_URL } from "./config";
 import type { ChatMessage, SourceLink } from "./agentAPI";
 export type { ChatMessage };
 
-export type SpecialistSource = {
-  id?: number;
-  agent_id?: number;
-  name?: string;
-  type: string;
-  path?: string;
-  url?: string;
-  added_at?: string;
+export type AgentLibraryItem = {
+  id: number;
+  name: string;
+  system: string;
+  description?: string;
+  path: string;
+  cover_url?: string;
+  added_at: string;
+  vector_db_update_date?: string;
 };
 
-export async function listSources(agentId: number, token: string) {
-  const res = await fetch(`${API_URL}/specialist_agents/${agentId}/sources`, {
+export async function listAgentItems(agentId: number, token: string) {
+  const res = await fetch(`${API_URL}/specialist_agents/${agentId}/items`, {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   });
   if (!res.ok) throw await res.text();
-  return (await res.json()) as SpecialistSource[];
+  return (await res.json()) as AgentLibraryItem[];
 }
 
-export async function addSource(agentId: number, data: Partial<SpecialistSource>, token: string) {
-  const res = await fetch(`${API_URL}/specialist_agents/${agentId}/sources`, {
+export async function linkAgentItem(agentId: number, itemId: number, token: string) {
+  const res = await fetch(`${API_URL}/specialist_agents/${agentId}/items`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-    body: JSON.stringify(data),
+    headers: {"Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {})},
+    body: JSON.stringify({ item_id: itemId }),
   });
   if (!res.ok) throw await res.text();
-  return (await res.json()) as SpecialistSource;
+  return (await res.json()) as AgentLibraryItem;
 }
 
-export async function uploadSourceFile(agentId: number, name: string, file: File, token: string) {
-  const formData = new FormData();
-  formData.append("name", name);
-  formData.append("file", file);
-  const res = await fetch(`${API_URL}/specialist_agents/${agentId}/source_file`, {
-    method: "POST",
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
-    body: formData,
-  });
-  if (!res.ok) throw await res.text();
-  return (await res.json()) as SpecialistSource;
-}
-
-export async function deleteSource(agentId: number, sourceId: number, token: string) {
-  const res = await fetch(`${API_URL}/specialist_agents/${agentId}/sources/${sourceId}`, {
+export async function unlinkAgentItem(agentId: number, itemId: number, token: string) {
+  const res = await fetch(`${API_URL}/specialist_agents/${agentId}/items/${itemId}`, {
     method: "DELETE",
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   });
   if (!res.ok) throw await res.text();
   return await res.json();
-}
-
-export async function downloadSource(agentId: number, sourceId: number, token: string) {
-  const res = await fetch(`${API_URL}/specialist_agents/${agentId}/sources/${sourceId}/download`, {
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
-  });
-  if (!res.ok) throw await res.text();
-  return await res.blob();
 }
 
 export async function startVectorJob(agentId: number, token: string) {

@@ -8,13 +8,13 @@ import { hasRole } from "../../lib/roles";
 import { useAgents } from "../../lib/useAgents";
 import { useWorlds } from "../../lib/userWorlds";
 import { useSpecialistJobs } from "../../lib/useSpecialistJobs";
-import { useSpecialistSources } from "../../lib/useSpecialistSources";
+import { useAgentLibraryItems } from "../../lib/useAgentLibraryItems";
 import { startVectorJob } from "../../lib/specialistAPI";
 import AgentModal from "../../components/agents/AgentModal";
-import SpecialistSourceModal from "../../components/agents/SpecialistSourceModal";
+import AgentItemModal from "../../components/agents/AgentItemModal";
 import ExportVectorDBModal from "../../components/agents/ExportVectorDBModal";
 import ImportVectorDBModal from "../../components/agents/ImportVectorDBModal";
-import { Link as LinkIcon, FileText, FileImage, FileArchive, FileVideo, FileAudio, File } from "lucide-react";
+import { FileText, FileImage, FileArchive, FileVideo, FileAudio, File } from "lucide-react";
 
 
 function getFileIcon(filename) {
@@ -195,35 +195,28 @@ function JobStatusScroll({ jobs }) {
   );
 }
 
-// ----- Source Cards -----
-function SourceCard({ source, onEdit }) {
-  const isLink = source.type === "link";
-  console.log("type: "+source.type)
-  console.log("Is link: "+isLink)
+// ----- Item Cards -----
+function ItemCard({ item, onRemove }) {
   return (
     <div className="border border-[var(--primary)] bg-[var(--card)] rounded-2xl p-4 shadow-lg flex flex-col gap-1">
       <div className="flex items-center gap-2 mb-1">
         <div className="bg-[var(--accent)] rounded-full p-2 flex items-center justify-center shadow-inner">
-          {isLink ? (
-            <LinkIcon className="text-[var(--primary)] w-6 h-6" />
-          ) : (
-            getFileIcon(source.path)
-          )}
+          {getFileIcon(item.path)}
         </div>
-        <div className="font-semibold text-[var(--primary)] truncate">{source.name}</div>
+        <div className="font-semibold text-[var(--primary)] truncate">{item.name}</div>
       </div>
       {/* <div className="text-sm break-all mb-1">
-        {getSourceDisplay(source)}
+        {item.path}
       </div> */}
       <div className="flex items-center justify-between">
         <span className="text-xs text-[var(--muted-foreground)]">
-          Added: {source.added_at ? new Date(source.added_at).toLocaleString() : "—"}
+          Added: {item.added_at ? new Date(item.added_at).toLocaleString() : "—"}
         </span>
         <button
-          className="px-2 py-1 text-xs rounded-xl font-bold bg-[var(--primary)] text-white hover:bg-[var(--accent)] shadow transition"
-          onClick={() => onEdit(source)}
+          className="px-2 py-1 text-xs rounded-xl font-bold bg-red-600 text-white hover:bg-red-700 shadow transition"
+          onClick={() => onRemove(item)}
         >
-          Edit
+          Remove
         </button>
       </div>
     </div>
@@ -237,11 +230,19 @@ function SpecialistAgentCard({
   jobs,
   onEdit,
   onRebuild,
-  setSourceModal,
+  setItemModal,
   onExport,
   onImport,
 }) {
-  const { sources } = useSpecialistSources(agent.id);
+  const { items, mutate: refreshItems } = useAgentLibraryItems(agent.id);
+  const { token } = useAuth();
+
+  async function removeItem(item) {
+    if (!confirm("Remove item from agent?")) return;
+    const { unlinkAgentItem } = await import("../../lib/specialistAPI");
+    await unlinkAgentItem(agent.id, item.id, token || "");
+    refreshItems();
+  }
   return (
     <div className="border border-indigo-100 bg-white/80 rounded-2xl shadow p-4">
       <div className="flex items-center gap-4">
@@ -260,16 +261,16 @@ function SpecialistAgentCard({
         <div className="flex gap-2 flex-wrap">
           <button className="px-3 py-1 rounded-lg font-semibold text-white bg-indigo-600 hover:bg-indigo-800 transition text-sm shadow" onClick={onEdit}>Edit</button>
           <button className="px-3 py-1 rounded-lg font-semibold text-purple-700 bg-purple-200 hover:bg-yellow-300 transition text-sm shadow border border-purple-300" onClick={onRebuild}>Rebuild Vector</button>
-          <button className="px-3 py-1 rounded-lg font-semibold text-white bg-sky-600 hover:bg-sky-800 transition text-sm shadow" onClick={() => setSourceModal({agentId: agent.id, source: null})}>Add Source</button>
+          <button className="px-3 py-1 rounded-lg font-semibold text-white bg-sky-600 hover:bg-sky-800 transition text-sm shadow" onClick={() => setItemModal({agentId: agent.id})}>Add Item</button>
           <button className="px-3 py-1 rounded-lg font-semibold text-white bg-emerald-600 hover:bg-emerald-800 transition text-sm shadow" onClick={onExport}>Export DB</button>
           <button className="px-3 py-1 rounded-lg font-semibold text-white bg-amber-600 hover:bg-amber-800 transition text-sm shadow" onClick={onImport}>Import DB</button>
         </div>
       </div>
       {jobs && <JobStatusScroll jobs={jobs} />}
-      {sources && sources.length > 0 && (
+      {items && items.length > 0 && (
         <div className="mt-3 grid sm:grid-cols-2 md:grid-cols-3 gap-3">
-          {sources.map(src => (
-            <SourceCard key={src.id} source={src} onEdit={(s) => setSourceModal({agentId: agent.id, source: s})} />
+          {items.map(it => (
+            <ItemCard key={it.id} item={it} onRemove={(i) => removeItem(i)} />
           ))}
         </div>
       )}
@@ -284,12 +285,12 @@ export default function SpecialistSettingsPage() {
   const { worlds } = useWorlds();
   const { jobs } = useSpecialistJobs();
   const [modalOpen, setModalOpen] = useState(false);
-  const [sourceModal, setSourceModal] = useState<{agentId:number, source:any}|null>(null);
+  const [itemModal, setItemModal] = useState<{agentId:number}|null>(null);
   const [selectedAgent, setSelectedAgent] = useState(null as any);
   const [exportAgent, setExportAgent] = useState(null as any);
   const [importAgent, setImportAgent] = useState(null as any);
   const [success, setSuccess] = useState("");
-  const [npcFlavor, setNpcFlavor] = useState("Manage your specialist agents and their sources here.");
+  const [npcFlavor, setNpcFlavor] = useState("Manage your specialist agents and their library items here.");
   const [npcQuote] = useState(npcQuotes[Math.floor(Math.random()*npcQuotes.length)]);
 
   if (!hasRole(user?.role, "world builder") && !hasRole(user?.role, "system admin")) {
@@ -337,7 +338,7 @@ export default function SpecialistSettingsPage() {
                   jobs={jobsByAgent[agent.id]}
                   onEdit={() => { setSelectedAgent(agent); setModalOpen(true); }}
                   onRebuild={() => handleRebuild(agent.id)}
-                  setSourceModal={setSourceModal}
+                  setItemModal={setItemModal}
                   onExport={() => setExportAgent(agent)}
                   onImport={() => setImportAgent(agent)}
                 />
@@ -353,11 +354,10 @@ export default function SpecialistSettingsPage() {
                 worlds={worlds}
               />
             )}
-            {sourceModal && (
-              <SpecialistSourceModal
-                agentId={sourceModal.agentId}
-                source={sourceModal.source}
-                onClose={()=>setSourceModal(null)}
+            {itemModal && (
+              <AgentItemModal
+                agentId={itemModal.agentId}
+                onClose={()=>setItemModal(null)}
                 onSaved={()=>{}}
               />
             )}

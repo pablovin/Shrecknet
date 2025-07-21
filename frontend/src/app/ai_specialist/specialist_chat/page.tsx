@@ -15,7 +15,6 @@ import type { ChatMessage } from "../../lib/specialistAPI";
 import { useAgentLibraryItems } from "../../lib/useAgentLibraryItems";
 import { downloadBlob } from "../../lib/importExportAPI";
 import { motion } from "framer-motion";
-import { Download, File } from "lucide-react";
 import ModalContainer from "../../components/template/modalContainer";
 import { clearSpecialistHistory } from "../../lib/specialistAPI";
 import { getPage } from "../../lib/pagesAPI";

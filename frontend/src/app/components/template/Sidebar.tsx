@@ -12,8 +12,9 @@ import PublicIcon from "@mui/icons-material/Public";
 import GroupRoundedIcon from "@mui/icons-material/GroupRounded";
 import CasinoRoundedIcon from "@mui/icons-material/CasinoRounded";
 import BuildRoundedIcon from "@mui/icons-material/BuildRounded";
+import SettingsRoundedIcon from "@mui/icons-material/SettingsRounded";
 import PersonEditAlt1RoundedIcon from "@mui/icons-material/EditRounded";
-import { Bot, BookOpenText, PenLine, Sparkles } from "lucide-react";
+import { Bot, BookOpenText, FileText, PenLine, Sparkles } from "lucide-react";
 
 export default function Sidebar({ mobileOpen = false, setMobileOpen = () => {} }) {
   const { user, token, isLoading: authLoading, refreshUser } = useAuth();
@@ -61,7 +62,7 @@ export default function Sidebar({ mobileOpen = false, setMobileOpen = () => {} }
     },
     {
       label: t("see_all_pages"),
-      icon: <BookOpenText fontSize="medium" />,
+      icon: <FileText fontSize="medium" />,
       href: "/all_pages",
       external: false,
       show: user && ["writer", "system admin"].includes(user.role),
@@ -71,6 +72,7 @@ export default function Sidebar({ mobileOpen = false, setMobileOpen = () => {} }
       icon: <GroupRoundedIcon fontSize="medium" />,
       href: "/elders",
       external: false,
+      ai: true,
       show: true,
     },
     {
@@ -78,6 +80,7 @@ export default function Sidebar({ mobileOpen = false, setMobileOpen = () => {} }
       icon: <Sparkles fontSize="medium" />,
       href: "/ai_specialist",
       external: false,
+      ai: true,
       show: true,
     },
 
@@ -86,6 +89,7 @@ export default function Sidebar({ mobileOpen = false, setMobileOpen = () => {} }
       icon: <Bot fontSize="medium" />,
       href: "/agent_writer",
       external: false,
+      ai: true,
       show: user && ["writer", "system admin"].includes(user.role),
     },
     {
@@ -93,6 +97,7 @@ export default function Sidebar({ mobileOpen = false, setMobileOpen = () => {} }
       icon: <PenLine fontSize="medium" />,
       href: "/ai_novelist",
       external: false,
+      ai: true,
       show: user && ["writer", "system admin"].includes(user.role),
     },
 
@@ -109,7 +114,7 @@ export default function Sidebar({ mobileOpen = false, setMobileOpen = () => {} }
   
     {
       label: t("system_settings"),
-      icon: <GroupRoundedIcon fontSize="medium" />,
+      icon: <SettingsRoundedIcon fontSize="medium" />,
       href: "/system_settings",
       external: false,
       show: user && user.role === "system admin",
@@ -183,7 +188,16 @@ export default function Sidebar({ mobileOpen = false, setMobileOpen = () => {} }
                 style={{ outline: "none" }}
               >
                 <span className="text-2xl">{m.icon}</span>
-                <span>{m.label}</span>
+                <span className="flex items-center gap-1">
+                  {m.label}
+                  {m.ai && (
+                    <span
+                      className="ml-1 text-[10px] font-bold border rounded px-1 border-[var(--primary)] text-[var(--primary)]"
+                    >
+                      AI
+                    </span>
+                  )}
+                </span>
               </a>
             ) : (
               <Link
@@ -204,7 +218,16 @@ export default function Sidebar({ mobileOpen = false, setMobileOpen = () => {} }
                 style={{ outline: "none" }}
               >
                 <span className="text-2xl">{m.icon}</span>
-                <span>{m.label}</span>
+                <span className="flex items-center gap-1">
+                  {m.label}
+                  {m.ai && (
+                    <span
+                      className="ml-1 text-[10px] font-bold border rounded px-1 border-[var(--primary)] text-[var(--primary)]"
+                    >
+                      AI
+                    </span>
+                  )}
+                </span>
               </Link>
             )
           ))}

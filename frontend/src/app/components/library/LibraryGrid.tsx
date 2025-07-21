@@ -38,9 +38,13 @@ export default function LibraryGrid({ items, onItemClick, onEmbed, jobsByItem, e
               <button
                 className="px-3 py-1 rounded-lg bg-[var(--primary)] text-[var(--primary-foreground)] text-sm shadow disabled:opacity-50"
                 onClick={(e) => { e.stopPropagation(); onEmbed?.(it); }}
-                disabled={embeddingId === it.id}
+                disabled={embeddingId === it.id || (jobsByItem && jobsByItem[it.id]?.some(j => j.status !== "done" && j.status !== "queued"))}
               >
-                {embeddingId === it.id ? "Embedding..." : "Embed"}
+                {embeddingId === it.id
+                  ? "Embedding..."
+                  : jobsByItem && jobsByItem[it.id]?.some(j => j.status !== "done" && j.status !== "queued")
+                  ? "Running..."
+                  : "Embed"}
               </button>
               {jobsByItem && jobsByItem[it.id] && (
                 <div className="text-[10px] text-[var(--foreground)]/80">

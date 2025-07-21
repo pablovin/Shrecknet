@@ -21,6 +21,7 @@ export default function LibraryPage() {
   const [search, setSearch] = useState("");
   const [systemFilter, setSystemFilter] = useState("");
   const [embeddingId, setEmbeddingId] = useState<number | null>(null);
+  const [toastMsg, setToastMsg] = useState("");
 
   if (!hasRole(user?.role, "system admin")) {
     return (
@@ -60,10 +61,17 @@ export default function LibraryPage() {
   }, {} as Record<number, any[]>);
 
   async function handleEmbed(item) {
+    if (jobsByItem[item.id]?.some((j) => j.status !== "done" && j.status !== "queued")) {
+      setToastMsg("A job is already running for this item.");
+      setTimeout(() => setToastMsg(""), 2000);
+      return;
+    }
     setEmbeddingId(item.id);
     try {
       await startLibraryVectorJob(item.id, token || "");
       refreshJobs();
+      setToastMsg("Embedding started. The job will run in the background.");
+      setTimeout(() => setToastMsg(""), 2000);
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error(err);
@@ -80,6 +88,11 @@ export default function LibraryPage() {
   return (
     <AuthGuard>
       <DashboardLayout>
+        {toastMsg && (
+          <div className="fixed top-8 left-1/2 transform -translate-x-1/2 bg-[var(--primary)] text-[var(--primary-foreground)] px-4 py-2 rounded-xl shadow z-[1000] text-sm animate-fade-in-out">
+            {toastMsg}
+          </div>
+        )}
         <div className="min-h-screen w-full bg-[var(--background)] text-[var(--foreground)] transition-colors duration-300 px-2 sm:px-6 py-8">
           <div className="mx-auto max-w-5xl w-full flex flex-col gap-8">
             <div className="flex items-center justify-between mb-3">

@@ -4,8 +4,10 @@ from bs4 import BeautifulSoup
 
 from app.database import async_session_maker
 from app.crud.crud_page import get_page
+from app.crud.crud_user_note import get_user_note
 
 from app.models.model_page import Page, PageCharacteristicValue
+from app.models.model_user_note import UserNote
 from app.models.model_characteristic import Characteristic, ConceptCharacteristicLink
 
 
@@ -302,3 +304,68 @@ async def sync_page_ref_attributes(page: Page | int):
 
         await session.commit()
         await session.flush()
+
+
+async def auto_crosslink_note_content(note: UserNote | int):
+    """Add wiki cross-reference links inside a user note."""
+    async with async_session_maker() as session:
+        if isinstance(note, UserNote):
+            note = await get_user_note(session, note.id)
+        else:
+            note = await get_user_note(session, note)
+
+        if not note:
+            return
+
+        if note.gameworld_id:
+            candidate_pages = await session.execute(
+                select(Page)
+                .where(Page.gameworld_id == note.gameworld_id)
+                .where(Page.ignore_crosslink == False)
+            )
+        else:
+            candidate_pages = await session.execute(
+                select(Page).where(Page.ignore_crosslink == False)
+            )
+        candidate_pages = candidate_pages.scalars().all()
+
+        page_name_map = {}
+        for cp in candidate_pages:
+            if cp.name.lower() not in page_name_map:
+                page_name_map[cp.name.lower()] = cp
+
+        soup = BeautifulSoup(note.content or "", "html.parser")
+        content_changed = False
+        for name, target_page in page_name_map.items():
+            already_linked = False
+            for a in soup.find_all("a", href=True):
+                if (
+                    a.get("href")
+                    == f"/worlds/{target_page.gameworld_id}/concept/{target_page.concept_id}/page/{target_page.id}"
+                    or a.get_text(strip=True).lower() == name
+                ):
+                    already_linked = True
+                    break
+            if already_linked:
+                continue
+            pattern = re.compile(rf"\b({re.escape(target_page.name)})\b", re.IGNORECASE)
+            for element in soup.find_all(string=True):
+                if element.find_parent("a"):
+                    continue
+                if pattern.search(element):
+                    def repl(m):
+                        url = f"/worlds/{target_page.gameworld_id}/concept/{target_page.concept_id}/page/{target_page.id}"
+                        return f'<a href="{url}" class="wiki-link" title="{target_page.name}">{m.group(0)}</a>'
+                    new_html = pattern.sub(repl, element, count=1)
+                    new_nodes = BeautifulSoup(new_html, "html.parser")
+                    element.replace_with(new_nodes)
+                    content_changed = True
+                    break
+
+        if content_changed:
+            try:
+                note.content = str(soup)
+                await session.commit()
+                await session.flush()
+            except Exception as e:
+                print("NOTE CROSSLINK ERROR:", repr(e))

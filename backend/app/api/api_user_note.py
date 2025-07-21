@@ -14,6 +14,7 @@ from app.crud.crud_user_note import (
     update_user_note,
     delete_user_note,
 )
+from app.task_queue import task_auto_crosslink_note_content
 
 UserNoteRead.model_rebuild()
 UserNoteCreate.model_rebuild()
@@ -29,6 +30,7 @@ async def create_note_endpoint(
 ):
     db_note = UserNote(**note.model_dump(), user_id=user.id, created_at=datetime.utcnow())
     db_note = await create_user_note(session, db_note)
+    task_auto_crosslink_note_content.delay(db_note.id)
     return db_note
 
 @router.get("/", response_model=List[UserNoteRead])
@@ -55,7 +57,11 @@ async def update_note(note_id: int, updates: UserNoteUpdate, user: User = Depend
     if not note or note.user_id != user.id:
         raise HTTPException(status_code=404, detail="Note not found")
     update_dict = updates.model_dump(exclude_unset=True)
-    note = await update_user_note(session, note_id, update_dict)
+    try:
+        note = await update_user_note(session, note_id, update_dict, user.id)
+    except PermissionError:
+        raise HTTPException(status_code=409, detail="Note is locked for editing")
+    task_auto_crosslink_note_content.delay(note.id)
     return note
 
 @router.delete("/{note_id}")

@@ -1,4 +1,4 @@
-from typing import Optional, List
+from typing import Optional, List, Dict
 from sqlmodel import SQLModel
 from datetime import datetime
 
@@ -9,6 +9,9 @@ class UserNoteBase(SQLModel):
     tags: List[str] = []
     gameworld_id: Optional[int] = None
     shared_with_user_ids: List[int] = []
+    contributors: List[Dict] = []
+    locked_by_user_id: Optional[int] = None
+    locked_at: Optional[datetime] = None
 
 class UserNoteCreate(UserNoteBase):
     pass

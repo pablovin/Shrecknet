@@ -18,7 +18,6 @@ from app.crud.crud_library_item import (
     delete_item,
 )
 from app.dependencies import get_current_user, require_role
-from app.task_queue import task_rebuild_library_vectors
 from app.config import settings
 
 LibraryItemRead.model_rebuild()
@@ -107,6 +106,7 @@ async def embed_library_item_async(
     item_id: int,
     user: User = Depends(require_role(UserRole.system_admin)),
 ):
+    from app.task_queue import task_rebuild_library_vectors
     job_id = uuid4().hex
     job_dir = Path(settings.library_job_dir)
     job_dir.mkdir(parents=True, exist_ok=True)

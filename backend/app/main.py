@@ -14,6 +14,7 @@ from .api import (
     api_backup,
     api_library,
     api_jobs,
+    api_user_note,
 )
 from contextlib import asynccontextmanager
 
@@ -97,6 +98,7 @@ app.include_router(api_specialist.router)
 app.include_router(api_backup.router)
 app.include_router(api_library.router)
 app.include_router(api_jobs.router)
+app.include_router(api_user_note.router)
 
 
 

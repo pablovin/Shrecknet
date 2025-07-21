@@ -65,6 +65,12 @@ def _migrate(conn):
             "CREATE TABLE agentlibraryitem (agent_id INTEGER NOT NULL REFERENCES agent(id), item_id INTEGER NOT NULL REFERENCES libraryitem(id), added_at DATETIME NOT NULL, PRIMARY KEY (agent_id, item_id))"
         ))
 
+    # -- UserNote table --
+    if "usernote" not in inspector.get_table_names():
+        conn.execute(text(
+            "CREATE TABLE usernote (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL REFERENCES user(id), title TEXT NOT NULL, content TEXT, note_date DATETIME, tags JSON, gameworld_id INTEGER REFERENCES gameworld(id), shared_with_user_ids JSON, created_at DATETIME NOT NULL, updated_at DATETIME)"
+        ))
+
 async def get_session() -> AsyncSession:
     async with async_session_maker() as session:
         yield session

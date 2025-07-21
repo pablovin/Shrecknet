@@ -5,14 +5,30 @@ from . import crud_import_export
 from . import crud_page
 from . import crud_page_links_update
 from . import crud_users
-from . import crud_agent
+try:
+    from . import crud_agent
+except Exception:  # pragma: no cover - optional heavy dependency
+    crud_agent = None
 from . import crud_chat_history
-from . import crud_specialist_source
-from . import crud_specialist_vectordb
-from . import crud_specialist_agent
+try:
+    from . import crud_specialist_source
+except Exception:
+    crud_specialist_source = None
+try:
+    from . import crud_specialist_vectordb
+except Exception:
+    crud_specialist_vectordb = None
+try:
+    from . import crud_specialist_agent
+except Exception:
+    crud_specialist_agent = None
 from . import crud_library_item
-from . import crud_library_vectordb
+try:
+    from . import crud_library_vectordb
+except Exception:
+    crud_library_vectordb = None
 from . import crud_agent_library_item
+from . import crud_user_note
 try:
     from . import crud_vectordb
 except Exception:  # pragma: no cover - optional dependency
@@ -30,14 +46,20 @@ __all__ = [
     "crud_page",
     "crud_page_links_update",
     "crud_users",
-    "crud_agent",
     "crud_chat_history",
-    "crud_specialist_source",
-    "crud_specialist_vectordb",
-    "crud_specialist_agent",
     "crud_library_item",
-    "crud_library_vectordb",
     "crud_agent_library_item",
+    "crud_user_note",
 ]
 if crud_vectordb:
     __all__.append("crud_vectordb")
+if crud_agent:
+    __all__.append("crud_agent")
+if crud_specialist_source:
+    __all__.append("crud_specialist_source")
+if crud_specialist_vectordb:
+    __all__.append("crud_specialist_vectordb")
+if crud_specialist_agent:
+    __all__.append("crud_specialist_agent")
+if crud_library_vectordb:
+    __all__.append("crud_library_vectordb")

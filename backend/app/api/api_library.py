@@ -71,6 +71,29 @@ async def list_library_items(
 ):
     return await get_items(session, system)
 
+
+@router.get("/vector_jobs/{job_id}")
+async def library_vector_job_status(job_id: str):
+    job_path = Path(settings.library_job_dir) / f"{job_id}.json"
+    if not job_path.is_file():
+        raise HTTPException(status_code=404, detail="Job not found")
+    with open(job_path) as f:
+        data = json.load(f)
+    return data
+
+
+@router.get("/vector_jobs")
+async def list_library_vector_jobs():
+    job_dir = Path(settings.library_job_dir)
+    job_dir.mkdir(parents=True, exist_ok=True)
+    jobs = []
+    for p in job_dir.glob("*.json"):
+        with open(p) as f:
+            data = json.load(f)
+        data["job_id"] = p.stem
+        jobs.append(data)
+    return jobs
+
 @router.get("/{item_id}", response_model=LibraryItemRead)
 async def read_library_item(item_id: int, session: AsyncSession = Depends(get_session)):
     item = await get_item(session, item_id)
@@ -131,26 +154,3 @@ async def embed_library_item_async(
         json.dump({"status": "queued", "item_id": item_id, "job_type": "rebuild_library_vectors"}, f)
     task_rebuild_library_vectors.delay(item_id, job_id)
     return {"job_id": job_id}
-
-
-@router.get("/vector_jobs/{job_id}")
-async def library_vector_job_status(job_id: str):
-    job_path = Path(settings.library_job_dir) / f"{job_id}.json"
-    if not job_path.is_file():
-        raise HTTPException(status_code=404, detail="Job not found")
-    with open(job_path) as f:
-        data = json.load(f)
-    return data
-
-
-@router.get("/vector_jobs")
-async def list_library_vector_jobs():
-    job_dir = Path(settings.library_job_dir)
-    job_dir.mkdir(parents=True, exist_ok=True)
-    jobs = []
-    for p in job_dir.glob("*.json"):
-        with open(p) as f:
-            data = json.load(f)
-        data["job_id"] = p.stem
-        jobs.append(data)
-    return jobs

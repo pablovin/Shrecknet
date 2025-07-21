@@ -32,20 +32,26 @@ async def test_library_crud(async_client, tmp_path):
     admin_token = await register_and_login(async_client, SYSTEM_ADMIN)
     player_token = await register_and_login(async_client, PLAYER)
 
-    file_path = tmp_path / "doc.txt"
-    file_path.write_text("hello")
+    file_path = tmp_path / "doc.pdf"
+    from reportlab.pdfgen import canvas
+    c = canvas.Canvas(str(file_path))
+    c.drawString(100, 750, "hello")
+    c.showPage()
+    c.save()
 
     with open(file_path, "rb") as f:
         resp = await async_client.post(
             "/library/",
             data={"name": "Doc", "system": "dnd", "description": "desc"},
-            files={"file": ("doc.txt", f, "text/plain")},
+            files={"file": ("doc.pdf", f, "application/pdf")},
             headers={"Authorization": f"Bearer {admin_token}"},
         )
     assert resp.status_code == 200
     item_id = resp.json()["id"]
     stored = Path(resp.json()["path"])
+    cover = Path(resp.json()["cover_url"])
     assert stored.is_file()
+    assert cover.is_file()
 
     # player cannot create
     with open(file_path, "rb") as f:
@@ -68,7 +74,7 @@ async def test_library_crud(async_client, tmp_path):
         headers={"Authorization": f"Bearer {admin_token}"},
     )
     assert resp.status_code == 200
-    assert resp.text == "hello"
+    assert resp.headers.get("content-type", "").startswith("application/pdf")
 
     # update
     resp = await async_client.patch(
@@ -87,3 +93,4 @@ async def test_library_crud(async_client, tmp_path):
     assert resp.status_code == 200
     assert resp.json()["ok"] is True
     assert not stored.exists()
+    assert not cover.parent.exists()

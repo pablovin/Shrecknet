@@ -83,3 +83,9 @@ async def rebuild_item_with_progress(
     item.vector_db_update_date = datetime.now(timezone.utc)
     await session.commit()
     return len(docs)
+
+
+def delete_item_vectors(item_id: int) -> None:
+    """Remove the vector DB collection for a library item."""
+    collection = _get_collection(item_id)
+    _delete_collection(f"library_{item_id}", collection)

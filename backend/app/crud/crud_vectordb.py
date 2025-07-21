@@ -14,11 +14,22 @@ from langchain.docstore.document import Document
 from langchain_huggingface import HuggingFaceEmbeddings
 
 
+class _DummyEmbeddings:
+    def embed_documents(self, texts: List[str]) -> List[List[float]]:
+        return [[float(hash(t) % 1000)] for t in texts]
 
-_embedding_fn = HuggingFaceEmbeddings(
-    model_name="sentence-transformers/all-mpnet-base-v2",
-      model_kwargs={"device": "cpu"}
-)
+    def embed_query(self, text: str) -> List[float]:
+        return [float(hash(text) % 1000)]
+
+
+
+if os.getenv("USE_DUMMY_EMBEDDINGS", "false").lower() == "true":
+    _embedding_fn = _DummyEmbeddings()
+else:
+    _embedding_fn = HuggingFaceEmbeddings(
+        model_name="sentence-transformers/all-mpnet-base-v2",
+        model_kwargs={"device": "cpu"},
+    )
 
 
 _text_splitter = RecursiveCharacterTextSplitter(

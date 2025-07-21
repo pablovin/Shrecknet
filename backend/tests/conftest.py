@@ -12,6 +12,7 @@ from httpx import AsyncClient, ASGITransport
 
 os.environ.setdefault("CELERY_BROKER_URL", "memory://")
 os.environ.setdefault("CELERY_RESULT_BACKEND", "cache+memory://")
+os.environ.setdefault("USE_DUMMY_EMBEDDINGS", "true")
 # Configure chat history location for tests
 from pathlib import Path
 from app.config import settings

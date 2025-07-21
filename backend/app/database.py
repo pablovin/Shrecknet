@@ -56,6 +56,8 @@ def _migrate(conn):
         columns = [c["name"] for c in inspector.get_columns("libraryitem")]
         if "vector_db_update_date" not in columns:
             conn.execute(text("ALTER TABLE libraryitem ADD COLUMN vector_db_update_date DATETIME"))
+        if "cover_url" not in columns:
+            conn.execute(text("ALTER TABLE libraryitem ADD COLUMN cover_url TEXT"))
 
 async def get_session() -> AsyncSession:
     async with async_session_maker() as session:

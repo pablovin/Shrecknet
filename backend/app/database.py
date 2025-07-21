@@ -68,8 +68,16 @@ def _migrate(conn):
     # -- UserNote table --
     if "usernote" not in inspector.get_table_names():
         conn.execute(text(
-            "CREATE TABLE usernote (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL REFERENCES user(id), title TEXT NOT NULL, content TEXT, note_date DATETIME, tags JSON, gameworld_id INTEGER REFERENCES gameworld(id), shared_with_user_ids JSON, created_at DATETIME NOT NULL, updated_at DATETIME)"
+            "CREATE TABLE usernote (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL REFERENCES user(id), title TEXT NOT NULL, content TEXT, note_date DATETIME, tags JSON, gameworld_id INTEGER REFERENCES gameworld(id), shared_with_user_ids JSON, contributors JSON, locked_by_user_id INTEGER REFERENCES user(id), locked_at DATETIME, created_at DATETIME NOT NULL, updated_at DATETIME)"
         ))
+    else:
+        columns = [c["name"] for c in inspector.get_columns("usernote")]
+        if "contributors" not in columns:
+            conn.execute(text("ALTER TABLE usernote ADD COLUMN contributors JSON"))
+        if "locked_by_user_id" not in columns:
+            conn.execute(text("ALTER TABLE usernote ADD COLUMN locked_by_user_id INTEGER REFERENCES user(id)"))
+        if "locked_at" not in columns:
+            conn.execute(text("ALTER TABLE usernote ADD COLUMN locked_at DATETIME"))
 
 async def get_session() -> AsyncSession:
     async with async_session_maker() as session:

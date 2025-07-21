@@ -6,9 +6,11 @@ import { useUserNotes } from "../lib/useUserNotes";
 import NoteModal from "../components/notes/NoteModal";
 import NoteList from "../components/notes/NoteList";
 import { PlusCircle } from "lucide-react";
+import { useAuth } from "../components/auth/AuthProvider";
 
 export default function UserNotesPage() {
   const { notes, mutate, isLoading } = useUserNotes();
+  const { user } = useAuth();
   const [modalOpen, setModalOpen] = useState(false);
   const [selected, setSelected] = useState(null);
 
@@ -43,7 +45,20 @@ export default function UserNotesPage() {
             {isLoading ? (
               <div>Loading...</div>
             ) : (
-              <NoteList notes={notes} onEdit={handleEdit} />
+              <>
+                <h2 className="text-xl font-bold mt-2">My Notes</h2>
+                <NoteList
+                  notes={notes.filter((n) => n.user_id === user?.id)}
+                  onEdit={handleEdit}
+                />
+                <h2 className="text-xl font-bold mt-6">Shared With Me</h2>
+                <NoteList
+                  notes={notes.filter(
+                    (n) => n.user_id !== user?.id && n.shared_with_user_ids?.includes(user?.id)
+                  )}
+                  onEdit={handleEdit}
+                />
+              </>
             )}
           </div>
           {modalOpen && (

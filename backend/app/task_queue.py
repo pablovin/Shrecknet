@@ -29,6 +29,7 @@ from app.crud.crud_page_links_update import (
     remove_crosslinks_to_page,
     remove_page_refs_from_characteristics,
     sync_page_ref_attributes,
+    auto_crosslink_note_content,
 )
 
 # Ensure all models are imported so SQLModel can resolve relationships
@@ -62,6 +63,10 @@ def task_remove_page_refs_from_characteristics(page_id: int):
 @celery_app.task
 def task_sync_page_ref_attributes(page_id: int):
     asyncio.run(sync_page_ref_attributes(page_id))
+
+@celery_app.task
+def task_auto_crosslink_note_content(note_id: int):
+    asyncio.run(auto_crosslink_note_content(note_id))
 
 from app.crud.crud_page_analysis import analyze_pages_bulk
 from app.crud.crud_agent import get_agent

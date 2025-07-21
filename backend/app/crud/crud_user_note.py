@@ -6,6 +6,8 @@ from sqlalchemy import or_
 from app.models.model_user_note import UserNote
 
 async def create_user_note(session: AsyncSession, note: UserNote) -> UserNote:
+    note.locked_by_user_id = None
+    note.locked_at = None
     session.add(note)
     await session.commit()
     await session.refresh(note)
@@ -36,13 +38,21 @@ async def get_user_notes(
     result = await session.execute(query)
     return result.scalars().all()
 
-async def update_user_note(session: AsyncSession, note_id: int, updates: dict) -> Optional[UserNote]:
+async def update_user_note(session: AsyncSession, note_id: int, updates: dict, editor_id: int) -> Optional[UserNote]:
     note = await get_user_note(session, note_id)
     if not note:
         return None
+    if note.locked_by_user_id and note.locked_by_user_id != editor_id:
+        raise PermissionError("Note is being edited by another user")
     for k, v in updates.items():
         setattr(note, k, v)
+    if editor_id != note.user_id:
+        history = note.contributors or []
+        history.append({"user_id": editor_id, "date": datetime.utcnow().isoformat()})
+        note.contributors = history
     note.updated_at = datetime.utcnow()
+    note.locked_by_user_id = None
+    note.locked_at = None
     await session.commit()
     await session.refresh(note)
     return note

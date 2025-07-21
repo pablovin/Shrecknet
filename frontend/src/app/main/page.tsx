@@ -14,14 +14,14 @@ import {
   PenLine,
   Hammer,
   Settings,
-  StickyNote
+  StickyNote,
 } from "lucide-react";
 
-function HomeCard({ href, icon, title, description, isAI = false, color }) {
+function HomeCard({ href, icon, title, description, isAI = false, color, iconColor }) {
   return (
     <Link
       href={href}
-      className={`group relative overflow-hidden rounded-3xl border border-[var(--border)] bg-[var(--surface)] p-4 sm:p-5 shadow-md hover:shadow-xl hover:border-[var(--primary)]/60 transition duration-300 ${color}`}
+      className={`group relative overflow-hidden rounded-3xl border border-[var(--border)] bg-[var(--surface)] p-6 shadow-md hover:shadow-xl hover:border-[var(--primary)]/60 transition duration-300 ${color}`}
     >
       {/* Glow Ring */}
       <div className="absolute -top-5 -right-5 w-24 h-24 rounded-full bg-[var(--primary)]/20 blur-2xl pointer-events-none z-0 transition-all duration-500 group-hover:opacity-60" />
@@ -35,16 +35,16 @@ function HomeCard({ href, icon, title, description, isAI = false, color }) {
 
       {/* Icon + Title */}
       <div className="relative z-10 flex items-center gap-4 mb-3">
-        <div className="w-10 h-10 sm:w-11 sm:h-11 rounded-2xl flex items-center justify-center bg-[var(--primary)]/10 text-[var(--primary)] shadow-md">
+        <div className={`w-14 h-14 rounded-2xl flex items-center justify-center text-white shadow-md ${iconColor}`}>
           {icon}
         </div>
         <div>
-          <h2 className="text-md sm:text-lg font-serif font-bold text-[var(--primary)] leading-tight">
+          <h2 className="text-lg font-serif font-bold text-[var(--primary)] leading-tight">
             {title}
           </h2>
           {isAI && (
             <p className="text-[10px] text-[var(--foreground)]/60 italic group-hover:text-[var(--primary)] transition">
-              Empowered by AI
+              Empowered by ChatGPT
             </p>
           )}
         </div>
@@ -73,6 +73,7 @@ export default function MainPage() {
       show: !!user,
       group: "worldcraft",
       color: "bg-gradient-to-br from-purple-50 to-transparent",
+      iconColor: "bg-purple-400",
     },
     {
       title: t("library"),
@@ -82,6 +83,7 @@ export default function MainPage() {
       show: !!user,
       group: "worldcraft",
       color: "bg-gradient-to-br from-orange-50 to-transparent",
+      iconColor: "bg-orange-400",
     },
     {
       title: t("all_pages"),
@@ -91,15 +93,17 @@ export default function MainPage() {
       show: user && ["writer", "system admin"].includes(user.role),
       group: "worldcraft",
       color: "bg-gradient-to-br from-yellow-50 to-transparent",
+      iconColor: "bg-yellow-400",
     },
     {
       title: "Notes",
-      description: "Create, organize, and share your notes like a true chronicler of realms.",
+      description: "Scribble insights, plot twists, or world secrets for yourself or your party.",
       icon: <StickyNote className="w-6 h-6" />,
-      href: "/notes",
+      href: "/user_notes",
       show: !!user,
       group: "worldcraft",
-      color: "bg-gradient-to-br from-green-50 to-transparent",
+      color: "bg-gradient-to-br from-rose-50 to-transparent",
+      iconColor: "bg-rose-400",
     },
     {
       title: t("ai_world_elders"),
@@ -110,6 +114,7 @@ export default function MainPage() {
       isAI: true,
       group: "ai",
       color: "bg-gradient-to-br from-blue-50 to-transparent",
+      iconColor: "bg-blue-400",
     },
     {
       title: t("ai_system_specialists"),
@@ -120,6 +125,7 @@ export default function MainPage() {
       isAI: true,
       group: "ai",
       color: "bg-gradient-to-br from-indigo-50 to-transparent",
+      iconColor: "bg-indigo-400",
     },
     {
       title: t("ai_page_writers"),
@@ -130,6 +136,7 @@ export default function MainPage() {
       isAI: true,
       group: "ai",
       color: "bg-gradient-to-br from-sky-50 to-transparent",
+      iconColor: "bg-sky-400",
     },
     {
       title: t("ai_adventure_novelists"),
@@ -140,6 +147,7 @@ export default function MainPage() {
       isAI: true,
       group: "ai",
       color: "bg-gradient-to-br from-pink-50 to-transparent",
+      iconColor: "bg-pink-400",
     },
     {
       title: t("system_settings"),
@@ -149,6 +157,7 @@ export default function MainPage() {
       show: user && user.role === "system admin",
       group: "system",
       color: "bg-gradient-to-br from-gray-100 to-transparent",
+      iconColor: "bg-gray-400",
     },
     {
       title: t("world_builder"),
@@ -158,6 +167,7 @@ export default function MainPage() {
       show: user && user.role === "system admin",
       group: "system",
       color: "bg-gradient-to-br from-yellow-100 to-transparent",
+      iconColor: "bg-yellow-500",
     },
   ];
 
@@ -202,7 +212,7 @@ export default function MainPage() {
               <h2 className="text-xl font-serif font-bold text-[var(--primary)] flex items-center gap-2">
                 {label}
               </h2>
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6">
                 {cards.filter((c) => c.group === groupKey && c.show).map((c) => (
                   <HomeCard key={c.title} {...c} />
                 ))}

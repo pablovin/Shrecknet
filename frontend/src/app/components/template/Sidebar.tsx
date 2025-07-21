@@ -96,6 +96,14 @@ export default function Sidebar({ mobileOpen = false, setMobileOpen = () => {} }
       show: user && ["world builder", "system admin"].includes(user.role),
     },
 
+    {
+      label: t("library"),
+      icon: <BookOpenText fontSize="medium" />,
+      href: "/library",
+      external: false,
+      show: true,
+    },
+
  
   
     {

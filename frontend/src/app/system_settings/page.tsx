@@ -4,6 +4,7 @@ import DashboardLayout from "../components/DashboardLayout";
 import { useAuth } from "../components/auth/AuthProvider";
 import { useState } from "react";
 import { useTranslation } from "@/app/hooks/useTranslation";
+import { hasRole } from "../lib/roles";
 import useRoleRedirect from "../hooks/useRoleRedirect";
 import ImportWorldModal from "../components/importexport/ImportWorldModal";
 import ExportWorldModal from "../components/importexport/ExportWorldModal";
@@ -59,9 +60,8 @@ export default function AdminDashboardPage() {
     }
   }
 
-
-  const allowed = useRoleRedirect("system admin");
-  if (!allowed) return null;
+    const allowed = useRoleRedirect("system admin");
+    if (!allowed) return null;
 
   // --- Data aggregation for dashboard charts ---
   const rulebookCounts = libraryItems.reduce<Record<string, number>>((acc, it) => {
@@ -101,8 +101,6 @@ export default function AdminDashboardPage() {
     return acc;
   }, {});
   const userData = Object.entries(roleCounts).map(([label, value]) => ({ label, value }));
-
-
 
   return (
     <AuthGuard>
@@ -214,17 +212,32 @@ export default function AdminDashboardPage() {
 
 function DashboardCard({ title, description, icon, color, actions, extra }) {
   return (
-    <div className="group relative overflow-hidden rounded-3xl border border-[var(--border)] bg-[var(--surface)] p-6 shadow-md transition hover:shadow-xl">
-      {/* Accent circle and icon */}
-      <div className="absolute -top-5 -right-5 w-24 h-24 rounded-full bg-gradient-to-br opacity-30 blur-2xl pointer-events-none z-0" style={{ backgroundImage: `linear-gradient(${color})` }}></div>
-      <div className="relative z-10 flex items-center gap-3 mb-3">
-        <div className={`w-10 h-10 rounded-xl flex items-center justify-center bg-gradient-to-br ${color} text-white shadow-md`}>
+    <div className="group relative overflow-hidden rounded-3xl border border-[var(--border)] bg-[var(--surface)] p-6 shadow-md transition hover:shadow-xl hover:border-[var(--primary)]/60">
+      {/* Accent glow */}
+      <div
+        className="absolute -top-5 -right-5 w-28 h-28 rounded-full bg-gradient-to-br opacity-30 blur-2xl pointer-events-none z-0"
+        style={{ backgroundImage: `linear-gradient(${color})` }}
+      ></div>
+
+      {/* Header Row */}
+      <div className="relative z-10 flex items-center gap-4 mb-4">
+        <div className={`w-11 h-11 rounded-2xl flex items-center justify-center bg-gradient-to-br ${color} text-white shadow-lg`}>
           {icon}
         </div>
-        <h2 className="text-lg font-bold text-[var(--primary)]">{title}</h2>
+        <div>
+          <h2 className="text-lg font-serif font-bold text-[var(--primary)] leading-tight">{title}</h2>
+          <p className="text-xs text-[var(--foreground)]/60">{description}</p>
+        </div>
       </div>
-      <p className="text-sm text-[var(--foreground)]/80 mb-4">{description}</p>
-      {extra && <div className="mb-4">{extra}</div>}
+
+      {/* Extra Content */}
+      {extra && (
+        <div className="relative z-10 mb-5 bg-[var(--surface-variant)]/60 rounded-xl p-3 border border-[var(--border)] shadow-inner">
+          {extra}
+        </div>
+      )}
+
+      {/* Actions */}
       <div className="flex flex-wrap gap-3 z-10 relative">{actions}</div>
     </div>
   );
@@ -233,26 +246,38 @@ function DashboardCard({ title, description, icon, color, actions, extra }) {
 function AgentSummary({ data }: { data: { world: string; counts: Record<string, number> }[] }) {
   const icons: Record<string, JSX.Element> = {
     conversational: <Bot className="w-3 h-3" />,
-    writer: <BookOpenText className="w-3 h-3" />,
-    novelist: <Book className="w-3 h-3" />,
+    "page writer": <BookOpenText className="w-3 h-3" />,
+    "story novelist": <Book className="w-3 h-3" />,
     specialist: <Users2 className="w-3 h-3" />,
   };
+
   const colors: Record<string, string> = {
     conversational: "var(--chart-1)",
-    writer: "var(--chart-2)",
-    novelist: "var(--chart-3)",
+    "page writer": "var(--chart-2)",
+    "story novelist": "var(--chart-3)",
     specialist: "var(--chart-4)",
   };
+
   return (
-    <div className="space-y-1 text-xs">
+    <div className="space-y-2 text-sm bg-[var(--surface-variant)]/50 p-3 rounded-xl border border-[var(--border)]">
       {data.map(({ world, counts }) => (
-        <div key={world} className="flex items-center gap-2 flex-wrap">
-          <span className="font-semibold mr-1">{world}</span>
-          {Object.entries(counts).map(([type, count]) => (
-            <span key={type} className="flex items-center gap-1" style={{ color: colors[type] }}>
-              {icons[type]} {count}
-            </span>
-          ))}
+        <div key={world} className="flex flex-col">
+          <span className="font-semibold text-[var(--primary)] font-serif">{world}</span>
+          <div className="flex gap-2 flex-wrap ml-1 mt-2">
+            {Object.entries(counts).map(([type, count]) => {
+              const icon = icons[type];
+              const color = colors[type] ?? "var(--foreground)";
+              return (
+                <span
+                  key={type}
+                  className="flex items-center gap-1 px-2 py-1 text-xs rounded-full bg-[var(--card-bg)] border border-[var(--border)] shadow-sm"
+                  style={{ color }}
+                >
+                  {icon ?? <span className="w-3 h-3 rounded-full bg-[var(--foreground)]/40 inline-block" />} {count}
+                </span>
+              );
+            })}
+          </div>
         </div>
       ))}
     </div>

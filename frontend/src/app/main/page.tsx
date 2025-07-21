@@ -14,13 +14,14 @@ import {
   PenLine,
   Hammer,
   Settings,
+  StickyNote
 } from "lucide-react";
 
 function HomeCard({ href, icon, title, description, isAI = false, color }) {
   return (
     <Link
       href={href}
-      className={`group relative overflow-hidden rounded-3xl border border-[var(--border)] bg-[var(--surface)] p-6 shadow-md hover:shadow-xl hover:border-[var(--primary)]/60 transition duration-300 ${color}`}
+      className={`group relative overflow-hidden rounded-3xl border border-[var(--border)] bg-[var(--surface)] p-4 sm:p-5 shadow-md hover:shadow-xl hover:border-[var(--primary)]/60 transition duration-300 ${color}`}
     >
       {/* Glow Ring */}
       <div className="absolute -top-5 -right-5 w-24 h-24 rounded-full bg-[var(--primary)]/20 blur-2xl pointer-events-none z-0 transition-all duration-500 group-hover:opacity-60" />
@@ -34,11 +35,11 @@ function HomeCard({ href, icon, title, description, isAI = false, color }) {
 
       {/* Icon + Title */}
       <div className="relative z-10 flex items-center gap-4 mb-3">
-        <div className="w-11 h-11 rounded-2xl flex items-center justify-center bg-[var(--primary)]/10 text-[var(--primary)] shadow-md">
+        <div className="w-10 h-10 sm:w-11 sm:h-11 rounded-2xl flex items-center justify-center bg-[var(--primary)]/10 text-[var(--primary)] shadow-md">
           {icon}
         </div>
         <div>
-          <h2 className="text-lg font-serif font-bold text-[var(--primary)] leading-tight">
+          <h2 className="text-md sm:text-lg font-serif font-bold text-[var(--primary)] leading-tight">
             {title}
           </h2>
           {isAI && (
@@ -90,6 +91,15 @@ export default function MainPage() {
       show: user && ["writer", "system admin"].includes(user.role),
       group: "worldcraft",
       color: "bg-gradient-to-br from-yellow-50 to-transparent",
+    },
+    {
+      title: "Notes",
+      description: "Create, organize, and share your notes like a true chronicler of realms.",
+      icon: <StickyNote className="w-6 h-6" />,
+      href: "/notes",
+      show: !!user,
+      group: "worldcraft",
+      color: "bg-gradient-to-br from-green-50 to-transparent",
     },
     {
       title: t("ai_world_elders"),
@@ -192,7 +202,7 @@ export default function MainPage() {
               <h2 className="text-xl font-serif font-bold text-[var(--primary)] flex items-center gap-2">
                 {label}
               </h2>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
                 {cards.filter((c) => c.group === groupKey && c.show).map((c) => (
                   <HomeCard key={c.title} {...c} />
                 ))}

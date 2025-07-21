@@ -1,28 +1,35 @@
 "use client";
 import AuthGuard from "../components/auth/AuthGuard";
 import DashboardLayout from "../components/DashboardLayout";
-import { hasRole } from "../lib/roles";
 import { useAuth } from "../components/auth/AuthProvider";
 import { useState } from "react";
 import { useTranslation } from "@/app/hooks/useTranslation";
+import { hasRole } from "../lib/roles";
 import ImportWorldModal from "../components/importexport/ImportWorldModal";
-import { Download, Upload, Users2, Bot, PenLine, FileDown, FileUp, BookOpenText } from "lucide-react";
-import { History } from "lucide-react";
-import Link from "next/link";
 import ExportWorldModal from "../components/importexport/ExportWorldModal";
 import ImportBackupModal from "../components/importexport/ImportBackupModal";
 import { createBackup } from "../lib/backupAPI";
 import { downloadBlob } from "../lib/importExportAPI";
+import {
+  Upload,
+  Download,
+  FileDown,
+  FileUp,
+  BookOpenText,
+  Bot,
+  History,
+  Users2,
+} from "lucide-react";
+import Link from "next/link";
 
-
-export default function UserManagementPage() {
+export default function AdminDashboardPage() {
   const { user, token } = useAuth();
   const { t } = useTranslation();
   const [importModalOpen, setImportModalOpen] = useState(false);
-  const [success, setSuccess] = useState("");
   const [exportModalOpen, setExportModalOpen] = useState(false);
   const [backupModalOpen, setBackupModalOpen] = useState(false);
   const [loadingBackup, setLoadingBackup] = useState(false);
+  const [success, setSuccess] = useState("");
 
   async function handleCreateBackup() {
     if (!token) return;
@@ -30,10 +37,10 @@ export default function UserManagementPage() {
     try {
       const blob = await createBackup(token);
       downloadBlob(blob, `backup.zip`);
-      setSuccess(t('export_started'));
+      setSuccess(t("export_started"));
       setTimeout(() => setSuccess(""), 2000);
     } catch (err) {
-      setSuccess(t('backup_failed'));
+      setSuccess(t("backup_failed"));
     } finally {
       setLoadingBackup(false);
     }
@@ -50,179 +57,120 @@ export default function UserManagementPage() {
   return (
     <AuthGuard>
       <DashboardLayout>
-        <div className="min-h-screen w-full bg-[var(--background)] text-[var(--foreground)] transition-colors duration-300 px-2 sm:px-6 py-8">
-          <div className="mx-auto max-w-3xl w-full flex flex-col gap-8">
-            {/* Title & feedback */}
-            <div className="flex items-center justify-between mb-3">
-              <h1 className="text-2xl font-serif font-bold text-[var(--primary)] tracking-tight">
-                System Settings
-              </h1>
-              <div className="flex flex-col gap-1 items-end">
-                {success && (
-                  <div className="bg-[var(--primary)] text-[var(--primary-foreground)] px-4 py-2 rounded-xl shadow z-[1000] text-sm animate-fade-in-out">
-                    {success}
-                  </div>
-                )}
-              </div>
+        <div className="min-h-screen w-full bg-[var(--background)] text-[var(--foreground)] px-4 sm:px-6 py-10 transition-colors duration-300">
+          <div className="mx-auto max-w-7xl w-full space-y-12">
+            <h1 className="text-3xl font-serif font-bold text-[var(--primary)] tracking-tight">
+              ✨ System Control Deck
+            </h1>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-6">
+              <DashboardCard
+                title="Import & Export Worlds"
+                description="Transfer your worlds between servers or creators."
+                icon={<Upload className="w-6 h-6" />}
+                color="from-purple-600 to-fuchsia-500"
+                actions={
+                  <>
+                    <button className="btn-primary" onClick={() => setImportModalOpen(true)}>
+                      <Upload className="w-4 h-4" /> Import
+                    </button>
+                    <button className="btn-outline" onClick={() => setExportModalOpen(true)}>
+                      <Download className="w-4 h-4" /> Export
+                    </button>
+                  </>
+                }
+              />
+
+              <DashboardCard
+                title="Backup & Restore"
+                description="Safeguard your progress. Recover from magical mishaps."
+                icon={<FileDown className="w-6 h-6" />}
+                color="from-cyan-600 to-blue-500"
+                actions={
+                  <>
+                    <button className="btn-outline" disabled={loadingBackup} onClick={handleCreateBackup}>
+                      {loadingBackup ? "Processing..." : "Create Backup"}
+                    </button>
+                    <button className="btn-primary" onClick={() => setBackupModalOpen(true)}>
+                      <FileUp className="w-4 h-4" /> Restore
+                    </button>
+                  </>
+                }
+              />
+
+              <DashboardCard
+                title="Library Vault"
+                description="Manage your tomes, rulebooks, and arcane references."
+                icon={<BookOpenText className="w-6 h-6" />}
+                color="from-orange-500 to-amber-400"
+                actions={
+                  <Link className="btn-primary" href="/library_admin">
+                    Enter Library
+                  </Link>
+                }
+              />
+
+              <DashboardCard
+                title="Agent Interface"
+                description="Control your world’s autonomous NPC advisors and guardians."
+                icon={<Bot className="w-6 h-6" />}
+                color="from-emerald-600 to-lime-500"
+                actions={
+                  <Link className="btn-primary" href="/agents_settings">
+                    Configure Agents
+                  </Link>
+                }
+              />
+
+              <DashboardCard
+                title="Chrono Queue"
+                description="Review and manage long-running background operations."
+                icon={<History className="w-6 h-6" />}
+                color="from-sky-600 to-indigo-500"
+                actions={
+                  <Link className="btn-primary" href="/background_jobs">
+                    View Jobs
+                  </Link>
+                }
+              />
+
+              <DashboardCard
+                title="User Sanctum"
+                description="Manage users, roles and permissions across your dominion."
+                icon={<Users2 className="w-6 h-6" />}
+                color="from-pink-500 to-rose-500"
+                actions={
+                  <Link className="btn-primary" href="/user_management">
+                    Manage Users
+                  </Link>
+                }
+              />
             </div>
 
-            {/* Import/Export Area */}
-            <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl shadow-sm p-6 w-full flex flex-col sm:flex-row gap-6 items-center">
-              <div className="flex flex-1 flex-col gap-2">
-                <div className="text-[var(--primary)] font-bold text-lg mb-1">
-                  Import / Export World
-                </div>
-                <div className="text-[var(--foreground)]/80 text-sm mb-3">
-                  Import a new world (from JSON), or export the current world for backup or transfer.
-                </div>
-                <div className="flex gap-4">
-                  <button
-                    type="button"
-                    className="flex items-center gap-2 px-5 py-2 rounded-xl font-bold bg-[var(--primary)] text-[var(--primary-foreground)]
-                      shadow hover:bg-[var(--accent)] hover:text-[var(--background)] transition border border-[var(--primary)]"
-                    onClick={() => setImportModalOpen(true)}
-                  >
-                    <Upload className="w-5 h-5" />
-                    Import World
-                  </button>
-                  <button
-                  type="button"
-                  className="flex items-center gap-2 px-5 py-2 rounded-xl font-bold border border-[var(--primary)] shadow transition
-                    bg-transparent text-[var(--primary)] hover:bg-[var(--primary)]/10 hover:text-[var(--primary-foreground)]"
-                  onClick={() => setExportModalOpen(true)}
-                >
-                  <Download className="w-5 h-5" />
-                  Export World
-                </button>
-                </div>
-              </div>
-              <ImportWorldModal
-                open={importModalOpen}
-                onClose={() => setImportModalOpen(false)}
-                onImported={() => {
-                  setSuccess("World imported successfully!");
-                  setImportModalOpen(false);
-                  setTimeout(() => setSuccess(""), 2000);
-                }}
-              />
+            {/* Modals */}
+            <ImportWorldModal open={importModalOpen} onClose={() => setImportModalOpen(false)} onImported={() => setSuccess("World imported!")} />
             <ExportWorldModal open={exportModalOpen} onClose={() => setExportModalOpen(false)} />
-            </div>
-
-            {/* Backup Area */}
-            <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl shadow-sm p-6 w-full flex flex-col sm:flex-row gap-6 items-center">
-              <div className="flex flex-1 flex-col gap-2">
-                <div className="text-[var(--primary)] font-bold text-lg mb-1">Backup / Restore</div>
-                <div className="text-[var(--foreground)]/80 text-sm mb-3">
-                  Create a full backup of all data and uploads, or import a backup to completely replace current data.
-                </div>
-                <div className="flex gap-4">
-                  <button
-                    type="button"
-                    className={`flex items-center gap-2 px-5 py-2 rounded-xl font-bold border border-[var(--primary)] shadow transition ${loadingBackup ? 'bg-[var(--primary)]/10 text-[var(--primary)]/60' : 'bg-transparent text-[var(--primary)] hover:bg-[var(--primary)]/10 hover:text-[var(--primary-foreground)]'}`}
-                    onClick={handleCreateBackup}
-                    disabled={loadingBackup}
-                  >
-                    <FileDown className="w-5 h-5" />
-                    {loadingBackup ? t('processing') : t('create_backup')}
-                  </button>
-                  <button
-                    type="button"
-                    className="flex items-center gap-2 px-5 py-2 rounded-xl font-bold bg-[var(--primary)] text-[var(--primary-foreground)] shadow hover:bg-[var(--accent)] hover:text-[var(--background)] transition border border-[var(--primary)]"
-                    onClick={() => setBackupModalOpen(true)}
-                  >
-                    <FileUp className="w-5 h-5" />
-                    {t('import_backup')}
-                  </button>
-                </div>
-              </div>
-              <ImportBackupModal
-                open={backupModalOpen}
-                onClose={() => setBackupModalOpen(false)}
-                onImported={() => {
-                  setSuccess('Backup imported successfully!');
-                  setTimeout(() => setSuccess(''), 2000);
-                }}
-              />
-            </div>
-
-            {/* Library Admin Area */}
-            <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl shadow-sm p-6 w-full flex flex-col gap-2">
-              <div className="flex items-center gap-2 mb-2">
-                <BookOpenText className="w-6 h-6 text-[var(--primary)]" />
-                <div className="text-[var(--primary)] font-bold text-lg">Library Admin</div>
-              </div>
-              <div className="text-[var(--foreground)]/80 text-sm mb-3">
-                Manage your collection of rulebooks and supplements.
-              </div>
-              <Link
-                href="/library_admin"
-                className="inline-flex items-center gap-2 px-5 py-2 rounded-xl font-bold bg-[var(--primary)] text-[var(--primary-foreground)] shadow hover:bg-[var(--accent)] hover:text-[var(--background)] border border-[var(--primary)] transition w-fit"
-              >
-                <BookOpenText className="w-5 h-5" />
-                Go to Library Admin
-              </Link>
-            </div>
-
-            {/* Agents Settings Area */}
-            <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl shadow-sm p-6 w-full flex flex-col gap-2">
-              <div className="flex items-center gap-2 mb-2">
-                <Bot className="w-6 h-6 text-[var(--primary)]" />
-                <div className="text-[var(--primary)] font-bold text-lg">Agent Settings</div>
-              </div>
-              <div className="text-[var(--foreground)]/80 text-sm mb-3">
-                Manage NPC agents and their configuration.
-              </div>
-              <Link
-                href="/agents_settings"
-                className="inline-flex items-center gap-2 px-5 py-2 rounded-xl font-bold bg-[var(--primary)] text-[var(--primary-foreground)] shadow hover:bg-[var(--accent)] hover:text-[var(--background)] border border-[var(--primary)] transition w-fit"
-              >
-                <Bot className="w-5 h-5" />
-                Go to Agent Settings
-              </Link>
-            </div>
-
-            {/* Background Jobs Area */}
-            <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl shadow-sm p-6 w-full flex flex-col gap-2">
-              <div className="flex items-center gap-2 mb-2">
-                <History className="w-6 h-6 text-[var(--primary)]" />
-                <div className="text-[var(--primary)] font-bold text-lg">Background Jobs</div>
-              </div>
-              <div className="text-[var(--foreground)]/80 text-sm mb-3">
-                View and manage background job history.
-              </div>
-              <Link
-                href="/background_jobs"
-                className="inline-flex items-center gap-2 px-5 py-2 rounded-xl font-bold bg-[var(--primary)] text-[var(--primary-foreground)] shadow hover:bg-[var(--accent)] hover:text-[var(--background)] border border-[var(--primary)] transition w-fit"
-              >
-                <History className="w-5 h-5" />
-                Open Background Jobs
-              </Link>
-            </div>
-
-            
-            {/* User Management Area */}
-            <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl shadow-sm p-6 w-full flex flex-col gap-2">
-              <div className="flex items-center gap-2 mb-2">
-                <Users2 className="w-6 h-6 text-[var(--primary)]" />
-                <div className="text-[var(--primary)] font-bold text-lg">
-                  User Management
-                </div>
-              </div>
-              <div className="text-[var(--foreground)]/80 text-sm mb-3">
-                Manage all users, roles and permissions.
-              </div>
-              <Link
-                href="/user_management"
-                className="inline-flex items-center gap-2 px-5 py-2 rounded-xl font-bold bg-[var(--primary)] text-[var(--primary-foreground)]
-                  shadow hover:bg-[var(--accent)] hover:text-[var(--background)] border border-[var(--primary)] transition w-fit"
-              >
-                <Users2 className="w-5 h-5" />
-                Go to User Management
-              </Link>
-            </div>
+            <ImportBackupModal open={backupModalOpen} onClose={() => setBackupModalOpen(false)} onImported={() => setSuccess("Backup imported!")} />
           </div>
         </div>
       </DashboardLayout>
     </AuthGuard>
+  );
+}
+
+function DashboardCard({ title, description, icon, color, actions }) {
+  return (
+    <div className="group relative overflow-hidden rounded-3xl border border-[var(--border)] bg-[var(--surface)] p-6 shadow-md transition hover:shadow-xl">
+      {/* Accent circle and icon */}
+      <div className="absolute -top-5 -right-5 w-24 h-24 rounded-full bg-gradient-to-br opacity-30 blur-2xl pointer-events-none z-0" style={{ backgroundImage: `linear-gradient(${color})` }}></div>
+      <div className="relative z-10 flex items-center gap-3 mb-3">
+        <div className={`w-10 h-10 rounded-xl flex items-center justify-center bg-gradient-to-br ${color} text-white shadow-md`}>
+          {icon}
+        </div>
+        <h2 className="text-lg font-bold text-[var(--primary)]">{title}</h2>
+      </div>
+      <p className="text-sm text-[var(--foreground)]/80 mb-4">{description}</p>
+      <div className="flex flex-wrap gap-3 z-10 relative">{actions}</div>
+    </div>
   );
 }

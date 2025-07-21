@@ -19,6 +19,7 @@ class LibraryItemRead(LibraryItemBase):
     id: int
     path: str
     added_at: datetime
+    vector_db_update_date: Optional[datetime] = None
 
     class Config:
         orm_mode = True

@@ -5,18 +5,22 @@ import { hasRole } from "../lib/roles";
 import { useAuth } from "../components/auth/AuthProvider";
 import { useLibraryItems } from "../lib/useLibraryItems";
 import { useState } from "react";
+import { startLibraryVectorJob } from "../lib/libraryAPI";
+import { useLibraryJobs } from "../lib/useLibraryJobs";
 import LibraryGrid from "../components/library/LibraryGrid";
 import LibraryModal from "../components/library/LibraryModal";
 import { PlusCircle } from "lucide-react";
 
 
 export default function LibraryPage() {
-  const { user } = useAuth();
+  const { user, token } = useAuth();
   const { items, isLoading, mutate } = useLibraryItems();
+  const { jobs, mutate: refreshJobs } = useLibraryJobs();
   const [modalOpen, setModalOpen] = useState(false);
   const [selected, setSelected] = useState(null);
   const [search, setSearch] = useState("");
   const [systemFilter, setSystemFilter] = useState("");
+  const [embeddingId, setEmbeddingId] = useState<number | null>(null);
 
   if (!hasRole(user?.role, "system admin")) {
     return (
@@ -49,6 +53,30 @@ export default function LibraryPage() {
         it.description?.toLowerCase().includes(search.toLowerCase()))
   );
 
+  const jobsByItem = jobs.reduce<Record<number, any[]>>((acc, j) => {
+    if (!acc[j.item_id]) acc[j.item_id] = [];
+    acc[j.item_id].push(j);
+    return acc;
+  }, {} as Record<number, any[]>);
+
+  async function handleEmbed(item) {
+    setEmbeddingId(item.id);
+    try {
+      await startLibraryVectorJob(item.id, token || "");
+      refreshJobs();
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error(err);
+    }
+    setEmbeddingId(null);
+  }
+
+  async function handleEmbedAll() {
+    for (const it of filteredItems) {
+      await handleEmbed(it);
+    }
+  }
+
   return (
     <AuthGuard>
       <DashboardLayout>
@@ -58,12 +86,20 @@ export default function LibraryPage() {
               <h1 className="text-2xl font-serif font-bold text-[var(--primary)] tracking-tight">
                 Library Admin
               </h1>
-              <button
-                className="flex items-center gap-2 px-4 py-2 rounded-xl font-bold bg-[var(--primary)] text-[var(--primary-foreground)] shadow hover:bg-[var(--accent)] hover:text-[var(--background)] transition"
-                onClick={handleNew}
-              >
-                <PlusCircle className="w-5 h-5" /> Add
-              </button>
+              <div className="flex gap-2">
+                <button
+                  className="flex items-center gap-2 px-4 py-2 rounded-xl font-bold bg-[var(--primary)] text-[var(--primary-foreground)] shadow hover:bg-[var(--accent)] hover:text-[var(--background)] transition"
+                  onClick={handleNew}
+                >
+                  <PlusCircle className="w-5 h-5" /> Add
+                </button>
+                <button
+                  className="flex items-center gap-2 px-4 py-2 rounded-xl font-bold bg-[var(--primary)] text-[var(--primary-foreground)] shadow hover:bg-[var(--accent)] hover:text-[var(--background)] transition"
+                  onClick={handleEmbedAll}
+                >
+                  Embed All
+                </button>
+              </div>
             </div>
 
             {/* Filters */}
@@ -91,7 +127,13 @@ export default function LibraryPage() {
             {isLoading ? (
               <div>Loading...</div>
             ) : (
-              <LibraryGrid items={filteredItems} onItemClick={handleEdit} />
+              <LibraryGrid
+                items={filteredItems}
+                onItemClick={handleEdit}
+                onEmbed={handleEmbed}
+                jobsByItem={jobsByItem}
+                embeddingId={embeddingId}
+              />
             )}
           </div>
           {modalOpen && (

@@ -69,6 +69,7 @@ from app.crud.crud_page import get_page, update_page, get_pages
 from app.database import async_session_maker
 from app.config import settings
 from app.crud import crud_vectordb, crud_specialist_vectordb, crud_novel
+from app.crud import crud_library_vectordb
 from datetime import datetime, timezone
 import json
 from pathlib import Path
@@ -281,6 +282,51 @@ def task_rebuild_specialist_vectors(agent_id: int, job_id: str):
 
         end_time = datetime.now(timezone.utc).isoformat()
         write_status("done", count=count, end=end_time)
+
+    asyncio.run(run())
+
+
+@celery_app.task
+def task_rebuild_library_vectors(item_id: int, job_id: str):
+    async def run():
+        job_dir = Path(settings.library_job_dir)
+        job_dir.mkdir(parents=True, exist_ok=True)
+        job_path = job_dir / f"{job_id}.json"
+        start_time = datetime.now(timezone.utc).isoformat()
+
+        def write_status(status: str, progress: float | None = None, total: int | None = None, processed: int | None = None, end: str | None = None):
+            data = {
+                "status": status,
+                "item_id": item_id,
+                "job_type": "rebuild_library_vectors",
+                "start_time": start_time,
+            }
+            if progress is not None:
+                data["progress"] = progress
+            if total is not None:
+                data["chunks_total"] = total
+            if processed is not None:
+                data["chunks_processed"] = processed
+            if end:
+                data["end_time"] = end
+            with open(job_path, "w") as f:
+                json.dump(data, f, default=str)
+
+        write_status("processing", progress=0)
+
+        async with async_session_maker() as session:
+            try:
+                def cb(idx: int, total: int):
+                    pct = int(idx / total * 100)
+                    write_status("processing", progress=pct, total=total, processed=idx)
+
+                count = await crud_library_vectordb.rebuild_item_with_progress(session, item_id, cb)
+            except Exception:
+                write_status("error")
+                raise
+
+        end_time = datetime.now(timezone.utc).isoformat()
+        write_status("done", progress=100, total=count, processed=count, end=end_time)
 
     asyncio.run(run())
 

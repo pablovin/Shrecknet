@@ -9,3 +9,4 @@ class LibraryItem(SQLModel, table=True):
     description: Optional[str] = None
     path: str
     added_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    vector_db_update_date: Optional[datetime] = None

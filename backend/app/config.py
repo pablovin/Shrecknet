@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     writer_job_dir: str = "./data/writer_jobs"
     specialist_job_dir: str = "./data/specialist_jobs"
     novelist_job_dir: str = "./data/novelist_jobs"
+    library_job_dir: str = "./data/library_jobs"
     celery_broker_url: str = "redis://localhost:6379/0"
     celery_result_backend: str = "redis://localhost:6379/0"
     vector_db_url: str = "localhost"

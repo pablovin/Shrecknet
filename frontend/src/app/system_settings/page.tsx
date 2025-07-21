@@ -19,7 +19,14 @@ import {
   Bot,
   History,
   Users2,
+  Book,
 } from "lucide-react";
+import SimpleBarChart from "../components/charts/SimpleBarChart";
+import { useLibraryItems } from "../lib/useLibraryItems";
+import { useWorlds } from "../lib/userWorlds";
+import { useAgents } from "../lib/useAgents";
+import { useJobs } from "../lib/useJobs";
+import { useUsers } from "../lib/useUsers";
 import Link from "next/link";
 
 export default function AdminDashboardPage() {
@@ -30,6 +37,12 @@ export default function AdminDashboardPage() {
   const [backupModalOpen, setBackupModalOpen] = useState(false);
   const [loadingBackup, setLoadingBackup] = useState(false);
   const [success, setSuccess] = useState("");
+
+  const { items: libraryItems } = useLibraryItems();
+  const { worlds } = useWorlds();
+  const { agents } = useAgents();
+  const { jobs } = useJobs();
+  const { users: userList } = useUsers();
 
   async function handleCreateBackup() {
     if (!token) return;
@@ -46,8 +59,50 @@ export default function AdminDashboardPage() {
     }
   }
 
+
   const allowed = useRoleRedirect("system admin");
   if (!allowed) return null;
+
+  // --- Data aggregation for dashboard charts ---
+  const rulebookCounts = libraryItems.reduce<Record<string, number>>((acc, it) => {
+    acc[it.system] = (acc[it.system] || 0) + 1;
+    return acc;
+  }, {});
+  const libraryData = Object.entries(rulebookCounts)
+    .map(([label, value]) => ({ label, value }))
+    .sort((a, b) => b.value - a.value);
+
+  const worldNames = worlds.reduce<Record<number, string>>((acc, w) => {
+    acc[w.id] = w.name;
+    return acc;
+  }, {});
+  const agentCounts: Record<string, Record<string, number>> = {};
+  agents.forEach(a => {
+    const w = worldNames[a.world_id] || `World ${a.world_id}`;
+    if (!agentCounts[w]) agentCounts[w] = {};
+    agentCounts[w][a.task] = (agentCounts[w][a.task] || 0) + 1;
+  });
+  const agentWorlds = Object.entries(agentCounts).map(([world, counts]) => ({ world, counts }));
+
+  const jobStats = { done: 0, failed: 0, processing: 0 };
+  jobs.forEach(j => {
+    if (j.status === "done") jobStats.done += 1;
+    else if (j.status === "error") jobStats.failed += 1;
+    else jobStats.processing += 1;
+  });
+  const jobData = [
+    { label: "Done", value: jobStats.done },
+    { label: "Processing", value: jobStats.processing },
+    { label: "Failed", value: jobStats.failed },
+  ];
+
+  const roleCounts = userList.reduce<Record<string, number>>((acc, u) => {
+    acc[u.role] = (acc[u.role] || 0) + 1;
+    return acc;
+  }, {});
+  const userData = Object.entries(roleCounts).map(([label, value]) => ({ label, value }));
+
+
 
   return (
     <AuthGuard>
@@ -98,6 +153,7 @@ export default function AdminDashboardPage() {
                 description="Manage your tomes, rulebooks, and arcane references."
                 icon={<BookOpenText className="w-6 h-6" />}
                 color="from-orange-500 to-amber-400"
+                extra={<SimpleBarChart data={libraryData} />}
                 actions={
                   <Link className="btn-primary" href="/library_admin">
                     Enter Library
@@ -110,6 +166,7 @@ export default function AdminDashboardPage() {
                 description="Control your world’s autonomous NPC advisors and guardians."
                 icon={<Bot className="w-6 h-6" />}
                 color="from-emerald-600 to-lime-500"
+                extra={<AgentSummary data={agentWorlds} />}
                 actions={
                   <Link className="btn-primary" href="/agents_settings">
                     Configure Agents
@@ -122,6 +179,7 @@ export default function AdminDashboardPage() {
                 description="Review and manage long-running background operations."
                 icon={<History className="w-6 h-6" />}
                 color="from-sky-600 to-indigo-500"
+                extra={<SimpleBarChart data={jobData} />}
                 actions={
                   <Link className="btn-primary" href="/background_jobs">
                     View Jobs
@@ -134,6 +192,7 @@ export default function AdminDashboardPage() {
                 description="Manage users, roles and permissions across your dominion."
                 icon={<Users2 className="w-6 h-6" />}
                 color="from-pink-500 to-rose-500"
+                extra={<SimpleBarChart data={userData} />}
                 actions={
                   <Link className="btn-primary" href="/user_management">
                     Manage Users
@@ -153,7 +212,7 @@ export default function AdminDashboardPage() {
   );
 }
 
-function DashboardCard({ title, description, icon, color, actions }) {
+function DashboardCard({ title, description, icon, color, actions, extra }) {
   return (
     <div className="group relative overflow-hidden rounded-3xl border border-[var(--border)] bg-[var(--surface)] p-6 shadow-md transition hover:shadow-xl">
       {/* Accent circle and icon */}
@@ -165,7 +224,37 @@ function DashboardCard({ title, description, icon, color, actions }) {
         <h2 className="text-lg font-bold text-[var(--primary)]">{title}</h2>
       </div>
       <p className="text-sm text-[var(--foreground)]/80 mb-4">{description}</p>
+      {extra && <div className="mb-4">{extra}</div>}
       <div className="flex flex-wrap gap-3 z-10 relative">{actions}</div>
+    </div>
+  );
+}
+
+function AgentSummary({ data }: { data: { world: string; counts: Record<string, number> }[] }) {
+  const icons: Record<string, JSX.Element> = {
+    conversational: <Bot className="w-3 h-3" />,
+    writer: <BookOpenText className="w-3 h-3" />,
+    novelist: <Book className="w-3 h-3" />,
+    specialist: <Users2 className="w-3 h-3" />,
+  };
+  const colors: Record<string, string> = {
+    conversational: "var(--chart-1)",
+    writer: "var(--chart-2)",
+    novelist: "var(--chart-3)",
+    specialist: "var(--chart-4)",
+  };
+  return (
+    <div className="space-y-1 text-xs">
+      {data.map(({ world, counts }) => (
+        <div key={world} className="flex items-center gap-2 flex-wrap">
+          <span className="font-semibold mr-1">{world}</span>
+          {Object.entries(counts).map(([type, count]) => (
+            <span key={type} className="flex items-center gap-1" style={{ color: colors[type] }}>
+              {icons[type]} {count}
+            </span>
+          ))}
+        </div>
+      ))}
     </div>
   );
 }

@@ -168,7 +168,11 @@ async def get_relationships(session: AsyncSession, page_id: int) -> List[PageRel
     )
     return result.scalars().all()
 
+from app.utils import serialize_value
+
 async def create_page_change(session: AsyncSession, change: PageChange) -> PageChange:
+    if change.values is not None:
+        change.values = serialize_value(change.values)
     session.add(change)
     await session.commit()
     await session.flush()

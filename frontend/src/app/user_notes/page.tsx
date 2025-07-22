@@ -1,25 +1,14 @@
 "use client";
-import { useState } from "react";
 import AuthGuard from "../components/auth/AuthGuard";
 import DashboardLayout from "../components/DashboardLayout";
 import { useUserNotes } from "../lib/useUserNotes";
-import NoteModal from "../components/notes/NoteModal";
 import NoteList from "../components/notes/NoteList";
 import { PlusCircle } from "lucide-react";
 import { useAuth } from "../components/auth/AuthProvider";
 
 export default function UserNotesPage() {
-  const { notes, mutate, isLoading } = useUserNotes();
+  const { notes, isLoading } = useUserNotes();
   const { user } = useAuth();
-  const [modalOpen, setModalOpen] = useState(false);
-
-  function handleNew() {
-    setModalOpen(true);
-  }
-
-  function handleSaved() {
-    mutate();
-  }
 
   return (
     <AuthGuard>
@@ -28,12 +17,14 @@ export default function UserNotesPage() {
           <div className="mx-auto max-w-5xl w-full flex flex-col gap-6">
             <div className="flex items-center justify-between mb-4">
               <h1 className="text-2xl font-serif font-bold text-[var(--primary)] tracking-tight">My Notes</h1>
-              <button
+              <a
+                href="/user_notes/new"
+                target="_blank"
+                rel="noopener noreferrer"
                 className="flex items-center gap-2 px-4 py-2 rounded-xl font-bold bg-[var(--primary)] text-[var(--primary-foreground)] shadow hover:bg-[var(--accent)] hover:text-[var(--background)] transition"
-                onClick={handleNew}
               >
                 <PlusCircle className="w-5 h-5" /> Add
-              </button>
+              </a>
             </div>
             {isLoading ? (
               <div>Loading...</div>
@@ -52,9 +43,6 @@ export default function UserNotesPage() {
               </>
             )}
           </div>
-          {modalOpen && (
-            <NoteModal note={null} onClose={() => setModalOpen(false)} onSave={handleSaved} />
-          )}
         </div>
       </DashboardLayout>
     </AuthGuard>

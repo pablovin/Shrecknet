@@ -78,7 +78,7 @@ export default function NoteDetailPage() {
   return (
     <AuthGuard>
       <div className="min-h-screen w-full bg-[var(--background)] text-[var(--foreground)] px-2 sm:px-6 py-8">
-        <div className="mx-auto max-w-2xl flex flex-col gap-4">
+        <div className="w-full flex flex-col gap-4">
           <button
             className="self-start px-4 py-2 rounded-xl font-bold bg-[var(--primary)] text-[var(--primary-foreground)] shadow hover:bg-[var(--accent)] hover:text-[var(--background)] transition"
             onClick={() => router.push('/user_notes')}

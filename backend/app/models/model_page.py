@@ -1,6 +1,6 @@
 # model_page.py
 from typing import Optional, List, Dict
-from sqlmodel import SQLModel, Field, Relationship, JSON
+from sqlmodel import SQLModel, Field, JSON
 from datetime import datetime, timezone
 from sqlalchemy import Column
 
@@ -12,6 +12,41 @@ class PageCharacteristicValue(SQLModel, table=True):
     characteristic_id: int = Field(foreign_key="characteristic.id", primary_key=True)
     value: Optional[List[str]] = Field(default=None, sa_column=Column(JSON))
     # If value is a reference to another page, it will be the other page's id (as string)
+
+
+class PageKeyEvent(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    page_id: int = Field(foreign_key="page.id")
+    event_type: str
+    event_date: Optional[datetime] = None
+    summary: Optional[str] = None
+    source_page_id: Optional[int] = Field(default=None, foreign_key="page.id")
+    related_page_ids: List[int] = Field(default_factory=list, sa_column=Column(JSON))
+    author_type: str
+    author_id: int
+    added_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class PageRelationship(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    page_id: int = Field(foreign_key="page.id")
+    target_page_id: int = Field(foreign_key="page.id")
+    relationship_type: str
+    source_page_id: Optional[int] = Field(default=None, foreign_key="page.id")
+    description: Optional[str] = None
+    author_type: str
+    author_id: int
+    added_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class PageChange(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    page_id: int = Field(foreign_key="page.id")
+    date: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    change_type: str
+    author_type: str
+    author_id: int
+    values: Optional[Dict] = Field(default=None, sa_column=Column(JSON))
 
 
 class Page(SQLModel, table=True):
@@ -29,9 +64,7 @@ class Page(SQLModel, table=True):
     ignore_crosslink: Optional[bool] = False #ignore this page when adding crosslinks to other pages
     allow_crossworld: Optional[bool] = True #Allow adding crosslink for other worlds to this page / allow this page to be added to crosslink for other worlds
 
-    key_events: Optional[List[Dict]] = Field(default_factory=list, sa_column=Column(JSON))
-    relationship_map: Optional[List[Dict]] = Field(default_factory=list, sa_column=Column(JSON))
-    changelog: Optional[List[Dict]] = Field(default_factory=list, sa_column=Column(JSON))
+    # Relationships stored in separate tables (queried as needed)
     
 
     

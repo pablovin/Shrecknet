@@ -4,9 +4,10 @@ from typing import List, Optional
 from fastapi import Query
 from app.database import get_session
 from app.models.model_user import User, UserRole
-from app.models.model_page import Page, PageCharacteristicValue
+from app.models.model_page import Page, PageCharacteristicValue, PageChange
 from app.schemas.schema_page import PageCreate, PageRead, PageUpdate
-from app.schemas.schema_page_characteristic_value import  PageCharacteristicValueUpdate, PageCharacteristicValueRead, PageCharacteristicValueCreate
+from app.schemas.schema_page_characteristic_value import PageCharacteristicValueUpdate, PageCharacteristicValueRead, PageCharacteristicValueCreate
+from app.schemas.schema_page_change import PageChangeRead
 from app.crud.crud_page import (
     create_page,
     get_pages,
@@ -19,6 +20,12 @@ from app.crud.crud_page import (
     update_page_characteristic_value,
     delete_page_characteristic_value,
     delete_page_characteristic_values,
+    create_page_change,
+    get_page_changes,
+    create_key_event,
+    get_key_events,
+    create_relationship,
+    get_relationships,
 )
 from datetime import datetime, timezone
 from app.dependencies import get_current_user, require_role
@@ -51,19 +58,19 @@ async def create_page_endpoint(
 ):
 
     page_data = page.model_dump(exclude={"values"})
-    changelog_entry = {
-        "date": datetime.now(timezone.utc).isoformat(),
-        "change_type": "created",
-        "author_type": "user",
-        "author_id": user.id,
-    }
     db_page = Page(
         **page_data,
         created_by_user_id=user.id,
         created_at=datetime.now(timezone.utc),
-        changelog=[changelog_entry],
     )
     db_page = await create_page(session, db_page)
+    change = PageChange(
+        page_id=db_page.id,
+        change_type="created",
+        author_type="user",
+        author_id=user.id,
+    )
+    await create_page_change(session, change)
 
     # values = await get_page_characteristic_values(session, db_page.id)
 
@@ -87,7 +94,16 @@ async def create_page_endpoint(
 
 
     values = await get_page_characteristic_values(session, db_page.id)
-    response = PageRead.model_validate({**db_page.model_dump(), "values": values})
+    events = await get_key_events(session, db_page.id)
+    relationships = await get_relationships(session, db_page.id)
+    changes = await get_page_changes(session, db_page.id)
+    response = PageRead.model_validate({
+        **db_page.model_dump(),
+        "values": values,
+        "key_events": events,
+        "relationship_map": relationships,
+        "changelog": changes,
+    })
 
      # Schedule background crosslink update only if this page allows
     if not db_page.ignore_crosslink:
@@ -113,7 +129,15 @@ async def read_pages(
     page_id_list = [p.id for p in db_pages]
     values_map = await get_pages_characteristic_values(session, page_id_list)
     return [
-        PageRead.model_validate({**page.model_dump(), "values": values_map.get(page.id, [])})
+        PageRead.model_validate(
+            {
+                **page.model_dump(),
+                "values": values_map.get(page.id, []),
+                "key_events": await get_key_events(session, page.id),
+                "relationship_map": await get_relationships(session, page.id),
+                "changelog": await get_page_changes(session, page.id),
+            }
+        )
         for page in db_pages
     ]
 
@@ -127,7 +151,18 @@ async def read_page(
         raise HTTPException(status_code=404, detail="Page not found")
     
     values = await get_page_characteristic_values(session, db_page.id)
-    return PageRead.model_validate({**db_page.model_dump(), "values": values})
+    events = await get_key_events(session, db_page.id)
+    relationships = await get_relationships(session, db_page.id)
+    changes = await get_page_changes(session, db_page.id)
+    return PageRead.model_validate(
+        {
+            **db_page.model_dump(),
+            "values": values,
+            "key_events": events,
+            "relationship_map": relationships,
+            "changelog": changes,
+        }
+    )
         
 
 @router.patch("/{page_id}", response_model=PageRead)
@@ -148,15 +183,15 @@ async def update_page_endpoint(
         raise HTTPException(status_code=403, detail="You are not allowed to update this page.")
 
     update_dict = updates.model_dump(exclude_unset=True, exclude={"values"})
-    changelog_entry = {
-        "date": datetime.now(timezone.utc).isoformat(),
-        "change_type": "updated",
-        "author_type": "user",
-        "author_id": user.id,
-        "values": update_dict,
-    }
-    update_dict["changelog"] = (db_page.changelog or []) + [changelog_entry]
     db_page = await update_page(session, page_id, update_dict)
+    change = PageChange(
+        page_id=page_id,
+        change_type="updated",
+        author_type="user",
+        author_id=user.id,
+        values=update_dict,
+    )
+    await create_page_change(session, change)
 
 
 
@@ -180,7 +215,16 @@ async def update_page_endpoint(
 
     # Fetch updated values to return
     values = await get_page_characteristic_values(session, page_id)
-    response = PageRead.model_validate({**db_page.model_dump(), "values": values})
+    events = await get_key_events(session, page_id)
+    relationships = await get_relationships(session, page_id)
+    changes = await get_page_changes(session, page_id)
+    response = PageRead.model_validate({
+        **db_page.model_dump(),
+        "values": values,
+        "key_events": events,
+        "relationship_map": relationships,
+        "changelog": changes,
+    })
 
     print ("Page was updated with the right values, now going into auto_crosslink!")
     from app.task_queue import task_auto_crosslink_page_content, task_sync_page_ref_attributes

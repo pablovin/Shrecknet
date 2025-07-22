@@ -5,6 +5,9 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .schema_page_characteristic_value import PageCharacteristicValueCreate, PageCharacteristicValueUpdate, PageCharacteristicValueRead
+    from .schema_page_key_event import PageKeyEventRead
+    from .schema_page_relationship import PageRelationshipRead
+    from .schema_page_change import PageChangeRead
 
 class PageBase(SQLModel):
     gameworld_id: int
@@ -21,9 +24,7 @@ class PageBase(SQLModel):
     ignore_crosslink: Optional[bool] = False #ignore this page when adding crosslinks to other pages
     allow_crossworld: Optional[bool] = True #Allow adding crosslink for other worlds to this page / allow this page to be added to crosslink for other worlds
 
-    key_events: Optional[List[Dict]] = []
-    relationship_map: Optional[List[Dict]] = []
-    changelog: Optional[List[Dict]] = []
+    # Lists are returned via related tables
         
 
 class PageCreate(PageBase):
@@ -39,9 +40,6 @@ class PageUpdate(SQLModel):
     allow_crosslinks: Optional[bool] = True #allow crosslinks in this page
     ignore_crosslink: Optional[bool] = False #ignore this page when adding crosslinks to other pages
     allow_crossworld: Optional[bool] = True #Allow adding crosslink for other worlds to this page / allow this page to be added to crosslink for other worlds
-    key_events: Optional[List[Dict]] = None
-    relationship_map: Optional[List[Dict]] = None
-    changelog: Optional[List[Dict]] = None
 
 class PageRead(PageBase):
     id: int
@@ -49,9 +47,9 @@ class PageRead(PageBase):
     created_at: datetime
     updated_at: Optional[datetime]
     values: List["PageCharacteristicValueRead"] = []
-    key_events: Optional[List[Dict]] = []
-    relationship_map: Optional[List[Dict]] = []
-    changelog: Optional[List[Dict]] = []
+    key_events: List["PageKeyEventRead"] = []
+    relationship_map: List["PageRelationshipRead"] = []
+    changelog: List["PageChangeRead"] = []
 
 # resolve forward references on import
 from .schema_page_characteristic_value import (
@@ -59,6 +57,9 @@ from .schema_page_characteristic_value import (
     PageCharacteristicValueUpdate,
     PageCharacteristicValueRead,
 )
+from .schema_page_key_event import PageKeyEventRead
+from .schema_page_relationship import PageRelationshipRead
+from .schema_page_change import PageChangeRead
 
 PageCreate.model_rebuild()
 PageUpdate.model_rebuild()

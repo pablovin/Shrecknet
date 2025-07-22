@@ -22,7 +22,7 @@ const ForceGraph2D = dynamic(
 
       if (!(window as any).THREE) {
         const THREE = await import("three");
-        (window as any).THREE = THREE;
+        (window as any).THREE = { ...THREE };
       }
     }
 

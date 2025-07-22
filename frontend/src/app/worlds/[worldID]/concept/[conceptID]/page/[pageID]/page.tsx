@@ -12,6 +12,7 @@ import { useWorlds } from "@/app/lib/userWorlds";
 import { useConceptById } from "@/app/lib/useConceptById";
 import { useConcepts } from "@/app/lib/useConcept";
 import { useCharacteristicsForConcept } from "@/app/lib/useCharacteristicsForConcept";
+import { usePages } from "@/app/lib/usePage";
 import PageTitleBar from "@/app/components/see_page/PageTitleBar";
 import TitleSection from "@/app/components/see_page/TitleSection";
 import HeaderSection from "@/app/components/see_page/HeaderSection";
@@ -98,6 +99,7 @@ export default function PageView() {
   const { worlds, isLoading: worldsLoading } = useWorlds();
   const { concepts, isLoading: conceptsLoading } = useConcepts(world?.id);
   const { characteristics, isLoading: charsLoading } = useCharacteristicsForConcept(page?.concept_id);
+  const { pages: worldPages } = usePages(world?.id ? { gameworld_id: world.id } : {});
 
   const { agents } = useAgents(page?.gameworld_id);
   const chatAgent = agents?.find(a => a.task === "conversational");
@@ -339,7 +341,12 @@ const bodySectionValues = filterNonEmptySectionValues(getSectionValues("body"));
                       />
                     </div>
                   ) : activeTab === "events" ? (
-                    <EventTimeline />
+                    <EventTimeline
+                      pageId={page.id}
+                      events={page.key_events || []}
+                      pages={worldPages}
+                      onUpdated={mutatePage}
+                    />
                   ) : activeTab === "relationships" ? (
                     <RelationshipMap />
                   ) : (

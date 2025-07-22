@@ -1,6 +1,15 @@
 "use client";
-import { ForceGraph2D } from "react-force-graph";
+import dynamic from "next/dynamic";
 import Link from "next/link";
+
+// ForceGraph2D requires browser globals like AFRAME which are
+// not available during server side rendering. Dynamically load
+// the component with SSR disabled to avoid "AFRAME is not defined"
+// errors when Next.js builds the server bundle.
+const ForceGraph2D = dynamic(
+  () => import("react-force-graph").then((mod) => mod.ForceGraph2D),
+  { ssr: false },
+);
 
 interface Node {
   id: number;

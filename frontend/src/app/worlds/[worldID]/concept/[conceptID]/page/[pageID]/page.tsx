@@ -350,7 +350,7 @@ const bodySectionValues = filterNonEmptySectionValues(getSectionValues("body"));
                   ) : activeTab === "relationships" ? (
                     <RelationshipMapTab page={page} pages={worldPages} />
                   ) : (
-                    <Changelog />
+                    <Changelog changes={page.changelog || []} />
                   )}
                 </div>
 

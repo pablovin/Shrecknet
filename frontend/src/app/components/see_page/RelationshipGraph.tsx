@@ -6,19 +6,28 @@ import dynamic from "next/dynamic";
 // the component with SSR disabled to avoid "AFRAME is not defined"
 // errors when Next.js builds the server bundle.
 const ForceGraph2D = dynamic(
-  () => {
-    if (typeof window !== "undefined" && !(window as any).AFRAME) {
-      (window as any).AFRAME = {
-        registerComponent: () => {},
-        registerPrimitive: () => {},
-        registerSystem: () => {},
-        components: {},
-        systems: {},
-        primitives: {},
-        utils: { diff: () => ({}) },
-      } as any;
+  async () => {
+    if (typeof window !== "undefined") {
+      if (!(window as any).AFRAME) {
+        (window as any).AFRAME = {
+          registerComponent: () => {},
+          registerPrimitive: () => {},
+          registerSystem: () => {},
+          components: {},
+          systems: {},
+          primitives: {},
+          utils: { diff: () => ({}) },
+        } as any;
+      }
+
+      if (!(window as any).THREE) {
+        const THREE = await import("three");
+        (window as any).THREE = THREE;
+      }
     }
-    return import("react-force-graph").then((mod) => mod.ForceGraph2D);
+
+    const mod = await import("react-force-graph");
+    return mod.ForceGraph2D;
   },
   { ssr: false },
 );

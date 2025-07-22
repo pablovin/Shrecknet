@@ -22,9 +22,22 @@ import useRoleRedirect from "@/app/hooks/useRoleRedirect";
 import { useTranslation } from "@/app/hooks/useTranslation";
 import { hasRole } from "@/app/lib/roles";
 import ModalContainer from "@/app/components/template/modalContainer";
-import { Trash2, ChevronLeft, ChevronRight } from "lucide-react";
+import {
+  Trash2,
+  ChevronLeft,
+  ChevronRight,
+  ScrollText,
+  Brain,
+  Calendar,
+  Map,
+  History,
+} from "lucide-react";
 import CreatePageForm from "../../../../../../components/create_page/CreatePageForm";
-import TabMenu from "@/app/components/world_builder/TabMenu";
+import PageTabMenu from "@/app/components/see_page/PageTabMenu";
+import EventTimeline from "@/app/components/see_page/EventTimeline";
+import RelationshipMap from "@/app/components/see_page/RelationshipMap";
+import Changelog from "@/app/components/see_page/Changelog";
+import Image from "next/image";
 import { useAgents } from "@/app/lib/useAgents";
 
 // --- Collapsible Sidebar, grid-based, NOT fixed ---
@@ -72,7 +85,9 @@ export default function PageView() {
 
   // For sidebar open/collapse
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [activeTab, setActiveTab] = useState<"content" | "notes">("content");
+  const [activeTab, setActiveTab] = useState<
+    "description" | "notes" | "events" | "relationships" | "changelog"
+  >("description");
   const [imgError, setImgError] = useState(false);
 
   
@@ -94,7 +109,7 @@ export default function PageView() {
     if (
       page &&
       (!page.content || page.content.trim() === "") &&
-      activeTab === "content"
+      activeTab === "description"
     ) {
       setActiveTab("notes");
     }
@@ -223,20 +238,38 @@ const bodySectionValues = filterNonEmptySectionValues(getSectionValues("body"));
                     canEdit: hasRole(user?.role, "writer"),
                     onEdit: () => setShowEditModal(true),
                   }}
-                />                
-              </div>
+                />
 
-              {hasRole(user?.role, "world builder") && (
-                  <div className="flex justify-start mb-1">
+                <div className="flex items-center gap-3 flex-wrap">
+                  {concept && (
+                    <span className="flex items-center gap-2 px-3 py-1 rounded-full bg-[var(--primary)]/20 border border-[var(--primary)]/40 shadow-sm">
+                      {concept.logo && (
+                        <Image
+                          src={concept.logo}
+                          alt={concept.name}
+                          width={24}
+                          height={24}
+                          className="w-6 h-6 rounded-full object-cover border border-[var(--primary)]/50"
+                        />
+                      )}
+                      <span className="text-sm font-semibold text-[var(--primary)]">
+                        {concept.name}
+                      </span>
+                    </span>
+                  )}
+
+                  {hasRole(user?.role, "world builder") && (
                     <button
                       onClick={() => setShowDeleteModal(true)}
-                      className="p-2 rounded-full bg-red-50 border border-red-200 hover:bg-red-100 hover:border-red-400 transition shadow-sm text-red-600 flex items-center justify-center focus:outline-none focus:ring-2 focus:ring-red-400"
+                      className="flex items-center gap-1 px-3 py-1 rounded-full bg-red-600 text-white text-sm shadow hover:bg-red-700 transition"
                       title={t("delete_page")}
                     >
-                      <Trash2 className="w-5 h-5" /> {t("delete_page")}
+                      <Trash2 className="w-4 h-4" />
+                      {t("delete_page")}
                     </button>
-                  </div>
-                )}
+                  )}
+                </div>
+              </div>
 
               {/* --- Main content & details area, responsive grid --- */}
               <div className="mt-1 grid grid-cols-1 lg:grid-cols-[1fr_auto] gap-4 relative">
@@ -255,15 +288,22 @@ const bodySectionValues = filterNonEmptySectionValues(getSectionValues("body"));
                       <BodySection values={bodySectionValues} worldId={world?.id} conceptid={concept?.id} />
                     )}
                     
-                  <TabMenu
+                  <PageTabMenu
                     activeTab={activeTab}
-                    onTabChange={(tab) => setActiveTab(tab as "content" | "notes")}
+                    onTabChange={(tab) =>
+                      setActiveTab(
+                        tab as "description" | "notes" | "events" | "relationships" | "changelog"
+                      )
+                    }
                     tabs={[
-                      { value: "content", label: "Main Content" },
-                      { value: "notes", label: agent ? `Content by ${agent.name}` : "Other notes" },
+                      { value: "description", label: "Description", icon: ScrollText },
+                      { value: "notes", label: "Writer's Notes", icon: Brain },
+                      { value: "events", label: "Key Events", icon: Calendar },
+                      { value: "relationships", label: "Relationship Map", icon: Map },
+                      { value: "changelog", label: "Changelog", icon: History },
                     ]}
                   />
-                  {activeTab === "content" ? (
+                  {activeTab === "description" ? (
                     <EditableContent
                       id="world-content-editor"
                       content={page.content}
@@ -273,7 +313,7 @@ const bodySectionValues = filterNonEmptySectionValues(getSectionValues("body"));
                       pageName={page.name}
                       className="w-full min-h-[300px] text-base md:text-lg prose prose-invert max-w-none"
                     />
-                  ) : (
+                  ) : activeTab === "notes" ? (
                     <div className="w-full">
                       {agent && (
                         <div className="flex items-start gap-3 mb-4 p-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] shadow-sm">
@@ -298,6 +338,12 @@ const bodySectionValues = filterNonEmptySectionValues(getSectionValues("body"));
                         className="w-full min-h-[300px] text-base md:text-lg prose prose-invert max-w-none"
                       />
                     </div>
+                  ) : activeTab === "events" ? (
+                    <EventTimeline />
+                  ) : activeTab === "relationships" ? (
+                    <RelationshipMap />
+                  ) : (
+                    <Changelog />
                   )}
                 </div>
 

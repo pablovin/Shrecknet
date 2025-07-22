@@ -1,5 +1,5 @@
 # model_page.py
-from typing import Optional, List
+from typing import Optional, List, Dict
 from sqlmodel import SQLModel, Field, Relationship, JSON
 from datetime import datetime, timezone
 from sqlalchemy import Column
@@ -27,7 +27,11 @@ class Page(SQLModel, table=True):
     #Cross Link information    
     allow_crosslinks: Optional[bool] = True #allow crosslinks in this page
     ignore_crosslink: Optional[bool] = False #ignore this page when adding crosslinks to other pages
-    allow_crossworld: Optional[bool] = True #Allow adding crosslink for other worlds to this page / allow this page to be added to crosslink for other worlds    
+    allow_crossworld: Optional[bool] = True #Allow adding crosslink for other worlds to this page / allow this page to be added to crosslink for other worlds
+
+    key_events: Optional[List[Dict]] = Field(default_factory=list, sa_column=Column(JSON))
+    relationship_map: Optional[List[Dict]] = Field(default_factory=list, sa_column=Column(JSON))
+    changelog: Optional[List[Dict]] = Field(default_factory=list, sa_column=Column(JSON))
     
 
     

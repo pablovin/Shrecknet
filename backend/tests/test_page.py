@@ -64,6 +64,11 @@ async def test_page_create_update_delete_rbac(async_client):
     assert resp.status_code == 200
     page_id = resp.json()["id"]
 
+    # Created page should have changelog entry
+    resp = await async_client.get(f"/pages/{page_id}", headers={"Authorization": f"Bearer {player_token}"})
+    assert resp.status_code == 200
+    assert resp.json()["changelog"][0]["change_type"] == "created"
+
     # Player cannot create
     resp = await async_client.post("/pages/", json=page_payload, headers={"Authorization": f"Bearer {player_token}"})
     assert resp.status_code == 403
@@ -78,6 +83,7 @@ async def test_page_create_update_delete_rbac(async_client):
     resp = await async_client.patch(f"/pages/{page_id}", json=update, headers={"Authorization": f"Bearer {writer_token}"})
     assert resp.status_code == 200
     assert resp.json()["content"] == "Blue Bloods Updated"
+    assert resp.json()["changelog"][-1]["change_type"] == "updated"
 
      # If allowed_user_ids is set, players can edit if they're in the list, writers can always edit
 

@@ -32,6 +32,7 @@ class PageRelationship(SQLModel, table=True):
     page_id: int = Field(foreign_key="page.id")
     target_page_id: int = Field(foreign_key="page.id")
     relationship_type: str
+    direction: str = "outgoing"
     source_page_id: Optional[int] = Field(default=None, foreign_key="page.id")
     description: Optional[str] = None
     author_type: str

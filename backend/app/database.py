@@ -46,8 +46,12 @@ def _migrate(conn):
     # -- PageRelationship table --
     if "pagerelationship" not in inspector.get_table_names():
         conn.execute(text(
-            "CREATE TABLE pagerelationship (id INTEGER PRIMARY KEY AUTOINCREMENT, page_id INTEGER NOT NULL REFERENCES page(id), target_page_id INTEGER NOT NULL REFERENCES page(id), relationship_type TEXT NOT NULL, source_page_id INTEGER REFERENCES page(id), description TEXT, author_type TEXT NOT NULL, author_id INTEGER NOT NULL, added_at DATETIME NOT NULL)"
+            "CREATE TABLE pagerelationship (id INTEGER PRIMARY KEY AUTOINCREMENT, page_id INTEGER NOT NULL REFERENCES page(id), target_page_id INTEGER NOT NULL REFERENCES page(id), relationship_type TEXT NOT NULL, direction TEXT NOT NULL, source_page_id INTEGER REFERENCES page(id), description TEXT, author_type TEXT NOT NULL, author_id INTEGER NOT NULL, added_at DATETIME NOT NULL)"
         ))
+    else:
+        columns = [c["name"] for c in inspector.get_columns("pagerelationship")]
+        if "direction" not in columns:
+            conn.execute(text("ALTER TABLE pagerelationship ADD COLUMN direction TEXT DEFAULT 'outgoing'"))
 
     # -- PageChange table --
     if "pagechange" not in inspector.get_table_names():

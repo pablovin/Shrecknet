@@ -1,0 +1,46 @@
+"use client";
+import { ForceGraph2D } from "react-force-graph";
+import Link from "next/link";
+
+interface Node {
+  id: number;
+  name: string;
+  logo?: string;
+}
+
+interface LinkInfo {
+  id: number;
+  source: number;
+  target: number;
+  type: string;
+  direction: string;
+  description?: string;
+}
+
+export default function RelationshipGraph({ nodes, links }: { nodes: Node[]; links: LinkInfo[] }) {
+  const graphData = {
+    nodes: nodes.map((n) => ({ id: n.id, name: n.name, logo: n.logo })),
+    links: links.map((l) => ({
+      id: l.id,
+      source: l.direction === "incoming" ? l.target : l.source,
+      target: l.direction === "incoming" ? l.source : l.target,
+      type: l.type,
+      description: l.description,
+    })),
+  };
+  return (
+    <div className="h-96 w-full">
+      {/* ForceGraph2D may be missing if dependencies are not installed */}
+      {/* @ts-ignore */}
+      <ForceGraph2D
+        graphData={graphData}
+        nodeLabel={(node: any) => node.name}
+        linkDirectionalArrowLength={6}
+        linkLabel={(link: any) => link.type}
+        onNodeClick={(node: any) => {
+          window.location.href = `/pages/${node.id}`;
+        }}
+      />
+    </div>
+  );
+}

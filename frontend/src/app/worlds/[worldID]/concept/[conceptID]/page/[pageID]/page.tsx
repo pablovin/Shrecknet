@@ -36,7 +36,7 @@ import {
 import CreatePageForm from "../../../../../../components/create_page/CreatePageForm";
 import PageTabMenu from "@/app/components/see_page/PageTabMenu";
 import EventTimeline from "@/app/components/see_page/EventTimeline";
-import RelationshipMap from "@/app/components/see_page/RelationshipMap";
+import RelationshipMapTab from "@/app/components/see_page/RelationshipMapTab";
 import Changelog from "@/app/components/see_page/Changelog";
 import Image from "next/image";
 import { useAgents } from "@/app/lib/useAgents";
@@ -348,7 +348,7 @@ const bodySectionValues = filterNonEmptySectionValues(getSectionValues("body"));
                       onUpdated={mutatePage}
                     />
                   ) : activeTab === "relationships" ? (
-                    <RelationshipMap />
+                    <RelationshipMapTab page={page} pages={worldPages} />
                   ) : (
                     <Changelog />
                   )}

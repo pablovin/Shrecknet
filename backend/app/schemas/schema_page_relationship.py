@@ -5,6 +5,7 @@ from datetime import datetime
 class PageRelationshipBase(SQLModel):
     target_page_id: int
     relationship_type: str
+    direction: str = "outgoing"
     source_page_id: Optional[int] = None
     description: Optional[str] = None
     author_type: str

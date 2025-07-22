@@ -12,15 +12,8 @@ export default function UserNotesPage() {
   const { notes, mutate, isLoading } = useUserNotes();
   const { user } = useAuth();
   const [modalOpen, setModalOpen] = useState(false);
-  const [selected, setSelected] = useState(null);
-
-  function handleEdit(note) {
-    setSelected(note);
-    setModalOpen(true);
-  }
 
   function handleNew() {
-    setSelected(null);
     setModalOpen(true);
   }
 
@@ -49,20 +42,18 @@ export default function UserNotesPage() {
                 <h2 className="text-xl font-bold mt-2">My Notes</h2>
                 <NoteList
                   notes={notes.filter((n) => n.user_id === user?.id)}
-                  onEdit={handleEdit}
                 />
                 <h2 className="text-xl font-bold mt-6">Shared With Me</h2>
                 <NoteList
                   notes={notes.filter(
                     (n) => n.user_id !== user?.id && n.shared_with_user_ids?.includes(user?.id)
                   )}
-                  onEdit={handleEdit}
                 />
               </>
             )}
           </div>
           {modalOpen && (
-            <NoteModal note={selected} onClose={() => setModalOpen(false)} onSave={handleSaved} />
+            <NoteModal note={null} onClose={() => setModalOpen(false)} onSave={handleSaved} />
           )}
         </div>
       </DashboardLayout>

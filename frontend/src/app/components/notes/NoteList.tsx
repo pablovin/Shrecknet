@@ -1,7 +1,9 @@
 "use client";
 import { format } from "date-fns";
+import { useRouter } from "next/navigation";
 
-export default function NoteList({ notes, onEdit }) {
+export default function NoteList({ notes }) {
+  const router = useRouter();
   if (!notes?.length) return <div className="text-center py-10 opacity-60">No notes.</div>;
   return (
     <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
@@ -9,7 +11,7 @@ export default function NoteList({ notes, onEdit }) {
         <button
           key={n.id}
           className="flex flex-col items-start gap-1 p-4 rounded-xl border border-[var(--border)] bg-[var(--surface)] hover:bg-[var(--surface-variant)] text-left"
-          onClick={() => onEdit(n)}
+          onClick={() => router.push(`/user_notes/${n.id}`)}
         >
           <span className="font-bold text-[var(--primary)]">{n.title}</span>
           <span className="text-xs text-[var(--foreground)]/70">

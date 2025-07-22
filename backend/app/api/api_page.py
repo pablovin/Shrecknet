@@ -51,10 +51,17 @@ async def create_page_endpoint(
 ):
 
     page_data = page.model_dump(exclude={"values"})
+    changelog_entry = {
+        "date": datetime.now(timezone.utc).isoformat(),
+        "change_type": "created",
+        "author_type": "user",
+        "author_id": user.id,
+    }
     db_page = Page(
         **page_data,
         created_by_user_id=user.id,
-        created_at=datetime.now(timezone.utc)
+        created_at=datetime.now(timezone.utc),
+        changelog=[changelog_entry],
     )
     db_page = await create_page(session, db_page)
 
@@ -130,6 +137,10 @@ async def update_page_endpoint(
     user: User = Depends(require_role(UserRole.writer)),
     session: AsyncSession = Depends(get_session),
 ):
+    db_page = await get_page(session, page_id)
+    if not db_page:
+        raise HTTPException(status_code=404, detail="Page not found")
+
     if not (
         require_role(UserRole.writer)
         or user.id in db_page.allowed_user_ids
@@ -137,9 +148,15 @@ async def update_page_endpoint(
         raise HTTPException(status_code=403, detail="You are not allowed to update this page.")
 
     update_dict = updates.model_dump(exclude_unset=True, exclude={"values"})
+    changelog_entry = {
+        "date": datetime.now(timezone.utc).isoformat(),
+        "change_type": "updated",
+        "author_type": "user",
+        "author_id": user.id,
+        "values": update_dict,
+    }
+    update_dict["changelog"] = (db_page.changelog or []) + [changelog_entry]
     db_page = await update_page(session, page_id, update_dict)
-    if not db_page:
-        raise HTTPException(status_code=404, detail="Page not found")
 
 
 

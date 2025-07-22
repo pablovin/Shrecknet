@@ -5,7 +5,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import delete
 
-from app.models.model_page import Page, PageCharacteristicValue
+from app.models.model_page import (
+    Page,
+    PageCharacteristicValue,
+    PageKeyEvent,
+    PageRelationship,
+    PageChange,
+)
 from app.models.model_characteristic import Characteristic
 from app.schemas.schema_page import PageCreate, PageUpdate
 from app.schemas.schema_page_characteristic_value import PageCharacteristicValueCreate
@@ -120,6 +126,44 @@ async def delete_page_characteristic_values(session: AsyncSession, page_id: int)
     await session.commit()
     await session.flush()
 
+# --- Page key events, relationships and changelog CRUD ---
+
+async def create_key_event(session: AsyncSession, event: PageKeyEvent) -> PageKeyEvent:
+    session.add(event)
+    await session.commit()
+    await session.flush()
+    return event
+
+async def get_key_events(session: AsyncSession, page_id: int) -> List[PageKeyEvent]:
+    result = await session.execute(
+        select(PageKeyEvent).where(PageKeyEvent.page_id == page_id).order_by(PageKeyEvent.added_at)
+    )
+    return result.scalars().all()
+
+async def create_relationship(session: AsyncSession, rel: PageRelationship) -> PageRelationship:
+    session.add(rel)
+    await session.commit()
+    await session.flush()
+    return rel
+
+async def get_relationships(session: AsyncSession, page_id: int) -> List[PageRelationship]:
+    result = await session.execute(
+        select(PageRelationship).where(PageRelationship.page_id == page_id).order_by(PageRelationship.added_at)
+    )
+    return result.scalars().all()
+
+async def create_page_change(session: AsyncSession, change: PageChange) -> PageChange:
+    session.add(change)
+    await session.commit()
+    await session.flush()
+    return change
+
+async def get_page_changes(session: AsyncSession, page_id: int) -> List[PageChange]:
+    result = await session.execute(
+        select(PageChange).where(PageChange.page_id == page_id).order_by(PageChange.date)
+    )
+    return result.scalars().all()
+
 # --- Optional: update individual value (not used in atomic pattern) ---
 
 async def update_page_characteristic_value(session: AsyncSession, page_id: int, characteristic_id: int, value: List[str]):
@@ -142,14 +186,6 @@ async def delete_page_characteristic_value(session: AsyncSession, page_id: int, 
             PageCharacteristicValue.page_id == page_id,
             PageCharacteristicValue.characteristic_id == characteristic_id
         )
-    )
-    await session.commit()
-    await session.flush()
-
-
-async def delete_page_characteristic_values(session: AsyncSession, page_id: int) -> None:
-    await session.execute(
-        delete(PageCharacteristicValue).where(PageCharacteristicValue.page_id == page_id)
     )
     await session.commit()
     await session.flush()

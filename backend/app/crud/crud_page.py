@@ -140,6 +140,22 @@ async def get_key_events(session: AsyncSession, page_id: int) -> List[PageKeyEve
     )
     return result.scalars().all()
 
+async def update_key_event(session: AsyncSession, event_id: int, updates: dict) -> Optional[PageKeyEvent]:
+    result = await session.execute(select(PageKeyEvent).where(PageKeyEvent.id == event_id))
+    event = result.scalar_one_or_none()
+    if not event:
+        return None
+    for key, value in updates.items():
+        setattr(event, key, value)
+    await session.commit()
+    await session.flush()
+    return event
+
+async def delete_key_event(session: AsyncSession, event_id: int) -> None:
+    await session.execute(delete(PageKeyEvent).where(PageKeyEvent.id == event_id))
+    await session.commit()
+    await session.flush()
+
 async def create_relationship(session: AsyncSession, rel: PageRelationship) -> PageRelationship:
     session.add(rel)
     await session.commit()

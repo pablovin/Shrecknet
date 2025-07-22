@@ -69,3 +69,33 @@ export async function getPagesForConcept(concept_id: number, token: string) {
 export async function getPagesForWorld(gameworld_id: number, token: string) {
   return getPages(token, { gameworld_id });
 }
+
+// --- Key Events ---
+export async function createKeyEvent(pageId: number, data: unknown, token: string) {
+  const res = await fetch(`${API_URL}/pages/${pageId}/events/`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) throw await res.json();
+  return await res.json();
+}
+
+export async function updateKeyEvent(eventId: number, data: unknown, token: string) {
+  const res = await fetch(`${API_URL}/pages/events/${eventId}`, {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) throw await res.json();
+  return await res.json();
+}
+
+export async function deleteKeyEvent(eventId: number, token: string) {
+  const res = await fetch(`${API_URL}/pages/events/${eventId}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw await res.json();
+  return await res.json();
+}

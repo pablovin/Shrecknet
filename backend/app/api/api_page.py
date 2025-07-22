@@ -1,13 +1,24 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 from typing import List, Optional
 from fastapi import Query
 from app.database import get_session
 from app.models.model_user import User, UserRole
-from app.models.model_page import Page, PageCharacteristicValue, PageChange
+from app.models.model_page import (
+    Page,
+    PageCharacteristicValue,
+    PageChange,
+    PageKeyEvent,
+)
 from app.schemas.schema_page import PageCreate, PageRead, PageUpdate
 from app.schemas.schema_page_characteristic_value import PageCharacteristicValueUpdate, PageCharacteristicValueRead, PageCharacteristicValueCreate
 from app.schemas.schema_page_change import PageChangeRead
+from app.schemas.schema_page_key_event import (
+    PageKeyEventCreate,
+    PageKeyEventRead,
+    PageKeyEventUpdate,
+)
 from app.crud.crud_page import (
     create_page,
     get_pages,
@@ -24,6 +35,8 @@ from app.crud.crud_page import (
     get_page_changes,
     create_key_event,
     get_key_events,
+    update_key_event,
+    delete_key_event,
     create_relationship,
     get_relationships,
 )
@@ -286,4 +299,71 @@ async def delete_page_value(
     session: AsyncSession = Depends(get_session),
 ):
     await delete_page_characteristic_value(session, page_id, characteristic_id)
+    return {"ok": True}
+
+# -- Key Event endpoints --
+
+@router.post("/{page_id}/events/", response_model=PageKeyEventRead)
+async def add_key_event_endpoint(
+    page_id: int,
+    event: PageKeyEventCreate,
+    user: User = Depends(require_role(UserRole.writer)),
+    session: AsyncSession = Depends(get_session),
+):
+    if event.page_id != page_id:
+        event.page_id = page_id
+    db_event = await create_key_event(session, PageKeyEvent(**event.model_dump()))
+    change = PageChange(
+        page_id=page_id,
+        change_type="key_event_added",
+        author_type="user",
+        author_id=user.id,
+        values=db_event.model_dump(),
+    )
+    await create_page_change(session, change)
+    return db_event
+
+
+@router.patch("/events/{event_id}", response_model=PageKeyEventRead)
+async def update_key_event_endpoint(
+    event_id: int,
+    updates: PageKeyEventUpdate,
+    user: User = Depends(require_role(UserRole.writer)),
+    session: AsyncSession = Depends(get_session),
+):
+    update_dict = updates.model_dump(exclude_unset=True)
+    event = await update_key_event(session, event_id, update_dict)
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+    change = PageChange(
+        page_id=event.page_id,
+        change_type="key_event_updated",
+        author_type="user",
+        author_id=user.id,
+        values=update_dict,
+    )
+    await create_page_change(session, change)
+    return event
+
+
+@router.delete("/events/{event_id}")
+async def delete_key_event_endpoint(
+    event_id: int,
+    user: User = Depends(require_role(UserRole.writer)),
+    session: AsyncSession = Depends(get_session),
+):
+    result = await session.execute(select(PageKeyEvent).where(PageKeyEvent.id == event_id))
+    event = result.scalar_one_or_none()
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+    page_id = event.page_id
+    await delete_key_event(session, event_id)
+    change = PageChange(
+        page_id=page_id,
+        change_type="key_event_deleted",
+        author_type="user",
+        author_id=user.id,
+        values={"event_id": event_id},
+    )
+    await create_page_change(session, change)
     return {"ok": True}

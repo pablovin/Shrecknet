@@ -18,3 +18,10 @@ class PageKeyEventRead(PageKeyEventBase):
     id: int
     page_id: int
     added_at: datetime
+
+class PageKeyEventUpdate(SQLModel):
+    event_type: Optional[str] = None
+    event_date: Optional[datetime] = None
+    summary: Optional[str] = None
+    source_page_id: Optional[int] = None
+    related_page_ids: Optional[List[int]] = None

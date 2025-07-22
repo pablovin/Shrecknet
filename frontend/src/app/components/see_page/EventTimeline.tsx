@@ -2,6 +2,9 @@
 import { useState, useEffect } from "react";
 import ModalContainer from "../template/modalContainer";
 import { useAuth } from "../auth/AuthProvider";
+import { hasRole } from "@/app/lib/roles";
+import { Combobox } from "@headlessui/react";
+import Link from "next/link";
 import {
   createKeyEvent,
   updateKeyEvent,
@@ -27,26 +30,22 @@ interface PageInfo {
   id: number;
   name: string;
   logo?: string;
+  gameworld_id?: number;
+  concept_id?: number;
 }
-
-const EVENT_ICONS: Record<string, string> = {
-  battle: "🗡️",
-  war: "⚔️",
-  lore: "📜",
-  magic: "✨",
-  item: "📦",
-};
 
 function EventForm({
   initial,
   pages,
+  eventTypes,
   onSubmit,
 }: {
   initial?: Event;
   pages: PageInfo[];
+  eventTypes: string[];
   onSubmit: (e: Event) => void;
 }) {
-  const [type, setType] = useState(initial?.event_type || "battle");
+  const [type, setType] = useState(initial?.event_type || eventTypes[0] || "");
   const [date, setDate] = useState(
     initial?.event_date ? initial.event_date.substring(0, 10) : ""
   );
@@ -57,6 +56,8 @@ function EventForm({
   const [related, setRelated] = useState<string[]>(
     (initial?.related_page_ids || []).map(String)
   );
+  const [sourceFilter, setSourceFilter] = useState("");
+  const [relatedFilter, setRelatedFilter] = useState("");
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -74,17 +75,17 @@ function EventForm({
     <form onSubmit={handleSubmit} className="space-y-4">
       <div className="flex flex-col gap-1">
         <label className="font-semibold text-sm">Type</label>
-        <select
+        <input
+          list="event-types"
           className="border rounded-md px-3 py-1 bg-[var(--surface)]"
           value={type}
           onChange={(e) => setType(e.target.value)}
-        >
-          {Object.keys(EVENT_ICONS).map((k) => (
-            <option key={k} value={k}>
-              {k}
-            </option>
+        />
+        <datalist id="event-types">
+          {eventTypes.map((t) => (
+            <option key={t} value={t} />
           ))}
-        </select>
+        </datalist>
       </div>
       <div className="flex flex-col gap-1">
         <label className="font-semibold text-sm">Date</label>
@@ -105,37 +106,91 @@ function EventForm({
       </div>
       <div className="flex flex-col gap-1">
         <label className="font-semibold text-sm">Source Page</label>
-        <select
-          className="border rounded-md px-3 py-1 bg-[var(--surface)]"
-          value={sourcePage}
-          onChange={(e) => setSourcePage(e.target.value)}
-        >
-          <option value="">None</option>
-          {pages.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name}
-            </option>
-          ))}
-        </select>
+        <Combobox value={sourcePage} onChange={(val) => setSourcePage(val)}>
+          <div className="relative">
+            <Combobox.Input
+              className="border rounded-md px-3 py-1 bg-[var(--surface)] w-full"
+              displayValue={(id: string) => {
+                const p = pages.find((pg) => String(pg.id) === id);
+                return p ? p.name : "";
+              }}
+              onChange={(e) => {
+                setSourceFilter(e.target.value);
+                setSourcePage(e.target.value);
+              }}
+              placeholder="Search page..."
+            />
+            <Combobox.Options className="absolute mt-1 max-h-60 w-full overflow-auto rounded bg-[var(--surface)] shadow-lg z-20 border">
+              <Combobox.Option value="" className="px-2 py-1 cursor-pointer hover:bg-[var(--accent)]/20">
+                None
+              </Combobox.Option>
+              {pages
+                .filter((p) => p.name.toLowerCase().includes(sourceFilter.toLowerCase()))
+                .map((p) => (
+                  <Combobox.Option
+                    key={p.id}
+                    value={String(p.id)}
+                    className="flex items-center gap-2 px-2 py-1 cursor-pointer hover:bg-[var(--accent)]/20"
+                  >
+                    {p.logo && (
+                      <Image src={p.logo} alt={p.name} width={16} height={16} className="w-4 h-4 rounded-full object-cover" />
+                    )}
+                    {p.name}
+                  </Combobox.Option>
+                ))}
+            </Combobox.Options>
+          </div>
+        </Combobox>
       </div>
       <div className="flex flex-col gap-1">
         <label className="font-semibold text-sm">Related Pages</label>
-        <select
-          multiple
-          className="border rounded-md px-3 py-1 bg-[var(--surface)] h-32"
-          value={related}
-          onChange={(e) =>
-            setRelated(
-              Array.from(e.target.selectedOptions).map((o) => o.value)
-            )
-          }
-        >
-          {pages.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name}
-            </option>
-          ))}
-        </select>
+        <Combobox value="" onChange={(val: number) => {
+            if (!related.includes(String(val))) setRelated([...related, String(val)]);
+          }}>
+          <div className="relative">
+            <Combobox.Input
+              className="border rounded-md px-3 py-1 bg-[var(--surface)] w-full"
+              onChange={(e) => setRelatedFilter(e.target.value)}
+              displayValue={() => ""}
+              placeholder="Search page..."
+            />
+            <Combobox.Options className="absolute mt-1 max-h-60 w-full overflow-auto rounded bg-[var(--surface)] shadow-lg z-20 border">
+              {pages
+                .filter(
+                  (p) =>
+                    p.name.toLowerCase().includes(relatedFilter.toLowerCase()) &&
+                    !related.includes(String(p.id))
+                )
+                .map((p) => (
+                  <Combobox.Option
+                    key={p.id}
+                    value={p.id}
+                    className="flex items-center gap-2 px-2 py-1 cursor-pointer hover:bg-[var(--accent)]/20"
+                  >
+                    {p.logo && (
+                      <Image src={p.logo} alt={p.name} width={16} height={16} className="w-4 h-4 rounded-full object-cover" />
+                    )}
+                    {p.name}
+                  </Combobox.Option>
+                ))}
+            </Combobox.Options>
+          </div>
+        </Combobox>
+        <div className="flex flex-wrap gap-2 mt-2">
+          {related.map((id) => {
+            const p = pages.find((pg) => pg.id === Number(id));
+            if (!p) return null;
+            return (
+              <span key={id} className="flex items-center gap-1 px-2 py-1 rounded-full bg-[var(--surface)] border text-xs">
+                {p.logo && (
+                  <Image src={p.logo} alt={p.name} width={16} height={16} className="w-4 h-4 rounded-full object-cover" />
+                )}
+                {p.name}
+                <button type="button" onClick={() => setRelated(related.filter((r) => r !== id))} className="ml-1">×</button>
+              </span>
+            );
+          })}
+        </div>
       </div>
       <button
         type="submit"
@@ -158,10 +213,12 @@ export default function EventTimeline({
   pages: PageInfo[];
   onUpdated: () => void;
 }) {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
+  const canEdit = hasRole(user?.role, "writer");
   const [filter, setFilter] = useState<string>("all");
   const [query, setQuery] = useState("");
   const [showForm, setShowForm] = useState(false);
+  const [showAll, setShowAll] = useState(false);
   const [editEvent, setEditEvent] = useState<Event | null>(null);
   const [pageMap, setPageMap] = useState<Record<number, PageInfo>>({});
 
@@ -176,7 +233,16 @@ export default function EventTimeline({
       if (!pageMap[id] && token) {
         getPage(id, token)
           .then((p) =>
-            setPageMap((m) => ({ ...m, [id]: { id: p.id, name: p.name, logo: p.logo } }))
+            setPageMap((m) => ({
+              ...m,
+              [id]: {
+                id: p.id,
+                name: p.name,
+                logo: p.logo,
+                gameworld_id: p.gameworld_id,
+                concept_id: p.concept_id,
+              },
+            }))
           )
           .catch(() => {});
       }
@@ -202,6 +268,7 @@ export default function EventTimeline({
       );
     })
     .sort((a, b) => (a.event_date || "").localeCompare(b.event_date || ""));
+  const visible = showAll ? filtered : filtered.slice(0, 10);
 
   const handleSave = async (ev: Event) => {
     if (!token) return;
@@ -252,23 +319,22 @@ export default function EventTimeline({
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
-        <button
-          className="px-3 py-1 rounded-full bg-[var(--primary)] text-[var(--primary-foreground)] hover:bg-[var(--accent)] transition"
-          onClick={() => setShowForm(true)}
-        >
-          Add Event
-        </button>
+        {canEdit && (
+          <button
+            className="px-3 py-1 rounded-full bg-[var(--primary)] text-[var(--primary-foreground)] hover:bg-[var(--accent)] transition"
+            onClick={() => setShowForm(true)}
+          >
+            Add Event
+          </button>
+        )}
       </div>
       <div className="relative border-l-2 border-[var(--primary)] ml-4 pl-6 max-h-[60vh] overflow-y-auto">
-        {filtered.map((e) => (
+        {visible.map((e) => (
           <div key={e.id} className="mb-8 relative group">
-            <span className="absolute -left-3 top-2 text-xl">
-              {EVENT_ICONS[e.event_type] || "📜"}
-            </span>
             <div className="bg-[var(--surface-variant)] border border-[var(--border)] rounded-xl p-4 shadow-md">
               <div className="flex justify-between items-center mb-2">
                 <div className="font-semibold text-sm flex items-center gap-1">
-                  {EVENT_ICONS[e.event_type] || "📜"} {e.event_type}
+                  {e.event_type}
                 </div>
                 <div className="text-xs text-[var(--foreground)]/70">
                   {e.event_date ? new Date(e.event_date).toLocaleDateString() : ""}
@@ -280,13 +346,18 @@ export default function EventTimeline({
                   {e.related_page_ids.map((id) => {
                     const p = pageMap[id];
                     if (!p) return null;
+                    const href = `/worlds/${p.gameworld_id}/concept/${p.concept_id}/page/${p.id}`;
                     return (
-                      <span key={id} className="flex items-center gap-1 px-2 py-1 rounded-full bg-[var(--surface)] border text-xs">
+                      <Link
+                        href={href}
+                        key={id}
+                        className="flex items-center gap-1 px-2 py-1 rounded-full bg-[var(--surface)] border text-xs"
+                      >
                         {p.logo && (
                           <Image src={p.logo} alt={p.name} width={16} height={16} className="w-4 h-4 rounded-full object-cover" />
                         )}
                         {p.name}
-                      </span>
+                      </Link>
                     );
                   })}
                 </div>
@@ -294,26 +365,71 @@ export default function EventTimeline({
               {e.source_page_id && pageMap[e.source_page_id] && (
                 <div className="flex items-center gap-2 text-xs mb-2">
                   <span className="font-semibold">Source:</span>
-                  {pageMap[e.source_page_id].logo && (
-                    <Image src={pageMap[e.source_page_id].logo!} alt="src" width={16} height={16} className="w-4 h-4 rounded-full object-cover" />
-                  )}
-                  {pageMap[e.source_page_id].name}
+                  <Link
+                    href={`/worlds/${pageMap[e.source_page_id].gameworld_id}/concept/${pageMap[e.source_page_id].concept_id}/page/${pageMap[e.source_page_id].id}`}
+                    className="flex items-center gap-1"
+                  >
+                    {pageMap[e.source_page_id].logo && (
+                      <Image
+                        src={pageMap[e.source_page_id].logo!}
+                        alt="src"
+                        width={16}
+                        height={16}
+                        className="w-4 h-4 rounded-full object-cover"
+                      />
+                    )}
+                    {pageMap[e.source_page_id].name}
+                  </Link>
                 </div>
               )}
-              <div className="flex justify-end gap-2 text-xs">
-                <button onClick={() => { setEditEvent(e); setShowForm(true); }} className="text-[var(--primary)] hover:underline">Edit</button>
-                <button onClick={() => handleDelete(e)} className="text-red-600 hover:underline">Delete</button>
-              </div>
+              {canEdit && (
+                <div className="flex justify-end gap-2 text-xs">
+                  <button
+                    onClick={() => {
+                      setEditEvent(e);
+                      setShowForm(true);
+                    }}
+                    className="text-[var(--primary)] hover:underline"
+                  >
+                    Edit
+                  </button>
+                  <button
+                    onClick={() => handleDelete(e)}
+                    className="text-red-600 hover:underline"
+                  >
+                    Delete
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         ))}
+        {!showAll && filtered.length > 10 && (
+          <button
+            className="text-sm text-[var(--primary)] underline mt-2"
+            onClick={() => setShowAll(true)}
+          >
+            Load more ({filtered.length - 10} more)
+          </button>
+        )}
         {filtered.length === 0 && (
           <div className="text-sm text-center text-[var(--foreground)]/70">No events found.</div>
         )}
       </div>
       {showForm && (
-        <ModalContainer title={editEvent ? "Edit Event" : "Add Event"} onClose={() => { setShowForm(false); setEditEvent(null); }}>
-          <EventForm initial={editEvent || { event_type: "battle" }} pages={allPages} onSubmit={handleSave} />
+        <ModalContainer
+          title={editEvent ? "Edit Event" : "Add Event"}
+          onClose={() => {
+            setShowForm(false);
+            setEditEvent(null);
+          }}
+        >
+          <EventForm
+            initial={editEvent || { event_type: "" }}
+            pages={allPages}
+            eventTypes={Array.from(new Set(events.map((e) => e.event_type)))}
+            onSubmit={handleSave}
+          />
         </ModalContainer>
       )}
     </div>

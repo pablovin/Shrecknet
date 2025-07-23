@@ -265,5 +265,10 @@
   "import_backup": "Importa Backup",
   "backup_importing": "Importazione backup...",
   "backup_imported": "Backup importato!",
-  "backup_failed": "Backup fallito. Riprova!"
+  "backup_failed": "Backup fallito. Riprova!",
+  "tab_description": "Descrizione",
+  "tab_writer_notes": "Note dell'autore",
+  "tab_key_events": "Eventi Chiave",
+  "tab_relationships": "Mappa Relazioni",
+  "tab_changelog": "Cronologia"
 }

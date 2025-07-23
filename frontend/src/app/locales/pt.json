@@ -262,5 +262,10 @@
   "import_backup": "Importar Backup",
   "backup_importing": "Importando backup...",
   "backup_imported": "Backup importado!",
-  "backup_failed": "Falha no backup. Tente novamente!"
+  "backup_failed": "Falha no backup. Tente novamente!",
+  "tab_description": "Descrição",
+  "tab_writer_notes": "Notas do Autor",
+  "tab_key_events": "Eventos Chave",
+  "tab_relationships": "Mapa de Relações",
+  "tab_changelog": "Alterações"
 }

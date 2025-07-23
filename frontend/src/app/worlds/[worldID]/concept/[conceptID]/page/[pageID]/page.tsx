@@ -30,7 +30,6 @@ import {
   Brain,
   Calendar,
   Map,
-  History,
 } from "lucide-react";
 import CreatePageForm from "../../../../../../components/create_page/CreatePageForm";
 import PageTabMenu from "@/app/components/see_page/PageTabMenu";
@@ -85,8 +84,9 @@ export default function PageView() {
   // For sidebar open/collapse
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [activeTab, setActiveTab] = useState<
-    "description" | "notes" | "events" | "relationships" | "changelog"
+    "description" | "notes" | "events" | "relationships"
   >("description");
+  const [showChangelog, setShowChangelog] = useState(false);
   const [imgError, setImgError] = useState(false);
 
   
@@ -243,6 +243,7 @@ const bodySectionValues = filterNonEmptySectionValues(getSectionValues("body"));
                   canDelete={hasRole(user?.role, "world builder")}
                   onDelete={() => setShowDeleteModal(true)}
                   deleteLabel={t("delete_page")}
+                  onShowChangelog={() => setShowChangelog(true)}
                 />
               </div>
 
@@ -267,15 +268,14 @@ const bodySectionValues = filterNonEmptySectionValues(getSectionValues("body"));
                     activeTab={activeTab}
                     onTabChange={(tab) =>
                       setActiveTab(
-                        tab as "description" | "notes" | "events" | "relationships" | "changelog"
+                        tab as "description" | "notes" | "events" | "relationships"
                       )
                     }
                     tabs={[
-                      { value: "description", label: "Description", icon: ScrollText },
-                      { value: "notes", label: "Writer's Notes", icon: Brain },
-                      { value: "events", label: "Key Events", icon: Calendar },
-                      { value: "relationships", label: "Relationship Map", icon: Map },
-                      { value: "changelog", label: "Changelog", icon: History },
+                      { value: "description", label: "tab_description", icon: ScrollText },
+                      { value: "notes", label: "tab_writer_notes", icon: Brain, ai: true },
+                      { value: "events", label: "tab_key_events", icon: Calendar },
+                      { value: "relationships", label: "tab_relationships", icon: Map },
                     ]}
                   />
                   {activeTab === "description" ? (
@@ -322,9 +322,7 @@ const bodySectionValues = filterNonEmptySectionValues(getSectionValues("body"));
                     />
                   ) : activeTab === "relationships" ? (
                     <RelationshipMapTab page={page} pages={worldPages} />
-                  ) : (
-                    <Changelog changes={page.changelog || []} />
-                  )}
+                  ) : null}
                 </div>
 
                 {/* --- Details Sidebar --- */}
@@ -392,6 +390,16 @@ const bodySectionValues = filterNonEmptySectionValues(getSectionValues("body"));
                   </button>
                 </div>
               </div>
+            </ModalContainer>
+          )}
+
+          {showChangelog && (
+            <ModalContainer
+              title={t("tab_changelog")}
+              onClose={() => setShowChangelog(false)}
+              className="max-w-2xl"
+            >
+              <Changelog changes={page.changelog || []} />
             </ModalContainer>
           )}
         </div>

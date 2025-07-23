@@ -1,6 +1,7 @@
-
-
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.future import select
+from datetime import datetime, timezone
+from typing import List, Optional
 
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
@@ -15,12 +16,10 @@ from app.models.model_agent import Agent
 from app.models.model_gameworld import GameWorld
 
 openai_model = settings.open_ai_model
-
 PERSONALITY_FILE = Path("./data/personalities_parsing.json")
 
 
 async def ensure_personality_prompts(personalities: list[str]) -> dict:
-    """Ensure prompt texts exist for the given personalities."""
     PERSONALITY_FILE.parent.mkdir(parents=True, exist_ok=True)
     if PERSONALITY_FILE.is_file():
         with open(PERSONALITY_FILE) as f:
@@ -30,10 +29,7 @@ async def ensure_personality_prompts(personalities: list[str]) -> dict:
 
     llm = ChatOpenAI(api_key=settings.openai_api_key or "sk-test", model=openai_model)
     prompt = ChatPromptTemplate.from_messages([
-        (
-            "system",
-            "Write one short sentence that describes how text should sound when using this personality.",
-        ),
+        ("system", "Write one short sentence that describes how text should sound when using this personality."),
         ("user", "{personality}"),
     ])
     chain = prompt | llm
@@ -65,78 +61,106 @@ async def chat_with_agent(
     n_results: int = 5,
     user_nickname: str | None = None,
 ) -> dict:
-    """Return a chat response and source links using OpenAI with world and agent context."""
-
     agent = await session.get(Agent, agent_id)
     if not agent or agent.vector_db_update_date is None:
         raise ValueError("Agent unavailable")
 
-    n_results = max(n_results, 5)
-
-    # print (f" - AGENT CHAT: {agent.name}")
-
     query = messages[-1].get("content", "") if messages else ""
-    docs = crud_vectordb.query_world(agent.world_id, query, n_results)
     world = await session.get(GameWorld, agent.world_id)
-    # print (f" ---- Querry: {query}")
-    # print (f" ---- Docs: {docs}")    
-    # print (f" ---- world: {world}")        
 
-    sources = []
-    context_parts = []
-    for d in docs:
-        page_id = d.get("page_id")
-        concept_id = d.get("concept_id")
-        title = d.get("title") or f"Page {page_id}" if page_id else "Unknown page"
-        if page_id is None or concept_id is None:
-            continue
-        url = f"/worlds/{agent.world_id}/concept/{concept_id}/page/{page_id}"
-        sources.append({"title": title, "url": url})
-        context_parts.append(f"[{title}]\n{d['document']}")
-    context = "\n\n".join(context_parts)
-      
+    # Step 1: Understand the query
+    llm_understand = ChatOpenAI(api_key=settings.openai_api_key, model=openai_model)
+    understand_prompt = ChatPromptTemplate.from_messages([
+        ("system", "Analyze the user query and return:
+            - key entities
+            - concept types
+            - view types (narrative, event, relationship)
+            - semantic rewritten query
+            Respond in JSON."),
+                    ("user", "{query}"),
+    ])
+    understand_chain = understand_prompt | llm_understand
+    structured = await understand_chain.ainvoke({"query": query})
 
+    try:
+        parsed = json.loads(structured.content.strip())
+    except Exception:
+        parsed = {
+            "semantic_query": query,
+            "views": ["narrative", "event", "relationship"],
+            "concept_types": []
+        }
+
+    semantic_query = parsed.get("semantic_query", query)
+    views = parsed.get("views", ["narrative", "event", "relationship"])
+    filters = {}
+    if parsed.get("concept_types"):
+        filters["concept_type"] = parsed["concept_types"]
+
+    # Step 2: Retrieve relevant chunks
+    chunks = crud_vectordb.query_world(
+        agent.world_id,
+        semantic_query,
+        n_results=n_results * 4,
+        views=views,
+        filters=filters
+    )
+
+    # Step 3: Use LLM to select which chunks are actually useful
+    context_input = "\n\n".join([f"[{c['title']}]: {c['document']}" for c in chunks])
+    llm_filter = ChatOpenAI(api_key=settings.openai_api_key, model="gpt-4o")
+    filter_prompt = ChatPromptTemplate.from_messages([
+        ("system", "Select the most relevant chunks to answer this query: '{query}'. Respond with a JSON list of titles used."),
+        ("user", "{context}"),
+    ])
+    filter_chain = filter_prompt | llm_filter
+    selection = await filter_chain.ainvoke({"query": query, "context": context_input})
+    try:
+        used_titles = json.loads(selection.content.strip())
+    except Exception:
+        used_titles = []
+
+    selected_chunks = [c for c in chunks if c["title"] in used_titles]
+    context = "\n\n".join(f"[{c['title']}]: {c['document']}" for c in selected_chunks)
+
+    sources = [
+        {
+            "title": c["title"],
+            "url": f"/worlds/{agent.world_id}/concept/{c['concept_id']}/page/{c['page_id']}"
+        }
+        for c in selected_chunks
+    ]
+
+    # Step 4: Generate the final response
     history_txt = "\n".join(f"{m['role']}: {m['content']}" for m in messages[:-1])
     personalities = [p.strip() for p in (agent.personality or "helpful NPC").split(",") if p.strip()]
     agent_name = agent.name or "Agent"
-
     prompts = await ensure_personality_prompts(personalities)
     tone = "\n".join(prompts.get(p, "") for p in personalities if prompts.get(p))
     personality = ", ".join(personalities) if personalities else "helpful NPC"
 
-    # print (f" ---- Context: {context}")
-    # print (f" ---- history_txt: {history_txt}")
-    # print (f" ---- personality: {personality}")    
-
-
     system_prompt = (
         "The agent is a helper to consume data from the world.\n"
-        +f"Agent name: {agent_name}\n"
-        +f"World system: {world.system}\n"
-        +f"World description: {world.description}\n"
-        +f"Agent`s personality: {personality}\n"
-        +f"{tone}\n"
+        + f"Agent name: {agent_name}\n"
+        + f"World system: {world.system}\n"
+        + f"World description: {world.description}\n"
+        + f"Agent's personality: {tone}\n"        
         + (f"The user you are assisting is named {user_nickname}. Always address them as {user_nickname}.\n" if user_nickname else "")
-        +"Use the following context and chat history to answer the user's question.\n"
-        +"Use the agent`s personality to give the tone of your responses. Stick to it, and make it creative!\n"
-        +"Do not mention any links in your answer.\n"
-        +"If no relevant information is found in the documents, inform the user."
+        + "Use the following context and chat history to answer the user's question.\n"
+        + "Use the agent's personality to give the tone of your responses. Stick to it, and make it creative!\n"
+        + "Do not mention any links in your answer.\n"
+        + "If no relevant information is found in the documents, inform the user."
     )
 
-    # print (f" ---- system_prompt: {system_prompt}") 
+    gen_prompt = ChatPromptTemplate.from_messages([
+        ("system", system_prompt),
+        ("system", f"Context:\n{context}" if context else "Context: none"),
+        ("system", f"Chat history:\n{history_txt}" if history_txt else "Chat history: none"),
+        ("user", "{input}"),
+    ])
 
-    prompt = ChatPromptTemplate.from_messages(
-        [
-            ("system", system_prompt),
-            ("system", f"Context:\n{context}" if context else "Context: none"),
-            ("system", f"Chat history:\n{history_txt}" if history_txt else "Chat history: none"),
-            ("user", "{input}"),
-        ]
-    )
-
-    llm = ChatOpenAI(api_key=settings.openai_api_key or "sk-test", model=openai_model)
-    chain = prompt | llm
-
+    final_llm = ChatOpenAI(api_key=settings.openai_api_key, model=openai_model)
+    chain = gen_prompt | final_llm
     builder = Graph()
     builder.add_node("chat", chain)
     builder.set_entry_point("chat")
@@ -149,14 +173,7 @@ async def chat_with_agent(
     return {"answer": answer, "sources": sources}
 
 
-from sqlalchemy.future import select
-from datetime import datetime, timezone
-from typing import List, Optional
-
 async def create_agent(session: AsyncSession, agent: Agent) -> Agent:
-
-    print (f"Creating this agent: {agent}")
-
     session.add(agent)
     await session.commit()
     await session.refresh(agent)
@@ -175,9 +192,7 @@ async def get_agents(session: AsyncSession, world_id: int | None = None) -> List
     if world_id:
         stmt = stmt.where(Agent.world_id == world_id)
     result = await session.execute(stmt)
-    return_result = result.scalars().all()
-    print (f"GOT THIS AGENTS: {return_result}")
-    return return_result
+    return result.scalars().all()
 
 async def update_agent(session: AsyncSession, agent_id: int, updates: dict) -> Optional[Agent]:
     db_agent = await session.get(Agent, agent_id)

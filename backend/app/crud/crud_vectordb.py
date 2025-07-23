@@ -1,5 +1,5 @@
 import os
-from typing import List, Dict
+from typing import List, Dict, Optional
 
 try:
     from chromadb.errors import ChromaError
@@ -201,10 +201,36 @@ async def rebuild_world(session: AsyncSession, world_id: int):
     return len(page_ids)
 
 
-def query_world(world_id: int, query: str, n_results: int = 5, views: List[str] = None) -> List[Dict]:
+def query_world(world_id: int, query: str, n_results: int = 5, views: Optional[List[str]] = None, filters: Optional[Dict] = None) -> List[Dict]:
     collection = _get_collection(world_id)
-    filters = {"view": {"$in": views}} if views else None
-    return collection.max_marginal_relevance_search(query, k=n_results * 4, filter=filters)
+    filter_dict = {}
+
+    if views:
+        filter_dict["view"] = {"$in": views}
+    if filters:
+        filter_dict.update(filters)
+
+    retrieved = collection.max_marginal_relevance_search(query, k=n_results * 4, filter=filter_dict or None)
+
+    pages: Dict[int, Dict] = {}
+    for doc in retrieved:
+        meta = doc.metadata or {}
+        page_id = meta.get("page_id")
+        if page_id is None:
+            continue
+        entry = pages.setdefault(
+            page_id,
+            {"document_parts": [], "metadata": {k: v for k, v in meta.items() if k != "chunk_index"}},
+        )
+        entry["document_parts"].append((meta.get("chunk_index", 0), doc.page_content))
+
+    results: List[Dict] = []
+    for page in pages.values():
+        parts = sorted(page["document_parts"], key=lambda x: x[0])
+        full_doc = " ".join(p[1] for p in parts)
+        results.append({"document": full_doc, **page["metadata"]})
+
+    return results[:n_results]
 
 # def query_world(world_id: int, query: str, n_results: int = 5) -> List[Dict]:
 #     collection = _get_collection(world_id)

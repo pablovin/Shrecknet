@@ -158,17 +158,29 @@ async def delete_key_event(session: AsyncSession, event_id: int) -> None:
 
 async def create_relationship(session: AsyncSession, rel: PageRelationship) -> PageRelationship:
     session.add(rel)
-    inverse = PageRelationship(
-        page_id=rel.target_page_id,
-        target_page_id=rel.page_id,
-        relationship_type=rel.relationship_type,
-        direction="incoming" if rel.direction == "outgoing" else "outgoing",
-        source_page_id=rel.source_page_id,
-        description=rel.description,
-        author_type=rel.author_type,
-        author_id=rel.author_id,
+    inverse_dir = "incoming" if rel.direction == "outgoing" else "outgoing"
+    result = await session.execute(
+        select(PageRelationship).where(
+            PageRelationship.page_id == rel.target_page_id,
+            PageRelationship.target_page_id == rel.page_id,
+            PageRelationship.relationship_type == rel.relationship_type,
+            PageRelationship.direction == inverse_dir,
+            PageRelationship.source_page_id == rel.source_page_id,
+        )
     )
-    session.add(inverse)
+    existing = result.scalar_one_or_none()
+    if not existing:
+        inverse = PageRelationship(
+            page_id=rel.target_page_id,
+            target_page_id=rel.page_id,
+            relationship_type=rel.relationship_type,
+            direction=inverse_dir,
+            source_page_id=rel.source_page_id,
+            description=rel.description,
+            author_type=rel.author_type,
+            author_id=rel.author_id,
+        )
+        session.add(inverse)
     await session.commit()
     await session.flush()
     return rel

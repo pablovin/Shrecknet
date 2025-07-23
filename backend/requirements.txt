@@ -30,3 +30,4 @@ pillow
 pdfminer.six
 pdf2image
 reportlab
+rapidfuzz

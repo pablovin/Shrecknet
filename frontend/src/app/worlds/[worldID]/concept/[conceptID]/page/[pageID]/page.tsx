@@ -24,7 +24,6 @@ import { useTranslation } from "@/app/hooks/useTranslation";
 import { hasRole } from "@/app/lib/roles";
 import ModalContainer from "@/app/components/template/modalContainer";
 import {
-  Trash2,
   ChevronLeft,
   ChevronRight,
   ScrollText,
@@ -38,7 +37,6 @@ import PageTabMenu from "@/app/components/see_page/PageTabMenu";
 import EventTimeline from "@/app/components/see_page/EventTimeline";
 import RelationshipMapTab from "@/app/components/see_page/RelationshipMapTab";
 import Changelog from "@/app/components/see_page/Changelog";
-import Image from "next/image";
 import { useAgents } from "@/app/lib/useAgents";
 
 // --- Collapsible Sidebar, grid-based, NOT fixed ---
@@ -240,37 +238,12 @@ const bodySectionValues = filterNonEmptySectionValues(getSectionValues("body"));
                     canEdit: hasRole(user?.role, "writer"),
                     onEdit: () => setShowEditModal(true),
                   }}
+                  conceptName={concept?.name}
+                  conceptLogo={concept?.logo}
+                  canDelete={hasRole(user?.role, "world builder")}
+                  onDelete={() => setShowDeleteModal(true)}
+                  deleteLabel={t("delete_page")}
                 />
-
-                <div className="flex items-center gap-3 flex-wrap">
-                  {concept && (
-                    <span className="flex items-center gap-2 px-3 py-1 rounded-full bg-[var(--primary)]/20 border border-[var(--primary)]/40 shadow-sm">
-                      {concept.logo && (
-                        <Image
-                          src={concept.logo}
-                          alt={concept.name}
-                          width={24}
-                          height={24}
-                          className="w-6 h-6 rounded-full object-cover border border-[var(--primary)]/50"
-                        />
-                      )}
-                      <span className="text-sm font-semibold text-[var(--primary)]">
-                        {concept.name}
-                      </span>
-                    </span>
-                  )}
-
-                  {hasRole(user?.role, "world builder") && (
-                    <button
-                      onClick={() => setShowDeleteModal(true)}
-                      className="flex items-center gap-1 px-3 py-1 rounded-full bg-red-600 text-white text-sm shadow hover:bg-red-700 transition"
-                      title={t("delete_page")}
-                    >
-                      <Trash2 className="w-4 h-4" />
-                      {t("delete_page")}
-                    </button>
-                  )}
-                </div>
               </div>
 
               {/* --- Main content & details area, responsive grid --- */}

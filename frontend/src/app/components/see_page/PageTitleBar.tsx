@@ -9,20 +9,37 @@ export default function PageTitleBar({
   pageName,
   logo,
   settings, // { allowCrosslinks, ignoreCrosslink, allowCrossworld, onEdit, canEdit }
+  conceptName,
+  conceptLogo,
+  onDelete,
+  canDelete,
+  deleteLabel,
 }) {
   const [zoomOpen, setZoomOpen] = useState(false);
 
   return (
     <div
-  className="    
-    rounded-2xl md:rounded-3xl  -mt-5 mb-10 px-4 py-6 md:px-8
-    shadow-2xl border border-white/20
-    backdrop-blur-[14px]
-     bg-gradient-to-br from-[#29196620] via-[#7b2ff25] to-[#36205a15] bg-white/15
-    flex flex-col md:flex-row items-center gap-8
-  "
-  style={{ boxShadow: "0 6px 40px 0 #7b2ff225, 0 1.5px 8px #2e205933" }}
->
+      className="relative rounded-2xl md:rounded-3xl -mt-5 mb-10 px-4 py-6 md:px-8 shadow-2xl border border-white/20 backdrop-blur-[14px] bg-gradient-to-br from-[#29196620] via-[#7b2ff25] to-[#36205a15] bg-white/15 flex flex-col md:flex-row items-center gap-8"
+      style={{ boxShadow: "0 6px 40px 0 #7b2ff225, 0 1.5px 8px #2e205933" }}
+    >
+  {/* --- Concept badge top right --- */}
+  {conceptName && (
+    <span className="absolute top-3 right-4 flex items-center gap-2 px-3 py-1 rounded-full bg-[var(--primary)]/20 border border-[var(--primary)]/40 shadow-sm">
+      {conceptLogo && (
+        <Image
+          src={conceptLogo}
+          alt={conceptName}
+          width={24}
+          height={24}
+          className="w-6 h-6 rounded-full object-cover border border-[var(--primary)]/50"
+        />
+      )}
+      <span className="text-sm font-semibold text-[var(--primary)] whitespace-nowrap">
+        {conceptName}
+      </span>
+    </span>
+  )}
+
   {/* --- Logo with modal zoom --- */}
   {logo && (
     <div className="flex-shrink-0 flex flex-col items-center justify-center">
@@ -97,6 +114,9 @@ export default function PageTitleBar({
         allowCrossworld={settings.allowCrossworld}
         canEdit={settings.canEdit}
         onEdit={settings.onEdit}
+        canDelete={canDelete}
+        onDelete={onDelete}
+        deleteLabel={deleteLabel}
       />
     </div>
   </div>

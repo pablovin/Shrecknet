@@ -1,7 +1,14 @@
-import { Info } from "lucide-react";
+import { Info, Trash2 } from "lucide-react";
 
-export default function SettingsDisplay({ 
-  allowCrosslinks, ignoreCrosslink, allowCrossworld, onEdit, canEdit 
+export default function SettingsDisplay({
+  allowCrosslinks,
+  ignoreCrosslink,
+  allowCrossworld,
+  onEdit,
+  canEdit,
+  onDelete,
+  canDelete,
+  deleteLabel,
 }) {
   const settings = [
     {
@@ -45,6 +52,15 @@ export default function SettingsDisplay({
           className="ml-2 px-3 py-1 rounded-full bg-[var(--primary)] text-white text-xs font-semibold hover:bg-[var(--accent)] transition"
         >
           Edit Page
+        </button>
+      )}
+      {canDelete && (
+        <button
+          onClick={onDelete}
+          className="ml-2 flex items-center gap-1 px-3 py-1 rounded-full bg-red-600 text-white text-xs font-semibold shadow hover:bg-red-700 transition"
+        >
+          <Trash2 className="w-4 h-4" />
+          {deleteLabel || 'Delete'}
         </button>
       )}
     </div>

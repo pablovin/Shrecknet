@@ -46,6 +46,7 @@ function EventForm({
   onSubmit: (e: Event) => void;
 }) {
   const [type, setType] = useState(initial?.event_type || eventTypes[0] || "");
+  const [typeFilter, setTypeFilter] = useState("");
   const [date, setDate] = useState(
     initial?.event_date ? initial.event_date.substring(0, 10) : ""
   );
@@ -75,17 +76,48 @@ function EventForm({
     <form onSubmit={handleSubmit} className="space-y-4">
       <div className="flex flex-col gap-1">
         <label className="font-semibold text-sm">Type</label>
-        <input
-          list="event-types"
-          className="border rounded-md px-3 py-1 bg-[var(--surface)]"
-          value={type}
-          onChange={(e) => setType(e.target.value)}
-        />
-        <datalist id="event-types">
-          {eventTypes.map((t) => (
-            <option key={t} value={t} />
-          ))}
-        </datalist>
+        <Combobox value={type} onChange={(val) => setType(val)}>
+          <div className="relative">
+            <Combobox.Input
+              className="border rounded-md px-3 py-1 bg-[var(--surface)] w-full"
+              displayValue={(v: string) => v}
+              onChange={(e) => {
+                setTypeFilter(e.target.value);
+                setType(e.target.value);
+              }}
+              placeholder="Select or type event type..."
+            />
+            <Combobox.Options className="absolute mt-1 max-h-60 w-full overflow-auto rounded bg-[var(--surface)] shadow-lg z-20 border">
+              {eventTypes
+                .filter((t) => t.toLowerCase().includes(typeFilter.toLowerCase()))
+                .map((t) => (
+                  <Combobox.Option
+                    key={t}
+                    value={t}
+                    className="px-2 py-1 cursor-pointer hover:bg-[var(--accent)]/20"
+                  >
+                    {t}
+                  </Combobox.Option>
+                ))}
+            </Combobox.Options>
+          </div>
+        </Combobox>
+        {sourcePage && (
+          (() => {
+            const p = pages.find((pg) => String(pg.id) === sourcePage);
+            if (!p) return null;
+            return (
+              <Link
+                href={`/worlds/${p.gameworld_id}/concept/${p.concept_id}/page/${p.id}`}
+                target="_blank"
+                className="text-xs underline text-[var(--primary)] mt-1"
+              >
+                View Selected Page
+              </Link>
+            );
+          })()
+        )}
+      </div>
       </div>
       <div className="flex flex-col gap-1">
         <label className="font-semibold text-sm">Date</label>
@@ -135,7 +167,15 @@ function EventForm({
                     {p.logo && (
                       <Image src={p.logo} alt={p.name} width={16} height={16} className="w-4 h-4 rounded-full object-cover" />
                     )}
-                    {p.name}
+                    <span className="flex-1">{p.name}</span>
+                    <a
+                      href={`/worlds/${p.gameworld_id}/concept/${p.concept_id}/page/${p.id}`}
+                      target="_blank"
+                      onClick={(e) => e.stopPropagation()}
+                      className="text-xs underline text-[var(--primary)]"
+                    >
+                      Open
+                    </a>
                   </Combobox.Option>
                 ))}
             </Combobox.Options>
@@ -170,7 +210,15 @@ function EventForm({
                     {p.logo && (
                       <Image src={p.logo} alt={p.name} width={16} height={16} className="w-4 h-4 rounded-full object-cover" />
                     )}
-                    {p.name}
+                    <span className="flex-1">{p.name}</span>
+                    <a
+                      href={`/worlds/${p.gameworld_id}/concept/${p.concept_id}/page/${p.id}`}
+                      target="_blank"
+                      onClick={(e) => e.stopPropagation()}
+                      className="text-xs underline text-[var(--primary)]"
+                    >
+                      Open
+                    </a>
                   </Combobox.Option>
                 ))}
             </Combobox.Options>
@@ -182,10 +230,16 @@ function EventForm({
             if (!p) return null;
             return (
               <span key={id} className="flex items-center gap-1 px-2 py-1 rounded-full bg-[var(--surface)] border text-xs">
-                {p.logo && (
-                  <Image src={p.logo} alt={p.name} width={16} height={16} className="w-4 h-4 rounded-full object-cover" />
-                )}
-                {p.name}
+                <Link
+                  href={`/worlds/${p.gameworld_id}/concept/${p.concept_id}/page/${p.id}`}
+                  target="_blank"
+                  className="flex items-center gap-1"
+                >
+                  {p.logo && (
+                    <Image src={p.logo} alt={p.name} width={16} height={16} className="w-4 h-4 rounded-full object-cover" />
+                  )}
+                  {p.name}
+                </Link>
                 <button type="button" onClick={() => setRelated(related.filter((r) => r !== id))} className="ml-1">×</button>
               </span>
             );

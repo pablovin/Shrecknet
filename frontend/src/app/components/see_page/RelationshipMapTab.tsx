@@ -23,13 +23,15 @@ interface PageInfo {
   id: number;
   name: string;
   logo?: string;
+  gameworld_id?: number;
+  concept_id?: number;
 }
 
 export default function RelationshipMapTab({
   page,
   pages,
 }: {
-  page: { relationship_map: Relationship[]; id: number };
+  page: { relationship_map: Relationship[]; id: number; gameworld_id: number; concept_id: number };
   pages: PageInfo[];
 }) {
   const { token } = useAuth();
@@ -65,6 +67,7 @@ export default function RelationshipMapTab({
 
       const nodes: any[] = [];
       const links: any[] = [];
+      const addedPairs = new Set<string>();
       const visited = new Set<number>();
 
       const addNode = (p: any) => {
@@ -75,6 +78,8 @@ export default function RelationshipMapTab({
           logo: p.logo,
           color: colorForConcept(p.concept_id || 0),
           description: p.content,
+          world_id: p.gameworld_id,
+          concept_id: p.concept_id,
         });
         visited.add(p.id);
       };
@@ -113,12 +118,16 @@ export default function RelationshipMapTab({
               rel.direction === "incoming" ? rel.target_page_id : q.id;
             const dst =
               rel.direction === "incoming" ? q.id : rel.target_page_id;
-            links.push({
-              id: rel.id.toString(),
-              source: src.toString(),
-              target: dst.toString(),
-              label: rel.relationship_type,
-            });
+            const key = `${Math.min(src, dst)}:${Math.max(src, dst)}:${rel.relationship_type}`;
+            if (!addedPairs.has(key)) {
+              links.push({
+                id: rel.id.toString(),
+                source: src.toString(),
+                target: dst.toString(),
+                label: rel.relationship_type,
+              });
+              addedPairs.add(key);
+            }
             const p = await fetchPage(rel.target_page_id);
             addNode(p);
             next.push({ id: rel.target_page_id, rels: p?.relationship_map });
@@ -144,6 +153,23 @@ export default function RelationshipMapTab({
         token
       );
       setRelationships((r) => [...r, newRel]);
+
+      // Create reciprocal relationship on target page
+      const reverseDir = rel.direction === "incoming" ? "outgoing" : "incoming";
+      await createRelationship(
+        rel.target_page_id,
+        {
+          page_id: rel.target_page_id,
+          target_page_id: page.id,
+          relationship_type: rel.relationship_type,
+          description: rel.description,
+          source_page_id: rel.source_page_id,
+          direction: reverseDir,
+          author_type: "user",
+          author_id: 0,
+        },
+        token
+      );
     } catch (err) {
       console.error("Failed to create relationship", err);
     }

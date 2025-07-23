@@ -4,6 +4,8 @@ import Image from "next/image";
 import { useState } from "react";
 import ModalContainer from "../template/modalContainer";
 import SettingsDisplay from "./SettingsDisplay"; // Update the path if needed
+import { History } from "lucide-react";
+import { useTranslation } from "@/app/hooks/useTranslation";
 
 export default function PageTitleBar({
   pageName,
@@ -14,30 +16,45 @@ export default function PageTitleBar({
   onDelete,
   canDelete,
   deleteLabel,
+  onShowChangelog,
 }) {
   const [zoomOpen, setZoomOpen] = useState(false);
+  const { t } = useTranslation();
 
   return (
     <div
       className="relative rounded-2xl md:rounded-3xl -mt-5 mb-10 px-4 py-6 md:px-8 shadow-2xl border border-white/20 backdrop-blur-[14px] bg-gradient-to-br from-[#29196620] via-[#7b2ff25] to-[#36205a15] bg-white/15 flex flex-col md:flex-row items-center gap-8"
       style={{ boxShadow: "0 6px 40px 0 #7b2ff225, 0 1.5px 8px #2e205933" }}
     >
-  {/* --- Concept badge top right --- */}
-  {conceptName && (
-    <span className="absolute top-3 right-4 flex items-center gap-2 px-3 py-1 rounded-full bg-[var(--primary)]/20 border border-[var(--primary)]/40 shadow-sm">
-      {conceptLogo && (
-        <Image
-          src={conceptLogo}
-          alt={conceptName}
-          width={24}
-          height={24}
-          className="w-6 h-6 rounded-full object-cover border border-[var(--primary)]/50"
-        />
+  {/* --- Concept badge and changelog --- */}
+  {(conceptName || onShowChangelog) && (
+    <div className="absolute top-3 right-4 flex items-center gap-2">
+      {conceptName && (
+        <span className="flex items-center gap-2 px-3 py-1 rounded-full bg-[var(--primary)]/20 border border-[var(--primary)]/40 shadow-sm">
+          {conceptLogo && (
+            <Image
+              src={conceptLogo}
+              alt={conceptName}
+              width={24}
+              height={24}
+              className="w-6 h-6 rounded-full object-cover border border-[var(--primary)]/50"
+            />
+          )}
+          <span className="text-sm font-semibold text-[var(--primary)] whitespace-nowrap">
+            {conceptName}
+          </span>
+        </span>
       )}
-      <span className="text-sm font-semibold text-[var(--primary)] whitespace-nowrap">
-        {conceptName}
-      </span>
-    </span>
+      {onShowChangelog && (
+        <button
+          onClick={onShowChangelog}
+          className="flex items-center gap-1 px-3 py-1 rounded-full bg-[var(--primary)] text-[var(--primary-foreground)] text-xs font-semibold shadow hover:bg-[var(--accent)] transition"
+        >
+          <History className="w-4 h-4" />
+          {t("tab_changelog")}
+        </button>
+      )}
+    </div>
   )}
 
   {/* --- Logo with modal zoom --- */}

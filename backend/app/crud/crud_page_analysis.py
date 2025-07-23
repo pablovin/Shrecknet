@@ -1,6 +1,5 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from langchain_openai import ChatOpenAI
-from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.prompts import ChatPromptTemplate
 from typing import Dict, List
 from difflib import SequenceMatcher
@@ -26,6 +25,18 @@ def _valid_name(name: str) -> bool:
         if term in n:
             return False
     return True
+
+
+def _post_process_names(names: set[str]) -> set[str]:
+    """Additional heuristics to remove unlikely concept names."""
+    processed: set[str] = set()
+    for name in names:
+        if not _valid_name(name):
+            continue
+        if len(name.split()) > 8:
+            continue
+        processed.add(name.strip())
+    return processed
 
 
 def _normalize(text: str) -> str:
@@ -92,8 +103,13 @@ async def analyze_page(session: AsyncSession, agent: Agent, page: Page):
     pages_by_id = {p.id: p for p in existing_pages}
     page_map = {_canonical(p.name): p.id for p in existing_pages}
 
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size=2000, chunk_overlap=200)
-    docs = text_splitter.split_text(page.content or "")
+    content = page.content or ""
+    if not content:
+        docs = [""]
+    else:
+        part_len = max(1, len(content) // 4)
+        docs = [content[i * part_len:(i + 1) * part_len] for i in range(3)]
+        docs.append(content[3 * part_len:])
 
     llm = ChatOpenAI(api_key=settings.openai_api_key or "sk-test", model=settings.open_ai_model)
 
@@ -110,8 +126,8 @@ async def analyze_page(session: AsyncSession, agent: Agent, page: Page):
         chain = prompt | llm
         for chunk in docs:
             resp = await chain.ainvoke({"text": chunk})
-            names = [n.strip() for n in resp.content.split(',') if n.strip()]
-            found.update(names)
+            names = {n.strip() for n in resp.content.split(',') if n.strip()}
+            found.update(_post_process_names(names))
         for name in sorted(found):
             if not _valid_name(name):
                 continue

@@ -10,6 +10,7 @@ from app.models.model_page import (
     PageCharacteristicValue,
     PageChange,
     PageKeyEvent,
+    PageRelationship,
 )
 from app.schemas.schema_page import PageCreate, PageRead, PageUpdate
 from app.schemas.schema_page_characteristic_value import PageCharacteristicValueUpdate, PageCharacteristicValueRead, PageCharacteristicValueCreate
@@ -18,6 +19,11 @@ from app.schemas.schema_page_key_event import (
     PageKeyEventCreate,
     PageKeyEventRead,
     PageKeyEventUpdate,
+)
+from app.schemas.schema_page_relationship import (
+    PageRelationshipCreate,
+    PageRelationshipRead,
+    PageRelationshipUpdate,
 )
 from app.crud.crud_page import (
     create_page,
@@ -39,6 +45,8 @@ from app.crud.crud_page import (
     delete_key_event,
     create_relationship,
     get_relationships,
+    update_relationship,
+    delete_relationship,
 )
 from datetime import datetime, timezone
 from app.dependencies import get_current_user, require_role
@@ -364,6 +372,73 @@ async def delete_key_event_endpoint(
         author_type="user",
         author_id=user.id,
         values={"event_id": event_id},
+    )
+    await create_page_change(session, change)
+    return {"ok": True}
+
+# -- Relationship endpoints --
+
+@router.post("/{page_id}/relationships/", response_model=PageRelationshipRead)
+async def add_relationship_endpoint(
+    page_id: int,
+    rel: PageRelationshipCreate,
+    user: User = Depends(require_role(UserRole.writer)),
+    session: AsyncSession = Depends(get_session),
+):
+    if rel.page_id != page_id:
+        rel.page_id = page_id
+    db_rel = await create_relationship(session, PageRelationship(**rel.model_dump()))
+    change = PageChange(
+        page_id=page_id,
+        change_type="relationship_added",
+        author_type="user",
+        author_id=user.id,
+        values=db_rel.model_dump(),
+    )
+    await create_page_change(session, change)
+    return db_rel
+
+
+@router.patch("/relationships/{rel_id}", response_model=PageRelationshipRead)
+async def update_relationship_endpoint(
+    rel_id: int,
+    updates: PageRelationshipUpdate,
+    user: User = Depends(require_role(UserRole.writer)),
+    session: AsyncSession = Depends(get_session),
+):
+    update_dict = updates.model_dump(exclude_unset=True)
+    rel = await update_relationship(session, rel_id, update_dict)
+    if not rel:
+        raise HTTPException(status_code=404, detail="Relationship not found")
+    change = PageChange(
+        page_id=rel.page_id,
+        change_type="relationship_updated",
+        author_type="user",
+        author_id=user.id,
+        values=update_dict,
+    )
+    await create_page_change(session, change)
+    return rel
+
+
+@router.delete("/relationships/{rel_id}")
+async def delete_relationship_endpoint(
+    rel_id: int,
+    user: User = Depends(require_role(UserRole.writer)),
+    session: AsyncSession = Depends(get_session),
+):
+    result = await session.execute(select(PageRelationship).where(PageRelationship.id == rel_id))
+    rel = result.scalar_one_or_none()
+    if not rel:
+        raise HTTPException(status_code=404, detail="Relationship not found")
+    page_id = rel.page_id
+    await delete_relationship(session, rel_id)
+    change = PageChange(
+        page_id=page_id,
+        change_type="relationship_deleted",
+        author_type="user",
+        author_id=user.id,
+        values={"relationship_id": rel_id},
     )
     await create_page_change(session, change)
     return {"ok": True}

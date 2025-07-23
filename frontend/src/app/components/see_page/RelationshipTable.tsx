@@ -19,7 +19,17 @@ interface PageInfo {
   logo?: string;
 }
 
-export default function RelationshipTable({ relationships, pages }: { relationships: Relationship[]; pages: PageInfo[] }) {
+export default function RelationshipTable({
+  relationships,
+  pages,
+  onEdit,
+  onDelete,
+}: {
+  relationships: Relationship[];
+  pages: PageInfo[];
+  onEdit?: (r: Relationship) => void;
+  onDelete?: (id: number) => void;
+}) {
   const getPage = (id: number) => pages.find((p) => p.id === id);
   return (
     <table className="w-full text-sm mt-4 border">
@@ -29,6 +39,7 @@ export default function RelationshipTable({ relationships, pages }: { relationsh
           <th className="px-2 py-1 text-left">Type</th>
           <th className="px-2 py-1 text-left">Description</th>
           <th className="px-2 py-1 text-left">Source</th>
+          {onEdit && <th></th>}
         </tr>
       </thead>
       <tbody>
@@ -45,6 +56,12 @@ export default function RelationshipTable({ relationships, pages }: { relationsh
               <td className="px-2 py-1">
                 {source ? <Link href={`/pages/${source.id}`}>{source.name}</Link> : "-"}
               </td>
+              {onEdit && (
+                <td className="px-2 py-1 space-x-1">
+                  <button onClick={() => onEdit(rel)} className="text-xs text-blue-500">Edit</button>
+                  <button onClick={() => onDelete?.(rel.id)} className="text-xs text-red-500">Delete</button>
+                </td>
+              )}
             </tr>
           );
         })}

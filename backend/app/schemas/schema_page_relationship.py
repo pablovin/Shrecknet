@@ -18,3 +18,10 @@ class PageRelationshipRead(PageRelationshipBase):
     id: int
     page_id: int
     added_at: datetime
+
+class PageRelationshipUpdate(SQLModel):
+    target_page_id: Optional[int] = None
+    relationship_type: Optional[str] = None
+    direction: Optional[str] = None
+    source_page_id: Optional[int] = None
+    description: Optional[str] = None

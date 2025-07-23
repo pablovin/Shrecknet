@@ -1,3 +1,4 @@
+"use client";
 import Image from "next/image";
 import Link from "next/link";
 import { GiCrystalBall } from "react-icons/gi";
@@ -39,40 +40,54 @@ export default function EventCard({
   onDelete: (e: Event) => void;
   authorName?: string;
 }) {
-  const formatDate = (d?: string) =>
-    d ? new Date(d).toLocaleDateString() : "";
-  const source = event.source_page_id
-    ? pageMap[event.source_page_id]
-    : undefined;
+  const formatDate = (d?: string) => (d ? new Date(d).toLocaleDateString() : "");
+  const source = event.source_page_id ? pageMap[event.source_page_id] : undefined;
 
   return (
-    <div className="relative pl-8 sm:pl-12">
-      <div className="absolute -left-4 sm:-left-6 top-4 z-10">
-        <span className="w-6 h-6 rounded-full bg-[var(--background)] border-2 border-[var(--primary)] flex items-center justify-center shadow">
-          <GiCrystalBall className="w-4 h-4 text-[var(--primary)]" />
+    <div className="relative pl-6 sm:pl-10">
+      {/* Timeline orb */}
+      <div className="absolute -left-3 sm:-left-5 top-5 z-10">
+        <span className="w-5 h-5 rounded-full bg-[var(--background)] border-2 border-[var(--primary)] flex items-center justify-center shadow">
+          <GiCrystalBall className="w-3 h-3 text-[var(--primary)]" />
         </span>
       </div>
-      <div className="bg-[var(--surface-variant)]/80 border border-[var(--border)] rounded-2xl shadow-md p-4 backdrop-blur-sm">
-        <div className="flex justify-between items-center mb-2">
-          <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-[var(--primary)]/20 text-[var(--primary)] border border-[var(--primary)]/30">
+
+      <div className="bg-[var(--surface)] border border-[var(--border)] rounded-xl shadow-sm p-4 sm:p-5 space-y-2 transition hover:shadow-md">
+        {/* Header */}
+        <div className="flex items-center justify-between text-xs font-semibold">
+          <span className="px-2 py-0.5 rounded-full bg-[var(--primary)]/10 text-[var(--primary)] border border-[var(--primary)]/30">
             {event.event_type}
           </span>
-          <span className="text-xs opacity-80">{formatDate(event.event_date)}</span>
+          <span className="text-[var(--muted-foreground)]">{formatDate(event.event_date)}</span>
         </div>
+
+        {/* Summary */}
         {event.summary && (
-          <p className="prose-sm mb-2 text-[var(--foreground)]">{event.summary}</p>
+          <p className="text-sm text-[var(--foreground)] leading-relaxed mt-1">
+            {event.summary}
+          </p>
         )}
+
+        {/* Related pages */}
         {event.related_page_ids && event.related_page_ids.length > 0 && (
-          <div className="flex flex-wrap gap-2 mb-2">
+          <div className="flex flex-wrap gap-2">
             {event.related_page_ids.map((id) => {
               const p = pageMap[id];
               if (!p) return null;
-              const href = `/worlds/${p.gameworld_id}/concept/${p.concept_id}/page/${p.id}`;
               return (
-                <WikiLinkHoverCard href={href} key={id}>
-                  <span className="flex items-center gap-1 px-2 py-1 rounded-full bg-[var(--surface)] border text-xs">
+                <WikiLinkHoverCard
+                  key={id}
+                  href={`/worlds/${p.gameworld_id}/concept/${p.concept_id}/page/${p.id}`}
+                >
+                  <span className="flex items-center gap-1 px-2 py-0.5 rounded-full border border-[var(--primary)]/20 text-xs">
                     {p.logo && (
-                      <Image src={p.logo} alt={p.name} width={16} height={16} className="w-4 h-4 rounded-full object-cover" />
+                      <Image
+                        src={p.logo}
+                        alt={p.name}
+                        width={16}
+                        height={16}
+                        className="w-4 h-4 rounded-full object-cover"
+                      />
                     )}
                     {p.name}
                   </span>
@@ -81,28 +96,40 @@ export default function EventCard({
             })}
           </div>
         )}
+
+        {/* Source page */}
         {source && (
-          <div className="flex items-center gap-2 text-xs mb-2">
-            <span className="font-semibold">Source:</span>
+          <div className="flex items-center gap-2 text-xs text-[var(--muted-foreground)]">
+            <span className="font-medium">Source:</span>
             <WikiLinkHoverCard
               href={`/worlds/${source.gameworld_id}/concept/${source.concept_id}/page/${source.id}`}
             >
-              <span className="flex items-center gap-1 px-2 py-1 rounded-full bg-[var(--surface)] border text-xs">
+              <span className="flex items-center gap-1 px-2 py-0.5 rounded-full border border-[var(--primary)]/20 text-xs">
                 {source.logo && (
-                  <Image src={source.logo} alt="src" width={16} height={16} className="w-4 h-4 rounded-full object-cover" />
+                  <Image
+                    src={source.logo}
+                    alt={source.name}
+                    width={16}
+                    height={16}
+                    className="w-4 h-4 rounded-full object-cover"
+                  />
                 )}
                 {source.name}
               </span>
             </WikiLinkHoverCard>
           </div>
         )}
+
+        {/* Author */}
         {authorName && (
-          <div className="text-xs text-right text-[var(--foreground)]/70 mt-1">
+          <div className="text-xs text-right text-[var(--muted-foreground)]">
             Written by {authorName}
           </div>
         )}
+
+        {/* Actions */}
         {canEdit && (
-          <div className="flex justify-end gap-2 text-xs mt-2">
+          <div className="flex justify-end gap-3 text-xs pt-1">
             <button
               onClick={() => onEdit(event)}
               className="text-[var(--primary)] hover:underline"

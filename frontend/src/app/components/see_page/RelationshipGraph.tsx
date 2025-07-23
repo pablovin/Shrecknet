@@ -8,6 +8,8 @@ interface NodeInfo {
   logo?: string;
   color: string;
   description?: string;
+  world_id?: number;
+  concept_id?: number;
   moreCount?: number;
 }
 
@@ -61,7 +63,12 @@ export default function RelationshipGraph({
         }}
         onNodePointerOut={() => setHover(null)}
         onNodeClick={(node) => {
-          window.location.href = `/pages/${node.id}`;
+          const data = node.data as NodeInfo;
+          if (data.world_id && data.concept_id) {
+            window.location.href = `/worlds/${data.world_id}/concept/${data.concept_id}/page/${node.id}`;
+          } else {
+            window.location.href = `/pages/${node.id}`;
+          }
         }}
       />
       {hover && (

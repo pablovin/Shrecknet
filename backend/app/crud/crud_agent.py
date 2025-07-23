@@ -117,7 +117,7 @@ async def chat_with_agent(
     query_words = semantic_query.lower().split()
     for p in all_pages:
         name_lower = p.name.lower()
-        if any(fuzz.partial_ratio(name_lower, word) > 85 for word in query_words):
+        if any(fuzz.partial_ratio(name_lower, word) > 90 for word in query_words):
             mentioned_pages.append(p.name)
     if mentioned_pages:
         filters["title"] = mentioned_pages
@@ -144,28 +144,42 @@ async def chat_with_agent(
     context_input = "\n\n".join([f"[{c['title']}]: {c['document']}" for c in chunks])
     llm_filter = ChatOpenAI(api_key=settings.openai_api_key, model="gpt-4o")
     filter_prompt = ChatPromptTemplate.from_messages([
-        ("system", "Select the most relevant chunks to answer this query: '{query}'. Respond with a JSON list of titles used."),
+        ("system", "You will receive a user query and a list of document chunks. Return ONLY a JSON list of the most relevant titles to answer the query. Do not add explanation or formatting. Example:\n[\"Page A\", \"Page B\"]"),
         ("user", "{context}"),
     ])
     filter_chain = filter_prompt | llm_filter
     selection = await filter_chain.ainvoke({"query": query, "context": context_input})
 
-    try:
-        used_titles = json.loads(selection.content.strip())
-    except Exception:
-        used_titles = []
+    # try:
+    used_titles = json.loads(selection.content.strip())
+    # except Exception as ex:
+    #     print (f"ERROR USED TITLES: {}")
+    #     used_titles = []
 
-    selected_chunks = [c for c in chunks if c["title"] in used_titles]
+    selected_chunks = []
+    for c in chunks:
+        if c["title"] in used_titles:
+            selected_chunks.append(c)
+            print("Retrieved titles:", [c["title"] for c in chunks])
+            print("Top chunk preview:", chunks[0]["document"][:300] if chunks else "None")
+
+    # selected_chunks = [c for c in chunks if c["title"] in used_titles]
     context = "\n\n".join(f"[{c['title']}]: {c['document']}" for c in selected_chunks)
 
-    sources = [
-        {
-            "title": c["title"],
-            "url": f"/worlds/{agent.world_id}/concept/{c['concept_id']}/page/{c['page_id']}"
-        }
-        for c in selected_chunks
-    ]
+    sources = []
+    for c in selected_chunks:
+        sources.append(
+            {
+                "title": c["title"],
+                "url": f"/worlds/{agent.world_id}/concept/{c['concept_id']}/page/{c['page_id']}"
+            }
+        )
 
+
+
+  
+    print(f"Context: {context}")
+    print(f"selected_chunks: {selected_chunks}")
     print(f"Sources: {sources}")
     
     # Step 6: Generate final response

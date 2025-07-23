@@ -5,6 +5,11 @@ import { useAuth } from "../auth/AuthProvider";
 import { hasRole } from "@/app/lib/roles";
 import { Combobox } from "@headlessui/react";
 import Link from "next/link";
+import Image from "next/image";
+import { PlusCircle } from "lucide-react";
+import { useUsers } from "@/app/lib/useUsers";
+import { useAgents } from "@/app/lib/useAgents";
+import EventCard, { Event as EventCardEvent } from "./EventCard";
 import {
   createKeyEvent,
   updateKeyEvent,
@@ -13,18 +18,23 @@ import {
 } from "@/app/lib/pagesAPI";
 import Image from "next/image";
 
-interface Event {
-  id?: number;
-  page_id?: number;
-  event_type: string;
-  event_date?: string;
-  summary?: string;
-  source_page_id?: number | null;
-  related_page_ids?: number[];
-  author_type?: string;
-  author_id?: number;
-  added_at?: string;
-}
+// Re-exporting for consumers if needed
+export type Event = EventCardEvent;
+
+const emojiMap: Record<string, string> = {
+  birth: "👶",
+  death: "💀",
+  battle: "⚔️",
+  discovery: "🔍",
+  founding: "🏰",
+  disaster: "🔥",
+  festival: "🎉",
+};
+
+const getEmoji = (type: string) => {
+  const key = type.toLowerCase();
+  return emojiMap[key] || "✨";
+};
 
 interface PageInfo {
   id: number;
@@ -275,6 +285,20 @@ export default function EventTimeline({
   const [editEvent, setEditEvent] = useState<Event | null>(null);
   const [pageMap, setPageMap] = useState<Record<number, PageInfo>>({});
 
+  const { users } = useUsers();
+  const worldId = pages[0]?.gameworld_id || Object.values(pageMap)[0]?.gameworld_id;
+  const { agents } = useAgents(worldId);
+
+  const getAuthorName = (ev: Event) => {
+    if (ev.author_type === "user") {
+      return users.find((u) => u.id === ev.author_id)?.nickname || `User ${ev.author_id}`;
+    }
+    if (ev.author_type === "agent") {
+      return agents.find((a) => a.id === ev.author_id)?.name || `Agent ${ev.author_id}`;
+    }
+    return ev.author_type || "";
+  };
+
   // Fetch page details if not provided
   useEffect(() => {
     const ids = new Set<number>();
@@ -352,111 +376,50 @@ export default function EventTimeline({
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-2 flex-wrap">
+      <div className="flex items-end flex-wrap gap-2 p-2 rounded-xl bg-[var(--surface-variant)]/60 border border-[var(--border)] shadow-inner font-serif">
         <select
-          className="border rounded-md px-3 py-1 bg-[var(--surface)]"
+          className="px-3 py-1 rounded-md bg-[var(--surface)] border border-[var(--border)]"
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
         >
-          <option value="all">All</option>
+          <option value="all">🌐 All</option>
           {Array.from(new Set(events.map((e) => e.event_type))).map((t) => (
             <option key={t} value={t}>
-              {t}
+              {getEmoji(t)} {t}
             </option>
           ))}
         </select>
         <input
           type="text"
           placeholder="Search..."
-          className="border rounded-md px-3 py-1 bg-[var(--surface)] flex-1"
+          className="flex-1 px-3 py-1 rounded-md bg-[var(--surface)] border border-[var(--border)]"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
         {canEdit && (
           <button
-            className="px-3 py-1 rounded-full bg-[var(--primary)] text-[var(--primary-foreground)] hover:bg-[var(--accent)] transition"
+            className="hidden sm:flex items-center gap-1 px-4 py-1 rounded-full bg-[var(--primary)] text-[var(--primary-foreground)] shadow hover:bg-[var(--accent)] transition"
             onClick={() => setShowForm(true)}
           >
-            Add Event
+            <PlusCircle className="w-4 h-4" /> Add Event
           </button>
         )}
       </div>
-      <div className="relative border-l-2 border-[var(--primary)] ml-4 pl-6 max-h-[60vh] overflow-y-auto">
-        {visible.map((e) => (
-          <div key={e.id} className="mb-8 relative group">
-            <div className="bg-[var(--surface-variant)] border border-[var(--border)] rounded-xl p-4 shadow-md">
-              <div className="flex justify-between items-center mb-2">
-                <div className="font-semibold text-sm flex items-center gap-1">
-                  {e.event_type}
-                </div>
-                <div className="text-xs text-[var(--foreground)]/70">
-                  {e.event_date ? new Date(e.event_date).toLocaleDateString() : ""}
-                </div>
-              </div>
-              {e.summary && <p className="mb-2 text-sm">{e.summary}</p>}
-              {e.related_page_ids && e.related_page_ids.length > 0 && (
-                <div className="flex flex-wrap gap-2 mb-2">
-                  {e.related_page_ids.map((id) => {
-                    const p = pageMap[id];
-                    if (!p) return null;
-                    const href = `/worlds/${p.gameworld_id}/concept/${p.concept_id}/page/${p.id}`;
-                    return (
-                      <Link
-                        href={href}
-                        key={id}
-                        className="flex items-center gap-1 px-2 py-1 rounded-full bg-[var(--surface)] border text-xs"
-                      >
-                        {p.logo && (
-                          <Image src={p.logo} alt={p.name} width={16} height={16} className="w-4 h-4 rounded-full object-cover" />
-                        )}
-                        {p.name}
-                      </Link>
-                    );
-                  })}
-                </div>
-              )}
-              {e.source_page_id && pageMap[e.source_page_id] && (
-                <div className="flex items-center gap-2 text-xs mb-2">
-                  <span className="font-semibold">Source:</span>
-                  <Link
-                    href={`/worlds/${pageMap[e.source_page_id].gameworld_id}/concept/${pageMap[e.source_page_id].concept_id}/page/${pageMap[e.source_page_id].id}`}
-                    className="flex items-center gap-1"
-                  >
-                    {pageMap[e.source_page_id].logo && (
-                      <Image
-                        src={pageMap[e.source_page_id].logo!}
-                        alt="src"
-                        width={16}
-                        height={16}
-                        className="w-4 h-4 rounded-full object-cover"
-                      />
-                    )}
-                    {pageMap[e.source_page_id].name}
-                  </Link>
-                </div>
-              )}
-              {canEdit && (
-                <div className="flex justify-end gap-2 text-xs">
-                  <button
-                    onClick={() => {
-                      setEditEvent(e);
-                      setShowForm(true);
-                    }}
-                    className="text-[var(--primary)] hover:underline"
-                  >
-                    Edit
-                  </button>
-                  <button
-                    onClick={() => handleDelete(e)}
-                    className="text-red-600 hover:underline"
-                  >
-                    Delete
-                  </button>
-                </div>
-              )}
-            </div>
-          </div>
-        ))}
+      <div className="relative ml-6 sm:ml-8 max-h-[60vh] overflow-y-auto">
+        <div className="absolute left-0 top-0 bottom-0 w-1 bg-[var(--primary)] rounded-full"></div>
+        <div className="space-y-8">
+          {visible.map((e) => (
+            <EventCard
+              key={e.id}
+              event={e}
+              pageMap={pageMap}
+              canEdit={canEdit}
+              onEdit={(ev) => { setEditEvent(ev); setShowForm(true); }}
+              onDelete={handleDelete}
+              authorName={getAuthorName(e)}
+            />
+          ))}
+        </div>
         {!showAll && filtered.length > 10 && (
           <button
             className="text-sm text-[var(--primary)] underline mt-2"
@@ -469,6 +432,14 @@ export default function EventTimeline({
           <div className="text-sm text-center text-[var(--foreground)]/70">No events found.</div>
         )}
       </div>
+      {canEdit && (
+        <button
+          className="sm:hidden fixed bottom-6 right-6 z-20 flex items-center justify-center w-12 h-12 rounded-full bg-[var(--primary)] text-[var(--primary-foreground)] shadow-lg"
+          onClick={() => setShowForm(true)}
+        >
+          <PlusCircle className="w-6 h-6" />
+        </button>
+      )}
       {showForm && (
         <ModalContainer
           title={editEvent ? "Edit Event" : "Add Event"}

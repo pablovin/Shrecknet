@@ -204,20 +204,27 @@ async def rebuild_world(session: AsyncSession, world_id: int):
 def query_world(world_id: int, query: str, n_results: int = 5, views: Optional[List[str]] = None, filters: Optional[Dict] = None) -> List[Dict]:
     collection = _get_collection(world_id)
     
-    # Build valid Chroma filter format (flat, no nested $and)
-    chroma_filter = {}
+    # Build valid Chroma filter format using $and for multiple conditions
+    conditions = []
 
     if views:
-        chroma_filter["view"] = {"$in": views}
+        conditions.append({"view": {"$in": views}})
 
     if filters:
         for key, value in filters.items():
             if isinstance(value, list):
-                chroma_filter[key] = {"$in": value}
+                conditions.append({key: {"$in": value}})
             elif isinstance(value, dict):
-                chroma_filter[key] = value
+                conditions.append({key: value})
             else:
-                chroma_filter[key] = {"$eq": value}
+                conditions.append({key: {"$eq": value}})
+
+    if not conditions:
+        chroma_filter = None
+    elif len(conditions) == 1:
+        chroma_filter = conditions[0]
+    else:
+        chroma_filter = {"$and": conditions}
 
     print(f"FILTERS USED IN QUERY: {chroma_filter}")
 

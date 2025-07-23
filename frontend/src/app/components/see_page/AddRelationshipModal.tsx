@@ -9,7 +9,7 @@ interface PageInfo {
   logo?: string;
 }
 
-interface RelationshipInput {
+export interface RelationshipInput {
   target_page_id: number;
   relationship_type: string;
   description?: string;
@@ -17,19 +17,28 @@ interface RelationshipInput {
   direction: string;
 }
 
-export default function AddRelationshipModal({ pages, onAdd, onClose }: { pages: PageInfo[]; onAdd: (r: RelationshipInput) => void; onClose: () => void }) {
-  const [target, setTarget] = useState<string>(""
-  );
+export default function AddRelationshipModal({
+  pages,
+  onSubmit,
+  onClose,
+  initial,
+}: {
+  pages: PageInfo[];
+  onSubmit: (r: RelationshipInput) => void;
+  onClose: () => void;
+  initial?: RelationshipInput;
+}) {
+  const [target, setTarget] = useState<string>(initial?.target_page_id?.toString() || "");
   const [filter, setFilter] = useState("");
-  const [type, setType] = useState("friend");
-  const [description, setDescription] = useState("");
-  const [source, setSource] = useState<string>("");
-  const [direction, setDirection] = useState("outgoing");
+  const [type, setType] = useState(initial?.relationship_type || "friend");
+  const [description, setDescription] = useState(initial?.description || "");
+  const [source, setSource] = useState<string>(initial?.source_page_id?.toString() || "");
+  const [direction, setDirection] = useState(initial?.direction || "outgoing");
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!target) return;
-    onAdd({
+    onSubmit({
       target_page_id: Number(target),
       relationship_type: type,
       description,
@@ -40,7 +49,7 @@ export default function AddRelationshipModal({ pages, onAdd, onClose }: { pages:
   };
 
   return (
-    <ModalContainer title="Add Relationship" onClose={onClose}>
+    <ModalContainer title={initial ? "Edit Relationship" : "Add Relationship"} onClose={onClose}>
       <form onSubmit={handleSubmit} className="space-y-4">
         <div>
           <label className="font-semibold text-sm">Target Page</label>
@@ -86,7 +95,7 @@ export default function AddRelationshipModal({ pages, onAdd, onClose }: { pages:
           </select>
         </div>
         <button type="submit" className="px-3 py-1 bg-[var(--primary)] text-white rounded">
-          Add
+          {initial ? "Save" : "Add"}
         </button>
       </form>
     </ModalContainer>

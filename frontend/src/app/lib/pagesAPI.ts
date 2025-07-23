@@ -99,3 +99,33 @@ export async function deleteKeyEvent(eventId: number, token: string) {
   if (!res.ok) throw await res.json();
   return await res.json();
 }
+
+// --- Relationships ---
+export async function createRelationship(pageId: number, data: unknown, token: string) {
+  const res = await fetch(`${API_URL}/pages/${pageId}/relationships/`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) throw await res.json();
+  return await res.json();
+}
+
+export async function updateRelationship(relId: number, data: unknown, token: string) {
+  const res = await fetch(`${API_URL}/pages/relationships/${relId}`, {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) throw await res.json();
+  return await res.json();
+}
+
+export async function deleteRelationship(relId: number, token: string) {
+  const res = await fetch(`${API_URL}/pages/relationships/${relId}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw await res.json();
+  return await res.json();
+}

@@ -168,6 +168,22 @@ async def get_relationships(session: AsyncSession, page_id: int) -> List[PageRel
     )
     return result.scalars().all()
 
+async def update_relationship(session: AsyncSession, rel_id: int, updates: dict) -> Optional[PageRelationship]:
+    result = await session.execute(select(PageRelationship).where(PageRelationship.id == rel_id))
+    rel = result.scalar_one_or_none()
+    if not rel:
+        return None
+    for key, value in updates.items():
+        setattr(rel, key, value)
+    await session.commit()
+    await session.flush()
+    return rel
+
+async def delete_relationship(session: AsyncSession, rel_id: int) -> None:
+    await session.execute(delete(PageRelationship).where(PageRelationship.id == rel_id))
+    await session.commit()
+    await session.flush()
+
 from app.utils import serialize_value
 
 async def create_page_change(session: AsyncSession, change: PageChange) -> PageChange:

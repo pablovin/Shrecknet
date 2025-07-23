@@ -2,9 +2,9 @@
 import { useState, useEffect } from "react";
 import RelationshipGraph from "./RelationshipGraph";
 import RelationshipTable from "./RelationshipTable";
-import AddRelationshipModal from "./AddRelationshipModal";
+import AddRelationshipModal, { RelationshipInput } from "./AddRelationshipModal";
 import { useAuth } from "../auth/AuthProvider";
-import { getPage } from "@/app/lib/pagesAPI";
+import { getPage, createRelationship, updateRelationship, deleteRelationship } from "@/app/lib/pagesAPI";
 
 interface Relationship {
   id: number;
@@ -35,6 +35,7 @@ export default function RelationshipMapTab({
   const { token } = useAuth();
   const [relationships, setRelationships] = useState<Relationship[]>([]);
   const [showModal, setShowModal] = useState(false);
+  const [editing, setEditing] = useState<Relationship | null>(null);
   const [graphNodes, setGraphNodes] = useState<any[]>([]);
   const [graphLinks, setGraphLinks] = useState<any[]>([]);
 
@@ -81,7 +82,7 @@ export default function RelationshipMapTab({
       addNode(pageMap.get(page.id));
 
       let queue = [
-        { id: page.id, rels: page.relationship_map || [] },
+        { id: page.id, rels: relationships },
       ];
       let depth = 0;
       const MAX_DEPTH = 2;
@@ -132,40 +133,78 @@ export default function RelationshipMapTab({
     }
 
     buildGraph();
-  }, [page, pages, token]);
+  }, [page.id, pages, token, relationships]);
 
-  const handleAdd = (
-    rel: Omit<
-      Relationship,
-      "id" | "page_id" | "author_type" | "author_id" | "added_at"
-    >
-  ) => {
-    const newRel: Relationship = {
-      id: Date.now(),
-      page_id: page.id,
-      author_type: "user",
-      author_id: 0,
-      added_at: new Date().toISOString(),
-      ...rel,
-    };
-    setRelationships((r) => [...r, newRel]);
+  const handleAdd = async (rel: RelationshipInput) => {
+    if (!token) return;
+    try {
+      const newRel: Relationship = await createRelationship(
+        page.id,
+        { ...rel, page_id: page.id, author_type: "user", author_id: 0 },
+        token
+      );
+      setRelationships((r) => [...r, newRel]);
+    } catch (err) {
+      console.error("Failed to create relationship", err);
+    }
+  };
+
+  const handleEdit = async (id: number, rel: RelationshipInput) => {
+    if (!token) return;
+    try {
+      const updated: Relationship = await updateRelationship(id, rel, token);
+      setRelationships((r) => r.map((p) => (p.id === id ? updated : p)));
+    } catch (err) {
+      console.error("Failed to update relationship", err);
+    }
+  };
+
+  const handleDelete = async (id: number) => {
+    if (!token) return;
+    try {
+      await deleteRelationship(id, token);
+      setRelationships((r) => r.filter((rel) => rel.id !== id));
+    } catch (err) {
+      console.error("Failed to delete relationship", err);
+    }
   };
 
   return (
     <div className="space-y-4">
       <RelationshipGraph nodes={graphNodes} links={graphLinks} />
-      <RelationshipTable relationships={relationships} pages={pages} />
+      <RelationshipTable
+        relationships={relationships}
+        pages={pages}
+        onEdit={(rel) => {
+          setEditing(rel);
+          setShowModal(true);
+        }}
+        onDelete={handleDelete}
+      />
       <button
         className="px-3 py-1 bg-[var(--primary)] text-white rounded"
-        onClick={() => setShowModal(true)}
+        onClick={() => {
+          setEditing(null);
+          setShowModal(true);
+        }}
       >
         Add Relationship
       </button>
       {showModal && (
         <AddRelationshipModal
           pages={pages}
-          onAdd={handleAdd}
-          onClose={() => setShowModal(false)}
+          onSubmit={(data) => {
+            if (editing) {
+              handleEdit(editing.id, data);
+            } else {
+              handleAdd(data);
+            }
+          }}
+          onClose={() => {
+            setShowModal(false);
+            setEditing(null);
+          }}
+          initial={editing || undefined}
         />
       )}
     </div>

@@ -10,13 +10,30 @@ export default function NoteList({ notes }) {
       {notes.map((n) => (
         <button
           key={n.id}
-          className="flex flex-col items-start gap-1 p-4 rounded-xl border border-[var(--border)] bg-[var(--surface)] hover:bg-[var(--surface-variant)] text-left"
+          className="flex flex-col items-start gap-1 p-4 rounded-xl border border-[var(--border)] bg-[var(--surface)] hover:bg-[var(--surface-variant)] text-left transition-shadow shadow-sm hover:shadow-md hover:border-[var(--primary)]/50"
           onClick={() => router.push(`/user_notes/${n.id}`)}
         >
-          <span className="font-bold text-[var(--primary)]">{n.title}</span>
+          <span className="font-bold text-[var(--primary)] text-lg mb-1 line-clamp-1">{n.title}</span>
           <span className="text-xs text-[var(--foreground)]/70">
-            {n.note_date ? format(new Date(n.note_date), "PPpp") : ""}
+            {n.note_date ? format(new Date(n.note_date), "PPpp") : "Undated"}
           </span>
+          {n.tags && n.tags.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-1">
+              {n.tags.map((tag) => (
+                <span
+                  key={tag}
+                  className="px-2 py-0.5 rounded-full text-xs bg-[var(--muted)] text-[var(--muted-foreground)]"
+                >
+                  #{tag}
+                </span>
+              ))}
+            </div>
+          )}
+          {n.shared && (
+            <span className="mt-2 inline-block text-xs text-[var(--accent)] font-semibold">
+              📬 Shared with you
+            </span>
+          )}
         </button>
       ))}
     </div>

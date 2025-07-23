@@ -21,6 +21,11 @@ from pydantic import BaseModel
 from typing import List, Literal, Optional
 import json
 
+from uuid import uuid4
+from pathlib import Path
+from app.config import settings
+from app.task_queue import task_analyze_pages_job, task_rebuild_vectordb, task_create_novel_job, task_analyze_pages_job, task_generate_pages_job
+
 class ChatMessage(BaseModel):
     role: Literal["system", "user", "assistant"]
     content: str
@@ -36,10 +41,6 @@ async def update_vector_job(
     agent_id: int,
     user: User = Depends(get_current_user),
 ):
-    from uuid import uuid4
-    from pathlib import Path
-    from app.config import settings
-    from app.task_queue import task_rebuild_vectordb
 
     job_id = uuid4().hex
     job_dir = Path(settings.vectordb_job_dir)
@@ -54,8 +55,6 @@ async def update_vector_job(
 
 @router.get("/vector_jobs/{job_id}")
 async def vector_job_status(job_id: str):
-    from pathlib import Path
-    from app.config import settings
 
     job_path = Path(settings.vectordb_job_dir) / f"{job_id}.json"
     if not job_path.is_file():
@@ -67,8 +66,6 @@ async def vector_job_status(job_id: str):
 
 @router.get("/vector_jobs")
 async def list_vector_jobs():
-    from pathlib import Path
-    from app.config import settings
 
     job_dir = Path(settings.vectordb_job_dir)
     job_dir.mkdir(parents=True, exist_ok=True)
@@ -83,8 +80,6 @@ async def list_vector_jobs():
 
 @router.get("/writer_jobs/{job_id}")
 async def writer_job_status(job_id: str):
-    from pathlib import Path
-    from app.config import settings
 
     job_path = Path(settings.writer_job_dir) / f"{job_id}.json"
     if not job_path.is_file():
@@ -96,8 +91,6 @@ async def writer_job_status(job_id: str):
 
 @router.patch("/writer_jobs/{job_id}")
 async def update_writer_job(job_id: str, payload: dict):
-    from pathlib import Path
-    from app.config import settings
 
     job_path = Path(settings.writer_job_dir) / f"{job_id}.json"
     if not job_path.is_file():
@@ -113,8 +106,6 @@ async def update_writer_job(job_id: str, payload: dict):
 
 @router.get("/writer_jobs")
 async def list_writer_jobs():
-    from pathlib import Path
-    from app.config import settings
 
     job_dir = Path(settings.writer_job_dir)
     job_dir.mkdir(parents=True, exist_ok=True)
@@ -129,8 +120,6 @@ async def list_writer_jobs():
 
 @router.get("/novelist_jobs/{job_id}")
 async def novelist_job_status(job_id: str):
-    from pathlib import Path
-    from app.config import settings
 
     job_path = Path(settings.novelist_job_dir) / f"{job_id}.json"
     if not job_path.is_file():
@@ -142,8 +131,6 @@ async def novelist_job_status(job_id: str):
 
 @router.patch("/novelist_jobs/{job_id}")
 async def update_novelist_job(job_id: str, payload: dict):
-    from pathlib import Path
-    from app.config import settings
 
     job_path = Path(settings.novelist_job_dir) / f"{job_id}.json"
     if not job_path.is_file():
@@ -159,8 +146,6 @@ async def update_novelist_job(job_id: str, payload: dict):
 
 @router.get("/novelist_jobs")
 async def list_novelist_jobs():
-    from pathlib import Path
-    from app.config import settings
 
     job_dir = Path(settings.novelist_job_dir)
     job_dir.mkdir(parents=True, exist_ok=True)
@@ -346,10 +331,6 @@ async def analyze_page_job_endpoint(
     page_id: int,
     user: User = Depends(get_current_user),
 ):
-    from uuid import uuid4
-    from pathlib import Path
-    from app.config import settings
-    from app.task_queue import task_analyze_pages_job
 
     job_id = uuid4().hex
     job_dir = Path(settings.writer_job_dir)
@@ -386,10 +367,6 @@ async def generate_pages_job_endpoint(
     payload: GenerateJobRequest,
     user: User = Depends(get_current_user),
 ):
-    from uuid import uuid4
-    from pathlib import Path
-    from app.config import settings
-    from app.task_queue import task_generate_pages_job
 
     job_id = uuid4().hex
     job_dir = Path(settings.writer_job_dir)
@@ -438,11 +415,6 @@ async def analyze_pages_job_endpoint(
     payload: AnalyzePagesJobRequest,
     user: User = Depends(get_current_user),
 ):
-    from uuid import uuid4
-    from pathlib import Path
-    from app.config import settings
-    from app.task_queue import task_analyze_pages_job
-
     job_id = uuid4().hex
     job_dir = Path(settings.writer_job_dir)
     job_dir.mkdir(parents=True, exist_ok=True)
@@ -471,10 +443,7 @@ async def create_novel_job_endpoint(
     payload: NovelJobRequest,
     user: User = Depends(get_current_user),
 ):
-    from uuid import uuid4
-    from pathlib import Path
-    from app.config import settings
-    from app.task_queue import task_create_novel_job
+
 
     job_id = uuid4().hex
     job_dir = Path(settings.novelist_job_dir)

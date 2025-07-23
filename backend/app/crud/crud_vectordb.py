@@ -3,7 +3,7 @@ from typing import List, Dict
 
 try:
     from chromadb.errors import ChromaError
-except Exception:  # pragma: no cover - fallback
+except Exception:
     class ChromaError(Exception):
         pass
 
@@ -12,7 +12,16 @@ from langchain_chroma import Chroma
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain.docstore.document import Document
 from langchain_huggingface import HuggingFaceEmbeddings
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.future import select
+from datetime import datetime, timezone
 
+from app.models.model_page import Page, PageCharacteristicValue, PageKeyEvent, PageRelationship
+from app.models.model_concept import Concept
+from app.models.model_characteristic import Characteristic
+from app.models.model_gameworld import GameWorld
+from app.models.model_agent import Agent
+from app.config import settings
 
 class _DummyEmbeddings:
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
@@ -20,7 +29,6 @@ class _DummyEmbeddings:
 
     def embed_query(self, text: str) -> List[float]:
         return [float(hash(text) % 1000)]
-
 
 
 if os.getenv("USE_DUMMY_EMBEDDINGS", "false").lower() == "true":
@@ -31,24 +39,50 @@ else:
         model_kwargs={"device": "cpu"},
     )
 
+_text_splitter = RecursiveCharacterTextSplitter(chunk_size=512, chunk_overlap=64)
 
-_text_splitter = RecursiveCharacterTextSplitter(
-    chunk_size=300,
-    chunk_overlap=50,
-    length_function=lambda txt: len(txt.split()),
-)
+_db_path = os.getenv("VECTOR_DB_PATH", settings.vector_db_path)
+chromadbURL = os.getenv("VECTOR_DB_URL", settings.vector_db_url)
+chromadbPort = int(os.getenv("VECTOR_DB_PORT", settings.vector_db_port))
+os.makedirs(_db_path, exist_ok=True)
 
+def _delete_collection(name: str, _client) -> None:
+    try:
+        if hasattr(_client, "delete_collection"):
+            try:
+                _client.delete_collection(name)
+            except TypeError:
+                _client.delete_collection(collection_name=name)
+        else:
+            _client.get_collection(name).delete()
+    except Exception:
+        pass
+
+def get_chroma_client():
+    return chromadb.HttpClient(host=chromadbURL, port=chromadbPort)
+
+def _get_collection(world_id: int):
+    name = f"world_{world_id}"
+    client = get_chroma_client()
+    return Chroma(
+        client=client,
+        collection_name=name,
+        embedding_function=_embedding_fn,
+    )
+
+def _normalize_view_name(view: str) -> str:
+    return view.lower().replace(" ", "_")
+
+def _build_document_chunks(text: str, metadata: dict):
+    docs = _text_splitter.create_documents([text], metadatas=[metadata])
+    for i, doc in enumerate(docs):
+        doc.metadata["chunk_index"] = i
+    return docs
 
 def _safe_add_documents(collection: Chroma, docs: List[Document]) -> None:
-    """Safely add documents, splitting on 413 errors."""
-
     client = collection._collection._client
     try:
-        max_size = (
-            client.get_max_batch_size()
-            if hasattr(client, "get_max_batch_size")
-            else getattr(client, "max_batch_size", 0)
-        )
+        max_size = client.get_max_batch_size() if hasattr(client, "get_max_batch_size") else getattr(client, "max_batch_size", 0)
     except Exception:
         max_size = 0
 
@@ -62,12 +96,7 @@ def _safe_add_documents(collection: Chroma, docs: List[Document]) -> None:
             collection.add_documents(batch)
         except Exception as exc:
             msg = str(exc).lower()
-            if (
-                isinstance(exc, ChromaError)
-                or "payload" in msg
-                or "length" in msg
-                or "413" in msg
-            ) and len(batch) > 1:
+            if (isinstance(exc, ChromaError) or "payload" in msg or "length" in msg or "413" in msg) and len(batch) > 1:
                 mid = len(batch) // 2
                 _add_batch(batch[:mid])
                 _add_batch(batch[mid:])
@@ -75,176 +104,93 @@ def _safe_add_documents(collection: Chroma, docs: List[Document]) -> None:
                 raise
 
     for i in range(0, len(docs), max_size):
-        _add_batch(docs[i : i + max_size])
-
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.future import select
-from datetime import datetime, timezone
-
-from app.models.model_page import Page, PageCharacteristicValue
-from app.models.model_concept import Concept
-from app.models.model_characteristic import Characteristic
-from app.models.model_agent import Agent
-from app.config import settings
-
-
-# Persistent client storing collections under ./vector_db. ``chromadb``
-# expects a filesystem path. ``settings.vector_db_path`` already contains
-# the default path, but the location can be overridden with the
-# ``VECTOR_DB_PATH`` environment variable.  The previous implementation
-# attempted to read an environment variable whose name was the path
-# itself which resulted in ``None`` being passed to ``PersistentClient``
-# and therefore created an in-memory database.  Use the provided setting
-# directly and fall back to it if the environment variable is not set.
-_db_path = os.getenv("VECTOR_DB_PATH", settings.vector_db_path)
-
-chromadbURL = os.getenv("VECTOR_DB_URL", settings.vector_db_url)
-chromadbPort = int(os.getenv("VECTOR_DB_PORT", settings.vector_db_port))
-
-# Ensure the directory exists so ``chromadb`` can persist collections
-os.makedirs(_db_path, exist_ok=True)
-
-# _client = chromadb.PersistentClient(path=_db_path)
-
-
-def _delete_collection(name: str, _client) -> None:
-    """Delete a Chroma collection by name if it exists."""
-    
-    try:
-        
-        if hasattr(_client, "delete_collection"):
-        
-            try:
-        
-                _client.delete_collection(name)  # type: ignore[arg-type]
-        
-            except TypeError:
-                # some versions require a keyword argument
-        
-                _client.delete_collection(collection_name=name)  # type: ignore[arg-type]
-        
-        else:
-        
-            _client.get_collection(name).delete()
-        
-    except Exception:
-        # Deleting should not fail the rebuild process
-
-        
-        pass
-
-
-def get_chroma_client():
-    """Return a Chroma client without requiring a running server."""
-
-    return chromadb.HttpClient(host=chromadbURL, port=chromadbPort)
-    
-    # _db_path = os.getenv("VECTOR_DB_PATH", settings.vector_db_path)
-    # print (f"READING CHROMA CLIENT FROM HERE: " + _db_path)
-    # os.makedirs(_db_path, exist_ok=True)
-    # return chromadb.PersistentClient(path=_db_path)
-
-def _get_collection(world_id: int):
-    name = f"world_{world_id}"
-    client = get_chroma_client()   # <-- Created when function runs, in child process
-    return Chroma(
-        client=client,
-        collection_name=name,
-        embedding_function=_embedding_fn,
-    )
-
-
-# def _get_collection(world_id: int):
-#     name = f"world_{world_id}"
-#     return Chroma(
-#         client=_client,
-#         collection_name=name,
-#         embedding_function=_embedding_fn,
-#     )
-
+        _add_batch(docs[i: i + max_size])
 
 async def add_page(session: AsyncSession, page_id: int):
-    result = await session.execute(
-        select(Page).where(Page.id == page_id)
-    )
-    page = result.scalar_one_or_none()    
-
+    result = await session.execute(select(Page).where(Page.id == page_id))
+    page = result.scalar_one_or_none()
     if not page:
-        return None
+        return False
 
-    # Load related concept
-    concept = await session.get(Concept, page.concept_id)    
+    concept = await session.get(Concept, page.concept_id)
+    world = await session.get(GameWorld, page.gameworld_id)
 
-    # Load characteristic values
+    metadata_base = {
+        "page_id": page.id,
+        "title": page.name,
+        "concept_id": page.concept_id,
+        "concept_name": concept.name if concept else None,
+        "concept_description": concept.description if concept else None,
+        "gameworld_id": page.gameworld_id,
+        "gameworld_name": world.name if world else None,
+        "system": world.system if world else None,
+    }
+
+    # Narrative View
     values = await session.execute(
         select(PageCharacteristicValue, Characteristic)
         .join(Characteristic, PageCharacteristicValue.characteristic_id == Characteristic.id)
         .where(PageCharacteristicValue.page_id == page.id)
-    )    
+    )
     char_texts = []
     for val, char in values.all():
-        if val.value is None:
-            continue
-        val_str = ", ".join(val.value) if isinstance(val.value, list) else str(val.value)
-        char_texts.append(f"{char.name}: {val_str}")
+        if val.value:
+            val_str = ", ".join(val.value) if isinstance(val.value, list) else str(val.value)
+            char_texts.append(f"{char.name}: {val_str}")
 
-    
-    doc_parts = [page.content or ""]
-    doc_parts.append(page.autogenerated_content or "")
-    
-    
-    if concept:
-        doc_parts.append(concept.description or "")
-    if char_texts:
-        doc_parts.append("\n".join(char_texts))
-    document = "\n".join(doc_parts)
+    narrative_parts = [
+        f"TITLE: {page.name}",
+        f"CONTENT:\n{page.content or ''}",
+        f"AUTOGENERATED:\n{page.autogenerated_content or ''}",
+        f"CHARACTERISTICS:\n" + "\n".join(char_texts),
+        f"CONCEPT:\n{concept.description if concept else ''}"
+    ]
+    narrative_text = "\n\n".join(narrative_parts)
 
-    # print (f" --- FINAL DOCUMENT: {document}")
-    metadata = {
-        "page_id": page.id,
-        "gameworld_id": page.gameworld_id,
-        "concept_id": page.concept_id,
-        "title": page.name,
-    }
+    # Events View
+    key_events = await session.exec(select(PageKeyEvent).where(PageKeyEvent.page_id == page.id))
+    event_parts = [f"EVENT [{e.event_type}] on {e.event_date}: {e.summary or ''}" for e in key_events]
+    events_text = "\n".join(event_parts)
 
+    # Relationships View
+    relations = await session.exec(select(PageRelationship).where(PageRelationship.page_id == page.id))
+    rel_parts = [
+        f"RELATIONSHIP {'->' if r.direction == 'outgoing' else '<-'} {r.target_page_id} ({r.relationship_type}): {r.description or ''}"
+        for r in relations
+    ]
+    relationships_text = "\n".join(rel_parts)
 
     collection = _get_collection(page.gameworld_id)
+    all_chunks = []
 
-    docs = _text_splitter.create_documents([document], metadatas=[metadata])
-    for i, doc in enumerate(docs):
-        doc.metadata["chunk_index"] = i
+    for view_name, text in [
+        ("narrative", narrative_text),
+        ("event", events_text),
+        ("relationship", relationships_text),
+    ]:
+        if not text.strip():
+            continue
+        metadata = dict(metadata_base)
+        metadata["view"] = _normalize_view_name(view_name)
+        view_chunks = _build_document_chunks(text, metadata)
+        all_chunks.extend(view_chunks)
 
-    # ``chromadb`` can fail on very large batches, so split the data into
-    # reasonable chunks based on the client's advertised limit.
-    _safe_add_documents(collection, docs)
-   
+    if not all_chunks:
+        return False
 
-    # print (f" --- API VECTORDB - Page added to the chromadb!")
+    _safe_add_documents(collection, all_chunks)
     return True
-
 
 async def rebuild_world(session: AsyncSession, world_id: int):
     name = f"world_{world_id}"
-
     collection = _get_collection(world_id)
-
-    print (f" --- INSIDE REBUILD WORKD: {world_id} --- ")
-
     _delete_collection(name, collection)
-    print (f" --- COLLECTION DELETED!")
-
-       # collection = _get_collection(world_id)
-
-    # print (f" - API VECTORDB - Collection: {collection}")
 
     result = await session.execute(select(Page.id).where(Page.gameworld_id == world_id))
-
     page_ids = [row[0] for row in result.all()]
     for pid in page_ids:
-
         await add_page(session, pid)
 
-       # update agents in this world with current time
     agent_result = await session.execute(select(Agent).where(Agent.world_id == world_id))
     agents = agent_result.scalars().all()
     now = datetime.now(timezone.utc)
@@ -255,27 +201,31 @@ async def rebuild_world(session: AsyncSession, world_id: int):
     return len(page_ids)
 
 
-def query_world(world_id: int, query: str, n_results: int = 5) -> List[Dict]:
-    """Query the vector DB for documents related to the given query."""
+def query_world(world_id: int, query: str, n_results: int = 5, views: List[str] = None) -> List[Dict]:
     collection = _get_collection(world_id)
-    retrieved = collection.max_marginal_relevance_search(query, k=n_results * 4)
+    filters = {"view": {"$in": views}} if views else None
+    return collection.max_marginal_relevance_search(query, k=n_results * 4, filter=filters)
 
-    pages: Dict[int, Dict] = {}
-    for doc in retrieved:
-        meta = doc.metadata or {}
-        page_id = meta.get("page_id")
-        if page_id is None:
-            continue
-        entry = pages.setdefault(
-            page_id,
-            {"document_parts": [], "metadata": {k: v for k, v in meta.items() if k != "chunk_index"}},
-        )
-        entry["document_parts"].append((meta.get("chunk_index", 0), doc.page_content))
+# def query_world(world_id: int, query: str, n_results: int = 5) -> List[Dict]:
+#     collection = _get_collection(world_id)
+#     retrieved = collection.max_marginal_relevance_search(query, k=n_results * 4)
 
-    results: List[Dict] = []
-    for page in pages.values():
-        parts = sorted(page["document_parts"], key=lambda x: x[0])
-        full_doc = " ".join(p[1] for p in parts)
-        results.append({"document": full_doc, **page["metadata"]})
+#     pages: Dict[int, Dict] = {}
+#     for doc in retrieved:
+#         meta = doc.metadata or {}
+#         page_id = meta.get("page_id")
+#         if page_id is None:
+#             continue
+#         entry = pages.setdefault(
+#             page_id,
+#             {"document_parts": [], "metadata": {k: v for k, v in meta.items() if k != "chunk_index"}},
+#         )
+#         entry["document_parts"].append((meta.get("chunk_index", 0), doc.page_content))
 
-    return results[:n_results]
+#     results: List[Dict] = []
+#     for page in pages.values():
+#         parts = sorted(page["document_parts"], key=lambda x: x[0])
+#         full_doc = " ".join(p[1] for p in parts)
+#         results.append({"document": full_doc, **page["metadata"]})
+
+#     return results[:n_results]

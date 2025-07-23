@@ -5,7 +5,6 @@ import { useAuth } from "../auth/AuthProvider";
 import { hasRole } from "@/app/lib/roles";
 import { Combobox } from "@headlessui/react";
 import Link from "next/link";
-import Image from "next/image";
 import { PlusCircle } from "lucide-react";
 import { useUsers } from "@/app/lib/useUsers";
 import { useAgents } from "@/app/lib/useAgents";

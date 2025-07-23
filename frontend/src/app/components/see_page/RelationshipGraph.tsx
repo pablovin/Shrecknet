@@ -1,76 +1,96 @@
 "use client";
-import dynamic from "next/dynamic";
+import { useState } from "react";
+import { GraphCanvas, lightTheme, GraphNode, GraphEdge } from "reagraph";
 
-// ForceGraph2D requires browser globals like AFRAME which are
-// not available during server side rendering. Dynamically load
-// the component with SSR disabled to avoid "AFRAME is not defined"
-// errors when Next.js builds the server bundle.
-const ForceGraph2D = dynamic(
-  async () => {
-    if (typeof window !== "undefined") {
-      if (!(window as any).AFRAME) {
-        (window as any).AFRAME = {
-          registerComponent: () => {},
-          registerPrimitive: () => {},
-          registerSystem: () => {},
-          components: {},
-          systems: {},
-          primitives: {},
-          utils: { diff: () => ({}) },
-        } as any;
-      }
-
-      if (!(window as any).THREE) {
-        const THREE = await import("three");
-        (window as any).THREE = { ...THREE };
-      }
-    }
-
-    const mod = await import("react-force-graph");
-    return mod.ForceGraph2D;
-  },
-  { ssr: false },
-);
-
-interface Node {
-  id: number;
+interface NodeInfo {
+  id: string;
   name: string;
   logo?: string;
+  color: string;
+  description?: string;
+  moreCount?: number;
 }
 
 interface LinkInfo {
-  id: number;
-  source: number;
-  target: number;
-  type: string;
-  direction: string;
-  description?: string;
+  id: string;
+  source: string;
+  target: string;
+  label: string;
 }
 
-export default function RelationshipGraph({ nodes, links }: { nodes: Node[]; links: LinkInfo[] }) {
-  const graphData = {
-    nodes: nodes.map((n) => ({ id: n.id, name: n.name, logo: n.logo })),
-    links: links.map((l) => ({
-      id: l.id,
-      source: l.direction === "incoming" ? l.target : l.source,
-      target: l.direction === "incoming" ? l.source : l.target,
-      type: l.type,
-      description: l.description,
-    })),
-  };
+export default function RelationshipGraph({
+  nodes,
+  links,
+}: {
+  nodes: NodeInfo[];
+  links: LinkInfo[];
+}) {
+  const [hover, setHover] = useState<{
+    node: NodeInfo;
+    x: number;
+    y: number;
+  } | null>(null);
+
+  const graphNodes: GraphNode<NodeInfo>[] = nodes.map((n) => ({
+    id: n.id,
+    label: n.name,
+    icon: n.logo,
+    fill: n.color,
+    data: n,
+  }));
+  const graphEdges: GraphEdge[] = links.map((l) => ({
+    id: l.id,
+    source: l.source,
+    target: l.target,
+    label: l.label,
+  }));
+
   return (
-    <div className="h-96 w-full">
-      {/* ForceGraph2D may be missing if dependencies are not installed */}
-      {/* @ts-ignore */}
-      <ForceGraph2D
-        graphData={graphData}
-        nodeLabel={(node: any) => node.name}
-        linkDirectionalArrowLength={6}
-        linkLabel={(link: any) => link.type}
-        onNodeClick={(node: any) => {
+    <div className="relative h-96 w-full">
+      <GraphCanvas
+        nodes={graphNodes}
+        edges={graphEdges}
+        theme={lightTheme}
+        labelType="all"
+        onNodePointerOver={(node, event) => {
+          setHover({
+            node: node.data as NodeInfo,
+            x: event.clientX,
+            y: event.clientY,
+          });
+        }}
+        onNodePointerOut={() => setHover(null)}
+        onNodeClick={(node) => {
           window.location.href = `/pages/${node.id}`;
         }}
       />
+      {hover && (
+        <div
+          className="pointer-events-none absolute z-10 bg-[var(--surface)] border border-[var(--border)] rounded shadow-md p-2 text-sm"
+          style={{ left: hover.x + 10, top: hover.y + 10 }}
+        >
+          <div className="font-semibold mb-1 flex items-center gap-2">
+            {hover.node.logo && (
+              <img
+                src={hover.node.logo}
+                alt="logo"
+                className="w-4 h-4 object-contain"
+              />
+            )}
+            {hover.node.name}
+          </div>
+          {hover.node.description && (
+            <div className="text-xs max-w-xs line-clamp-3">
+              {hover.node.description}
+            </div>
+          )}
+          {hover.node.moreCount && (
+            <div className="text-[var(--muted-foreground)] text-xs mt-1">
+              +{hover.node.moreCount} more relationships
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

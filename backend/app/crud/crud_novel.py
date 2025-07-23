@@ -1,7 +1,9 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.model_agent import Agent
 from app.crud.crud_agent import ensure_personality_prompts
-from app.api.api_agent import chat_with_agent  # For RAG context fetching!
+# chat_with_agent lives in crud_agent to avoid circular imports with the API
+# router and Celery tasks. Import from crud_agent directly.
+from app.crud.crud_agent import chat_with_agent  # For RAG context fetching!
 from app.config import settings
 
 from langchain_openai import ChatOpenAI

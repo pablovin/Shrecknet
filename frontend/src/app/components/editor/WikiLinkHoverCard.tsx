@@ -14,12 +14,13 @@ function getPreviewHTML(content, maxLen = 220) {
   let preview = "";
   let len = 0;
   for (let i = 0; i < ps.length; i++) {
-    const t = ps[i].innerText || ps[i].textContent || "";
-    preview += "<p>" + t + "</p>";
-    len += t.length;
+    const html = ps[i].innerHTML || "";
+    const textLen = (ps[i].innerText || ps[i].textContent || "").length;
+    preview += `<p>${html}</p>`;
+    len += textLen;
     if (len > maxLen || i > 1) break;
   }
-  if (!preview) preview = (el.textContent || "").slice(0, maxLen) + "...";
+  if (!preview) preview = el.innerHTML.slice(0, maxLen) + "...";
   return preview;
 }
 

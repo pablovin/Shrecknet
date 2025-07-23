@@ -118,7 +118,6 @@ function EventForm({
           })()
         )}
       </div>
-      </div>
       <div className="flex flex-col gap-1">
         <label className="font-semibold text-sm">Date</label>
         <input

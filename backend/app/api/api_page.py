@@ -34,6 +34,9 @@ from app.crud.crud_page import (
     create_page_characteristic_value,
     get_page_characteristic_values,
     get_pages_characteristic_values,
+    get_pages_key_events,
+    get_pages_relationships,
+    get_pages_changes,
     update_page_characteristic_value,
     delete_page_characteristic_value,
     delete_page_characteristic_values,
@@ -149,14 +152,17 @@ async def read_pages(
     db_pages = await get_pages(session, gameworld_id=gameworld_id, concept_id=concept_id)
     page_id_list = [p.id for p in db_pages]
     values_map = await get_pages_characteristic_values(session, page_id_list)
+    events_map = await get_pages_key_events(session, page_id_list)
+    relationships_map = await get_pages_relationships(session, page_id_list)
+    changes_map = await get_pages_changes(session, page_id_list)
     return [
         PageRead.model_validate(
             {
                 **page.model_dump(),
                 "values": values_map.get(page.id, []),
-                "key_events": await get_key_events(session, page.id),
-                "relationship_map": await get_relationships(session, page.id),
-                "changelog": await get_page_changes(session, page.id),
+                "key_events": events_map.get(page.id, []),
+                "relationship_map": relationships_map.get(page.id, []),
+                "changelog": changes_map.get(page.id, []),
             }
         )
         for page in db_pages

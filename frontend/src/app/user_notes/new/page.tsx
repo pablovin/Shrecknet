@@ -1,13 +1,13 @@
 "use client";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import AuthGuard from "../components/auth/AuthGuard";
-import { createUserNote } from "../lib/userNotesAPI";
-import EditableContent from "../components/editor/EditableContent";
-import { M3FloatingInput } from "../components/template/M3FloatingInput";
-import { useAuth } from "../components/auth/AuthProvider";
-import { getPages } from "../lib/pagesAPI";
-import { autoLinkWikiContent } from "../components/editor/autoLinkWikiContent";
+import AuthGuard from "@/app/components/auth/AuthGuard";
+import { createUserNote } from "@/app/lib/userNotesAPI";
+import EditableContent from "@/app/components/editor/EditableContent";
+import { M3FloatingInput } from "@/app/components/template/M3FloatingInput";
+import { useAuth } from "@/app/components/auth/AuthProvider";
+import { getPages } from "@/app/lib/pagesAPI";
+import { autoLinkWikiContent } from "@/app/components/editor/autoLinkWikiContent";
 
 export default function NewNotePage() {
   const router = useRouter();

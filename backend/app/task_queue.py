@@ -383,7 +383,7 @@ def task_generate_pages_job(
                 return
             result = await generate_pages(session, agent, page, pages)
 
-            pages_map = {p["name"]: p for p in result.get("pages", [])}
+            pages_map = {p["name"]: p for p in result}
             final_pages = []
             auto_updated = []
 

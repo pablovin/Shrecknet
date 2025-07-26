@@ -109,14 +109,17 @@ async def analyze_page(session, agent: Agent, page: Page) -> dict:
                 retrieved_concepts.add(c["concept_name"])
 
     # Filter retrieved concepts to only those that are auto_generated
+    print (f"RETRIEVED CONCEPTS: {retrieved_concepts} ")
     filtered_retrieved_concepts = [c for c in retrieved_concepts if c in concept_defs]
+    print (f"PAGE: {page.content[0:30]} ")
+    print (f"FOUND CONCEPTS: {filtered_retrieved_concepts} ")
 
     # Step 4: Run LLM extraction per chunk using relevant concepts only
     prompt = ChatPromptTemplate.from_messages([
         ("system", "You are analyzing a story. Extract ONLY important concept mentions that match existing known concepts.\n"
-                   + "Concept list:\n"
-                   + "\n".join(f"- {name}: {desc}" for name, desc in concept_defs.items() if name in filtered_retrieved_concepts)
-                   + "\nReturn a JSON object like: { \"<name>\": \"<concept_type>\" }"),
+                + "Concept list:\n"
+                + "\n".join(f"- {name}: {desc}" for name, desc in concept_defs.items() if name in filtered_retrieved_concepts)
+                + "\nReturn a JSON object like: {{ \"<name>\": \"<concept_type>\" }}"),
         ("user", "{chunk}")
     ])
     llm = ChatOpenAI(api_key=settings.openai_api_key, model=settings.open_ai_model)
@@ -124,13 +127,14 @@ async def analyze_page(session, agent: Agent, page: Page) -> dict:
 
     found_names: Dict[str, str] = {}
     for chunk in text_chunks:
-        try:
+            print (f"TEXT CHUNK: {chunk[0:40]}")
             result = await chain.ainvoke({"chunk": chunk})
+            print (f"RESULT: {result}")
             parsed = json.loads(result.content.strip())
             found_names.update(parsed)
-        except Exception:
-            continue
 
+    
+    print (f"FOUND NAMES: {found_names} ")
     # Step 5: Normalize and match to existing pages
     suggestions = []
     for name, concept_name in found_names.items():
@@ -168,9 +172,9 @@ async def _choose_concept(llm: ChatOpenAI, name: str, content: str, options: Lis
     return resp.content.strip()
 
 
-async def generate_pages_from_suggestions(session, agent: Agent, suggestions: List[dict]) -> List[dict]:
+async def generate_pages(session: AsyncSession, agent: Agent, page: Page, page_specs: List[dict]) -> List[dict]:
     # Batch preload everything needed
-    concept_ids = {s["concept_id"] for s in suggestions}
+    concept_ids = {s["concept_id"] for s in page_specs}
     concepts = await crud_concept.get_concepts(session, auto_generated=True)
     concept_map = {c.id: c for c in concepts if c.id in concept_ids}
 
@@ -179,7 +183,7 @@ async def generate_pages_from_suggestions(session, agent: Agent, suggestions: Li
 
     results = []
 
-    for spec in suggestions:
+    for spec in page_specs:
         concept = concept_map.get(spec["concept_id"])
         if not concept:
             continue

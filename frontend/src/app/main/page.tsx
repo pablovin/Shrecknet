@@ -3,7 +3,6 @@ import AuthGuard from "../components/auth/AuthGuard";
 import DashboardLayout from "../components/DashboardLayout";
 import { useAuth } from "../components/auth/AuthProvider";
 import { useTranslation } from "../hooks/useTranslation";
-import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
   Globe,
@@ -16,6 +15,24 @@ import {
   Settings,
   StickyNote,
 } from "lucide-react";
+import { Suspense } from "react";
+
+// --- Fix: Client-only ErrorBanner ---
+import { useSearchParams } from "next/navigation";
+function ErrorBannerClient() {
+  const params = useSearchParams();
+  const error = params.get("error");
+
+  if (error === "unauthorized") {
+    return (
+      <div className="text-center bg-red-100 text-red-700 border border-red-300 px-4 py-2 rounded">
+        You are not authorized to view this page.
+      </div>
+    );
+  }
+
+  return null;
+}
 
 function HomeCard({ href, icon, title, description, isAI = false, color, iconColor }) {
   return (
@@ -61,8 +78,6 @@ function HomeCard({ href, icon, title, description, isAI = false, color, iconCol
 export default function MainPage() {
   const { user } = useAuth();
   const { t } = useTranslation();
-  const params = useSearchParams();
-  const error = params.get("error");
 
   const cards = [
     {
@@ -190,11 +205,9 @@ export default function MainPage() {
     <AuthGuard>
       <DashboardLayout>
         <div className="min-h-screen w-full px-2 sm:px-6 py-8 flex flex-col gap-6">
-          {error === "unauthorized" && (
-            <div className="text-center bg-red-100 text-red-700 border border-red-300 px-4 py-2 rounded">
-              {t("not_authorized")}
-            </div>
-          )}
+          <Suspense fallback={null}>
+            <ErrorBannerClient />
+          </Suspense>
 
           {/* Hero */}
           <div className="text-center mb-6">

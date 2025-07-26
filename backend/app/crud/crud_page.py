@@ -140,6 +140,22 @@ async def get_key_events(session: AsyncSession, page_id: int) -> List[PageKeyEve
     )
     return result.scalars().all()
 
+async def get_pages_key_events(
+    session: AsyncSession, page_ids: List[int]
+) -> Dict[int, List[PageKeyEvent]]:
+    if not page_ids:
+        return {}
+    result = await session.execute(
+        select(PageKeyEvent)
+        .where(PageKeyEvent.page_id.in_(page_ids))
+        .order_by(PageKeyEvent.added_at)
+    )
+    events = result.scalars().all()
+    events_by_page: Dict[int, List[PageKeyEvent]] = {}
+    for ev in events:
+        events_by_page.setdefault(ev.page_id, []).append(ev)
+    return events_by_page
+
 async def update_key_event(session: AsyncSession, event_id: int, updates: dict) -> Optional[PageKeyEvent]:
     result = await session.execute(select(PageKeyEvent).where(PageKeyEvent.id == event_id))
     event = result.scalar_one_or_none()
@@ -191,6 +207,22 @@ async def get_relationships(session: AsyncSession, page_id: int) -> List[PageRel
     )
     return result.scalars().all()
 
+async def get_pages_relationships(
+    session: AsyncSession, page_ids: List[int]
+) -> Dict[int, List[PageRelationship]]:
+    if not page_ids:
+        return {}
+    result = await session.execute(
+        select(PageRelationship)
+        .where(PageRelationship.page_id.in_(page_ids))
+        .order_by(PageRelationship.added_at)
+    )
+    rels = result.scalars().all()
+    rels_by_page: Dict[int, List[PageRelationship]] = {}
+    for rel in rels:
+        rels_by_page.setdefault(rel.page_id, []).append(rel)
+    return rels_by_page
+
 async def update_relationship(session: AsyncSession, rel_id: int, updates: dict) -> Optional[PageRelationship]:
     result = await session.execute(select(PageRelationship).where(PageRelationship.id == rel_id))
     rel = result.scalar_one_or_none()
@@ -222,6 +254,22 @@ async def get_page_changes(session: AsyncSession, page_id: int) -> List[PageChan
         select(PageChange).where(PageChange.page_id == page_id).order_by(PageChange.date)
     )
     return result.scalars().all()
+
+async def get_pages_changes(
+    session: AsyncSession, page_ids: List[int]
+) -> Dict[int, List[PageChange]]:
+    if not page_ids:
+        return {}
+    result = await session.execute(
+        select(PageChange)
+        .where(PageChange.page_id.in_(page_ids))
+        .order_by(PageChange.date)
+    )
+    changes = result.scalars().all()
+    changes_by_page: Dict[int, List[PageChange]] = {}
+    for change in changes:
+        changes_by_page.setdefault(change.page_id, []).append(change)
+    return changes_by_page
 
 # --- Optional: update individual value (not used in atomic pattern) ---
 

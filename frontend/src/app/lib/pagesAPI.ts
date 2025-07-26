@@ -70,6 +70,16 @@ export async function getPagesForWorld(gameworld_id: number, token: string) {
   return getPages(token, { gameworld_id });
 }
 
+export async function searchPages(query: string, token: string) {
+  const params = new URLSearchParams();
+  if (query) params.append("query", query);
+  const res = await fetch(`${API_URL}/pages/search?${params.toString()}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) throw new Error("Could not search pages");
+  return await res.json();
+}
+
 // --- Key Events ---
 export async function createKeyEvent(pageId: number, data: unknown, token: string) {
   const res = await fetch(`${API_URL}/pages/${pageId}/events/`, {

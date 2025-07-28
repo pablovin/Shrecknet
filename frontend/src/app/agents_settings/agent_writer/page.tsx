@@ -13,6 +13,8 @@ import { getPagesForWorld } from "../../lib/pagesAPI";
 import { useVectorJobs } from "../../lib/useVectorJobs";
 import { useWriterJobs } from "../../lib/useWriterJobs";
 import { usePageById } from "../../lib/usePageById";
+import AgentEmbeddingModal from "../../components/agents/AgentEmbeddingModal";
+import { useAgentEmbeddings } from "../../lib/useAgentEmbeddings";
 
 // ------- GUILDMASTER NPC GUIDE -------
 const npcQuotes = [
@@ -72,6 +74,30 @@ function AgentAvatar({ name, logo }) {
       ) : (
         initials
       )}
+    </div>
+  );
+}
+
+// ------- Agent Embedding Info -------
+function AgentEmbeddingInfo({ agentId, worlds }) {
+  const { embeddings } = useAgentEmbeddings(agentId);
+  if (!embeddings.length) return null;
+  return (
+    <div className="text-xs text-indigo-700 mt-1 space-y-1">
+      {embeddings.map((e: any) => (
+        <div key={e.id}>
+          <span className="font-semibold">{e.name}</span> (
+          {worlds.find((w: any) => w.id === e.world_id)?.name || e.world_id}) -
+          {" "}
+          {e.page_count ?? "?"} pages, last:
+          {" "}
+          {e.last_index_time
+            ? new Date(e.last_index_time).toLocaleString()
+            : "n/a"}
+          {" "}
+          ({e.build_seconds ? e.build_seconds.toFixed(1) + "s" : "?"})
+        </div>
+      ))}
     </div>
   );
 }
@@ -272,6 +298,7 @@ export default function AgentsGuildhallPage() {
   const [search, setSearch] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
   const [selectedAgent, setSelectedAgent] = useState(null);
+  const [embeddingModal, setEmbeddingModal] = useState<{id:number, world:number}|null>(null);
   const [success, setSuccess] = useState("");
   const [updatingAgentId, setUpdatingAgentId] = useState<number | null>(null);
   const [bulkUpdating, setBulkUpdating] = useState(false);
@@ -410,6 +437,7 @@ function AgentGuildTable({ title, icon, agents, task, canRebuild }) {
                       Vector DB updated: <span className="font-semibold">{new Date(agent.vector_db_update_date).toLocaleString()}</span>
                     </div>
                   )}
+                  <AgentEmbeddingInfo agentId={agent.id} worlds={worlds} />
                 </div>
                 <div className="flex gap-2">
                   <button
@@ -427,6 +455,12 @@ function AgentGuildTable({ title, icon, agents, task, canRebuild }) {
                     }}
                   >
                     Delete
+                  </button>
+                  <button
+                    className="px-3 py-1 rounded-lg font-semibold text-white bg-sky-600 hover:bg-sky-800 transition text-sm shadow"
+                    onClick={() => setEmbeddingModal({ id: agent.id, world: agent.world_id })}
+                  >
+                    Embeddings
                   </button>
                   {canRebuild && (
                     <button
@@ -527,6 +561,14 @@ return (
               onSave={handleModalSave}
               onDelete={handleModalDelete}
               worlds={worlds}
+            />
+          )}
+          {embeddingModal && (
+            <AgentEmbeddingModal
+              agentId={embeddingModal.id}
+              worldId={embeddingModal.world}
+              onClose={() => setEmbeddingModal(null)}
+              onSaved={() => {}}
             />
           )}
         </div>

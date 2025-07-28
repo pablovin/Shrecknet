@@ -136,6 +136,9 @@ function AgentWriterPageContent() {
     .filter(j => j.status === 'done' && j.action_needed !== 'review')
     .sort((a, b) => new Date(b.end_time || 0).getTime() - new Date(a.end_time || 0).getTime())
     .slice(0, 3);
+  const recentJobs = [...agentWriterJobs]
+    .sort((a,b) => new Date(b.start_time || 0).getTime() - new Date(a.start_time || 0).getTime())
+    .slice(0,5);
 
   let filtered = (pages || []).filter(
     p => p.name?.toLowerCase().includes(search.toLowerCase()) && p.content && p.content.trim() !== ""
@@ -274,6 +277,23 @@ function AgentWriterPageContent() {
             {jobFeedback && (
               <div className="bg-fuchsia-100 text-fuchsia-900 font-bold rounded-xl px-4 py-2 shadow mb-2 text-center">
                 {jobFeedback}
+              </div>
+            )}
+
+            {recentJobs.length > 0 && (
+              <div className="border border-indigo-200 rounded-xl bg-white/90 shadow p-2 mb-4">
+                <h3 className="font-bold mb-2 text-indigo-700">Recent Requests</h3>
+                <table className="min-w-full text-sm">
+                  <tbody>
+                    {recentJobs.map(j => (
+                      <tr key={j.job_id} className="border-t border-indigo-100">
+                        <td className="p-1">{new Date(j.start_time).toLocaleString()}</td>
+                        <td className="p-1">{pageMap[j.page_id]?.name || j.page_names?.[0]}</td>
+                        <td className="p-1"><a className="text-fuchsia-700 underline" href={`/agent_writer/${selectedAgent.id}/history/${j.job_id}`}>View</a></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             )}
 

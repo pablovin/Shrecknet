@@ -171,11 +171,13 @@ export async function startGenerateJob(
   pages: any[],
   token: string,
   suggestions?: any[],
-  mergeGroups?: string[][]
+  mergeGroups?: string[][],
+  requestId?: string
 ) {
   const body: any = { pages };
   if (suggestions) body.suggestions = suggestions;
   if (mergeGroups) body.merge_groups = mergeGroups;
+  if (requestId) body.request_id = requestId;
   const res = await fetch(`${API_URL}/agents/${agentId}/pages/${pageId}/generate_job`, {
     method: "POST",
     headers: {

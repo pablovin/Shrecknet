@@ -20,7 +20,9 @@ async def test_list_and_delete_jobs(async_client, create_user, login_and_get_tok
     vec_job = Path(settings.vectordb_job_dir) / "v1.json"
     vec_job.write_text(json.dumps({"status": "done", "start_time": "2024"}))
 
-    writer_job = Path(settings.writer_job_dir) / "w1.json"
+    writer_dir = Path(settings.writer_job_dir) / "w1"
+    writer_dir.mkdir(parents=True)
+    writer_job = writer_dir / "job.json"
     writer_job.write_text(json.dumps({"status": "running", "start_time": "2024"}))
 
     novel_job = Path(settings.novelist_job_dir) / "n1.json"

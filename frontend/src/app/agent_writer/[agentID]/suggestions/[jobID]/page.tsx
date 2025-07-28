@@ -194,7 +194,8 @@ export default function SuggestionsPage() {
         allPages as any[],
         token || "",
         prepared,
-        mergeGroups
+        mergeGroups,
+        jobID as string
       );
       if (jobID)
         await updateWriterJob(jobID as string, { action_needed: "done" }, token || "");

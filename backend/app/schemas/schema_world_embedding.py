@@ -13,6 +13,12 @@ class WorldEmbeddingCreate(WorldEmbeddingBase):
     pass
 
 
+class WorldEmbeddingUpdate(BaseModel):
+    world_id: Optional[int] = None
+    name: Optional[str] = None
+    collection: Optional[str] = None
+
+
 class WorldEmbedding(WorldEmbeddingBase):
     id: int
     created_at: datetime

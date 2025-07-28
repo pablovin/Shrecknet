@@ -66,3 +66,25 @@ async def test_create_world_embedding(async_client, create_user, login_and_get_t
     with open(job_files[0]) as f:
         job = json.load(f)
     assert job["status"] == "queued"
+
+
+@pytest.mark.anyio
+async def test_update_world_embedding(async_client, create_user, login_and_get_token):
+    await create_user(**ADMIN)
+    token = await login_and_get_token(ADMIN["email"], ADMIN["password"], ADMIN["role"])
+
+    gw_payload = {"name": "UpdateWorld", "system": "sys", "description": "d", "logo": "logo"}
+    resp = await async_client.post("/gameworlds/", json=gw_payload, headers={"Authorization": f"Bearer {token}"})
+    gw_id = resp.json()["id"]
+
+    payload = {"world_id": gw_id, "name": "base", "collection": f"world_{gw_id}_base"}
+    resp = await async_client.post("/world_embeddings/", json=payload, headers={"Authorization": f"Bearer {token}"})
+    emb_id = resp.json()["id"]
+
+    resp = await async_client.patch(
+        f"/world_embeddings/{emb_id}",
+        json={"name": "changed"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["name"] == "changed"

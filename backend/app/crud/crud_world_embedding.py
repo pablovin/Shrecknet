@@ -36,3 +36,14 @@ async def delete_embedding(session: AsyncSession, embedding_id: int) -> bool:
     await session.commit()
     return True
 
+async def update_embedding(session: AsyncSession, embedding_id: int, updates: dict) -> Optional[WorldEmbedding]:
+    emb = await session.get(WorldEmbedding, embedding_id)
+    if not emb:
+        return None
+    for key, value in updates.items():
+        setattr(emb, key, value)
+    session.add(emb)
+    await session.commit()
+    await session.refresh(emb)
+    return emb
+

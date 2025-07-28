@@ -8,7 +8,8 @@ import { useWorldEmbeddings } from "../lib/useWorldEmbeddings";
 import { createWorldEmbedding, deleteWorldEmbedding, startWorldEmbeddingJob } from "../lib/worldEmbeddingAPI";
 import { useWorldEmbeddingJobs } from "../lib/useWorldEmbeddingJobs";
 import { useState } from "react";
-import { Sparkles, BookOpen, Trash2, Globe } from "lucide-react";
+import { Sparkles, BookOpen, Trash2, Globe, Pencil } from "lucide-react";
+import WorldEmbeddingModal from "../components/world_embeddings/WorldEmbeddingModal";
 
 export default function WorldEmbeddingsPage() {
   const { token } = useAuth();
@@ -18,6 +19,7 @@ export default function WorldEmbeddingsPage() {
   const [worldId, setWorldId] = useState("");
   const [name, setName] = useState("");
   const [deletingId, setDeletingId] = useState<number | null>(null);
+  const [editing, setEditing] = useState<any | null>(null);
   const allowed = useRoleRedirect("system admin");
   if (!allowed) return null;
 
@@ -43,6 +45,20 @@ export default function WorldEmbeddingsPage() {
     await deleteWorldEmbedding(id, token || "");
     setDeletingId(null);
     mutate();
+  }
+
+  function openEdit(e: any) {
+    setEditing(e);
+  }
+
+  function closeEdit() {
+    setEditing(null);
+    mutate();
+  }
+
+  async function handleRebuild(id: number) {
+    await startWorldEmbeddingJob(id, token || "");
+    refreshJobs();
   }
 
   function getWorldName(id: number) {
@@ -101,15 +117,22 @@ export default function WorldEmbeddingsPage() {
             </button>
           </form>
 
-          <table className="w-full border">
-            <thead><tr><th>ID</th><th>Name</th><th>World</th><th></th></tr></thead>
+          <table className="w-full border text-sm">
+            <thead><tr><th>ID</th><th>Name</th><th>World</th><th>Pages</th><th>Last Build</th><th>Time</th><th></th></tr></thead>
             <tbody>
               {embeddings.map((e:any)=>(
                 <tr key={e.id} className="border-t">
                   <td className="px-2">{e.id}</td>
                   <td className="px-2">{e.name}</td>
-                  <td className="px-2">{e.world_id}</td>
-                  <td className="px-2"><button onClick={()=>handleDelete(e.id)} className="text-red-600">Delete</button></td>
+                  <td className="px-2">{getWorldName(e.world_id)}</td>
+                  <td className="px-2">{e.page_count ?? 'None'}</td>
+                  <td className="px-2">{e.last_index_time ? new Date(e.last_index_time).toLocaleString() : 'Never'}</td>
+                  <td className="px-2">{e.build_seconds ? `${e.build_seconds}s` : '-'}</td>
+                  <td className="px-2 flex gap-2">
+                    <button onClick={()=>openEdit(e)} className="text-blue-600">Edit</button>
+                    <button onClick={()=>handleRebuild(e.id)} className="text-purple-600">Rebuild</button>
+                    <button onClick={()=>handleDelete(e.id)} className="text-red-600">Delete</button>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -142,6 +165,13 @@ export default function WorldEmbeddingsPage() {
               >
                 <div className="absolute top-3 right-3 flex gap-2">
                   <button
+                    className="rounded-full bg-blue-100 hover:bg-blue-300 dark:bg-blue-900 dark:hover:bg-blue-700 p-2 shadow text-blue-600 dark:text-blue-300 transition"
+                    title="Edit"
+                    onClick={() => openEdit(e)}
+                  >
+                    <Pencil className="w-5 h-5" />
+                  </button>
+                  <button
                     className="rounded-full bg-red-100 hover:bg-red-300 dark:bg-red-900 dark:hover:bg-red-700 p-2 shadow text-red-600 dark:text-red-300 transition"
                     title="Shatter Crystal"
                     disabled={deletingId === e.id}
@@ -165,6 +195,15 @@ export default function WorldEmbeddingsPage() {
                 <div className="text-xs text-purple-800/70 dark:text-purple-100/70 mt-2">
                   Codex Entry ID: <span className="font-mono">{e.id}</span>
                 </div>
+                <div className="text-xs mt-1">Pages: {e.page_count ?? 'None'}</div>
+                <div className="text-xs mt-1">Last Build: {e.last_index_time ? new Date(e.last_index_time).toLocaleString() : 'Never'}</div>
+                <div className="text-xs mt-1">Build Time: {e.build_seconds ? `${e.build_seconds}s` : '-'}</div>
+                <button
+                  className="mt-2 px-3 py-1 rounded-xl bg-purple-600 text-white text-sm hover:bg-purple-700"
+                  onClick={() => handleRebuild(e.id)}
+                >
+                  Rebuild
+                </button>
               </div>
             ))}
             {embeddings.length === 0 && (
@@ -176,6 +215,14 @@ export default function WorldEmbeddingsPage() {
 
         </div>
       </DashboardLayout>
+      {editing && (
+        <WorldEmbeddingModal
+          embedding={editing}
+          worlds={worlds}
+          onClose={closeEdit}
+          onSaved={closeEdit}
+        />
+      )}
     </AuthGuard>
   );
 }

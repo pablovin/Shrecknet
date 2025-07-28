@@ -22,6 +22,7 @@ import {
   Users2,
   Book,
   Layers,
+  Timer,
 } from "lucide-react";
 import SimpleBarChart from "../components/charts/SimpleBarChart";
 import { useLibraryItems } from "../lib/useLibraryItems";
@@ -29,6 +30,7 @@ import { useWorlds } from "../lib/userWorlds";
 import { useAgents } from "../lib/useAgents";
 import { useJobs } from "../lib/useJobs";
 import { useUsers } from "../lib/useUsers";
+import { useWorldEmbeddings } from "../lib/useWorldEmbeddings";
 import Link from "next/link";
 
 export default function AdminDashboardPage() {
@@ -45,6 +47,7 @@ export default function AdminDashboardPage() {
   const { agents } = useAgents();
   const { jobs } = useJobs();
   const { users: userList } = useUsers();
+  const { embeddings } = useWorldEmbeddings();
 
   async function handleCreateBackup() {
     if (!token) return;
@@ -165,6 +168,7 @@ export default function AdminDashboardPage() {
                 description="Manage vector stores for your worlds."
                 icon={<Layers className="w-6 h-6" />}
                 color="from-violet-600 to-purple-500"
+                extra={<EmbeddingSummary embeddings={embeddings} />}
                 actions={
                   <Link className="btn-primary" href="/world_embeddings">
                     Manage Embeddings
@@ -290,6 +294,40 @@ function AgentSummary({ data }: { data: { world: string; counts: Record<string, 
                 </span>
               );
             })}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function EmbeddingSummary({ embeddings }: { embeddings: any[] }) {
+  return (
+    <div className="space-y-2 text-sm">
+      {embeddings.length === 0 && (
+        <div className="text-xs text-[var(--foreground)]/60">No embeddings</div>
+      )}
+      {embeddings.map(e => (
+        <div key={e.id} className="flex flex-col">
+          <span className="font-semibold text-[var(--primary)] font-serif">
+            {e.name}
+          </span>
+          <div className="flex gap-2 flex-wrap ml-1 mt-1 text-xs">
+            <span className="flex items-center gap-1">
+              <Book className="w-3 h-3" /> {e.page_count ?? 0} pages
+            </span>
+            {e.last_index_time && (
+              <span className="flex items-center gap-1">
+                <History className="w-3 h-3" />
+                {new Date(e.last_index_time).toLocaleDateString()}
+              </span>
+            )}
+            {e.build_seconds !== null && e.build_seconds !== undefined && (
+              <span className="flex items-center gap-1">
+                <Timer className="w-3 h-3" />
+                {e.build_seconds.toFixed(1)}s
+              </span>
+            )}
           </div>
         </div>
       ))}

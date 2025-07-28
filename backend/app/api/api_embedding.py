@@ -9,7 +9,11 @@ import json
 from app.config import settings
 from app.task_queue import task_rebuild_world_embedding
 from app.models.model_user import User, UserRole
-from app.schemas.schema_world_embedding import WorldEmbedding, WorldEmbeddingCreate
+from app.schemas.schema_world_embedding import (
+    WorldEmbedding,
+    WorldEmbeddingCreate,
+    WorldEmbeddingUpdate,
+)
 from app.models.model_world_embedding import WorldEmbedding as WorldEmbeddingModel
 from app.dependencies import get_current_user, require_role
 
@@ -56,6 +60,21 @@ async def delete_embedding(
     if not ok:
         raise HTTPException(status_code=404, detail="Embedding not found")
     return {"ok": True}
+
+
+@router.patch("/{embedding_id}", response_model=WorldEmbedding)
+async def update_embedding_endpoint(
+    embedding_id: int,
+    updates: WorldEmbeddingUpdate,
+    user: User = Depends(require_role(UserRole.system_admin)),
+    session: AsyncSession = Depends(get_session),
+):
+    embedding = await crud_world_embedding.update_embedding(
+        session, embedding_id, updates.model_dump(exclude_unset=True)
+    )
+    if not embedding:
+        raise HTTPException(status_code=404, detail="Embedding not found")
+    return embedding
 
 
 @router.post("/{embedding_id}/embed_async")

@@ -21,6 +21,19 @@ export async function createWorldEmbedding(data: any, token: string) {
   return await res.json();
 }
 
+export async function updateWorldEmbedding(id: number, data: any, token: string) {
+  const res = await fetch(`${API_URL}/world_embeddings/${id}`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) throw await res.text();
+  return await res.json();
+}
+
 export async function deleteWorldEmbedding(id: number, token: string) {
   const res = await fetch(`${API_URL}/world_embeddings/${id}`, {
     method: "DELETE",

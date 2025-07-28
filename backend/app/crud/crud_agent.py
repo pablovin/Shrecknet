@@ -11,7 +11,7 @@ from pathlib import Path
 import json
 
 from app.config import settings
-from app.crud import crud_vectordb, crud_concept, crud_page
+from app.crud import crud_vectordb, crud_concept, crud_page, crud_agent_embedding
 from app.models.model_agent import Agent
 from app.models.model_gameworld import GameWorld
 from rapidfuzz import fuzz
@@ -69,6 +69,8 @@ async def chat_with_agent(
 
     query = messages[-1].get("content", "") if messages else ""
     world = await session.get(GameWorld, agent.world_id)
+    embeddings = await crud_agent_embedding.get_embeddings(session, agent_id)
+    collections = [e.collection for e in embeddings] or [None]
 
     # Run step 1 and 2 concurrently: extract query structure + load pages/concepts
     async def extract_query_structure():
@@ -128,14 +130,21 @@ async def chat_with_agent(
 
     print(f"FILTERS USED IN QUERY: {filters}")
 
-    # Step 3: Retrieve chunks
-    chunks = crud_vectordb.query_world(
-        agent.world_id,
-        semantic_query,
-        n_results=n_results * 8,
-        views=views,
-        filters=filters
-    )
+    # Step 3: Retrieve chunks from all associated embeddings
+    chunks = []
+    for coll in collections:
+        try:
+            parts = crud_vectordb.query_world(
+                agent.world_id,
+                semantic_query,
+                n_results=n_results * 8,
+                views=views,
+                filters=filters,
+                collection=coll,
+            )
+            chunks.extend(parts)
+        except Exception:
+            continue
 
     # Step 4: Top-K semantic compression (keep only strongest chunks by size)
     chunks = sorted(chunks, key=lambda c: len(c["document"]), reverse=True)[:n_results * 2]

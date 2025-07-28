@@ -87,6 +87,18 @@ def _migrate(conn):
             "CREATE TABLE agentlibraryitem (agent_id INTEGER NOT NULL REFERENCES agent(id), item_id INTEGER NOT NULL REFERENCES libraryitem(id), added_at DATETIME NOT NULL, PRIMARY KEY (agent_id, item_id))"
         ))
 
+    # -- WorldEmbedding table --
+    if "worldembedding" not in inspector.get_table_names():
+        conn.execute(text(
+            "CREATE TABLE worldembedding (id INTEGER PRIMARY KEY AUTOINCREMENT, world_id INTEGER NOT NULL REFERENCES gameworld(id), name TEXT NOT NULL, collection TEXT NOT NULL, created_at DATETIME NOT NULL)"
+        ))
+
+    # -- AgentEmbedding table --
+    if "agentembedding" not in inspector.get_table_names():
+        conn.execute(text(
+            "CREATE TABLE agentembedding (agent_id INTEGER NOT NULL REFERENCES agent(id), embedding_id INTEGER NOT NULL REFERENCES worldembedding(id), added_at DATETIME NOT NULL, PRIMARY KEY (agent_id, embedding_id))"
+        ))
+
     # -- UserNote table --
     if "usernote" not in inspector.get_table_names():
         conn.execute(text(

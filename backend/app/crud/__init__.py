@@ -29,6 +29,8 @@ except Exception:
     crud_library_vectordb = None
 from . import crud_agent_library_item
 from . import crud_user_note
+from . import crud_world_embedding
+from . import crud_agent_embedding
 try:
     from . import crud_vectordb
 except Exception:  # pragma: no cover - optional dependency
@@ -50,6 +52,8 @@ __all__ = [
     "crud_library_item",
     "crud_agent_library_item",
     "crud_user_note",
+    "crud_world_embedding",
+    "crud_agent_embedding",
 ]
 if crud_vectordb:
     __all__.append("crud_vectordb")

@@ -21,6 +21,7 @@ import {
   History,
   Users2,
   Book,
+  Layers,
 } from "lucide-react";
 import SimpleBarChart from "../components/charts/SimpleBarChart";
 import { useLibraryItems } from "../lib/useLibraryItems";
@@ -155,6 +156,18 @@ export default function AdminDashboardPage() {
                 actions={
                   <Link className="btn-primary" href="/library_admin">
                     Enter Library
+                  </Link>
+                }
+              />
+
+              <DashboardCard
+                title="World Embeddings"
+                description="Manage vector stores for your worlds."
+                icon={<Layers className="w-6 h-6" />}
+                color="from-violet-600 to-purple-500"
+                actions={
+                  <Link className="btn-primary" href="/world_embeddings">
+                    Manage Embeddings
                   </Link>
                 }
               />

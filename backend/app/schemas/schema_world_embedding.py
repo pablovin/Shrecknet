@@ -16,6 +16,9 @@ class WorldEmbeddingCreate(WorldEmbeddingBase):
 class WorldEmbedding(WorldEmbeddingBase):
     id: int
     created_at: datetime
+    last_index_time: Optional[datetime] = None
+    page_count: Optional[int] = None
+    build_seconds: Optional[float] = None
 
     class Config:
         orm_mode = True

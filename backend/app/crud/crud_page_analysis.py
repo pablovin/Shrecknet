@@ -14,7 +14,24 @@ from app.crud import crud_page, crud_concept, crud_vectordb
 from app.crud import crud_characteristic
 from app.crud.crud_agent import ensure_personality_prompts
 import json
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from bs4 import BeautifulSoup
+from rapidfuzz import fuzz, process
+
+import unicodedata
+
+  
+
+def normalize_name(name):
+    # Remove accents, lowercase, trim spaces
+    name = unicodedata.normalize('NFKD', name).encode('ASCII', 'ignore').decode('ASCII')
+    name = name.lower().strip()
+    # Remove leading 'o ', 'a ', 'os ', 'as ', etc.
+    for prefix in ["o ", "a ", "os ", "as ", "barão ", "lady ", "rei ", "rainha "]:
+        if name.startswith(prefix):
+            name = name[len(prefix):]
+    return name
+
+
 
 
 def _valid_name(name: str) -> bool:
@@ -55,101 +72,139 @@ def _canonical(name: str) -> str:
     return " ".join(words)
 
 
-def _select_key(name: str, groups: Dict[str, List[dict]]) -> str:
-    """Return the canonical key for grouping similar names."""
-    canonical = _canonical(name)
-    for k in list(groups.keys()):
-        if k.startswith(canonical):
-            groups[canonical] = groups.pop(k)
-            return canonical
-        if canonical.startswith(k):
-            return k
-    return canonical
-
-
-def _find_existing_page(name: str, page_map: Dict[str, int]) -> int | None:
-    """Find existing page id by canonical or fuzzy match."""
-    key = _canonical(name)
-    if key in page_map:
-        return page_map[key]
-    for k, pid in page_map.items():
-        if key.startswith(k) or k.startswith(key):
-            return pid
-        if SequenceMatcher(None, key, k).ratio() > 0.85:
-            return pid
+def find_best_page_match(name, existing_titles, threshold=80):
+    name_norm = normalize_name(name)
+    choices = [normalize_name(t) for t in existing_titles.keys()]
+    match, score, idx = process.extractOne(name_norm, choices, scorer=fuzz.token_set_ratio)
+    if score >= threshold:
+        matched_key = list(existing_titles.keys())[idx]  # get the original key
+        return matched_key
     return None
 
 
-_text_splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=100)
 
+def split_html_by_headers(html, header_tags=("h1", "h2", "h3")):
+    soup = BeautifulSoup(html, "html.parser")
+    # Find all headers in order
+    headers = []
+    for tag in header_tags:
+        headers += soup.find_all(tag)
+    headers = sorted(headers, key=lambda x: x.sourceline if hasattr(x, 'sourceline') and x.sourceline else 0)
 
-async def analyze_page(session, agent: Agent, page: Page) -> dict:
-    # Step 1: Load concepts and existing pages
+    chunks = []
+    for i, h in enumerate(headers):
+        # Use space separator!
+        section_texts = [h.get_text(separator=' ', strip=True)]
+        for sib in h.next_siblings:
+            if getattr(sib, 'name', None) in header_tags:
+                break
+            if getattr(sib, 'get_text', None):
+                txt = sib.get_text(separator=' ', strip=True)
+                if txt:
+                    section_texts.append(txt)
+            elif isinstance(sib, str):
+                stripped = sib.strip()
+                if stripped:
+                    section_texts.append(stripped)
+        chunk = "\n".join(section_texts).strip()
+        if chunk:
+            chunks.append(chunk)
+    return chunks
+
+def ensure_visible_text(chunk):
+    # If already plain text, return as is
+    if isinstance(chunk, str):
+        return chunk.strip()
+    # If Document object, get .page_content
+    text = getattr(chunk, "page_content", str(chunk))
+    # Strip all HTML tags, merge inline elements
+    return BeautifulSoup(text, "html.parser").get_text(separator='', strip=True)
+
+async def analyze_page(session, agent, page) -> dict:
+    # Load concepts and existing pages
     concepts = await crud_concept.get_concepts(session, gameworld_id=page.gameworld_id, auto_generated=True)
     concept_defs = {c.name: c.description or "" for c in concepts}
-    concept_names = list(concept_defs.keys())
+    concepts_by_id = {c.id: c for c in concepts}
+    concepts_by_name = {normalize_name(c.name): c for c in concepts}
     existing_pages = await crud_page.get_pages(session, gameworld_id=page.gameworld_id)
-    existing_titles = {p.name.lower(): p.id for p in existing_pages if p.name}
+    existing_titles_norm = {normalize_name(p.name): p for p in existing_pages if p.name}
 
-    # Step 2: Chunk the page into logical pieces
+    # Chunk page content
     content = page.content or ""
-    text_chunks = _text_splitter.split_text(content)
+    text_chunks = split_html_by_headers(content)
 
-    # Step 3: Retrieve surrounding context to guide LLM extraction
-    retrieved_concepts = set()
-    for chunk in text_chunks:
-        related_chunks = crud_vectordb.query_world(
-            page.gameworld_id,
-            chunk,
-            n_results=8,
-            views=["relationship", "event", "narrative"]
-        )
-        for c in related_chunks:
-            if "concept_name" in c:
-                retrieved_concepts.add(c["concept_name"])
-
-    # Filter retrieved concepts to only those that are auto_generated
-    print (f"RETRIEVED CONCEPTS: {retrieved_concepts} ")
-    filtered_retrieved_concepts = [c for c in retrieved_concepts if c in concept_defs]
-    print (f"PAGE: {page.content[0:30]} ")
-    print (f"FOUND CONCEPTS: {filtered_retrieved_concepts} ")
-
-    # Step 4: Run LLM extraction per chunk using relevant concepts only
+    # Prompt LLM for {page_name: concept_name} mappings
     prompt = ChatPromptTemplate.from_messages([
-        ("system", "You are analyzing a story. Extract ONLY important concept mentions that match existing known concepts.\n"
-                + "Concept list:\n"
-                + "\n".join(f"- {name}: {desc}" for name, desc in concept_defs.items() if name in filtered_retrieved_concepts)
-                + "\nReturn a JSON object like: {{ \"<name>\": \"<concept_type>\" }}"),
+        ("system",
+            "You are analyzing a story. Extract important concepts and suggest the canonical page names for each, along with the concept (category/type) each belongs to, using the most complete and unambiguous name possible."
+            "\nIf possible, map aliases and short references to their main page name."
+            "\nConcept list:\n"
+            + "\n".join(f"- {name}: {desc}" for name, desc in concept_defs.items())
+            + "\nReturn a JSON object mapping each page name to its concept (category), e.g.:\n"
+            + "{{\n  \"Barão de Karst\": \"NPC\",\n  \"Abelardo\": \"NPC\",\n  \"Yudennach\": \"Reino\",\n  \"Green Dragon\": \"Monstro\"\n}}"
+            + "\nDo not include mentions that are not mapped to a concept. Only return the JSON object."
+        ),
         ("user", "{chunk}")
     ])
     llm = ChatOpenAI(api_key=settings.openai_api_key, model=settings.open_ai_model)
     chain = prompt | llm
 
-    found_names: Dict[str, str] = {}
+    # Collect all page_name: concept_name pairs from all chunks
+    all_pairs = []
     for chunk in text_chunks:
-            print (f"TEXT CHUNK: {chunk[0:40]}")
-            result = await chain.ainvoke({"chunk": chunk})
-            print (f"RESULT: {result}")
-            parsed = json.loads(result.content.strip())
-            found_names.update(parsed)
+        result = await chain.ainvoke({"chunk": chunk})
+        parsed = json.loads(result.content.strip())
+        if isinstance(parsed, dict):
+            all_pairs.extend(parsed.items())
 
-    
-    print (f"FOUND NAMES: {found_names} ")
-    # Step 5: Normalize and match to existing pages
+    # Group by normalized name (deduplicate aliases & similar names)
+    groups = {}
+    for name, concept_name in all_pairs:
+        norm = normalize_name(name)
+        if norm not in groups:
+            groups[norm] = {"names": [], "concepts": set()}
+        groups[norm]["names"].append(name)
+        groups[norm]["concepts"].add(concept_name)
+
     suggestions = []
-    for name, concept_name in found_names.items():
-        concept_obj = next((c for c in concepts if c.name == concept_name), None)
-        if not concept_obj:
-            continue
+    already_handled = set()
+    for norm, data in groups.items():
+        # Pick the best display name (prefer the actual page name if it exists, else the longest/most descriptive name)
+        page_obj = existing_titles_norm.get(norm)
+        all_names = data["names"]
+        # If any of the LLM names match an existing page exactly, use that page's name. Else, pick the longest one.
+        best_name = page_obj.name if page_obj else max(all_names, key=len)
 
-        page_id = existing_titles.get(name.lower())
+        # If this normalized name already mapped to an existing page, keep only one suggestion for that page!
+        if page_obj:
+            if page_obj.id in already_handled:
+                continue  # Already suggested via another alias
+            already_handled.add(page_obj.id)
+
+        # Choose concept from existing page, or from LLM/LLM guess, or from concept list
+        concept_obj = None
+        if page_obj and getattr(page_obj, "concept_id", None):
+            concept_obj = concepts_by_id.get(page_obj.concept_id)
+        if not concept_obj:
+            # Try: match LLM concept to your concepts list (fuzzy)
+            llm_concept = next(iter(data["concepts"])) if data["concepts"] else None
+            if llm_concept:
+                # Try exact or fuzzy match to available concept types/names
+                match = concepts_by_name.get(normalize_name(llm_concept))
+                if match:
+                    concept_obj = match
+        final_concept_id = concept_obj.id if concept_obj else None
+        final_concept_name = concept_obj.name if concept_obj else (llm_concept if llm_concept else "Unknown")
+
+        exists = bool(page_obj)
+        print(f"Suggestion: {best_name} - Concept: {final_concept_name}  - Exists: {exists}")
         suggestions.append({
-            "name": name,
-            "concept_id": concept_obj.id,
-            "concept": concept_name,
-            "mode": "update" if page_id else "create",
-            "exists": bool(page_id),
-            "target_page_id": page_id,
+            "name": best_name,
+            "concept_id": final_concept_id,
+            "concept": final_concept_name,
+            "mode": "update" if exists else "create",
+            "exists": exists,
+            "target_page_id": page_obj.id if page_obj else None,
             "source_pages": [{"id": page.id, "name": page.name}],
             "source_page_ids": [page.id],
             "source_page_updated": (page.updated_at.isoformat() if page.updated_at else "")

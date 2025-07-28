@@ -8,8 +8,23 @@ import { useWorldEmbeddings } from "../lib/useWorldEmbeddings";
 import { createWorldEmbedding, deleteWorldEmbedding, startWorldEmbeddingJob } from "../lib/worldEmbeddingAPI";
 import { useWorldEmbeddingJobs } from "../lib/useWorldEmbeddingJobs";
 import { useState } from "react";
-import { Sparkles, BookOpen, Trash2, Globe, Pencil } from "lucide-react";
+import { Sparkles, BookOpen, Trash2, Globe, Pencil, Loader2, CheckCircle2, XCircle, Clock } from "lucide-react";
 import WorldEmbeddingModal from "../components/world_embeddings/WorldEmbeddingModal";
+
+const statusStyle = {
+  queued: "bg-yellow-50 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-100 border-yellow-200 dark:border-yellow-700",
+  running: "bg-blue-50 text-blue-800 dark:bg-blue-900 dark:text-blue-100 border-blue-200 dark:border-blue-700 animate-pulse",
+  success: "bg-green-50 text-green-800 dark:bg-green-900 dark:text-green-100 border-green-200 dark:border-green-700",
+  failed: "bg-rose-50 text-rose-800 dark:bg-rose-900 dark:text-rose-100 border-rose-200 dark:border-rose-700",
+  default: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-100 border-slate-200 dark:border-slate-700"
+};
+
+const statusIcon = {
+  queued: <Clock className="w-4 h-4 inline-block mr-1" />,
+  running: <Loader2 className="w-4 h-4 inline-block mr-1 animate-spin" />,
+  success: <CheckCircle2 className="w-4 h-4 inline-block mr-1" />,
+  failed: <XCircle className="w-4 h-4 inline-block mr-1" />,
+};
 
 export default function WorldEmbeddingsPage() {
   const { token } = useAuth();
@@ -45,25 +60,30 @@ export default function WorldEmbeddingsPage() {
     await deleteWorldEmbedding(id, token || "");
     setDeletingId(null);
     mutate();
+    refreshJobs();
   }
 
   function openEdit(e: any) {
     setEditing(e);
   }
-
   function closeEdit() {
     setEditing(null);
     mutate();
   }
-
   async function handleRebuild(id: number) {
     await startWorldEmbeddingJob(id, token || "");
     refreshJobs();
   }
-
   function getWorldName(id: number) {
     return worlds.find((w: any) => w.id === id)?.name || "Unknown Realm";
   }
+
+  // Group jobs by embedding for easier lookup
+  const jobsByEmbedding = jobs.reduce((map: any, j: any) => {
+    map[j.embedding_id] = map[j.embedding_id] || [];
+    map[j.embedding_id].push(j);
+    return map;
+  }, {});
 
   return (
     <AuthGuard>
@@ -82,7 +102,7 @@ export default function WorldEmbeddingsPage() {
             </p>
           </div>
 
-          {/* "Ritual" Create Form */}
+          {/* Ritual Form */}
           <form
             onSubmit={handleCreate}
             className="w-full max-w-xl flex flex-col md:flex-row items-stretch gap-2 mb-10 bg-white/80 dark:bg-purple-900/50 rounded-2xl shadow-lg p-4 border-2 border-purple-200 dark:border-purple-700"
@@ -117,47 +137,13 @@ export default function WorldEmbeddingsPage() {
             </button>
           </form>
 
-          <table className="w-full border text-sm">
-            <thead><tr><th>ID</th><th>Name</th><th>World</th><th>Pages</th><th>Last Build</th><th>Time</th><th></th></tr></thead>
-            <tbody>
-              {embeddings.map((e:any)=>(
-                <tr key={e.id} className="border-t">
-                  <td className="px-2">{e.id}</td>
-                  <td className="px-2">{e.name}</td>
-                  <td className="px-2">{getWorldName(e.world_id)}</td>
-                  <td className="px-2">{e.page_count ?? 'None'}</td>
-                  <td className="px-2">{e.last_index_time ? new Date(e.last_index_time).toLocaleString() : 'Never'}</td>
-                  <td className="px-2">{e.build_seconds ? `${e.build_seconds}s` : '-'}</td>
-                  <td className="px-2 flex gap-2">
-                    <button onClick={()=>openEdit(e)} className="text-blue-600">Edit</button>
-                    <button onClick={()=>handleRebuild(e.id)} className="text-purple-600">Rebuild</button>
-                    <button onClick={()=>handleDelete(e.id)} className="text-red-600">Delete</button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {jobs.length > 0 && (
-            <div className="mt-8">
-              <h2 className="text-xl font-semibold mb-2">Embedding Jobs</h2>
-              <table className="w-full border text-sm">
-                <thead><tr><th>ID</th><th>Status</th><th>Embedding</th></tr></thead>
-                <tbody>
-                  {jobs.map((j:any)=>(
-                    <tr key={j.job_id} className="border-t">
-                      <td className="px-2 font-mono">{j.job_id}</td>
-                      <td className="px-2">{j.status}</td>
-                      <td className="px-2">{j.embedding_id}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-
-
           {/* Embeddings Grid */}
           <div className="w-full max-w-5xl grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {embeddings.length === 0 && (
+              <div className="col-span-full text-center p-10 text-lg text-slate-500 italic">
+                No World Crystals yet.<br />Begin your ritual to forge the first!
+              </div>
+            )}
             {embeddings.map((e: any) => (
               <div
                 key={e.id}
@@ -166,7 +152,7 @@ export default function WorldEmbeddingsPage() {
                 <div className="absolute top-3 right-3 flex gap-2">
                   <button
                     className="rounded-full bg-blue-100 hover:bg-blue-300 dark:bg-blue-900 dark:hover:bg-blue-700 p-2 shadow text-blue-600 dark:text-blue-300 transition"
-                    title="Edit"
+                    title="Edit Crystal"
                     onClick={() => openEdit(e)}
                   >
                     <Pencil className="w-5 h-5" />
@@ -199,20 +185,37 @@ export default function WorldEmbeddingsPage() {
                 <div className="text-xs mt-1">Last Build: {e.last_index_time ? new Date(e.last_index_time).toLocaleString() : 'Never'}</div>
                 <div className="text-xs mt-1">Build Time: {e.build_seconds ? `${e.build_seconds}s` : '-'}</div>
                 <button
-                  className="mt-2 px-3 py-1 rounded-xl bg-purple-600 text-white text-sm hover:bg-purple-700"
+                  className="mt-2 px-3 py-1 rounded-xl bg-purple-600 text-white text-sm hover:bg-purple-700 transition"
                   onClick={() => handleRebuild(e.id)}
                 >
                   Rebuild
                 </button>
+                {/* Jobs for this embedding */}
+                {Array.isArray(jobsByEmbedding[e.id]) && jobsByEmbedding[e.id].length > 0 && (
+                  <div className="mt-3">
+                    <div className="text-xs font-semibold mb-1 text-purple-700 dark:text-purple-300 flex items-center gap-2">
+                      <Sparkles className="w-4 h-4" /> Ritual Log
+                    </div>
+                    <ul className="flex flex-col gap-2">
+                      {jobsByEmbedding[e.id].map((j: any) => (
+                        <li
+                          key={j.job_id}
+                          className={
+                            "flex items-center gap-2 px-3 py-1 rounded-lg border " +
+                            (statusStyle[j.status as keyof typeof statusStyle] || statusStyle.default)
+                          }
+                        >
+                          {statusIcon[j.status as keyof typeof statusIcon] || <Clock className="w-4 h-4 mr-1" />}
+                          <span className="font-mono">{j.job_id}</span>
+                          <span className="capitalize text-xs">{j.status}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
               </div>
             ))}
-            {embeddings.length === 0 && (
-              <div className="col-span-full text-center p-10 text-lg text-slate-500 italic">
-                No World Crystals yet.<br />Begin your ritual to forge the first!
-              </div>
-            )}
           </div>
-
         </div>
       </DashboardLayout>
       {editing && (

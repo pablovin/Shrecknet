@@ -81,7 +81,7 @@ async def chat_with_agent(
         }
     collections = [e.collection for e in valid_embeds]
 
-    # Run step 1 and 2 concurrently: extract query structure + load pages/concepts
+    # Step 1+2: Query understanding (LLM) + load pages
     async def extract_query_structure():
         llm_understand = ChatOpenAI(api_key=settings.openai_api_key, model=openai_model)
         concepts = await crud_concept.get_concepts(session, gameworld_id=agent.world_id)
@@ -107,7 +107,6 @@ async def chat_with_agent(
     structured_response, all_pages = await asyncio.gather(
         extract_query_structure(), load_pages()
     )
-
     structured, concepts = structured_response
 
     try:
@@ -123,7 +122,7 @@ async def chat_with_agent(
     views = parsed.get("views", ["narrative", "event", "relationship"])
     filters = {}
 
-    # Fuzzy match against page titles
+    # Fuzzy match against page titles (for user queries mentioning specific pages)
     mentioned_pages = []
     query_words = semantic_query.lower().split()
     for p in all_pages:
@@ -139,68 +138,63 @@ async def chat_with_agent(
 
     print(f"FILTERS USED IN QUERY: {filters}")
 
-    # Step 3: Retrieve chunks from all associated embeddings
-    chunks = []
+    # Step 3: Query all embeddings with improved query_world
+    all_results = []
     for coll in collections:
         try:
-            parts = crud_vectordb.query_world(
+            results = crud_vectordb.query_world(
                 agent.world_id,
                 semantic_query,
-                n_results=n_results * 8,
+                n_results=n_results * 2,
                 views=views,
                 filters=filters,
                 collection=coll,
+                max_chunks_per_page=6  # adjust as needed per context window
             )
-            chunks.extend(parts)
-        except Exception:
+            all_results.extend(results)
+        except Exception as ex:
+            print(f"Query failed for collection {coll}: {ex}")
             continue
 
-    # Step 4: Top-K semantic compression (keep only strongest chunks by size)
-    chunks = sorted(chunks, key=lambda c: len(c["document"]), reverse=True)[:n_results * 2]
+    # Step 4: Rank, select, and filter relevant results
+    # Sort by first highlight score, then by full document length as fallback
+    all_results = sorted(
+        all_results,
+        key=lambda r: (
+            r["highlights"][0]["score"] if r.get("highlights") and r["highlights"][0].get("score") is not None else 0,
+            len(r.get("document", ""))),
+        reverse=True
+    )
 
-    # Step 5: Filter with LLM
-    context_input = "\n\n".join([f"[{c['title']}]: {c['document']}" for c in chunks])
-    llm_filter = ChatOpenAI(api_key=settings.openai_api_key, model="gpt-4o")
-    filter_prompt = ChatPromptTemplate.from_messages([
-        ("system", "You will receive a user query and a list of document chunks. Return ONLY a JSON list of the most relevant titles to answer the query. Do not add explanation or formatting. Example:\n[\"Page A\", \"Page B\"]"),
-        ("user", "{context}"),
-    ])
-    filter_chain = filter_prompt | llm_filter
-    selection = await filter_chain.ainvoke({"query": query, "context": context_input})
+    # Take up to n_results most relevant "pages"
+    selected_results = all_results[:n_results]
 
-    # try:
-    used_titles = json.loads(selection.content.strip())
-    # except Exception as ex:
-    #     print (f"ERROR USED TITLES: {}")
-    #     used_titles = []
+    # For LLM input, you can combine both aggregated doc and top highlights for each page
+    context_blocks = []
+    for res in selected_results:
+        title = res.get("title") or res.get("page_id") or "Untitled"
+        # If you want: include highlight chunks for extra relevance (optional, for transparency or debugging)
+        # highlights_text = "\n".join([f"{h['content']}" for h in res.get("highlights", [])])
+        # For most LLMs, using the aggregate 'document' is best for context:
+        context_blocks.append(f"[{title}]: {res['document']}")
 
-    selected_chunks = []
-    for c in chunks:
-        if c["title"] in used_titles:
-            selected_chunks.append(c)
-            print("Retrieved titles:", [c["title"] for c in chunks])
-            print("Top chunk preview:", chunks[0]["document"][:300] if chunks else "None")
+    context = "\n\n".join(context_blocks)
 
-    # selected_chunks = [c for c in chunks if c["title"] in used_titles]
-    context = "\n\n".join(f"[{c['title']}]: {c['document']}" for c in selected_chunks)
-
+    # Build sources with full metadata (page, concept, etc)
     sources = []
-    for c in selected_chunks:
-        sources.append(
-            {
-                "title": c["title"],
-                "url": f"/worlds/{agent.world_id}/concept/{c['concept_id']}/page/{c['page_id']}"
-            }
-        )
+    for res in selected_results:
+        sources.append({
+            "title": res.get("title") or f"Page {res.get('page_id')}",
+            "url": f"/worlds/{agent.world_id}/concept/{res.get('concept_id')}/page/{res.get('page_id')}",
+            "concept": res.get("concept_name"),
+            "concept_id": res.get("concept_id"),
+            "page_id": res.get("page_id"),
+        })
 
-
-
-  
     print(f"Context: {context}")
-    print(f"selected_chunks: {selected_chunks}")
     print(f"Sources: {sources}")
-    
-    # Step 6: Generate final response
+
+    # Step 5: Generate final response
     history_txt = "\n".join(f"{m['role']}: {m['content']}" for m in messages[:-1])
     personalities = [p.strip() for p in (agent.personality or "helpful NPC").split(",") if p.strip()]
     agent_name = agent.name or "Agent"
@@ -239,6 +233,7 @@ async def chat_with_agent(
     answer = getattr(response, "content", str(response))
 
     return {"answer": answer, "sources": sources}
+
 
 
 

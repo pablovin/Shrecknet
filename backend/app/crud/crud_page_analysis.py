@@ -5,7 +5,54 @@ from typing import Dict, List
 from difflib import SequenceMatcher
 import unicodedata
 
+from datetime import datetime, timezone
 
+from app.config import settings
+from app.models.model_page import Page
+from app.models.model_agent import Agent
+from app.models.model_concept import Concept
+from app.crud import crud_page, crud_concept, crud_vectordb
+from app.crud import crud_characteristic, crud_agent_embedding
+from app.crud.crud_agent import ensure_personality_prompts
+import json
+from bs4 import BeautifulSoup
+from rapidfuzz import fuzz, process
+
+
+from bs4 import BeautifulSoup
+
+def strip_html(text):
+    soup = BeautifulSoup(text or "", "html.parser")
+    return soup.get_text(separator=" ", strip=True)
+
+def split_html_by_headers(html, header_tags=("h1", "h2", "h3")):
+    soup = BeautifulSoup(html, "html.parser")
+    headers = []
+    for tag in header_tags:
+        headers += soup.find_all(tag)
+    headers = sorted(headers, key=lambda x: x.sourceline if hasattr(x, 'sourceline') and x.sourceline else 0)
+
+    chunks = []
+    for i, h in enumerate(headers):
+        section_texts = [h.get_text(separator=' ', strip=True)]
+        for sib in h.next_siblings:
+            if getattr(sib, 'name', None) in header_tags:
+                break
+            if getattr(sib, 'get_text', None):
+                txt = sib.get_text(separator=' ', strip=True)
+                if txt:
+                    section_texts.append(txt)
+            elif isinstance(sib, str):
+                stripped = sib.strip()
+                if stripped:
+                    section_texts.append(stripped)
+        chunk = "\n".join(section_texts).strip()
+        if chunk:
+            chunks.append(chunk)
+    return chunks
+
+
+  
 async def _get_agent_embeddings(session: AsyncSession, agent: Agent):
     """Return valid world embeddings associated with the agent."""
     embeddings = await crud_agent_embedding.get_embeddings(session, agent.id)
@@ -36,22 +83,7 @@ async def _query_agent_world(
         except Exception:
             continue
     return chunks[:n_results]
-from datetime import datetime, timezone
 
-from app.config import settings
-from app.models.model_page import Page
-from app.models.model_agent import Agent
-from app.models.model_concept import Concept
-from app.crud import crud_page, crud_concept, crud_vectordb
-from app.crud import crud_characteristic, crud_agent_embedding
-from app.crud.crud_agent import ensure_personality_prompts
-import json
-from bs4 import BeautifulSoup
-from rapidfuzz import fuzz, process
-
-import unicodedata
-
-  
 
 def normalize_name(name):
     # Remove accents, lowercase, trim spaces
@@ -172,7 +204,7 @@ async def analyze_page(session, agent, page) -> dict:
     # Gather additional context from the agent's world embeddings
     embed_chunks = await _query_agent_world(session, agent, page.name, n_results=3)
     text_chunks.extend(c["document"] for c in embed_chunks)
-
+ 
     # Prompt LLM for {page_name: concept_name} mappings
     prompt = ChatPromptTemplate.from_messages([
         ("system",

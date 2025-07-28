@@ -70,7 +70,16 @@ async def chat_with_agent(
     query = messages[-1].get("content", "") if messages else ""
     world = await session.get(GameWorld, agent.world_id)
     embeddings = await crud_agent_embedding.get_embeddings(session, agent_id)
-    collections = [e.collection for e in embeddings] or [None]
+    valid_embeds = [e for e in embeddings if e.last_index_time]
+    if not valid_embeds:
+        return {
+            "answer": (
+                "The agent stares into the abyss, lacking any forged lore. "
+                "Craft world embeddings before seeking its counsel!"
+            ),
+            "sources": [],
+        }
+    collections = [e.collection for e in valid_embeds]
 
     # Run step 1 and 2 concurrently: extract query structure + load pages/concepts
     async def extract_query_structure():

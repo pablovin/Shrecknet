@@ -11,6 +11,7 @@ Shrecknet is a collaborative world building and story telling platform. It mixes
 - **CRM like wiki** with Worlds, Concepts, Characteristics and Pages
 - **Automatic cross linking** and vector search powered by Celery workers
 - **Conversational, Specialist, Writer and Novelist AI agents**
+- **Optional world embeddings** can be linked to agents to provide extra lore
 - Import/export utilities and example data
 - Docker based development environment
 

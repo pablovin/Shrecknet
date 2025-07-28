@@ -8,3 +8,6 @@ class WorldEmbedding(SQLModel, table=True):
     name: str
     collection: str
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    last_index_time: Optional[datetime] = None
+    page_count: Optional[int] = None
+    build_seconds: Optional[float] = None

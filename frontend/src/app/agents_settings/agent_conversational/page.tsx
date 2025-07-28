@@ -11,7 +11,7 @@ import AgentModal from "../../components/agents/AgentModal";
 import AgentEmbeddingModal from "../../components/agents/AgentEmbeddingModal";
 import { startVectorUpdate } from "../../lib/vectordbAPI";
 import { getPagesForWorld } from "../../lib/pagesAPI";
-import { useVectorJobs } from "../../lib/useVectorJobs";
+import { useAgentEmbeddings } from "../../lib/useAgentEmbeddings";
 import { useWriterJobs } from "../../lib/useWriterJobs";
 import { usePageById } from "../../lib/usePageById";
 
@@ -77,105 +77,18 @@ function AgentAvatar({ name, logo }) {
   );
 }
 
-// ------- JOB STATUS SCROLL -------
-function JobStatusScroll({ jobs }) {
-  if (!jobs || !jobs.length) return null;
-
-  // Split jobs into active and completed/error
-  const activeJobs = jobs.filter(j =>
-    j.status === "queued" || j.status === "running" || j.status === "processing"
-  );
-  const finishedJobs = jobs
-    .filter(j => j.status === "finished" || j.status === "done" || j.status === "error")
-    .slice(-3); // Last 3 only
-
-  function renderJobStatus(job) {
-    if (job.status === "running" || job.status === "processing") {
-      return (
-        <>
-          <span className="animate-pulse">⏳</span> Running: {job.progress || "In progress..."}
-        </>
-      );
-    }
-    if (job.status === "queued") {
-      return (
-        <>
-          <span>🕓</span> Queued: {job.progress || "Waiting..."}
-        </>
-      );
-    }
-    if (job.status === "finished" || job.status === "done") {
-      return (
-        <>
-          <span>✅</span> Done: {job.progress || "Complete"}
-        </>
-      );
-    }
-    if (job.status === "error") {
-      return (
-        <>
-          <span>❌</span> Error: {job.progress || "Failed"}
-        </>
-      );
-    }
-    return <>🔄 {job.status}</>;
-  }
-
-  function renderPagesIndexed(job) {
-    if (job.pages_indexed !== undefined && job.pages_indexed !== null) {
-      return (
-        <div className="text-xs text-gray-700 ml-5">
-          Pages indexed: <span className="font-semibold">{job.pages_indexed}</span>
-        </div>
-      );
-    }
-    return null;
-  }
-
-  function renderTime(job) {
-    return (
-      <div className="text-xs text-gray-500 ml-5">
-        Start: {job.start_time ? new Date(job.start_time).toLocaleString() : "?"}
-        {job.end_time && <> | End: {new Date(job.end_time).toLocaleString()}</>}
-      </div>
-    );
-  }
-
+// ------- Agent Embedding Info -------
+function AgentEmbeddingInfo({ agentId }) {
+  const { embeddings } = useAgentEmbeddings(agentId);
+  if (!embeddings.length) return null;
   return (
-    <div className="bg-purple-50 border border-indigo-200 rounded-xl p-2 mt-2 shadow-inner animate-pulse">
-      <div className="font-semibold text-yellow-900 mb-1 flex items-center gap-1">
-        <Wand2 className="w-4 h-4 text-yellow-600" /> Vector Update Progress
-      </div>
-
-      {activeJobs.length > 0 && (
-        <>
-          <div className="font-semibold text-indigo-700">Active Jobs:</div>
-          <ul className="pl-3 text-sm text-yellow-900 mb-2">
-            {activeJobs.map((job, idx) => (
-              <li key={job.id || idx} className="mb-1">
-                {renderJobStatus(job)}
-                {renderPagesIndexed(job)}
-                {renderTime(job)}
-              </li>
-            ))}
-          </ul>
-        </>
-      )}
-
-      {finishedJobs.length > 0 && (
-        <>
-          <div className="font-semibold text-indigo-700 mt-2">Recent Jobs:</div>
-          <ul className="pl-3 text-sm text-yellow-900">
-            {finishedJobs.map((job, idx) => (
-              <li key={job.id || idx} className="mb-1">
-                {renderJobStatus(job)}
-                {renderPagesIndexed(job)}
-                {renderTime(job)}
-              </li>
-            ))}
-          </ul>
-        </>
-      )}
+    <div className="text-xs text-indigo-700 mt-1 space-y-1">
+      {embeddings.map((e:any) => (
+        <div key={e.id}>
+          <span className="font-semibold">{e.name}</span> - {e.page_count ?? "?"} pages,
+          {" "}last: {e.last_index_time ? new Date(e.last_index_time).toLocaleString() : "n/a"} ({e.build_seconds ? e.build_seconds.toFixed(1)+"s" : "?"})
+        </div>
+      ))}
     </div>
   );
 }
@@ -267,10 +180,8 @@ export default function AgentsGuildhallPage() {
   const { user, token } = useAuth();
   const { agents, mutate, isLoading, error } = useAgents();
   const { worlds } = useWorlds();
-  const { jobs: vectorJobs, mutate: refreshVectorJobs } = useVectorJobs();
   const { jobs: writerJobs } = useWriterJobs();
 
-  const [search, setSearch] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
   const [selectedAgent, setSelectedAgent] = useState(null);
   const [embeddingModal, setEmbeddingModal] = useState<{id:number, world:number}|null>(null);
@@ -293,7 +204,6 @@ const filtered = agents.filter((a) =>
 );
 
 // Group jobs by agent
-const vectorJobsByAgent = vectorJobs
   .filter((j) => j.job_type === "update_vector_db")
   .reduce<Record<number, any[]>>((acc, j) => {
     if (!acc[j.agent_id]) acc[j.agent_id] = [];
@@ -325,9 +235,7 @@ async function handleRebuildAll() {
       setBulkStatus((s) => [...s, `❌ ${ag.name}: failed to queue.`]);
     }
   }
-  refreshVectorJobs();
   setBulkUpdating(false);
-  setNpcFlavor("Guild ritual complete! All agents have been refreshed.");
 }
 
 // Individual vector update
@@ -348,8 +256,6 @@ async function handleRebuild(agent) {
     }
     await startVectorUpdate(token || "", agent.id);
     setSuccess("Vector DB update started");
-    refreshVectorJobs();
-    setNpcFlavor(`Agent ${agent.name} is off to the archives!`);
   } catch (err) {
     setSuccess("Failed to rebuild vector DB");
     setNpcFlavor("Something went wrong with the ritual...");
@@ -412,6 +318,7 @@ function AgentGuildTable({ title, icon, agents, task, canRebuild }) {
                       Vector DB updated: <span className="font-semibold">{new Date(agent.vector_db_update_date).toLocaleString()}</span>
                     </div>
                   )}
+                  <AgentEmbeddingInfo agentId={agent.id} />
                 </div>
                 <div className="flex gap-2">
                   <button
@@ -447,10 +354,6 @@ function AgentGuildTable({ title, icon, agents, task, canRebuild }) {
                   )}
                 </div>
               </div>
-              {/* Show jobs for this agent */}
-              {task === "conversational" && vectorJobsByAgent[agent.id] && (
-                <JobStatusScroll jobs={vectorJobsByAgent[agent.id]} />
-              )}
               {task === "page writer" && writerJobsByAgent[agent.id] && (
                 <WriterJobStatusScroll jobs={writerJobsByAgent[agent.id]} />
               )}

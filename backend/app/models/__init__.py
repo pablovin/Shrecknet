@@ -1,4 +1,17 @@
-from . import model_agent, model_characteristic, model_concept, model_gameworld, model_page, model_user, model_specialist_source, model_library_item, model_agent_library_item, model_user_note
+from . import (
+    model_agent,
+    model_characteristic,
+    model_concept,
+    model_gameworld,
+    model_page,
+    model_user,
+    model_specialist_source,
+    model_library_item,
+    model_agent_library_item,
+    model_user_note,
+    model_world_embedding,
+    model_agent_embedding,
+)
 
 __all__ = [
     "model_agent",
@@ -11,4 +24,6 @@ __all__ = [
     "model_library_item",
     "model_agent_library_item",
     "model_user_note",
+    "model_world_embedding",
+    "model_agent_embedding",
 ]

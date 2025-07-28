@@ -8,6 +8,7 @@ import useRoleRedirect from "../../hooks/useRoleRedirect";
 import { useAgents } from "../../lib/useAgents";
 import { useWorlds } from "../../lib/userWorlds";
 import AgentModal from "../../components/agents/AgentModal";
+import AgentEmbeddingModal from "../../components/agents/AgentEmbeddingModal";
 import { startVectorUpdate } from "../../lib/vectordbAPI";
 import { getPagesForWorld } from "../../lib/pagesAPI";
 import { useVectorJobs } from "../../lib/useVectorJobs";
@@ -272,6 +273,7 @@ export default function AgentsGuildhallPage() {
   const [search, setSearch] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
   const [selectedAgent, setSelectedAgent] = useState(null);
+  const [embeddingModal, setEmbeddingModal] = useState<{id:number, world:number}|null>(null);
   const [success, setSuccess] = useState("");
   const [updatingAgentId, setUpdatingAgentId] = useState<number | null>(null);
   const [bulkUpdating, setBulkUpdating] = useState(false);
@@ -418,17 +420,23 @@ function AgentGuildTable({ title, icon, agents, task, canRebuild }) {
                   >
                     Edit
                   </button>
-                  <button
-                    className="px-3 py-1 rounded-lg font-semibold text-white bg-rose-600 hover:bg-rose-800 transition text-sm shadow"
-                    onClick={() => {
-                      setSelectedAgent(agent);
-                      setModalOpen(true);
-                      setNpcFlavor(`Are you sure you want to remove agent ${agent.name}?`);
-                    }}
-                  >
-                    Delete
-                  </button>
-                  {canRebuild && (
+                <button
+                  className="px-3 py-1 rounded-lg font-semibold text-white bg-rose-600 hover:bg-rose-800 transition text-sm shadow"
+                  onClick={() => {
+                    setSelectedAgent(agent);
+                    setModalOpen(true);
+                    setNpcFlavor(`Are you sure you want to remove agent ${agent.name}?`);
+                  }}
+                >
+                  Delete
+                </button>
+                <button
+                  className="px-3 py-1 rounded-lg font-semibold text-white bg-sky-600 hover:bg-sky-800 transition text-sm shadow"
+                  onClick={() => setEmbeddingModal({id:agent.id, world:agent.world_id})}
+                >
+                  Embeddings
+                </button>
+                {canRebuild && (
                     <button
                       className="px-3 py-1 rounded-lg font-semibold text-indigo-700 bg-purple-200 hover:bg-yellow-300 transition text-sm shadow border border-purple-300"
                       onClick={() => handleRebuild(agent)}
@@ -527,6 +535,14 @@ return (
               onSave={handleModalSave}
               onDelete={handleModalDelete}
               worlds={worlds}
+            />
+          )}
+          {embeddingModal && (
+            <AgentEmbeddingModal
+              agentId={embeddingModal.id}
+              worldId={embeddingModal.world}
+              onClose={()=>setEmbeddingModal(null)}
+              onSaved={()=>{}}
             />
           )}
         </div>

@@ -61,8 +61,8 @@ def _delete_collection(name: str, _client) -> None:
 def get_chroma_client():
     return chromadb.HttpClient(host=chromadbURL, port=chromadbPort)
 
-def _get_collection(world_id: int):
-    name = f"world_{world_id}"
+def _get_collection(world_id: int, collection: str | None = None):
+    name = collection or f"world_{world_id}"
     client = get_chroma_client()
     return Chroma(
         client=client,
@@ -106,7 +106,7 @@ def _safe_add_documents(collection: Chroma, docs: List[Document]) -> None:
     for i in range(0, len(docs), max_size):
         _add_batch(docs[i: i + max_size])
 
-async def add_page(session: AsyncSession, page_id: int):
+async def add_page(session: AsyncSession, page_id: int, collection: str | None = None):
     result = await session.execute(select(Page).where(Page.id == page_id))
     page = result.scalar_one_or_none()
     if not page:
@@ -160,7 +160,7 @@ async def add_page(session: AsyncSession, page_id: int):
     ]
     relationships_text = "\n".join(rel_parts)
 
-    collection = _get_collection(page.gameworld_id)
+    collection = _get_collection(page.gameworld_id, collection)
     all_chunks = []
 
     for view_name, text in [
@@ -181,15 +181,15 @@ async def add_page(session: AsyncSession, page_id: int):
     _safe_add_documents(collection, all_chunks)
     return True
 
-async def rebuild_world(session: AsyncSession, world_id: int):
-    name = f"world_{world_id}"
-    collection = _get_collection(world_id)
-    _delete_collection(name, collection)
+async def rebuild_world(session: AsyncSession, world_id: int, collection: str | None = None):
+    name = collection or f"world_{world_id}"
+    collection_obj = _get_collection(world_id, collection)
+    _delete_collection(name, collection_obj)
 
     result = await session.execute(select(Page.id).where(Page.gameworld_id == world_id))
     page_ids = [row[0] for row in result.all()]
     for pid in page_ids:
-        await add_page(session, pid)
+        await add_page(session, pid, collection)
 
     agent_result = await session.execute(select(Agent).where(Agent.world_id == world_id))
     agents = agent_result.scalars().all()
@@ -201,8 +201,8 @@ async def rebuild_world(session: AsyncSession, world_id: int):
     return len(page_ids)
 
 
-def query_world(world_id: int, query: str, n_results: int = 5, views: Optional[List[str]] = None, filters: Optional[Dict] = None) -> List[Dict]:
-    collection = _get_collection(world_id)
+def query_world(world_id: int, query: str, n_results: int = 5, views: Optional[List[str]] = None, filters: Optional[Dict] = None, collection: str | None = None) -> List[Dict]:
+    collection_obj = _get_collection(world_id, collection)
     
     # Build valid Chroma filter format using $and for multiple conditions
     conditions = []
@@ -229,7 +229,7 @@ def query_world(world_id: int, query: str, n_results: int = 5, views: Optional[L
     print(f"FILTERS USED IN QUERY: {chroma_filter}")
 
     # Run query
-    retrieved = collection.max_marginal_relevance_search(
+    retrieved = collection_obj.max_marginal_relevance_search(
         query,
         k=n_results * 4,
         filter=chroma_filter if chroma_filter else None

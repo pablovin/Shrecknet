@@ -1,5 +1,7 @@
 import pytest
 from unittest.mock import patch
+import json
+from pathlib import Path
 
 WORLD_BUILDER = {
     "nickname": "builder",
@@ -24,7 +26,7 @@ WRITER = {
 }
 
 @pytest.mark.anyio
-async def test_create_world_embedding(async_client, create_user, login_and_get_token):
+async def test_create_world_embedding(async_client, create_user, login_and_get_token, tmp_path):
     await create_user(**WORLD_BUILDER)
     await create_user(**ADMIN)
     await create_user(**WRITER)
@@ -48,12 +50,19 @@ async def test_create_world_embedding(async_client, create_user, login_and_get_t
         resp = await async_client.post("/pages/", json=page, headers={"Authorization": f"Bearer {writer_token}"})
         assert resp.status_code == 200
 
-    with patch("app.crud.crud_vectordb.rebuild_world", return_value=2) as rebuild:
+    from app.config import settings
+    settings.world_embedding_job_dir = str(tmp_path)
+    Path(settings.world_embedding_job_dir).mkdir(parents=True, exist_ok=True)
+
+    with patch("app.task_queue.task_rebuild_world_embedding.delay") as delay:
         payload = {"world_id": gw_id, "name": "base", "collection": f"world_{gw_id}_base"}
         resp = await async_client.post("/world_embeddings/", json=payload, headers={"Authorization": f"Bearer {admin_token}"})
+        assert delay.called
     assert resp.status_code == 200
     data = resp.json()
-    assert data["page_count"] == 2
-    assert data["build_seconds"] >= 0
-    assert data["last_index_time"] is not None
-    assert rebuild.called
+    assert data["page_count"] is None
+    job_files = list(Path(settings.world_embedding_job_dir).glob("*.json"))
+    assert len(job_files) == 1
+    with open(job_files[0]) as f:
+        job = json.load(f)
+    assert job["status"] == "queued"

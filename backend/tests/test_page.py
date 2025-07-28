@@ -195,3 +195,27 @@ async def test_safe_delete_removes_page_refs(async_client):
     assert resp.status_code == 200
     vals = resp.json()["values"]
     assert not vals or str(p1_id) not in (vals[0]["value"] or [])
+
+
+@pytest.mark.anyio
+async def test_page_search_endpoint(async_client):
+    token = await register_and_login(async_client, SYSTEM_ADMIN)
+
+    gw_payload = {"name": "SearchWorld", "system": "sys", "description": "d", "logo": "logo"}
+    resp = await async_client.post("/gameworlds/", json=gw_payload, headers={"Authorization": f"Bearer {token}"})
+    gw_id = resp.json()["id"]
+
+    concept_payload = {"gameworld_id": gw_id, "name": "Clan", "description": "c"}
+    resp = await async_client.post("/concepts/", json=concept_payload, headers={"Authorization": f"Bearer {token}"})
+    concept_id = resp.json()["id"]
+
+    for name in ["Alpha", "Beta"]:
+        page_payload = {"gameworld_id": gw_id, "concept_id": concept_id, "name": name}
+        resp = await async_client.post("/pages/", json=page_payload, headers={"Authorization": f"Bearer {token}"})
+        assert resp.status_code == 200
+
+    resp = await async_client.get("/pages/search", params={"query": "Al"}, headers={"Authorization": f"Bearer {token}"})
+    assert resp.status_code == 200
+    results = resp.json()
+    assert any(p["name"] == "Alpha" for p in results)
+    assert all("values" not in p for p in results)

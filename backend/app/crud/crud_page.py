@@ -13,7 +13,7 @@ from app.models.model_page import (
     PageChange,
 )
 from app.models.model_characteristic import Characteristic
-from app.schemas.schema_page import PageCreate, PageUpdate
+from app.schemas.schema_page import PageCreate, PageUpdate, PageSummary
 from app.schemas.schema_page_characteristic_value import PageCharacteristicValueCreate
 
 # --- PAGE CRUD ---
@@ -38,6 +38,35 @@ async def get_pages(session: AsyncSession, *, gameworld_id: Optional[int] = None
         query = query.where(Page.concept_id == concept_id)
     result = await session.execute(query)
     return result.scalars().all()
+
+async def search_pages(
+    session: AsyncSession,
+    *,
+    search: Optional[str] = None,
+    gameworld_id: Optional[int] = None,
+    concept_id: Optional[int] = None
+) -> List[PageSummary]:
+    query = select(Page.id, Page.name, Page.gameworld_id, Page.concept_id, Page.logo)
+    if gameworld_id:
+        query = query.where(Page.gameworld_id == gameworld_id)
+    if concept_id:
+        query = query.where(Page.concept_id == concept_id)
+    if search:
+        like = f"%{search}%"
+        query = query.where(Page.name.ilike(like))
+    query = query.order_by(Page.name)
+    result = await session.execute(query)
+    rows = result.all()
+    return [
+        PageSummary(
+            id=row.id,
+            name=row.name,
+            gameworld_id=row.gameworld_id,
+            concept_id=row.concept_id,
+            logo=row.logo,
+        )
+        for row in rows
+    ]
 
 async def update_page(session: AsyncSession, page_id: int, updates: dict) -> Optional[Page]:
     db_page = await get_page(session, page_id)

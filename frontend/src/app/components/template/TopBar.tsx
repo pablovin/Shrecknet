@@ -5,7 +5,7 @@ import ThemeToggle from "../ui/ThemeToggle";
 import Image from "next/image";
 import { FaSearch, FaBookmark, FaSignOutAlt } from "react-icons/fa";
 import { useEffect, useRef, useState } from "react";
-import { usePages } from "@/app/lib/usePage";
+import { usePageSearch } from "@/app/lib/usePageSearch";
 import { getGameWorlds } from "@/app/lib/gameworldsAPI";
 import { MdPublic } from "react-icons/md";
 import { RiFile3Line } from "react-icons/ri";
@@ -23,8 +23,8 @@ export default function TopBar() {
       user.role === "system admin");
 
   // --- Search Logic ---
-  const { pages = [], isLoading } = usePages();
   const [searchValue, setSearchValue] = useState("");
+  const { pages = [], isLoading } = usePageSearch(searchValue);
   const [searchOpen, setSearchOpen] = useState(false);
   const [worldsMap, setWorldsMap] = useState({});
   const [worldsLoaded, setWorldsLoaded] = useState(false);
@@ -45,16 +45,7 @@ export default function TopBar() {
   }, [token, worldsLoaded]);
 
   // Filter pages on search
-  const searchResults =
-    searchValue.length < 2
-      ? []
-      : pages
-          .filter(
-            (page) =>
-              page.name &&
-              page.name.toLowerCase().includes(searchValue.toLowerCase())
-          )
-          .slice(0, 10);
+  const searchResults = searchValue.length < 2 ? [] : pages.slice(0, 10);
 
   // Keyboard nav
   const [selectedIdx, setSelectedIdx] = useState(0);

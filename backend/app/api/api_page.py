@@ -12,7 +12,7 @@ from app.models.model_page import (
     PageKeyEvent,
     PageRelationship,
 )
-from app.schemas.schema_page import PageCreate, PageRead, PageUpdate
+from app.schemas.schema_page import PageCreate, PageRead, PageUpdate, PageSummary
 from app.schemas.schema_page_characteristic_value import PageCharacteristicValueUpdate, PageCharacteristicValueRead, PageCharacteristicValueCreate
 from app.schemas.schema_page_change import PageChangeRead
 from app.schemas.schema_page_key_event import (
@@ -28,6 +28,7 @@ from app.schemas.schema_page_relationship import (
 from app.crud.crud_page import (
     create_page,
     get_pages,
+    search_pages,
     get_page,
     update_page,
     delete_page,
@@ -135,6 +136,22 @@ async def create_page_endpoint(
         task_auto_crosslink_batch.delay(db_page.id)
         task_sync_page_ref_attributes.delay(db_page.id)
     return response
+
+
+@router.get("/search", response_model=List[PageSummary])
+async def search_pages_endpoint(
+    q: Optional[str] = Query(None, alias="query"),
+    gameworld_id: Optional[int] = Query(None),
+    concept_id: Optional[int] = Query(None),
+    session: AsyncSession = Depends(get_session),
+):
+    pages = await search_pages(
+        session,
+        search=q,
+        gameworld_id=gameworld_id,
+        concept_id=concept_id,
+    )
+    return pages
 
     # values = await get_page_characteristic_values(session, db_page.id)
     # return PageRead.model_validate({**db_page.model_dump(), "values": values})

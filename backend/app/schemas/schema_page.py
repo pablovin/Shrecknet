@@ -51,6 +51,14 @@ class PageRead(PageBase):
     relationship_map: List["PageRelationshipRead"] = []
     changelog: List["PageChangeRead"] = []
 
+# New lightweight schema for search results
+class PageSummary(SQLModel):
+    id: int
+    gameworld_id: int
+    concept_id: int
+    name: str
+    logo: Optional[str] = None
+
 # resolve forward references on import
 from .schema_page_characteristic_value import (
     PageCharacteristicValueCreate,
@@ -64,5 +72,6 @@ from .schema_page_change import PageChangeRead
 PageCreate.model_rebuild()
 PageUpdate.model_rebuild()
 PageRead.model_rebuild()
+PageSummary.model_rebuild()
 
 

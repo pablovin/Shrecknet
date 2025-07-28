@@ -14,6 +14,7 @@ import { getPagesForWorld } from "../../lib/pagesAPI";
 import { useAgentEmbeddings } from "../../lib/useAgentEmbeddings";
 import { useWriterJobs } from "../../lib/useWriterJobs";
 import { usePageById } from "../../lib/usePageById";
+import { useVectorJobs } from "../../lib/useVectorJobs";
 
 // ------- GUILDMASTER NPC GUIDE -------
 const npcQuotes = [
@@ -180,7 +181,11 @@ export default function AgentsGuildhallPage() {
   const { user, token } = useAuth();
   const { agents, mutate, isLoading, error } = useAgents();
   const { worlds } = useWorlds();
+
+  const { jobs: vectorJobs, mutate: refreshVectorJobs } = useVectorJobs();
   const { jobs: writerJobs } = useWriterJobs();
+
+  const [search, setSearch] = useState("");
 
   const [modalOpen, setModalOpen] = useState(false);
   const [selectedAgent, setSelectedAgent] = useState(null);
@@ -198,25 +203,27 @@ export default function AgentsGuildhallPage() {
 
   const allowed = useRoleRedirect("world builder");
   if (!allowed) return null;
-// Filter/search logic
-const filtered = agents.filter((a) =>
-  a.name?.toLowerCase().includes(search.toLowerCase())
-);
 
-// Group jobs by agent
-  .filter((j) => j.job_type === "update_vector_db")
-  .reduce<Record<number, any[]>>((acc, j) => {
-    if (!acc[j.agent_id]) acc[j.agent_id] = [];
-    acc[j.agent_id].push(j);
-    return acc;
-  }, {});
+  // Filter/search logic
+  const filtered = agents.filter((a) =>
+    a.name?.toLowerCase().includes(search.toLowerCase())
+  );
 
-const writerJobsByAgent = writerJobs
-  .filter(j => j.job_type === "analyze_pages")
-  .reduce<Record<number, any[]>>((acc, j) => {
-    if (!acc[j.agent_id]) acc[j.agent_id] = [];
-    acc[j.agent_id].push(j);
-    return acc;
+  // Group jobs by agent
+  const vectorJobsByAgent = vectorJobs
+    .filter((j) => j.job_type === "update_vector_db")
+    .reduce<Record<number, any[]>>((acc, j) => {
+      if (!acc[j.agent_id]) acc[j.agent_id] = [];
+      acc[j.agent_id].push(j);
+      return acc;
+    }, {});
+
+  const writerJobsByAgent = writerJobs
+    .filter(j => j.job_type === "analyze_pages")
+    .reduce<Record<number, any[]>>((acc, j) => {
+      if (!acc[j.agent_id]) acc[j.agent_id] = [];
+      acc[j.agent_id].push(j);
+      return acc;
   }, {});
 
 // Bulk vector update
@@ -235,7 +242,9 @@ async function handleRebuildAll() {
       setBulkStatus((s) => [...s, `❌ ${ag.name}: failed to queue.`]);
     }
   }
+  refreshVectorJobs();
   setBulkUpdating(false);
+  setNpcFlavor("Guild ritual complete! All agents have been refreshed.");
 }
 
 // Individual vector update
@@ -256,6 +265,8 @@ async function handleRebuild(agent) {
     }
     await startVectorUpdate(token || "", agent.id);
     setSuccess("Vector DB update started");
+    refreshVectorJobs();
+    setNpcFlavor(`Agent ${agent.name} is off to the archives!`);
   } catch (err) {
     setSuccess("Failed to rebuild vector DB");
     setNpcFlavor("Something went wrong with the ritual...");

@@ -5,13 +5,15 @@ import { useAuth } from "../components/auth/AuthProvider";
 import useRoleRedirect from "../hooks/useRoleRedirect";
 import { useWorlds } from "../lib/userWorlds";
 import { useWorldEmbeddings } from "../lib/useWorldEmbeddings";
-import { createWorldEmbedding, deleteWorldEmbedding } from "../lib/worldEmbeddingAPI";
+import { createWorldEmbedding, deleteWorldEmbedding, startWorldEmbeddingJob } from "../lib/worldEmbeddingAPI";
+import { useWorldEmbeddingJobs } from "../lib/useWorldEmbeddingJobs";
 import { useState } from "react";
 
 export default function WorldEmbeddingsPage() {
   const { token } = useAuth();
   const { worlds } = useWorlds();
   const { embeddings, mutate } = useWorldEmbeddings();
+  const { jobs, mutate: refreshJobs } = useWorldEmbeddingJobs();
   const [worldId, setWorldId] = useState("");
   const [name, setName] = useState("");
   const allowed = useRoleRedirect("system admin");
@@ -23,6 +25,7 @@ export default function WorldEmbeddingsPage() {
     await createWorldEmbedding({ world_id: Number(worldId), name, collection: `world_${worldId}_${name}` }, token||"" );
     setName("");
     mutate();
+    refreshJobs();
   }
 
   async function handleDelete(id:number) {
@@ -57,6 +60,23 @@ export default function WorldEmbeddingsPage() {
               ))}
             </tbody>
           </table>
+          {jobs.length > 0 && (
+            <div className="mt-8">
+              <h2 className="text-xl font-semibold mb-2">Embedding Jobs</h2>
+              <table className="w-full border text-sm">
+                <thead><tr><th>ID</th><th>Status</th><th>Embedding</th></tr></thead>
+                <tbody>
+                  {jobs.map((j:any)=>(
+                    <tr key={j.job_id} className="border-t">
+                      <td className="px-2 font-mono">{j.job_id}</td>
+                      <td className="px-2">{j.status}</td>
+                      <td className="px-2">{j.embedding_id}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       </DashboardLayout>
     </AuthGuard>

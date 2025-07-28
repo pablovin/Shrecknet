@@ -15,6 +15,7 @@ JOB_DIRS = {
     "specialist": settings.specialist_job_dir,
     "novelist": settings.novelist_job_dir,
     "library": settings.library_job_dir,
+    "world_embedding": settings.world_embedding_job_dir,
 }
 
 class JobRef(BaseModel):

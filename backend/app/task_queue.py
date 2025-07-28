@@ -336,6 +336,57 @@ def task_rebuild_library_vectors(item_id: int, job_id: str):
     asyncio.run(run())
 
 
+@celery_app.task
+def task_rebuild_world_embedding(embedding_id: int, job_id: str):
+    async def run():
+        job_dir = Path(settings.world_embedding_job_dir)
+        job_dir.mkdir(parents=True, exist_ok=True)
+        job_path = job_dir / f"{job_id}.json"
+        start_time = datetime.now(timezone.utc).isoformat()
+        with open(job_path, "w") as f:
+            json.dump({
+                "status": "processing",
+                "embedding_id": embedding_id,
+                "job_type": "rebuild_world_embedding",
+                "start_time": start_time,
+            }, f, default=str)
+
+        async with async_session_maker() as session:
+            from app.crud import crud_world_embedding
+            embedding = await crud_world_embedding.get_embedding(session, embedding_id)
+            if not embedding:
+                with open(job_path, "w") as ff:
+                    json.dump({"status": "error", "error": "Embedding not found", "start_time": start_time}, ff, default=str)
+                return
+            try:
+                t0 = datetime.now(timezone.utc)
+                count = await crud_vectordb.rebuild_world(session, embedding.world_id, embedding.collection)
+                t1 = datetime.now(timezone.utc)
+                embedding.last_index_time = t1
+                embedding.page_count = count
+                embedding.build_seconds = (t1 - t0).total_seconds()
+                session.add(embedding)
+                await session.commit()
+                await session.refresh(embedding)
+            except Exception as exc:
+                with open(job_path, "w") as ff:
+                    json.dump({"status": "error", "error": str(exc), "start_time": start_time}, ff, default=str)
+                raise
+
+        end_time = datetime.now(timezone.utc).isoformat()
+        with open(job_path, "w") as f:
+            json.dump({
+                "status": "done",
+                "embedding_id": embedding_id,
+                "job_type": "rebuild_world_embedding",
+                "pages_indexed": count,
+                "start_time": start_time,
+                "end_time": end_time,
+            }, f, default=str)
+
+    asyncio.run(run())
+
+
 
 
 @celery_app.task

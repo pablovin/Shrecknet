@@ -30,6 +30,23 @@ export async function deleteWorldEmbedding(id: number, token: string) {
   return await res.json();
 }
 
+export async function startWorldEmbeddingJob(id: number, token: string) {
+  const res = await fetch(`${API_URL}/world_embeddings/${id}/embed_async`, {
+    method: "POST",
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) throw await res.text();
+  return await res.json();
+}
+
+export async function listWorldEmbeddingJobs(token: string) {
+  const res = await fetch(`${API_URL}/world_embeddings/vector_jobs`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) throw await res.text();
+  return await res.json();
+}
+
 export async function getAgentEmbeddings(agentId: number, token: string) {
   const res = await fetch(`${API_URL}/world_embeddings/agents/${agentId}`, {
     headers: token ? { Authorization: `Bearer ${token}` } : {},

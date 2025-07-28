@@ -81,18 +81,32 @@ async def list_vector_jobs():
 @router.get("/writer_jobs/{job_id}")
 async def writer_job_status(job_id: str):
 
-    job_path = Path(settings.writer_job_dir) / f"{job_id}.json"
+    job_dir = Path(settings.writer_job_dir) / job_id
+    job_path = job_dir / "job.json"
     if not job_path.is_file():
         raise HTTPException(status_code=404, detail="Job not found")
     with open(job_path) as f:
         data = json.load(f)
+    analysis_path = job_dir / "analysis.json"
+    if analysis_path.is_file():
+        with open(analysis_path) as af:
+            data["analysis"] = json.load(af)
+    review_path = job_dir / "review.json"
+    if review_path.is_file():
+        with open(review_path) as rf:
+            data["review"] = json.load(rf)
+    generated_path = job_dir / "generated.json"
+    if generated_path.is_file():
+        with open(generated_path) as gf:
+            data["generated"] = json.load(gf)
     return data
 
 
 @router.patch("/writer_jobs/{job_id}")
 async def update_writer_job(job_id: str, payload: dict):
 
-    job_path = Path(settings.writer_job_dir) / f"{job_id}.json"
+    job_dir = Path(settings.writer_job_dir) / job_id
+    job_path = job_dir / "job.json"
     if not job_path.is_file():
         raise HTTPException(status_code=404, detail="Job not found")
     with open(job_path) as f:
@@ -110,11 +124,17 @@ async def list_writer_jobs():
     job_dir = Path(settings.writer_job_dir)
     job_dir.mkdir(parents=True, exist_ok=True)
     jobs = []
-    for p in job_dir.glob("*.json"):
-        with open(p) as f:
+    for d in job_dir.iterdir():
+        if not d.is_dir():
+            continue
+        job_path = d / "job.json"
+        if not job_path.is_file():
+            continue
+        with open(job_path) as f:
             data = json.load(f)
-        data["job_id"] = p.stem
+        data["job_id"] = d.name
         jobs.append(data)
+    jobs.sort(key=lambda j: j.get("start_time", ""), reverse=True)
     return jobs
 
 
@@ -333,9 +353,9 @@ async def analyze_page_job_endpoint(
 ):
 
     job_id = uuid4().hex
-    job_dir = Path(settings.writer_job_dir)
+    job_dir = Path(settings.writer_job_dir) / job_id
     job_dir.mkdir(parents=True, exist_ok=True)
-    job_path = job_dir / f"{job_id}.json"
+    job_path = job_dir / "job.json"
     with open(job_path, "w") as f:
         json.dump(
             {
@@ -358,6 +378,7 @@ class GenerateJobRequest(BaseModel):
     suggestions: Optional[List[dict]] = None
     merge_groups: Optional[List[List[str]]] = None
     bulk_accept_updates: Optional[bool] = False
+    request_id: Optional[str] = None
 
 
 @router.post("/{agent_id}/pages/{page_id}/generate_job")
@@ -368,20 +389,33 @@ async def generate_pages_job_endpoint(
     user: User = Depends(get_current_user),
 ):
 
-    job_id = uuid4().hex
-    job_dir = Path(settings.writer_job_dir)
+    request_id = payload.request_id or uuid4().hex
+    gen_job_id = uuid4().hex
+
+    job_dir = Path(settings.writer_job_dir) / request_id
     job_dir.mkdir(parents=True, exist_ok=True)
-    job_path = job_dir / f"{job_id}.json"
+    job_path = job_dir / "job.json"
+    review_path = job_dir / "review.json"
+
+    data = {
+        "status": "queued",
+        "agent_id": agent_id,
+        "page_id": page_id,
+        "job_type": "generate_pages",
+        "merge_groups": payload.merge_groups or [],
+        "suggestions": payload.suggestions or [],
+        "bulk_accept_updates": payload.bulk_accept_updates or False,
+        "generation_job_id": gen_job_id,
+    }
     with open(job_path, "w") as f:
+        json.dump(data, f)
+
+    with open(review_path, "w") as f:
         json.dump(
             {
-                "status": "queued",
-                "agent_id": agent_id,
-                "page_id": page_id,
-                "job_type": "generate_pages",
-                "merge_groups": payload.merge_groups or [],
                 "suggestions": payload.suggestions or [],
-                "bulk_accept_updates": payload.bulk_accept_updates or False,
+                "merge_groups": payload.merge_groups or [],
+                "pages": payload.pages,
             },
             f,
         )
@@ -390,12 +424,13 @@ async def generate_pages_job_endpoint(
         agent_id,
         page_id,
         payload.pages,
-        job_id,
+        gen_job_id,
         payload.merge_groups or [],
         payload.suggestions or [],
         payload.bulk_accept_updates or False,
+        request_id,
     )
-    return {"job_id": job_id}
+    return {"job_id": gen_job_id, "request_id": request_id}
 
 
 class AnalyzePagesJobRequest(BaseModel):
@@ -416,9 +451,9 @@ async def analyze_pages_job_endpoint(
     user: User = Depends(get_current_user),
 ):
     job_id = uuid4().hex
-    job_dir = Path(settings.writer_job_dir)
+    job_dir = Path(settings.writer_job_dir) / job_id
     job_dir.mkdir(parents=True, exist_ok=True)
-    job_path = job_dir / f"{job_id}.json"
+    job_path = job_dir / "job.json"
 
     with open(job_path, "w") as f:
         json.dump(

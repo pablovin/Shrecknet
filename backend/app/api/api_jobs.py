@@ -31,12 +31,25 @@ def _load_jobs():
     for kind, dir_path in JOB_DIRS.items():
         p = Path(dir_path)
         p.mkdir(parents=True, exist_ok=True)
-        for f in p.glob("*.json"):
-            with open(f) as fh:
-                data = json.load(fh)
-            data["job_id"] = f.stem
-            data["kind"] = kind
-            jobs.append(data)
+        if kind == "writer":
+            for d in p.iterdir():
+                if not d.is_dir():
+                    continue
+                job_file = d / "job.json"
+                if not job_file.is_file():
+                    continue
+                with open(job_file) as fh:
+                    data = json.load(fh)
+                data["job_id"] = d.name
+                data["kind"] = kind
+                jobs.append(data)
+        else:
+            for f in p.glob("*.json"):
+                with open(f) as fh:
+                    data = json.load(fh)
+                data["job_id"] = f.stem
+                data["kind"] = kind
+                jobs.append(data)
     return jobs
 
 @router.get("/")
@@ -52,13 +65,26 @@ async def delete_jobs(payload: DeleteJobsRequest, user: User = Depends(require_r
         dir_path = JOB_DIRS.get(ref.kind)
         if not dir_path:
             continue
-        job_path = Path(dir_path) / f"{ref.job_id}.json"
-        if not job_path.is_file():
-            continue
-        with open(job_path) as f:
-            data = json.load(f)
-        if data.get("status") in {"running", "processing", "queued"}:
-            continue
-        job_path.unlink()
-        deleted.append({"kind": ref.kind, "job_id": ref.job_id})
+        if ref.kind == "writer":
+            job_dir = Path(dir_path) / ref.job_id
+            job_file = job_dir / "job.json"
+            if not job_file.is_file():
+                continue
+            with open(job_file) as f:
+                data = json.load(f)
+            if data.get("status") in {"running", "processing", "queued"}:
+                continue
+            import shutil
+            shutil.rmtree(job_dir)
+            deleted.append({"kind": ref.kind, "job_id": ref.job_id})
+        else:
+            job_path = Path(dir_path) / f"{ref.job_id}.json"
+            if not job_path.is_file():
+                continue
+            with open(job_path) as f:
+                data = json.load(f)
+            if data.get("status") in {"running", "processing", "queued"}:
+                continue
+            job_path.unlink()
+            deleted.append({"kind": ref.kind, "job_id": ref.job_id})
     return {"deleted": deleted}

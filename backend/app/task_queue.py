@@ -84,9 +84,10 @@ from app.crud.crud_page_analysis import analyze_page, generate_pages
 @celery_app.task
 def task_analyze_pages_job(agent_id: int, page_ids: list[int], job_id: str):
     async def run():
-        job_dir = Path(settings.writer_job_dir)
+        job_dir = Path(settings.writer_job_dir) / job_id
         job_dir.mkdir(parents=True, exist_ok=True)
-        job_path = job_dir / f"{job_id}.json"
+        job_path = job_dir / "job.json"
+        analysis_path = job_dir / "analysis.json"
         start_time = datetime.now(timezone.utc).isoformat()
 
         with open(job_path, "w") as f:
@@ -163,6 +164,8 @@ def task_analyze_pages_job(agent_id: int, page_ids: list[int], job_id: str):
                 f,
                 default=str,
             )
+        with open(analysis_path, "w") as af:
+            json.dump({"suggestions": suggestions}, af, default=str)
 
     asyncio.run(run())
 
@@ -398,11 +401,13 @@ def task_generate_pages_job(
     merge_groups: list[list[str]] | None = None,
     suggestions: list[dict] | None = None,
     bulk_accept_updates: bool = False,
+    request_id: str | None = None,
 ):
     async def run():
-        job_dir = Path(settings.writer_job_dir)
-        job_dir.mkdir(parents=True, exist_ok=True)
-        job_path = job_dir / f"{job_id}.json"
+        req_dir = Path(settings.writer_job_dir) / (request_id or job_id)
+        req_dir.mkdir(parents=True, exist_ok=True)
+        job_path = req_dir / "job.json"
+        generated_path = req_dir / "generated.json"
         start_time = datetime.now(timezone.utc).isoformat()
         with open(job_path, "w") as f:
             json.dump(
@@ -531,6 +536,8 @@ def task_generate_pages_job(
                 f,
                 default=str,
             )
+        with open(generated_path, "w") as gf:
+            json.dump({"pages": result_pages, "auto_updated": auto_updated}, gf, default=str)
 
     asyncio.run(run())
 

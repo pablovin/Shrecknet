@@ -240,7 +240,12 @@ async def chat_test(
         raise HTTPException(status_code=400, detail="Agent unavailable")
 
     query = msgs[-1].get("content", "") if msgs else ""
-    docs = crud_vectordb.query_world(agent.world_id, query, n_results=4)
+    from app.crud import crud_agent_embedding
+    embeddings = await crud_agent_embedding.get_embeddings(session, agent_id)
+    valid_embeds = [e for e in embeddings if e.last_index_time]
+    if not valid_embeds:
+        raise HTTPException(status_code=400, detail="Agent unavailable")
+    docs = crud_vectordb.query_world(valid_embeds[0].id, query, n_results=4)
     return {"documents": docs}
 
 

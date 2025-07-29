@@ -1,4 +1,5 @@
 import pytest
+from unittest.mock import patch
 
 WORLD_BUILDER = {
     "nickname": "builder",
@@ -47,6 +48,14 @@ async def test_rebuild_vectordb(async_client, create_user, login_and_get_token):
         resp = await async_client.post("/pages/", json=page, headers={"Authorization": f"Bearer {writer_token}"})
         assert resp.status_code == 200
 
-    resp = await async_client.post(f"/vectordb/{gw_id}/rebuild")
+    with patch("app.task_queue.task_rebuild_world_embedding.delay"):
+        resp = await async_client.post(
+            "/world_embeddings/",
+            json={"world_id": gw_id, "name": "base"},
+            headers={"Authorization": f"Bearer {admin_token}"},
+        )
+    emb_id = resp.json()["id"]
+
+    resp = await async_client.post(f"/vectordb/{emb_id}/rebuild")
     assert resp.status_code == 200
     assert resp.json()["pages_indexed"] == 3

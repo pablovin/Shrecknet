@@ -1,7 +1,7 @@
 import { API_URL } from "./config";
 
-export async function rebuildVectorDB(token: string, worldId: number) {
-  const res = await fetch(`${API_URL}/vectordb/${worldId}/rebuild`, {
+export async function rebuildVectorDB(token: string, embeddingId: number) {
+  const res = await fetch(`${API_URL}/vectordb/${embeddingId}/rebuild`, {
     method: "POST",
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   });

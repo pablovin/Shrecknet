@@ -71,9 +71,8 @@ async def _query_agent_world(
     embeddings = await _get_agent_embeddings(session, agent)
     for emb in embeddings:
         try:
-            parts = crud_vectordb.query_embedding(
+            parts = crud_vectordb.query_world(
                 emb.id,
-                agent.world_id,
                 query,
                 n_results=n_results,
                 views=views,

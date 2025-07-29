@@ -210,7 +210,11 @@ def task_rebuild_vectordb(agent_id: int, job_id: str):
                 print (f" --- CALCUALTING SUGGESTIONS3 --- ")
                 print (f" --- CALCUALTING SUGGESTIONS3 --- ")
                 print (f" --- CALCUALTING SUGGESTIONS3 --- ")
-                count = await crud_vectordb.rebuild_world(session, agent.world_id)
+                from app.crud import crud_agent_embedding
+                embed_ids = await crud_agent_embedding.get_embedding_ids(session, agent.id)
+                count = 0
+                for eid in embed_ids:
+                    count += await crud_vectordb.rebuild_embedding(session, agent.world_id, eid)
                 print (f" --- CALCUALTING SUGGESTIONS4 --- ")
                 print (f" --- CALCUALTING SUGGESTIONS4 --- ")
                 print (f" --- CALCUALTING SUGGESTIONS4 --- ")

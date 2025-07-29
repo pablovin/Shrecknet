@@ -64,19 +64,17 @@ async def async_query_all_embeddings(
     """
     embeddings = await crud_agent_embedding.get_embeddings(session, agent.id)
     valid_embeds = [e for e in embeddings if e.last_index_time]
-    collections = [e.collection for e in valid_embeds]
     tasks = [
         asyncio.to_thread(
             crud_vectordb.query_world,
-            agent.world_id,
+            emb.id,
             query,
             n_results,
             views,
             None,  # No filters
-            coll,
             max_chunks_per_page,
         )
-        for coll in collections
+        for emb in valid_embeds
     ]
     all_results = await asyncio.gather(*tasks)
     print (f"RESULTS: {all_results}")

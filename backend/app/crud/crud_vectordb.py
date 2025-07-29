@@ -96,15 +96,6 @@ def _delete_collection(name: str, _client) -> None:
 def get_chroma_client():
     return chromadb.HttpClient(host=chromadbURL, port=chromadbPort)
 
-def _get_collection(world_id: int, collection: str | None = None):
-    name = collection or f"world_{world_id}"
-    client = get_chroma_client()
-    return Chroma(
-        client=client,
-        collection_name=name,
-        embedding_function=_embedding_fn,
-    )
-
 def _get_embedding_collection(embedding_id: int) -> Chroma:
     name = f"embedding_{embedding_id}"
     client = get_chroma_client()
@@ -150,7 +141,7 @@ def _safe_add_documents(collection: Chroma, docs: List[Document]) -> None:
     for i in range(0, len(docs), max_size):
         _add_batch(docs[i: i + max_size])
 
-async def add_page(session: AsyncSession, page_id: int, collection: str | None = None):
+async def add_page(session: AsyncSession, page_id: int, embedding_id: int):
     # Fetch the page
     result = await session.execute(select(Page).where(Page.id == page_id))
     page = result.scalar_one_or_none()
@@ -256,7 +247,7 @@ async def add_page(session: AsyncSession, page_id: int, collection: str | None =
     #     })
 
     # ---- Prepare chunks for vectorstore ----
-    collection = _get_collection(page.gameworld_id, collection)
+    collection = _get_embedding_collection(embedding_id)
     all_chunks = []
 
     for chunk_obj in narrative_chunks:
@@ -278,30 +269,6 @@ async def add_page(session: AsyncSession, page_id: int, collection: str | None =
     _safe_add_documents(collection, all_chunks)
     return True
 
-async def add_embedding_page(session: AsyncSession, page_id: int, embedding_id: int):
-    return await add_page(session, page_id, f"embedding_{embedding_id}")
-
-async def rebuild_world(session: AsyncSession, world_id: int, collection: str | None = None):
-    name = collection or f"world_{world_id}"
-    collection_obj = _get_collection(world_id, collection)
-    _delete_collection(name, collection_obj)
-
-    result = await session.execute(select(Page.id).where(Page.gameworld_id == world_id))
-    page_ids = [row[0] for row in result.all()]
-
-
-    for batch in chunked(page_ids, 20):
-        await asyncio.gather(*(add_page(session, pid, collection) for pid in batch))
-    
-
-    agent_result = await session.execute(select(Agent).where(Agent.world_id == world_id))
-    agents = agent_result.scalars().all()
-    now = datetime.now(timezone.utc)
-    for agent in agents:
-        agent.vector_db_update_date = now
-    await session.commit()
-
-    return len(page_ids)
 
 async def rebuild_embedding(session: AsyncSession, world_id: int, embedding_id: int) -> int:
     name = f"embedding_{embedding_id}"
@@ -312,18 +279,17 @@ async def rebuild_embedding(session: AsyncSession, world_id: int, embedding_id: 
     page_ids = [row[0] for row in result.all()]
 
     for batch in chunked(page_ids, 20):
-        await asyncio.gather(*(add_embedding_page(session, pid, embedding_id) for pid in batch))
+        await asyncio.gather(*(add_page(session, pid, embedding_id) for pid in batch))
 
     return len(page_ids)
 
 
 def query_world(
-    world_id: int,
+    embedding_id: int,
     query: str,
     n_results: int = 5,
     views: Optional[List[str]] = None,
     filters: Optional[Dict] = None,
-    collection: str | None = None,
     max_chunks_per_page: Optional[int] = 15,  # Set to 0 or None for unlimited
 ) -> List[Dict]:
     """
@@ -333,7 +299,7 @@ def query_world(
       - highlights: list of individual chunks with metadata
       - ...page-level metadata
     """
-    collection_obj = _get_collection(world_id, collection)
+    collection_obj = _get_embedding_collection(embedding_id)
 
     # --- Build filter for Chroma/your vectorstore ---
     conditions = []
@@ -356,7 +322,7 @@ def query_world(
     # --- Query vectorstore ---
     # With a 128k LLM window and pages max 8k tokens, we can return up to 8 chunks per page by default
     # If you want to further optimize, you can dynamically adjust max_chunks_per_page based on actual chunk lengths
-    print (f"CRUD_VECTOR Collection: {collection} - WORLD ID: {world_id}")
+    print (f"CRUD_VECTOR Embedding: {embedding_id}")
     print (f"CRUD_VECTOR  chroma_filter: {chroma_filter}")
     retrieved = collection_obj.max_marginal_relevance_search(
         query,
@@ -428,24 +394,9 @@ def query_world(
 
     return results[:n_results]
 
-def query_embedding(
-    embedding_id: int,
-    world_id: int,
-    query: str,
-    n_results: int = 5,
-    views: Optional[List[str]] = None,
-    filters: Optional[Dict] = None,
-    max_chunks_per_page: Optional[int] = 15,
-) -> List[Dict]:
-    return query_world(
-        world_id,
-        query,
-        n_results=n_results,
-        views=views,
-        filters=filters,
-        collection=f"embedding_{embedding_id}",
-        max_chunks_per_page=max_chunks_per_page,
-    )
+def query_embedding(*args, **kwargs):
+    """Deprecated alias for ``query_world``."""
+    return query_world(*args, **kwargs)
 
 
 # def query_world(world_id: int, query: str, n_results: int = 5) -> List[Dict]:

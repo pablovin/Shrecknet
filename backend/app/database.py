@@ -90,7 +90,7 @@ def _migrate(conn):
     # -- WorldEmbedding table --
     if "worldembedding" not in inspector.get_table_names():
         conn.execute(text(
-            "CREATE TABLE worldembedding (id INTEGER PRIMARY KEY AUTOINCREMENT, world_id INTEGER NOT NULL REFERENCES gameworld(id), name TEXT NOT NULL, collection TEXT NOT NULL, created_at DATETIME NOT NULL, last_index_time DATETIME, page_count INTEGER, build_seconds REAL)"
+            "CREATE TABLE worldembedding (id INTEGER PRIMARY KEY AUTOINCREMENT, world_id INTEGER NOT NULL REFERENCES gameworld(id), name TEXT NOT NULL, created_at DATETIME NOT NULL, last_index_time DATETIME, page_count INTEGER, build_seconds REAL)"
         ))
     else:
         columns = [c["name"] for c in inspector.get_columns("worldembedding")]

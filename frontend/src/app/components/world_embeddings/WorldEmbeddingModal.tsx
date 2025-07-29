@@ -9,7 +9,6 @@ export default function WorldEmbeddingModal({ embedding, worlds, onClose, onSave
   const [form, setForm] = useState({
     world_id: embedding.world_id,
     name: embedding.name,
-    collection: embedding.collection,
   });
   const { token } = useAuth();
   const [saving, setSaving] = useState(false);
@@ -48,12 +47,6 @@ export default function WorldEmbeddingModal({ embedding, worlds, onClose, onSave
           label="Name"
           value={form.name}
           onChange={e => setForm({ ...form, name: e.target.value })}
-          required
-        />
-        <M3FloatingInput
-          label="Collection"
-          value={form.collection}
-          onChange={e => setForm({ ...form, collection: e.target.value })}
           required
         />
         <div className="flex flex-row-reverse gap-3 mt-3">

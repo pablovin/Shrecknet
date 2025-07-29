@@ -45,7 +45,6 @@ export default function WorldEmbeddingsPage() {
       {
         world_id: Number(worldId),
         name,
-        collection: `world_${worldId}_${name}`,
       },
       token || ""
     );

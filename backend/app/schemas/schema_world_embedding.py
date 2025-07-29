@@ -6,7 +6,6 @@ from pydantic import BaseModel
 class WorldEmbeddingBase(BaseModel):
     world_id: int
     name: str
-    collection: str
 
 
 class WorldEmbeddingCreate(WorldEmbeddingBase):
@@ -16,7 +15,6 @@ class WorldEmbeddingCreate(WorldEmbeddingBase):
 class WorldEmbeddingUpdate(BaseModel):
     world_id: Optional[int] = None
     name: Optional[str] = None
-    collection: Optional[str] = None
 
 
 class WorldEmbedding(WorldEmbeddingBase):

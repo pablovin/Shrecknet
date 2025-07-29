@@ -363,7 +363,7 @@ def task_rebuild_world_embedding(embedding_id: int, job_id: str):
                 return
             try:
                 t0 = datetime.now(timezone.utc)
-                count = await crud_vectordb.rebuild_world(session, embedding.world_id, embedding.collection)
+                count = await crud_vectordb.rebuild_embedding(session, embedding.world_id, embedding.id)
                 t1 = datetime.now(timezone.utc)
                 embedding.last_index_time = t1
                 embedding.page_count = count

@@ -22,7 +22,8 @@ from app.models.model_characteristic import Characteristic
 from app.models.model_gameworld import GameWorld
 from app.models.model_agent import Agent
 from app.config import settings
-
+from more_itertools import chunked
+import asyncio
 
 from bs4 import BeautifulSoup
 
@@ -275,8 +276,11 @@ async def rebuild_world(session: AsyncSession, world_id: int, collection: str | 
 
     result = await session.execute(select(Page.id).where(Page.gameworld_id == world_id))
     page_ids = [row[0] for row in result.all()]
-    for pid in page_ids:
-        await add_page(session, pid, collection)
+
+
+    for batch in chunked(page_ids, 20):
+        await asyncio.gather(*(add_page(session, pid, collection) for pid in batch))
+    
 
     agent_result = await session.execute(select(Agent).where(Agent.world_id == world_id))
     agents = agent_result.scalars().all()

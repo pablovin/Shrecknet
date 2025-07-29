@@ -71,13 +71,13 @@ async def _query_agent_world(
     embeddings = await _get_agent_embeddings(session, agent)
     for emb in embeddings:
         try:
-            parts = crud_vectordb.query_world(
+            parts = crud_vectordb.query_embedding(
+                emb.id,
                 agent.world_id,
                 query,
                 n_results=n_results,
                 views=views,
                 filters=filters,
-                collection=emb.collection,
             )
             chunks.extend(parts)
         except Exception:

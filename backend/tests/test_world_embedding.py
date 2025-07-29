@@ -55,7 +55,7 @@ async def test_create_world_embedding(async_client, create_user, login_and_get_t
     Path(settings.world_embedding_job_dir).mkdir(parents=True, exist_ok=True)
 
     with patch("app.task_queue.task_rebuild_world_embedding.delay") as delay:
-        payload = {"world_id": gw_id, "name": "base", "collection": f"world_{gw_id}_base"}
+        payload = {"world_id": gw_id, "name": "base"}
         resp = await async_client.post("/world_embeddings/", json=payload, headers={"Authorization": f"Bearer {admin_token}"})
         assert delay.called
     assert resp.status_code == 200
@@ -77,7 +77,7 @@ async def test_update_world_embedding(async_client, create_user, login_and_get_t
     resp = await async_client.post("/gameworlds/", json=gw_payload, headers={"Authorization": f"Bearer {token}"})
     gw_id = resp.json()["id"]
 
-    payload = {"world_id": gw_id, "name": "base", "collection": f"world_{gw_id}_base"}
+    payload = {"world_id": gw_id, "name": "base"}
     resp = await async_client.post("/world_embeddings/", json=payload, headers={"Authorization": f"Bearer {token}"})
     emb_id = resp.json()["id"]
 

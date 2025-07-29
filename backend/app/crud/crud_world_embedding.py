@@ -4,6 +4,7 @@ from typing import List, Optional
 
 from datetime import datetime, timezone
 from app.models.model_world_embedding import WorldEmbedding
+from app.crud.crud_vectordb import _delete_collection, _get_embedding_collection
 
 async def create_embedding(session: AsyncSession, embedding: WorldEmbedding) -> WorldEmbedding:
     session.add(embedding)
@@ -32,6 +33,9 @@ async def delete_embedding(session: AsyncSession, embedding_id: int) -> bool:
     emb = await session.get(WorldEmbedding, embedding_id)
     if not emb:
         return False
+    # Remove associated vectors
+    collection = _get_embedding_collection(embedding_id)
+    _delete_collection(f"embedding_{embedding_id}", collection)
     await session.delete(emb)
     await session.commit()
     return True

@@ -331,13 +331,14 @@ def query_world(
     # --- Query vectorstore ---
     # With a 128k LLM window and pages max 8k tokens, we can return up to 8 chunks per page by default
     # If you want to further optimize, you can dynamically adjust max_chunks_per_page based on actual chunk lengths
-
+    print (f"CRUD_VECTOR Collection: {collection} - WORLD ID: {world_id}")
+    print (f"CRUD_VECTOR  chroma_filter: {chroma_filter}")
     retrieved = collection_obj.max_marginal_relevance_search(
         query,
         k=n_results * 12,  # Large enough for top-N pages with several chunks each
         filter=chroma_filter if chroma_filter else None
     )
-
+    print (f"CRUD_VECTOR  retrieved: {retrieved}")
     # --- Group retrieved chunks by page_id, keep only the top-N (most relevant) per page ---
     pages: Dict[int, Dict] = {}
     chunk_ids_seen = set()  # Avoid duplicates

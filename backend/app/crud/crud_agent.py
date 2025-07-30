@@ -161,14 +161,14 @@ async def chat_with_agent(
                 session, agent, sq, n_results * 2, ["narrative", "event", "relationship"], 12
             )
         )
-        # Short (keywordified) version for recall
-        keyword_query = extract_keywords(sq)
-        if keyword_query and keyword_query != sq:
-            tasks.append(
-                async_query_all_embeddings(
-                    session, agent, keyword_query, n_results * 2, ["narrative", "event", "relationship"], 12
-                )
-            )
+        # # Short (keywordified) version for recall
+        # keyword_query = extract_keywords(sq)
+        # if keyword_query and keyword_query != sq:
+        #     tasks.append(
+        #         async_query_all_embeddings(
+        #             session, agent, keyword_query, n_results * 2, ["narrative", "event", "relationship"], 12
+        #         )
+        #     )
 
     # Run all queries in parallel
     results_lists = await asyncio.gather(*tasks)
@@ -225,8 +225,8 @@ async def chat_with_agent(
             "page_id": res.get("page_id"),
         })
 
-    print(f"LLM Context: {context[:1500]}...")  # print first part for debugging
-    print(f"Sources: {sources}")
+    # print(f"LLM Context: {context[:1500]}...")  # print first part for debugging
+    # print(f"Sources: {sources}")
 
     # --- STEP 4: GENERATE LLM RESPONSE ---
     history_txt = "\n".join(f"{m['role']}: {m['content']}" for m in messages[:-1])

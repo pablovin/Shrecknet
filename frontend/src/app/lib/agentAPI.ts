@@ -123,12 +123,17 @@ export async function analyzePageWithAgent(
   pageId: number,
   token: string
 ) {
-  const res = await fetch(`${API_URL}/agents/${agentId}/pages/${pageId}/analyze`, {
-    method: "POST",
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
-  });
-  if (!res.ok) throw await res.text();
-  return await res.json();
+  const { job_id } = await startAnalyzeJob(agentId, [pageId], token);
+  let attempts = 0;
+  while (attempts < 30) {
+    await new Promise(r => setTimeout(r, 2000));
+    const job = await getWriterJob(job_id, token);
+    if (job.status === "done") {
+      return { suggestions: job.suggestions || job.analysis || [] };
+    }
+    attempts++;
+  }
+  throw new Error("timeout");
 }
 export async function generatePagesWithAgent(
   agentId: number,

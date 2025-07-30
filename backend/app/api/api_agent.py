@@ -319,8 +319,8 @@ async def analyze_page_endpoint(
     if agent.world_id != page.gameworld_id:
         raise HTTPException(status_code=400, detail="Agent and page belong to different worlds")
 
-    result = await analyze_page(session, agent, page)
-    return result
+    result = await analyze_pages_bulk(session, agent, [page])
+    return {"suggestions": result}
 
 
 class GeneratePagesRequest(BaseModel):

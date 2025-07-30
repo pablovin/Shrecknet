@@ -230,6 +230,20 @@ async def add_page(session: AsyncSession, page_id: int, embedding_id: int):
     _safe_add_documents(collection, chunks)
     return True
 
+def get_page_chunks(embedding_id: int, page_id: int) -> List[str]:
+    """Return ordered text chunks for a single page from the embedding."""
+    collection = _get_embedding_collection(embedding_id)
+    try:
+        data = collection.get(where={"page_id": page_id}, include=["documents", "metadatas"])
+    except Exception:
+        return []
+    docs = data.get("documents") or []
+    metas = data.get("metadatas") or []
+    pairs = zip(metas, docs)
+    ordered = sorted(pairs, key=lambda p: p[0].get("chunk_index", 0))
+    return [doc for _, doc in ordered]
+
+
 
 async def rebuild_embedding(session: AsyncSession, world_id: int, embedding_id: int) -> int:
     name = f"embedding_{embedding_id}"

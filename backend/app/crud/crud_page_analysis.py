@@ -66,6 +66,7 @@ async def _query_agent_world(
     n_results: int = 5,
     views: List[str] | None = None,
     filters: Dict | None = None,
+    max_chunks_per_page: int | None = 15,
 ):
     chunks = []
     embeddings = await _get_agent_embeddings(session, agent)
@@ -77,6 +78,7 @@ async def _query_agent_world(
                 n_results=n_results,
                 views=views,
                 filters=filters,
+                max_chunks_per_page=max_chunks_per_page,
             )
             chunks.extend(parts)
         except Exception:
@@ -196,13 +198,20 @@ async def analyze_page(session, agent, page) -> dict:
     existing_pages = await crud_page.get_pages(session, gameworld_id=page.gameworld_id)
     existing_titles_norm = {normalize_name(p.name): p for p in existing_pages if p.name}
 
-    # Chunk page content
-    content = page.content or ""
-    text_chunks = split_html_by_headers(content)
+    # Gather page text directly from the vector database if available
+    page_chunks: List[str] = []
+    for emb in valid_embeds:
+        page_chunks = crud_vectordb.get_page_chunks(emb.id, page.id)
+        if page_chunks:
+            break
+    if not page_chunks:
+        page_chunks = split_html_by_headers(page.content or "")
 
-    # Gather additional context from the agent's world embeddings
+    # Add a few extra relevant chunks from the world embedding for context
     embed_chunks = await _query_agent_world(session, agent, page.name, n_results=3)
-    text_chunks.extend(c["document"] for c in embed_chunks)
+    page_chunks.extend(c["document"] for c in embed_chunks)
+
+    full_text = "\n".join(page_chunks)
  
     # Prompt LLM for {page_name: concept_name} mappings
     prompt = ChatPromptTemplate.from_messages([
@@ -220,10 +229,10 @@ async def analyze_page(session, agent, page) -> dict:
     llm = ChatOpenAI(api_key=settings.openai_api_key, model=settings.open_ai_model)
     chain = prompt | llm
 
-    # Collect all page_name: concept_name pairs from all chunks
+    # Collect page_name: concept_name pairs using a single LLM call
     all_pairs = []
-    for chunk in text_chunks:
-        result = await chain.ainvoke({"chunk": chunk})
+    if full_text.strip():
+        result = await chain.ainvoke({"chunk": full_text})
         parsed = json.loads(result.content.strip())
         if isinstance(parsed, dict):
             all_pairs.extend(parsed.items())

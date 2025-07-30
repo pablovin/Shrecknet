@@ -139,11 +139,7 @@ def task_analyze_pages_job(agent_id: int, page_ids: list[int], job_id: str):
                         default=str,
                     )
 
-            if len(pages) == 1:
-                result = await analyze_page(session, agent, pages[0])
-                suggestions = result.get("suggestions", [])
-            else:
-                suggestions = await analyze_pages_bulk(session, agent, pages)
+            suggestions = await analyze_pages_bulk(session, agent, pages)
 
         end_time = datetime.now(timezone.utc).isoformat()
         with open(job_path, "w") as f:

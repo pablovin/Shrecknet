@@ -237,7 +237,7 @@ async def analyze_page(session, agent, page) -> dict:
             "\nConcept list:\n"
             + "\n".join(f"- {name}: {desc}" for name, desc in concept_defs.items())
             + "\nReturn a JSON object mapping each page name to its concept (category), e.g.:\n"
-            + "{\n  \"Barão de Karst\": \"NPC\",\n  \"Abelardo\": \"NPC\",\n  \"Yudennach\": \"Reino\",\n  \"Green Dragon\": \"Monstro\"\n}"
+            + "{{\n  \"Barão de Karst\": \"NPC\",\n  \"Abelardo\": \"NPC\",\n  \"Yudennach\": \"Reino\",\n  \"Green Dragon\": \"Monstro\"\n}}"
             + "\nDo not include mentions that are not mapped to a concept. Only return the JSON object."
         ),
         ("user", "{chunk}")

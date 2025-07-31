@@ -18,7 +18,7 @@ import json
 from bs4 import BeautifulSoup
 from rapidfuzz import fuzz, process
 
-
+import asyncio
 from bs4 import BeautifulSoup
 
 def strip_html(text):
@@ -185,12 +185,35 @@ def ensure_visible_text(chunk):
     # Strip all HTML tags, merge inline elements
     return BeautifulSoup(text, "html.parser").get_text(separator='', strip=True)
 
+async def get_page_view_chunks(session, agent, page):
+    """
+    Returns a dict: {"narrative": ..., "relationship": ..., "event": ...}
+    Each value is the concatenated plain text for that view from embeddings.
+    """
+    valid_embeds = await _get_agent_embeddings(session, agent)
+    if not valid_embeds:
+        return {}
+    views = ["relationship", "event"]
+    view_chunks = {}
+
+    for emb in valid_embeds:
+        for view in views:
+            parts = crud_vectordb.get_page_chunks(emb.id, page.id, view=view)
+            if parts:
+                # Accepts both list-of-strings and list-of-objects with .page_content
+                texts = [ensure_visible_text(p) for p in parts if p]
+                if texts:
+                    view_chunks[view] = "\n".join(texts)
+        if len(view_chunks) == len(views):
+            break  # Got all
+    return view_chunks
+
 async def analyze_page(session, agent, page) -> dict:
+    # --- 1. Load concepts, pages, agent embeddings ---
     valid_embeds = await _get_agent_embeddings(session, agent)
     if not valid_embeds:
         return {"suggestions": [], "error": "Agent world embeddings missing"}
 
-    # Load concepts and existing pages
     concepts = await crud_concept.get_concepts(session, gameworld_id=page.gameworld_id, auto_generated=True)
     concept_defs = {c.name: c.description or "" for c in concepts}
     concepts_by_id = {c.id: c for c in concepts}
@@ -198,22 +221,15 @@ async def analyze_page(session, agent, page) -> dict:
     existing_pages = await crud_page.get_pages(session, gameworld_id=page.gameworld_id)
     existing_titles_norm = {normalize_name(p.name): p for p in existing_pages if p.name}
 
-    # Gather page text directly from the vector database if available
-    page_chunks: List[str] = []
-    for emb in valid_embeds:
-        page_chunks = crud_vectordb.get_page_chunks(emb.id, page.id)
-        if page_chunks:
-            break
-    if not page_chunks:
-        page_chunks = split_html_by_headers(page.content or "")
+    # --- 2. Get global context (views) from page embeddings ---
+    view_chunks = await get_page_view_chunks(session, agent, page)
+    metadata_only_text = "\n\n".join(
+        f"{view.title()}:\n{content.strip()}"
+        for view, content in view_chunks.items()
+        if content and content.strip()
+    )
 
-    # Add a few extra relevant chunks from the world embedding for context
-    embed_chunks = await _query_agent_world(session, agent, page.name, n_results=3)
-    page_chunks.extend(c["document"] for c in embed_chunks)
-
-    full_text = "\n".join(page_chunks)
- 
-    # Prompt LLM for {page_name: concept_name} mappings
+    # --- 3. Prepare LLM chain ---
     prompt = ChatPromptTemplate.from_messages([
         ("system",
             "You are analyzing a story. Extract important concepts and suggest the canonical page names for each, along with the concept (category/type) each belongs to, using the most complete and unambiguous name possible."
@@ -221,7 +237,7 @@ async def analyze_page(session, agent, page) -> dict:
             "\nConcept list:\n"
             + "\n".join(f"- {name}: {desc}" for name, desc in concept_defs.items())
             + "\nReturn a JSON object mapping each page name to its concept (category), e.g.:\n"
-            + "{{\n  \"Barão de Karst\": \"NPC\",\n  \"Abelardo\": \"NPC\",\n  \"Yudennach\": \"Reino\",\n  \"Green Dragon\": \"Monstro\"\n}}"
+            + "{\n  \"Barão de Karst\": \"NPC\",\n  \"Abelardo\": \"NPC\",\n  \"Yudennach\": \"Reino\",\n  \"Green Dragon\": \"Monstro\"\n}"
             + "\nDo not include mentions that are not mapped to a concept. Only return the JSON object."
         ),
         ("user", "{chunk}")
@@ -229,15 +245,39 @@ async def analyze_page(session, agent, page) -> dict:
     llm = ChatOpenAI(api_key=settings.openai_api_key, model=settings.open_ai_model)
     chain = prompt | llm
 
-    # Collect page_name: concept_name pairs using a single LLM call
+    # --- 4. Metadata-only pass ---
     all_pairs = []
-    if full_text.strip():
-        result = await chain.ainvoke({"chunk": full_text})
-        parsed = json.loads(result.content.strip())
-        if isinstance(parsed, dict):
-            all_pairs.extend(parsed.items())
+    if metadata_only_text.strip():
+        try:
+            result = await chain.ainvoke({"chunk": metadata_only_text})
+            parsed = json.loads(result.content.strip())
+            if isinstance(parsed, dict):
+                all_pairs.extend(parsed.items())
+        except Exception as e:
+            print(f"Metadata pass failed: {e}")
 
-    # Group by normalized name (deduplicate aliases & similar names)
+    # --- 5. Chunked content pass (header-based) ---
+    page_chunks = split_html_by_headers(page.content or "")
+    chunk_texts = [ensure_visible_text(chunk) for chunk in page_chunks if chunk and chunk.strip()]
+
+    async def process_chunk(chunk_text):
+        # Prepend metadata to each chunk
+        chunk_input = f"{metadata_only_text}\n\n{chunk_text}".strip() if metadata_only_text else chunk_text
+        try:
+            result = await chain.ainvoke({"chunk": chunk_input})
+            parsed = json.loads(result.content.strip())
+            if isinstance(parsed, dict):
+                return parsed.items()
+        except Exception as e:
+            print(f"Chunk LLM failed: {e}")
+        return []
+
+    if chunk_texts:
+        chunk_results = await asyncio.gather(*(process_chunk(chunk) for chunk in chunk_texts))
+        for res in chunk_results:
+            all_pairs.extend(res)
+
+    # --- 6. Merge and deduplicate results ---
     groups = {}
     for name, concept_name in all_pairs:
         norm = normalize_name(name)
@@ -249,35 +289,28 @@ async def analyze_page(session, agent, page) -> dict:
     suggestions = []
     already_handled = set()
     for norm, data in groups.items():
-        # Pick the best display name (prefer the actual page name if it exists, else the longest/most descriptive name)
         page_obj = existing_titles_norm.get(norm)
         all_names = data["names"]
-        # If any of the LLM names match an existing page exactly, use that page's name. Else, pick the longest one.
-        best_name = page_obj.name if page_obj else max(all_names, key=len)
-
-        # If this normalized name already mapped to an existing page, keep only one suggestion for that page!
-        if page_obj:
-            if page_obj.id in already_handled:
-                continue  # Already suggested via another alias
-            already_handled.add(page_obj.id)
-
-        # Choose concept from existing page, or from LLM/LLM guess, or from concept list
-        concept_obj = None
-        if page_obj and getattr(page_obj, "concept_id", None):
-            concept_obj = concepts_by_id.get(page_obj.concept_id)
-        if not concept_obj:
-            # Try: match LLM concept to your concepts list (fuzzy)
-            llm_concept = next(iter(data["concepts"])) if data["concepts"] else None
-            if llm_concept:
-                # Try exact or fuzzy match to available concept types/names
-                match = concepts_by_name.get(normalize_name(llm_concept))
-                if match:
-                    concept_obj = match
-        final_concept_id = concept_obj.id if concept_obj else None
-        final_concept_name = concept_obj.name if concept_obj else (llm_concept if llm_concept else "Unknown")
-
+        all_concepts = list(data["concepts"])
         exists = bool(page_obj)
-        print(f"Suggestion: {best_name} - Concept: {final_concept_name}  - Exists: {exists}")
+
+        if exists:
+            # Use actual page name, and DB concept if possible
+            best_name = page_obj.name
+            concept_obj = concepts_by_id.get(page_obj.concept_id) if getattr(page_obj, "concept_id", None) else None
+            final_concept_id = concept_obj.id if concept_obj else None
+            final_concept_name = concept_obj.name if concept_obj else (all_concepts[0] if all_concepts else "Unknown")
+            if page_obj.id in already_handled:
+                continue
+            already_handled.add(page_obj.id)
+        else:
+            # For new pages, use *shortest* suggested name (most likely to be canonical)
+            best_name = min(all_names, key=len)
+            llm_concept = all_concepts[0] if all_concepts else "Unknown"
+            concept_obj = concepts_by_name.get(normalize_name(llm_concept))
+            final_concept_id = concept_obj.id if concept_obj else None
+            final_concept_name = concept_obj.name if concept_obj else llm_concept
+
         suggestions.append({
             "name": best_name,
             "concept_id": final_concept_id,

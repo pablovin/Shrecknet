@@ -11,6 +11,7 @@ export default function SuggestionCard({
     token,
     subStep,
     onUpdate,
+    onDragMerge,
   }) {
     const { t } = useTranslation();
     const [filter, setFilter] = useState("");
@@ -46,6 +47,24 @@ export default function SuggestionCard({
   
     return (
       <div
+        draggable={subStep === 'b'}
+        onDragStart={(e) => {
+          if (subStep === 'b') {
+            e.dataTransfer.setData('text/plain', String(index));
+          }
+        }}
+        onDragOver={(e) => {
+          if (subStep === 'b') e.preventDefault();
+        }}
+        onDrop={(e) => {
+          if (subStep === 'b') {
+            e.preventDefault();
+            const from = Number(e.dataTransfer.getData('text/plain'));
+            if (!isNaN(from) && from !== index) {
+              onDragMerge?.(from, index);
+            }
+          }
+        }}
         className={`border-2 ${
           isMerged ? "border-gray-300 bg-gray-100" : backgroundClass
         } rounded-xl p-4 space-y-3 transition-colors duration-200`}
@@ -223,6 +242,4 @@ export default function SuggestionCard({
         )}
       </div>
     );
-  }
-  
-  
+}

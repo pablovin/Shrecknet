@@ -224,6 +224,19 @@ export default function SuggestionsPage() {
     a.name.localeCompare(b.name)
   );
 
+  const handleDragMerge = (fromIdx: number, toIdx: number) => {
+    setSelectedSuggestions((prev) => {
+      const copy = [...prev];
+      const from = copy[fromIdx];
+      const to = copy[toIdx];
+      if (!from || !to) return prev;
+      const set = new Set<string>(from.merge_targets || []);
+      set.add(to.name);
+      from.merge_targets = Array.from(set);
+      return copy;
+    });
+  };
+
   return (
     <AuthGuard>
       <DashboardLayout>
@@ -297,6 +310,7 @@ export default function SuggestionsPage() {
                       pages={allPages}
                       token={token}
                       subStep={subStep}
+                      onDragMerge={handleDragMerge}
                       onUpdate={(i: number, data: any) => {
                         const copy = [...selectedSuggestions];
                         copy[i] = { ...copy[i], ...data };

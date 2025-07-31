@@ -196,7 +196,7 @@
   "step2a_hint": "Clique em \u201cRemover\u201d em qualquer sugestão que não desejar manter.",
   "step2b_merge": "Etapa 2B: Mesclar Sugestões Semelhantes",
   "step2b_desc": "Agora agrupe sugestões que se refiram ao mesmo tópico.",
-  "step2b_hint": "Use o menu \u201cMesclar Com\u201d em cada cartão para vincular sugestões relacionadas.",
+  "step2b_hint": "Use o menu \u201cMesclar Com\u201d em cada cartão ou simplesmente arraste um cartão sobre outro para mesclá-los.",
   "step2c_finalize": "Etapa 2C: Finalizar Páginas",
   "step2c_desc": "Hora de atribuir conceitos e decidir se cria ou atualiza páginas.",
   "step2c_hint": "Defina a ação, selecione o conceito alvo e escolha uma página existente se for atualizar.",

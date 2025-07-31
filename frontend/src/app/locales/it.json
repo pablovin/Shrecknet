@@ -198,7 +198,7 @@
   "step2a_hint": "Fai clic su \u201cRimuovi\u201d per ogni suggerimento che non vuoi mantenere.",
   "step2b_merge": "Passo 2B: Unisci i Suggerimenti Simili",
   "step2b_desc": "Ora raggruppa i suggerimenti che si riferiscono allo stesso argomento.",
-  "step2b_hint": "Usa il menu \u201cUnisci Con\u201d su ogni scheda per collegare i suggerimenti correlati.",
+  "step2b_hint": "Usa il menu \u201cUnisci Con\u201d su ogni scheda o trascina semplicemente una scheda sopra un'altra per unirle.",
   "step2c_finalize": "Passo 2C: Finalizza le Pagine",
   "step2c_desc": "È il momento di assegnare i concetti e decidere se creare o aggiornare le pagine.",
   "step2c_hint": "Imposta l'azione, seleziona il concetto di destinazione e scegli una pagina esistente se devi aggiornarla.",

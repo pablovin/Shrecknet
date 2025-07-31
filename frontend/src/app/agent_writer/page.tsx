@@ -198,6 +198,7 @@ function AgentWriterPageContent() {
                     <tr className="text-left text-indigo-800">
                       <th className="p-2">{t('status')}</th>
                       <th className="p-2">{t('page')}</th>
+                      <th className="p-2">{t('source_pages')}</th>
                       <th className="p-2">{t('type')}</th>
                       <th className="p-2">{t('started')}</th>
                       <th className="p-2">{t('ended')}</th>
@@ -209,6 +210,7 @@ function AgentWriterPageContent() {
                     {jobs.map(job => (
                       <tr key={job.id} className={`border-t border-indigo-100 ${job.status === 'done' ? 'bg-indigo-50/80' : 'bg-yellow-50/70 animate-pulse'}`}>
                         <td className={`p-2 ${job.status === 'done' ? 'text-fuchsia-700 font-semibold' : 'text-yellow-700 font-semibold'}`}>{job.status === 'done' ? t('needs_review') : t('running')}</td>
+                        <td className="p-2">-</td>
                         <td className="p-2">{job.pages.join(', ')}</td>
                         <td className="p-2">{JOB_LABELS['analyze_pages']}</td>
                         <td className="p-2">{job.start_time ? new Date(job.start_time).toLocaleString() : '-'}</td>
@@ -217,21 +219,36 @@ function AgentWriterPageContent() {
                         <td className="p-2">{job.status === 'done' ? (<Link className="text-fuchsia-700 underline font-bold" href={`/agent_writer/${selectedAgent.id}/suggestions/${job.id}`}>{t('review')}</Link>) : null}</td>
                       </tr>
                     ))}
-                    {runningJobs.map(job => (
+                    {runningJobs.map(job => {
+                      const srcNames = Array.isArray(job.page_names)
+                        ? job.page_names.join(', ')
+                        : Array.isArray(job.suggestions)
+                          ? Array.from(new Set(job.suggestions.flatMap((s: any) => (s.source_pages || []).map((sp: any) => sp.name)))).join(', ')
+                          : '-';
+                      return (
                       <tr key={job.job_id} className="border-t border-indigo-100 bg-yellow-50/70 animate-pulse">
                         <td className="p-2 text-yellow-700 font-semibold">Running</td>
-                        <td className="p-2">{pageMap[job.page_id]?.name || job.page_id}</td>
+                        <td className="p-2">{pageMap[job.page_id]?.name || job.page_id || '-'}</td>
+                        <td className="p-2">{srcNames || '-'}</td>
                         <td className="p-2">{JOB_LABELS[job.job_type] || job.job_type}</td>
                         <td className="p-2">{job.start_time ? new Date(job.start_time).toLocaleString() : '-'}</td>
                         <td className="p-2">-</td>
                         <td className="p-2">-</td>
                         <td className="p-2"></td>
                       </tr>
-                    ))}
-                    {waitingJobs.map(job => (
+                      );
+                    })}
+                    {waitingJobs.map(job => {
+                      const srcNames = Array.isArray(job.page_names)
+                        ? job.page_names.join(', ')
+                        : Array.isArray(job.suggestions)
+                          ? Array.from(new Set(job.suggestions.flatMap((s: any) => (s.source_pages || []).map((sp: any) => sp.name)))).join(', ')
+                          : '-';
+                      return (
                       <tr key={job.job_id} className="border-t border-indigo-100 bg-indigo-50/80">
                         <td className="p-2 text-fuchsia-700 font-semibold">{t('needs_review')}</td>
-                        <td className="p-2">{pageMap[job.page_id]?.name || job.page_id}</td>
+                        <td className="p-2">{pageMap[job.page_id]?.name || job.page_id || '-'}</td>
+                        <td className="p-2">{srcNames || '-'}</td>
                         <td className="p-2">{JOB_LABELS[job.job_type] || job.job_type}</td>
                         <td className="p-2">{job.start_time ? new Date(job.start_time).toLocaleString() : '-'}</td>
                         <td className="p-2">{job.end_time ? new Date(job.end_time).toLocaleString() : '-'}</td>
@@ -253,20 +270,29 @@ function AgentWriterPageContent() {
                           </button>
                         </td>
                       </tr>
-                    ))}
-                    {doneJobs.map(job => (
+                      );
+                    })}
+                    {doneJobs.map(job => {
+                      const srcNames = Array.isArray(job.page_names)
+                        ? job.page_names.join(', ')
+                        : Array.isArray(job.suggestions)
+                          ? Array.from(new Set(job.suggestions.flatMap((s: any) => (s.source_pages || []).map((sp: any) => sp.name)))).join(', ')
+                          : '-';
+                      return (
                       <tr key={job.job_id} className="border-t border-indigo-100 text-indigo-400 bg-white">
                         <td className="p-2">{t('done')}</td>
-                        <td className="p-2">{job.page_name}</td>
+                        <td className="p-2">{job.page_name || pageMap[job.page_id]?.name || '-'}</td>
+                        <td className="p-2">{srcNames || '-'}</td>
                         <td className="p-2">{JOB_LABELS[job.job_type] || job.job_type}</td>
                         <td className="p-2">{job.start_time ? new Date(job.start_time).toLocaleString() : '-'}</td>
                         <td className="p-2">{job.end_time ? new Date(job.end_time).toLocaleString() : '-'}</td>
                         <td className="p-2">{job.start_time && job.end_time ? Math.round((new Date(job.end_time).getTime() - new Date(job.end_time).getTime())/1000) + 's' : '-'}</td>
                         <td className="p-2"></td>
                       </tr>
-                    ))}
+                      );
+                    })}
                     {runningJobs.length === 0 && waitingJobs.length === 0 && doneJobs.length === 0 && (
-                      <tr><td colSpan={7} className="p-2 text-center">{t('no_jobs')}</td></tr>
+                      <tr><td colSpan={8} className="p-2 text-center">{t('no_jobs')}</td></tr>
                     )}
                   </tbody>
                 </table>

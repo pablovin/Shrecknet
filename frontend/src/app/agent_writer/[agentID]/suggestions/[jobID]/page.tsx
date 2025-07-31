@@ -148,6 +148,10 @@ export default function SuggestionsPage() {
     else if (subStep === 'b') setSubStep('a');
   };
 
+  const handleBulkDelete = () => {
+    setSelectedSuggestions((prev) => prev.filter((s) => !s._delete));
+  };
+
   async function handleGenerate() {
     if (!agentID || !job) return;
     setLoading(true);
@@ -298,11 +302,6 @@ export default function SuggestionsPage() {
                         copy[i] = { ...copy[i], ...data };
                         setSelectedSuggestions(copy);
                       }}
-                      onRemove={(i: number) => {
-                        const copy = [...selectedSuggestions];
-                        copy.splice(i, 1);
-                        setSelectedSuggestions(copy);
-                      }}
                     />
                   </div>
                 )})}
@@ -314,12 +313,18 @@ export default function SuggestionsPage() {
                 <p className="mb-4">{t('track_progress')}</p>
                 <div className="grid grid-cols-2 gap-2 text-sm">
                   {sortedSuggestions.map((s, idx) => {
-                    const isMerged = selectedSuggestions.some(
+                    const targetedByOther = selectedSuggestions.some(
                       (other) =>
                         other !== s &&
                         Array.isArray(other.merge_targets) &&
                         other.merge_targets.includes(s.name)
                     );
+                    const firstIndex = selectedSuggestions.findIndex((ss) => ss.name === s.name);
+                    const isMerged =
+                      targetedByOther ||
+                      (firstIndex !== selectedSuggestions.indexOf(s) &&
+                        Array.isArray(selectedSuggestions[firstIndex]?.merge_targets) &&
+                        selectedSuggestions[firstIndex].merge_targets.includes(s.name));
                     const type = isMerged ? "Merged" : s.mode === "update" || s.exists ? "Update" : "Create";
                     const color = type === "Update" ? "text-blue-500" : type === "Create" ? "text-green-500" : "text-gray-500";
                     return (
@@ -342,13 +347,22 @@ export default function SuggestionsPage() {
               </div>
             </div>
 
-            <div className="flex justify-between mt-8 w-full max-w-screen-2xl mx-auto px-4">
+            <div className="flex flex-wrap justify-between mt-8 w-full max-w-screen-2xl mx-auto px-4 gap-4">
               <button
                 onClick={goBackSubStep}
                 className="px-4 py-2 rounded-xl border border-[var(--primary)] text-[var(--primary)] font-bold shadow hover:bg-[var(--accent)]/30 transition"
               >
                 {t('back')}
               </button>
+
+              {subStep === 'a' && selectedSuggestions.some((s) => s._delete) && (
+                <button
+                  onClick={handleBulkDelete}
+                  className="px-4 py-2 rounded-xl bg-red-600 text-white font-bold shadow hover:bg-red-700 transition"
+                >
+                  {t('delete_selected')}
+                </button>
+              )}
 
 
               {subStep !== 'c' ? (

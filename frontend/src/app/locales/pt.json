@@ -217,6 +217,7 @@
   "update_all": "Atualizar Todas",
   "update_all_desc": "Todas as sugestões de atualização serão aplicadas automaticamente.",
   "bulk_updating": "Aplicando todas as sugestões de atualização. Aguarde...",
+  "delete_selected": "Excluir selecionados",
   "all_pages_updated": "Todas as páginas foram atualizadas e criadas!",
   "update_page": "Atualizar Página",
   "new_page": "Nova Página",

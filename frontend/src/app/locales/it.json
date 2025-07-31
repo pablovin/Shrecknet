@@ -219,6 +219,7 @@
   "update_all": "Aggiorna Tutto",
   "update_all_desc": "Tutti i suggerimenti di aggiornamento saranno applicati automaticamente.",
   "bulk_updating": "Applicazione di tutti i suggerimenti di aggiornamento. Attendere...",
+  "delete_selected": "Elimina selezionati",
   "all_pages_updated": "Tutte le pagine sono state aggiornate e create!",
   "update_page": "Aggiorna Pagina",
   "new_page": "Nuova Pagina",

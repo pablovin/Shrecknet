@@ -11,7 +11,6 @@ export default function SuggestionCard({
     token,
     subStep,
     onUpdate,
-    onRemove,
   }) {
     const { t } = useTranslation();
     const [filter, setFilter] = useState("");
@@ -22,9 +21,18 @@ export default function SuggestionCard({
       ? "bg-blue-100 border-blue-300"
       : "bg-green-100 border-green-300";
   
-    const isMerged = suggestions.some((other, i) =>
-      i !== index && Array.isArray(other.merge_targets) && other.merge_targets.includes(suggestion.name)
+    const targetedByOther = suggestions.some(
+      (other, i) =>
+        i !== index &&
+        Array.isArray(other.merge_targets) &&
+        other.merge_targets.includes(suggestion.name)
     );
+    const firstIndex = suggestions.findIndex((s) => s.name === suggestion.name);
+    const isMerged =
+      targetedByOther ||
+      (firstIndex !== index &&
+        Array.isArray(suggestions[firstIndex]?.merge_targets) &&
+        suggestions[firstIndex].merge_targets.includes(suggestion.name));
   
     if (isMerged && subStep !== 'b') {
       return (
@@ -58,12 +66,17 @@ export default function SuggestionCard({
             </span>
           </div>
           {subStep === "a" && (
-            <button
-              className="text-red-500 hover:underline text-sm"
-              onClick={() => onRemove(index)}
-            >
+            <label className="text-red-500 text-sm flex items-center gap-1 cursor-pointer">
+              <input
+                type="checkbox"
+                className="accent-red-500 w-4 h-4"
+                checked={!!suggestion._delete}
+                onChange={(e) =>
+                  onUpdate(index, { _delete: e.target.checked })
+                }
+              />
               {t('remove')}
-            </button>
+            </label>
           )}
         </div>
   
@@ -159,31 +172,50 @@ export default function SuggestionCard({
             {subStep === 'b' && (
               <div className="col-span-2">
                 <label className="block text-sm font-semibold mb-1">{t('merge_with')}</label>
-                <div className="flex flex-wrap gap-2">
-                  {suggestions
-                    .filter((s, i) => i !== index)
-                    .sort((a, b) => a.name.localeCompare(b.name))
-                    .map((suggOption, i) => {
-                      const merged = Array.isArray(suggestion.merge_targets) && suggestion.merge_targets.includes(suggOption.name);
-                      return (
-                        <button
-                          key={i}
-                          onClick={() => {
-                            const current = suggestion.merge_targets || [];
-                            const already = current.includes(suggOption.name);
-                            const updated = already
-                              ? current.filter((n) => n !== suggOption.name)
-                              : [...current, suggOption.name];
-                            onUpdate(index, { merge_targets: updated });
-                          }}
-                          className={`px-2 py-1 rounded-full border text-xs ${
-                            merged ? "bg-[var(--primary)] text-white border-[var(--primary)]" : "border-[var(--border)] text-[var(--foreground)] hover:bg-[var(--accent)]/20"
-                          }`}
-                        >
-                          {suggOption.name}
-                        </button>
-                      );
-                    })}
+                <Combobox
+                  multiple
+                  value={suggestion.merge_targets || []}
+                  onChange={(vals) => onUpdate(index, { merge_targets: vals })}
+                >
+                  <div className="relative">
+                    <Combobox.Input
+                      className="w-full rounded border border-[var(--primary)] px-2 py-1 bg-[var(--surface)] text-[var(--foreground)]"
+                      placeholder={t('search_page')}
+                      onChange={(e) => setFilter(e.target.value)}
+                      displayValue={() => ''}
+                    />
+                    <Combobox.Options className="absolute mt-1 max-h-60 w-full overflow-auto rounded-xl bg-[var(--surface)] shadow-lg z-20 border border-[var(--primary)]">
+                      {suggestions
+                        .filter((s, i) => i !== index && s.name.toLowerCase().includes(filter.toLowerCase()))
+                        .sort((a, b) => a.name.localeCompare(b.name))
+                        .map((suggOption, i) => (
+                          <Combobox.Option
+                            key={i}
+                            value={suggOption.name}
+                            className="px-2 py-1 cursor-pointer hover:bg-[var(--accent)]/20"
+                          >
+                            {suggOption.name}
+                          </Combobox.Option>
+                        ))}
+                    </Combobox.Options>
+                  </div>
+                </Combobox>
+                <div className="flex flex-wrap gap-2 mt-2">
+                  {(suggestion.merge_targets || []).map((tgt: string) => (
+                    <span key={tgt} className="px-2 py-1 rounded-full text-xs bg-[var(--primary)] text-white flex items-center gap-1">
+                      {tgt}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const updated = (suggestion.merge_targets || []).filter((n: string) => n !== tgt);
+                          onUpdate(index, { merge_targets: updated });
+                        }}
+                        className="ml-1 text-white hover:text-gray-200"
+                      >
+                        &times;
+                      </button>
+                    </span>
+                  ))}
                 </div>
               </div>
             )}

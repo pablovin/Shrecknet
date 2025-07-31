@@ -36,7 +36,15 @@ function AgentWriterPageContent() {
   const { worlds } = useWorlds();
   const [selectedAgent, setSelectedAgent] = useState<any>(null);
   const searchParams = useSearchParams();
-  const { pages } = usePages(selectedAgent ? { gameworld_id: selectedAgent.world_id } : {});
+  const [selectedConcept, setSelectedConcept] = useState<number | "">("");
+  const { pages } = usePages(
+    selectedAgent
+      ? {
+          gameworld_id: selectedAgent.world_id,
+          ...(selectedConcept ? { concept_id: selectedConcept } : {}),
+        }
+      : {}
+  );
   const { concepts } = useConcepts(selectedAgent?.world_id);
 
   const [search, setSearch] = useState("");
@@ -330,6 +338,20 @@ function AgentWriterPageContent() {
                   <h3 className="text-xl font-bold mb-1 text-fuchsia-700">{t('library_of_lore')}</h3>
                   <p className="text-indigo-900/80 mb-2">{t('library_desc')}</p>
                 </div>
+                <select
+                  className="px-3 py-2 rounded-xl border border-indigo-200 bg-white text-sm w-full sm:w-auto"
+                  value={selectedConcept}
+                  onChange={e => {
+                    const val = e.target.value;
+                    setSelectedConcept(val ? Number(val) : "");
+                    setPageIndex(0);
+                  }}
+                >
+                  <option value="">All concepts</option>
+                  {concepts?.map(c => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </select>
                 <div className="flex items-center gap-2 bg-white border border-indigo-200 px-4 py-2 rounded-xl shadow-inner w-full sm:w-[260px]">
                   <Search className="w-5 h-5 text-indigo-400" />
                   <input

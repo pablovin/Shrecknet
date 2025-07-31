@@ -1,265 +1,80 @@
-  "use client";
-  import { useParams } from "next/navigation";
-  import DashboardLayout from "@/app/components/DashboardLayout";
-  import AuthGuard from "@/app/components/auth/AuthGuard";
-  import { useAuth } from "@/app/components/auth/AuthProvider";
-  import { useEffect, useState } from "react";
-  import { getWriterJob, updateWriterJob } from "@/app/lib/agentAPI";
-  import { useAgentById } from "@/app/lib/useAgentById";
-  import { useConcepts } from "@/app/lib/useConcept";
-  import { useWorld } from "@/app/lib/useWorld";
+"use client";
+import { useEffect, useState } from "react";
+import { useParams, useRouter } from "next/navigation";
+import DashboardLayout from "@/app/components/DashboardLayout";
+import AuthGuard from "@/app/components/auth/AuthGuard";
+import { useAuth } from "@/app/components/auth/AuthProvider";
+import { getWriterJob } from "@/app/lib/agentAPI";
+import { useAgentById } from "@/app/lib/useAgentById";
+import { useConcepts } from "@/app/lib/useConcept";
+import { useWorld } from "@/app/lib/useWorld";
+import { usePages } from "@/app/lib/usePage";
+import { getPage, updatePage } from "@/app/lib/pagesAPI";
+import EditableContent from "@/app/components/editor/EditableContent";
+import EventTimeline from "@/app/components/see_page/EventTimeline";
+import RelationshipMapTab from "@/app/components/see_page/RelationshipMapTab";
+import Image from "next/image";
 import { Loader2 } from "lucide-react";
 import { useTranslation } from "@/app/hooks/useTranslation";
-import { getPage, getPagesForConcept, updatePage, createPage } from "@/app/lib/pagesAPI";
-import CreatePageForm from "@/app/components/create_page/CreatePageForm";
-import HTMLRenderer from "@/app/components/editor/HTMLRenderer";
-import Image from "next/image";
-import { useRouter } from "next/navigation";
-import { json } from "stream/consumers";
 
-  function buildMergeGroups(suggestions: any[]) {
-    const graph = new Map<string, Set<string>>();
-    suggestions.forEach((s) => {
-      if (!graph.has(s.name)) graph.set(s.name, new Set());
-      (s.merge_targets || []).forEach((t: string) => {
-        graph.get(s.name)!.add(t);
-        if (!graph.has(t)) graph.set(t, new Set());
-        graph.get(t)!.add(s.name);
-      });
-    });
-    const visited = new Set<string>();
-    const groups: string[][] = [];
-    for (const name of graph.keys()) {
-      if (visited.has(name)) continue;
-      const queue = [name];
-      const group = new Set<string>();
-      while (queue.length) {
-        const cur = queue.pop()!;
-        if (visited.has(cur)) continue;
-        visited.add(cur);
-        group.add(cur);
-        graph.get(cur)!.forEach((n) => queue.push(n));
-      }
-      groups.push(Array.from(group));
-    }
-  const independent = suggestions.filter((s) => !graph.has(s.name)).map((s) => [s.name]);
-  return [...groups, ...independent];
-}
-
-function AgentBubble({ agent, children, loading = false }: any) {
-  if (!agent) return null;
-  return (
-    <div className="flex items-start gap-4 mb-4">
-      <div className="relative">
-        <Image
-          src={agent.logo || "/images/default/avatars/logo.png"}
-          alt={agent.name}
-          width={80} // Increase width
-          height={80} // Increase height proportionally
-          className={`rounded-full object-cover border-2 border-[var(--primary)] shadow-md ${loading ? "animate-pulse" : ""}`}
-        />
-        {loading && (
-          <span className="absolute -bottom-1 -right-1 bg-[var(--primary)] rounded-full w-5 h-5 flex items-center justify-center">
-            <Loader2 className="w-4 h-4 text-white animate-spin" />
-          </span>
-        )}
-      </div>
-      <div className="relative flex-1">
-        <div className="bg-[var(--card)] border border-[var(--primary)] rounded-2xl px-4 py-3 shadow-sm text-[var(--foreground)] max-w-[80%] text-md space-y-2">
-          {children}
-        </div>
-        <div className="absolute left-2 -bottom-3 w-4 h-4 bg-[var(--card)] border-l border-b border-[var(--primary)] rounded-bl-full"></div>
-      </div>
-    </div>
-  );
-}
-
-  export default function ReviewPage() {
-    const { t } = useTranslation();
-    const { agentID, jobID } = useParams();
-  const { token } = useAuth();
-  const [job, setJob] = useState<any>(null);
-  const [generatedPages, setGeneratedPages] = useState<any[]>([]);
-  const [activeGen, setActiveGen] = useState(0);
-  const [bulkUpdating, setBulkUpdating] = useState(false);
-
-    const { agent } = useAgentById(Number(agentID));
-    const { concepts } = useConcepts(agent?.world_id);
-  const { world } = useWorld(agent?.world_id);
+export default function ReviewPage() {
+  const { t } = useTranslation();
+  const { agentID, jobID } = useParams();
   const router = useRouter();
+  const { token } = useAuth();
+  const { agent } = useAgentById(Number(agentID));
+  const { concepts } = useConcepts(agent?.world_id);
+  const { world } = useWorld(agent?.world_id);
+  const { pages: worldPages } = usePages(world?.id ? { gameworld_id: world.id } : {});
 
-  async function handleBulkUpdate() {
+  const [job, setJob] = useState<any>(null);
+  const [pages, setPages] = useState<any[]>([]);
+  const [activeIdx, setActiveIdx] = useState(0);
+
+  async function refreshPage(id: number, idx: number) {
     if (!token) return;
-    setBulkUpdating(true);
     try {
-      for (const p of generatedPages.filter((pg) => pg.isUpdate)) {
-        await updatePage(
-          p.id,
-          {
-            autogenerated_content: p.autogenerated_content,
-            updated_by_agent_id: Number(agentID),
-          },
-          token
-        );
-      }
-      setGeneratedPages((g) => {
-        const remaining = g.filter((pg) => !pg.isUpdate);
-        if (remaining.length === 0 && jobID) {
-          updateWriterJob(jobID as string, { action_needed: "done" }, token || "");
-        }
-        if (remaining.length > 0) setActiveGen(0);
-        return remaining;
+      const p = await getPage(id, token);
+      setPages((pgs) => {
+        const copy = [...pgs];
+        copy[idx] = p;
+        return copy;
       });
     } catch (err) {
-      console.error("Bulk update failed", err);
+      console.error("Failed to refresh page", err);
     }
-    setBulkUpdating(false);
   }
 
-
-    // Show "All done!" message and redirect if no pages left to review
-    // useEffect(() => {
-    //   if (job && job.status === "done" && generatedPages.length === 0) {
-    //     const timeout = setTimeout(() => {
-    //       router.push("/agent_writer");
-    //     }, 2000);
-    //     return () => clearTimeout(timeout);
-    //   }
-    // }, [job, generatedPages, router]);
-
-
-
-    useEffect(() => {
-      if (!jobID || !token) return;
-      getWriterJob(jobID as string, token)
-        .then(async (data) => {
-          setJob(data);
-          if (data.status === "done") {
-            let suggestions = data.suggestions || [];
-            // if (data.bulk_accept_updates) {
-            //   suggestions = suggestions.filter(
-            //     (s: any) => !(s.exists || s.mode === "update")
-            //   );
-            // }
-
-            const mergeGroups = data.merge_groups || buildMergeGroups(suggestions);
-
-            const fullGroups = mergeGroups.map((names: string[]) => {
-              const group = suggestions.filter((s: any) => names.includes(s.name));
-              const base = group.find((s: any) => Array.isArray(s.merge_targets) && s.merge_targets.length > 0) || group[0];
-              const mergedItems = group.filter((s: any) => s !== base);
-              return { base, mergedItems, group };
-            });
-
-            
-            const pagesMap = new Map<string | number, any>();
-            (data.pages || []).forEach((p: any) => {
-              pagesMap.set(p.name, p);
-              if (p.id) pagesMap.set(p.id, p);
-            });
-            const mergedResult: any[] = [];
-            
-            console.log("Full groups:"+JSON.stringify(fullGroups))
-            console.log("pagesMap:"+JSON.stringify(pagesMap))
-            for (const { base, mergedItems } of fullGroups) {
-
-              
-              const generatedBase = pagesMap.get(base.target_page_id || base.name);
-              const isUpdate = base.exists || base.mode === "update";
-
-              const mergedContents = [];
-
-              if (isUpdate) {
-                // For updates, prefer new_autogenerated_content clearly
-                if (generatedBase?.autogenerated_content) {
-                  mergedContents.push(generatedBase.autogenerated_content);
-                } else if (base.autogenerated_content) {
-                  mergedContents.push(base.autogenerated_content);
-                }
-              } else {
-                // For new pages
-                mergedContents.push(generatedBase?.autogenerated_content || base.autogenerated_content || "");
+  useEffect(() => {
+    if (!jobID || !token) return;
+    getWriterJob(jobID as string, token)
+      .then(async (data) => {
+        setJob(data);
+        if (data.status === "done") {
+          const list = data.pages || data.generated?.pages || [];
+          const full = await Promise.all(
+            list.map(async (p: any) => {
+              try {
+                return await getPage(p.id, token);
+              } catch {
+                return null;
               }
+            })
+          );
+          setPages(full.filter(Boolean));
+          setActiveIdx(0);
+        }
+      })
+      .catch((err) => {
+        console.error("ERROR!", err);
+      });
+  }, [jobID, token]);
 
-              console.log("Merged contents: " + JSON.stringify(mergedContents))
-              const sourcesMap: Record<number, any> = {};
-              [base, ...mergedItems].forEach((it: any) => {
-                (it.source_pages || []).forEach((sp: any) => {
-                  sourcesMap[sp.id] = sp;
-                });
-              });
-              const sources = Object.values(sourcesMap);
-
-              for (const item of mergedItems) {
-                const generated = pagesMap.get(item.target_page_id || item.name);
-                if (isUpdate) {
-                  if (item.autogenerated_content) {
-                    mergedContents.push(item.autogenerated_content);
-                  } else if (generated?.autogenerated_content) {
-                    mergedContents.push(generated.autogenerated_content);
-                  }
-                } else {
-                  if (generated?.autogenerated_content) {
-                    mergedContents.push(generated.autogenerated_content);
-                  } else if (item.autogenerated_content) {
-                    mergedContents.push(item.autogenerated_content);
-                  }
-                }
-              }
-
-              const combinedAutogen = mergedContents.filter(Boolean).join("\n\n---\n\n");
-              
-              console.log("combinedAutogen:"+JSON.stringify(combinedAutogen))
-
-              if (base.exists || base.mode === "update") {
-                const backendPage = base.target_page_id
-                  ? await getPage(base.target_page_id, token || "")
-                  : (await getPagesForConcept(base.concept_id, token || "")).find((p: any) =>
-                      p.name.toLowerCase() === base.name.toLowerCase()
-                    );
-                const previousAutogen = backendPage?.autogenerated_content || "";
-                const newAutogen = combinedAutogen;
-                const fullAutogen = `${previousAutogen ? previousAutogen + "\n\n---\n\n" : ""}${newAutogen}`;
-
-                console.log("previousAutogen:"+JSON.stringify(previousAutogen))
-                console.log("newAutogen:"+JSON.stringify(newAutogen))
-                console.log("fullAutogen:"+JSON.stringify(fullAutogen))
-
-
-                mergedResult.push({
-                  ...backendPage,
-                  autogenerated_content: fullAutogen,
-                  new_autogenerated_content: newAutogen,
-                  isUpdate: true,
-                  source_pages: sources,
-                });
-              } else {
-                const created = pagesMap.get(base.target_page_id || base.name);
-                if (created) {
-                  mergedResult.push({
-                    ...created,
-                    concept_id: created.concept_id ?? base.concept_id,
-                    autogenerated_content: combinedAutogen,
-                    new_autogenerated_content: combinedAutogen,
-                    isUpdate: false,
-                    source_pages: sources,
-                  });
-                }
-              }
-            }
-            mergedResult.sort((a, b) => (a.isUpdate === b.isUpdate ? 0 : a.isUpdate ? 1 : -1));
-            setGeneratedPages(mergedResult);
-          }
-        })
-        .catch(() => {
-          console.error("ERROR!");
-        });
-    }, [jobID, token]);
-
-    if (!job) return (
+  if (!job)
+    return (
       <AuthGuard>
         <DashboardLayout>
-          <div className="p-6 text-[var(--foreground)]">{t('loading')}</div>
+          <div className="p-6 text-[var(--foreground)]">{t("loading")}</div>
         </DashboardLayout>
       </AuthGuard>
     );
@@ -269,200 +84,115 @@ function AgentBubble({ agent, children, loading = false }: any) {
       <AuthGuard>
         <DashboardLayout>
           <div className="p-6 text-[var(--foreground)] flex items-center gap-2">
-            <Loader2 className="animate-spin" /> {t('summoning_scribes')}
+            <Loader2 className="animate-spin" /> {t("summoning_scribes")}
           </div>
         </DashboardLayout>
       </AuthGuard>
     );
 
-  if (generatedPages.length === 0)
+  if (pages.length === 0)
     return (
       <AuthGuard>
         <DashboardLayout>
           <div className="min-h-[60vh] flex flex-col items-center justify-center px-4">
-            <AgentBubble agent={agent}>{t('all_pages_updated')}</AgentBubble>
+            <div className="text-xl font-semibold">{t("all_pages_updated")}</div>
             <button
               onClick={() => router.push(`/agent_writer?agent=${agentID}`)}
               className="mt-4 px-4 py-2 rounded-xl bg-[var(--primary)] text-white font-bold shadow"
             >
-              {t('return_agent_writer')}
+              {t("return_agent_writer")}
             </button>
           </div>
         </DashboardLayout>
       </AuthGuard>
     );
 
+  const page = pages[activeIdx];
 
-  // useEffect(() => {
-  //       if (job && generatedPages.length === 0 && jobID) {
-  //         updateWriterJob(jobID as string, { action_needed: "done" }, token || "");
-  //       }
-  //     }, [generatedPages, job, jobID, token]);
+  async function handleSaveNotes(idx: number, newContent: string) {
+    if (!token) return;
+    try {
+      await updatePage(page.id, { autogenerated_content: newContent }, token);
+      refreshPage(page.id, idx);
+    } catch (err) {
+      console.error("Failed to save notes", err);
+    }
+  }
 
-  // if (job && job.status === "done" && generatedPages.length === 0) {
-  //     return (
-  //       <AuthGuard>
-  //         <DashboardLayout>
-  //           <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4 text-center">
-  //             <div className="text-4xl font-bold text-green-600 mb-2">🎉 Well done!</div>
-  //             <div className="text-lg text-[var(--foreground)]">
-  //               All pages were reviewed and updated.<br />
-  //               You’ll be sent back to the Scriptorium in a moment...
-  //             </div>
-  //             <div className="mt-8 animate-bounce text-3xl">📚</div>
-  //           </div>
-  //         </DashboardLayout>
-  //       </AuthGuard>
-  //     );
-  //   }
-
-
-
-    return (
-      <AuthGuard>
-        <DashboardLayout>
-          <div className="min-h-screen w-full bg-[var(--background)] text-[var(--foreground)] px-2 sm:px-6 py-10 flex justify-center">
-            <div className="w-full max-w-screen-2xl mx-auto px-4">
-              <div className="flex flex-col items-center gap-2 mb-6">
-                {agent && (
-                  <div className="flex items-center gap-4 mb-4">
-                    <Image src={agent.logo || "/images/default/avatars/logo.png"} alt={agent.name} width={64} height={64} className="rounded-full border-2 border-[var(--primary)] shadow-lg" />
-                    <h1 className="text-2xl font-extrabold text-[var(--primary)]">{t('review_legends')}</h1>
-                  </div>
-                )}
-                <div className="flex flex-col sm:flex-row flex-wrap gap-4 border-b border-[var(--border)] pb-4 mb-6">
-                  <div className="flex flex-col gap-2">
-                    <p className="font-semibold text-green-700">{t('suggested_new_pages')}</p>
-                    <div className="flex flex-wrap gap-2">
-                      {generatedPages.filter(p => !p.isUpdate).map((p, idx) => (
-                        <button
-                          key={idx}
-                          onClick={() => setActiveGen(generatedPages.indexOf(p))}
-                          className={`px-4 py-2 rounded-t-lg text-sm font-bold border-b-2 transition-all ${
-                            activeGen === generatedPages.indexOf(p)
-                              ? "border-green-600 text-green-600 bg-[var(--card)]"
-                              : "border-transparent text-green-700/60 hover:text-green-700"
-                          }`}
-                        >
-                          {p.name}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                  {generatedPages.some(p => p.isUpdate) && (
-                    <div className="flex flex-col gap-2 sm:ml-4 mt-4 sm:mt-0 border-t sm:border-t-0 sm:border-l border-[var(--border)] pt-4 sm:pt-0 sm:pl-4">
-                      <div className="flex items-center gap-2">
-                        <p className="font-semibold text-blue-700">{t('pages_to_update')}</p>
-                        <button
-                          onClick={handleBulkUpdate}
-                          disabled={bulkUpdating}
-                          className="px-3 py-1 rounded-lg bg-blue-600 text-white text-xs font-bold shadow disabled:opacity-50"
-                        >
-                          {bulkUpdating ? t('processing') : t('update_all')}
-                        </button>
+  return (
+    <AuthGuard>
+      <DashboardLayout>
+        <div className="min-h-screen w-full bg-[var(--background)] text-[var(--foreground)] px-2 sm:px-6 py-10 flex justify-center">
+          <div className="w-full max-w-screen-2xl mx-auto flex flex-col md:flex-row gap-6">
+            <div className="md:w-64">
+              <div className="bg-[var(--card)] border border-green-600 rounded-xl p-4 shadow">
+                <h2 className="text-lg font-bold text-green-700 mb-3">New Pages</h2>
+                <div className="flex flex-col gap-2">
+                  {pages.map((p, idx) => (
+                    <button
+                      key={p.id}
+                      onClick={() => setActiveIdx(idx)}
+                      className={`text-left px-3 py-2 rounded-lg border transition-all ${
+                        activeIdx === idx
+                          ? "bg-green-600/20 border-green-600"
+                          : "border-transparent hover:border-green-600/50"
+                      }`}
+                    >
+                      <div className="font-semibold text-green-700">{p.name}</div>
+                      <div className="text-xs text-[var(--muted-foreground)]">
+                        {concepts?.find((c) => c.id === p.concept_id)?.name || ""}
                       </div>
-                      <p className="text-xs text-blue-700">{t('update_all_desc')}</p>
-                      <div className="flex flex-wrap gap-2">
-                        {generatedPages.filter(p => p.isUpdate).map((p, idx) => (
-                          <button
-                            key={idx}
-                            onClick={() => setActiveGen(generatedPages.indexOf(p))}
-                            className={`px-4 py-2 rounded-t-lg text-sm font-bold border-b-2 transition-all ${
-                              activeGen === generatedPages.indexOf(p)
-                                ? "border-blue-600 text-blue-600 bg-[var(--card)]"
-                                : "border-transparent text-blue-700/60 hover:text-blue-700"
-                            }`}
-                          >
-                            {p.name}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
+                    </button>
+                  ))}
                 </div>
-                {bulkUpdating && (
-                  <div className="w-full mt-4">
-                    <AgentBubble agent={agent} loading>
-                      {t('bulk_updating')}
-                    </AgentBubble>
-                  </div>
-                )}
               </div>
+            </div>
 
-              { generatedPages.map((p, idx) =>
-                activeGen === idx ? (
-                  <div key={idx} className="border border-[var(--border)] rounded-xl p-6 bg-[var(--card)] shadow-sm mb-12">
-                    <div className="flex items-center gap-4 mb-4">
-                      {concepts?.find((c) => c.id === p.concept_id)?.logo && (
-                        <img src={concepts.find((c) => c.id === p.concept_id)!.logo} alt="concept logo" className="w-10 h-10 rounded-full border border-[var(--border)]" />
-                      )}
-                      <h3 className="text-xl font-bold text-[var(--primary)]">
-                        {concepts?.find((c) => c.id === p.concept_id)?.name || t('unknown_concept')}
-                      </h3>
-                    </div>
-
-                    <AgentBubble agent={agent}>
-                      <p className="font-semibold">{t('based_on_what_i_wrote')}</p>
-                      <HTMLRenderer
-                        content={p.isUpdate ? p.new_autogenerated_content : p.autogenerated_content}
+            <div className="flex-1 space-y-8">
+              {page && (
+                <>
+                  <div className="flex items-center gap-3">
+                    {concepts?.find((c) => c.id === page.concept_id)?.logo && (
+                      <Image
+                        src={concepts.find((c) => c.id === page.concept_id)!.logo}
+                        alt="concept logo"
+                        width={40}
+                        height={40}
+                        className="rounded-full border border-[var(--border)]"
                       />
-                    </AgentBubble>
-                    {Array.isArray(p.source_pages) && p.source_pages.length > 0 && (
-                      <div className="text-xs text-[var(--muted-foreground)] mb-2">
-                        {t('from')} {p.source_pages.map((sp: any) => sp.name).join(', ')}
-                      </div>
                     )}
+                    <h1 className="text-2xl font-bold">{page.name}</h1>
+                  </div>
 
-                    <p className="mt-6 mb-2 font-medium text-[var(--foreground)]">{t('page_information')}</p>
+                  <EditableContent
+                    content={page.autogenerated_content}
+                    canEdit={true}
+                    onSaveContent={(content) => handleSaveNotes(activeIdx, content)}
+                    pageType="worlds"
+                    pageName={page.name}
+                    className="mt-4"
+                  />
 
-                    <CreatePageForm
-                      selectedWorld={world}
-                      selectedConcept={concepts?.find((c) => c.id === p.concept_id)}
-                      token={token}
-                      initialValues={p}
-                      mode={p?.id ? "edit" : "create"}
-                      onSubmit={async (payload) => {
-                        if (!token) return;
-                        if (p?.id) {
-                          await updatePage(
-                            p.id,
-                            {
-                              ...payload,
-                              autogenerated_content: p.autogenerated_content,
-                              updated_by_agent_id: Number(agentID),
-                            },
-                            token
-                          );
-                        } else {
-                          const created = await createPage(payload, token);
-                          await updatePage(
-                            created.id,
-                            {
-                              autogenerated_content: p.autogenerated_content,
-                              updated_by_agent_id: Number(agentID),
-                            },
-                            token
-                          );
-                        }
-                        setGeneratedPages((g) => {
-                          const updated = g.filter((_, i) => i !== idx);
-                          if (updated.length === 0 && jobID) {
-                            updateWriterJob(jobID as string, { action_needed: "done" }, token || "");
-                          }
-                          if (updated.length > 0) {
-                            updated.sort((a, b) => (a.isUpdate === b.isUpdate ? 0 : a.isUpdate ? 1 : -1));
-                            setActiveGen(0);
-                          }
-                          return updated;
-                        });
-                      }}
+                  <div>
+                    <h2 className="text-xl font-semibold mb-2">{t("tab_key_events")}</h2>
+                    <EventTimeline
+                      pageId={page.id}
+                      events={page.key_events || []}
+                      pages={worldPages}
+                      onUpdated={() => refreshPage(page.id, activeIdx)}
                     />
                   </div>
-                ) : null
+
+                  <div>
+                    <h2 className="text-xl font-semibold mb-2">{t("tab_relationships")}</h2>
+                    <RelationshipMapTab page={page} pages={worldPages} />
+                  </div>
+                </>
               )}
             </div>
           </div>
-        </DashboardLayout>
-      </AuthGuard>
-    );
-  }
+        </div>
+      </DashboardLayout>
+    </AuthGuard>
+  );
+}

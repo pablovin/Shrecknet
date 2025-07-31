@@ -196,7 +196,7 @@
   "step2a_hint": "Click \u201cRemove\u201d on any suggestion you don't want to keep.",
   "step2b_merge": "Step 2B: Merge Similar Suggestions",
   "step2b_desc": "Now, group together suggestions that refer to the same topic.",
-  "step2b_hint": "Use the \u201cMerge With\u201d dropdown on each card to link related suggestions.",
+  "step2b_hint": "Use the \u201cMerge With\u201d dropdown on each card or simply drag one suggestion onto another to combine them.",
   "step2c_finalize": "Step 2C: Finalize Pages",
   "step2c_desc": "Time to assign concepts and decide whether to create or update pages.",
   "step2c_hint": "Set the action, select the target concept, and pick an existing page if updating.",

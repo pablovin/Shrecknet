@@ -230,13 +230,34 @@ async def add_page(session: AsyncSession, page_id: int, embedding_id: int):
     _safe_add_documents(collection, chunks)
     return True
 
-def get_page_chunks(embedding_id: int, page_id: int) -> List[str]:
-    """Return ordered text chunks for a single page from the embedding."""
+def get_page_chunks(
+    embedding_id: int,
+    page_id: int,
+    *,
+    view: Optional[str] = None,
+) -> List[str]:
+    """Return ordered text chunks for a single page from the embedding.
+
+    Parameters
+    ----------
+    embedding_id : int
+        The embedding collection identifier.
+    page_id : int
+        The page ID to fetch chunks for.
+    view : str, optional
+        If provided, only chunks matching this view (``narrative``, ``event``,
+        ``relationship``) will be returned.
+    """
+
     collection = _get_embedding_collection(embedding_id)
+    where = {"page_id": page_id}
+    if view:
+        where["view"] = _normalize_view_name(view)
     try:
-        data = collection.get(where={"page_id": page_id}, include=["documents", "metadatas"])
+        data = collection.get(where=where, include=["documents", "metadatas"])
     except Exception:
         return []
+
     docs = data.get("documents") or []
     metas = data.get("metadatas") or []
     pairs = zip(metas, docs)

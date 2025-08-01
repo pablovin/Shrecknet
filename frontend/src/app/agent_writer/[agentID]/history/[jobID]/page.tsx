@@ -33,6 +33,12 @@ export default function HistoryJobPage() {
     setLoading(false);
   }
 
+  function handleReviewAgain() {
+    if (!job) return;
+    const path = `/agent_writer/${agentID}/${job.job_type === 'analyze_pages' ? 'suggestions' : 'review'}/${job.job_id}`;
+    router.push(path);
+  }
+
   if (!job) return (
     <AuthGuard><DashboardLayout>Loading...</DashboardLayout></AuthGuard>
   );
@@ -42,10 +48,16 @@ export default function HistoryJobPage() {
       <DashboardLayout>
         <div className="min-h-screen w-full p-4 space-y-4">
           <h1 className="text-xl font-bold">Request {jobID}</h1>
-          <button onClick={handleRedo} disabled={loading}
-            className="px-3 py-2 rounded bg-fuchsia-600 text-white disabled:opacity-50">
-            {loading ? <Loader2 className="w-4 h-4 animate-spin"/> : "Redo"}
-          </button>
+          <div className="flex gap-2">
+            <button onClick={handleRedo} disabled={loading}
+              className="px-3 py-2 rounded bg-fuchsia-600 text-white disabled:opacity-50">
+              {loading ? <Loader2 className="w-4 h-4 animate-spin"/> : "Redo"}
+            </button>
+            <button onClick={handleReviewAgain}
+              className="px-3 py-2 rounded bg-indigo-600 text-white">
+              Review Again
+            </button>
+          </div>
           <div className="space-y-4">
             <div>
               <h2 className="font-semibold">Analysis</h2>

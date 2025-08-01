@@ -10,7 +10,7 @@ import { useAgents } from "../lib/useAgents";
 import { useWorlds } from "../lib/userWorlds";
 import { usePages } from "../lib/usePage";
 import { useConcepts } from "../lib/useConcept";
-import { startAnalyzeJob, getWriterJob, updateWriterJob } from "../lib/agentAPI";
+import { startAnalyzeJob } from "../lib/agentAPI";
 import { useWriterJobs } from "../lib/useWriterJobs";
 import Image from "next/image";
 import Link from "next/link";
@@ -53,8 +53,7 @@ function AgentWriterPageContent() {
   const [pageIndex, setPageIndex] = useState(0);
   const PAGE_SIZE = 10;
   const [selectedPages, setSelectedPages] = useState<number[]>([]);
-  const [jobs, setJobs] = useState<any[]>([]);
-  const { jobs: writerJobs, mutate: mutateWriterJobs } = useWriterJobs();
+  const { jobs: writerJobs } = useWriterJobs();
   const [jobFeedback, setJobFeedback] = useState<string | null>(null);
 
   useEffect(() => {
@@ -66,21 +65,6 @@ function AgentWriterPageContent() {
     }
   }, [agents, searchParams, selectedAgent]);
 
-  useEffect(() => {
-    const interval = setInterval(() => {
-      jobs.forEach((job) => {
-        if (job.status === "done") return;
-        getWriterJob(job.id, token)
-          .then((data) => {
-            setJobs((j) =>
-              j.map((jj) => (jj.id === job.id ? { ...jj, ...data } : jj))
-            );
-          })
-          .catch(() => {});
-      });
-    }, 4000);
-    return () => clearInterval(interval);
-  }, [jobs, token]);
 
   const allowed = useRoleRedirect("writer");
   if (!allowed) return null;
@@ -138,12 +122,6 @@ function AgentWriterPageContent() {
   const pageMap = Object.fromEntries((pages || []).map(p => [p.id, p]));
 
   const agentWriterJobs = writerJobs.filter(j => j.agent_id === selectedAgent.id);
-  const runningJobs = agentWriterJobs.filter(j => j.status !== 'done');
-  const waitingJobs = agentWriterJobs.filter(j => j.status === 'done' && j.action_needed === 'review');
-  const doneJobs = agentWriterJobs
-    .filter(j => j.status === 'done' && j.action_needed !== 'review')
-    .sort((a, b) => new Date(b.end_time || 0).getTime() - new Date(a.end_time || 0).getTime())
-    .slice(0, 3);
   const recentJobs = [...agentWriterJobs]
     .sort((a,b) => new Date(b.start_time || 0).getTime() - new Date(a.start_time || 0).getTime())
     .slice(0,5);
@@ -198,114 +176,6 @@ function AgentWriterPageContent() {
               </button>
             </div>
 
-            {/* Jobs Table */}
-            {(runningJobs.length > 0 || waitingJobs.length > 0 || doneJobs.length > 0) && (
-              <div className="overflow-x-auto border border-indigo-200 rounded-xl bg-white/90 shadow">
-                <table className="min-w-full text-sm">
-                  <thead>
-                    <tr className="text-left text-indigo-800">
-                      <th className="p-2">{t('status')}</th>
-                      <th className="p-2">{t('page')}</th>
-                      <th className="p-2">{t('source_pages')}</th>
-                      <th className="p-2">{t('type')}</th>
-                      <th className="p-2">{t('started')}</th>
-                      <th className="p-2">{t('ended')}</th>
-                      <th className="p-2">{t('duration')}</th>
-                      <th className="p-2"></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {jobs.map(job => (
-                      <tr key={job.id} className={`border-t border-indigo-100 ${job.status === 'done' ? 'bg-indigo-50/80' : 'bg-yellow-50/70 animate-pulse'}`}>
-                        <td className={`p-2 ${job.status === 'done' ? 'text-fuchsia-700 font-semibold' : 'text-yellow-700 font-semibold'}`}>{job.status === 'done' ? t('needs_review') : t('running')}</td>
-                        <td className="p-2">-</td>
-                        <td className="p-2">{job.pages.join(', ')}</td>
-                        <td className="p-2">{JOB_LABELS['analyze_pages']}</td>
-                        <td className="p-2">{job.start_time ? new Date(job.start_time).toLocaleString() : '-'}</td>
-                        <td className="p-2">{job.status === 'done' && job.end_time ? new Date(job.end_time).toLocaleString() : '-'}</td>
-                        <td className="p-2">{job.start_time && job.end_time ? Math.round((new Date(job.end_time).getTime() - new Date(job.start_time).getTime())/1000) + 's' : '-'}</td>
-                        <td className="p-2">{job.status === 'done' ? (<Link className="text-fuchsia-700 underline font-bold" href={`/agent_writer/${selectedAgent.id}/suggestions/${job.id}`}>{t('review')}</Link>) : null}</td>
-                      </tr>
-                    ))}
-                    {runningJobs.map(job => {
-                      const srcNames = Array.isArray(job.page_names)
-                        ? job.page_names.join(', ')
-                        : Array.isArray(job.suggestions)
-                          ? Array.from(new Set(job.suggestions.flatMap((s: any) => (s.source_pages || []).map((sp: any) => sp.name)))).join(', ')
-                          : '-';
-                      return (
-                      <tr key={job.job_id} className="border-t border-indigo-100 bg-yellow-50/70 animate-pulse">
-                        <td className="p-2 text-yellow-700 font-semibold">Running</td>
-                        <td className="p-2">{pageMap[job.page_id]?.name || job.page_id || '-'}</td>
-                        <td className="p-2">{srcNames || '-'}</td>
-                        <td className="p-2">{JOB_LABELS[job.job_type] || job.job_type}</td>
-                        <td className="p-2">{job.start_time ? new Date(job.start_time).toLocaleString() : '-'}</td>
-                        <td className="p-2">-</td>
-                        <td className="p-2">-</td>
-                        <td className="p-2"></td>
-                      </tr>
-                      );
-                    })}
-                    {waitingJobs.map(job => {
-                      const srcNames = Array.isArray(job.page_names)
-                        ? job.page_names.join(', ')
-                        : Array.isArray(job.suggestions)
-                          ? Array.from(new Set(job.suggestions.flatMap((s: any) => (s.source_pages || []).map((sp: any) => sp.name)))).join(', ')
-                          : '-';
-                      return (
-                      <tr key={job.job_id} className="border-t border-indigo-100 bg-indigo-50/80">
-                        <td className="p-2 text-fuchsia-700 font-semibold">{t('needs_review')}</td>
-                        <td className="p-2">{pageMap[job.page_id]?.name || job.page_id || '-'}</td>
-                        <td className="p-2">{srcNames || '-'}</td>
-                        <td className="p-2">{JOB_LABELS[job.job_type] || job.job_type}</td>
-                        <td className="p-2">{job.start_time ? new Date(job.start_time).toLocaleString() : '-'}</td>
-                        <td className="p-2">{job.end_time ? new Date(job.end_time).toLocaleString() : '-'}</td>
-                        <td className="p-2">{job.start_time && job.end_time ? Math.round((new Date(job.end_time).getTime() - new Date(job.start_time).getTime())/1000) + 's' : '-'}</td>
-                        <td className="p-2 flex gap-2">
-                          {job.job_type === 'analyze_pages' ? (
-                            <Link className="text-fuchsia-700 underline font-bold" href={`/agent_writer/${selectedAgent.id}/suggestions/${job.job_id}`}>{t('review')}</Link>
-                          ) : (
-                            <Link className="text-fuchsia-700 underline font-bold" href={`/agent_writer/${selectedAgent.id}/review/${job.job_id}`}>{t('review')}</Link>
-                          )}
-                          <button
-                            className="text-red-600 underline"
-                            onClick={async () => {
-                              await updateWriterJob(job.job_id, { action_needed: 'done' }, token || '');
-                              mutateWriterJobs();
-                            }}
-                          >
-                            {t('close_job')}
-                          </button>
-                        </td>
-                      </tr>
-                      );
-                    })}
-                    {doneJobs.map(job => {
-                      const srcNames = Array.isArray(job.page_names)
-                        ? job.page_names.join(', ')
-                        : Array.isArray(job.suggestions)
-                          ? Array.from(new Set(job.suggestions.flatMap((s: any) => (s.source_pages || []).map((sp: any) => sp.name)))).join(', ')
-                          : '-';
-                      return (
-                      <tr key={job.job_id} className="border-t border-indigo-100 text-indigo-400 bg-white">
-                        <td className="p-2">{t('done')}</td>
-                        <td className="p-2">{job.page_name || pageMap[job.page_id]?.name || '-'}</td>
-                        <td className="p-2">{srcNames || '-'}</td>
-                        <td className="p-2">{JOB_LABELS[job.job_type] || job.job_type}</td>
-                        <td className="p-2">{job.start_time ? new Date(job.start_time).toLocaleString() : '-'}</td>
-                        <td className="p-2">{job.end_time ? new Date(job.end_time).toLocaleString() : '-'}</td>
-                        <td className="p-2">{job.start_time && job.end_time ? Math.round((new Date(job.end_time).getTime() - new Date(job.end_time).getTime())/1000) + 's' : '-'}</td>
-                        <td className="p-2"></td>
-                      </tr>
-                      );
-                    })}
-                    {runningJobs.length === 0 && waitingJobs.length === 0 && doneJobs.length === 0 && (
-                      <tr><td colSpan={8} className="p-2 text-center">{t('no_jobs')}</td></tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            )}
 
             {/* Job Feedback */}
             {jobFeedback && (
@@ -317,17 +187,44 @@ function AgentWriterPageContent() {
             {recentJobs.length > 0 && (
               <div className="border border-indigo-200 rounded-xl bg-white/90 shadow p-2 mb-4">
                 <h3 className="font-bold mb-2 text-indigo-700">Recent Requests</h3>
-                <table className="min-w-full text-sm">
-                  <tbody>
-                    {recentJobs.map(j => (
-                      <tr key={j.job_id} className="border-t border-indigo-100">
-                        <td className="p-1">{new Date(j.start_time).toLocaleString()}</td>
-                        <td className="p-1">{pageMap[j.page_id]?.name || j.page_names?.[0]}</td>
-                        <td className="p-1"><a className="text-fuchsia-700 underline" href={`/agent_writer/${selectedAgent.id}/history/${j.job_id}`}>View</a></td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                <div>
+                  {recentJobs.map(j => (
+                    <details key={j.job_id} className="border-t border-indigo-100">
+                      <summary className="cursor-pointer flex justify-between p-1">
+                        <span>{new Date(j.start_time).toLocaleString()}</span>
+                        <span>{pageMap[j.page_id]?.name || j.page_names?.[0]}</span>
+                      </summary>
+                      <div className="p-2">
+                        <table className="min-w-full text-sm">
+                          <thead>
+                            <tr className="text-left text-indigo-800">
+                              <th className="p-1">Type</th>
+                              <th className="p-1">Started</th>
+                              <th className="p-1">Ended</th>
+                              <th className="p-1">Duration</th>
+                              <th className="p-1">Status</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            <tr>
+                              <td className="p-1">{JOB_LABELS[j.job_type] || j.job_type}</td>
+                              <td className="p-1">{j.start_time ? new Date(j.start_time).toLocaleString() : '-'}</td>
+                              <td className="p-1">{j.end_time ? new Date(j.end_time).toLocaleString() : '-'}</td>
+                              <td className="p-1">{j.start_time && j.end_time ? Math.round((new Date(j.end_time).getTime() - new Date(j.start_time).getTime())/1000) + 's' : '-'}</td>
+                              <td className="p-1 capitalize">{j.status}</td>
+                            </tr>
+                          </tbody>
+                        </table>
+                        <div className="mt-2 flex gap-2">
+                          {j.status === 'done' && j.action_needed === 'review' && (
+                            <Link className="text-fuchsia-700 underline font-bold" href={`/agent_writer/${selectedAgent.id}/review/${j.job_id}`}>Review</Link>
+                          )}
+                          <Link className="text-fuchsia-700 underline" href={`/agent_writer/${selectedAgent.id}/history/${j.job_id}`}>View</Link>
+                        </div>
+                      </div>
+                    </details>
+                  ))}
+                </div>
               </div>
             )}
 
@@ -364,8 +261,7 @@ function AgentWriterPageContent() {
                 <button
                   disabled={selectedPages.length === 0}
                   onClick={async () => {
-                    const res = await startAnalyzeJob(selectedAgent.id, selectedPages, token || "");
-                    setJobs(j => [...j, { id: res.job_id, pages: selectedPages.map(pid => pageMap[pid]?.name || pid), status: "queued" }]);
+                    await startAnalyzeJob(selectedAgent.id, selectedPages, token || "");
                     setSelectedPages([]);
                     setJobFeedback(t('processing_selected_pages'));
                     setTimeout(() => setJobFeedback(null), 1200);
@@ -411,9 +307,8 @@ function AgentWriterPageContent() {
                           <button
                             className="px-3 py-2 rounded-xl bg-fuchsia-600 text-white font-semibold text-xs hover:bg-fuchsia-700 transition"
                             onClick={async () => {
-                              const res = await startAnalyzeJob(selectedAgent.id, [p.id], token || "");
-                              setJobs(j => [...j, { id: res.job_id, pages: [p.name], status: "queued" }]);
-                              setJobFeedback(`Started job for "${p.name}"!`);
+                              await startAnalyzeJob(selectedAgent.id, [p.id], token || "");
+                              setJobFeedback(`Started job for \"${p.name}\"!`);
                               setTimeout(() => setJobFeedback(null), 1200);
                             }}
                           >

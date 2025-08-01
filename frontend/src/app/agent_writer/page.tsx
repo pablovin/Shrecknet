@@ -217,7 +217,12 @@ function AgentWriterPageContent() {
                         </table>
                         <div className="mt-2 flex gap-2">
                           {j.status === 'done' && j.action_needed === 'review' && (
-                            <Link className="text-fuchsia-700 underline font-bold" href={`/agent_writer/${selectedAgent.id}/review/${j.job_id}`}>Review</Link>
+                            <Link
+                              className="text-fuchsia-700 underline font-bold"
+                              href={`/agent_writer/${selectedAgent.id}/${j.job_type === 'analyze_pages' ? 'suggestions' : 'review'}/${j.job_id}`}
+                            >
+                              Review
+                            </Link>
                           )}
                           <Link className="text-fuchsia-700 underline" href={`/agent_writer/${selectedAgent.id}/history/${j.job_id}`}>View</Link>
                         </div>

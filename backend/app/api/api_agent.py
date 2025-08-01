@@ -17,7 +17,7 @@ from app.crud.crud_page_analysis import analyze_page, generate_pages
 from app.crud.crud_page import get_page
 from app.schemas.schema_agent import AgentCreate, AgentRead, AgentUpdate
 from app.database import get_session
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from typing import List, Literal, Optional
 import json
 
@@ -32,6 +32,18 @@ class ChatMessage(BaseModel):
 
 class ChatRequest(BaseModel):
     messages: List[ChatMessage]
+
+
+class PageSpec(BaseModel):
+    """Specification for generating or updating a page."""
+
+    name: str
+    concept_id: int
+    mode: Literal["create", "update"] = "create"
+    target_page_id: Optional[int] = None
+    source_page_ids: Optional[List[int]] = None
+
+    model_config = ConfigDict(extra="allow")
 
 router = APIRouter(prefix="/agents", tags=["Agents"], dependencies=[Depends(get_current_user)])
 
@@ -324,7 +336,7 @@ async def analyze_page_endpoint(
 
 
 class GeneratePagesRequest(BaseModel):
-    pages: List[dict]
+    pages: List[PageSpec]
 
 
 @router.post("/{agent_id}/pages/{page_id}/generate")
@@ -342,7 +354,8 @@ async def generate_pages_endpoint(
     if agent.world_id != page.gameworld_id:
         raise HTTPException(status_code=400, detail="Agent and page belong to different worlds")
 
-    result = await generate_pages(session, agent, page, payload.pages)
+    page_specs = [p.model_dump() for p in payload.pages]
+    result = await generate_pages(session, agent, page, page_specs)
     return result
 
 
@@ -379,7 +392,7 @@ async def analyze_page_job_endpoint(
 
 
 class GenerateJobRequest(BaseModel):
-    pages: List[dict]
+    pages: List[PageSpec]
     suggestions: Optional[List[dict]] = None
     merge_groups: Optional[List[List[str]]] = None
     bulk_accept_updates: Optional[bool] = False
@@ -415,12 +428,13 @@ async def generate_pages_job_endpoint(
     with open(job_path, "w") as f:
         json.dump(data, f)
 
+    page_specs = [p.model_dump() for p in payload.pages]
     with open(review_path, "w") as f:
         json.dump(
             {
                 "suggestions": payload.suggestions or [],
                 "merge_groups": payload.merge_groups or [],
-                "pages": payload.pages,
+                "pages": page_specs,
             },
             f,
         )
@@ -428,7 +442,7 @@ async def generate_pages_job_endpoint(
     task_generate_pages_job.delay(
         agent_id,
         page_id,
-        payload.pages,
+        page_specs,
         gen_job_id,
         payload.merge_groups or [],
         payload.suggestions or [],

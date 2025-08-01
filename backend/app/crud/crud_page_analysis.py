@@ -355,8 +355,10 @@ async def generate_pages(
     that source.
     """
 
-    # Filter only brand new pages
-    create_specs = [s for s in page_specs if s.get("mode") == "create"]
+    # Filter only brand new pages. Treat specs without an explicit mode as
+    # creations so the UI can omit this field when using the writer job
+    # endpoint.
+    create_specs = [s for s in page_specs if s.get("mode", "create") == "create"]
     if not create_specs:
         return {"pages": []}
 

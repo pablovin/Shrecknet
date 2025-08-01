@@ -467,7 +467,8 @@ async def generate_pages(
     all_page_ids = set(p.id for p in all_name_to_page.values())
 
     # 7. Now deduplicate and add key events/relationships with valid links
-    today_iso = datetime.now(timezone.utc).date().isoformat()
+    # Use a proper datetime object for default event dates
+    today_dt = datetime.now(timezone.utc)
     results = []
 
     for sid, info in spec_data.items():
@@ -488,8 +489,16 @@ async def generate_pages(
                 "author_type": "agent",
                 "author_id": agent.id,
             })
-            # Set event_date to today if missing/invalid
-            ev["event_date"] = ev.get("event_date") or today_iso
+            # Ensure event_date is a datetime object
+            ev_date = ev.get("event_date")
+            if isinstance(ev_date, str):
+                try:
+                    ev_date = datetime.fromisoformat(ev_date)
+                except ValueError:
+                    ev_date = None
+            if not ev_date:
+                ev_date = today_dt
+            ev["event_date"] = ev_date
 
             # Related pages: resolve only to pages we know
             related_names = ev.get("related_pages", [])

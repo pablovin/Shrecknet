@@ -6,11 +6,13 @@ from langgraph.graph import Graph
 from app.config import settings
 from app.crud.crud_agent import get_agent, ensure_personality_prompts
 from app.models.model_gameworld import GameWorld
-from app.agentic_ai.agentic_workers import (
+from app.agentic_ai.agentic_worker_llm import (
     decompose_question,
+    validate_response,
+)
+from app.agentic_ai.agentic_worker_shrecknet import (
     query_world_embeddings,
     aggregate_prune_and_dedup,
-    validate_response,
 )
 
 openai_model = settings.open_ai_model

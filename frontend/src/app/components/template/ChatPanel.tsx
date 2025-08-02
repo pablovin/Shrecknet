@@ -8,7 +8,7 @@ import { useAuth } from "../auth/AuthProvider";
 import WikiLinkHoverCard from "../editor/WikiLinkHoverCard";
 import ModalContainer from "./modalContainer";
 import {
-  chatWithAgent,
+  chatWithConversationalAgent,
   ChatMessage,
   getChatHistory,
   SourceLink,
@@ -94,7 +94,7 @@ export default function ChatPanel({
     setLoading(true);
     setMessages(m => [...m, { role: "assistant", content: "" }]);
     try {
-      const { answer, sources } = await chatWithAgent(
+      const { answer, sources } = await chatWithConversationalAgent(
         selectedAgentId,
         updatedAll,
         token || ""

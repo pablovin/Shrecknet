@@ -59,7 +59,7 @@ export async function deleteAgent(id: number, token: string) {
   return await res.json();
 }
 
-export async function chatWithAgent(
+export async function chatWithConversationalAgent(
   agentId: number,
   messages: ChatMessage[],
   token: string

@@ -5,13 +5,13 @@ from app.dependencies import get_current_user, require_role
 from app.models.model_user import User, UserRole
 from app.models.model_agent import Agent
 from app.crud.crud_agent import (
-    chat_with_agent,
     create_agent,
     get_agent,
     get_agents,
     update_agent,
     delete_agent,
 )
+from app.crud.crud_agent_conversational import chat_with_agent
 from app.crud import crud_vectordb, crud_chat_history
 from app.crud.crud_page_analysis import analyze_page, generate_pages
 from app.crud.crud_page import get_page
@@ -25,6 +25,7 @@ from uuid import uuid4
 from pathlib import Path
 from app.config import settings
 from app.task_queue import task_analyze_pages_job, task_rebuild_vectordb, task_create_novel_job, task_analyze_pages_job, task_generate_pages_job
+
 
 class ChatMessage(BaseModel):
     role: Literal["system", "user", "assistant"]
@@ -44,6 +45,7 @@ class PageSpec(BaseModel):
     source_page_ids: Optional[List[int]] = None
 
     model_config = ConfigDict(extra="allow")
+
 
 router = APIRouter(prefix="/agents", tags=["Agents"], dependencies=[Depends(get_current_user)])
 

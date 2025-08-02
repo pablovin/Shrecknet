@@ -6,7 +6,7 @@ import { motion } from "framer-motion";
 import DashboardLayout from "../../components/DashboardLayout";
 import AuthGuard from "../../components/auth/AuthGuard";
 import { useAgentById } from "../../lib/useAgentById";
-import { chatWithAgent, getChatHistory, clearChatHistory, ChatMessage, SourceLink } from "../../lib/agentAPI";
+import { chatWithConversationalAgent, getChatHistory, clearChatHistory, ChatMessage, SourceLink } from "../../lib/agentAPI";
 import { getPage } from "../../lib/pagesAPI";
 import { useAuth } from "../../components/auth/AuthProvider";
 import Image from "next/image";
@@ -82,7 +82,7 @@ export default function ElderChatPage() {
     setLoading(true);
     setMessages(m => [...m, { role: "assistant", content: "", time: new Date() }]);
     try {
-      const { answer, sources } = await chatWithAgent(
+      const { answer, sources } = await chatWithConversationalAgent(
         id,
         updated.map(({ role, content }) => ({ role, content })),
         token || ""

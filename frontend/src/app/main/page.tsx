@@ -14,6 +14,7 @@ import {
   Hammer,
   Settings,
   StickyNote,
+  ScrollText,
 } from "lucide-react";
 import { Suspense } from "react";
 
@@ -119,6 +120,16 @@ export default function MainPage() {
       group: "worldcraft",
       color: "bg-gradient-to-br from-rose-50 to-transparent",
       iconColor: "bg-rose-400",
+    },
+    {
+      title: t("sessions"),
+      description: t("sessions_desc"),
+      icon: <ScrollText className="w-6 h-6" />,
+      href: "/tables",
+      show: !!user,
+      group: "worldcraft",
+      color: "bg-gradient-to-br from-green-50 to-transparent",
+      iconColor: "bg-green-400",
     },
     {
       title: t("ai_world_elders"),

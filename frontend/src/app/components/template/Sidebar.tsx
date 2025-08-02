@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { usePathname } from "next/navigation";
 import { useAuth } from "../auth/AuthProvider";
 import UserModal from "../user_management/User_Modal";
@@ -15,7 +15,10 @@ import BuildRoundedIcon from "@mui/icons-material/BuildRounded";
 import SettingsRoundedIcon from "@mui/icons-material/SettingsRounded";
 import HomeIcon from "@mui/icons-material/HomeRounded";
 import PersonEditAlt1RoundedIcon from "@mui/icons-material/EditRounded";
+import NotificationsIcon from "@mui/icons-material/NotificationsRounded";
 import { Bot, BookOpenText, FileText, PenLine, Sparkles } from "lucide-react";
+import NewsDialog from "../news/NewsDialog";
+import { getNews, markNewsSeen } from "../../lib/newsAPI";
 
 export default function Sidebar({ mobileOpen = false, setMobileOpen = () => {} }) {
   const { user, token, isLoading: authLoading, refreshUser } = useAuth();
@@ -23,8 +26,40 @@ export default function Sidebar({ mobileOpen = false, setMobileOpen = () => {} }
   const [profileModalOpen, setProfileModalOpen] = useState(false);
   const [profileSuccess, setProfileSuccess] = useState("");
   const [profileError, setProfileError] = useState("");
+  const [newsOpen, setNewsOpen] = useState(false);
+  const [newsItems, setNewsItems] = useState([]);
 
   const pathname = usePathname();
+
+  useEffect(() => {
+    if (!token) return;
+    getNews(token)
+      .then((items) => {
+        setNewsItems(items);
+        const unseen = items.filter((n: any) => !n.seen);
+        const today = new Date().toDateString();
+        const last = typeof window !== "undefined" ? localStorage.getItem("news_last_seen") : null;
+        if (last !== today && unseen.length > 0) {
+          setNewsOpen(true);
+          localStorage.setItem("news_last_seen", today);
+          unseen.forEach((n: any) => markNewsSeen(n.id, token));
+          setNewsItems(items.map((n: any) => ({ ...n, seen: true })));
+        }
+      })
+      .catch(() => {});
+  }, [token]);
+
+  function handleOpenNews() {
+    setNewsOpen(true);
+    const unseen = newsItems.filter((n: any) => !n.seen);
+    if (unseen.length > 0) {
+      unseen.forEach((n: any) => markNewsSeen(n.id, token));
+      setNewsItems(newsItems.map((n: any) => ({ ...n, seen: true })));
+      if (typeof window !== "undefined") {
+        localStorage.setItem("news_last_seen", new Date().toDateString());
+      }
+    }
+  }
 
   async function handleProfileSave() {
     if (typeof refreshUser === "function") await refreshUser();
@@ -183,6 +218,19 @@ export default function Sidebar({ mobileOpen = false, setMobileOpen = () => {} }
           
         </div>
 
+        <div className="flex justify-end px-4 mt-2">
+          <button
+            onClick={handleOpenNews}
+            className="relative text-[var(--primary)] hover:text-[var(--accent)]"
+            aria-label={t("news")}
+          >
+            <NotificationsIcon />
+            {newsItems.some((n: any) => !n.seen) && (
+              <span className="absolute -top-1 -right-1 w-2 h-2 bg-red-600 rounded-full" />
+            )}
+          </button>
+        </div>
+
         {/* Menu Items */}
         <nav className="flex-1 flex flex-col gap-1 py-6">
           {menu.filter((m) => m.show).map((m) => (
@@ -292,6 +340,7 @@ export default function Sidebar({ mobileOpen = false, setMobileOpen = () => {} }
           />
         )}
       </aside>
+      <NewsDialog open={newsOpen} onClose={() => setNewsOpen(false)} news={newsItems} />
     </>
   );
 }

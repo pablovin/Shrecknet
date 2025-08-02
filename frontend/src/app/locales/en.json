@@ -268,5 +268,9 @@
   "tab_writer_notes": "Writer's Notes",
   "tab_key_events": "Key Events",
   "tab_relationships": "Relationship Map",
-  "tab_changelog": "Changelog"
+  "tab_changelog": "Changelog",
+  "news": "News",
+  "newsboard": "Newsboard",
+  "no_news": "No news available.",
+  "add_news": "Add News"
 }

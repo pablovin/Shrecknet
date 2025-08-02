@@ -140,6 +140,7 @@ async def load_context_and_data_worker(
 
     existing_pages = await crud_page.get_pages(session, gameworld_id=page.gameworld_id)
     existing_titles_norm = {normalize_name(p.name): p for p in existing_pages if p.name}
+    # print (f"Existing titles: {existing_titles_norm}")
 
     return {
         "concept_defs": concept_defs,

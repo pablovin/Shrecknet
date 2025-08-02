@@ -4,10 +4,11 @@ import DashboardLayout from "@/app/components/DashboardLayout";
 import { useTables } from "@/app/lib/useTables";
 import { useAuth } from "@/app/components/auth/AuthProvider";
 import { createTable } from "@/app/lib/tableAPI";
-import M3FloatingInput from "@/app/components/template/M3FloatingInput";
 import PageRefSelectorMD3 from "@/app/components/create_page/PageRefSelectorMD3";
 import { useWorlds } from "@/app/lib/userWorlds";
 import { useUsers } from "@/app/lib/useUsers";
+import { M3FloatingInput } from "../components/template/M3FloatingInput";
+
 
 export default function TablesPage() {
   const { tables, mutate } = useTables();

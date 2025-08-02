@@ -40,8 +40,20 @@ class SessionPoll(SQLModel, table=True):
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     session: "Session" = Relationship(back_populates="poll")
-    options: List["SessionPollOption"] = Relationship(back_populates="poll")
-    votes: List["SessionPollVote"] = Relationship(back_populates="poll")
+    # Explicitly specify the foreign key used for the options relationship. Without
+    # this SQLModel/SQLAlchemy cannot determine which foreign key path to use when
+    # joining SessionPoll and SessionPollOption because `final_option_id` also
+    # references `SessionPollOption`. This leads to the "multiple foreign key
+    # paths" error on application startup.  By pointing the relationship to
+    # `SessionPollOption.poll_id` we make the join unambiguous.
+    options: List["SessionPollOption"] = Relationship(
+        back_populates="poll",
+        sa_relationship_kwargs={"foreign_keys": "SessionPollOption.poll_id"},
+    )
+    votes: List["SessionPollVote"] = Relationship(
+        back_populates="poll",
+        sa_relationship_kwargs={"foreign_keys": "SessionPollVote.poll_id"},
+    )
 
 
 class SessionPollOption(SQLModel, table=True):
@@ -49,8 +61,14 @@ class SessionPollOption(SQLModel, table=True):
     poll_id: int = Field(foreign_key="sessionpoll.id")
     proposed_time: datetime
 
-    poll: "SessionPoll" = Relationship(back_populates="options")
-    votes: List["SessionPollVote"] = Relationship(back_populates="option")
+    poll: "SessionPoll" = Relationship(
+        back_populates="options",
+        sa_relationship_kwargs={"foreign_keys": "SessionPollOption.poll_id"},
+    )
+    votes: List["SessionPollVote"] = Relationship(
+        back_populates="option",
+        sa_relationship_kwargs={"foreign_keys": "SessionPollVote.option_id"},
+    )
 
 
 class SessionPollVote(SQLModel, table=True):
@@ -58,5 +76,11 @@ class SessionPollVote(SQLModel, table=True):
     option_id: int = Field(foreign_key="sessionpolloption.id", primary_key=True)
     user_id: int = Field(foreign_key="user.id", primary_key=True)
 
-    poll: "SessionPoll" = Relationship(back_populates="votes")
-    option: "SessionPollOption" = Relationship(back_populates="votes")
+    poll: "SessionPoll" = Relationship(
+        back_populates="votes",
+        sa_relationship_kwargs={"foreign_keys": "SessionPollVote.poll_id"},
+    )
+    option: "SessionPollOption" = Relationship(
+        back_populates="votes",
+        sa_relationship_kwargs={"foreign_keys": "SessionPollVote.option_id"},
+    )

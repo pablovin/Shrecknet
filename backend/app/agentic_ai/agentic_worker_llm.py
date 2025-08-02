@@ -54,7 +54,7 @@ async def process_chunks_worker(
         "\nThese is the list of existing Concepts. Suggest pages based only on these concepts:\n"
         + "\n".join(f"- {name}: {desc}" for name, desc in concept_defs.items())
         + "\nReturn a JSON object mapping each page name to its concept (category), e.g.:\n"
-        + "{\n  \"Barão de Karst\": \"NPC\",\n  \"Abelardo\": \"NPC\",\n  \"Yudennach\": \"Reino\",\n  \"Green Dragon\": \"Monstro\"\n}"
+        + "{{\n  \"Barão de Karst\": \"NPC\",\n  \"Abelardo\": \"NPC\",\n  \"Yudennach\": \"Reino\",\n  \"Green Dragon\": \"Monstro\"\n}}"
         + "\nDo not include mentions that are not mapped to a concept. Only return the JSON object."
     )
     prompt = ChatPromptTemplate.from_messages([
@@ -62,6 +62,7 @@ async def process_chunks_worker(
         ("user", "{chunk}"),
     ])
     llm = ChatOpenAI(api_key=settings.openai_api_key, model=settings.open_ai_model)
+    chain = prompt | llm
 
     async def process_chunk(chunk_text: str) -> List[Tuple[str, str]]:
         chunk_input = (
@@ -70,7 +71,7 @@ async def process_chunks_worker(
             else chunk_text
         )
         try:
-            result = await llm.ainvoke({"chunk": chunk_input})
+            result = await chain.ainvoke({"chunk": chunk_input})
             parsed = json.loads(result.content.strip())
             if isinstance(parsed, dict):
                 return list(parsed.items())
@@ -92,7 +93,16 @@ def merge_and_deduplicate_worker(
     concepts_by_id: Dict[int, "Concept"],
     concepts_by_name: Dict[str, "Concept"],
 ) -> List[dict]:
-    """Merge and deduplicate LLM results for a single page."""
+    from difflib import SequenceMatcher
+
+    def _similar(a: str, b: str) -> bool:
+        a, b = a.lower(), b.lower()
+        if a in b or b in a:
+            return True
+        if a in b.split() or b in a.split():
+            return True
+        return SequenceMatcher(None, a, b).ratio() >= 0.67
+    
     groups: Dict[str, Dict] = {}
     for name, concept_name in all_pairs:
         norm = normalize_name(name)
@@ -103,10 +113,24 @@ def merge_and_deduplicate_worker(
     suggestions: List[dict] = []
     already_handled: set[int] = set()
     for norm, data in groups.items():
-        page_obj = existing_titles_norm.get(norm)
         all_names = data["names"]
         all_concepts = list(data["concepts"])
+
+        # Step 1: Try exact match
+        page_obj = existing_titles_norm.get(norm)
         exists = bool(page_obj)
+
+        # Step 2: If not exact, fuzzy match
+        if not exists:
+            # Try to find any close match (using concept_id for more safety)
+            for exist_norm, exist_page in existing_titles_norm.items():
+                if _similar(norm, exist_norm):
+                    # If possible, also compare concept/category for more precision
+                    sugg_concept_obj = concepts_by_name.get(normalize_name(all_concepts[0])) if all_concepts else None
+                    if (not exist_page.concept_id) or (sugg_concept_obj and exist_page.concept_id == sugg_concept_obj.id):
+                        page_obj = exist_page
+                        exists = True
+                        break
 
         if exists:
             best_name = page_obj.name
@@ -138,7 +162,7 @@ def merge_and_deduplicate_worker(
                 "concept": final_concept_name,
                 "mode": "update" if exists else "create",
                 "exists": exists,
-                "target_page_id": page_obj.id if page_obj else None,
+                "target_page_id": page_obj.id if exists else None,
                 "source_pages": [{"id": page.id, "name": page.name}],
                 "source_page_ids": [page.id],
                 "source_page_updated": (

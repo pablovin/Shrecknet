@@ -32,6 +32,10 @@ from . import crud_user_note
 from . import crud_world_embedding
 from . import crud_agent_embedding
 try:
+    from . import crud_agent_conversational
+except Exception:
+    crud_agent_conversational = None
+try:
     from . import crud_vectordb
 except Exception:  # pragma: no cover - optional dependency
     class _DummyVectorDB:
@@ -57,6 +61,8 @@ __all__ = [
 ]
 if crud_vectordb:
     __all__.append("crud_vectordb")
+if crud_agent_conversational:
+    __all__.append("crud_agent_conversational")
 if crud_agent:
     __all__.append("crud_agent")
 if crud_specialist_source:

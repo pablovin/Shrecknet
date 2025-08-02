@@ -51,6 +51,8 @@ async def analyze_pages(session: AsyncSession, agent: Agent, pages: List[Page]) 
             continue
         meta_text, chunks = await extract_metadata_and_chunks_worker(page)
         pairs = await process_chunks_worker(ctx["concept_defs"], meta_text, chunks)
+        # print (f"Pairs: {pairs}")
+        # print (f"existing_titles_norm: {ctx['existing_titles_norm']}")
         suggs = merge_and_deduplicate_worker(
             pairs,
             page,

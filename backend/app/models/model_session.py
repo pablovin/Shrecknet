@@ -2,9 +2,11 @@ from typing import Optional, List
 from datetime import datetime, timezone
 from sqlmodel import SQLModel, Field, Relationship
 
+
 class Session(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     table_id: int = Field(foreign_key="table.id")
+    name: str
     scheduled_time: datetime
     summary: Optional[str] = None
     location: Optional[str] = None
@@ -12,6 +14,9 @@ class Session(SQLModel, table=True):
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     attendances: List["SessionAttendance"] = Relationship(back_populates="session")
+    pages: List["SessionPage"] = Relationship(back_populates="session")
+    poll: Optional["SessionPoll"] = Relationship(back_populates="session")
+
 
 class SessionAttendance(SQLModel, table=True):
     session_id: int = Field(foreign_key="session.id", primary_key=True)
@@ -19,3 +24,39 @@ class SessionAttendance(SQLModel, table=True):
     attending: bool = Field(default=True)
 
     session: "Session" = Relationship(back_populates="attendances")
+
+
+class SessionPage(SQLModel, table=True):
+    session_id: int = Field(foreign_key="session.id", primary_key=True)
+    page_id: int = Field(foreign_key="page.id", primary_key=True)
+
+    session: "Session" = Relationship(back_populates="pages")
+
+
+class SessionPoll(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    session_id: int = Field(foreign_key="session.id")
+    final_option_id: Optional[int] = Field(default=None, foreign_key="sessionpolloption.id")
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    session: "Session" = Relationship(back_populates="poll")
+    options: List["SessionPollOption"] = Relationship(back_populates="poll")
+    votes: List["SessionPollVote"] = Relationship(back_populates="poll")
+
+
+class SessionPollOption(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    poll_id: int = Field(foreign_key="sessionpoll.id")
+    proposed_time: datetime
+
+    poll: "SessionPoll" = Relationship(back_populates="options")
+    votes: List["SessionPollVote"] = Relationship(back_populates="option")
+
+
+class SessionPollVote(SQLModel, table=True):
+    poll_id: int = Field(foreign_key="sessionpoll.id", primary_key=True)
+    option_id: int = Field(foreign_key="sessionpolloption.id", primary_key=True)
+    user_id: int = Field(foreign_key="user.id", primary_key=True)
+
+    poll: "SessionPoll" = Relationship(back_populates="votes")
+    option: "SessionPollOption" = Relationship(back_populates="votes")

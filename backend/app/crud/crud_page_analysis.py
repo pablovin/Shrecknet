@@ -322,9 +322,9 @@ async def generate_pages(
     session: "AsyncSession", agent: "Agent", page: "Page", page_specs: List[dict]
 ) -> dict:
     """Thin wrapper that delegates page generation to agentic workers."""
-    from app.agentic_ai.agentic_workers import generate_pages_worker
+    from app.crud import crud_agent_write
 
-    return await generate_pages_worker(session, agent, page, page_specs)
+    return await crud_agent_write.generate_pages(session, agent, page, page_specs)
 
 
 
@@ -590,6 +590,6 @@ async def analyze_pages_bulk(
     session: AsyncSession, agent: Agent, pages: List[Page]
 ) -> List[dict]:
     """Thin wrapper that delegates bulk analysis to agentic workers."""
-    from app.agentic_ai.agentic_workers import analyze_pages_worker
+    from app.crud import crud_agent_write
 
-    return await analyze_pages_worker(session, agent, pages)
+    return await crud_agent_write.analyze_pages(session, agent, pages)

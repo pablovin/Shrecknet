@@ -68,7 +68,7 @@ def task_sync_page_ref_attributes(page_id: int):
 def task_auto_crosslink_note_content(note_id: int):
     asyncio.run(auto_crosslink_note_content(note_id))
 
-from app.crud import crud_agentic_writer
+from app.crud import crud_agent_write
 from app.crud.crud_agent import get_agent
 from app.crud.crud_page import get_page, update_page, get_pages
 from app.database import async_session_maker
@@ -138,7 +138,7 @@ def task_analyze_pages_job(agent_id: int, page_ids: list[int], job_id: str):
                         default=str,
                     )
 
-            suggestions = await crud_agentic_writer.analyze_pages(session, agent, pages)
+            suggestions = await crud_agent_write.analyze_pages(session, agent, pages)
 
         end_time = datetime.now(timezone.utc).isoformat()
         with open(job_path, "w") as f:
@@ -436,7 +436,7 @@ def task_generate_pages_job(
                         "start_time": start_time,
                     }, ff, default=str)
                 return
-            result = await crud_agentic_writer.generate_pages(session, agent, page, pages)
+            result = await crud_agent_write.generate_pages(session, agent, page, pages)
             result_pages = result.get("pages", [])
             auto_updated = []
 

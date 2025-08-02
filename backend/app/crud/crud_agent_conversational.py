@@ -6,7 +6,7 @@ from langgraph.graph import Graph
 from app.config import settings
 from app.crud.crud_agent import get_agent, ensure_personality_prompts
 from app.models.model_gameworld import GameWorld
-from app.agentic_workers import (
+from app.agentic_ai.agentic_workers import (
     decompose_question,
     query_world_embeddings,
     aggregate_prune_and_dedup,

@@ -1,4 +1,4 @@
-"""Reusable agentic worker functions for conversational agents."""
+"""Reusable agentic worker functions for conversational and writing agents."""
 
 import asyncio
 import json
@@ -7,7 +7,7 @@ from typing import Iterable, List, Tuple
 from langchain_openai import ChatOpenAI
 
 from app.config import settings
-from app.crud import crud_vectordb, crud_agent_embedding
+from app.crud import crud_vectordb, crud_agent_embedding, crud_page_analysis
 
 openai_model = settings.open_ai_model
 
@@ -150,3 +150,13 @@ async def validate_response(query: str, answer: str, user_nickname: str | None, 
     validator_prompt = make_validator_prompt(query, answer, user_nickname, tone)
     resp = await llm.ainvoke(validator_prompt)
     return "no" not in resp.content.lower()
+
+
+async def analyze_pages_worker(session, agent, pages):
+    """Analyze a batch of pages for an agent."""
+    return await crud_page_analysis.analyze_pages_bulk(session, agent, pages)
+
+
+async def generate_pages_worker(session, agent, page, page_specs):
+    """Generate or update pages based on specifications."""
+    return await crud_page_analysis.generate_pages(session, agent, page, page_specs)

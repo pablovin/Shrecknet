@@ -1,7 +1,6 @@
-from __future__ import annotations
 from typing import Optional, List
-from sqlmodel import SQLModel, Field, Relationship
 from datetime import datetime, timezone
+from sqlmodel import SQLModel, Field, Relationship
 
 class Session(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)

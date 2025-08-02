@@ -16,7 +16,7 @@ import SettingsRoundedIcon from "@mui/icons-material/SettingsRounded";
 import HomeIcon from "@mui/icons-material/HomeRounded";
 import PersonEditAlt1RoundedIcon from "@mui/icons-material/EditRounded";
 import NotificationsIcon from "@mui/icons-material/NotificationsRounded";
-import { Bot, BookOpenText, FileText, PenLine, Sparkles } from "lucide-react";
+import { Bot, BookOpenText, FileText, PenLine, Sparkles, ScrollText } from "lucide-react";
 import NewsDialog from "../news/NewsDialog";
 import { getNews, markNewsSeen } from "../../lib/newsAPI";
 
@@ -107,6 +107,13 @@ export default function Sidebar({ mobileOpen = false, setMobileOpen = () => {} }
       label: t("notes"),
       icon: <FileText fontSize="medium" />,
       href: "/user_notes",
+      external: false,
+      show: true,
+    },
+    {
+      label: t("sessions"),
+      icon: <ScrollText fontSize="medium" />,
+      href: "/tables",
       external: false,
       show: true,
     },

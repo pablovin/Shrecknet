@@ -40,6 +40,8 @@
   "system_settings": "System Settings",
   "library": "Library",
   "notes": "Notes",
+  "sessions": "Sessions",
+  "sessions_desc": "Track and manage your play sessions.",
   "worlds": "Worlds",
   "hi": "Hi!",
   "personalize": "Personalize",

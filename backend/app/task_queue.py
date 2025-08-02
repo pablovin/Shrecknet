@@ -2,13 +2,14 @@ import os
 import asyncio
 from celery import Celery
 import multiprocessing
+
 multiprocessing.set_start_method("spawn", force=True)
 
 
 celery_app = Celery(
-    'shrecknet',
-    broker=os.getenv('CELERY_BROKER_URL', 'redis://localhost:6379/0'),
-    backend=os.getenv('CELERY_RESULT_BACKEND', 'redis://localhost:6379/0'),
+    "shrecknet",
+    broker=os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/0"),
+    backend=os.getenv("CELERY_RESULT_BACKEND", "redis://localhost:6379/0"),
 )
 
 # celery_app = Celery(
@@ -18,9 +19,9 @@ celery_app = Celery(
 # )
 
 
-celery_app.conf.task_serializer = 'json'
-celery_app.conf.result_serializer = 'json'
-celery_app.conf.accept_content = ['json']
+celery_app.conf.task_serializer = "json"
+celery_app.conf.result_serializer = "json"
+celery_app.conf.accept_content = ["json"]
 celery_app.conf.broker_connection_retry_on_startup = True
 
 from app.crud.crud_page_links_update import (
@@ -44,29 +45,36 @@ import app.models.model_page  # noqa: F401
 import app.models.model_characteristic  # noqa: F401
 import app.models.model_specialist_source  # noqa: F401
 
+
 @celery_app.task
 def task_auto_crosslink_page_content(page_id: int):
     asyncio.run(auto_crosslink_page_content(page_id))
+
 
 @celery_app.task
 def task_auto_crosslink_batch(page_id: int):
     asyncio.run(auto_crosslink_batch(page_id))
 
+
 @celery_app.task
 def task_remove_crosslinks_to_page(page_id: int):
     asyncio.run(remove_crosslinks_to_page(page_id))
+
 
 @celery_app.task
 def task_remove_page_refs_from_characteristics(page_id: int):
     asyncio.run(remove_page_refs_from_characteristics(page_id))
 
+
 @celery_app.task
 def task_sync_page_ref_attributes(page_id: int):
     asyncio.run(sync_page_ref_attributes(page_id))
 
+
 @celery_app.task
 def task_auto_crosslink_note_content(note_id: int):
     asyncio.run(auto_crosslink_note_content(note_id))
+
 
 from app.crud import crud_agent_writer
 from app.crud.crud_agent import get_agent
@@ -109,7 +117,15 @@ def task_analyze_pages_job(agent_id: int, page_ids: list[int], job_id: str):
             agent = await get_agent(session, agent_id)
             if not agent:
                 with open(job_path, "w") as ff:
-                    json.dump({"status": "error", "error": "Agent not found", "start_time": start_time}, ff, default=str)
+                    json.dump(
+                        {
+                            "status": "error",
+                            "error": "Agent not found",
+                            "start_time": start_time,
+                        },
+                        ff,
+                        default=str,
+                    )
                 return
 
             pages = []
@@ -173,53 +189,66 @@ def task_rebuild_vectordb(agent_id: int, job_id: str):
         job_path = job_dir / f"{job_id}.json"
         start_time = datetime.now(timezone.utc).isoformat()
         with open(job_path, "w") as f:
-            json.dump({
-                "status": "processing",
-                "agent_id": agent_id,
-                "job_type": "update_vector_db",
-                "start_time": start_time,
-            }, f, default=str)
+            json.dump(
+                {
+                    "status": "processing",
+                    "agent_id": agent_id,
+                    "job_type": "update_vector_db",
+                    "start_time": start_time,
+                },
+                f,
+                default=str,
+            )
 
-        print (f" --- CALCUALTING SUGGESTIONS --- ")
-        print (f" --- CALCUALTING SUGGESTIONS --- ")
-        print (f" --- CALCUALTING SUGGESTIONS --- ")
-        print (f" --- CALCUALTING SUGGESTIONS --- ")
+        print(f" --- CALCUALTING SUGGESTIONS --- ")
+        print(f" --- CALCUALTING SUGGESTIONS --- ")
+        print(f" --- CALCUALTING SUGGESTIONS --- ")
+        print(f" --- CALCUALTING SUGGESTIONS --- ")
         async with async_session_maker() as session:
             agent = await get_agent(session, agent_id)
             if not agent:
                 with open(job_path, "w") as ff:
-                    json.dump({
-                        "status": "error",
-                        "error": "Agent not found",
-                        "start_time": start_time,
-                    }, ff, default=str)
+                    json.dump(
+                        {
+                            "status": "error",
+                            "error": "Agent not found",
+                            "start_time": start_time,
+                        },
+                        ff,
+                        default=str,
+                    )
                 return
 
-            print (f" --- CALCUALTING SUGGESTIONS2 --- ")
-            print (f" --- CALCUALTING SUGGESTIONS2 --- ")
-            print (f" --- CALCUALTING SUGGESTIONS2 --- ")
-            print (f" --- CALCUALTING SUGGESTIONS2 --- ")
-            
+            print(f" --- CALCUALTING SUGGESTIONS2 --- ")
+            print(f" --- CALCUALTING SUGGESTIONS2 --- ")
+            print(f" --- CALCUALTING SUGGESTIONS2 --- ")
+            print(f" --- CALCUALTING SUGGESTIONS2 --- ")
+
             try:
-                print (f" --- CALCUALTING SUGGESTIONS3 --- ")
-                print (f" --- CALCUALTING SUGGESTIONS3 --- ")
-                print (f" --- CALCUALTING SUGGESTIONS3 --- ")
-                print (f" --- CALCUALTING SUGGESTIONS3 --- ")
+                print(f" --- CALCUALTING SUGGESTIONS3 --- ")
+                print(f" --- CALCUALTING SUGGESTIONS3 --- ")
+                print(f" --- CALCUALTING SUGGESTIONS3 --- ")
+                print(f" --- CALCUALTING SUGGESTIONS3 --- ")
                 from app.crud import crud_agent_embedding
-                embed_ids = await crud_agent_embedding.get_embedding_ids(session, agent.id)
+
+                embed_ids = await crud_agent_embedding.get_embedding_ids(
+                    session, agent.id
+                )
                 count = 0
                 for eid in embed_ids:
-                    count += await crud_vectordb.rebuild_embedding(session, agent.world_id, eid)
-                print (f" --- CALCUALTING SUGGESTIONS4 --- ")
-                print (f" --- CALCUALTING SUGGESTIONS4 --- ")
-                print (f" --- CALCUALTING SUGGESTIONS4 --- ")
-                print (f" --- CALCUALTING SUGGESTIONS4 --- ")
+                    count += await crud_vectordb.rebuild_embedding(
+                        session, agent.world_id, eid
+                    )
+                print(f" --- CALCUALTING SUGGESTIONS4 --- ")
+                print(f" --- CALCUALTING SUGGESTIONS4 --- ")
+                print(f" --- CALCUALTING SUGGESTIONS4 --- ")
+                print(f" --- CALCUALTING SUGGESTIONS4 --- ")
             except Exception as exc:  # pragma: no cover - defensive
-                print (f" --- CALCUALTING SUGGESTIONS5  ERROR {str(exc)} --- ")
-                print (f" --- CALCUALTING SUGGESTIONS5  ERROR {str(exc)} --- ")
-                print (f" --- CALCUALTING SUGGESTIONS5  ERROR {str(exc)} --- ")
-                print (f" --- CALCUALTING SUGGESTIONS5  ERROR {str(exc)} --- ")
-            
+                print(f" --- CALCUALTING SUGGESTIONS5  ERROR {str(exc)} --- ")
+                print(f" --- CALCUALTING SUGGESTIONS5  ERROR {str(exc)} --- ")
+                print(f" --- CALCUALTING SUGGESTIONS5  ERROR {str(exc)} --- ")
+                print(f" --- CALCUALTING SUGGESTIONS5  ERROR {str(exc)} --- ")
+
                 with open(job_path, "w") as ff:
                     json.dump(
                         {
@@ -234,14 +263,18 @@ def task_rebuild_vectordb(agent_id: int, job_id: str):
 
         end_time = datetime.now(timezone.utc).isoformat()
         with open(job_path, "w") as f:
-            json.dump({
-                "status": "done",
-                "agent_id": agent_id,
-                "job_type": "update_vector_db",
-                "pages_indexed": count,
-                "start_time": start_time,
-                "end_time": end_time,
-            }, f, default=str)
+            json.dump(
+                {
+                    "status": "done",
+                    "agent_id": agent_id,
+                    "job_type": "update_vector_db",
+                    "pages_indexed": count,
+                    "start_time": start_time,
+                    "end_time": end_time,
+                },
+                f,
+                default=str,
+            )
 
     asyncio.run(run())
 
@@ -253,7 +286,13 @@ def task_rebuild_specialist_vectors(agent_id: int, job_id: str):
         job_dir.mkdir(parents=True, exist_ok=True)
         job_path = job_dir / f"{job_id}.json"
         start_time = datetime.now(timezone.utc).isoformat()
-        def write_status(status: str, progress: str | None = None, count: int | None = None, end: str | None = None):
+
+        def write_status(
+            status: str,
+            progress: str | None = None,
+            count: int | None = None,
+            end: str | None = None,
+        ):
             data = {
                 "status": status,
                 "agent_id": agent_id,
@@ -277,6 +316,7 @@ def task_rebuild_specialist_vectors(agent_id: int, job_id: str):
                 write_status("error")
                 return
             try:
+
                 def progress_cb(msg: str):
                     write_status("processing", msg)
 
@@ -301,7 +341,13 @@ def task_rebuild_library_vectors(item_id: int, job_id: str):
         job_path = job_dir / f"{job_id}.json"
         start_time = datetime.now(timezone.utc).isoformat()
 
-        def write_status(status: str, progress: float | None = None, total: int | None = None, processed: int | None = None, end: str | None = None):
+        def write_status(
+            status: str,
+            progress: float | None = None,
+            total: int | None = None,
+            processed: int | None = None,
+            end: str | None = None,
+        ):
             data = {
                 "status": status,
                 "item_id": item_id,
@@ -323,11 +369,14 @@ def task_rebuild_library_vectors(item_id: int, job_id: str):
 
         async with async_session_maker() as session:
             try:
+
                 def cb(idx: int, total: int):
                     pct = int(idx / total * 100)
                     write_status("processing", progress=pct, total=total, processed=idx)
 
-                count = await crud_library_vectordb.rebuild_item_with_progress(session, item_id, cb)
+                count = await crud_library_vectordb.rebuild_item_with_progress(
+                    session, item_id, cb
+                )
             except Exception:
                 write_status("error")
                 raise
@@ -346,23 +395,38 @@ def task_rebuild_world_embedding(embedding_id: int, job_id: str):
         job_path = job_dir / f"{job_id}.json"
         start_time = datetime.now(timezone.utc).isoformat()
         with open(job_path, "w") as f:
-            json.dump({
-                "status": "processing",
-                "embedding_id": embedding_id,
-                "job_type": "rebuild_world_embedding",
-                "start_time": start_time,
-            }, f, default=str)
+            json.dump(
+                {
+                    "status": "processing",
+                    "embedding_id": embedding_id,
+                    "job_type": "rebuild_world_embedding",
+                    "start_time": start_time,
+                },
+                f,
+                default=str,
+            )
 
         async with async_session_maker() as session:
             from app.crud import crud_world_embedding
+
             embedding = await crud_world_embedding.get_embedding(session, embedding_id)
             if not embedding:
                 with open(job_path, "w") as ff:
-                    json.dump({"status": "error", "error": "Embedding not found", "start_time": start_time}, ff, default=str)
+                    json.dump(
+                        {
+                            "status": "error",
+                            "error": "Embedding not found",
+                            "start_time": start_time,
+                        },
+                        ff,
+                        default=str,
+                    )
                 return
             try:
                 t0 = datetime.now(timezone.utc)
-                count = await crud_vectordb.rebuild_embedding(session, embedding.world_id, embedding.id)
+                count = await crud_vectordb.rebuild_embedding(
+                    session, embedding.world_id, embedding.id
+                )
                 t1 = datetime.now(timezone.utc)
                 embedding.last_index_time = t1
                 embedding.page_count = count
@@ -372,23 +436,33 @@ def task_rebuild_world_embedding(embedding_id: int, job_id: str):
                 await session.refresh(embedding)
             except Exception as exc:
                 with open(job_path, "w") as ff:
-                    json.dump({"status": "error", "error": str(exc), "start_time": start_time}, ff, default=str)
+                    json.dump(
+                        {
+                            "status": "error",
+                            "error": str(exc),
+                            "start_time": start_time,
+                        },
+                        ff,
+                        default=str,
+                    )
                 raise
 
         end_time = datetime.now(timezone.utc).isoformat()
         with open(job_path, "w") as f:
-            json.dump({
-                "status": "done",
-                "embedding_id": embedding_id,
-                "job_type": "rebuild_world_embedding",
-                "pages_indexed": count,
-                "start_time": start_time,
-                "end_time": end_time,
-            }, f, default=str)
+            json.dump(
+                {
+                    "status": "done",
+                    "embedding_id": embedding_id,
+                    "job_type": "rebuild_world_embedding",
+                    "pages_indexed": count,
+                    "start_time": start_time,
+                    "end_time": end_time,
+                },
+                f,
+                default=str,
+            )
 
     asyncio.run(run())
-
-
 
 
 @celery_app.task
@@ -420,6 +494,7 @@ def task_generate_pages_job(
                     "suggestions": suggestions or [],
                     "bulk_accept_updates": bulk_accept_updates,
                     "action_needed": None,
+                    "embedding_jobs": [],
                 },
                 f,
                 default=str,
@@ -430,15 +505,20 @@ def task_generate_pages_job(
             page = await get_page(session, page_id)
             if not agent or not page or agent.world_id != page.gameworld_id:
                 with open(job_path, "w") as ff:
-                    json.dump({
-                        "status": "error",
-                        "error": "Agent or page not found",
-                        "start_time": start_time,
-                    }, ff, default=str)
+                    json.dump(
+                        {
+                            "status": "error",
+                            "error": "Agent or page not found",
+                            "start_time": start_time,
+                        },
+                        ff,
+                        default=str,
+                    )
                 return
             result = await crud_agent_writer.generate_pages(session, agent, page, pages)
             result_pages = result.get("pages", [])
             auto_updated = []
+            embedding_jobs = result.get("embedding_jobs", [])
 
         end_time = datetime.now(timezone.utc).isoformat()
         with open(job_path, "w") as f:
@@ -450,6 +530,7 @@ def task_generate_pages_job(
                     "job_type": "generate_pages",
                     "pages": result_pages,
                     "auto_updated": auto_updated,
+                    "embedding_jobs": embedding_jobs,
                     "start_time": start_time,
                     "end_time": end_time,
                     "merge_groups": merge_groups or [],
@@ -461,43 +542,75 @@ def task_generate_pages_job(
                 default=str,
             )
         with open(generated_path, "w") as gf:
-            json.dump({"pages": result_pages, "auto_updated": auto_updated}, gf, default=str)
+            json.dump(
+                {
+                    "pages": result_pages,
+                    "auto_updated": auto_updated,
+                    "embedding_jobs": embedding_jobs,
+                },
+                gf,
+                default=str,
+            )
 
     asyncio.run(run())
 
+
 @celery_app.task
-def task_create_novel_job(agent_id: int, text: str, instructions: str, previous_page_id: int | None, helper_agents: list[int], job_id: str):
+def task_create_novel_job(
+    agent_id: int,
+    text: str,
+    instructions: str,
+    previous_page_id: int | None,
+    helper_agents: list[int],
+    job_id: str,
+):
     async def run():
         job_dir = Path(settings.novelist_job_dir)
         job_dir.mkdir(parents=True, exist_ok=True)
         job_path = job_dir / f"{job_id}.json"
         start_time = datetime.now(timezone.utc).isoformat()
         with open(job_path, "w") as f:
-            json.dump({
-                "status": "processing",
-                "agent_id": agent_id,
-                "job_type": "create_novel",
-                "progress": 0,
-                "start_time": start_time,
-            }, f, default=str)
+            json.dump(
+                {
+                    "status": "processing",
+                    "agent_id": agent_id,
+                    "job_type": "create_novel",
+                    "progress": 0,
+                    "start_time": start_time,
+                },
+                f,
+                default=str,
+            )
 
         async with async_session_maker() as session:
             agent = await get_agent(session, agent_id)
             if not agent:
                 with open(job_path, "w") as ff:
-                    json.dump({"status": "error", "error": "Agent not found", "start_time": start_time}, ff, default=str)
+                    json.dump(
+                        {
+                            "status": "error",
+                            "error": "Agent not found",
+                            "start_time": start_time,
+                        },
+                        ff,
+                        default=str,
+                    )
                 return
 
             async def progress_cb(idx: int, total: int):
                 with open(job_path, "w") as f:
-                    json.dump({
-                        "status": "processing",
-                        "agent_id": agent_id,
-                        "job_type": "create_novel",
-                        "progress": idx + 1,
-                        "chunks_total": total,
-                        "start_time": start_time,
-                    }, f, default=str)
+                    json.dump(
+                        {
+                            "status": "processing",
+                            "agent_id": agent_id,
+                            "job_type": "create_novel",
+                            "progress": idx + 1,
+                            "chunks_total": total,
+                            "start_time": start_time,
+                        },
+                        f,
+                        default=str,
+                    )
 
             novel = await crud_novel.create_novel(
                 session,
@@ -511,14 +624,18 @@ def task_create_novel_job(agent_id: int, text: str, instructions: str, previous_
 
         end_time = datetime.now(timezone.utc).isoformat()
         with open(job_path, "w") as f:
-            json.dump({
-                "status": "done",
-                "agent_id": agent_id,
-                "job_type": "create_novel",
-                "novel": novel,
-                "start_time": start_time,
-                "end_time": end_time,
-                "action_needed": "review",
-            }, f, default=str)
+            json.dump(
+                {
+                    "status": "done",
+                    "agent_id": agent_id,
+                    "job_type": "create_novel",
+                    "novel": novel,
+                    "start_time": start_time,
+                    "end_time": end_time,
+                    "action_needed": "review",
+                },
+                f,
+                default=str,
+            )
 
     asyncio.run(run())

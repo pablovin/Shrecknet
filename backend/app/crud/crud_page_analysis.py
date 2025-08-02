@@ -21,36 +21,11 @@ from rapidfuzz import fuzz, process
 import asyncio
 from bs4 import BeautifulSoup
 
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+
 def strip_html(text):
     soup = BeautifulSoup(text or "", "html.parser")
     return soup.get_text(separator=" ", strip=True)
-
-def split_html_by_headers(html, header_tags=("h1", "h2", "h3")):
-    soup = BeautifulSoup(html, "html.parser")
-    headers = []
-    for tag in header_tags:
-        headers += soup.find_all(tag)
-    headers = sorted(headers, key=lambda x: x.sourceline if hasattr(x, 'sourceline') and x.sourceline else 0)
-
-    chunks = []
-    for i, h in enumerate(headers):
-        section_texts = [h.get_text(separator=' ', strip=True)]
-        for sib in h.next_siblings:
-            if getattr(sib, 'name', None) in header_tags:
-                break
-            if getattr(sib, 'get_text', None):
-                txt = sib.get_text(separator=' ', strip=True)
-                if txt:
-                    section_texts.append(txt)
-            elif isinstance(sib, str):
-                stripped = sib.strip()
-                if stripped:
-                    section_texts.append(stripped)
-        chunk = "\n".join(section_texts).strip()
-        if chunk:
-            chunks.append(chunk)
-    return chunks
-
 
   
 async def _get_agent_embeddings(session: AsyncSession, agent: Agent):
@@ -147,69 +122,79 @@ def find_best_page_match(name, existing_titles, threshold=80):
     return None
 
 
+# Utility: Clean visible text from HTML
+def ensure_visible_text(chunk: str) -> str:
+    return BeautifulSoup(chunk, "html.parser").get_text(separator=' ', strip=True)
 
-def split_html_by_headers(html, header_tags=("h1", "h2", "h3")):
+# Utility: Split content into chunks using headers or fallback
+def split_html_by_headers(html, header_tags=("h1", "h2", "h3"), fallback_chunk_size=1000, fallback_overlap=200):
     soup = BeautifulSoup(html, "html.parser")
-    # Find all headers in order
     headers = []
     for tag in header_tags:
         headers += soup.find_all(tag)
     headers = sorted(headers, key=lambda x: x.sourceline if hasattr(x, 'sourceline') and x.sourceline else 0)
 
-    chunks = []
-    for i, h in enumerate(headers):
-        # Use space separator!
-        section_texts = [h.get_text(separator=' ', strip=True)]
-        for sib in h.next_siblings:
-            if getattr(sib, 'name', None) in header_tags:
-                break
-            if getattr(sib, 'get_text', None):
-                txt = sib.get_text(separator=' ', strip=True)
-                if txt:
-                    section_texts.append(txt)
-            elif isinstance(sib, str):
-                stripped = sib.strip()
-                if stripped:
-                    section_texts.append(stripped)
-        chunk = "\n".join(section_texts).strip()
-        if chunk:
-            chunks.append(chunk)
-    return chunks
+    if len(headers) > 1:
+        chunks = []
+        for i, h in enumerate(headers):
+            section_texts = [h.get_text(separator=' ', strip=True)]
+            for sib in h.next_siblings:
+                if getattr(sib, 'name', None) in header_tags:
+                    break
+                if getattr(sib, 'get_text', None):
+                    txt = sib.get_text(separator=' ', strip=True)
+                    if txt:
+                        section_texts.append(txt)
+                elif isinstance(sib, str):
+                    stripped = sib.strip()
+                    if stripped:
+                        section_texts.append(stripped)
+            chunk = "\n".join(section_texts).strip()
+            if chunk:
+                chunks.append(chunk)
+        return [ensure_visible_text(c) for c in chunks]
+    
+    # Fallback: use langchain splitter on visible text only
+    visible_text = ensure_visible_text(html)
+    splitter = RecursiveCharacterTextSplitter(
+        chunk_size=fallback_chunk_size*8,
+        chunk_overlap=fallback_overlap*8
+    )
+    return splitter.split_text(visible_text)
 
-def ensure_visible_text(chunk):
-    # If already plain text, return as is
-    if isinstance(chunk, str):
-        return chunk.strip()
-    # If Document object, get .page_content
-    text = getattr(chunk, "page_content", str(chunk))
-    # Strip all HTML tags, merge inline elements
-    return BeautifulSoup(text, "html.parser").get_text(separator='', strip=True)
+# Utility: Extract events and relationships as plain text
+async def extract_page_metadata_text(page):
+    events = getattr(page, "events", None)
+    if events is None and hasattr(page, "session"):
+        event_result = await page.session.execute(
+            select(PageKeyEvent).where(PageKeyEvent.page_id == page.id)
+        )
+        events = list(event_result.scalars())
+    event_lines = [
+        f"EVENT [{e.event_type}] on {e.event_date}: {e.summary or ''}" for e in (events or [])
+    ]
 
-async def get_page_view_chunks(session, agent, page):
-    """
-    Returns a dict: {"narrative": ..., "relationship": ..., "event": ...}
-    Each value is the concatenated plain text for that view from embeddings.
-    """
-    valid_embeds = await _get_agent_embeddings(session, agent)
-    if not valid_embeds:
-        return {}
-    views = ["relationship", "event"]
-    view_chunks = {}
+    rels = getattr(page, "relationships", None)
+    if rels is None and hasattr(page, "session"):
+        rel_result = await page.session.execute(
+            select(PageRelationship).where(PageRelationship.page_id == page.id)
+        )
+        rels = list(rel_result.scalars())
+    rel_lines = [
+        f"RELATIONSHIP {'->' if r.direction == 'outgoing' else '<-'} {r.target_page_id} ({r.relationship_type}): {r.description or ''}"
+        for r in (rels or [])
+    ]
 
-    for emb in valid_embeds:
-        for view in views:
-            parts = crud_vectordb.get_page_chunks(emb.id, page.id, view=view)
-            if parts:
-                # Accepts both list-of-strings and list-of-objects with .page_content
-                texts = [ensure_visible_text(p) for p in parts if p]
-                if texts:
-                    view_chunks[view] = "\n".join(texts)
-        if len(view_chunks) == len(views):
-            break  # Got all
-    return view_chunks
+    output = ""
+    if event_lines:
+        output += "Key Events:\n" + "\n".join(event_lines) + "\n\n"
+    if rel_lines:
+        output += "Relationships:\n" + "\n".join(rel_lines) + "\n\n"
+    return output.strip()
 
+# Main function
 async def analyze_page(session, agent, page) -> dict:
-    # --- 1. Load concepts, pages, agent embeddings ---
+    # --- 1. Load context and data ---
     valid_embeds = await _get_agent_embeddings(session, agent)
     if not valid_embeds:
         return {"suggestions": [], "error": "Agent world embeddings missing"}
@@ -221,20 +206,23 @@ async def analyze_page(session, agent, page) -> dict:
     existing_pages = await crud_page.get_pages(session, gameworld_id=page.gameworld_id)
     existing_titles_norm = {normalize_name(p.name): p for p in existing_pages if p.name}
 
-    # --- 2. Get global context (views) from page embeddings ---
-    view_chunks = await get_page_view_chunks(session, agent, page)
-    metadata_only_text = "\n\n".join(
-        f"{view.title()}:\n{content.strip()}"
-        for view, content in view_chunks.items()
-        if content and content.strip()
-    )
+    # --- 2. Extract metadata and split content into chunks ---
+    page_metadata_text = await extract_page_metadata_text(page)
+    page_chunks = split_html_by_headers(page.content or "")
+    chunk_texts = [ensure_visible_text(chunk) for chunk in page_chunks if chunk and chunk.strip()]
 
     # --- 3. Prepare LLM chain ---
     prompt = ChatPromptTemplate.from_messages([
         ("system",
-            "You are analyzing a story. Extract important concepts and suggest the canonical page names for each, along with the concept (category/type) each belongs to, using the most complete and unambiguous name possible."
+            "You are an assistant of my RPG wiki. Your job is to propose new pages that need to be added or pages to be updated on the wiki.\n"
+            "You do this, by analyzing a novelized session I am sending you, and suggesting important pages that need to be created or updated\n"
+            "I am sending you the story in chunks, so it is easier to process.\n"
+            "You are also provided with EXTRA INFORMATION (key events and relationships associated with the full story, not only the chunk). "
+            "You may use this extra information to help you decide the importance or meaning of concepts you extract, but focus on the chunk text.\n"
+            "Extract important concepts and suggest the canonical page names for each, along with the concept (category/type) each belongs to, using the most complete and unambiguous name possible."
+            "Only extract suggested pages that are important for this chunk!\n"
             "\nIf possible, map aliases and short references to their main page name."
-            "\nConcept list:\n"
+            "\nThese is the list of existing Concepts. Suggest pages based only on these concepts:\n"
             + "\n".join(f"- {name}: {desc}" for name, desc in concept_defs.items())
             + "\nReturn a JSON object mapping each page name to its concept (category), e.g.:\n"
             + "{{\n  \"Barão de Karst\": \"NPC\",\n  \"Abelardo\": \"NPC\",\n  \"Yudennach\": \"Reino\",\n  \"Green Dragon\": \"Monstro\"\n}}"
@@ -245,24 +233,12 @@ async def analyze_page(session, agent, page) -> dict:
     llm = ChatOpenAI(api_key=settings.openai_api_key, model=settings.open_ai_model)
     chain = prompt | llm
 
-    # --- 4. Metadata-only pass ---
-    all_pairs = []
-    if metadata_only_text.strip():
-        try:
-            result = await chain.ainvoke({"chunk": metadata_only_text})
-            parsed = json.loads(result.content.strip())
-            if isinstance(parsed, dict):
-                all_pairs.extend(parsed.items())
-        except Exception as e:
-            print(f"Metadata pass failed: {e}")
-
-    # --- 5. Chunked content pass (header-based) ---
-    page_chunks = split_html_by_headers(page.content or "")
-    chunk_texts = [ensure_visible_text(chunk) for chunk in page_chunks if chunk and chunk.strip()]
-
+    # --- 4. Process each chunk (prepend metadata) ---
     async def process_chunk(chunk_text):
-        # Prepend metadata to each chunk
-        chunk_input = f"{metadata_only_text}\n\n{chunk_text}".strip() if metadata_only_text else chunk_text
+        chunk_input = (
+            f"--- EXTRA INFORMATION ---\n{page_metadata_text}\n\n--- MAIN CHUNK ---\n{chunk_text}"
+            if page_metadata_text else chunk_text
+        )
         try:
             result = await chain.ainvoke({"chunk": chunk_input})
             parsed = json.loads(result.content.strip())
@@ -272,12 +248,13 @@ async def analyze_page(session, agent, page) -> dict:
             print(f"Chunk LLM failed: {e}")
         return []
 
+    all_pairs = []
     if chunk_texts:
         chunk_results = await asyncio.gather(*(process_chunk(chunk) for chunk in chunk_texts))
         for res in chunk_results:
             all_pairs.extend(res)
 
-    # --- 6. Merge and deduplicate results ---
+    # --- 5. Merge and deduplicate results ---
     groups = {}
     for name, concept_name in all_pairs:
         norm = normalize_name(name)
@@ -295,7 +272,6 @@ async def analyze_page(session, agent, page) -> dict:
         exists = bool(page_obj)
 
         if exists:
-            # Use actual page name, and DB concept if possible
             best_name = page_obj.name
             concept_obj = concepts_by_id.get(page_obj.concept_id) if getattr(page_obj, "concept_id", None) else None
             final_concept_id = concept_obj.id if concept_obj else None
@@ -304,7 +280,6 @@ async def analyze_page(session, agent, page) -> dict:
                 continue
             already_handled.add(page_obj.id)
         else:
-            # For new pages, use *shortest* suggested name (most likely to be canonical)
             best_name = min(all_names, key=len)
             llm_concept = all_concepts[0] if all_concepts else "Unknown"
             concept_obj = concepts_by_name.get(normalize_name(llm_concept))
@@ -322,7 +297,7 @@ async def analyze_page(session, agent, page) -> dict:
             "source_page_ids": [page.id],
             "source_page_updated": (page.updated_at.isoformat() if page.updated_at else "")
         })
-
+    # print (f"Suggestions: {suggestions}")
     return {"suggestions": suggestions}
 
 

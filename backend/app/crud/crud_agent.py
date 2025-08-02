@@ -17,6 +17,8 @@ from app.models.model_gameworld import GameWorld
 from rapidfuzz import fuzz
 import asyncio
 
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+
 openai_model = settings.open_ai_model
 PERSONALITY_FILE = Path("./data/personalities_parsing.json")
 

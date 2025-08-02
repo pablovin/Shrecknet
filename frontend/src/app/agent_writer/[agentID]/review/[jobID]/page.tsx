@@ -1,4 +1,5 @@
 "use client";
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import DashboardLayout from "@/app/components/DashboardLayout";
@@ -16,6 +17,7 @@ import RelationshipMapTab from "@/app/components/see_page/RelationshipMapTab";
 import Image from "next/image";
 import { Loader2 } from "lucide-react";
 import { useTranslation } from "@/app/hooks/useTranslation";
+import CreatePageForm from "@/app/components/create_page/CreatePageForm";
 
 export default function ReviewPage() {
   const { t } = useTranslation();
@@ -25,19 +27,21 @@ export default function ReviewPage() {
   const { agent } = useAgentById(Number(agentID));
   const { concepts } = useConcepts(agent?.world_id);
   const { world } = useWorld(agent?.world_id);
-  const { pages: worldPages } = usePages(world?.id ? { gameworld_id: world.id } : {});
+  const { pages: worldPages } = usePages(
+    world?.id ? { gameworld_id: world.id } : {},
+  );
 
   const [job, setJob] = useState<any>(null);
   const [newPages, setNewPages] = useState<any[]>([]);
   const [updatedPages, setUpdatedPages] = useState<any[]>([]);
   const [activeIdx, setActiveIdx] = useState(0);
-  const [activeType, setActiveType] = useState<'new' | 'updated'>('new');
+  const [activeType, setActiveType] = useState<"new" | "updated">("new");
 
-  async function refreshPage(id: number, idx: number, type: 'new' | 'updated') {
+  async function refreshPage(id: number, idx: number, type: "new" | "updated") {
     if (!token) return;
     try {
       const p = await getPage(id, token);
-      if (type === 'new') {
+      if (type === "new") {
         setNewPages((pgs) => {
           const copy = [...pgs];
           copy[idx] = p;
@@ -62,7 +66,8 @@ export default function ReviewPage() {
         setJob(data);
         if (data.status === "done") {
           const newList = data.generated?.pages || data.pages || [];
-          const updList = data.generated?.auto_updated || data.auto_updated || [];
+          const updList =
+            data.generated?.auto_updated || data.auto_updated || [];
 
           const newFull = await Promise.all(
             newList.map(async (p: any) => {
@@ -71,7 +76,7 @@ export default function ReviewPage() {
               } catch {
                 return null;
               }
-            })
+            }),
           );
 
           const updFull = await Promise.all(
@@ -81,12 +86,12 @@ export default function ReviewPage() {
               } catch {
                 return null;
               }
-            })
+            }),
           );
 
           setNewPages(newFull.filter(Boolean));
           setUpdatedPages(updFull.filter(Boolean));
-          setActiveType(newFull.length > 0 ? 'new' : 'updated');
+          setActiveType(newFull.length > 0 ? "new" : "updated");
           setActiveIdx(0);
         }
       })
@@ -120,7 +125,9 @@ export default function ReviewPage() {
       <AuthGuard>
         <DashboardLayout>
           <div className="min-h-[60vh] flex flex-col items-center justify-center px-4">
-            <div className="text-xl font-semibold">{t("all_pages_updated")}</div>
+            <div className="text-xl font-semibold">
+              {t("all_pages_updated")}
+            </div>
             <button
               onClick={() => router.push(`/agent_writer?agent=${agentID}`)}
               className="mt-4 px-4 py-2 rounded-xl bg-[var(--primary)] text-white font-bold shadow"
@@ -132,7 +139,9 @@ export default function ReviewPage() {
       </AuthGuard>
     );
 
-  const page = activeType === 'new' ? newPages[activeIdx] : updatedPages[activeIdx];
+  const page =
+    activeType === "new" ? newPages[activeIdx] : updatedPages[activeIdx];
+  const pageConcept = concepts?.find((c) => c.id === page?.concept_id);
 
   async function handleSaveNotes(idx: number, newContent: string) {
     if (!token) return;
@@ -144,6 +153,16 @@ export default function ReviewPage() {
     }
   }
 
+  async function handleEditPage(payload: unknown) {
+    if (!token || !page) return;
+    try {
+      await updatePage(page.id, payload, token);
+      refreshPage(page.id, activeIdx, activeType);
+    } catch (err) {
+      console.error("Failed to update page", err);
+    }
+  }
+
   return (
     <AuthGuard>
       <DashboardLayout>
@@ -152,21 +171,29 @@ export default function ReviewPage() {
             <div className="md:w-64 space-y-4">
               {newPages.length > 0 && (
                 <div className="bg-[var(--card)] border border-green-600 rounded-xl p-4 shadow">
-                  <h2 className="text-lg font-bold text-green-700 mb-3">New Pages</h2>
+                  <h2 className="text-lg font-bold text-green-700 mb-3">
+                    New Pages
+                  </h2>
                   <div className="flex flex-col gap-2">
                     {newPages.map((p, idx) => (
                       <button
                         key={p.id}
-                        onClick={() => { setActiveType('new'); setActiveIdx(idx); }}
+                        onClick={() => {
+                          setActiveType("new");
+                          setActiveIdx(idx);
+                        }}
                         className={`text-left px-3 py-2 rounded-lg border transition-all ${
-                          activeType === 'new' && activeIdx === idx
-                            ? 'bg-green-600/20 border-green-600'
-                            : 'border-transparent hover:border-green-600/50'
+                          activeType === "new" && activeIdx === idx
+                            ? "bg-green-600/20 border-green-600"
+                            : "border-transparent hover:border-green-600/50"
                         }`}
                       >
-                        <div className="font-semibold text-green-700">{p.name}</div>
+                        <div className="font-semibold text-green-700">
+                          {p.name}
+                        </div>
                         <div className="text-xs text-[var(--muted-foreground)]">
-                          {concepts?.find((c) => c.id === p.concept_id)?.name || ''}
+                          {concepts?.find((c) => c.id === p.concept_id)?.name ||
+                            ""}
                         </div>
                       </button>
                     ))}
@@ -176,21 +203,29 @@ export default function ReviewPage() {
 
               {updatedPages.length > 0 && (
                 <div className="bg-[var(--card)] border border-blue-600 rounded-xl p-4 shadow">
-                  <h2 className="text-lg font-bold text-blue-700 mb-3">Updated Pages</h2>
+                  <h2 className="text-lg font-bold text-blue-700 mb-3">
+                    Updated Pages
+                  </h2>
                   <div className="flex flex-col gap-2">
                     {updatedPages.map((p, idx) => (
                       <button
                         key={p.id}
-                        onClick={() => { setActiveType('updated'); setActiveIdx(idx); }}
+                        onClick={() => {
+                          setActiveType("updated");
+                          setActiveIdx(idx);
+                        }}
                         className={`text-left px-3 py-2 rounded-lg border transition-all ${
-                          activeType === 'updated' && activeIdx === idx
-                            ? 'bg-blue-600/20 border-blue-600'
-                            : 'border-transparent hover:border-blue-600/50'
+                          activeType === "updated" && activeIdx === idx
+                            ? "bg-blue-600/20 border-blue-600"
+                            : "border-transparent hover:border-blue-600/50"
                         }`}
                       >
-                        <div className="font-semibold text-blue-700">{p.name}</div>
+                        <div className="font-semibold text-blue-700">
+                          {p.name}
+                        </div>
                         <div className="text-xs text-[var(--muted-foreground)]">
-                          {concepts?.find((c) => c.id === p.concept_id)?.name || ''}
+                          {concepts?.find((c) => c.id === p.concept_id)?.name ||
+                            ""}
                         </div>
                       </button>
                     ))}
@@ -205,7 +240,9 @@ export default function ReviewPage() {
                   <div className="flex items-center gap-3">
                     {concepts?.find((c) => c.id === page.concept_id)?.logo && (
                       <Image
-                        src={concepts.find((c) => c.id === page.concept_id)!.logo}
+                        src={
+                          concepts.find((c) => c.id === page.concept_id)!.logo
+                        }
                         alt="concept logo"
                         width={40}
                         height={40}
@@ -218,26 +255,43 @@ export default function ReviewPage() {
                   <EditableContent
                     content={page.autogenerated_content}
                     canEdit={true}
-                    onSaveContent={(content) => handleSaveNotes(activeIdx, content)}
+                    onSaveContent={(content) =>
+                      handleSaveNotes(activeIdx, content)
+                    }
                     pageType="worlds"
                     pageName={page.name}
                     className="mt-4"
                   />
 
                   <div>
-                    <h2 className="text-xl font-semibold mb-2">{t("tab_key_events")}</h2>
+                    <h2 className="text-xl font-semibold mb-2">
+                      {t("tab_key_events")}
+                    </h2>
                     <EventTimeline
                       pageId={page.id}
                       events={page.key_events || []}
                       pages={worldPages}
-                      onUpdated={() => refreshPage(page.id, activeIdx, activeType)}
+                      onUpdated={() =>
+                        refreshPage(page.id, activeIdx, activeType)
+                      }
                     />
                   </div>
 
                   <div>
-                    <h2 className="text-xl font-semibold mb-2">{t("tab_relationships")}</h2>
+                    <h2 className="text-xl font-semibold mb-2">
+                      {t("tab_relationships")}
+                    </h2>
                     <RelationshipMapTab page={page} pages={worldPages} />
                   </div>
+
+                  <CreatePageForm
+                    selectedWorld={world}
+                    selectedConcept={pageConcept}
+                    token={token as string}
+                    initialValues={page}
+                    mode="edit"
+                    onSubmit={handleEditPage}
+                  />
                 </>
               )}
             </div>

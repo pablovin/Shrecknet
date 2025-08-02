@@ -23,6 +23,7 @@ import {
   Book,
   Layers,
   Timer,
+  Bell,
 } from "lucide-react";
 import SimpleBarChart from "../components/charts/SimpleBarChart";
 import { useLibraryItems } from "../lib/useLibraryItems";
@@ -211,6 +212,18 @@ export default function AdminDashboardPage() {
                 actions={
                   <Link className="btn-primary" href="/user_management">
                     Manage Users
+                  </Link>
+                }
+              />
+
+              <DashboardCard
+                title="News Board"
+                description="Create announcements for all users."
+                icon={<Bell className="w-6 h-6" />}
+                color="from-amber-500 to-orange-500"
+                actions={
+                  <Link className="btn-primary" href="/system_settings/newsboard">
+                    Manage News
                   </Link>
                 }
               />

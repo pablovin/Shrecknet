@@ -14,6 +14,7 @@ for _mod in [
     "api_jobs",
     "api_user_note",
     "api_embedding",
+    "api_news",
 ]:
     try:
         globals()[_mod] = __import__(f"app.api.{_mod}", fromlist=["router"])

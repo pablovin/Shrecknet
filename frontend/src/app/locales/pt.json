@@ -269,5 +269,9 @@
   "tab_writer_notes": "Notas do Autor",
   "tab_key_events": "Eventos Chave",
   "tab_relationships": "Mapa de Relações",
-  "tab_changelog": "Alterações"
+  "tab_changelog": "Alterações",
+  "news": "Notícias",
+  "newsboard": "Quadro de Notícias",
+  "no_news": "Sem notícias.",
+  "add_news": "Adicionar Notícia"
 }

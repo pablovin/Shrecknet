@@ -272,5 +272,9 @@
   "tab_writer_notes": "Note dell'autore",
   "tab_key_events": "Eventi Chiave",
   "tab_relationships": "Mappa Relazioni",
-  "tab_changelog": "Cronologia"
+  "tab_changelog": "Cronologia",
+  "news": "Notizie",
+  "newsboard": "Bacheca Notizie",
+  "no_news": "Nessuna notizia.",
+  "add_news": "Aggiungi Notizia"
 }

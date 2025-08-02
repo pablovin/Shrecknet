@@ -9,7 +9,7 @@ import {
   finalizeSessionPoll,
 } from "@/app/lib/sessionAPI";
 import { useAuth } from "@/app/components/auth/AuthProvider";
-import M3FloatingInput from "@/app/components/template/M3FloatingInput";
+import { M3FloatingInput } from "@/app/components/template/M3FloatingInput";
 import PageRefSelectorMD3 from "@/app/components/create_page/PageRefSelectorMD3";
 import { getPages } from "@/app/lib/pagesAPI";
 import { useUsers } from "@/app/lib/useUsers";

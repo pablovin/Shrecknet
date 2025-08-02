@@ -7,7 +7,7 @@ sequenceDiagram
     participant User
     participant API as FastAPI /agents/{id}/chat
     participant Chat as chat_with_agent
-    participant Workers as agentic_workers
+    participant Workers as agentic_worker_* modules
     participant LLM as ChatOpenAI
     User->>API: POST message
     API->>Chat: chat_with_agent(messages)
@@ -31,5 +31,5 @@ sequenceDiagram
 ```
 
 * **chat_with_agent** orchestrates the conversation pipeline.
-* **agentic_workers** module provides `decompose_question`, `query_world_embeddings`, `aggregate_prune_and_dedup`, and `validate_response` helpers.
+* **agentic_worker_llm** and **agentic_worker_shrecknet** modules provide `decompose_question`, `query_world_embeddings`, `aggregate_prune_and_dedup`, and `validate_response` helpers.
 * **ChatPromptTemplate**, **ChatOpenAI**, and **LangGraph Graph** compose the LLM call.

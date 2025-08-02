@@ -13,7 +13,7 @@ from app.crud.crud_agent import (
 )
 from app.crud.crud_agent_conversational import chat_with_agent
 from app.crud import crud_vectordb, crud_chat_history
-from app.crud import crud_agent_write
+from app.crud import crud_agent_writer
 from app.crud.crud_page import get_page
 from app.schemas.schema_agent import AgentCreate, AgentRead, AgentUpdate
 from app.database import get_session
@@ -333,7 +333,7 @@ async def analyze_page_endpoint(
     if agent.world_id != page.gameworld_id:
         raise HTTPException(status_code=400, detail="Agent and page belong to different worlds")
 
-    result = await crud_agent_write.analyze_pages(session, agent, [page])
+    result = await crud_agent_writer.analyze_pages(session, agent, [page])
     return {"suggestions": result}
 
 
@@ -357,7 +357,7 @@ async def generate_pages_endpoint(
         raise HTTPException(status_code=400, detail="Agent and page belong to different worlds")
 
     page_specs = [p.model_dump() for p in payload.pages]
-    result = await crud_agent_write.generate_pages(session, agent, page, page_specs)
+    result = await crud_agent_writer.generate_pages(session, agent, page, page_specs)
     return result
 
 

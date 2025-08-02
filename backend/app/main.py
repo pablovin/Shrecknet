@@ -17,6 +17,8 @@ from .api import (
     api_user_note,
     api_embedding,
     api_news,
+    api_table,
+    api_session,
 )
 from contextlib import asynccontextmanager
 
@@ -104,6 +106,8 @@ app.include_router(api_jobs.router)
 app.include_router(api_user_note.router)
 app.include_router(api_embedding.router)
 app.include_router(api_news.router)
+app.include_router(api_table.router)
+app.include_router(api_session.router)
 
 
 

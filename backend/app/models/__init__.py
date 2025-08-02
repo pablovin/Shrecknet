@@ -12,6 +12,8 @@ from . import (
     model_world_embedding,
     model_agent_embedding,
     model_news,
+    model_table,
+    model_session,
 )
 
 __all__ = [
@@ -28,4 +30,6 @@ __all__ = [
     "model_world_embedding",
     "model_agent_embedding",
     "model_news",
+    "model_table",
+    "model_session",
 ]

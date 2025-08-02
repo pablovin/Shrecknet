@@ -6,6 +6,7 @@ import DashboardLayout from "@/app/components/DashboardLayout";
 import AuthGuard from "@/app/components/auth/AuthGuard";
 import { useAuth } from "@/app/components/auth/AuthProvider";
 import { getWriterJob } from "@/app/lib/agentAPI";
+import { getWorldEmbeddingJob } from "@/app/lib/worldEmbeddingAPI";
 import { useAgentById } from "@/app/lib/useAgentById";
 import { useConcepts } from "@/app/lib/useConcept";
 import { useWorld } from "@/app/lib/useWorld";
@@ -36,6 +37,8 @@ export default function ReviewPage() {
   const [updatedPages, setUpdatedPages] = useState<any[]>([]);
   const [activeIdx, setActiveIdx] = useState(0);
   const [activeType, setActiveType] = useState<"new" | "updated">("new");
+  const [embeddingJobs, setEmbeddingJobs] = useState<any[]>([]);
+  const [embeddingsReady, setEmbeddingsReady] = useState(false);
 
   async function refreshPage(id: number, idx: number, type: "new" | "updated") {
     if (!token) return;
@@ -64,6 +67,7 @@ export default function ReviewPage() {
     getWriterJob(jobID as string, token)
       .then(async (data) => {
         setJob(data);
+        setEmbeddingJobs(data.embedding_jobs || []);
         if (data.status === "done") {
           const newList = data.generated?.pages || data.pages || [];
           const updList =
@@ -100,6 +104,35 @@ export default function ReviewPage() {
       });
   }, [jobID, token]);
 
+  useEffect(() => {
+    if (!token) return;
+    if (embeddingJobs.length === 0) {
+      setEmbeddingsReady(true);
+      return;
+    }
+    let cancelled = false;
+    async function poll() {
+      try {
+        const statuses = await Promise.all(
+          embeddingJobs.map((j: any) => getWorldEmbeddingJob(j.job_id, token)),
+        );
+        if (!cancelled) {
+          if (statuses.every((s) => s.status === "done")) {
+            setEmbeddingsReady(true);
+          } else {
+            setTimeout(poll, 5000);
+          }
+        }
+      } catch {
+        if (!cancelled) setTimeout(poll, 5000);
+      }
+    }
+    poll();
+    return () => {
+      cancelled = true;
+    };
+  }, [embeddingJobs, token]);
+
   if (!job)
     return (
       <AuthGuard>
@@ -125,12 +158,19 @@ export default function ReviewPage() {
       <AuthGuard>
         <DashboardLayout>
           <div className="min-h-[60vh] flex flex-col items-center justify-center px-4">
+            {embeddingJobs.length > 0 && !embeddingsReady && (
+              <div className="mb-4 flex items-center gap-2 text-yellow-700 bg-yellow-100 border border-yellow-300 rounded p-3">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                {t("embedding_learning")}
+              </div>
+            )}
             <div className="text-xl font-semibold">
               {t("all_pages_updated")}
             </div>
             <button
               onClick={() => router.push(`/agent_writer?agent=${agentID}`)}
-              className="mt-4 px-4 py-2 rounded-xl bg-[var(--primary)] text-white font-bold shadow"
+              disabled={!embeddingsReady}
+              className="mt-4 px-4 py-2 rounded-xl bg-[var(--primary)] text-white font-bold shadow disabled:opacity-50"
             >
               {t("return_agent_writer")}
             </button>
@@ -166,7 +206,13 @@ export default function ReviewPage() {
   return (
     <AuthGuard>
       <DashboardLayout>
-        <div className="min-h-screen w-full bg-[var(--background)] text-[var(--foreground)] px-2 sm:px-6 py-10 flex justify-center">
+        <div className="min-h-screen w-full bg-[var(--background)] text-[var(--foreground)] px-2 sm:px-6 py-10 flex flex-col items-center">
+          {embeddingJobs.length > 0 && !embeddingsReady && (
+            <div className="mb-4 flex items-center gap-2 text-yellow-700 bg-yellow-100 border border-yellow-300 rounded p-3">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              {t("embedding_learning")}
+            </div>
+          )}
           <div className="w-full max-w-screen-2xl mx-auto flex flex-col md:flex-row gap-6">
             <div className="md:w-64 space-y-4">
               {newPages.length > 0 && (
@@ -295,6 +341,15 @@ export default function ReviewPage() {
                 </>
               )}
             </div>
+          </div>
+          <div className="mt-6">
+            <button
+              onClick={() => router.push(`/agent_writer?agent=${agentID}`)}
+              disabled={!embeddingsReady}
+              className="px-4 py-2 rounded-xl bg-[var(--primary)] text-white font-bold shadow disabled:opacity-50"
+            >
+              {t("return_agent_writer")}
+            </button>
           </div>
         </div>
       </DashboardLayout>

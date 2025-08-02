@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { API_URL } from "./config";
 
 export async function getWorldEmbeddings(token: string) {
@@ -21,7 +22,11 @@ export async function createWorldEmbedding(data: any, token: string) {
   return await res.json();
 }
 
-export async function updateWorldEmbedding(id: number, data: any, token: string) {
+export async function updateWorldEmbedding(
+  id: number,
+  data: any,
+  token: string,
+) {
   const res = await fetch(`${API_URL}/world_embeddings/${id}`, {
     method: "PATCH",
     headers: {
@@ -60,6 +65,14 @@ export async function listWorldEmbeddingJobs(token: string) {
   return await res.json();
 }
 
+export async function getWorldEmbeddingJob(jobId: string, token: string) {
+  const res = await fetch(`${API_URL}/world_embeddings/vector_jobs/${jobId}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) throw await res.text();
+  return await res.json();
+}
+
 export async function getAgentEmbeddings(agentId: number, token: string) {
   const res = await fetch(`${API_URL}/world_embeddings/agents/${agentId}`, {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
@@ -68,7 +81,11 @@ export async function getAgentEmbeddings(agentId: number, token: string) {
   return await res.json();
 }
 
-export async function setAgentEmbeddings(agentId: number, ids: number[], token: string) {
+export async function setAgentEmbeddings(
+  agentId: number,
+  ids: number[],
+  token: string,
+) {
   const res = await fetch(`${API_URL}/world_embeddings/agents/${agentId}`, {
     method: "POST",
     headers: {

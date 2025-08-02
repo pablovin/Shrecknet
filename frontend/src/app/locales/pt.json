@@ -231,6 +231,7 @@
   "bulk_updating": "Aplicando todas as sugestões de atualização. Aguarde...",
   "delete_selected": "Excluir selecionados",
   "all_pages_updated": "Todas as páginas foram atualizadas e criadas!",
+  "embedding_learning": "O agente está lendo as novas páginas. Aguarde até que isso termine antes de iniciar uma nova análise.",
   "update_page": "Atualizar Página",
   "new_page": "Nova Página",
   "action": "Ação",

@@ -232,6 +232,7 @@
   "bulk_updating": "Applying all update suggestions. Please wait...",
   "delete_selected": "Delete Selected",
   "all_pages_updated": "All pages were updated and created!",
+  "embedding_learning": "The agent is reading the new pages. Please wait until this is done before starting a new analysis.",
   "update_page": "Update Page",
   "new_page": "New Page",
   "action": "Action",

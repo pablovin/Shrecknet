@@ -24,6 +24,7 @@ import {
   Layers,
   Timer,
   Bell,
+  Table2,
 } from "lucide-react";
 import SimpleBarChart from "../components/charts/SimpleBarChart";
 import { useLibraryItems } from "../lib/useLibraryItems";
@@ -65,14 +66,17 @@ export default function AdminDashboardPage() {
     }
   }
 
-    const allowed = useRoleRedirect("system admin");
-    if (!allowed) return null;
+  const allowed = useRoleRedirect("system admin");
+  if (!allowed) return null;
 
   // --- Data aggregation for dashboard charts ---
-  const rulebookCounts = libraryItems.reduce<Record<string, number>>((acc, it) => {
-    acc[it.system] = (acc[it.system] || 0) + 1;
-    return acc;
-  }, {});
+  const rulebookCounts = libraryItems.reduce<Record<string, number>>(
+    (acc, it) => {
+      acc[it.system] = (acc[it.system] || 0) + 1;
+      return acc;
+    },
+    {},
+  );
   const libraryData = Object.entries(rulebookCounts)
     .map(([label, value]) => ({ label, value }))
     .sort((a, b) => b.value - a.value);
@@ -82,15 +86,18 @@ export default function AdminDashboardPage() {
     return acc;
   }, {});
   const agentCounts: Record<string, Record<string, number>> = {};
-  agents.forEach(a => {
+  agents.forEach((a) => {
     const w = worldNames[a.world_id] || `World ${a.world_id}`;
     if (!agentCounts[w]) agentCounts[w] = {};
     agentCounts[w][a.task] = (agentCounts[w][a.task] || 0) + 1;
   });
-  const agentWorlds = Object.entries(agentCounts).map(([world, counts]) => ({ world, counts }));
+  const agentWorlds = Object.entries(agentCounts).map(([world, counts]) => ({
+    world,
+    counts,
+  }));
 
   const jobStats = { done: 0, failed: 0, processing: 0 };
-  jobs.forEach(j => {
+  jobs.forEach((j) => {
     if (j.status === "done") jobStats.done += 1;
     else if (j.status === "error") jobStats.failed += 1;
     else jobStats.processing += 1;
@@ -105,7 +112,10 @@ export default function AdminDashboardPage() {
     acc[u.role] = (acc[u.role] || 0) + 1;
     return acc;
   }, {});
-  const userData = Object.entries(roleCounts).map(([label, value]) => ({ label, value }));
+  const userData = Object.entries(roleCounts).map(([label, value]) => ({
+    label,
+    value,
+  }));
 
   return (
     <AuthGuard>
@@ -124,10 +134,16 @@ export default function AdminDashboardPage() {
                 color="from-purple-600 to-fuchsia-500"
                 actions={
                   <>
-                    <button className="btn-primary" onClick={() => setImportModalOpen(true)}>
+                    <button
+                      className="btn-primary"
+                      onClick={() => setImportModalOpen(true)}
+                    >
                       <Upload className="w-4 h-4" /> Import
                     </button>
-                    <button className="btn-outline" onClick={() => setExportModalOpen(true)}>
+                    <button
+                      className="btn-outline"
+                      onClick={() => setExportModalOpen(true)}
+                    >
                       <Download className="w-4 h-4" /> Export
                     </button>
                   </>
@@ -141,10 +157,17 @@ export default function AdminDashboardPage() {
                 color="from-cyan-600 to-blue-500"
                 actions={
                   <>
-                    <button className="btn-outline" disabled={loadingBackup} onClick={handleCreateBackup}>
+                    <button
+                      className="btn-outline"
+                      disabled={loadingBackup}
+                      onClick={handleCreateBackup}
+                    >
                       {loadingBackup ? "Processing..." : "Create Backup"}
                     </button>
-                    <button className="btn-primary" onClick={() => setBackupModalOpen(true)}>
+                    <button
+                      className="btn-primary"
+                      onClick={() => setBackupModalOpen(true)}
+                    >
                       <FileUp className="w-4 h-4" /> Restore
                     </button>
                   </>
@@ -217,12 +240,27 @@ export default function AdminDashboardPage() {
               />
 
               <DashboardCard
+                title="Tables & Sessions"
+                description="Create tables and schedule game sessions."
+                icon={<Table2 className="w-6 h-6" />}
+                color="from-teal-500 to-green-500"
+                actions={
+                  <Link className="btn-primary" href="/tables">
+                    Manage Tables
+                  </Link>
+                }
+              />
+
+              <DashboardCard
                 title="News Board"
                 description="Create announcements for all users."
                 icon={<Bell className="w-6 h-6" />}
                 color="from-amber-500 to-orange-500"
                 actions={
-                  <Link className="btn-primary" href="/system_settings/newsboard">
+                  <Link
+                    className="btn-primary"
+                    href="/system_settings/newsboard"
+                  >
                     Manage News
                   </Link>
                 }
@@ -230,9 +268,20 @@ export default function AdminDashboardPage() {
             </div>
 
             {/* Modals */}
-            <ImportWorldModal open={importModalOpen} onClose={() => setImportModalOpen(false)} onImported={() => setSuccess("World imported!")} />
-            <ExportWorldModal open={exportModalOpen} onClose={() => setExportModalOpen(false)} />
-            <ImportBackupModal open={backupModalOpen} onClose={() => setBackupModalOpen(false)} onImported={() => setSuccess("Backup imported!")} />
+            <ImportWorldModal
+              open={importModalOpen}
+              onClose={() => setImportModalOpen(false)}
+              onImported={() => setSuccess("World imported!")}
+            />
+            <ExportWorldModal
+              open={exportModalOpen}
+              onClose={() => setExportModalOpen(false)}
+            />
+            <ImportBackupModal
+              open={backupModalOpen}
+              onClose={() => setBackupModalOpen(false)}
+              onImported={() => setSuccess("Backup imported!")}
+            />
           </div>
         </div>
       </DashboardLayout>
@@ -251,11 +300,15 @@ function DashboardCard({ title, description, icon, color, actions, extra }) {
 
       {/* Header Row */}
       <div className="relative z-10 flex items-center gap-4 mb-4">
-        <div className={`w-11 h-11 rounded-2xl flex items-center justify-center bg-gradient-to-br ${color} text-white shadow-lg`}>
+        <div
+          className={`w-11 h-11 rounded-2xl flex items-center justify-center bg-gradient-to-br ${color} text-white shadow-lg`}
+        >
           {icon}
         </div>
         <div>
-          <h2 className="text-lg font-serif font-bold text-[var(--primary)] leading-tight">{title}</h2>
+          <h2 className="text-lg font-serif font-bold text-[var(--primary)] leading-tight">
+            {title}
+          </h2>
           <p className="text-xs text-[var(--foreground)]/60">{description}</p>
         </div>
       </div>
@@ -273,7 +326,11 @@ function DashboardCard({ title, description, icon, color, actions, extra }) {
   );
 }
 
-function AgentSummary({ data }: { data: { world: string; counts: Record<string, number> }[] }) {
+function AgentSummary({
+  data,
+}: {
+  data: { world: string; counts: Record<string, number> }[];
+}) {
   const icons: Record<string, JSX.Element> = {
     conversational: <Bot className="w-3 h-3" />,
     "page writer": <BookOpenText className="w-3 h-3" />,
@@ -292,7 +349,9 @@ function AgentSummary({ data }: { data: { world: string; counts: Record<string, 
     <div className="space-y-2 text-sm bg-[var(--surface-variant)]/50 p-3 rounded-xl border border-[var(--border)]">
       {data.map(({ world, counts }) => (
         <div key={world} className="flex flex-col">
-          <span className="font-semibold text-[var(--primary)] font-serif">{world}</span>
+          <span className="font-semibold text-[var(--primary)] font-serif">
+            {world}
+          </span>
           <div className="flex gap-2 flex-wrap ml-1 mt-2">
             {Object.entries(counts).map(([type, count]) => {
               const icon = icons[type];
@@ -303,7 +362,10 @@ function AgentSummary({ data }: { data: { world: string; counts: Record<string, 
                   className="flex items-center gap-1 px-2 py-1 text-xs rounded-full bg-[var(--card-bg)] border border-[var(--border)] shadow-sm"
                   style={{ color }}
                 >
-                  {icon ?? <span className="w-3 h-3 rounded-full bg-[var(--foreground)]/40 inline-block" />} {count}
+                  {icon ?? (
+                    <span className="w-3 h-3 rounded-full bg-[var(--foreground)]/40 inline-block" />
+                  )}{" "}
+                  {count}
                 </span>
               );
             })}
@@ -320,7 +382,7 @@ function EmbeddingSummary({ embeddings }: { embeddings: any[] }) {
       {embeddings.length === 0 && (
         <div className="text-xs text-[var(--foreground)]/60">No embeddings</div>
       )}
-      {embeddings.map(e => (
+      {embeddings.map((e) => (
         <div key={e.id} className="flex flex-col">
           <span className="font-semibold text-[var(--primary)] font-serif">
             {e.name}

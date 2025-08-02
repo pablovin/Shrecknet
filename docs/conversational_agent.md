@@ -1,27 +1,28 @@
 # Conversational Agent Flow
 
-This diagram outlines the flow of a chat request through the backend conversational agent, showing which functions and classes are invoked.
+This diagram outlines the flow of a chat request through the backend conversational agent and highlights the primary classes involved.
 
 ```mermaid
 sequenceDiagram
     participant User
     participant API as FastAPI /agents/{id}/chat
-    participant Chat as chat_with_agent
-    participant Workers as agentic_worker_* modules
-    participant LLM as ChatOpenAI
+    participant Chat as crud_agent_conversational.chat_with_agent
+    participant Shrecknet as agentic_worker_shrecknet
+    participant LLMWorker as agentic_worker_llm
+    participant LLM as LangGraph\n(ChatPromptTemplate → ChatOpenAI)
     User->>API: POST message
     API->>Chat: chat_with_agent(messages)
-    Chat->>Workers: decompose_question(query)
-    Workers-->>Chat: sub-questions
-    Chat->>Workers: query_world_embeddings(sub-questions)
-    Workers-->>Chat: annotated results
-    Chat->>Workers: aggregate_prune_and_dedup(results)
-    Workers-->>Chat: context & sources
+    Chat->>Shrecknet: decompose_question(query)
+    Shrecknet-->>Chat: sub-questions
+    Chat->>Shrecknet: query_world_embeddings(sub-questions)
+    Shrecknet-->>Chat: annotated results
+    Chat->>LLMWorker: aggregate_prune_and_dedup(results)
+    LLMWorker-->>Chat: context & sources
     Chat->>Chat: ensure_personality_prompts()
-    Chat->>LLM: LangGraph Graph\n(ChatPromptTemplate + ChatOpenAI)
+    Chat->>LLM: invoke graph
     LLM-->>Chat: answer
-    Chat->>Workers: validate_response(query, answer)
-    Workers-->>Chat: pass/fail
+    Chat->>LLMWorker: validate_response(query, answer)
+    LLMWorker-->>Chat: pass/fail
     alt needs retry
         Chat->>LLM: fallback prompt
         LLM-->>Chat: revised answer
@@ -30,6 +31,6 @@ sequenceDiagram
     API-->>User: JSON response
 ```
 
-* **chat_with_agent** orchestrates the conversation pipeline.
-* **agentic_worker_llm** and **agentic_worker_shrecknet** modules provide `decompose_question`, `query_world_embeddings`, `aggregate_prune_and_dedup`, and `validate_response` helpers.
-* **ChatPromptTemplate**, **ChatOpenAI**, and **LangGraph Graph** compose the LLM call.
+* **crud_agent_conversational.chat_with_agent** orchestrates the conversation pipeline.
+* **agentic_worker_shrecknet** resolves context from the world and **agentic_worker_llm** refines results and validates the model output.
+* **ChatPromptTemplate**, **ChatOpenAI**, and **LangGraph** compose the LLM call.

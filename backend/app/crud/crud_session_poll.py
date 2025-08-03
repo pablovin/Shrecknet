@@ -7,12 +7,15 @@ from app.models.model_session import (
     SessionPollOption,
     SessionPollVote,
 )
+from app.models.model_table import TableMember, Table
 from app.schemas.schema_session_poll import (
     SessionPollCreate,
     SessionPollVoteCreate,
     SessionPollRead,
     SessionPollOptionRead,
 )
+from app.crud.crud_news import create_news
+from app.schemas.schema_news import NewsCreate
 
 
 async def create_poll(
@@ -27,6 +30,24 @@ async def create_poll(
         session.add(SessionPollOption(poll_id=poll.id, proposed_time=dt))
     await session.commit()
     await session.refresh(poll)
+    sess = await session.get(Session, session_id)
+    table = await session.get(Table, sess.table_id) if sess else None
+    if sess and table:
+        result = await session.execute(
+            select(TableMember.user_id).where(TableMember.table_id == table.id)
+        )
+        member_ids = result.scalars().all()
+        for uid in member_ids:
+            news = NewsCreate(
+                title="Poll Created",
+                type="gaming_session",
+                description=(
+                    f"Poll created for session '{sess.name}' in table '{table.name}'. "
+                    f"Please vote! View: /tables/{table.id}"
+                ),
+                user_id=uid,
+            )
+            await create_news(session, news)
     return poll
 
 

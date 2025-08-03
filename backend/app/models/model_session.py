@@ -7,7 +7,7 @@ class Session(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     table_id: int = Field(foreign_key="table.id")
     name: str
-    scheduled_time: datetime
+    scheduled_time: Optional[datetime] = Field(default=None, nullable=True)
     summary: Optional[str] = None
     location: Optional[str] = None
     timezone: str = Field(default="UTC")

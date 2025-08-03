@@ -6,7 +6,7 @@ import { useSessions } from "@/app/lib/useSessions";
 interface SessionItem {
   id: number;
   name: string;
-  scheduled_time: string;
+  scheduled_time: string | null;
   location?: string | null;
   summary?: string | null;
 }
@@ -30,7 +30,9 @@ export default function UserTableSessionsPage() {
                 <div>
                   <div className="font-semibold">{s.name}</div>
                   <div className="text-sm">
-                    {new Date(s.scheduled_time).toLocaleString()}
+                    {s.scheduled_time
+                      ? new Date(s.scheduled_time).toLocaleString()
+                      : "Not scheduled"}
                   </div>
                 </div>
               </div>

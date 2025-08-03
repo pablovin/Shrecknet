@@ -12,6 +12,8 @@ import { useUsers } from "@/app/lib/useUsers";
 import { M3FloatingInput } from "../components/template/M3FloatingInput";
 import Link from "next/link";
 import { Users2, Book, Calendar, ArrowRight, Edit, Trash2 } from "lucide-react";
+import { ConfirmModal } from "@/app/components/template/ConfirmModal";
+import { useTranslation } from "@/app/hooks/useTranslation";
 
 interface TableMember {
   id: number;
@@ -35,12 +37,15 @@ export default function TablesPage() {
   const { worlds } = useWorlds();
   const { users } = useUsers();
   const { token } = useAuth();
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<TableItem | null>(null);
   const [name, setName] = useState("");
   const [worldId, setWorldId] = useState("");
   const [logo, setLogo] = useState<File | null>(null);
   const [members, setMembers] = useState<string[]>([]);
+  const [deleteId, setDeleteId] = useState<number | null>(null);
+  const [deleting, setDeleting] = useState(false);
   async function handleSave() {
     if (editing) {
       await updateTable(
@@ -88,8 +93,12 @@ export default function TablesPage() {
     setOpen(true);
   }
 
-  async function handleDelete(id: number) {
-    await deleteTable(id, token);
+  async function handleDelete() {
+    if (deleteId === null) return;
+    setDeleting(true);
+    await deleteTable(deleteId, token);
+    setDeleting(false);
+    setDeleteId(null);
     mutate();
   }
 
@@ -118,10 +127,10 @@ export default function TablesPage() {
 
         <ul className="grid gap-7 sm:grid-cols-1">
           {tables.map((t: TableItem) => (
-              <li
-                key={t.id}
-                className="relative flex flex-col min-h-[154px] rounded-3xl border border-[var(--primary)]/15 bg-white shadow-lg overflow-hidden group hover:shadow-2xl hover:border-[var(--primary-dark)] transition"
-              >
+            <li
+              key={t.id}
+              className="relative flex flex-col min-h-[154px] rounded-3xl border border-[var(--primary)]/15 bg-white shadow-lg overflow-hidden group hover:shadow-2xl hover:border-[var(--primary-dark)] transition"
+            >
               <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition">
                 <button
                   onClick={() => startEdit(t)}
@@ -130,7 +139,7 @@ export default function TablesPage() {
                   <Edit className="w-4 h-4 text-[var(--primary)]" />
                 </button>
                 <button
-                  onClick={() => handleDelete(t.id)}
+                  onClick={() => setDeleteId(t.id)}
                   className="p-1 rounded-full bg-white/80 hover:bg-white"
                 >
                   <Trash2 className="w-4 h-4 text-[var(--primary)]" />
@@ -303,6 +312,14 @@ export default function TablesPage() {
           </div>
         )}
       </div>
+      <ConfirmModal
+        open={deleteId !== null}
+        title={t("delete_table")}
+        message={t("confirm_delete_table")}
+        onConfirm={handleDelete}
+        onCancel={() => setDeleteId(null)}
+        loading={deleting}
+      />
     </DashboardLayout>
   );
 }

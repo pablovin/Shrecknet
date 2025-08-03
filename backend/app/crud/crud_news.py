@@ -1,21 +1,32 @@
 from typing import List
-from sqlalchemy import select
+from sqlalchemy import select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.models.model_news import News, NewsView
+from app.models.model_news import News, NewsView, NewsTarget
 from app.schemas.schema_news import NewsCreate, NewsRead
 
 
 async def create_news(session: AsyncSession, news_in: NewsCreate) -> News:
-    news = News(**news_in.model_dump())
+    news_data = news_in.model_dump(exclude={"user_ids"})
+    news = News(**news_data)
     session.add(news)
     await session.commit()
     await session.refresh(news)
+
+    if news_in.user_ids:
+        targets = [NewsTarget(news_id=news.id, user_id=uid) for uid in news_in.user_ids]
+        session.add_all(targets)
+        await session.commit()
+
     return news
 
 
 async def get_news_for_user(session: AsyncSession, user_id: int) -> List[NewsRead]:
+    targeted_subq = select(NewsTarget.news_id).where(NewsTarget.user_id == user_id)
+    no_target_exists = (
+        ~select(NewsTarget.id).where(NewsTarget.news_id == News.id).exists()
+    )
     result = await session.execute(
-        select(News).where((News.user_id == None) | (News.user_id == user_id))
+        select(News).where(or_(News.id.in_(targeted_subq), no_target_exists))
     )
     news_items = result.scalars().all()
     seen_ids_result = await session.execute(
@@ -28,7 +39,6 @@ async def get_news_for_user(session: AsyncSession, user_id: int) -> List[NewsRea
             title=n.title,
             type=n.type,
             description=n.description,
-            user_id=n.user_id,
             created_at=n.created_at,
             seen=n.id in seen_ids,
         )

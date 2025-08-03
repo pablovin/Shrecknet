@@ -36,15 +36,15 @@ async def create_table(
         )
     await session.commit()
 
-    for uid in member_ids:
-        if uid != creator_id:
-            news = NewsCreate(
-                title="Added to Table",
-                type="gaming_session",
-                description=f"You were added to table '{table.name}'. View: /tables/{table.id}",
-                user_id=uid,
-            )
-            await create_news(session, news)
+    target_ids = [uid for uid in member_ids if uid != creator_id]
+    if target_ids:
+        news = NewsCreate(
+            title="Added to Table",
+            type="gaming_session",
+            description=f"You were added to table '{table.name}'. View: /tables/{table.id}",
+            user_ids=target_ids,
+        )
+        await create_news(session, news)
     return table
 
 
@@ -93,12 +93,12 @@ async def update_table(
     await session.commit()
     await session.refresh(table)
 
-    for uid in added_ids:
+    if added_ids:
         news = NewsCreate(
             title="Added to Table",
             type="gaming_session",
             description=f"You were added to table '{table.name}'. View: /tables/{table.id}",
-            user_id=uid,
+            user_ids=list(added_ids),
         )
         await create_news(session, news)
     return table

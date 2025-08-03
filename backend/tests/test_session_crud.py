@@ -14,6 +14,7 @@ WORLD_BUILDER = {
 async def test_update_and_delete_session(async_client):
     resp = await async_client.post("/user/", json=WORLD_BUILDER)
     assert resp.status_code == 200
+    builder_id = resp.json()["id"]
     login = await async_client.post(
         "/user/login",
         data={
@@ -31,7 +32,7 @@ async def test_update_and_delete_session(async_client):
 
     resp = await async_client.post(
         "/tables/",
-        json={"world_id": world_id, "name": "Party", "member_ids": []},
+        json={"world_id": world_id, "name": "Party", "member_ids": [builder_id]},
         headers=headers,
     )
     table_id = resp.json()["id"]
@@ -43,6 +44,7 @@ async def test_update_and_delete_session(async_client):
         "location": "",
         "table_id": table_id,
         "timezone": "UTC",
+        # Leave attendee_ids empty so table members are automatically added
         "attendee_ids": [],
         "page_ids": [],
     }

@@ -33,3 +33,14 @@ export async function updateTable(id: number, data: unknown, token: string) {
   if (!res.ok) throw await res.json();
   return await res.json();
 }
+
+export async function deleteTable(id: number, token: string) {
+  const res = await fetch(`${API_URL}/tables/${id}`, {
+    method: "DELETE",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+  if (!res.ok) throw await res.json();
+  return await res.json();
+}

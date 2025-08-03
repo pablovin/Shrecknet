@@ -16,7 +16,12 @@ from app.schemas.schema_table import (
     TableRead,
     TableUpdate,
 )
-from app.crud.crud_table import create_table, get_tables_for_user, update_table
+from app.crud.crud_table import (
+    create_table,
+    get_tables_for_user,
+    update_table,
+    delete_table,
+)
 
 router = APIRouter(
     prefix="/tables", tags=["tables"], dependencies=[Depends(get_current_user)]
@@ -95,3 +100,13 @@ async def update_table_endpoint(
     user: User = Depends(require_role(UserRole.world_builder)),
 ):
     return await update_table(session, table_id, table)
+
+
+@router.delete("/{table_id}")
+async def delete_table_endpoint(
+    table_id: int,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(require_role(UserRole.world_builder)),
+):
+    await delete_table(session, table_id)
+    return {"ok": True}

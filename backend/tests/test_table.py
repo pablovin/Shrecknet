@@ -11,7 +11,7 @@ WORLD_BUILDER = {
 
 
 @pytest.mark.anyio
-async def test_delete_table_removes_sessions(async_client):
+async def test_delete_table_removes_sessions_and_polls(async_client):
     resp = await async_client.post("/user/", json=WORLD_BUILDER)
     assert resp.status_code == 200, resp.text
     login = await async_client.post(
@@ -51,6 +51,17 @@ async def test_delete_table_removes_sessions(async_client):
         f"/tables/{table_id}/sessions", json=sess_payload, headers=headers
     )
     assert resp.status_code == 200, resp.text
+    session_id = resp.json()["id"]
+
+    poll_payload = {
+        "proposed_times": [datetime.now(timezone.utc).isoformat()],
+    }
+    resp = await async_client.post(
+        f"/tables/{table_id}/sessions/{session_id}/poll",
+        json=poll_payload,
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
 
     resp = await async_client.get(f"/tables/{table_id}/sessions", headers=headers)
     assert resp.status_code == 200
@@ -63,6 +74,75 @@ async def test_delete_table_removes_sessions(async_client):
     resp = await async_client.get(f"/tables/{table_id}/sessions", headers=headers)
     assert resp.status_code == 200
     assert resp.json() == []
+
+    resp = await async_client.get(
+        f"/tables/{table_id}/sessions/{session_id}/poll", headers=headers
+    )
+    assert resp.status_code == 404
+
+
+@pytest.mark.anyio
+async def test_update_table_members(async_client):
+    gm_payload = {
+        "nickname": "gm_member",
+        "email": "gm_member@example.com",
+        "password": "secret123",
+        "role": "world builder",
+        "image_url": "no image",
+    }
+    resp = await async_client.post("/user/", json=gm_payload)
+    assert resp.status_code == 200, resp.text
+    gm_id = resp.json()["id"]
+    login = await async_client.post(
+        "/user/login",
+        data={"username": gm_payload["email"], "password": gm_payload["password"]},
+    )
+    token = login.json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    player1 = {
+        "nickname": "player1",
+        "email": "player1@example.com",
+        "password": "secret123",
+        "role": "world builder",
+        "image_url": "no image",
+    }
+    resp = await async_client.post("/user/", json=player1)
+    player1_id = resp.json()["id"]
+
+    player2 = {
+        "nickname": "player2",
+        "email": "player2@example.com",
+        "password": "secret123",
+        "role": "world builder",
+        "image_url": "no image",
+    }
+    resp = await async_client.post("/user/", json=player2)
+    player2_id = resp.json()["id"]
+
+    gw_payload = {"name": "World", "system": "dnd", "description": "", "logo": ""}
+    resp = await async_client.post("/gameworlds/", json=gw_payload, headers=headers)
+    world_id = resp.json()["id"]
+
+    resp = await async_client.post(
+        "/tables/",
+        json={"world_id": world_id, "name": "Party", "member_ids": [player1_id]},
+        headers=headers,
+    )
+    table_id = resp.json()["id"]
+
+    resp = await async_client.patch(
+        f"/tables/{table_id}",
+        json={"member_ids": [gm_id, player2_id]},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+
+    resp = await async_client.get("/tables/", headers=headers)
+    members = {m["id"] for m in resp.json()[0]["members"]}
+    assert gm_id in members
+    assert player2_id in members
+    assert player1_id not in members
 
 
 @pytest.mark.anyio

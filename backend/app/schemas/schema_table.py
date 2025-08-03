@@ -25,6 +25,7 @@ class TableUpdate(SQLModel):
     world_id: Optional[int] = None
     name: Optional[str] = None
     crest_url: Optional[str] = None
+    member_ids: Optional[List[int]] = None
 
 
 class TableMemberRead(SQLModel):

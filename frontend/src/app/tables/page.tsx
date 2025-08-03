@@ -43,7 +43,15 @@ export default function TablesPage() {
   const [members, setMembers] = useState<string[]>([]);
   async function handleSave() {
     if (editing) {
-      await updateTable(editing.id, { world_id: Number(worldId), name }, token);
+      await updateTable(
+        editing.id,
+        {
+          world_id: Number(worldId),
+          name,
+          member_ids: members.map((m) => Number(m)),
+        },
+        token,
+      );
       if (logo) {
         const url = await uploadTableLogo(logo, editing.id);
         await updateTable(editing.id, { crest_url: url }, token);
@@ -76,7 +84,7 @@ export default function TablesPage() {
     setName(t.name);
     setWorldId(String(t.world_id));
     setLogo(null);
-    setMembers([]);
+    setMembers(t.members.map((m) => String(m.id)));
     setOpen(true);
   }
 
@@ -262,26 +270,24 @@ export default function TablesPage() {
                   className="w-full"
                 />
               </div>
-              {!editing && (
-                <div className="mt-3">
-                  <PageRefSelectorMD3
-                    options={users.map(
-                      (u: {
-                        id: number;
-                        nickname: string;
-                        image_url?: string | null;
-                      }) => ({
-                        id: u.id,
-                        name: u.nickname,
-                        logo: u.image_url,
-                      }),
-                    )}
-                    value={members}
-                    onChange={setMembers}
-                    label="Party Members"
-                  />
-                </div>
-              )}
+              <div className="mt-3">
+                <PageRefSelectorMD3
+                  options={users.map(
+                    (u: {
+                      id: number;
+                      nickname: string;
+                      image_url?: string | null;
+                    }) => ({
+                      id: u.id,
+                      name: u.nickname,
+                      logo: u.image_url,
+                    }),
+                  )}
+                  value={members}
+                  onChange={setMembers}
+                  label="Party Members"
+                />
+              </div>
               <div className="flex justify-end gap-2 mt-5">
                 <button
                   onClick={() => setOpen(false)}

@@ -51,10 +51,32 @@ async def update_table(
         raise ValueError("Table not found")
 
     update_data = table_in.model_dump(exclude_unset=True)
+    member_ids = update_data.pop("member_ids", None)
     for field, value in update_data.items():
         setattr(table, field, value)
 
     session.add(table)
+
+    if member_ids is not None:
+        existing_members = (
+            (
+                await session.execute(
+                    select(TableMember).where(TableMember.table_id == table_id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        existing_ids = {m.user_id for m in existing_members}
+        new_ids = set(member_ids)
+
+        for uid in new_ids - existing_ids:
+            session.add(TableMember(table_id=table_id, user_id=uid, is_gm=False))
+
+        for member in existing_members:
+            if member.user_id not in new_ids:
+                await session.delete(member)
+
     await session.commit()
     await session.refresh(table)
     return table

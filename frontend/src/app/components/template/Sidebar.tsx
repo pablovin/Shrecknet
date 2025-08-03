@@ -16,34 +16,53 @@ import SettingsRoundedIcon from "@mui/icons-material/SettingsRounded";
 import HomeIcon from "@mui/icons-material/HomeRounded";
 import PersonEditAlt1RoundedIcon from "@mui/icons-material/EditRounded";
 import NotificationsIcon from "@mui/icons-material/NotificationsRounded";
-import { Bot, BookOpenText, FileText, PenLine, Sparkles, ScrollText } from "lucide-react";
+import {
+  Bot,
+  BookOpenText,
+  FileText,
+  PenLine,
+  Sparkles,
+  ScrollText,
+} from "lucide-react";
 import NewsDialog from "../news/NewsDialog";
 import { getNews, markNewsSeen } from "../../lib/newsAPI";
 
-export default function Sidebar({ mobileOpen = false, setMobileOpen = () => {} }) {
+interface NewsItem {
+  id: number;
+  seen: boolean;
+  [key: string]: unknown;
+}
+
+export default function Sidebar({
+  mobileOpen = false,
+  setMobileOpen = () => {},
+}) {
   const { user, token, isLoading: authLoading, refreshUser } = useAuth();
   const { t } = useTranslation();
   const [profileModalOpen, setProfileModalOpen] = useState(false);
   const [profileSuccess, setProfileSuccess] = useState("");
   const [profileError, setProfileError] = useState("");
   const [newsOpen, setNewsOpen] = useState(false);
-  const [newsItems, setNewsItems] = useState([]);
+  const [newsItems, setNewsItems] = useState<NewsItem[]>([]);
 
   const pathname = usePathname();
 
   useEffect(() => {
     if (!token) return;
     getNews(token)
-      .then((items) => {
+      .then((items: NewsItem[]) => {
         setNewsItems(items);
-        const unseen = items.filter((n: any) => !n.seen);
+        const unseen = items.filter((n) => !n.seen);
         const today = new Date().toDateString();
-        const last = typeof window !== "undefined" ? localStorage.getItem("news_last_seen") : null;
+        const last =
+          typeof window !== "undefined"
+            ? localStorage.getItem("news_last_seen")
+            : null;
         if (last !== today && unseen.length > 0) {
           setNewsOpen(true);
           localStorage.setItem("news_last_seen", today);
-          unseen.forEach((n: any) => markNewsSeen(n.id, token));
-          setNewsItems(items.map((n: any) => ({ ...n, seen: true })));
+          unseen.forEach((n) => markNewsSeen(n.id, token));
+          setNewsItems(items.map((n) => ({ ...n, seen: true })));
         }
       })
       .catch(() => {});
@@ -51,10 +70,10 @@ export default function Sidebar({ mobileOpen = false, setMobileOpen = () => {} }
 
   function handleOpenNews() {
     setNewsOpen(true);
-    const unseen = newsItems.filter((n: any) => !n.seen);
+    const unseen = newsItems.filter((n) => !n.seen);
     if (unseen.length > 0) {
-      unseen.forEach((n: any) => markNewsSeen(n.id, token));
-      setNewsItems(newsItems.map((n: any) => ({ ...n, seen: true })));
+      unseen.forEach((n) => markNewsSeen(n.id, token));
+      setNewsItems(newsItems.map((n) => ({ ...n, seen: true })));
       if (typeof window !== "undefined") {
         localStorage.setItem("news_last_seen", new Date().toDateString());
       }
@@ -95,7 +114,7 @@ export default function Sidebar({ mobileOpen = false, setMobileOpen = () => {} }
       external: false,
       show: true,
     },
-    
+
     {
       label: t("library"),
       icon: <BookOpenText fontSize="medium" />,
@@ -113,7 +132,7 @@ export default function Sidebar({ mobileOpen = false, setMobileOpen = () => {} }
     {
       label: t("sessions"),
       icon: <ScrollText fontSize="medium" />,
-      href: "/tables",
+      href: "/user_table",
       external: false,
       show: true,
     },
@@ -166,9 +185,6 @@ export default function Sidebar({ mobileOpen = false, setMobileOpen = () => {} }
       show: user && ["world builder", "system admin"].includes(user.role),
     },
 
-
- 
-  
     {
       label: t("system_settings"),
       icon: <SettingsRoundedIcon fontSize="medium" />,
@@ -192,7 +208,9 @@ export default function Sidebar({ mobileOpen = false, setMobileOpen = () => {} }
       {/* Mobile overlay */}
       <div
         className={`fixed inset-0 z-40 bg-black/50 backdrop-blur-sm transition-opacity duration-300 md:hidden ${
-          mobileOpen ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
+          mobileOpen
+            ? "opacity-100 pointer-events-auto"
+            : "opacity-0 pointer-events-none"
         }`}
         onClick={() => setMobileOpen(false)}
         aria-hidden="true"
@@ -213,16 +231,14 @@ export default function Sidebar({ mobileOpen = false, setMobileOpen = () => {} }
       >
         {/* Logo only, fills width, with shadow/contrast */}
         <div className="flex items-center justify-center h-24 bg-transparent p-3 border-b border-[var(--border)]">
-          
-            <Image
-              src="/images/logo_dark.png"
-              alt="Shrecknet logo"
-              width={400}
-              height={400}
-              className="w-full h-auto max-w-[300px] object-contain drop-shadow-lg"
-              priority
-            />
-          
+          <Image
+            src="/images/logo_dark.png"
+            alt="Shrecknet logo"
+            width={400}
+            height={400}
+            className="w-full h-auto max-w-[300px] object-contain drop-shadow-lg"
+            priority
+          />
         </div>
 
         <div className="flex justify-end px-4 mt-2">
@@ -232,7 +248,7 @@ export default function Sidebar({ mobileOpen = false, setMobileOpen = () => {} }
             aria-label={t("news")}
           >
             <NotificationsIcon />
-            {newsItems.some((n: any) => !n.seen) && (
+            {newsItems.some((n) => !n.seen) && (
               <span className="absolute -top-1 -right-1 w-2 h-2 bg-red-600 rounded-full" />
             )}
           </button>
@@ -240,14 +256,16 @@ export default function Sidebar({ mobileOpen = false, setMobileOpen = () => {} }
 
         {/* Menu Items */}
         <nav className="flex-1 flex flex-col gap-1 py-6">
-          {menu.filter((m) => m.show).map((m) => (
-            m.external ? (
-              <a
-                key={m.label}
-                href={m.href}
-                target="_blank"
-                rel="noopener noreferrer"
-                className={`
+          {menu
+            .filter((m) => m.show)
+            .map((m) =>
+              m.external ? (
+                <a
+                  key={m.label}
+                  href={m.href}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className={`
                   flex items-center gap-3 px-5 py-3
                   rounded-md font-semibold
                   text-base text-[var(--foreground)]
@@ -255,25 +273,23 @@ export default function Sidebar({ mobileOpen = false, setMobileOpen = () => {} }
                   transition
                   border-r-4 border-transparent
                 `}
-                style={{ outline: "none" }}
-              >
-                <span className="text-2xl">{m.icon}</span>
-                <span className="flex items-center gap-1">
-                  {m.label}
-                  {m.ai && (
-                    <span
-                      className="ml-1 text-[10px] font-bold border rounded px-1 border-[var(--primary)] text-[var(--primary)]"
-                    >
-                      AI
-                    </span>
-                  )}
-                </span>
-              </a>
-            ) : (
-              <Link
-                key={m.label}
-                href={m.href}
-                className={`
+                  style={{ outline: "none" }}
+                >
+                  <span className="text-2xl">{m.icon}</span>
+                  <span className="flex items-center gap-1">
+                    {m.label}
+                    {m.ai && (
+                      <span className="ml-1 text-[10px] font-bold border rounded px-1 border-[var(--primary)] text-[var(--primary)]">
+                        AI
+                      </span>
+                    )}
+                  </span>
+                </a>
+              ) : (
+                <Link
+                  key={m.label}
+                  href={m.href}
+                  className={`
                   flex items-center gap-3 px-5 py-3
                   rounded-md font-semibold
                   text-base text-[var(--foreground)]
@@ -285,22 +301,20 @@ export default function Sidebar({ mobileOpen = false, setMobileOpen = () => {} }
                       : "border-transparent"
                   }
                 `}
-                style={{ outline: "none" }}
-              >
-                <span className="text-2xl">{m.icon}</span>
-                <span className="flex items-center gap-1">
-                  {m.label}
-                  {m.ai && (
-                    <span
-                      className="ml-1 text-[10px] font-bold border rounded px-1 border-[var(--primary)] text-[var(--primary)]"
-                    >
-                      AI
-                    </span>
-                  )}
-                </span>
-              </Link>
-            )
-          ))}
+                  style={{ outline: "none" }}
+                >
+                  <span className="text-2xl">{m.icon}</span>
+                  <span className="flex items-center gap-1">
+                    {m.label}
+                    {m.ai && (
+                      <span className="ml-1 text-[10px] font-bold border rounded px-1 border-[var(--primary)] text-[var(--primary)]">
+                        AI
+                      </span>
+                    )}
+                  </span>
+                </Link>
+              ),
+            )}
         </nav>
 
         {/* User Info at the bottom */}
@@ -347,7 +361,11 @@ export default function Sidebar({ mobileOpen = false, setMobileOpen = () => {} }
           />
         )}
       </aside>
-      <NewsDialog open={newsOpen} onClose={() => setNewsOpen(false)} news={newsItems} />
+      <NewsDialog
+        open={newsOpen}
+        onClose={() => setNewsOpen(false)}
+        news={newsItems}
+      />
     </>
   );
 }

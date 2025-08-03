@@ -1,10 +1,9 @@
 "use client";
+import { useState } from "react";
 import AuthGuard from "../components/auth/AuthGuard";
 import DashboardLayout from "../components/DashboardLayout";
 import { useAuth } from "../components/auth/AuthProvider";
-import { useState } from "react";
 import { useTranslation } from "@/app/hooks/useTranslation";
-import { hasRole } from "../lib/roles";
 import useRoleRedirect from "../hooks/useRoleRedirect";
 import ImportWorldModal from "../components/importexport/ImportWorldModal";
 import ExportWorldModal from "../components/importexport/ExportWorldModal";
@@ -12,19 +11,7 @@ import ImportBackupModal from "../components/importexport/ImportBackupModal";
 import { createBackup } from "../lib/backupAPI";
 import { downloadBlob } from "../lib/importExportAPI";
 import {
-  Upload,
-  Download,
-  FileDown,
-  FileUp,
-  BookOpenText,
-  Bot,
-  History,
-  Users2,
-  Book,
-  Layers,
-  Timer,
-  Bell,
-  Table2,
+  Upload, Download, FileDown, FileUp, BookOpenText, Bot, History, Users2, Book, Layers, Timer, Bell, Table2, Settings,
 } from "lucide-react";
 import SimpleBarChart from "../components/charts/SimpleBarChart";
 import { useLibraryItems } from "../lib/useLibraryItems";
@@ -35,6 +22,28 @@ import { useUsers } from "../lib/useUsers";
 import { useWorldEmbeddings } from "../lib/useWorldEmbeddings";
 import Link from "next/link";
 
+// --- Tab groups ---
+const TABS = [
+  {
+    key: "admin",
+    label: "Admin Apps",
+    icon: <Table2 className="w-5 h-5" />,
+    features: ["tables", "news"],
+  },
+  {
+    key: "content",
+    label: "Content Management",
+    icon: <Layers className="w-5 h-5" />,
+    features: ["embeddings", "library", "agents"],
+  },
+  {
+    key: "maintenance",
+    label: "Shrecknet Maintenance",
+    icon: <Settings className="w-5 h-5" />,
+    features: ["users", "queue", "backup", "import"],
+  },
+];
+
 export default function AdminDashboardPage() {
   const { user, token } = useAuth();
   const { t } = useTranslation();
@@ -43,6 +52,7 @@ export default function AdminDashboardPage() {
   const [backupModalOpen, setBackupModalOpen] = useState(false);
   const [loadingBackup, setLoadingBackup] = useState(false);
   const [success, setSuccess] = useState("");
+  const [activeTab, setActiveTab] = useState(TABS[0].key);
 
   const { items: libraryItems } = useLibraryItems();
   const { worlds } = useWorlds();
@@ -117,177 +127,218 @@ export default function AdminDashboardPage() {
     value,
   }));
 
+  // --- Feature cards ---
+  const FEATURE_CARDS: Record<string, JSX.Element> = {
+    import: (
+      <DashboardCard
+        title="Import & Export Worlds"
+        description="Transfer your worlds between servers or creators."
+        icon={<Upload className="w-6 h-6" />}
+        color="from-purple-600 to-fuchsia-500"
+        actions={
+          <>
+            <button className="btn-primary" onClick={() => setImportModalOpen(true)}>
+              <Upload className="w-4 h-4" /> Import
+            </button>
+            <button className="btn-outline" onClick={() => setExportModalOpen(true)}>
+              <Download className="w-4 h-4" /> Export
+            </button>
+          </>
+        }
+      />
+    ),
+    backup: (
+      <DashboardCard
+        title="Backup & Restore"
+        description="Safeguard your progress. Recover from magical mishaps."
+        icon={<FileDown className="w-6 h-6" />}
+        color="from-cyan-600 to-blue-500"
+        actions={
+          <>
+            <button
+              className="btn-outline"
+              disabled={loadingBackup}
+              onClick={handleCreateBackup}
+            >
+              {loadingBackup ? "Processing..." : "Create Backup"}
+            </button>
+            <button
+              className="btn-primary"
+              onClick={() => setBackupModalOpen(true)}
+            >
+              <FileUp className="w-4 h-4" /> Restore
+            </button>
+          </>
+        }
+      />
+    ),
+    library: (
+      <DashboardCard
+        title="Library Vault"
+        description="Manage your tomes, rulebooks, and arcane references."
+        icon={<BookOpenText className="w-6 h-6" />}
+        color="from-orange-500 to-amber-400"
+        extra={<SimpleBarChart data={libraryData} />}
+        actions={
+          <Link className="btn-primary" href="/library_admin">
+            Enter Library
+          </Link>
+        }
+      />
+    ),
+    embeddings: (
+      <DashboardCard
+        title="World Embeddings"
+        description="Manage vector stores for your worlds."
+        icon={<Layers className="w-6 h-6" />}
+        color="from-violet-600 to-purple-500"
+        extra={<EmbeddingSummary embeddings={embeddings} />}
+        actions={
+          <Link className="btn-primary" href="/world_embeddings">
+            Manage Embeddings
+          </Link>
+        }
+      />
+    ),
+    agents: (
+      <DashboardCard
+        title="Agent Interface"
+        description="Control your world’s autonomous NPC advisors and guardians."
+        icon={<Bot className="w-6 h-6" />}
+        color="from-emerald-600 to-lime-500"
+        extra={<AgentSummary data={agentWorlds} />}
+        actions={
+          <Link className="btn-primary" href="/agents_settings">
+            Configure Agents
+          </Link>
+        }
+      />
+    ),
+    queue: (
+      <DashboardCard
+        title="Chrono Queue"
+        description="Review and manage long-running background operations."
+        icon={<History className="w-6 h-6" />}
+        color="from-sky-600 to-indigo-500"
+        extra={<SimpleBarChart data={jobData} />}
+        actions={
+          <Link className="btn-primary" href="/background_jobs">
+            View Jobs
+          </Link>
+        }
+      />
+    ),
+    users: (
+      <DashboardCard
+        title="User Sanctum"
+        description="Manage users, roles and permissions across your dominion."
+        icon={<Users2 className="w-6 h-6" />}
+        color="from-pink-500 to-rose-500"
+        extra={<SimpleBarChart data={userData} />}
+        actions={
+          <Link className="btn-primary" href="/user_management">
+            Manage Users
+          </Link>
+        }
+      />
+    ),
+    tables: (
+      <DashboardCard
+        title="Tables & Sessions"
+        description="Create tables and schedule game sessions."
+        icon={<Table2 className="w-6 h-6" />}
+        color="from-teal-500 to-green-500"
+        actions={
+          <Link className="btn-primary" href="/tables">
+            Manage Tables
+          </Link>
+        }
+      />
+    ),
+    news: (
+      <DashboardCard
+        title="News Board"
+        description="Create announcements for all users."
+        icon={<Bell className="w-6 h-6" />}
+        color="from-amber-500 to-orange-500"
+        actions={
+          <Link className="btn-primary" href="/system_settings/newsboard">
+            Manage News
+          </Link>
+        }
+      />
+    ),
+  };
+
+  // Active tab group
+  const activeTabObj = TABS.find((g) => g.key === activeTab);
+
   return (
     <AuthGuard>
       <DashboardLayout>
-        <div className="min-h-screen w-full bg-[var(--background)] text-[var(--foreground)] px-4 sm:px-6 py-10 transition-colors duration-300">
-          <div className="mx-auto max-w-7xl w-full space-y-12">
-            <h1 className="text-3xl font-serif font-bold text-[var(--primary)] tracking-tight">
+        <div className="min-h-screen w-full bg-[var(--background)] text-[var(--foreground)] transition-colors duration-300">
+          <div className="mx-auto max-w-7xl w-full space-y-8 py-10 px-2 sm:px-6">
+            <h1 className="text-3xl font-serif font-bold text-[var(--primary)] tracking-tight mb-4">
               ✨ System Control Deck
             </h1>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-6">
-              <DashboardCard
-                title="Import & Export Worlds"
-                description="Transfer your worlds between servers or creators."
-                icon={<Upload className="w-6 h-6" />}
-                color="from-purple-600 to-fuchsia-500"
-                actions={
-                  <>
-                    <button
-                      className="btn-primary"
-                      onClick={() => setImportModalOpen(true)}
-                    >
-                      <Upload className="w-4 h-4" /> Import
-                    </button>
-                    <button
-                      className="btn-outline"
-                      onClick={() => setExportModalOpen(true)}
-                    >
-                      <Download className="w-4 h-4" /> Export
-                    </button>
-                  </>
-                }
-              />
-
-              <DashboardCard
-                title="Backup & Restore"
-                description="Safeguard your progress. Recover from magical mishaps."
-                icon={<FileDown className="w-6 h-6" />}
-                color="from-cyan-600 to-blue-500"
-                actions={
-                  <>
-                    <button
-                      className="btn-outline"
-                      disabled={loadingBackup}
-                      onClick={handleCreateBackup}
-                    >
-                      {loadingBackup ? "Processing..." : "Create Backup"}
-                    </button>
-                    <button
-                      className="btn-primary"
-                      onClick={() => setBackupModalOpen(true)}
-                    >
-                      <FileUp className="w-4 h-4" /> Restore
-                    </button>
-                  </>
-                }
-              />
-
-              <DashboardCard
-                title="Library Vault"
-                description="Manage your tomes, rulebooks, and arcane references."
-                icon={<BookOpenText className="w-6 h-6" />}
-                color="from-orange-500 to-amber-400"
-                extra={<SimpleBarChart data={libraryData} />}
-                actions={
-                  <Link className="btn-primary" href="/library_admin">
-                    Enter Library
-                  </Link>
-                }
-              />
-
-              <DashboardCard
-                title="World Embeddings"
-                description="Manage vector stores for your worlds."
-                icon={<Layers className="w-6 h-6" />}
-                color="from-violet-600 to-purple-500"
-                extra={<EmbeddingSummary embeddings={embeddings} />}
-                actions={
-                  <Link className="btn-primary" href="/world_embeddings">
-                    Manage Embeddings
-                  </Link>
-                }
-              />
-
-              <DashboardCard
-                title="Agent Interface"
-                description="Control your world’s autonomous NPC advisors and guardians."
-                icon={<Bot className="w-6 h-6" />}
-                color="from-emerald-600 to-lime-500"
-                extra={<AgentSummary data={agentWorlds} />}
-                actions={
-                  <Link className="btn-primary" href="/agents_settings">
-                    Configure Agents
-                  </Link>
-                }
-              />
-
-              <DashboardCard
-                title="Chrono Queue"
-                description="Review and manage long-running background operations."
-                icon={<History className="w-6 h-6" />}
-                color="from-sky-600 to-indigo-500"
-                extra={<SimpleBarChart data={jobData} />}
-                actions={
-                  <Link className="btn-primary" href="/background_jobs">
-                    View Jobs
-                  </Link>
-                }
-              />
-
-              <DashboardCard
-                title="User Sanctum"
-                description="Manage users, roles and permissions across your dominion."
-                icon={<Users2 className="w-6 h-6" />}
-                color="from-pink-500 to-rose-500"
-                extra={<SimpleBarChart data={userData} />}
-                actions={
-                  <Link className="btn-primary" href="/user_management">
-                    Manage Users
-                  </Link>
-                }
-              />
-
-              <DashboardCard
-                title="Tables & Sessions"
-                description="Create tables and schedule game sessions."
-                icon={<Table2 className="w-6 h-6" />}
-                color="from-teal-500 to-green-500"
-                actions={
-                  <Link className="btn-primary" href="/tables">
-                    Manage Tables
-                  </Link>
-                }
-              />
-
-              <DashboardCard
-                title="News Board"
-                description="Create announcements for all users."
-                icon={<Bell className="w-6 h-6" />}
-                color="from-amber-500 to-orange-500"
-                actions={
-                  <Link
-                    className="btn-primary"
-                    href="/system_settings/newsboard"
-                  >
-                    Manage News
-                  </Link>
-                }
-              />
+            {/* Tab Menu */}
+            <div className="w-full flex flex-wrap gap-2 sm:gap-6 border-b border-[var(--border)] mb-8">
+              {TABS.map((tab) => (
+                <button
+                  key={tab.key}
+                  onClick={() => setActiveTab(tab.key)}
+                  className={`
+                    inline-flex items-center gap-2 px-4 py-2 text-base font-semibold rounded-t-2xl
+                    transition-all
+                    ${
+                      activeTab === tab.key
+                        ? "bg-[var(--surface)] text-[var(--primary)] border-x border-t border-[var(--primary)] shadow"
+                        : "text-[var(--foreground)]/70 hover:text-[var(--primary)]"
+                    }
+                  `}
+                  style={{ marginBottom: activeTab === tab.key ? "-1px" : "0" }}
+                  aria-selected={activeTab === tab.key}
+                  aria-controls={`tab-panel-${tab.key}`}
+                >
+                  {tab.icon}
+                  {tab.label}
+                </button>
+              ))}
             </div>
 
-            {/* Modals */}
-            <ImportWorldModal
-              open={importModalOpen}
-              onClose={() => setImportModalOpen(false)}
-              onImported={() => setSuccess("World imported!")}
-            />
-            <ExportWorldModal
-              open={exportModalOpen}
-              onClose={() => setExportModalOpen(false)}
-            />
-            <ImportBackupModal
-              open={backupModalOpen}
-              onClose={() => setBackupModalOpen(false)}
-              onImported={() => setSuccess("Backup imported!")}
-            />
+            {/* Tab Content */}
+            <div id={`tab-panel-${activeTab}`}>
+              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-6">
+                {activeTabObj?.features.map((f) => (
+                  <div key={f}>{FEATURE_CARDS[f]}</div>
+                ))}
+              </div>
+            </div>
           </div>
+
+          {/* Modals */}
+          <ImportWorldModal
+            open={importModalOpen}
+            onClose={() => setImportModalOpen(false)}
+            onImported={() => setSuccess("World imported!")}
+          />
+          <ExportWorldModal
+            open={exportModalOpen}
+            onClose={() => setExportModalOpen(false)}
+          />
+          <ImportBackupModal
+            open={backupModalOpen}
+            onClose={() => setBackupModalOpen(false)}
+            onImported={() => setSuccess("Backup imported!")}
+          />
         </div>
       </DashboardLayout>
     </AuthGuard>
   );
 }
+
+// Reuse your existing DashboardCard, AgentSummary, EmbeddingSummary components!
 
 function DashboardCard({ title, description, icon, color, actions, extra }) {
   return (

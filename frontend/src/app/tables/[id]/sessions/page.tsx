@@ -15,7 +15,7 @@ import { M3FloatingInput } from "@/app/components/template/M3FloatingInput";
 import PageRefSelectorMD3 from "@/app/components/create_page/PageRefSelectorMD3";
 import { getPages } from "@/app/lib/pagesAPI";
 import { useUsers } from "@/app/lib/useUsers";
-import { CalendarDays } from "lucide-react";
+import { CalendarDays, Trash2 } from "lucide-react";
 
 export default function TableSessionsPage() {
   const params = useParams();
@@ -250,9 +250,20 @@ export default function TableSessionsPage() {
               )}
               {usePoll && (
                 <>
-                  {proposed.map((p) => (
-                    <div key={p} className="text-sm">
+                  {proposed.map((p, i) => (
+                    <div
+                      key={i}
+                      className="text-sm flex items-center justify-between"
+                    >
                       {new Date(p).toLocaleString()}
+                      <Trash2
+                        className="w-4 h-4 cursor-pointer"
+                        onClick={() =>
+                          setProposed((prev) =>
+                            prev.filter((_, idx) => idx !== i),
+                          )
+                        }
+                      />
                     </div>
                   ))}
                   <div className="flex gap-2 items-center">
@@ -323,9 +334,18 @@ export default function TableSessionsPage() {
           <div className="fixed inset-0 bg-black/40 flex items-center justify-center">
             <div className="bg-[var(--surface)] p-6 rounded-xl w-full max-w-md space-y-4">
               <h2 className="text-xl font-semibold">Create Poll</h2>
-              {proposed.map((p) => (
-                <div key={p} className="text-sm">
+              {proposed.map((p, i) => (
+                <div
+                  key={i}
+                  className="text-sm flex items-center justify-between"
+                >
                   {new Date(p).toLocaleString()}
+                  <Trash2
+                    className="w-4 h-4 cursor-pointer"
+                    onClick={() =>
+                      setProposed((prev) => prev.filter((_, idx) => idx !== i))
+                    }
+                  />
                 </div>
               ))}
               <div className="flex gap-2 items-center">

@@ -36,20 +36,17 @@ export default function UserTablesPage() {
 
         <ul className="grid gap-7 sm:grid-cols-1">
           {tables.map((t: TableItem) => (
-            <li
-              key={t.id}
-              className="relative flex flex-col min-h-[154px] rounded-3xl border-0 border-[var(--primary)] bg-[var(--surface-variant)] shadow-lg overflow-hidden group hover:shadow-2xl hover:border-[var(--primary-dark)] transition"
-              style={{
-                background: `linear-gradient(120deg, #f7f3fe 88%, #ece7ff 100%)`,
-              }}
-            >
+              <li
+                key={t.id}
+                className="relative flex flex-col min-h-[154px] rounded-3xl border border-[var(--primary)]/15 bg-white shadow-lg overflow-hidden group hover:shadow-2xl hover:border-[var(--primary-dark)] transition"
+              >
               <div className="flex items-center gap-4 px-5 pt-5 pb-2">
                 <Image
                   src={t.crest_url || "/images/worlds/new_game.png"}
                   alt={t.name}
                   width={72}
                   height={72}
-                  className="w-16 h-16 rounded-xl object-cover border-4 border-[var(--primary)] bg-white shadow-md"
+                  className="w-16 h-16 rounded-xl object-cover border-1 border-[var(--primary)] bg-white shadow-md"
                 />
                 <div className="flex-1 min-w-0">
                   <Link

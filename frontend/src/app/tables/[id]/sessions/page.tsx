@@ -1,6 +1,5 @@
 "use client";
-/* eslint-disable @typescript-eslint/no-explicit-any */
-import { useEffect, useState } from "react";
+import { useState, useEffect } from "react";
 import { useParams } from "next/navigation";
 import DashboardLayout from "@/app/components/DashboardLayout";
 import { useSessions } from "@/app/lib/useSessions";
@@ -17,7 +16,20 @@ import { M3FloatingInput } from "@/app/components/template/M3FloatingInput";
 import PageRefSelectorMD3 from "@/app/components/create_page/PageRefSelectorMD3";
 import { getPages } from "@/app/lib/pagesAPI";
 import { useUsers } from "@/app/lib/useUsers";
-import { CalendarDays, Trash2, Pencil } from "lucide-react";
+import {
+  CalendarDays,
+  Trash2,
+  Pencil,
+  MapPin,
+  Users2,
+  Book,
+  Plus,
+  ChevronDown,
+  ChevronUp,
+  ScrollText,
+} from "lucide-react";
+import Link from "next/link";
+import Image from "next/image";
 
 export default function TableSessionsPage() {
   const params = useParams();
@@ -38,6 +50,10 @@ export default function TableSessionsPage() {
   const [newProposal, setNewProposal] = useState("");
   const [usePoll, setUsePoll] = useState(false);
   const [polls, setPolls] = useState<Record<number, any>>({});
+  const [showPast, setShowPast] = useState(false);
+
+  // Optional: you might want to load party info for crest/name/etc
+  // const { table: party } = useTable(tableId); // implement if you want
 
   useEffect(() => {
     if (token) {
@@ -95,15 +111,7 @@ export default function TableSessionsPage() {
       await createSessionPoll(tableId, sess.id, proposed, token);
       await refreshPoll(sess.id);
     }
-    setOpen(false);
-    setName("");
-    setTime("");
-    setLocation("");
-    setSummary("");
-    setPages([]);
-    setUsePoll(false);
-    setProposed([]);
-    setNewProposal("");
+    resetModal();
     mutate();
   }
 
@@ -121,13 +129,7 @@ export default function TableSessionsPage() {
       },
       token,
     );
-    setOpen(false);
-    setEditSession(null);
-    setName("");
-    setTime("");
-    setLocation("");
-    setSummary("");
-    setPages([]);
+    resetModal();
     mutate();
   }
 
@@ -150,272 +152,212 @@ export default function TableSessionsPage() {
     setOpen(true);
   }
 
+  function resetModal() {
+    setOpen(false);
+    setEditSession(null);
+    setName("");
+    setTime("");
+    setLocation("");
+    setSummary("");
+    setPages([]);
+    setUsePoll(false);
+    setProposed([]);
+    setNewProposal("");
+  }
+
   const now = new Date();
   const upcoming = sessions.filter(
     (s: any) => !s.scheduled_time || new Date(s.scheduled_time) >= now,
   );
   const past = sessions.filter(
     (s: any) => s.scheduled_time && new Date(s.scheduled_time) < now,
-  );
+  ).sort((a, b) => new Date(b.scheduled_time) - new Date(a.scheduled_time));
 
-  function renderSession(s: any) {
-    const pollData = polls[s.id];
+  // --- Card components ---
+  function SessionCard({ s, pollData }: { s: any; pollData?: any }) {
+    const isPast = s.scheduled_time && new Date(s.scheduled_time) < now;
     return (
-      <li
-        key={s.id}
-        className="p-4 rounded-xl bg-[var(--surface-variant)] space-y-1"
+      <div
+        className={`
+          group rounded-2xl border border-[var(--border)] bg-white shadow-lg px-5 py-4 mb-3 min-w-[320px] max-w-md
+          transition relative flex flex-col gap-2 hover:shadow-2xl
+          ${isPast ? "opacity-70" : "opacity-100"}
+        `}
       >
-        <div className="flex justify-between items-center">
+        <div className="flex justify-between items-center mb-1">
           <div>
-            <div className="font-semibold">{s.name}</div>
-            <div className="text-sm">
+            <div className="font-bold font-serif text-lg text-[var(--primary)] flex items-center gap-2">
+              <ScrollText className="w-5 h-5" /> {s.name}
+              <span className={`ml-2 px-2 py-0.5 rounded-full text-xs font-bold
+                ${isPast ? "bg-gray-200 text-gray-500" : pollData ? "bg-yellow-100 text-yellow-700" : "bg-green-100 text-green-700"}
+              `}>
+                {isPast ? "Completed" : pollData ? "Vote" : "Scheduled"}
+              </span>
+            </div>
+            <div className="text-xs text-gray-600 flex items-center gap-1">
+              <CalendarDays className="w-4 h-4" />
               {s.scheduled_time
                 ? new Date(s.scheduled_time).toLocaleString()
-                : "Not scheduled"}
+                : pollData
+                ? <span className="font-semibold text-yellow-600">Voting!</span>
+                : <span className="font-semibold text-gray-500">Unscheduled</span>}
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            {!pollData && (
-              <button
-                className="text-sm text-[var(--primary)] flex items-center gap-1"
-                onClick={() => setPollSession(s.id)}
-              >
-                <CalendarDays className="w-4 h-4" /> Create Poll
-              </button>
-            )}
-            <Pencil
-              className="w-4 h-4 cursor-pointer"
+          <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition">
+            <button
+              title="Edit"
+              className="p-1 rounded-full hover:bg-[var(--primary)]/10"
               onClick={() => startEdit(s)}
-            />
-            <Trash2
-              className="w-4 h-4 cursor-pointer"
+            >
+              <Pencil className="w-4 h-4 text-[var(--primary)]" />
+            </button>
+            <button
+              title="Delete"
+              className="p-1 rounded-full hover:bg-rose-50"
               onClick={() => handleDelete(s.id)}
-            />
+            >
+              <Trash2 className="w-4 h-4 text-rose-500" />
+            </button>
           </div>
         </div>
-        {s.location && <div className="text-sm">{s.location}</div>}
-        {s.summary && <div className="text-sm opacity-80">{s.summary}</div>}
+        <div className="flex flex-wrap items-center gap-3">
+          {s.location && (
+            <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-purple-100 text-purple-700 text-xs font-semibold">
+              <MapPin className="w-3 h-3" /> {s.location}
+            </span>
+          )}
+          {s.summary && (
+            <span className="text-xs text-gray-500 italic">{s.summary}</span>
+          )}
+        </div>
+        <div className="flex flex-wrap gap-2 items-center mt-2">
+          {s.page_ids?.length > 0 && (
+            <span className="flex items-center gap-2 text-xs text-gray-600">
+              <Book className="w-4 h-4" />
+              Linked:{" "}
+              {s.page_ids.map((pid: number) => {
+                const p = pageOptions.find((pg) => pg.id === pid);
+                return p ? (
+                  <Link
+                    key={pid}
+                    href={`/worlds/${p.world_id || p.gameworld_id}/concept/${p.concept_id}/page/${pid}`}
+                    className="underline text-[var(--primary)] font-semibold hover:text-[var(--accent)] transition"
+                    target="_blank"
+                  >
+                    {p.name}
+                  </Link>
+                ) : null;
+              })}
+            </span>
+          )}
+        </div>
+        {/* Poll UI */}
         {pollData && (
-          <div className="mt-2 space-y-2">
-            {pollData.options.map((opt: any) => (
-              <div key={opt.id} className="border p-2 rounded">
-                <div className="flex justify-between items-center">
-                  <div>{new Date(opt.proposed_time).toLocaleString()}</div>
-                  {pollData.final_option_id === null && (
-                    <button
-                      className="text-sm text-[var(--primary)]"
-                      onClick={async () => {
-                        await finalizeSessionPoll(tableId, s.id, opt.id, token);
-                        await mutate();
-                        refreshPoll(s.id);
-                      }}
-                    >
-                      Select date
-                    </button>
-                  )}
-                </div>
-                {opt.votes.length ? (
-                  <div className="flex flex-wrap gap-2 mt-1">
-                    {opt.votes.map((id: number) => {
-                      const u = users.find((usr: any) => usr.id === id);
+          <div className="mt-2">
+            <div className="text-xs font-semibold mb-1">Session Date Poll:</div>
+            <div className="flex flex-wrap gap-2 mb-1">
+              {pollData.options.map((opt: any) => (
+                <div
+                  key={opt.id}
+                  className={`flex flex-col items-center px-3 py-2 rounded-xl border
+                    ${pollData.final_option_id === opt.id ? "bg-green-100 border-green-300" : "bg-yellow-50 border-yellow-200"}
+                  `}
+                >
+                  <span className="font-bold text-xs">{new Date(opt.proposed_time).toLocaleString()}</span>
+                  <div className="flex -space-x-2 mt-1">
+                    {opt.votes.map((uid: number) => {
+                      const u = users.find((usr: any) => usr.id === uid);
                       return (
-                        <div
-                          key={id}
-                          className="flex items-center gap-1 text-xs"
-                        >
-                          {u?.image_url && (
-                            <img
-                              src={u.image_url}
-                              alt={u.nickname}
-                              className="w-4 h-4 rounded-full"
-                            />
-                          )}
-                          <span>{u?.nickname || id}</span>
-                        </div>
+                        <img
+                          key={uid}
+                          src={u?.image_url || "/images/avatars/default.png"}
+                          alt={u?.nickname || "?"}
+                          className="w-5 h-5 rounded-full border border-white bg-white shadow"
+                          title={u?.nickname}
+                        />
                       );
                     })}
                   </div>
-                ) : (
-                  <div className="text-xs opacity-80 mt-1">No votes</div>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-      </li>
-    );
-  }
-
-  return (
-    <DashboardLayout>
-      <div className="w-full max-w-4xl mx-auto p-4">
-        <div className="flex justify-between items-center mb-4">
-          <h1 className="text-2xl font-bold">Sessions</h1>
-          <button
-            className="px-4 py-2 rounded-lg bg-[var(--primary)] text-[var(--primary-foreground)]"
-            onClick={() => {
-              setEditSession(null);
-              setName("");
-              setTime("");
-              setLocation("");
-              setSummary("");
-              setPages([]);
-              setUsePoll(false);
-              setProposed([]);
-              setNewProposal("");
-              setOpen(true);
-            }}
-          >
-            Schedule
-          </button>
-        </div>
-        <section className="space-y-2">
-          <h2 className="font-semibold">Upcoming Sessions</h2>
-          <ul className="space-y-2">
-            {upcoming.map((s: any) => renderSession(s))}
-          </ul>
-        </section>
-        <section className="space-y-2 mt-8">
-          <h2 className="font-semibold">Past Sessions</h2>
-          <ul className="space-y-2">
-            {past.map((s: any) => renderSession(s))}
-          </ul>
-        </section>
-        {open && (
-          <div className="fixed inset-0 bg-black/40 flex items-center justify-center">
-            <div className="bg-[var(--surface)] p-6 rounded-xl w-full max-w-md space-y-4">
-              <M3FloatingInput
-                label="Name"
-                value={name}
-                onChange={(e: any) => setName(e.target.value)}
-              />
-              {!editSession && (
-                <div className="flex gap-4">
-                  <label className="flex items-center gap-1 text-sm">
-                    <input
-                      type="radio"
-                      checked={!usePoll}
-                      onChange={() => setUsePoll(false)}
-                    />
-                    Set date
-                  </label>
-                  <label className="flex items-center gap-1 text-sm">
-                    <input
-                      type="radio"
-                      checked={usePoll}
-                      onChange={() => setUsePoll(true)}
-                    />
-                    Propose poll
-                  </label>
-                </div>
-              )}
-              {(!usePoll || editSession) && (
-                <M3FloatingInput
-                  type="datetime-local"
-                  label="Time"
-                  value={time}
-                  onChange={(e: any) => setTime(e.target.value)}
-                />
-              )}
-              {usePoll && !editSession && (
-                <>
-                  {proposed.map((p, i) => (
-                    <div
-                      key={i}
-                      className="text-sm flex items-center justify-between"
-                    >
-                      {new Date(p).toLocaleString()}
-                      <Trash2
-                        className="w-4 h-4 cursor-pointer"
-                        onClick={() =>
-                          setProposed((prev) =>
-                            prev.filter((_, idx) => idx !== i),
-                          )
-                        }
-                      />
-                    </div>
-                  ))}
-                  <div className="flex gap-2 items-center">
-                    <M3FloatingInput
-                      type="datetime-local"
-                      label="Proposed Time"
-                      value={newProposal}
-                      onChange={(e: any) => setNewProposal(e.target.value)}
-                    />
+                  {pollData.final_option_id === null && (
                     <button
-                      className="btn-primary mt-6"
-                      onClick={() => {
-                        if (newProposal) {
-                          setProposed([...proposed, newProposal]);
-                          setNewProposal("");
-                        }
+                      className="mt-2 px-2 py-1 bg-[var(--primary)] text-white rounded text-xs shadow hover:bg-[var(--accent)]"
+                      onClick={async () => {
+                        await finalizeSessionPoll(tableId, s.id, opt.id, token);
+                        mutate();
+                        refreshPoll(s.id);
                       }}
                     >
-                      Add
+                      Select
                     </button>
-                  </div>
-                </>
-              )}
-              <M3FloatingInput
-                label="Location"
-                value={location}
-                onChange={(e: any) => setLocation(e.target.value)}
-              />
-              <M3FloatingInput
-                label="Summary"
-                value={summary}
-                onChange={(e: any) => setSummary(e.target.value)}
-              />
-              <PageRefSelectorMD3
-                options={pageOptions.map((p: any) => ({
-                  id: p.id,
-                  name: p.name,
-                  logo: p.image_url,
-                }))}
-                value={pages}
-                onChange={setPages}
-                label="Pages"
-              />
-              <div className="flex justify-end gap-2">
-                <button
-                  onClick={() => {
-                    setOpen(false);
-                    setEditSession(null);
-                    setUsePoll(false);
-                    setProposed([]);
-                    setNewProposal("");
-                  }}
-                  className="px-4 py-2 rounded-lg"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={editSession ? handleUpdate : handleCreate}
-                  className="px-4 py-2 rounded-lg bg-[var(--primary)] text-[var(--primary-foreground)]"
-                >
-                  Save
-                </button>
-              </div>
+                  )}
+                </div>
+              ))}
             </div>
           </div>
         )}
+      </div>
+    );
+  }
 
-        {pollSession && (
-          <div className="fixed inset-0 bg-black/40 flex items-center justify-center">
-            <div className="bg-[var(--surface)] p-6 rounded-xl w-full max-w-md space-y-4">
-              <h2 className="text-xl font-semibold">Create Poll</h2>
+  // --- Modal UI ---
+  function SessionModal() {
+    return (
+      <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center">
+        <div className="bg-white rounded-2xl shadow-2xl p-7 w-full max-w-lg relative">
+          <h2 className="text-2xl font-bold font-serif text-[var(--primary)] mb-4 text-center">
+            {editSession ? "Edit Session" : "Schedule a New Session"}
+          </h2>
+          <M3FloatingInput
+            label="Name"
+            value={name}
+            onChange={(e: any) => setName(e.target.value)}
+          />
+          {!editSession && (
+            <div className="flex gap-4 my-2">
+              <label className="flex items-center gap-1 text-sm">
+                <input
+                  type="radio"
+                  checked={!usePoll}
+                  onChange={() => setUsePoll(false)}
+                />
+                Set date
+              </label>
+              <label className="flex items-center gap-1 text-sm">
+                <input
+                  type="radio"
+                  checked={usePoll}
+                  onChange={() => setUsePoll(true)}
+                />
+                Propose poll
+              </label>
+            </div>
+          )}
+          {(!usePoll || editSession) && (
+            <M3FloatingInput
+              type="datetime-local"
+              label="Time"
+              value={time}
+              onChange={(e: any) => setTime(e.target.value)}
+            />
+          )}
+          {usePoll && !editSession && (
+            <div className="mb-3">
               {proposed.map((p, i) => (
                 <div
                   key={i}
-                  className="text-sm flex items-center justify-between"
+                  className="flex items-center justify-between text-xs bg-purple-50 rounded px-3 py-1 mb-1"
                 >
                   {new Date(p).toLocaleString()}
-                  <Trash2
-                    className="w-4 h-4 cursor-pointer"
+                  <button
+                    className="text-rose-500 hover:text-rose-700"
                     onClick={() =>
-                      setProposed((prev) => prev.filter((_, idx) => idx !== i))
+                      setProposed((prev) =>
+                        prev.filter((_, idx) => idx !== i),
+                      )
                     }
-                  />
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
                 </div>
               ))}
               <div className="flex gap-2 items-center">
@@ -437,38 +379,196 @@ export default function TableSessionsPage() {
                   Add
                 </button>
               </div>
-              <div className="flex justify-end gap-2">
-                <button
-                  onClick={() => {
-                    setPollSession(null);
-                    setProposed([]);
-                    setNewProposal("");
-                  }}
-                  className="px-4 py-2 rounded-lg"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={async () => {
-                    await createSessionPoll(
-                      tableId,
-                      pollSession!,
-                      proposed,
-                      token,
-                    );
-                    setProposed([]);
-                    await refreshPoll(pollSession!);
-                    setPollSession(null);
-                    mutate();
-                  }}
-                  className="px-4 py-2 rounded-lg bg-[var(--primary)] text-[var(--primary-foreground)]"
-                >
-                  Save
-                </button>
-              </div>
             </div>
+          )}
+          <M3FloatingInput
+            label="Location"
+            value={location}
+            onChange={(e: any) => setLocation(e.target.value)}
+          />
+          <M3FloatingInput
+            label="Summary"
+            value={summary}
+            onChange={(e: any) => setSummary(e.target.value)}
+          />
+          <PageRefSelectorMD3
+            options={pageOptions.map((p: any) => ({
+              id: p.id,
+              name: p.name,
+              logo: p.image_url,
+            }))}
+            value={pages}
+            onChange={setPages}
+            label="Pages"
+          />
+          <div className="flex justify-end gap-2 mt-6">
+            <button
+              onClick={resetModal}
+              className="px-4 py-2 rounded-lg font-semibold text-[var(--primary)] hover:bg-[var(--primary)]/10 transition"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={editSession ? handleUpdate : handleCreate}
+              className="px-4 py-2 rounded-lg bg-[var(--primary)] text-white font-bold shadow hover:bg-[var(--primary-dark)] transition"
+            >
+              Save
+            </button>
           </div>
-        )}
+        </div>
+      </div>
+    );
+  }
+
+  function PollModal() {
+    return (
+      <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center">
+        <div className="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-md relative">
+          <h2 className="text-xl font-bold text-[var(--primary)] mb-4 text-center">Create Poll</h2>
+          {proposed.map((p, i) => (
+            <div
+              key={i}
+              className="flex items-center justify-between text-xs bg-purple-50 rounded px-3 py-1 mb-1"
+            >
+              {new Date(p).toLocaleString()}
+              <button
+                className="text-rose-500 hover:text-rose-700"
+                onClick={() =>
+                  setProposed((prev) => prev.filter((_, idx) => idx !== i))
+                }
+              >
+                <Trash2 className="w-4 h-4" />
+              </button>
+            </div>
+          ))}
+          <div className="flex gap-2 items-center">
+            <M3FloatingInput
+              type="datetime-local"
+              label="Proposed Time"
+              value={newProposal}
+              onChange={(e: any) => setNewProposal(e.target.value)}
+            />
+            <button
+              className="btn-primary mt-6"
+              onClick={() => {
+                if (newProposal) {
+                  setProposed([...proposed, newProposal]);
+                  setNewProposal("");
+                }
+              }}
+            >
+              Add
+            </button>
+          </div>
+          <div className="flex justify-end gap-2 mt-6">
+            <button
+              onClick={() => {
+                setPollSession(null);
+                setProposed([]);
+                setNewProposal("");
+              }}
+              className="px-4 py-2 rounded-lg"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={async () => {
+                await createSessionPoll(
+                  tableId,
+                  pollSession!,
+                  proposed,
+                  token,
+                );
+                setProposed([]);
+                await refreshPoll(pollSession!);
+                setPollSession(null);
+                mutate();
+              }}
+              className="px-4 py-2 rounded-lg bg-[var(--primary)] text-white font-bold shadow hover:bg-[var(--primary-dark)] transition"
+            >
+              Save
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // -- Main render --
+  return (
+    <DashboardLayout>
+      <div className="w-full max-w-5xl mx-auto px-3 py-10 min-h-screen relative">
+        {/* --- Party/Adventure header (optional, for style) --- */}
+        {/* <div className="flex items-center gap-3 mb-10">
+          <Image src={party?.crest_url || "/images/worlds/new_game.png"} alt={party?.name} width={54} height={54} className="w-14 h-14 rounded-xl border-2 border-[var(--primary)] bg-white shadow" />
+          <h1 className="text-2xl font-bold font-serif text-[var(--primary)]">{party?.name || "Adventuring Party"}</h1>
+          <Link href="/tables" className="ml-auto text-[var(--primary)] hover:underline text-sm">← Back to Parties</Link>
+        </div> */}
+        <div className="flex items-center gap-3 mb-10">
+          <Users2 className="w-8 h-8 text-[var(--primary)]" />
+          <h1 className="text-2xl font-bold font-serif text-[var(--primary)]">Game Sessions</h1>
+          <button
+            className="ml-auto flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[var(--primary)] text-white font-bold shadow-lg border-2 border-[var(--primary)] hover:bg-[var(--primary-dark)] transition"
+            onClick={() => {
+              setEditSession(null);
+              setName("");
+              setTime("");
+              setLocation("");
+              setSummary("");
+              setPages([]);
+              setUsePoll(false);
+              setProposed([]);
+              setNewProposal("");
+              setOpen(true);
+            }}
+          >
+            <Plus className="w-5 h-5" />
+            New Session
+          </button>
+        </div>
+
+        {/* --- Upcoming Sessions --- */}
+        <div>
+          <div className="font-bold font-serif text-xl text-[var(--primary)] mb-2 flex items-center gap-2">
+            <CalendarDays className="w-6 h-6" />
+            Upcoming Sessions
+          </div>
+          <div className="flex flex-row gap-6 overflow-x-auto pb-4">
+            {upcoming.length === 0 ? (
+              <div className="text-gray-500 italic mt-2">No upcoming sessions.</div>
+            ) : (
+              upcoming.map((s: any) => (
+                <SessionCard key={s.id} s={s} pollData={polls[s.id]} />
+              ))
+            )}
+          </div>
+        </div>
+
+        {/* --- Past Sessions --- */}
+        <div className="mt-8">
+          <button
+            className="flex items-center gap-2 text-[var(--primary)] font-semibold mb-2"
+            onClick={() => setShowPast((v) => !v)}
+          >
+            {showPast ? <ChevronUp /> : <ChevronDown />}
+            Past Sessions
+          </button>
+          {showPast && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+              {past.length === 0 ? (
+                <div className="text-gray-400 italic ml-2">No past sessions.</div>
+              ) : (
+                past.map((s: any) => (
+                  <SessionCard key={s.id} s={s} pollData={polls[s.id]} />
+                ))
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* --- Modals --- */}
+        {open && <SessionModal />}
+        {pollSession && <PollModal />}
       </div>
     </DashboardLayout>
   );

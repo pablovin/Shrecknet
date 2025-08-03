@@ -25,5 +25,16 @@ class SessionRead(SessionBase):
     page_ids: List[int] = []
 
 
+class SessionUpdate(SQLModel):
+    name: Optional[str] = None
+    scheduled_time: Optional[datetime] = None
+    summary: Optional[str] = None
+    location: Optional[str] = None
+    timezone: Optional[str] = None
+    attendee_ids: Optional[List[int]] = None
+    page_ids: Optional[List[int]] = None
+
+
 SessionCreate.model_rebuild()
 SessionRead.model_rebuild()
+SessionUpdate.model_rebuild()

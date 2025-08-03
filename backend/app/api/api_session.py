@@ -4,13 +4,18 @@ from typing import List
 from app.database import get_session
 from app.models.model_user import User
 from app.dependencies import get_current_user
-from app.schemas.schema_session import SessionCreate, SessionRead
+from app.schemas.schema_session import SessionCreate, SessionRead, SessionUpdate
 from app.schemas.schema_session_poll import (
     SessionPollCreate,
     SessionPollRead,
     SessionPollVoteCreate,
 )
-from app.crud.crud_session import create_session, get_sessions_for_table
+from app.crud.crud_session import (
+    create_session,
+    delete_session,
+    get_sessions_for_table,
+    update_session,
+)
 from app.crud.crud_session_poll import (
     create_poll,
     get_poll,
@@ -69,6 +74,46 @@ async def list_sessions_endpoint(
         )
         for s in sessions
     ]
+
+
+@router.patch("/{table_id}/sessions/{session_id}", response_model=SessionRead)
+async def update_session_endpoint(
+    table_id: int,
+    session_id: int,
+    updates: SessionUpdate,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    sess = await update_session(
+        session, session_id, updates.model_dump(exclude_unset=True)
+    )
+    if not sess:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return SessionRead(
+        id=sess.id,
+        table_id=sess.table_id,
+        name=sess.name,
+        scheduled_time=sess.scheduled_time,
+        summary=sess.summary,
+        location=sess.location,
+        timezone=sess.timezone,
+        created_by=sess.created_by,
+        created_at=sess.created_at,
+        page_ids=[p.page_id for p in sess.pages],
+    )
+
+
+@router.delete("/{table_id}/sessions/{session_id}")
+async def delete_session_endpoint(
+    table_id: int,
+    session_id: int,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    ok = await delete_session(session, session_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return {"ok": True}
 
 
 @router.post("/{table_id}/sessions/{session_id}/poll", response_model=SessionPollRead)

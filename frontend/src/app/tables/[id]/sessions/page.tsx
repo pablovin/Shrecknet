@@ -9,13 +9,15 @@ import {
   createSessionPoll,
   getSessionPoll,
   finalizeSessionPoll,
+  updateSession,
+  deleteSession,
 } from "@/app/lib/sessionAPI";
 import { useAuth } from "@/app/components/auth/AuthProvider";
 import { M3FloatingInput } from "@/app/components/template/M3FloatingInput";
 import PageRefSelectorMD3 from "@/app/components/create_page/PageRefSelectorMD3";
 import { getPages } from "@/app/lib/pagesAPI";
 import { useUsers } from "@/app/lib/useUsers";
-import { CalendarDays, Trash2 } from "lucide-react";
+import { CalendarDays, Trash2, Pencil } from "lucide-react";
 
 export default function TableSessionsPage() {
   const params = useParams();
@@ -23,6 +25,7 @@ export default function TableSessionsPage() {
   const { token } = useAuth();
   const { sessions, mutate } = useSessions(tableId);
   const [open, setOpen] = useState(false);
+  const [editSession, setEditSession] = useState<any | null>(null);
   const [name, setName] = useState("");
   const [time, setTime] = useState("");
   const [location, setLocation] = useState("");
@@ -104,6 +107,49 @@ export default function TableSessionsPage() {
     mutate();
   }
 
+  async function handleUpdate() {
+    await updateSession(
+      tableId,
+      editSession!.id,
+      {
+        name,
+        scheduled_time: time,
+        location,
+        summary,
+        page_ids: pages.map((p) => Number(p)),
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      },
+      token,
+    );
+    setOpen(false);
+    setEditSession(null);
+    setName("");
+    setTime("");
+    setLocation("");
+    setSummary("");
+    setPages([]);
+    mutate();
+  }
+
+  async function handleDelete(id: number) {
+    if (!confirm("Delete this session?")) return;
+    await deleteSession(tableId, id, token);
+    mutate();
+  }
+
+  function startEdit(s: any) {
+    setEditSession(s);
+    setName(s.name || "");
+    setTime(s.scheduled_time ? s.scheduled_time.slice(0, 16) : "");
+    setLocation(s.location || "");
+    setSummary(s.summary || "");
+    setPages((s.page_ids || []).map(String));
+    setUsePoll(false);
+    setProposed([]);
+    setNewProposal("");
+    setOpen(true);
+  }
+
   const now = new Date();
   const upcoming = sessions.filter(
     (s: any) => !s.scheduled_time || new Date(s.scheduled_time) >= now,
@@ -128,14 +174,24 @@ export default function TableSessionsPage() {
                 : "Not scheduled"}
             </div>
           </div>
-          {!pollData && (
-            <button
-              className="text-sm text-[var(--primary)] flex items-center gap-1"
-              onClick={() => setPollSession(s.id)}
-            >
-              <CalendarDays className="w-4 h-4" /> Create Poll
-            </button>
-          )}
+          <div className="flex items-center gap-2">
+            {!pollData && (
+              <button
+                className="text-sm text-[var(--primary)] flex items-center gap-1"
+                onClick={() => setPollSession(s.id)}
+              >
+                <CalendarDays className="w-4 h-4" /> Create Poll
+              </button>
+            )}
+            <Pencil
+              className="w-4 h-4 cursor-pointer"
+              onClick={() => startEdit(s)}
+            />
+            <Trash2
+              className="w-4 h-4 cursor-pointer"
+              onClick={() => handleDelete(s.id)}
+            />
+          </div>
         </div>
         {s.location && <div className="text-sm">{s.location}</div>}
         {s.summary && <div className="text-sm opacity-80">{s.summary}</div>}
@@ -197,7 +253,18 @@ export default function TableSessionsPage() {
           <h1 className="text-2xl font-bold">Sessions</h1>
           <button
             className="px-4 py-2 rounded-lg bg-[var(--primary)] text-[var(--primary-foreground)]"
-            onClick={() => setOpen(true)}
+            onClick={() => {
+              setEditSession(null);
+              setName("");
+              setTime("");
+              setLocation("");
+              setSummary("");
+              setPages([]);
+              setUsePoll(false);
+              setProposed([]);
+              setNewProposal("");
+              setOpen(true);
+            }}
           >
             Schedule
           </button>
@@ -222,25 +289,27 @@ export default function TableSessionsPage() {
                 value={name}
                 onChange={(e: any) => setName(e.target.value)}
               />
-              <div className="flex gap-4">
-                <label className="flex items-center gap-1 text-sm">
-                  <input
-                    type="radio"
-                    checked={!usePoll}
-                    onChange={() => setUsePoll(false)}
-                  />
-                  Set date
-                </label>
-                <label className="flex items-center gap-1 text-sm">
-                  <input
-                    type="radio"
-                    checked={usePoll}
-                    onChange={() => setUsePoll(true)}
-                  />
-                  Propose poll
-                </label>
-              </div>
-              {!usePoll && (
+              {!editSession && (
+                <div className="flex gap-4">
+                  <label className="flex items-center gap-1 text-sm">
+                    <input
+                      type="radio"
+                      checked={!usePoll}
+                      onChange={() => setUsePoll(false)}
+                    />
+                    Set date
+                  </label>
+                  <label className="flex items-center gap-1 text-sm">
+                    <input
+                      type="radio"
+                      checked={usePoll}
+                      onChange={() => setUsePoll(true)}
+                    />
+                    Propose poll
+                  </label>
+                </div>
+              )}
+              {(!usePoll || editSession) && (
                 <M3FloatingInput
                   type="datetime-local"
                   label="Time"
@@ -248,7 +317,7 @@ export default function TableSessionsPage() {
                   onChange={(e: any) => setTime(e.target.value)}
                 />
               )}
-              {usePoll && (
+              {usePoll && !editSession && (
                 <>
                   {proposed.map((p, i) => (
                     <div
@@ -311,6 +380,7 @@ export default function TableSessionsPage() {
                 <button
                   onClick={() => {
                     setOpen(false);
+                    setEditSession(null);
                     setUsePoll(false);
                     setProposed([]);
                     setNewProposal("");
@@ -320,7 +390,7 @@ export default function TableSessionsPage() {
                   Cancel
                 </button>
                 <button
-                  onClick={handleCreate}
+                  onClick={editSession ? handleUpdate : handleCreate}
                   className="px-4 py-2 rounded-lg bg-[var(--primary)] text-[var(--primary-foreground)]"
                 >
                   Save

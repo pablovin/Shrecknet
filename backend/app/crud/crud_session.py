@@ -12,7 +12,7 @@ from app.models.model_session import (
     SessionPollOption,
     SessionPollVote,
 )
-from app.models.model_table import TableMember
+from app.models.model_table import TableMember, Table
 from app.schemas.schema_session import SessionCreate
 from app.crud.crud_news import create_news
 from app.schemas.schema_news import NewsCreate
@@ -72,12 +72,19 @@ async def create_session(
     # error. By refreshing here we eagerly load the relationship while the
     # session is still active.
     await session.refresh(sess, attribute_names=["pages"])
-
-    if sess.scheduled_time:
+    table = await session.get(Table, session_in.table_id)
+    date_info = (
+        sess.scheduled_time.isoformat() if sess.scheduled_time else "unscheduled"
+    )
+    for uid in attendee_ids:
         news = NewsCreate(
-            title="Session Scheduled",
-            type="session",
-            description=f"Session for table {session_in.table_id} on {sess.scheduled_time.isoformat()}",
+            title="Session Created",
+            type="gaming_session",
+            description=(
+                f"Session '{sess.name}' for table '{table.name}' scheduled on {date_info}. "
+                f"View: /tables/{table.id}"
+            ),
+            user_id=uid,
         )
         await create_news(session, news)
     return sess

@@ -30,6 +30,8 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import Image from "next/image";
+import { ConfirmModal } from "@/app/components/template/ConfirmModal";
+import { useTranslation } from "@/app/hooks/useTranslation";
 
 // --- Modal for new/edit session ---
 function SessionModal({
@@ -98,7 +100,9 @@ function SessionModal({
         {usePoll && !editSession && (
           <div className="mb-3">
             <div className="mb-2 text-sm text-purple-900 bg-purple-50 rounded-lg px-2 py-1">
-              Propose multiple possible dates and times for the group to vote on. Once everyone votes, a final date can be selected for the session.
+              Propose multiple possible dates and times for the group to vote
+              on. Once everyone votes, a final date can be selected for the
+              session.
             </div>
             {proposed.map((p, i) => (
               <div
@@ -189,7 +193,9 @@ function PollModal({
   return (
     <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center">
       <div className="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-md relative">
-        <h2 className="text-xl font-bold text-[var(--primary)] mb-4 text-center">Create Poll</h2>
+        <h2 className="text-xl font-bold text-[var(--primary)] mb-4 text-center">
+          Create Poll
+        </h2>
         {proposed.map((p, i) => (
           <div
             key={i}
@@ -226,10 +232,7 @@ function PollModal({
           </button>
         </div>
         <div className="flex justify-end gap-2 mt-6">
-          <button
-            onClick={onClose}
-            className="px-4 py-2 rounded-lg"
-          >
+          <button onClick={onClose} className="px-4 py-2 rounded-lg">
             Cancel
           </button>
           <button
@@ -249,6 +252,10 @@ export default function TableSessionsPage() {
   const tableId = Number(params?.id);
   const { token } = useAuth();
   const { sessions, mutate } = useSessions(tableId);
+  const { t } = useTranslation();
+
+  const [deleteId, setDeleteId] = useState<number | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   // --- Modal state ---
   const [modalOpen, setModalOpen] = useState(false);
@@ -351,9 +358,12 @@ export default function TableSessionsPage() {
     mutate();
   }
 
-  async function handleDelete(id: number) {
-    if (!confirm("Delete this session?")) return;
-    await deleteSession(tableId, id, token);
+  async function handleDelete() {
+    if (deleteId === null) return;
+    setDeleting(true);
+    await deleteSession(tableId, deleteId, token);
+    setDeleting(false);
+    setDeleteId(null);
     mutate();
   }
 
@@ -423,19 +433,23 @@ export default function TableSessionsPage() {
           <div>
             <div className="font-bold font-serif text-lg text-[var(--primary)] flex items-center gap-2">
               <ScrollText className="w-5 h-5" /> {s.name}
-              <span className={`ml-2 px-2 py-0.5 rounded-full text-xs font-bold
+              <span
+                className={`ml-2 px-2 py-0.5 rounded-full text-xs font-bold
                 ${isPast ? "bg-gray-200 text-gray-500" : pollData ? "bg-yellow-100 text-yellow-700" : "bg-green-100 text-green-700"}
-              `}>
+              `}
+              >
                 {isPast ? "Completed" : pollData ? "Vote" : "Scheduled"}
               </span>
             </div>
             <div className="text-xs text-gray-600 flex items-center gap-1">
               <CalendarDays className="w-4 h-4" />
-              {s.scheduled_time
-                ? new Date(s.scheduled_time).toLocaleString()
-                : pollData
-                ? <span className="font-semibold text-yellow-600">Voting!</span>
-                : <span className="font-semibold text-gray-500">Unscheduled</span>}
+              {s.scheduled_time ? (
+                new Date(s.scheduled_time).toLocaleString()
+              ) : pollData ? (
+                <span className="font-semibold text-yellow-600">Voting!</span>
+              ) : (
+                <span className="font-semibold text-gray-500">Unscheduled</span>
+              )}
             </div>
           </div>
           <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition">
@@ -449,7 +463,7 @@ export default function TableSessionsPage() {
             <button
               title="Delete"
               className="p-1 rounded-full hover:bg-rose-50"
-              onClick={() => handleDelete(s.id)}
+              onClick={() => setDeleteId(s.id)}
             >
               <Trash2 className="w-4 h-4 text-rose-500" />
             </button>
@@ -498,7 +512,9 @@ export default function TableSessionsPage() {
                     ${pollData.final_option_id === opt.id ? "bg-green-100 border-green-300" : "bg-yellow-50 border-yellow-200"}
                   `}
                 >
-                  <span className="font-bold text-xs">{new Date(opt.proposed_time).toLocaleString()}</span>
+                  <span className="font-bold text-xs">
+                    {new Date(opt.proposed_time).toLocaleString()}
+                  </span>
                   <div className="flex -space-x-2 mt-1">
                     {opt.votes.map((uid: number) => {
                       const u = users.find((usr: any) => usr.id === uid);
@@ -549,7 +565,9 @@ export default function TableSessionsPage() {
         {/* --- Party/Adventure header (optional, for style) --- */}
         <div className="flex items-center gap-3 mb-10">
           <Users2 className="w-8 h-8 text-[var(--primary)]" />
-          <h1 className="text-2xl font-bold font-serif text-[var(--primary)]">Game Sessions</h1>
+          <h1 className="text-2xl font-bold font-serif text-[var(--primary)]">
+            Game Sessions
+          </h1>
           <button
             className="ml-auto flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[var(--primary)] text-white font-bold shadow-lg border-2 border-[var(--primary)] hover:bg-[var(--primary-dark)] transition"
             onClick={() => {
@@ -578,7 +596,9 @@ export default function TableSessionsPage() {
           </div>
           <div className="flex flex-row gap-6 overflow-x-auto pb-4">
             {upcoming.length === 0 ? (
-              <div className="text-gray-500 italic mt-2">No upcoming sessions.</div>
+              <div className="text-gray-500 italic mt-2">
+                No upcoming sessions.
+              </div>
             ) : (
               upcoming.map((s: any) => (
                 <SessionCard key={s.id} s={s} pollData={polls[s.id]} />
@@ -599,7 +619,9 @@ export default function TableSessionsPage() {
           {showPast && (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
               {past.length === 0 ? (
-                <div className="text-gray-400 italic ml-2">No past sessions.</div>
+                <div className="text-gray-400 italic ml-2">
+                  No past sessions.
+                </div>
               ) : (
                 past.map((s: any) => (
                   <SessionCard key={s.id} s={s} pollData={polls[s.id]} />
@@ -641,6 +663,14 @@ export default function TableSessionsPage() {
           setProposed={setPollProposed}
           newProposal={pollNewProposal}
           setNewProposal={setPollNewProposal}
+        />
+        <ConfirmModal
+          open={deleteId !== null}
+          title={t("delete_session")}
+          message={t("confirm_delete_session")}
+          onConfirm={handleDelete}
+          onCancel={() => setDeleteId(null)}
+          loading={deleting}
         />
       </div>
     </DashboardLayout>

@@ -58,17 +58,17 @@ async def list_tables_endpoint(
 
         # Sessions
         session_rows = await session.execute(
-            select(Session).where(Session.table_id == t.id)
+            select(Session.scheduled_time).where(Session.table_id == t.id)
         )
-        sessions = session_rows.scalars().all()
-        latest = None
-        next_up = None
-        for s in sessions:
-            if s.scheduled_time <= now:
-                if not latest or s.scheduled_time > latest.scheduled_time:
-                    latest = s
-            elif not next_up or s.scheduled_time < next_up.scheduled_time:
-                next_up = s
+        session_times = session_rows.scalars().all()
+        latest_time = None
+        next_up_time = None
+        for s_time in session_times:
+            if s_time <= now:
+                if not latest_time or s_time > latest_time:
+                    latest_time = s_time
+            elif not next_up_time or s_time < next_up_time:
+                next_up_time = s_time
 
         results.append(
             TableListRead(
@@ -80,8 +80,8 @@ async def list_tables_endpoint(
                 created_at=t.created_at,
                 world_name=world_name,
                 members=members,
-                latest_session=latest.scheduled_time if latest else None,
-                next_session=next_up.scheduled_time if next_up else None,
+                latest_session=latest_time,
+                next_session=next_up_time,
             )
         )
     return results

@@ -1,6 +1,6 @@
 "use client";
 import { createContext, useContext, useEffect, useState } from "react";
-import { getCurrentUser } from "../../lib/usersApi"; // Adjust path as needed
+import { getCurrentUser, updateUser } from "../../lib/usersApi"; // Adjust path as needed
 
 type User = {
   id: number;
@@ -8,6 +8,7 @@ type User = {
   email: string;
   role: string;
   image_url?: string | null;
+  timezone?: string | null;
 };
 
 type AuthContextType = {
@@ -57,9 +58,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (token) {
       setLoading(true);
       getCurrentUser(token)
-        .then((data) => {
+        .then(async (data) => {
           setUser(data);
           setLoading(false);
+          if (!data.timezone) {
+            const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+            try {
+              const updated = await updateUser(
+                data.id,
+                { timezone: tz },
+                token,
+              );
+              setUser(updated);
+              alert(`Timezone set to ${tz}`);
+            } catch (e) {
+              console.error("Failed to update timezone", e);
+            }
+          }
         })
         .catch(() => {
           setUser(null);
@@ -95,7 +110,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return path;
   };
 
-
   async function refreshUser(tokenOverride) {
     const tokenToUse = tokenOverride || token;
     if (!tokenToUse) return;
@@ -114,12 +128,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         token,
         setToken,
         isLoggedIn: !!token && !!user,
-        user,        
+        user,
         logout,
         setRedirectAfterLogin,
         getRedirectAfterLogin,
         loading,
-        refreshUser
+        refreshUser,
       }}
     >
       {children}

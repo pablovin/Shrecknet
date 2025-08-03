@@ -10,6 +10,7 @@ class Session(SQLModel, table=True):
     scheduled_time: datetime
     summary: Optional[str] = None
     location: Optional[str] = None
+    timezone: str = Field(default="UTC")
     created_by: int = Field(foreign_key="user.id")
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -36,7 +37,9 @@ class SessionPage(SQLModel, table=True):
 class SessionPoll(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     session_id: int = Field(foreign_key="session.id")
-    final_option_id: Optional[int] = Field(default=None, foreign_key="sessionpolloption.id")
+    final_option_id: Optional[int] = Field(
+        default=None, foreign_key="sessionpolloption.id"
+    )
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     session: "Session" = Relationship(back_populates="poll")

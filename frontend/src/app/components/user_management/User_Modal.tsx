@@ -10,7 +10,12 @@ import { M3FloatingInput } from "../template/M3FloatingInput";
 import Image from "next/image";
 async function uploadAvatar(file, userId) {
   const customFileName = userId.toString();
-  const imageUrl = await uploadImage(file, "avatars", userId.toString(), customFileName);
+  const imageUrl = await uploadImage(
+    file,
+    "avatars",
+    userId.toString(),
+    customFileName,
+  );
   return imageUrl;
 }
 
@@ -27,6 +32,7 @@ export default function UserModal({
     email: user.email,
     role: user.role,
     image_url: user.image_url,
+    timezone: user.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone,
     newAvatar: null,
   });
   const [password, setPassword] = useState("");
@@ -35,15 +41,17 @@ export default function UserModal({
   const [confirmUnlock, setConfirmUnlock] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [saving, setSaving] = useState(false);
-
-  
+  const timezones =
+    typeof Intl.supportedValuesOf === "function"
+      ? Intl.supportedValuesOf("timeZone")
+      : [Intl.DateTimeFormat().resolvedOptions().timeZone];
 
   async function handleAvatarChange(e) {
     const file = e.target.files?.[0];
     if (file) {
       try {
         const avatarUrl = await uploadAvatar(file, user.id);
-        setForm(f => ({ ...f, image_url: avatarUrl, newAvatar: file }));
+        setForm((f) => ({ ...f, image_url: avatarUrl, newAvatar: file }));
       } catch (err) {
         setLocalError("Avatar upload failed. " + err);
         setError?.("Avatar upload failed. " + err);
@@ -61,6 +69,7 @@ export default function UserModal({
         nickname: form.nickname,
         role: form.role,
         image_url: form.image_url,
+        timezone: form.timezone,
       };
       if (isProfile && password) updatePayload.password = password;
       await updateUser(user.id, updatePayload, token);
@@ -89,8 +98,11 @@ export default function UserModal({
   }
 
   return (
-    <ModalContainer title={isProfile ? "Edit Your Profile" : "Edit User"} onClose={onClose}>
-      {(error) && (
+    <ModalContainer
+      title={isProfile ? "Edit Your Profile" : "Edit User"}
+      onClose={onClose}
+    >
+      {error && (
         <div className="bg-red-100 text-red-700 rounded-lg px-3 py-2 mb-3 text-sm">
           {error}
         </div>
@@ -127,7 +139,7 @@ export default function UserModal({
           label="Nickname"
           name="nickname"
           value={form.nickname}
-          onChange={e => setForm(f => ({ ...f, nickname: e.target.value }))}
+          onChange={(e) => setForm((f) => ({ ...f, nickname: e.target.value }))}
           required
         />
         {!isProfile && (
@@ -135,11 +147,13 @@ export default function UserModal({
             <select
               className="peer w-full px-4 pt-6 pb-2 text-[var(--foreground)] bg-[var(--surface)] border-2 border-[var(--border)] rounded-xl outline-none focus:border-[var(--primary)] transition-colors text-base"
               value={form.role}
-              onChange={e => setForm(f => ({ ...f, role: e.target.value }))}
+              onChange={(e) => setForm((f) => ({ ...f, role: e.target.value }))}
               required
             >
-              {ROLES.map(role => (
-                <option key={role} value={role}>{role}</option>
+              {ROLES.map((role) => (
+                <option key={role} value={role}>
+                  {role}
+                </option>
               ))}
             </select>
             <label
@@ -150,6 +164,27 @@ export default function UserModal({
             </label>
           </div>
         )}
+        <div className="relative">
+          <select
+            className="peer w-full px-4 pt-6 pb-2 text-[var(--foreground)] bg-[var(--surface)] border-2 border-[var(--border)] rounded-xl outline-none focus:border-[var(--primary)] transition-colors text-base"
+            value={form.timezone}
+            onChange={(e) =>
+              setForm((f) => ({ ...f, timezone: e.target.value }))
+            }
+          >
+            {timezones.map((tz) => (
+              <option key={tz} value={tz}>
+                {tz}
+              </option>
+            ))}
+          </select>
+          <label
+            className="absolute left-3 top-1.5 text-base text-[var(--primary)] font-semibold pointer-events-none"
+            style={{ zIndex: 10 }}
+          >
+            Timezone
+          </label>
+        </div>
         {isProfile && (
           <M3FloatingInput
             label="New Password"
@@ -157,7 +192,7 @@ export default function UserModal({
             type="password"
             value={password}
             autoComplete="new-password"
-            onChange={e => setPassword(e.target.value)}
+            onChange={(e) => setPassword(e.target.value)}
             minLength={8}
             maxLength={100}
             placeholder=" "
@@ -204,7 +239,8 @@ export default function UserModal({
           ) : (
             <div className="flex flex-col items-center">
               <div className="mb-2 font-semibold text-red-700 text-center">
-                Are you sure you want to delete the user <span className="font-bold">{user.nickname}</span>?
+                Are you sure you want to delete the user{" "}
+                <span className="font-bold">{user.nickname}</span>?
               </div>
               <div className="flex gap-3">
                 <button
@@ -215,7 +251,10 @@ export default function UserModal({
                 </button>
                 <button
                   className="px-5 py-2 bg-[var(--primary)]/10 text-[var(--primary)] rounded-lg hover:bg-[var(--primary)]/20 font-bold"
-                  onClick={() => { setConfirmDelete(false); setConfirmUnlock(false); }}
+                  onClick={() => {
+                    setConfirmDelete(false);
+                    setConfirmUnlock(false);
+                  }}
                 >
                   Cancel
                 </button>

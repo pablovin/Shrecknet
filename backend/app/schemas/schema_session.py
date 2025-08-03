@@ -8,10 +8,11 @@ class SessionBase(SQLModel):
     scheduled_time: datetime
     summary: Optional[str] = None
     location: Optional[str] = None
+    timezone: str
 
 
 class SessionCreate(SessionBase):
-    table_id: int
+    table_id: Optional[int] = None
     attendee_ids: List[int] = []
     page_ids: List[int] = []
 

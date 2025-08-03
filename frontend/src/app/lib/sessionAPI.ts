@@ -102,3 +102,40 @@ export async function finalizeSessionPoll(
   if (!res.ok) throw await res.json();
   return await res.json();
 }
+
+export async function updateSession(
+  tableId: number,
+  sessionId: number,
+  data: unknown,
+  token: string,
+) {
+  const res = await fetch(
+    `${API_URL}/tables/${tableId}/sessions/${sessionId}`,
+    {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(data),
+    },
+  );
+  if (!res.ok) throw await res.json();
+  return await res.json();
+}
+
+export async function deleteSession(
+  tableId: number,
+  sessionId: number,
+  token: string,
+) {
+  const res = await fetch(
+    `${API_URL}/tables/${tableId}/sessions/${sessionId}`,
+    {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+  if (!res.ok) throw await res.json();
+  return await res.json();
+}

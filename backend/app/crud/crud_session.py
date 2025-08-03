@@ -1,6 +1,9 @@
 from typing import List, Set
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+
 from app.models.model_session import Session, SessionAttendance, SessionPage
 from app.models.model_table import TableMember
 from app.schemas.schema_session import SessionCreate
@@ -40,6 +43,13 @@ async def create_session(
 
     await session.commit()
 
+    # Ensure related pages are loaded before returning the session. Without
+    # explicitly refreshing the relationship SQLAlchemy will attempt a lazy
+    # load later which fails under async sessions with a MissingGreenlet
+    # error. By refreshing here we eagerly load the relationship while the
+    # session is still active.
+    await session.refresh(sess, attribute_names=["pages"])
+
     news = NewsCreate(
         title="Session Scheduled",
         type="session",
@@ -50,5 +60,9 @@ async def create_session(
 
 
 async def get_sessions_for_table(session: AsyncSession, table_id: int) -> List[Session]:
-    result = await session.execute(select(Session).where(Session.table_id == table_id))
+    result = await session.execute(
+        select(Session)
+        .where(Session.table_id == table_id)
+        .options(selectinload(Session.pages))
+    )
     return result.scalars().all()

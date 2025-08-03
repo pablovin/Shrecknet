@@ -1,7 +1,15 @@
 from typing import List
-from sqlalchemy import select
+from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.model_table import Table, TableMember
+from app.models.model_session import (
+    Session,
+    SessionAttendance,
+    SessionPage,
+    SessionPoll,
+    SessionPollOption,
+    SessionPollVote,
+)
 from app.schemas.schema_table import TableCreate, TableUpdate
 
 
@@ -50,3 +58,50 @@ async def update_table(
     await session.commit()
     await session.refresh(table)
     return table
+
+
+async def delete_table(session: AsyncSession, table_id: int) -> None:
+    """Remove a table and all of its sessions."""
+    session_ids = (
+        (await session.execute(select(Session.id).where(Session.table_id == table_id)))
+        .scalars()
+        .all()
+    )
+
+    if session_ids:
+        poll_ids = (
+            (
+                await session.execute(
+                    select(SessionPoll.id).where(
+                        SessionPoll.session_id.in_(session_ids)
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+        if poll_ids:
+            await session.execute(
+                delete(SessionPollVote).where(SessionPollVote.poll_id.in_(poll_ids))
+            )
+            await session.execute(
+                delete(SessionPollOption).where(SessionPollOption.poll_id.in_(poll_ids))
+            )
+            await session.execute(
+                delete(SessionPoll).where(SessionPoll.id.in_(poll_ids))
+            )
+
+        await session.execute(
+            delete(SessionPage).where(SessionPage.session_id.in_(session_ids))
+        )
+        await session.execute(
+            delete(SessionAttendance).where(
+                SessionAttendance.session_id.in_(session_ids)
+            )
+        )
+        await session.execute(delete(Session).where(Session.id.in_(session_ids)))
+
+    await session.execute(delete(TableMember).where(TableMember.table_id == table_id))
+    await session.execute(delete(Table).where(Table.id == table_id))
+    await session.commit()

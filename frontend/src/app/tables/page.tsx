@@ -4,14 +4,14 @@ import Image from "next/image";
 import DashboardLayout from "@/app/components/DashboardLayout";
 import { useTables } from "@/app/lib/useTables";
 import { useAuth } from "@/app/components/auth/AuthProvider";
-import { createTable, updateTable } from "@/app/lib/tableAPI";
+import { createTable, updateTable, deleteTable } from "@/app/lib/tableAPI";
 import { uploadTableLogo } from "@/app/lib/uploadTableLogo";
 import PageRefSelectorMD3 from "@/app/components/create_page/PageRefSelectorMD3";
 import { useWorlds } from "@/app/lib/userWorlds";
 import { useUsers } from "@/app/lib/useUsers";
 import { M3FloatingInput } from "../components/template/M3FloatingInput";
 import Link from "next/link";
-import { Users2, Book, Calendar, ArrowRight } from "lucide-react";
+import { Users2, Book, Calendar, ArrowRight, Edit, Trash2 } from "lucide-react";
 
 interface TableMember {
   id: number;
@@ -21,6 +21,7 @@ interface TableMember {
 
 interface TableItem {
   id: number;
+  world_id: number;
   name: string;
   world_name: string;
   crest_url?: string | null;
@@ -29,41 +30,40 @@ interface TableItem {
   next_session?: string | null;
 }
 
-function formatDateDistance(dateStr: string | null, prefix: string, future?: boolean) {
-  if (!dateStr) return "";
-  const d = new Date(dateStr);
-  const now = Date.now();
-  const diff = Math.round((d.getTime() - now) / (1000 * 60 * 60 * 24));
-  return future
-    ? `${prefix}: ${d.toLocaleDateString()} (${diff >= 0 ? `in ${diff} days` : "now"})`
-    : `${prefix}: ${d.toLocaleDateString()} (${diff <= 0 ? `${-diff} days ago` : "now"})`;
-}
-
 export default function TablesPage() {
   const { tables, mutate } = useTables();
   const { worlds } = useWorlds();
   const { users } = useUsers();
   const { token } = useAuth();
   const [open, setOpen] = useState(false);
+  const [editing, setEditing] = useState<TableItem | null>(null);
   const [name, setName] = useState("");
   const [worldId, setWorldId] = useState("");
   const [logo, setLogo] = useState<File | null>(null);
   const [members, setMembers] = useState<string[]>([]);
-
-  async function handleCreate() {
-    const table = await createTable(
-      {
-        world_id: Number(worldId),
-        name,
-        member_ids: members.map((m) => Number(m)),
-      },
-      token,
-    );
-    if (logo) {
-      const url = await uploadTableLogo(logo, table.id);
-      await updateTable(table.id, { crest_url: url }, token);
+  async function handleSave() {
+    if (editing) {
+      await updateTable(editing.id, { world_id: Number(worldId), name }, token);
+      if (logo) {
+        const url = await uploadTableLogo(logo, editing.id);
+        await updateTable(editing.id, { crest_url: url }, token);
+      }
+    } else {
+      const table = await createTable(
+        {
+          world_id: Number(worldId),
+          name,
+          member_ids: members.map((m) => Number(m)),
+        },
+        token,
+      );
+      if (logo) {
+        const url = await uploadTableLogo(logo, table.id);
+        await updateTable(table.id, { crest_url: url }, token);
+      }
     }
     setOpen(false);
+    setEditing(null);
     setName("");
     setWorldId("");
     setLogo(null);
@@ -71,7 +71,21 @@ export default function TablesPage() {
     mutate();
   }
 
-  return (     
+  function startEdit(t: TableItem) {
+    setEditing(t);
+    setName(t.name);
+    setWorldId(String(t.world_id));
+    setLogo(null);
+    setMembers([]);
+    setOpen(true);
+  }
+
+  async function handleDelete(id: number) {
+    await deleteTable(id, token);
+    mutate();
+  }
+
+  return (
     <DashboardLayout>
       <div className="w-full max-w-5xl mx-auto px-2 py-10 min-h-screen relative">
         <div className="flex justify-between items-center mb-8">
@@ -81,7 +95,14 @@ export default function TablesPage() {
           </h1>
           <button
             className="px-5 py-2.5 rounded-xl bg-[var(--primary)] text-white font-bold shadow-lg border-2 border-[var(--primary)] hover:bg-[var(--primary-dark)] transition"
-            onClick={() => setOpen(true)}
+            onClick={() => {
+              setEditing(null);
+              setName("");
+              setWorldId("");
+              setLogo(null);
+              setMembers([]);
+              setOpen(true);
+            }}
           >
             + New Party
           </button>
@@ -96,6 +117,20 @@ export default function TablesPage() {
                 background: `linear-gradient(120deg, #f7f3fe 88%, #ece7ff 100%)`,
               }}
             >
+              <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition">
+                <button
+                  onClick={() => startEdit(t)}
+                  className="p-1 rounded-full bg-white/80 hover:bg-white"
+                >
+                  <Edit className="w-4 h-4 text-[var(--primary)]" />
+                </button>
+                <button
+                  onClick={() => handleDelete(t.id)}
+                  className="p-1 rounded-full bg-white/80 hover:bg-white"
+                >
+                  <Trash2 className="w-4 h-4 text-[var(--primary)]" />
+                </button>
+              </div>
               {/* Top Banner Row */}
               <div className="flex items-center gap-4 px-5 pt-5 pb-2">
                 <Image
@@ -129,7 +164,10 @@ export default function TablesPage() {
               {/* Members Row */}
               <div className="flex flex-wrap items-center gap-3 px-5 pb-2">
                 {t.members.map((m: TableMember) => (
-                  <div key={m.id} className="flex items-center gap-2 bg-[var(--primary)]/5 rounded-full px-2 py-1 shadow text-xs">
+                  <div
+                    key={m.id}
+                    className="flex items-center gap-2 bg-[var(--primary)]/5 rounded-full px-2 py-1 shadow text-xs"
+                  >
                     <Image
                       src={m.image_url || "/images/avatars/default.png"}
                       alt={m.nickname}
@@ -137,7 +175,9 @@ export default function TablesPage() {
                       height={28}
                       className="w-7 h-7 rounded-full object-cover border-2 border-[var(--primary)]"
                     />
-                    <span className="font-semibold text-[var(--primary-dark)]">{m.nickname}</span>
+                    <span className="font-semibold text-[var(--primary-dark)]">
+                      {m.nickname}
+                    </span>
                   </div>
                 ))}
               </div>
@@ -149,7 +189,8 @@ export default function TablesPage() {
                     <span>
                       Last: {new Date(t.latest_session).toLocaleDateString()} (
                       {Math.floor(
-                        (Date.now() - new Date(t.latest_session).getTime()) / (1000 * 60 * 60 * 24)
+                        (Date.now() - new Date(t.latest_session).getTime()) /
+                          (1000 * 60 * 60 * 24),
                       )}{" "}
                       days ago)
                     </span>
@@ -160,9 +201,12 @@ export default function TablesPage() {
                 {t.next_session && (
                   <div className="flex items-center gap-2 text-xs text-[var(--primary)] font-semibold">
                     <Calendar className="w-4 h-4" />
-                    Next: {new Date(t.next_session).toLocaleDateString()} (in{" "}
+                    Next: {new Date(
+                      t.next_session,
+                    ).toLocaleDateString()} (in{" "}
                     {Math.ceil(
-                      (new Date(t.next_session).getTime() - Date.now()) / (1000 * 60 * 60 * 24)
+                      (new Date(t.next_session).getTime() - Date.now()) /
+                        (1000 * 60 * 60 * 24),
                     )}{" "}
                     days)
                   </div>
@@ -177,12 +221,14 @@ export default function TablesPage() {
           <div className="fixed inset-0 z-40 bg-black/40 flex items-center justify-center">
             <div className="bg-[var(--surface)] border-2 border-[var(--primary)] shadow-xl rounded-2xl p-8 w-full max-w-md relative">
               <h2 className="text-xl font-serif font-bold text-[var(--primary)] mb-2 text-center">
-                Create a New Party
+                {editing ? "Edit Party" : "Create a New Party"}
               </h2>
               <M3FloatingInput
                 label="Party Name"
                 value={name}
-                onChange={(e: ChangeEvent<HTMLInputElement>) => setName(e.target.value)}
+                onChange={(e: ChangeEvent<HTMLInputElement>) =>
+                  setName(e.target.value)
+                }
               />
               <div className="mt-3">
                 <label className="text-[var(--primary)] font-semibold text-sm mb-1 block">
@@ -190,7 +236,9 @@ export default function TablesPage() {
                 </label>
                 <select
                   value={worldId}
-                  onChange={(e: ChangeEvent<HTMLSelectElement>) => setWorldId(e.target.value)}
+                  onChange={(e: ChangeEvent<HTMLSelectElement>) =>
+                    setWorldId(e.target.value)
+                  }
                   className="w-full px-3 py-2 rounded-lg border border-[var(--primary)] bg-[var(--surface)] text-[var(--primary-dark)]"
                 >
                   <option value="">Select world</option>
@@ -214,18 +262,26 @@ export default function TablesPage() {
                   className="w-full"
                 />
               </div>
-              <div className="mt-3">
-                <PageRefSelectorMD3
-                  options={users.map((u: { id: number; nickname: string; image_url?: string | null }) => ({
-                    id: u.id,
-                    name: u.nickname,
-                    logo: u.image_url,
-                  }))}
-                  value={members}
-                  onChange={setMembers}
-                  label="Party Members"
-                />
-              </div>
+              {!editing && (
+                <div className="mt-3">
+                  <PageRefSelectorMD3
+                    options={users.map(
+                      (u: {
+                        id: number;
+                        nickname: string;
+                        image_url?: string | null;
+                      }) => ({
+                        id: u.id,
+                        name: u.nickname,
+                        logo: u.image_url,
+                      }),
+                    )}
+                    value={members}
+                    onChange={setMembers}
+                    label="Party Members"
+                  />
+                </div>
+              )}
               <div className="flex justify-end gap-2 mt-5">
                 <button
                   onClick={() => setOpen(false)}
@@ -234,7 +290,7 @@ export default function TablesPage() {
                   Cancel
                 </button>
                 <button
-                  onClick={handleCreate}
+                  onClick={handleSave}
                   className="px-4 py-2 rounded-lg bg-[var(--primary)] text-white font-bold shadow hover:bg-[var(--primary-dark)] transition"
                 >
                   Save

@@ -90,12 +90,23 @@ async def create_session(
     return sess
 
 
-async def get_sessions_for_table(session: AsyncSession, table_id: int) -> List[Session]:
-    result = await session.execute(
+async def get_sessions_for_table(
+    session: AsyncSession, table_id: int, user_id: int | None = None
+) -> List[Session]:
+    """Return sessions for a table.
+
+    If ``user_id`` is provided, only sessions where the user has an attendance
+    record are returned.
+    """
+
+    stmt = (
         select(Session)
         .where(Session.table_id == table_id)
         .options(selectinload(Session.pages))
     )
+    if user_id is not None:
+        stmt = stmt.join(SessionAttendance).where(SessionAttendance.user_id == user_id)
+    result = await session.execute(stmt)
     return result.scalars().all()
 
 

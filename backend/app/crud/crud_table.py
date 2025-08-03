@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Set
 from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.model_table import Table, TableMember
@@ -11,6 +11,8 @@ from app.models.model_session import (
     SessionPollVote,
 )
 from app.schemas.schema_table import TableCreate, TableUpdate
+from app.crud.crud_news import create_news
+from app.schemas.schema_news import NewsCreate
 
 
 async def create_table(
@@ -33,6 +35,16 @@ async def create_table(
             TableMember(table_id=table.id, user_id=uid, is_gm=(uid == creator_id))
         )
     await session.commit()
+
+    for uid in member_ids:
+        if uid != creator_id:
+            news = NewsCreate(
+                title="Added to Table",
+                type="gaming_session",
+                description=f"You were added to table '{table.name}'. View: /tables/{table.id}",
+                user_id=uid,
+            )
+            await create_news(session, news)
     return table
 
 
@@ -56,7 +68,7 @@ async def update_table(
         setattr(table, field, value)
 
     session.add(table)
-
+    added_ids: Set[int] = set()
     if member_ids is not None:
         existing_members = (
             (
@@ -70,7 +82,8 @@ async def update_table(
         existing_ids = {m.user_id for m in existing_members}
         new_ids = set(member_ids)
 
-        for uid in new_ids - existing_ids:
+        added_ids = new_ids - existing_ids
+        for uid in added_ids:
             session.add(TableMember(table_id=table_id, user_id=uid, is_gm=False))
 
         for member in existing_members:
@@ -79,6 +92,15 @@ async def update_table(
 
     await session.commit()
     await session.refresh(table)
+
+    for uid in added_ids:
+        news = NewsCreate(
+            title="Added to Table",
+            type="gaming_session",
+            description=f"You were added to table '{table.name}'. View: /tables/{table.id}",
+            user_id=uid,
+        )
+        await create_news(session, news)
     return table
 
 

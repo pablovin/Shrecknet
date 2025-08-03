@@ -44,12 +44,38 @@ def _migrate(conn):
         conn.execute(text("ALTER TABLE user ADD COLUMN timezone TEXT"))
 
     # -- Session table migrations --
-    columns = [c["name"] for c in inspector.get_columns("session")]
-    if "name" not in columns:
+    session_cols = inspector.get_columns("session")
+    column_names = [c["name"] for c in session_cols]
+    if "name" not in column_names:
         # Existing rows may exist, so add with a default value
         conn.execute(text("ALTER TABLE session ADD COLUMN name TEXT DEFAULT ''"))
-    if "timezone" not in columns:
+    if "timezone" not in column_names:
         conn.execute(text("ALTER TABLE session ADD COLUMN timezone TEXT DEFAULT 'UTC'"))
+    if "scheduled_time" in column_names:
+        sched_col = next(c for c in session_cols if c["name"] == "scheduled_time")
+        if not sched_col["nullable"]:
+            conn.execute(text("ALTER TABLE session RENAME TO session_old"))
+            conn.execute(
+                text(
+                    "CREATE TABLE session ("
+                    "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                    "table_id INTEGER NOT NULL REFERENCES table(id), "
+                    "name TEXT NOT NULL, "
+                    "scheduled_time DATETIME, "
+                    "summary TEXT, "
+                    "location TEXT, "
+                    "timezone TEXT NOT NULL DEFAULT 'UTC', "
+                    "created_by INTEGER NOT NULL REFERENCES user(id), "
+                    "created_at DATETIME NOT NULL)"
+                )
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO session (id, table_id, name, scheduled_time, summary, location, timezone, created_by, created_at) "
+                    "SELECT id, table_id, name, scheduled_time, summary, location, timezone, created_by, created_at FROM session_old"
+                )
+            )
+            conn.execute(text("DROP TABLE session_old"))
 
     # -- Page table migrations --
     columns = [c["name"] for c in inspector.get_columns("page")]

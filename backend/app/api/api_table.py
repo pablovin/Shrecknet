@@ -69,11 +69,17 @@ async def list_tables_endpoint(
         latest_time = None
         next_up_time = None
         for s_time in session_times:
-            if s_time <= now:
-                if not latest_time or s_time > latest_time:
-                    latest_time = s_time
-            elif not next_up_time or s_time < next_up_time:
-                next_up_time = s_time
+            # Ensure we compare timezone-aware datetimes. Some stored
+            # session times may be naive (no timezone info), so default
+            # them to UTC for comparison.
+            s_time_aware = (
+                s_time.replace(tzinfo=timezone.utc) if s_time.tzinfo is None else s_time
+            )
+            if s_time_aware <= now:
+                if not latest_time or s_time_aware > latest_time:
+                    latest_time = s_time_aware
+            elif not next_up_time or s_time_aware < next_up_time:
+                next_up_time = s_time_aware
 
         results.append(
             TableListRead(

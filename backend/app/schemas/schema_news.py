@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Optional
+from typing import List, Optional
 from sqlmodel import SQLModel
 
 
@@ -7,11 +7,10 @@ class NewsBase(SQLModel):
     title: str
     type: str
     description: str
-    user_id: Optional[int] = None
 
 
 class NewsCreate(NewsBase):
-    pass
+    user_ids: List[int] = []
 
 
 class NewsRead(NewsBase):

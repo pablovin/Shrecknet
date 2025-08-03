@@ -37,6 +37,7 @@ export default function TableSessionsPage() {
   );
   const [proposed, setProposed] = useState<string[]>([]);
   const [newProposal, setNewProposal] = useState("");
+  const sessionDetail = sessions.find((s: any) => s.id === pollSession);
 
   useEffect(() => {
     if (token) {
@@ -68,6 +69,40 @@ export default function TableSessionsPage() {
     mutate();
   }
 
+  const now = new Date();
+  const upcoming = sessions.filter(
+    (s: any) => new Date(s.scheduled_time) >= now,
+  );
+  const past = sessions.filter((s: any) => new Date(s.scheduled_time) < now);
+
+  function renderSession(s: any) {
+    return (
+      <li
+        key={s.id}
+        className="p-4 rounded-xl bg-[var(--surface-variant)] space-y-1"
+      >
+        <div className="flex justify-between items-center">
+          <div>
+            <div className="font-semibold">{s.name}</div>
+            <div className="text-sm">
+              {s.scheduled_time
+                ? new Date(s.scheduled_time).toLocaleString()
+                : "Not scheduled"}
+            </div>
+          </div>
+          <button
+            className="text-sm text-[var(--primary)] flex items-center gap-1"
+            onClick={() => setPollSession(s.id)}
+          >
+            <CalendarDays className="w-4 h-4" /> Poll
+          </button>
+        </div>
+        {s.location && <div className="text-sm">{s.location}</div>}
+        {s.summary && <div className="text-sm opacity-80">{s.summary}</div>}
+      </li>
+    );
+  }
+
   return (
     <DashboardLayout>
       <div className="w-full max-w-4xl mx-auto p-4">
@@ -80,33 +115,18 @@ export default function TableSessionsPage() {
             Schedule
           </button>
         </div>
-        <ul className="space-y-2">
-          {sessions.map((s: any) => (
-            <li
-              key={s.id}
-              className="p-4 rounded-xl bg-[var(--surface-variant)] space-y-1"
-            >
-              <div className="flex justify-between items-center">
-                <div>
-                  <div className="font-semibold">{s.name}</div>
-                  <div className="text-sm">
-                    {new Date(s.scheduled_time).toLocaleString()}
-                  </div>
-                </div>
-                <button
-                  className="text-sm text-[var(--primary)] flex items-center gap-1"
-                  onClick={() => setPollSession(s.id)}
-                >
-                  <CalendarDays className="w-4 h-4" /> Poll
-                </button>
-              </div>
-              {s.location && <div className="text-sm">{s.location}</div>}
-              {s.summary && (
-                <div className="text-sm opacity-80">{s.summary}</div>
-              )}
-            </li>
-          ))}
-        </ul>
+        <section className="space-y-2">
+          <h2 className="font-semibold">Upcoming Sessions</h2>
+          <ul className="space-y-2">
+            {upcoming.map((s: any) => renderSession(s))}
+          </ul>
+        </section>
+        <section className="space-y-2 mt-8">
+          <h2 className="font-semibold">Past Sessions</h2>
+          <ul className="space-y-2">
+            {past.map((s: any) => renderSession(s))}
+          </ul>
+        </section>
         {open && (
           <div className="fixed inset-0 bg-black/40 flex items-center justify-center">
             <div className="bg-[var(--surface)] p-6 rounded-xl w-full max-w-md space-y-4">
@@ -165,6 +185,12 @@ export default function TableSessionsPage() {
               {poll ? (
                 <div className="space-y-4">
                   <h2 className="text-xl font-semibold">Session Poll</h2>
+                  {sessionDetail?.scheduled_time && (
+                    <div className="text-sm">
+                      Session date:{" "}
+                      {new Date(sessionDetail.scheduled_time).toLocaleString()}
+                    </div>
+                  )}
                   {poll.options.map((opt: any) => (
                     <div key={opt.id} className="border p-2 rounded">
                       <div className="flex justify-between items-center">
@@ -189,15 +215,30 @@ export default function TableSessionsPage() {
                           </button>
                         )}
                       </div>
-                      <div className="text-xs opacity-80 mt-1">
-                        {opt.votes
-                          .map(
-                            (id: number) =>
-                              users.find((u: any) => u.id === id)?.nickname ||
-                              id,
-                          )
-                          .join(", ") || "No votes"}
-                      </div>
+                      {opt.votes.length ? (
+                        <div className="flex flex-wrap gap-2 mt-1">
+                          {opt.votes.map((id: number) => {
+                            const u = users.find((usr: any) => usr.id === id);
+                            return (
+                              <div
+                                key={id}
+                                className="flex items-center gap-1 text-xs"
+                              >
+                                {u?.image_url && (
+                                  <img
+                                    src={u.image_url}
+                                    alt={u.nickname}
+                                    className="w-4 h-4 rounded-full"
+                                  />
+                                )}
+                                <span>{u?.nickname || id}</span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <div className="text-xs opacity-80 mt-1">No votes</div>
+                      )}
                     </div>
                   ))}
                   <button

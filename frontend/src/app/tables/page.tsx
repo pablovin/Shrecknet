@@ -10,6 +10,8 @@ import PageRefSelectorMD3 from "@/app/components/create_page/PageRefSelectorMD3"
 import { useWorlds } from "@/app/lib/userWorlds";
 import { useUsers } from "@/app/lib/useUsers";
 import { M3FloatingInput } from "../components/template/M3FloatingInput";
+import Link from "next/link";
+import { Users2, Book, Calendar, ArrowRight } from "lucide-react";
 
 interface TableMember {
   id: number;
@@ -25,6 +27,16 @@ interface TableItem {
   members: TableMember[];
   latest_session?: string | null;
   next_session?: string | null;
+}
+
+function formatDateDistance(dateStr: string | null, prefix: string, future?: boolean) {
+  if (!dateStr) return "";
+  const d = new Date(dateStr);
+  const now = Date.now();
+  const diff = Math.round((d.getTime() - now) / (1000 * 60 * 60 * 24));
+  return future
+    ? `${prefix}: ${d.toLocaleDateString()} (${diff >= 0 ? `in ${diff} days` : "now"})`
+    : `${prefix}: ${d.toLocaleDateString()} (${diff <= 0 ? `${-diff} days ago` : "now"})`;
 }
 
 export default function TablesPage() {
@@ -47,12 +59,10 @@ export default function TablesPage() {
       },
       token,
     );
-
     if (logo) {
       const url = await uploadTableLogo(logo, table.id);
       await updateTable(table.id, { crest_url: url }, token);
     }
-
     setOpen(false);
     setName("");
     setWorldId("");
@@ -61,104 +71,127 @@ export default function TablesPage() {
     mutate();
   }
 
-  return (
+  return (     
     <DashboardLayout>
-      <div className="w-full max-w-4xl mx-auto p-4">
-        <div className="flex justify-between items-center mb-4">
-          <h1 className="text-2xl font-bold">Party Tables</h1>
+      <div className="w-full max-w-5xl mx-auto px-2 py-10 min-h-screen relative">
+        <div className="flex justify-between items-center mb-8">
+          <h1 className="text-3xl font-extrabold font-serif text-[var(--primary)] tracking-wider flex items-center gap-2">
+            <Users2 className="w-7 h-7 text-[var(--primary)]" />
+            Adventuring Parties
+          </h1>
           <button
-            className="px-4 py-2 rounded-lg bg-[var(--primary)] text-[var(--primary-foreground)]"
+            className="px-5 py-2.5 rounded-xl bg-[var(--primary)] text-white font-bold shadow-lg border-2 border-[var(--primary)] hover:bg-[var(--primary-dark)] transition"
             onClick={() => setOpen(true)}
           >
-            Create
+            + New Party
           </button>
         </div>
-        <ul className="space-y-2">
+
+        <ul className="grid gap-7 sm:grid-cols-2">
           {tables.map((t: TableItem) => (
             <li
               key={t.id}
-              className="p-4 rounded-xl bg-[var(--surface-variant)] flex gap-4"
+              className="relative flex flex-col min-h-[154px] rounded-3xl border-2 border-[var(--primary)] bg-[var(--surface-variant)] shadow-lg overflow-hidden group hover:shadow-2xl hover:border-[var(--primary-dark)] transition"
+              style={{
+                background: `linear-gradient(120deg, #f7f3fe 88%, #ece7ff 100%)`,
+              }}
             >
-              <Image
-                src={t.crest_url || "/images/worlds/new_game.png"}
-                alt={t.name}
-                width={64}
-                height={64}
-                className="w-16 h-16 rounded object-cover"
-              />
-              <div className="flex-1 space-y-1">
-                <div className="flex justify-between">
-                  <span className="font-semibold">{t.name}</span>
-                  <span className="text-sm text-[var(--primary)]">
-                    {t.world_name}
+              {/* Top Banner Row */}
+              <div className="flex items-center gap-4 px-5 pt-5 pb-2">
+                <Image
+                  src={t.crest_url || "/images/worlds/new_game.png"}
+                  alt={t.name}
+                  width={72}
+                  height={72}
+                  className="w-16 h-16 rounded-xl object-cover border-4 border-[var(--primary)] bg-white shadow-md"
+                />
+                <div className="flex-1 min-w-0">
+                  <Link
+                    href={`/tables/${t.id}/sessions`}
+                    className="block text-xl font-serif font-bold truncate text-[var(--primary)] hover:underline transition"
+                  >
+                    {t.name}
+                  </Link>
+                  <span className="inline-flex items-center gap-1 text-xs font-semibold bg-[var(--primary)]/10 text-[var(--primary)] rounded px-2 py-0.5 mt-1 mr-2">
+                    <Book className="w-4 h-4 inline" /> {t.world_name}
                   </span>
                 </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  {t.members.map((m: TableMember) => (
-                    <div key={m.id} className="flex items-center gap-1 text-xs">
-                      <Image
-                        src={m.image_url || "/images/avatars/default.png"}
-                        alt={m.nickname}
-                        width={24}
-                        height={24}
-                        className="w-6 h-6 rounded-full object-cover"
-                      />
-                      <span>{m.nickname}</span>
-                    </div>
-                  ))}
-                </div>
-                <div className="text-xs">
-                  {t.latest_session && (
-                    <div>
-                      Last: {new Date(t.latest_session).toLocaleString()} (
-                      {Math.floor(
-                        (Date.now() - new Date(t.latest_session).getTime()) /
-                          (1000 * 60 * 60 * 24),
-                      )}{" "}
-                      days ago)
-                    </div>
-                  )}
-                  {t.next_session && (
-                    <div>
-                      Next: {new Date(t.next_session).toLocaleString()} (in{" "}
-                      {Math.ceil(
-                        (new Date(t.next_session).getTime() - Date.now()) /
-                          (1000 * 60 * 60 * 24),
-                      )}{" "}
-                      days)
-                    </div>
-                  )}
+                <div className="flex items-center gap-2">
+                  <ArrowRight className="w-5 h-5 text-[var(--primary)]" />
+                  <Link
+                    href={`/tables/${t.id}/sessions`}
+                    className="text-xs font-semibold text-[var(--primary)] underline"
+                  >
+                    Sessions
+                  </Link>
                 </div>
               </div>
-              <a
-                href={`/tables/${t.id}/sessions`}
-                className="text-sm text-[var(--primary)] self-start"
-              >
-                Sessions
-              </a>
+              {/* Members Row */}
+              <div className="flex flex-wrap items-center gap-3 px-5 pb-2">
+                {t.members.map((m: TableMember) => (
+                  <div key={m.id} className="flex items-center gap-2 bg-[var(--primary)]/5 rounded-full px-2 py-1 shadow text-xs">
+                    <Image
+                      src={m.image_url || "/images/avatars/default.png"}
+                      alt={m.nickname}
+                      width={28}
+                      height={28}
+                      className="w-7 h-7 rounded-full object-cover border-2 border-[var(--primary)]"
+                    />
+                    <span className="font-semibold text-[var(--primary-dark)]">{m.nickname}</span>
+                  </div>
+                ))}
+              </div>
+              {/* Details Bar */}
+              <div className="flex flex-wrap justify-between items-center px-5 pb-3 pt-2 border-t border-[var(--primary)] bg-[var(--primary)]/5 mt-3">
+                <div className="flex items-center gap-2 text-xs text-[var(--primary-dark)]">
+                  <Calendar className="w-4 h-4" />
+                  {t.latest_session ? (
+                    <span>
+                      Last: {new Date(t.latest_session).toLocaleDateString()} (
+                      {Math.floor(
+                        (Date.now() - new Date(t.latest_session).getTime()) / (1000 * 60 * 60 * 24)
+                      )}{" "}
+                      days ago)
+                    </span>
+                  ) : (
+                    <span>No sessions yet</span>
+                  )}
+                </div>
+                {t.next_session && (
+                  <div className="flex items-center gap-2 text-xs text-[var(--primary)] font-semibold">
+                    <Calendar className="w-4 h-4" />
+                    Next: {new Date(t.next_session).toLocaleDateString()} (in{" "}
+                    {Math.ceil(
+                      (new Date(t.next_session).getTime() - Date.now()) / (1000 * 60 * 60 * 24)
+                    )}{" "}
+                    days)
+                  </div>
+                )}
+              </div>
             </li>
           ))}
         </ul>
+
+        {/* Modal */}
         {open && (
-          <div className="fixed inset-0 bg-black/40 flex items-center justify-center">
-            <div className="bg-[var(--surface)] p-6 rounded-xl w-full max-w-md space-y-4">
+          <div className="fixed inset-0 z-40 bg-black/40 flex items-center justify-center">
+            <div className="bg-[var(--surface)] border-2 border-[var(--primary)] shadow-xl rounded-2xl p-8 w-full max-w-md relative">
+              <h2 className="text-xl font-serif font-bold text-[var(--primary)] mb-2 text-center">
+                Create a New Party
+              </h2>
               <M3FloatingInput
-                label="Name"
+                label="Party Name"
                 value={name}
-                onChange={(e: ChangeEvent<HTMLInputElement>) =>
-                  setName(e.target.value)
-                }
+                onChange={(e: ChangeEvent<HTMLInputElement>) => setName(e.target.value)}
               />
-              <div>
+              <div className="mt-3">
                 <label className="text-[var(--primary)] font-semibold text-sm mb-1 block">
                   World
                 </label>
                 <select
                   value={worldId}
-                  onChange={(e: ChangeEvent<HTMLSelectElement>) =>
-                    setWorldId(e.target.value)
-                  }
-                  className="w-full px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--surface)]"
+                  onChange={(e: ChangeEvent<HTMLSelectElement>) => setWorldId(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg border border-[var(--primary)] bg-[var(--surface)] text-[var(--primary-dark)]"
                 >
                   <option value="">Select world</option>
                   {worlds.map((w: { id: number; name: string }) => (
@@ -168,9 +201,9 @@ export default function TablesPage() {
                   ))}
                 </select>
               </div>
-              <div>
+              <div className="mt-3">
                 <label className="text-[var(--primary)] font-semibold text-sm mb-1 block">
-                  Logo
+                  Party Crest (Logo)
                 </label>
                 <input
                   type="file"
@@ -181,32 +214,28 @@ export default function TablesPage() {
                   className="w-full"
                 />
               </div>
-              <PageRefSelectorMD3
-                options={users.map(
-                  (u: {
-                    id: number;
-                    nickname: string;
-                    image_url?: string | null;
-                  }) => ({
+              <div className="mt-3">
+                <PageRefSelectorMD3
+                  options={users.map((u: { id: number; nickname: string; image_url?: string | null }) => ({
                     id: u.id,
                     name: u.nickname,
                     logo: u.image_url,
-                  }),
-                )}
-                value={members}
-                onChange={setMembers}
-                label="Members"
-              />
-              <div className="flex justify-end gap-2">
+                  }))}
+                  value={members}
+                  onChange={setMembers}
+                  label="Party Members"
+                />
+              </div>
+              <div className="flex justify-end gap-2 mt-5">
                 <button
                   onClick={() => setOpen(false)}
-                  className="px-4 py-2 rounded-lg"
+                  className="px-4 py-2 rounded-lg font-semibold text-[var(--primary)] hover:bg-[var(--primary)]/10 transition"
                 >
                   Cancel
                 </button>
                 <button
                   onClick={handleCreate}
-                  className="px-4 py-2 rounded-lg bg-[var(--primary)] text-[var(--primary-foreground)]"
+                  className="px-4 py-2 rounded-lg bg-[var(--primary)] text-white font-bold shadow hover:bg-[var(--primary-dark)] transition"
                 >
                   Save
                 </button>

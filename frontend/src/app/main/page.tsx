@@ -36,7 +36,15 @@ function ErrorBannerClient() {
   return null;
 }
 
-function HomeCard({ href, icon, title, description, isAI = false, color, iconColor }) {
+function HomeCard({
+  href,
+  icon,
+  title,
+  description,
+  isAI = false,
+  color,
+  iconColor,
+}) {
   return (
     <Link
       href={href}
@@ -54,7 +62,9 @@ function HomeCard({ href, icon, title, description, isAI = false, color, iconCol
 
       {/* Icon + Title */}
       <div className="relative z-10 flex flex-col items-center gap-4 mb-4">
-        <div className={`w-16 h-16 rounded-2xl flex items-center justify-center text-white shadow-md ${iconColor}`}>
+        <div
+          className={`w-16 h-16 rounded-2xl flex items-center justify-center text-white shadow-md ${iconColor}`}
+        >
           {icon}
         </div>
         <div>
@@ -86,7 +96,7 @@ export default function MainPage() {
       title: t("sessions"),
       description: t("sessions_desc"),
       icon: <ScrollText className="w-6 h-6" />,
-      href: "/tables",
+      href: "/user_table",
       show: !!user,
       group: "game",
       color: "bg-gradient-to-br from-green-50 to-transparent",
@@ -231,7 +241,8 @@ export default function MainPage() {
               🧭 Choose Your Path
             </h1>
             <p className="text-[var(--foreground)]/80 text-base mt-1">
-              Welcome to your world-building portal. Where would you like to begin?
+              Welcome to your world-building portal. Where would you like to
+              begin?
             </p>
           </div>
 
@@ -242,9 +253,11 @@ export default function MainPage() {
                 {label}
               </h2>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                {cards.filter((c) => c.group === groupKey && c.show).map((c) => (
-                  <HomeCard key={c.title} {...c} />
-                ))}
+                {cards
+                  .filter((c) => c.group === groupKey && c.show)
+                  .map((c) => (
+                    <HomeCard key={c.title} {...c} />
+                  ))}
               </div>
             </div>
           ))}

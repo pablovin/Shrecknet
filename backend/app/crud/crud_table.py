@@ -2,9 +2,12 @@ from typing import List
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.model_table import Table, TableMember
-from app.schemas.schema_table import TableCreate
+from app.schemas.schema_table import TableCreate, TableUpdate
 
-async def create_table(session: AsyncSession, table_in: TableCreate, creator_id: int) -> Table:
+
+async def create_table(
+    session: AsyncSession, table_in: TableCreate, creator_id: int
+) -> Table:
     table = Table(
         world_id=table_in.world_id,
         name=table_in.name,
@@ -18,12 +21,32 @@ async def create_table(session: AsyncSession, table_in: TableCreate, creator_id:
     member_ids = set(table_in.member_ids or [])
     member_ids.add(creator_id)
     for uid in member_ids:
-        session.add(TableMember(table_id=table.id, user_id=uid, is_gm=(uid == creator_id)))
+        session.add(
+            TableMember(table_id=table.id, user_id=uid, is_gm=(uid == creator_id))
+        )
     await session.commit()
     return table
+
 
 async def get_tables_for_user(session: AsyncSession, user_id: int) -> List[Table]:
     result = await session.execute(
         select(Table).join(TableMember).where(TableMember.user_id == user_id)
     )
     return result.scalars().all()
+
+
+async def update_table(
+    session: AsyncSession, table_id: int, table_in: TableUpdate
+) -> Table:
+    table = await session.get(Table, table_id)
+    if not table:
+        raise ValueError("Table not found")
+
+    update_data = table_in.model_dump(exclude_unset=True)
+    for field, value in update_data.items():
+        setattr(table, field, value)
+
+    session.add(table)
+    await session.commit()
+    await session.refresh(table)
+    return table

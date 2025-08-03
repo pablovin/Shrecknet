@@ -21,8 +21,12 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
     let file = files.file as formidable.File | formidable.File[] | undefined;
     if (Array.isArray(file)) file = file[0];
 
-    const pageType = Array.isArray(fields.pageType) ? fields.pageType[0] : fields.pageType || "misc";
-    const pageName = Array.isArray(fields.pageName) ? fields.pageName[0] : fields.pageName || "general";
+    const pageType = Array.isArray(fields.pageType)
+      ? fields.pageType[0]
+      : fields.pageType || "misc";
+    const pageName = Array.isArray(fields.pageName)
+      ? fields.pageName[0]
+      : fields.pageName || "general";
     const customFileName = Array.isArray(fields.customFileName)
       ? fields.customFileName[0]
       : fields.customFileName;
@@ -32,15 +36,22 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
       return;
     }
 
-    const dir = path.join(process.cwd(), "uploads/images", pageType, pageName);
+    const isTable = pageType === "tables";
+    const dir = isTable
+      ? path.join(process.cwd(), "uploads", "tables", pageName)
+      : path.join(process.cwd(), "uploads/images", pageType, pageName);
     fs.mkdirSync(dir, { recursive: true });
 
     // File extension
-    const fileExt = path.extname(file.originalFilename || file.name || "upload").toLowerCase();
+    const fileExt = path
+      .extname(file.originalFilename || file.name || "upload")
+      .toLowerCase();
 
     // Clean base name
-    const baseName =
-      (file.originalFilename || file.name || "upload").replace(/[^a-zA-Z0-9_.-]/g, "_");
+    const baseName = (file.originalFilename || file.name || "upload").replace(
+      /[^a-zA-Z0-9_.-]/g,
+      "_",
+    );
 
     // Use customFileName if present, otherwise use the base name so repeated
     // uploads replace the previous file
@@ -53,7 +64,9 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
     if (fs.existsSync(dest)) fs.unlinkSync(dest);
 
     // Robust: check for filepath (formidable v3+), fallback to path (v2)
-    const tempPath = (file as any).filepath || (file as any).path;
+    const tempPath =
+      (file as formidable.File & { filepath?: string }).filepath ||
+      (file as formidable.File & { path?: string }).path;
     if (!tempPath) {
       res.status(400).json({ error: "File path not found for upload" });
       return;
@@ -69,8 +82,9 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
     }
     // -------------------------------------------------
 
+    const urlBase = isTable ? "/uploads/tables" : "/uploads/images";
     res.status(200).json({
-      url: `/uploads/images/${pageType}/${pageName}/${fileName}`.replace(/\/+/g, "/"),
+      url: path.join(urlBase, pageName, fileName).replace(/\\+/g, "/"),
     });
   });
 }

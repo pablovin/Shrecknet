@@ -35,7 +35,23 @@ async def create_session(
             )
         )
         attendee_ids = set(result.scalars().all())
-    for uid in attendee_ids:
+
+    # Avoid inserting duplicate attendance records which would violate the
+    # uniqueness constraint on (session_id, user_id). This can happen if
+    # records from a previous run remain in the database or if duplicate
+    # attendee IDs are provided.
+    if attendee_ids:
+        existing_result = await session.execute(
+            select(SessionAttendance.user_id).where(
+                (SessionAttendance.session_id == sess.id)
+                & (SessionAttendance.user_id.in_(attendee_ids))
+            )
+        )
+        existing_ids = set(existing_result.scalars().all())
+    else:
+        existing_ids = set()
+
+    for uid in attendee_ids - existing_ids:
         session.add(SessionAttendance(session_id=sess.id, user_id=uid, attending=True))
 
     for pid in session_in.page_ids or []:

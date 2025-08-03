@@ -5,7 +5,7 @@ from sqlmodel import SQLModel
 
 class SessionBase(SQLModel):
     name: str
-    scheduled_time: datetime
+    scheduled_time: Optional[datetime] = None
     summary: Optional[str] = None
     location: Optional[str] = None
     timezone: str

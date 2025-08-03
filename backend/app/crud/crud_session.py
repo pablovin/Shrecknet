@@ -50,12 +50,13 @@ async def create_session(
     # session is still active.
     await session.refresh(sess, attribute_names=["pages"])
 
-    news = NewsCreate(
-        title="Session Scheduled",
-        type="session",
-        description=f"Session for table {session_in.table_id} on {sess.scheduled_time.isoformat()}",
-    )
-    await create_news(session, news)
+    if sess.scheduled_time:
+        news = NewsCreate(
+            title="Session Scheduled",
+            type="session",
+            description=f"Session for table {session_in.table_id} on {sess.scheduled_time.isoformat()}",
+        )
+        await create_news(session, news)
     return sess
 
 

@@ -87,11 +87,11 @@ export default function TablesPage() {
           </button>
         </div>
 
-        <ul className="grid gap-7 sm:grid-cols-2">
+        <ul className="grid gap-7 sm:grid-cols-1">
           {tables.map((t: TableItem) => (
             <li
               key={t.id}
-              className="relative flex flex-col min-h-[154px] rounded-3xl border-2 border-[var(--primary)] bg-[var(--surface-variant)] shadow-lg overflow-hidden group hover:shadow-2xl hover:border-[var(--primary-dark)] transition"
+              className="relative flex flex-col min-h-[154px] rounded-3xl border-0 border-[var(--primary)] bg-[var(--surface-variant)] shadow-lg overflow-hidden group hover:shadow-2xl hover:border-[var(--primary-dark)] transition"
               style={{
                 background: `linear-gradient(120deg, #f7f3fe 88%, #ece7ff 100%)`,
               }}

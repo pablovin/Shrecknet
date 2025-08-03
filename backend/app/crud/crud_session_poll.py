@@ -36,8 +36,8 @@ async def create_poll(
         result = await session.execute(
             select(TableMember.user_id).where(TableMember.table_id == table.id)
         )
-        member_ids = result.scalars().all()
-        for uid in member_ids:
+        member_ids = list(result.scalars().all())
+        if member_ids:
             news = NewsCreate(
                 title="Poll Created",
                 type="gaming_session",
@@ -45,7 +45,7 @@ async def create_poll(
                     f"Poll created for session '{sess.name}' in table '{table.name}'. "
                     f"Please vote! View: /tables/{table.id}"
                 ),
-                user_id=uid,
+                user_ids=member_ids,
             )
             await create_news(session, news)
     return poll

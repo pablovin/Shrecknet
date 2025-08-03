@@ -1,10 +1,17 @@
 from typing import List, Optional, Set
 
-from sqlalchemy import select
+from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models.model_session import Session, SessionAttendance, SessionPage
+from app.models.model_session import (
+    Session,
+    SessionAttendance,
+    SessionPage,
+    SessionPoll,
+    SessionPollOption,
+    SessionPollVote,
+)
 from app.models.model_table import TableMember
 from app.schemas.schema_session import SessionCreate
 from app.crud.crud_news import create_news
@@ -120,6 +127,27 @@ async def delete_session(session: AsyncSession, session_id: int) -> bool:
     sess = await get_session(session, session_id)
     if not sess:
         return False
+    # Remove related attendance records
+    await session.execute(
+        delete(SessionAttendance).where(SessionAttendance.session_id == session_id)
+    )
+    # Remove related page links
+    await session.execute(
+        delete(SessionPage).where(SessionPage.session_id == session_id)
+    )
+    # Clean up poll information if present
+    result = await session.execute(
+        select(SessionPoll).where(SessionPoll.session_id == session_id)
+    )
+    poll = result.scalar_one_or_none()
+    if poll:
+        await session.execute(
+            delete(SessionPollVote).where(SessionPollVote.poll_id == poll.id)
+        )
+        await session.execute(
+            delete(SessionPollOption).where(SessionPollOption.poll_id == poll.id)
+        )
+        await session.delete(poll)
     await session.delete(sess)
     await session.commit()
     return True

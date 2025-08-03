@@ -69,6 +69,10 @@ async def list_tables_endpoint(
         latest_time = None
         next_up_time = None
         for s_time in session_times:
+            if s_time is None:
+                # Skip sessions without a scheduled time
+                continue
+
             # Ensure we compare timezone-aware datetimes. Some stored
             # session times may be naive (no timezone info), so default
             # them to UTC for comparison.

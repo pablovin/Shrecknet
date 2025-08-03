@@ -9,6 +9,7 @@ from app.schemas.schema_session_poll import (
     SessionPollCreate,
     SessionPollRead,
     SessionPollVoteCreate,
+    SessionPollSelect,
 )
 from app.crud.crud_session import (
     create_session,
@@ -55,10 +56,13 @@ async def create_session_endpoint(
 @router.get("/{table_id}/sessions", response_model=List[SessionRead])
 async def list_sessions_endpoint(
     table_id: int,
+    joined: bool = False,
     session: AsyncSession = Depends(get_session),
     user: User = Depends(get_current_user),
 ):
-    sessions = await get_sessions_for_table(session, table_id)
+    sessions = await get_sessions_for_table(
+        session, table_id, user.id if joined else None
+    )
     return [
         SessionRead(
             id=s.id,
@@ -164,12 +168,12 @@ async def vote_poll_endpoint(
 async def finalize_poll_endpoint(
     table_id: int,
     session_id: int,
-    vote: SessionPollVoteCreate,
+    selection: SessionPollSelect,
     session: AsyncSession = Depends(get_session),
     user: User = Depends(get_current_user),
 ):
     poll = await get_poll(session, session_id)
     if not poll:
         raise HTTPException(status_code=404, detail="Poll not found")
-    poll = await finalize_poll(session, poll, vote.option_id)
+    poll = await finalize_poll(session, poll, selection.option_id)
     return await poll_to_read(session, poll)

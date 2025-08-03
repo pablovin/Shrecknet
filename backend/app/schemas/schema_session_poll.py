@@ -8,6 +8,10 @@ class SessionPollCreate(SQLModel):
 
 
 class SessionPollVoteCreate(SQLModel):
+    option_ids: List[int] = []
+
+
+class SessionPollSelect(SQLModel):
     option_id: int
 
 
@@ -27,5 +31,6 @@ class SessionPollRead(SQLModel):
 
 SessionPollCreate.model_rebuild()
 SessionPollVoteCreate.model_rebuild()
+SessionPollSelect.model_rebuild()
 SessionPollOptionRead.model_rebuild()
 SessionPollRead.model_rebuild()

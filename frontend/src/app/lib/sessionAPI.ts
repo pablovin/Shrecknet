@@ -1,7 +1,14 @@
 import { API_URL } from "./config";
 
-export async function getSessions(tableId: number, token: string) {
-  const res = await fetch(`${API_URL}/tables/${tableId}/sessions`, {
+export async function getSessions(
+  tableId: number,
+  token: string,
+  joined = false,
+) {
+  const url = joined
+    ? `${API_URL}/tables/${tableId}/sessions?joined=true`
+    : `${API_URL}/tables/${tableId}/sessions`;
+  const res = await fetch(url, {
     headers: { Authorization: `Bearer ${token}` },
   });
   if (!res.ok) throw new Error("Failed to fetch sessions");
@@ -64,7 +71,7 @@ export async function createSessionPoll(
 export async function voteSessionPoll(
   tableId: number,
   sessionId: number,
-  optionId: number,
+  optionIds: number[],
   token: string,
 ) {
   const res = await fetch(
@@ -75,7 +82,7 @@ export async function voteSessionPoll(
         Authorization: `Bearer ${token}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ option_id: optionId }),
+      body: JSON.stringify({ option_ids: optionIds }),
     },
   );
   if (!res.ok) throw await res.json();

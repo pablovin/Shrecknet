@@ -48,9 +48,8 @@ async def cast_vote(
             (SessionPollVote.poll_id == poll.id) & (SessionPollVote.user_id == user_id)
         )
     )
-    session.add(
-        SessionPollVote(poll_id=poll.id, option_id=vote_in.option_id, user_id=user_id)
-    )
+    for oid in vote_in.option_ids:
+        session.add(SessionPollVote(poll_id=poll.id, option_id=oid, user_id=user_id))
     await session.commit()
 
 

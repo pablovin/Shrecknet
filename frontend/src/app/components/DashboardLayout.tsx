@@ -4,7 +4,6 @@ import Sidebar from "./template/Sidebar";
 import ChatPanel from "./template/ChatPanel";
 import { FaBars } from "react-icons/fa";
 
-// The key change is the argument: ({ children }: PropsWithChildren<{}>)
 export default function DashboardLayout({ children }: PropsWithChildren) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
@@ -22,7 +21,7 @@ export default function DashboardLayout({ children }: PropsWithChildren) {
   }, []);
 
   return (
-    <div className="relative bg-[var(--background)] min-h-screen w-full flex">
+   <div className="relative bg-[var(--background)] min-h-screen w-full flex">
       {/* Hamburger menu (mobile only) */}
       <button
         className="fixed top-5 right-5 z-50 md:hidden bg-[var(--primary)] text-white p-2 rounded-full shadow-lg"
@@ -32,15 +31,15 @@ export default function DashboardLayout({ children }: PropsWithChildren) {
         <FaBars size={22} />
       </button>
 
-      {/* Sidebar (fixed to right) */}
-      <Sidebar mobileOpen={sidebarOpen} setMobileOpen={() => setSidebarOpen(open => !open)} />
+      {/* Sidebar (hidden on mobile unless open) */}
+      <Sidebar
+        mobileOpen={sidebarOpen}
+        setMobileOpen={setSidebarOpen}
+      />
 
-      {/* Main content area */}
+      {/* Main content */}
       <div className="flex-1 flex flex-col min-h-screen bg-[var(--background)] transition-colors duration-300 pr-0 md:pl-64">
-        {/* TopBar */}
-        <TopBar />
-
-        {/* Content */}
+        <TopBar onSidebarToggle={() => setSidebarOpen(true)} />
         <main className="flex-1 px-2 sm:px-6 py-6 mt-[64px] overflow-y-auto">
           {children}
         </main>

@@ -6,51 +6,137 @@ import UserModal from "../user_management/User_Modal";
 import Image from "next/image";
 import Link from "next/link";
 import { useTranslation } from "../../hooks/useTranslation";
-
-// Material Symbols
-import PublicIcon from "@mui/icons-material/Public";
-import GroupRoundedIcon from "@mui/icons-material/GroupRounded";
-import CasinoRoundedIcon from "@mui/icons-material/CasinoRounded";
-import BuildRoundedIcon from "@mui/icons-material/BuildRounded";
-import SettingsRoundedIcon from "@mui/icons-material/SettingsRounded";
-import HomeIcon from "@mui/icons-material/HomeRounded";
-import PersonEditAlt1RoundedIcon from "@mui/icons-material/EditRounded";
+import NewsDialog from "../news/NewsDialog";
 import NotificationsIcon from "@mui/icons-material/NotificationsRounded";
+import EditIcon from "@mui/icons-material/EditRounded";
 import {
-  Bot,
   BookOpenText,
   FileText,
   PenLine,
   Sparkles,
   ScrollText,
+  Library as LibraryIcon,
+  Globe,
+  Hammer,
+  Settings,
+  StickyNote,
+  Users,
 } from "lucide-react";
-import NewsDialog from "../news/NewsDialog";
 import { getNews, markNewsSeen } from "../../lib/newsAPI";
 
-interface NewsItem {
-  id: number;
-  seen: boolean;
-  [key: string]: unknown;
-}
+const MENU_GROUPS = [
+  {
+    label: "Game Sessions",
+    items: [
+      {
+        key: "sessions",
+        label: "Sessions",
+        icon: <ScrollText className="w-5 h-5" />,
+        href: "/user_table",
+      },
+      {
+        key: "notes",
+        label: "Notes",
+        icon: <StickyNote className="w-5 h-5" />,
+        href: "/user_notes",
+      },
+    ],
+  },
+  {
+    label: "Worldcraft",
+    items: [
+      {
+        key: "worlds",
+        label: "Worlds",
+        icon: <Globe className="w-5 h-5" />,
+        href: "/worlds",
+      },
+      {
+        key: "library",
+        label: "Library",
+        icon: <LibraryIcon className="w-5 h-5" />,
+        href: "/library",
+      },
+      {
+        key: "all_pages",
+        label: "All Pages",
+        icon: <BookOpenText className="w-5 h-5" />,
+        href: "/all_pages",
+        show: (user) => user && ["writer", "system admin"].includes(user.role),
+      },
+    ],
+  },
+  {
+    label: "AI Advisors",
+    items: [
+      {
+        key: "elders",
+        label: "Elders",
+        icon: <Users className="w-5 h-5" />,
+        href: "/elders",
+        badge: "AI",
+      },
+      {
+        key: "specialists",
+        label: "Specialists",
+        icon: <Sparkles className="w-5 h-5" />,
+        href: "/ai_specialist",
+        badge: "AI",
+      },
+      {
+        key: "writers",
+        label: "Writers",
+        icon: <BookOpenText className="w-5 h-5" />,
+        href: "/agent_writer",
+        badge: "AI",
+        show: (user) => user && ["writer", "system admin"].includes(user.role),
+      },
+      {
+        key: "novelists",
+        label: "Novelists",
+        icon: <PenLine className="w-5 h-5" />,
+        href: "/ai_novelist",
+        badge: "AI",
+        show: (user) => user && ["writer", "system admin"].includes(user.role),
+      },
+    ],
+  },
+  {
+    label: "System Deck",
+    items: [
+      {
+        key: "world_builder",
+        label: "World Builder",
+        icon: <Hammer className="w-5 h-5" />,
+        href: "/world_builder",
+        show: (user) => user && ["world builder", "system admin"].includes(user.role),
+      },
+      {
+        key: "system_settings",
+        label: "System Settings",
+        icon: <Settings className="w-5 h-5" />,
+        href: "/system_settings",
+        show: (user) => user && user.role === "system admin",
+      },
+    ],
+  },
+];
 
-export default function Sidebar({
-  mobileOpen = false,
-  setMobileOpen = () => {},
-}) {
+export default function Sidebar({ mobileOpen = false, setMobileOpen = () => {} }) {
   const { user, token, isLoading: authLoading, refreshUser } = useAuth();
   const { t } = useTranslation();
   const [profileModalOpen, setProfileModalOpen] = useState(false);
   const [profileSuccess, setProfileSuccess] = useState("");
   const [profileError, setProfileError] = useState("");
   const [newsOpen, setNewsOpen] = useState(false);
-  const [newsItems, setNewsItems] = useState<NewsItem[]>([]);
-
+  const [newsItems, setNewsItems] = useState([]);
   const pathname = usePathname();
 
+  // Fetch news on mount
   useEffect(() => {
     if (!token) return;
     getNews(token)
-      .then((items: NewsItem[]) => {
+      .then((items) => {
         setNewsItems(items);
         const unseen = items.filter((n) => !n.seen);
         const today = new Date().toDateString();
@@ -68,6 +154,14 @@ export default function Sidebar({
       .catch(() => {});
   }, [token]);
 
+  // Prevent background scroll when sidebar is open (mobile)
+  useEffect(() => {
+    if (mobileOpen) document.body.style.overflow = "hidden";
+    else document.body.style.overflow = "";
+    return () => { document.body.style.overflow = ""; };
+  }, [mobileOpen]);
+
+  // Mark all news seen on open
   function handleOpenNews() {
     setNewsOpen(true);
     const unseen = newsItems.filter((n) => !n.seen);
@@ -80,263 +174,92 @@ export default function Sidebar({
     }
   }
 
-  async function handleProfileSave() {
-    if (typeof refreshUser === "function") await refreshUser();
-    setProfileModalOpen(false);
-    setProfileSuccess(t("profile_updated_success"));
-    setTimeout(() => setProfileSuccess(""), 2000);
-  }
-  function handleProfileError(msg) {
-    setProfileError(msg);
-    setTimeout(() => setProfileError(""), 2000);
-  }
-
-  // Menu Items
-  const menu = [
-    {
-      label: t("virtual_table"),
-      icon: <CasinoRoundedIcon fontSize="medium" />,
-      href: "https://foundry.shrecknet.club",
-      external: true,
-      show: true,
-    },
-    {
-      label: t("home"),
-      icon: <HomeIcon fontSize="medium" />,
-      href: "/main",
-      external: false,
-      show: true,
-    },
-    {
-      label: t("worlds"),
-      icon: <PublicIcon fontSize="medium" />,
-      href: "/worlds",
-      external: false,
-      show: true,
-    },
-
-    {
-      label: t("library"),
-      icon: <BookOpenText fontSize="medium" />,
-      href: "/library",
-      external: false,
-      show: true,
-    },
-    {
-      label: t("notes"),
-      icon: <FileText fontSize="medium" />,
-      href: "/user_notes",
-      external: false,
-      show: true,
-    },
-    {
-      label: t("sessions"),
-      icon: <ScrollText fontSize="medium" />,
-      href: "/user_table",
-      external: false,
-      show: true,
-    },
-    {
-      label: t("see_all_pages"),
-      icon: <FileText fontSize="medium" />,
-      href: "/all_pages",
-      external: false,
-      show: user && ["writer", "system admin"].includes(user.role),
-    },
-    {
-      label: t("ai_world_elders"),
-      icon: <GroupRoundedIcon fontSize="medium" />,
-      href: "/elders",
-      external: false,
-      ai: true,
-      show: true,
-    },
-    {
-      label: t("ai_system_specialists"),
-      icon: <Sparkles fontSize="medium" />,
-      href: "/ai_specialist",
-      external: false,
-      ai: true,
-      show: true,
-    },
-
-    {
-      label: t("ai_page_writers"),
-      icon: <Bot fontSize="medium" />,
-      href: "/agent_writer",
-      external: false,
-      ai: true,
-      show: user && ["writer", "system admin"].includes(user.role),
-    },
-    {
-      label: t("ai_adventure_novelists"),
-      icon: <PenLine fontSize="medium" />,
-      href: "/ai_novelist",
-      external: false,
-      ai: true,
-      show: user && ["writer", "system admin"].includes(user.role),
-    },
-
-    {
-      label: t("world_builder"),
-      icon: <BuildRoundedIcon fontSize="medium" />,
-      href: "/world_builder",
-      external: false,
-      show: user && ["world builder", "system admin"].includes(user.role),
-    },
-
-    {
-      label: t("system_settings"),
-      icon: <SettingsRoundedIcon fontSize="medium" />,
-      href: "/system_settings",
-      external: false,
-      show: user && user.role === "system admin",
-    },
-  ];
-
-  // Don't render if not logged in
-  if (authLoading || !token) return null;
-
-  // Utility: checks if this route is active
   function isActive(href) {
     return !href.startsWith("http") && pathname.startsWith(href);
   }
 
-  // Sidebar content
+  if (authLoading || !token) return null;
+
   return (
     <>
-      {/* Mobile overlay */}
+      {/* Overlay for mobile */}
       <div
-        className={`fixed inset-0 z-40 bg-black/50 backdrop-blur-sm transition-opacity duration-300 md:hidden ${
-          mobileOpen
-            ? "opacity-100 pointer-events-auto"
-            : "opacity-0 pointer-events-none"
-        }`}
+        className={`fixed inset-0 z-40 bg-black/50 backdrop-blur-sm transition-opacity duration-300
+        ${mobileOpen ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"}
+        md:hidden`}
         onClick={() => setMobileOpen(false)}
         aria-hidden="true"
       />
-
+      {/* Sidebar */}
       <aside
         className={`
-          fixed left-0 top-0 z-50 h-screen w-64
-          flex flex-col items-stretch
-          bg-[var(--sidebar-bg)]
-          border-r border-[var(--border)]
-          shadow-md
-          overflow-y-auto
-          transition-all
-          md:block ${mobileOpen ? "block" : "hidden"}
+          fixed left-0 top-0 z-50 h-full w-[90vw] max-w-[320px] md:w-64
+          bg-gradient-to-b from-[var(--sidebar-bg)] to-white border-r border-[var(--border)]
+          shadow-xl flex flex-col transition-transform duration-300 ease-in-out
+          ${mobileOpen ? "translate-x-0" : "-translate-x-full"}
+          md:translate-x-0 md:relative md:block
         `}
-        style={{ minWidth: 120, maxWidth: 220 }}
+        style={{ minWidth: 120 }}
       >
-        {/* Logo only, fills width, with shadow/contrast */}
-        <div className="flex items-center justify-center h-24 bg-transparent p-3 border-b border-[var(--border)]">
+        {/* Close button for mobile */}
+        <div className="flex md:hidden justify-end px-4 pt-4">
+          <button
+            className="text-3xl text-[var(--primary)]"
+            onClick={() => setMobileOpen(false)}
+            aria-label="Close menu"
+          >
+            &times;
+          </button>
+        </div>
+        {/* Logo */}
+        <div className="flex items-center justify-center h-20 py-3 border-b border-[var(--border)] bg-[var(--sidebar-bg)]">
           <Image
             src="/images/logo_dark.png"
             alt="Shrecknet logo"
-            width={400}
-            height={400}
-            className="w-full h-auto max-w-[300px] object-contain drop-shadow-lg"
+            width={70}
+            height={70}
+            className="w-16 h-16 object-contain drop-shadow-lg"
             priority
           />
         </div>
-
-        <div className="flex justify-end px-4 mt-2">
-          <button
-            onClick={handleOpenNews}
-            className="relative text-[var(--primary)] hover:text-[var(--accent)]"
-            aria-label={t("news")}
-          >
-            <NotificationsIcon />
-            {newsItems.some((n) => !n.seen) && (
-              <span className="absolute -top-1 -right-1 w-2 h-2 bg-red-600 rounded-full" />
-            )}
-          </button>
-        </div>
-
-        {/* Menu Items */}
-        <nav className="flex-1 flex flex-col gap-1 py-6">
-          {menu
-            .filter((m) => m.show)
-            .map((m) =>
-              m.external ? (
-                <a
-                  key={m.label}
-                  href={m.href}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className={`
-                  flex items-center gap-3 px-5 py-3
-                  rounded-md font-semibold
-                  text-base text-[var(--foreground)]
-                  hover:bg-[var(--primary)]/10 hover:text-[var(--primary)]
-                  transition
-                  border-r-4 border-transparent
-                `}
-                  style={{ outline: "none" }}
-                >
-                  <span className="text-2xl">{m.icon}</span>
-                  <span className="flex items-center gap-1">
-                    {m.label}
-                    {m.ai && (
-                      <span className="ml-1 text-[10px] font-bold border rounded px-1 border-[var(--primary)] text-[var(--primary)]">
-                        AI
-                      </span>
-                    )}
-                  </span>
-                </a>
-              ) : (
-                <Link
-                  key={m.label}
-                  href={m.href}
-                  className={`
-                  flex items-center gap-3 px-5 py-3
-                  rounded-md font-semibold
-                  text-base text-[var(--foreground)]
-                  hover:bg-[var(--primary)]/10 hover:text-[var(--primary)]
-                  transition
-                  border-r-4 ${
-                    isActive(m.href)
-                      ? "border-[var(--primary)] bg-[var(--primary)]/10 text-[var(--primary)]"
-                      : "border-transparent"
-                  }
-                `}
-                  style={{ outline: "none" }}
-                >
-                  <span className="text-2xl">{m.icon}</span>
-                  <span className="flex items-center gap-1">
-                    {m.label}
-                    {m.ai && (
-                      <span className="ml-1 text-[10px] font-bold border rounded px-1 border-[var(--primary)] text-[var(--primary)]">
-                        AI
-                      </span>
-                    )}
-                  </span>
-                </Link>
-              ),
-            )}
-        </nav>
-
-        {/* User Info at the bottom */}
-        <div className="flex flex-col items-center gap-2 pb-6 pt-4 border-t border-[var(--border)] mt-auto w-full">
-          <div className="bg-[var(--surface)] rounded-2xl p-1 shadow w-40 h-40 flex items-center justify-center">
-            <Image
-              src={user?.image_url || "/images/avatars/default.png"}
-              alt="avatar"
-              width={400}
-              height={400}
-              className="object-cover w-38 h-38 rounded-2xl border-2 border-[var(--primary)]"
-            />
-          </div>
-          <div className="font-bold text-[var(--primary)] text-lg capitalize flex items-center gap-2">
-            {user?.nickname || t("hi")}
-            <button
-              className="ml-1 p-1 text-[var(--primary)]/80 hover:text-[var(--primary)] transition"
-              title={t("personalize")}
-              onClick={() => setProfileModalOpen(true)}
-            >
-              <PersonEditAlt1RoundedIcon style={{ fontSize: 20 }} />
-            </button>
+        {/* ----------- User Profile FIRST ----------- */}
+        <div className="flex flex-col items-center gap-2 pt-4 pb-2 border-b border-[var(--border)] bg-transparent w-full relative">
+          <div className="relative flex flex-col items-center w-full">
+            {/* Avatar */}
+            <div className="bg-[var(--surface)] rounded-2xl p-1 shadow w-20 h-20 flex items-center justify-center mx-auto relative">
+              <Image
+                src={user?.image_url || "/images/avatars/default.png"}
+                alt="avatar"
+                width={80}
+                height={80}
+                className="object-cover w-16 h-16 rounded-2xl border-2 border-[var(--primary)]"
+              />
+              {/* Alert Icon (news) */}
+              <button
+                onClick={handleOpenNews}
+                className="absolute bottom-1 right-0 p-1 rounded-full bg-white border shadow hover:bg-[var(--primary)]/10"
+                aria-label={t("news")}
+                style={{ boxShadow: "0 1px 6px rgba(80,0,130,.09)" }}
+              >
+                <NotificationsIcon className="text-[var(--primary)]" fontSize="small" />
+                {newsItems.some((n) => !n.seen) && (
+                  <span className="absolute -top-1 -right-1 w-2 h-2 bg-red-600 rounded-full" />
+                )}
+              </button>
+              {/* Edit button */}
+              <button
+                className="absolute top-1 right-1 p-1 rounded-full bg-white border shadow hover:bg-[var(--primary)]/10"
+                aria-label={t("personalize")}
+                onClick={() => setProfileModalOpen(true)}
+                style={{ boxShadow: "0 1px 6px rgba(80,0,130,.07)" }}
+              >
+                <EditIcon style={{ fontSize: 18, color: "var(--primary)" }} />
+              </button>
+            </div>
+            {/* Nickname */}
+            <div className="font-bold text-[var(--primary)] text-lg capitalize text-center mt-1">
+              {user?.nickname || t("hi")}
+            </div>
           </div>
           {profileSuccess && (
             <div className="w-full text-center bg-green-100 text-green-700 px-2 py-1 rounded text-xs">
@@ -349,23 +272,108 @@ export default function Sidebar({
             </div>
           )}
         </div>
-        {/* Profile Modal */}
+        {/* ------------------------------------------ */}
+        {/* ----------- Main Link at the Top ----------- */}
+        <Link
+          href="/main"
+          className={`
+            flex items-center gap-3 px-4 py-3 mt-2 mb-2 rounded-2xl font-semibold
+            text-base transition
+            ${pathname.startsWith("/main")
+              ? "bg-[var(--primary)]/10 text-[var(--primary)] shadow"
+              : "text-[var(--foreground)] hover:bg-[var(--primary)]/5"}
+          `}
+          style={{
+            borderLeft: pathname.startsWith("/main")
+              ? "5px solid var(--primary)"
+              : "5px solid transparent",
+          }}
+          onClick={() => setMobileOpen(false)}
+        >
+          <span className="text-2xl">
+            <svg width="20" height="20" fill="none"><path d="M10 3L3 10h2v7h3v-4h2v4h3v-7h2L10 3z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"/></svg>
+          </span>
+          <span>Main</span>
+        </Link>
+        {/* ------------------------------------------ */}
+        {/* Menu Groups */}
+        <nav className="flex-1 flex flex-col gap-6 py-6">
+          {MENU_GROUPS.map((group) => (
+            <div key={group.label}>
+              <div className="px-6 text-xs uppercase font-bold tracking-wider text-[var(--primary)]/80 mb-2">
+                {group.label}
+              </div>
+              <div className="flex flex-col gap-2">
+                {group.items
+                  .filter((item) => !item.show || item.show(user))
+                  .map((item) => (
+                    <Link
+                      key={item.key}
+                      href={item.href}
+                      className={`
+                        flex items-center gap-3 px-4 py-3 rounded-2xl font-semibold
+                        text-base group transition
+                        ${
+                          isActive(item.href)
+                            ? "bg-[var(--primary)]/10 text-[var(--primary)] shadow"
+                            : "text-[var(--foreground)] hover:bg-[var(--primary)]/5"
+                        }
+                      `}
+                      style={{
+                        borderLeft: isActive(item.href)
+                          ? "5px solid var(--primary)"
+                          : "5px solid transparent",
+                      }}
+                      onClick={() => setMobileOpen(false)}
+                    >
+                      <span className="text-2xl">{item.icon}</span>
+                      <span className="flex items-center gap-1">
+                        {item.label}
+                        {item.badge && (
+                          <span className="ml-1 text-[10px] font-bold border rounded px-1 border-[var(--primary)] text-[var(--primary)]">
+                            {item.badge}
+                          </span>
+                        )}
+                      </span>
+                    </Link>
+                  ))}
+              </div>
+            </div>
+          ))}
+        </nav>
+        {/* Profile Modal (fullscreen, center, not just in sidebar) */}
         {profileModalOpen && user && (
-          <UserModal
-            user={user}
-            onClose={() => setProfileModalOpen(false)}
-            onSave={handleProfileSave}
-            onDelete={null}
-            isProfile={true}
-            setError={handleProfileError}
-          />
+          <div className="fixed inset-0 z-[9999] bg-black/50 flex items-center justify-center">
+            <div className="bg-white rounded-3xl shadow-2xl p-4 w-full max-w-md mx-auto relative">
+              <UserModal
+                user={user}
+                onClose={() => setProfileModalOpen(false)}
+                onSave={async () => {
+                  if (typeof refreshUser === "function") await refreshUser();
+                  setProfileModalOpen(false);
+                  setProfileSuccess(t("profile_updated_success"));
+                  setTimeout(() => setProfileSuccess(""), 2000);
+                }}
+                onDelete={null}
+                isProfile={true}
+                setError={(msg) => {
+                  setProfileError(msg);
+                  setTimeout(() => setProfileError(""), 2000);
+                }}
+              />
+              <button
+                className="absolute top-2 right-4 text-2xl text-[var(--primary)]"
+                onClick={() => setProfileModalOpen(false)}
+                aria-label="Close"
+              >
+                &times;
+              </button>
+            </div>
+          </div>
         )}
       </aside>
-      <NewsDialog
-        open={newsOpen}
-        onClose={() => setNewsOpen(false)}
-        news={newsItems}
-      />
+      {/* News Dialog */}
+      <NewsDialog open={newsOpen} onClose={() => setNewsOpen(false)} news={newsItems} />
     </>
   );
 }

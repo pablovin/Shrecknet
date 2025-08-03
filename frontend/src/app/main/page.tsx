@@ -17,14 +17,13 @@ import {
   ScrollText,
   Library,
 } from "lucide-react";
-import { Suspense } from "react";
-
-// --- Fix: Client-only ErrorBanner ---
+import { useState, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
+
+// --- Error Banner ---
 function ErrorBannerClient() {
   const params = useSearchParams();
   const error = params.get("error");
-
   if (error === "unauthorized") {
     return (
       <div className="text-center bg-red-100 text-red-700 border border-red-300 px-4 py-2 rounded">
@@ -32,65 +31,58 @@ function ErrorBannerClient() {
       </div>
     );
   }
-
   return null;
 }
 
-function HomeCard({
-  href,
-  icon,
-  title,
-  description,
-  isAI = false,
-  color,
-  iconColor,
-}) {
+// --- Glyph button ---
+function DashGlyph({ href, icon, title, isAI, iconColor, description }) {
+  const [hovered, setHovered] = useState(false);
   return (
-    <Link
-      href={href}
-      className={`group relative overflow-hidden rounded-3xl border border-[var(--border)] bg-[var(--surface)] p-6 shadow-md hover:shadow-xl hover:border-[var(--primary)]/60 transition duration-300 ${color} flex flex-col items-center text-center`}
+    <div
+      className="relative flex flex-col items-center"
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      tabIndex={0}
+      aria-label={title}
     >
-      {/* Glow Ring */}
-      <div className="absolute -top-5 -right-5 w-24 h-24 rounded-full bg-[var(--primary)]/20 blur-2xl pointer-events-none z-0 transition-all duration-500 group-hover:opacity-60" />
-
-      {/* AI Badge */}
-      {isAI && (
-        <div className="absolute top-3 right-3 z-10 text-xs bg-[var(--primary)] text-white px-2 py-0.5 rounded-full shadow">
-          AI
+      <Link
+        href={href}
+        className={`
+          group relative flex flex-col items-center justify-center
+          px-4 py-2 bg-[var(--surface)] border border-[var(--primary)]/20
+          rounded-2xl shadow-sm transition hover:bg-[var(--primary)]/10 hover:border-[var(--primary)]/60
+          focus:ring-2 focus:ring-[var(--primary)] focus:outline-none
+          min-w-[85px]
+        `}
+        tabIndex={-1}
+      >
+        {isAI && (
+          <span className="absolute top-0 right-0 text-[10px] px-1 py-0.5 rounded bg-[var(--primary)] text-white shadow -translate-y-2 translate-x-2">
+            AI
+          </span>
+        )}
+        <span className={`w-8 h-8 flex items-center justify-center rounded-xl text-white shadow text-xl ${iconColor} mb-1`}>
+          {icon}
+        </span>
+        <span className="font-serif font-bold text-[var(--primary)] text-xs">
+          {title}
+        </span>
+      </Link>
+      {hovered && description && (
+        <div className="z-40 absolute left-1/2 -translate-x-1/2 top-[105%] w-52 text-center bg-[var(--surface)] border border-[var(--primary)]/20 rounded-lg px-3 py-2 text-[var(--primary)] text-xs shadow-xl animate-fade-in pointer-events-none">
+          {description}
         </div>
       )}
-
-      {/* Icon + Title */}
-      <div className="relative z-10 flex flex-col items-center gap-4 mb-4">
-        <div
-          className={`w-16 h-16 rounded-2xl flex items-center justify-center text-white shadow-md ${iconColor}`}
-        >
-          {icon}
-        </div>
-        <div>
-          <h2 className="text-lg font-serif font-bold text-[var(--primary)] leading-tight">
-            {title}
-          </h2>
-          {isAI && (
-            <p className="text-[10px] text-[var(--foreground)]/60 italic group-hover:text-[var(--primary)] transition">
-              Empowered by ChatGPT
-            </p>
-          )}
-        </div>
-      </div>
-
-      {/* Description */}
-      <p className="text-sm text-[var(--foreground)]/80 relative z-10">
-        {description}
-      </p>
-    </Link>
+    </div>
   );
 }
 
+// --- Main Page ---
 export default function MainPage() {
   const { user } = useAuth();
   const { t } = useTranslation();
 
+  // App cards
   const cards = [
     {
       title: t("sessions"),
@@ -99,7 +91,6 @@ export default function MainPage() {
       href: "/user_table",
       show: !!user,
       group: "game",
-      color: "bg-gradient-to-br from-green-50 to-transparent",
       iconColor: "bg-green-400",
     },
     {
@@ -109,7 +100,6 @@ export default function MainPage() {
       href: "/user_notes",
       show: !!user,
       group: "game",
-      color: "bg-gradient-to-br from-rose-50 to-transparent",
       iconColor: "bg-rose-400",
     },
     {
@@ -119,7 +109,6 @@ export default function MainPage() {
       href: "/worlds",
       show: !!user,
       group: "worldcraft",
-      color: "bg-gradient-to-br from-purple-50 to-transparent",
       iconColor: "bg-purple-400",
     },
     {
@@ -129,7 +118,6 @@ export default function MainPage() {
       href: "/all_pages",
       show: user && ["writer", "system admin"].includes(user.role),
       group: "worldcraft",
-      color: "bg-gradient-to-br from-yellow-50 to-transparent",
       iconColor: "bg-yellow-400",
     },
     {
@@ -139,7 +127,6 @@ export default function MainPage() {
       href: "/library",
       show: !!user,
       group: "worldcraft",
-      color: "bg-gradient-to-br from-orange-50 to-transparent",
       iconColor: "bg-orange-400",
     },
     {
@@ -150,7 +137,6 @@ export default function MainPage() {
       show: !!user,
       isAI: true,
       group: "ai",
-      color: "bg-gradient-to-br from-blue-50 to-transparent",
       iconColor: "bg-blue-400",
     },
     {
@@ -161,7 +147,6 @@ export default function MainPage() {
       show: !!user,
       isAI: true,
       group: "ai",
-      color: "bg-gradient-to-br from-indigo-50 to-transparent",
       iconColor: "bg-indigo-400",
     },
     {
@@ -172,7 +157,6 @@ export default function MainPage() {
       show: user && ["writer", "system admin"].includes(user.role),
       isAI: true,
       group: "ai",
-      color: "bg-gradient-to-br from-sky-50 to-transparent",
       iconColor: "bg-sky-400",
     },
     {
@@ -183,7 +167,6 @@ export default function MainPage() {
       show: user && ["writer", "system admin"].includes(user.role),
       isAI: true,
       group: "ai",
-      color: "bg-gradient-to-br from-pink-50 to-transparent",
       iconColor: "bg-pink-400",
     },
     {
@@ -193,7 +176,6 @@ export default function MainPage() {
       href: "/world_builder",
       show: user && user.role === "system admin",
       group: "system",
-      color: "bg-gradient-to-br from-yellow-100 to-transparent",
       iconColor: "bg-yellow-500",
     },
     {
@@ -203,64 +185,67 @@ export default function MainPage() {
       href: "/system_settings",
       show: user && user.role === "system admin",
       group: "system",
-      color: "bg-gradient-to-br from-gray-100 to-transparent",
       iconColor: "bg-gray-400",
     },
   ];
 
-  const grouped = {
-    game: {
-      label: t("group_game_sessions"),
-      color: "",
-    },
-    worldcraft: {
-      label: t("group_worldcraft"),
-      color: "",
-    },
-    ai: {
-      label: t("group_ai_advisors"),
-      color: "",
-    },
-    system: {
-      label: t("group_system_deck"),
-      color: "",
-    },
-  };
+  // Row definitions and background shades
+  const groupedRows = [
+    { key: "game", label: t("group_game_sessions"), bg: "from-green-50 to-white" },
+    { key: "worldcraft", label: t("group_worldcraft"), bg: "from-purple-50 to-white" },
+    { key: "ai", label: t("group_ai_advisors"), bg: "from-blue-50 to-white" },
+    { key: "system", label: t("group_system_deck"), bg: "from-gray-50 to-white" },
+  ];
 
   return (
     <AuthGuard>
       <DashboardLayout>
-        <div className="min-h-screen w-full px-2 sm:px-6 py-8 flex flex-col gap-6">
+        <div className="min-h-screen w-full px-2 sm:px-6 py-8 flex flex-col gap-7">
           <Suspense fallback={null}>
             <ErrorBannerClient />
           </Suspense>
-
           {/* Hero */}
-          <div className="text-center mb-6">
-            <h1 className="text-3xl md:text-4xl font-serif font-bold text-[var(--primary)] tracking-tight">
-              🧭 Choose Your Path
+          <div className="text-center mb-1">
+            <h1 className="text-3xl md:text-4xl font-serif font-bold text-[var(--primary)] tracking-tight flex justify-center items-center gap-2">
+              <span role="img" aria-label="compass">🧭</span> Choose Your Path
             </h1>
             <p className="text-[var(--foreground)]/80 text-base mt-1">
-              Welcome to your world-building portal. Where would you like to
-              begin?
+              Welcome to your world-building portal. Where would you like to begin?
             </p>
           </div>
-
-          {/* Sections */}
-          {Object.entries(grouped).map(([groupKey, { label }]) => (
-            <div key={groupKey} className="space-y-4">
-              <h2 className="text-xl font-serif font-bold text-[var(--primary)] flex items-center gap-2">
-                {label}
-              </h2>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                {cards
-                  .filter((c) => c.group === groupKey && c.show)
-                  .map((c) => (
-                    <HomeCard key={c.title} {...c} />
+          {/* Grouped rows */}
+          {groupedRows.map((group) => {
+            const groupCards = cards.filter((c) => c.group === group.key && c.show);
+            if (groupCards.length === 0) return null;
+            return (
+              <div
+                key={group.key}
+                className={`rounded-2xl shadow-inner px-2 sm:px-6 py-4 transition group
+                  bg-gradient-to-br ${group.bg}
+                `}
+              >
+                <div className="flex items-center gap-2 mb-3">
+                  <span className="w-2 h-2 rounded-full bg-[var(--primary)]/60" />
+                  <span className="text-lg font-bold font-serif text-[var(--primary)] tracking-wide">
+                    {group.label}
+                  </span>
+                </div>
+                <div className="flex flex-wrap gap-3 items-end justify-start">
+                  {groupCards.map((c, i) => (
+                    <DashGlyph key={c.title} {...c} />
                   ))}
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
+          {/* Tooltip Animation CSS */}
+          <style jsx global>{`
+            @keyframes fade-in {
+              from { opacity: 0; transform: translateY(10px);}
+              to { opacity: 1; transform: translateY(0);}
+            }
+            .animate-fade-in { animation: fade-in 0.2s; }
+          `}</style>
         </div>
       </DashboardLayout>
     </AuthGuard>

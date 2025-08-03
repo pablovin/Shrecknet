@@ -38,11 +38,18 @@ def _migrate(conn):
             text("ALTER TABLE agent ADD COLUMN specialist_update_date DATETIME")
         )
 
+    # -- User table migrations --
+    columns = [c["name"] for c in inspector.get_columns("user")]
+    if "timezone" not in columns:
+        conn.execute(text("ALTER TABLE user ADD COLUMN timezone TEXT"))
+
     # -- Session table migrations --
     columns = [c["name"] for c in inspector.get_columns("session")]
     if "name" not in columns:
         # Existing rows may exist, so add with a default value
         conn.execute(text("ALTER TABLE session ADD COLUMN name TEXT DEFAULT ''"))
+    if "timezone" not in columns:
+        conn.execute(text("ALTER TABLE session ADD COLUMN timezone TEXT DEFAULT 'UTC'"))
 
     # -- Page table migrations --
     columns = [c["name"] for c in inspector.get_columns("page")]

@@ -31,29 +31,247 @@ import {
 import Link from "next/link";
 import Image from "next/image";
 
+// --- Modal for new/edit session ---
+function SessionModal({
+  open,
+  onClose,
+  onSave,
+  editSession,
+  name,
+  setName,
+  time,
+  setTime,
+  location,
+  setLocation,
+  summary,
+  setSummary,
+  pages,
+  setPages,
+  usePoll,
+  setUsePoll,
+  proposed,
+  setProposed,
+  newProposal,
+  setNewProposal,
+  pageOptions,
+}) {
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center">
+      <div className="bg-white rounded-2xl shadow-2xl p-7 w-full max-w-lg relative">
+        <h2 className="text-2xl font-bold font-serif text-[var(--primary)] mb-4 text-center">
+          {editSession ? "Edit Session" : "Schedule a New Session"}
+        </h2>
+        <M3FloatingInput
+          label="Name"
+          value={name}
+          onChange={(e: any) => setName(e.target.value)}
+        />
+        {!editSession && (
+          <div className="flex gap-4 my-2">
+            <label className="flex items-center gap-1 text-sm">
+              <input
+                type="radio"
+                checked={!usePoll}
+                onChange={() => setUsePoll(false)}
+              />
+              Set date
+            </label>
+            <label className="flex items-center gap-1 text-sm">
+              <input
+                type="radio"
+                checked={usePoll}
+                onChange={() => setUsePoll(true)}
+              />
+              Propose poll
+            </label>
+          </div>
+        )}
+        {(!usePoll || editSession) && (
+          <M3FloatingInput
+            type="datetime-local"
+            label="Time"
+            value={time}
+            onChange={(e: any) => setTime(e.target.value)}
+          />
+        )}
+        {usePoll && !editSession && (
+          <div className="mb-3">
+            <div className="mb-2 text-sm text-purple-900 bg-purple-50 rounded-lg px-2 py-1">
+              Propose multiple possible dates and times for the group to vote on. Once everyone votes, a final date can be selected for the session.
+            </div>
+            {proposed.map((p, i) => (
+              <div
+                key={i}
+                className="flex items-center justify-between text-xs bg-purple-50 rounded px-3 py-1 mb-1"
+              >
+                {new Date(p).toLocaleString()}
+                <button
+                  className="text-rose-500 hover:text-rose-700"
+                  onClick={() =>
+                    setProposed((prev) => prev.filter((_, idx) => idx !== i))
+                  }
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              </div>
+            ))}
+            <div className="flex gap-2 items-center">
+              <M3FloatingInput
+                type="datetime-local"
+                label="Proposed Time"
+                value={newProposal}
+                onChange={(e: any) => setNewProposal(e.target.value)}
+              />
+              <button
+                className="btn-primary mt-6"
+                onClick={() => {
+                  if (newProposal) {
+                    setProposed([...proposed, newProposal]);
+                    setNewProposal("");
+                  }
+                }}
+              >
+                Add
+              </button>
+            </div>
+          </div>
+        )}
+        <M3FloatingInput
+          label="Location"
+          value={location}
+          onChange={(e: any) => setLocation(e.target.value)}
+        />
+        <M3FloatingInput
+          label="Summary"
+          value={summary}
+          onChange={(e: any) => setSummary(e.target.value)}
+        />
+        <PageRefSelectorMD3
+          options={pageOptions.map((p: any) => ({
+            id: p.id,
+            name: p.name,
+            logo: p.image_url,
+          }))}
+          value={pages}
+          onChange={setPages}
+          label="Pages"
+        />
+        <div className="flex justify-end gap-2 mt-6">
+          <button
+            onClick={onClose}
+            className="px-4 py-2 rounded-lg font-semibold text-[var(--primary)] hover:bg-[var(--primary)]/10 transition"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onSave}
+            className="px-4 py-2 rounded-lg bg-[var(--primary)] text-white font-bold shadow hover:bg-[var(--primary-dark)] transition"
+          >
+            Save
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PollModal({
+  open,
+  onClose,
+  onSave,
+  proposed,
+  setProposed,
+  newProposal,
+  setNewProposal,
+}) {
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center">
+      <div className="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-md relative">
+        <h2 className="text-xl font-bold text-[var(--primary)] mb-4 text-center">Create Poll</h2>
+        {proposed.map((p, i) => (
+          <div
+            key={i}
+            className="flex items-center justify-between text-xs bg-purple-50 rounded px-3 py-1 mb-1"
+          >
+            {new Date(p).toLocaleString()}
+            <button
+              className="text-rose-500 hover:text-rose-700"
+              onClick={() =>
+                setProposed((prev) => prev.filter((_, idx) => idx !== i))
+              }
+            >
+              <Trash2 className="w-4 h-4" />
+            </button>
+          </div>
+        ))}
+        <div className="flex gap-2 items-center">
+          <M3FloatingInput
+            type="datetime-local"
+            label="Proposed Time"
+            value={newProposal}
+            onChange={(e: any) => setNewProposal(e.target.value)}
+          />
+          <button
+            className="btn-primary mt-6"
+            onClick={() => {
+              if (newProposal) {
+                setProposed([...proposed, newProposal]);
+                setNewProposal("");
+              }
+            }}
+          >
+            Add
+          </button>
+        </div>
+        <div className="flex justify-end gap-2 mt-6">
+          <button
+            onClick={onClose}
+            className="px-4 py-2 rounded-lg"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onSave}
+            className="px-4 py-2 rounded-lg bg-[var(--primary)] text-white font-bold shadow hover:bg-[var(--primary-dark)] transition"
+          >
+            Save
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function TableSessionsPage() {
   const params = useParams();
   const tableId = Number(params?.id);
   const { token } = useAuth();
   const { sessions, mutate } = useSessions(tableId);
-  const [open, setOpen] = useState(false);
+
+  // --- Modal state ---
+  const [modalOpen, setModalOpen] = useState(false);
   const [editSession, setEditSession] = useState<any | null>(null);
   const [name, setName] = useState("");
   const [time, setTime] = useState("");
   const [location, setLocation] = useState("");
   const [summary, setSummary] = useState("");
   const [pages, setPages] = useState<string[]>([]);
-  const [pageOptions, setPageOptions] = useState<any[]>([]);
-  const { users } = useUsers();
-  const [pollSession, setPollSession] = useState<number | null>(null);
+  const [usePoll, setUsePoll] = useState(false);
   const [proposed, setProposed] = useState<string[]>([]);
   const [newProposal, setNewProposal] = useState("");
-  const [usePoll, setUsePoll] = useState(false);
+  const [pageOptions, setPageOptions] = useState<any[]>([]);
+
+  // Poll Modal
+  const [pollSession, setPollSession] = useState<number | null>(null);
+  const [pollProposed, setPollProposed] = useState<string[]>([]);
+  const [pollNewProposal, setPollNewProposal] = useState("");
+
+  const { users } = useUsers();
+
   const [polls, setPolls] = useState<Record<number, any>>({});
   const [showPast, setShowPast] = useState(false);
-
-  // Optional: you might want to load party info for crest/name/etc
-  // const { table: party } = useTable(tableId); // implement if you want
 
   useEffect(() => {
     if (token) {
@@ -149,11 +367,11 @@ export default function TableSessionsPage() {
     setUsePoll(false);
     setProposed([]);
     setNewProposal("");
-    setOpen(true);
+    setModalOpen(true);
   }
 
   function resetModal() {
-    setOpen(false);
+    setModalOpen(false);
     setEditSession(null);
     setName("");
     setTime("");
@@ -165,13 +383,30 @@ export default function TableSessionsPage() {
     setNewProposal("");
   }
 
+  // --- Poll Modal logic ---
+  function openPollModal(sessionId: number) {
+    setPollSession(sessionId);
+    setPollProposed([]);
+    setPollNewProposal("");
+  }
+  async function savePollModal() {
+    if (!pollSession) return;
+    await createSessionPoll(tableId, pollSession, pollProposed, token);
+    await refreshPoll(pollSession);
+    setPollSession(null);
+    setPollProposed([]);
+    setPollNewProposal("");
+    mutate();
+  }
+
+  // --- Sessions ---
   const now = new Date();
   const upcoming = sessions.filter(
     (s: any) => !s.scheduled_time || new Date(s.scheduled_time) >= now,
   );
-  const past = sessions.filter(
-    (s: any) => s.scheduled_time && new Date(s.scheduled_time) < now,
-  ).sort((a, b) => new Date(b.scheduled_time) - new Date(a.scheduled_time));
+  const past = sessions
+    .filter((s: any) => s.scheduled_time && new Date(s.scheduled_time) < now)
+    .sort((a, b) => new Date(b.scheduled_time) - new Date(a.scheduled_time));
 
   // --- Card components ---
   function SessionCard({ s, pollData }: { s: any; pollData?: any }) {
@@ -295,201 +530,14 @@ export default function TableSessionsPage() {
             </div>
           </div>
         )}
-      </div>
-    );
-  }
-
-  // --- Modal UI ---
-  function SessionModal() {
-    return (
-      <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center">
-        <div className="bg-white rounded-2xl shadow-2xl p-7 w-full max-w-lg relative">
-          <h2 className="text-2xl font-bold font-serif text-[var(--primary)] mb-4 text-center">
-            {editSession ? "Edit Session" : "Schedule a New Session"}
-          </h2>
-          <M3FloatingInput
-            label="Name"
-            value={name}
-            onChange={(e: any) => setName(e.target.value)}
-          />
-          {!editSession && (
-            <div className="flex gap-4 my-2">
-              <label className="flex items-center gap-1 text-sm">
-                <input
-                  type="radio"
-                  checked={!usePoll}
-                  onChange={() => setUsePoll(false)}
-                />
-                Set date
-              </label>
-              <label className="flex items-center gap-1 text-sm">
-                <input
-                  type="radio"
-                  checked={usePoll}
-                  onChange={() => setUsePoll(true)}
-                />
-                Propose poll
-              </label>
-            </div>
-          )}
-          {(!usePoll || editSession) && (
-            <M3FloatingInput
-              type="datetime-local"
-              label="Time"
-              value={time}
-              onChange={(e: any) => setTime(e.target.value)}
-            />
-          )}
-          {usePoll && !editSession && (
-            <div className="mb-3">
-              {proposed.map((p, i) => (
-                <div
-                  key={i}
-                  className="flex items-center justify-between text-xs bg-purple-50 rounded px-3 py-1 mb-1"
-                >
-                  {new Date(p).toLocaleString()}
-                  <button
-                    className="text-rose-500 hover:text-rose-700"
-                    onClick={() =>
-                      setProposed((prev) =>
-                        prev.filter((_, idx) => idx !== i),
-                      )
-                    }
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                </div>
-              ))}
-              <div className="flex gap-2 items-center">
-                <M3FloatingInput
-                  type="datetime-local"
-                  label="Proposed Time"
-                  value={newProposal}
-                  onChange={(e: any) => setNewProposal(e.target.value)}
-                />
-                <button
-                  className="btn-primary mt-6"
-                  onClick={() => {
-                    if (newProposal) {
-                      setProposed([...proposed, newProposal]);
-                      setNewProposal("");
-                    }
-                  }}
-                >
-                  Add
-                </button>
-              </div>
-            </div>
-          )}
-          <M3FloatingInput
-            label="Location"
-            value={location}
-            onChange={(e: any) => setLocation(e.target.value)}
-          />
-          <M3FloatingInput
-            label="Summary"
-            value={summary}
-            onChange={(e: any) => setSummary(e.target.value)}
-          />
-          <PageRefSelectorMD3
-            options={pageOptions.map((p: any) => ({
-              id: p.id,
-              name: p.name,
-              logo: p.image_url,
-            }))}
-            value={pages}
-            onChange={setPages}
-            label="Pages"
-          />
-          <div className="flex justify-end gap-2 mt-6">
-            <button
-              onClick={resetModal}
-              className="px-4 py-2 rounded-lg font-semibold text-[var(--primary)] hover:bg-[var(--primary)]/10 transition"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={editSession ? handleUpdate : handleCreate}
-              className="px-4 py-2 rounded-lg bg-[var(--primary)] text-white font-bold shadow hover:bg-[var(--primary-dark)] transition"
-            >
-              Save
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  function PollModal() {
-    return (
-      <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center">
-        <div className="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-md relative">
-          <h2 className="text-xl font-bold text-[var(--primary)] mb-4 text-center">Create Poll</h2>
-          {proposed.map((p, i) => (
-            <div
-              key={i}
-              className="flex items-center justify-between text-xs bg-purple-50 rounded px-3 py-1 mb-1"
-            >
-              {new Date(p).toLocaleString()}
-              <button
-                className="text-rose-500 hover:text-rose-700"
-                onClick={() =>
-                  setProposed((prev) => prev.filter((_, idx) => idx !== i))
-                }
-              >
-                <Trash2 className="w-4 h-4" />
-              </button>
-            </div>
-          ))}
-          <div className="flex gap-2 items-center">
-            <M3FloatingInput
-              type="datetime-local"
-              label="Proposed Time"
-              value={newProposal}
-              onChange={(e: any) => setNewProposal(e.target.value)}
-            />
-            <button
-              className="btn-primary mt-6"
-              onClick={() => {
-                if (newProposal) {
-                  setProposed([...proposed, newProposal]);
-                  setNewProposal("");
-                }
-              }}
-            >
-              Add
-            </button>
-          </div>
-          <div className="flex justify-end gap-2 mt-6">
-            <button
-              onClick={() => {
-                setPollSession(null);
-                setProposed([]);
-                setNewProposal("");
-              }}
-              className="px-4 py-2 rounded-lg"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={async () => {
-                await createSessionPoll(
-                  tableId,
-                  pollSession!,
-                  proposed,
-                  token,
-                );
-                setProposed([]);
-                await refreshPoll(pollSession!);
-                setPollSession(null);
-                mutate();
-              }}
-              className="px-4 py-2 rounded-lg bg-[var(--primary)] text-white font-bold shadow hover:bg-[var(--primary-dark)] transition"
-            >
-              Save
-            </button>
-          </div>
-        </div>
+        {!isPast && !pollData && (
+          <button
+            className="mt-2 text-xs text-[var(--primary)] underline"
+            onClick={() => openPollModal(s.id)}
+          >
+            Create Poll
+          </button>
+        )}
       </div>
     );
   }
@@ -499,11 +547,6 @@ export default function TableSessionsPage() {
     <DashboardLayout>
       <div className="w-full max-w-5xl mx-auto px-3 py-10 min-h-screen relative">
         {/* --- Party/Adventure header (optional, for style) --- */}
-        {/* <div className="flex items-center gap-3 mb-10">
-          <Image src={party?.crest_url || "/images/worlds/new_game.png"} alt={party?.name} width={54} height={54} className="w-14 h-14 rounded-xl border-2 border-[var(--primary)] bg-white shadow" />
-          <h1 className="text-2xl font-bold font-serif text-[var(--primary)]">{party?.name || "Adventuring Party"}</h1>
-          <Link href="/tables" className="ml-auto text-[var(--primary)] hover:underline text-sm">← Back to Parties</Link>
-        </div> */}
         <div className="flex items-center gap-3 mb-10">
           <Users2 className="w-8 h-8 text-[var(--primary)]" />
           <h1 className="text-2xl font-bold font-serif text-[var(--primary)]">Game Sessions</h1>
@@ -519,7 +562,7 @@ export default function TableSessionsPage() {
               setUsePoll(false);
               setProposed([]);
               setNewProposal("");
-              setOpen(true);
+              setModalOpen(true);
             }}
           >
             <Plus className="w-5 h-5" />
@@ -567,8 +610,38 @@ export default function TableSessionsPage() {
         </div>
 
         {/* --- Modals --- */}
-        {open && <SessionModal />}
-        {pollSession && <PollModal />}
+        <SessionModal
+          open={modalOpen}
+          onClose={resetModal}
+          onSave={editSession ? handleUpdate : handleCreate}
+          editSession={editSession}
+          name={name}
+          setName={setName}
+          time={time}
+          setTime={setTime}
+          location={location}
+          setLocation={setLocation}
+          summary={summary}
+          setSummary={setSummary}
+          pages={pages}
+          setPages={setPages}
+          usePoll={usePoll}
+          setUsePoll={setUsePoll}
+          proposed={proposed}
+          setProposed={setProposed}
+          newProposal={newProposal}
+          setNewProposal={setNewProposal}
+          pageOptions={pageOptions}
+        />
+        <PollModal
+          open={!!pollSession}
+          onClose={() => setPollSession(null)}
+          onSave={savePollModal}
+          proposed={pollProposed}
+          setProposed={setPollProposed}
+          newProposal={pollNewProposal}
+          setNewProposal={setPollNewProposal}
+        />
       </div>
     </DashboardLayout>
   );

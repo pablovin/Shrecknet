@@ -19,7 +19,10 @@ from app.crud.crud_session_poll import (
     poll_to_read,
 )
 
-router = APIRouter(prefix="/tables", tags=["sessions"], dependencies=[Depends(get_current_user)])
+router = APIRouter(
+    prefix="/tables", tags=["sessions"], dependencies=[Depends(get_current_user)]
+)
+
 
 @router.post("/{table_id}/sessions", response_model=SessionRead)
 async def create_session_endpoint(
@@ -37,10 +40,12 @@ async def create_session_endpoint(
         scheduled_time=sess.scheduled_time,
         summary=sess.summary,
         location=sess.location,
+        timezone=sess.timezone,
         created_by=sess.created_by,
         created_at=sess.created_at,
         page_ids=[p.page_id for p in sess.pages],
     )
+
 
 @router.get("/{table_id}/sessions", response_model=List[SessionRead])
 async def list_sessions_endpoint(
@@ -57,6 +62,7 @@ async def list_sessions_endpoint(
             scheduled_time=s.scheduled_time,
             summary=s.summary,
             location=s.location,
+            timezone=s.timezone,
             created_by=s.created_by,
             created_at=s.created_at,
             page_ids=[p.page_id for p in s.pages],
@@ -90,7 +96,9 @@ async def get_poll_endpoint(
     return await poll_to_read(session, poll)
 
 
-@router.post("/{table_id}/sessions/{session_id}/poll/vote", response_model=SessionPollRead)
+@router.post(
+    "/{table_id}/sessions/{session_id}/poll/vote", response_model=SessionPollRead
+)
 async def vote_poll_endpoint(
     table_id: int,
     session_id: int,
@@ -105,7 +113,9 @@ async def vote_poll_endpoint(
     return await poll_to_read(session, poll)
 
 
-@router.post("/{table_id}/sessions/{session_id}/poll/finalize", response_model=SessionPollRead)
+@router.post(
+    "/{table_id}/sessions/{session_id}/poll/finalize", response_model=SessionPollRead
+)
 async def finalize_poll_endpoint(
     table_id: int,
     session_id: int,

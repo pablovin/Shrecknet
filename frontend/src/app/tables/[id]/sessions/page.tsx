@@ -1,4 +1,5 @@
 "use client";
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import DashboardLayout from "@/app/components/DashboardLayout";
@@ -54,6 +55,7 @@ export default function TableSessionsPage() {
         location,
         summary,
         page_ids: pages.map((p) => Number(p)),
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
       },
       token,
     );

@@ -8,13 +8,16 @@ from app.crud.crud_news import create_news
 from app.schemas.schema_news import NewsCreate
 
 
-async def create_session(session: AsyncSession, session_in: SessionCreate, creator_id: int) -> Session:
+async def create_session(
+    session: AsyncSession, session_in: SessionCreate, creator_id: int
+) -> Session:
     sess = Session(
         table_id=session_in.table_id,
         name=session_in.name,
         scheduled_time=session_in.scheduled_time,
         summary=session_in.summary,
         location=session_in.location,
+        timezone=session_in.timezone,
         created_by=creator_id,
     )
     session.add(sess)
@@ -24,7 +27,9 @@ async def create_session(session: AsyncSession, session_in: SessionCreate, creat
     attendee_ids: Set[int] = set(session_in.attendee_ids or [])
     if not attendee_ids:
         result = await session.execute(
-            select(TableMember.user_id).where(TableMember.table_id == session_in.table_id)
+            select(TableMember.user_id).where(
+                TableMember.table_id == session_in.table_id
+            )
         )
         attendee_ids = set(result.scalars().all())
     for uid in attendee_ids:

@@ -88,6 +88,10 @@ export default function TableSessionsPage() {
       },
       token,
     );
+    if (usePoll && proposed.length) {
+      await createSessionPoll(tableId, sess.id, proposed, token);
+      await refreshPoll(sess.id);
+    }
     setOpen(false);
     setName("");
     setTime("");
@@ -95,10 +99,9 @@ export default function TableSessionsPage() {
     setSummary("");
     setPages([]);
     setUsePoll(false);
+    setProposed([]);
+    setNewProposal("");
     mutate();
-    if (usePoll) {
-      setPollSession(sess.id);
-    }
   }
 
   const now = new Date();
@@ -245,6 +248,34 @@ export default function TableSessionsPage() {
                   onChange={(e: any) => setTime(e.target.value)}
                 />
               )}
+              {usePoll && (
+                <>
+                  {proposed.map((p) => (
+                    <div key={p} className="text-sm">
+                      {new Date(p).toLocaleString()}
+                    </div>
+                  ))}
+                  <div className="flex gap-2 items-center">
+                    <M3FloatingInput
+                      type="datetime-local"
+                      label="Proposed Time"
+                      value={newProposal}
+                      onChange={(e: any) => setNewProposal(e.target.value)}
+                    />
+                    <button
+                      className="btn-primary mt-6"
+                      onClick={() => {
+                        if (newProposal) {
+                          setProposed([...proposed, newProposal]);
+                          setNewProposal("");
+                        }
+                      }}
+                    >
+                      Add
+                    </button>
+                  </div>
+                </>
+              )}
               <M3FloatingInput
                 label="Location"
                 value={location}
@@ -270,6 +301,8 @@ export default function TableSessionsPage() {
                   onClick={() => {
                     setOpen(false);
                     setUsePoll(false);
+                    setProposed([]);
+                    setNewProposal("");
                   }}
                   className="px-4 py-2 rounded-lg"
                 >

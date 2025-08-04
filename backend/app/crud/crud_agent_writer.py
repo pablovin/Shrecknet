@@ -30,7 +30,6 @@ from app.agentic_ai.agentic_worker_utils import (
 from app.crud import crud_concept, crud_page, crud_world_embedding
 from app.models.model_agent import Agent
 from app.models.model_page import Page, PageKeyEvent, PageRelationship
-from app.task_queue import task_rebuild_world_embedding
 
 
 async def analyze_pages(
@@ -362,6 +361,10 @@ async def generate_pages_worker(
     embedding_jobs: list[dict] = []
     embeddings = await crud_world_embedding.get_embeddings(session, page.gameworld_id)
     if embeddings:
+        from app.task_queue import (
+            task_rebuild_world_embedding,
+        )  # local import to avoid circular
+
         job_dir = Path(settings.world_embedding_job_dir)
         job_dir.mkdir(parents=True, exist_ok=True)
         for emb in embeddings:

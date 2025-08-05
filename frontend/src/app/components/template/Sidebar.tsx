@@ -223,55 +223,68 @@ export default function Sidebar({ mobileOpen = false, setMobileOpen = () => {} }
           />
         </div>
         {/* ----------- User Profile FIRST ----------- */}
-        <div className="flex flex-col items-center gap-2 pt-4 pb-2 border-b border-[var(--border)] bg-transparent w-full relative">
-          <div className="relative flex flex-col items-center w-full">
-            {/* Avatar */}
-            <div className="bg-[var(--surface)] rounded-2xl p-1 shadow w-20 h-20 flex items-center justify-center mx-auto relative">
-              <Image
-                src={user?.image_url || "/images/avatars/default.png"}
-                alt="avatar"
-                width={80}
-                height={80}
-                className="object-cover w-16 h-16 rounded-2xl border-2 border-[var(--primary)]"
-              />
-              {/* Alert Icon (news) */}
+          <div className="flex flex-col items-center gap-2 pt-4 pb-2 border-b border-[var(--border)] bg-transparent w-full relative">
+            <div className="relative flex flex-col items-center w-full">
+
+              {/* Avatar (80% of sidebar width) */}
+              <div className="relative flex items-center justify-center w-[80%] mx-auto aspect-square">
+                <Image
+                  src={user?.image_url || "/images/avatars/default.png"}
+                  alt="avatar"
+                  width={256}  // For clarity, you might want a higher src
+                  height={256}
+                  className="object-cover w-full h-full rounded-3xl border-4 border-[var(--primary)] shadow-lg"
+                />
+                {/* Edit Button */}
+                <button
+                  className="absolute bottom-2 right-2 p-2 rounded-full bg-white border shadow-lg hover:bg-[var(--primary)]/10 transition"
+                  aria-label={t("personalize")}
+                  onClick={() => setProfileModalOpen(true)}
+                  style={{ boxShadow: "0 2px 10px rgba(80,0,130,.13)" }}
+                >
+                  <EditIcon style={{ fontSize: 26, color: "var(--primary)" }} />
+                </button>
+              </div>
+
+              {/* Notification Bar */}
               <button
                 onClick={handleOpenNews}
-                className="absolute bottom-1 right-0 p-1 rounded-full bg-white border shadow hover:bg-[var(--primary)]/10"
+                className={`
+                  w-[80%] mx-auto mt-3 flex items-center justify-center gap-2 px-3 py-2 rounded-lg font-semibold
+                  transition-all
+                  ${newsItems.some((n) => !n.seen)
+                    ? 'bg-red-600 text-white shadow-lg animate-pulse'
+                    : 'bg-[var(--surface)] text-[var(--primary)] border'}
+                `}
                 aria-label={t("news")}
                 style={{ boxShadow: "0 1px 6px rgba(80,0,130,.09)" }}
               >
-                <NotificationsIcon className="text-[var(--primary)]" fontSize="small" />
-                {newsItems.some((n) => !n.seen) && (
-                  <span className="absolute -top-1 -right-1 w-2 h-2 bg-red-600 rounded-full" />
-                )}
+                <NotificationsIcon fontSize="medium" />
+                <span>
+                  {t("Notifications")}
+                  {newsItems.some((n) => !n.seen) && (
+                    <span className="ml-2 inline-block w-2 h-2 bg-white rounded-full shadow" />
+                  )}
+                </span>
               </button>
-              {/* Edit button */}
-              <button
-                className="absolute top-1 right-1 p-1 rounded-full bg-white border shadow hover:bg-[var(--primary)]/10"
-                aria-label={t("personalize")}
-                onClick={() => setProfileModalOpen(true)}
-                style={{ boxShadow: "0 1px 6px rgba(80,0,130,.07)" }}
-              >
-                <EditIcon style={{ fontSize: 18, color: "var(--primary)" }} />
-              </button>
+
+              {/* Nickname */}
+              <div className="font-bold text-[var(--primary)] text-lg capitalize text-center mt-2">
+                {user?.nickname || t("hi")}
+              </div>
             </div>
-            {/* Nickname */}
-            <div className="font-bold text-[var(--primary)] text-lg capitalize text-center mt-1">
-              {user?.nickname || t("hi")}
-            </div>
+
+            {profileSuccess && (
+              <div className="w-full text-center bg-green-100 text-green-700 px-2 py-1 rounded text-xs">
+                {profileSuccess}
+              </div>
+            )}
+            {profileError && (
+              <div className="w-full text-center bg-red-100 text-red-700 px-2 py-1 rounded text-xs">
+                {profileError}
+              </div>
+            )}
           </div>
-          {profileSuccess && (
-            <div className="w-full text-center bg-green-100 text-green-700 px-2 py-1 rounded text-xs">
-              {profileSuccess}
-            </div>
-          )}
-          {profileError && (
-            <div className="w-full text-center bg-red-100 text-red-700 px-2 py-1 rounded text-xs">
-              {profileError}
-            </div>
-          )}
-        </div>
         {/* ------------------------------------------ */}
         {/* ----------- Main Link at the Top ----------- */}
         <Link

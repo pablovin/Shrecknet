@@ -91,79 +91,90 @@ export default function UserTableSessionsPage() {
     await refreshPoll(sessionId);
   }
 
+  const now = new Date();
+  const upcomingSessions = sessions.filter(
+    (s: SessionItem) => !s.scheduled_time || new Date(s.scheduled_time) >= now,
+  );
+  const previousSessions = sessions.filter(
+    (s: SessionItem) => s.scheduled_time && new Date(s.scheduled_time) < now,
+  );
+
+  const renderSession = (s: SessionItem) => (
+    <li
+      key={s.id}
+      className="p-4 rounded-xl bg-[var(--surface-variant)] space-y-1"
+    >
+      <div className="flex justify-between items-center">
+        <div>
+          <div className="font-semibold">{s.name}</div>
+          <div className="text-sm">
+            {s.scheduled_time
+              ? new Date(s.scheduled_time).toLocaleString()
+              : "Not scheduled"}
+          </div>
+        </div>
+      </div>
+      {s.location && <div className="text-sm">{s.location}</div>}
+      {s.summary && <div className="text-sm opacity-80">{s.summary}</div>}
+      {polls[s.id] && (
+        <div className="mt-2">
+          <div className="text-xs font-semibold mb-1">Session Date Poll:</div>
+          <div className="flex flex-wrap gap-2 mb-2">
+            {polls[s.id].options.map((opt: any) => (
+              <label
+                key={opt.id}
+                className="flex items-center gap-2 px-3 py-2 rounded-xl border bg-yellow-50 border-yellow-200"
+              >
+                <input
+                  type="checkbox"
+                  checked={(selections[s.id] || []).includes(opt.id)}
+                  onChange={() => toggleOption(s.id, opt.id)}
+                />
+                <span className="text-xs font-semibold">
+                  {new Date(opt.proposed_time).toLocaleString()}
+                </span>
+                <div className="flex -space-x-2">
+                  {opt.votes.map((uid: number) => {
+                    const u = users.find((usr: any) => usr.id === uid);
+                    return (
+                      <img
+                        key={uid}
+                        src={u?.image_url || "/images/avatars/default.png"}
+                        alt={u?.nickname || "?"}
+                        className="w-5 h-5 rounded-full border border-white bg-white shadow"
+                        title={u?.nickname}
+                      />
+                    );
+                  })}
+                </div>
+              </label>
+            ))}
+          </div>
+          <button
+            className="px-2 py-1 bg-[var(--primary)] text-white rounded text-xs"
+            onClick={() => submitVote(s.id)}
+          >
+            Save Vote
+          </button>
+        </div>
+      )}
+    </li>
+  );
+
   return (
     <DashboardLayout>
       <div className="w-full max-w-4xl mx-auto p-4">
         <h1 className="text-2xl font-bold mb-4">Sessions</h1>
-        <ul className="space-y-2">
-          {sessions.map((s: SessionItem) => (
-            <li
-              key={s.id}
-              className="p-4 rounded-xl bg-[var(--surface-variant)] space-y-1"
-            >
-              <div className="flex justify-between items-center">
-                <div>
-                  <div className="font-semibold">{s.name}</div>
-                  <div className="text-sm">
-                    {s.scheduled_time
-                      ? new Date(s.scheduled_time).toLocaleString()
-                      : "Not scheduled"}
-                  </div>
-                </div>
-              </div>
-              {s.location && <div className="text-sm">{s.location}</div>}
-              {s.summary && (
-                <div className="text-sm opacity-80">{s.summary}</div>
-              )}
-              {polls[s.id] && (
-                <div className="mt-2">
-                  <div className="text-xs font-semibold mb-1">
-                    Session Date Poll:
-                  </div>
-                  <div className="flex flex-wrap gap-2 mb-2">
-                    {polls[s.id].options.map((opt: any) => (
-                      <label
-                        key={opt.id}
-                        className="flex items-center gap-2 px-3 py-2 rounded-xl border bg-yellow-50 border-yellow-200"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={(selections[s.id] || []).includes(opt.id)}
-                          onChange={() => toggleOption(s.id, opt.id)}
-                        />
-                        <span className="text-xs font-semibold">
-                          {new Date(opt.proposed_time).toLocaleString()}
-                        </span>
-                        <div className="flex -space-x-2">
-                          {opt.votes.map((uid: number) => {
-                            const u = users.find((usr: any) => usr.id === uid);
-                            return (
-                              <img
-                                key={uid}
-                                src={
-                                  u?.image_url || "/images/avatars/default.png"
-                                }
-                                alt={u?.nickname || "?"}
-                                className="w-5 h-5 rounded-full border border-white bg-white shadow"
-                                title={u?.nickname}
-                              />
-                            );
-                          })}
-                        </div>
-                      </label>
-                    ))}
-                  </div>
-                  <button
-                    className="px-2 py-1 bg-[var(--primary)] text-white rounded text-xs"
-                    onClick={() => submitVote(s.id)}
-                  >
-                    Save Vote
-                  </button>
-                </div>
-              )}
-            </li>
-          ))}
-        </ul>
+        <h2 className="text-xl font-semibold mb-2">Upcoming Sessions</h2>
+        <ul className="space-y-2">{upcomingSessions.map(renderSession)}</ul>
+        {previousSessions.length > 0 && (
+          <>
+            <h2 className="text-xl font-semibold mt-6 mb-2">
+              Previous Sessions
+            </h2>
+            <ul className="space-y-2">{previousSessions.map(renderSession)}</ul>
+          </>
+        )}
       </div>
     </DashboardLayout>
   );

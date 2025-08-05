@@ -14,6 +14,7 @@ from app.crud.crud_user_note import (
     update_user_note,
     delete_user_note,
 )
+
 try:
     from app.task_queue import task_auto_crosslink_note_content
 except Exception:  # pragma: no cover - optional task queue
@@ -23,7 +24,10 @@ UserNoteRead.model_rebuild()
 UserNoteCreate.model_rebuild()
 UserNoteUpdate.model_rebuild()
 
-router = APIRouter(prefix="/user_notes", tags=["UserNotes"], dependencies=[Depends(get_current_user)])
+router = APIRouter(
+    prefix="/user_notes", tags=["UserNotes"], dependencies=[Depends(get_current_user)]
+)
+
 
 @router.post("/", response_model=UserNoteRead)
 async def create_note_endpoint(
@@ -31,11 +35,14 @@ async def create_note_endpoint(
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
-    db_note = UserNote(**note.model_dump(), user_id=user.id, created_at=datetime.utcnow())
+    db_note = UserNote(
+        **note.model_dump(), user_id=user.id, created_at=datetime.utcnow()
+    )
     db_note = await create_user_note(session, db_note)
     if task_auto_crosslink_note_content:
         task_auto_crosslink_note_content.delay(db_note.id)
     return db_note
+
 
 @router.get("/", response_model=List[UserNoteRead])
 async def list_notes(
@@ -45,22 +52,45 @@ async def list_notes(
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
-    notes = await get_user_notes(session, user_id=user.id, search=search, start_date=start_date, end_date=end_date)
+    notes = await get_user_notes(
+        session,
+        user_id=user.id,
+        search=search,
+        start_date=start_date,
+        end_date=end_date,
+    )
     return notes
 
+
 @router.get("/{note_id}", response_model=UserNoteRead)
-async def get_note(note_id: int, user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
+async def get_note(
+    note_id: int,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
     note = await get_user_note(session, note_id)
-    if not note or not (note.user_id == user.id or user.id in note.shared_with_user_ids):
+    if not note or not (
+        note.user_id == user.id or user.id in note.shared_with_user_ids
+    ):
         raise HTTPException(status_code=404, detail="Note not found")
     return note
 
+
 @router.patch("/{note_id}", response_model=UserNoteRead)
-async def update_note(note_id: int, updates: UserNoteUpdate, user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
+async def update_note(
+    note_id: int,
+    updates: UserNoteUpdate,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
     note = await get_user_note(session, note_id)
-    if not note or note.user_id != user.id:
+    if not note or not (
+        note.user_id == user.id or user.id in note.shared_with_user_ids
+    ):
         raise HTTPException(status_code=404, detail="Note not found")
     update_dict = updates.model_dump(exclude_unset=True)
+    if note.user_id != user.id and "shared_with_user_ids" in update_dict:
+        update_dict.pop("shared_with_user_ids")
     try:
         note = await update_user_note(session, note_id, update_dict, user.id)
     except PermissionError:
@@ -69,8 +99,13 @@ async def update_note(note_id: int, updates: UserNoteUpdate, user: User = Depend
         task_auto_crosslink_note_content.delay(note.id)
     return note
 
+
 @router.delete("/{note_id}")
-async def delete_note(note_id: int, user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
+async def delete_note(
+    note_id: int,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
     note = await get_user_note(session, note_id)
     if not note or note.user_id != user.id:
         raise HTTPException(status_code=404, detail="Note not found")

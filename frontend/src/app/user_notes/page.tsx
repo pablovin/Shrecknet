@@ -5,10 +5,12 @@ import { useUserNotes } from "../lib/useUserNotes";
 import NoteList from "../components/notes/NoteList";
 import { PlusCircle, Notebook, Users } from "lucide-react";
 import { useAuth } from "../components/auth/AuthProvider";
+import { useUsers } from "../lib/useUsers";
 
 export default function UserNotesPage() {
   const { notes, isLoading } = useUserNotes();
   const { user } = useAuth();
+  const { users } = useUsers();
 
   return (
     <AuthGuard>
@@ -31,27 +33,41 @@ export default function UserNotesPage() {
             </div>
 
             {isLoading ? (
-              <div className="text-center text-lg text-[var(--muted-foreground)]">Loading your notes...</div>
+              <div className="text-center text-lg text-[var(--muted-foreground)]">
+                Loading your notes...
+              </div>
             ) : (
               <div className="w-full flex flex-col md:flex-row gap-8">
                 {/* MY NOTES */}
                 <div className="flex-1 bg-white/70 rounded-2xl border-0 border-[var(--primary)] shadow-md p-5">
                   <div className="flex items-center gap-2 mb-4">
                     <Notebook className="w-6 h-6 text-[var(--primary)]" />
-                    <h2 className="text-xl font-bold text-[var(--primary)] font-serif">My Notes</h2>
+                    <h2 className="text-xl font-bold text-[var(--primary)] font-serif">
+                      My Notes
+                    </h2>
                   </div>
-                  <NoteList notes={notes.filter((n) => n.user_id === user?.id)} />
+                  <NoteList
+                    notes={notes.filter((n) => n.user_id === user?.id)}
+                    users={users}
+                    currentUserId={user?.id}
+                  />
                 </div>
                 {/* SHARED WITH ME */}
                 <div className="flex-1 bg-white/70 rounded-2xl border-0 border-[var(--primary)] shadow-md p-5">
                   <div className="flex items-center gap-2 mb-4">
                     <Users className="w-6 h-6 text-[var(--primary)]" />
-                    <h2 className="text-xl font-bold text-[var(--primary)] font-serif">Shared With Me</h2>
+                    <h2 className="text-xl font-bold text-[var(--primary)] font-serif">
+                      Shared With Me
+                    </h2>
                   </div>
                   <NoteList
                     notes={notes.filter(
-                      (n) => n.user_id !== user?.id && n.shared_with_user_ids?.includes(user?.id)
+                      (n) =>
+                        n.user_id !== user?.id &&
+                        n.shared_with_user_ids?.includes(user?.id),
                     )}
+                    users={users}
+                    currentUserId={user?.id}
                   />
                 </div>
               </div>

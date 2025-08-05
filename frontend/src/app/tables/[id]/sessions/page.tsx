@@ -424,7 +424,7 @@ export default function TableSessionsPage() {
     return (
       <div
         className={`
-          group rounded-2xl border border-[var(--border)] bg-white shadow-lg px-5 py-4 mb-3 min-w-[320px] max-w-md
+          group rounded-2xl border border-[var(--border)] bg-[var(--surface)] shadow-lg px-5 py-4 mb-3 min-w-[320px] max-w-md
           transition relative flex flex-col gap-2 hover:shadow-2xl
           ${isPast ? "opacity-70" : "opacity-100"}
         `}
@@ -435,20 +435,28 @@ export default function TableSessionsPage() {
               <ScrollText className="w-5 h-5" /> {s.name}
               <span
                 className={`ml-2 px-2 py-0.5 rounded-full text-xs font-bold
-                ${isPast ? "bg-gray-200 text-gray-500" : pollData ? "bg-yellow-100 text-yellow-700" : "bg-green-100 text-green-700"}
+                ${
+                  isPast
+                    ? "bg-[var(--surface-variant)] text-[var(--foreground)]/70"
+                    : pollData
+                      ? "bg-yellow-100 text-yellow-700"
+                      : "bg-green-100 text-green-700"
+                }
               `}
               >
                 {isPast ? "Completed" : pollData ? "Vote" : "Scheduled"}
               </span>
             </div>
-            <div className="text-xs text-gray-600 flex items-center gap-1">
+            <div className="text-xs text-[var(--foreground)]/80 flex items-center gap-1">
               <CalendarDays className="w-4 h-4" />
               {s.scheduled_time ? (
                 new Date(s.scheduled_time).toLocaleString()
               ) : pollData ? (
                 <span className="font-semibold text-yellow-600">Voting!</span>
               ) : (
-                <span className="font-semibold text-gray-500">Unscheduled</span>
+                <span className="font-semibold text-[var(--foreground)]/70">
+                  Unscheduled
+                </span>
               )}
             </div>
           </div>
@@ -476,12 +484,14 @@ export default function TableSessionsPage() {
             </span>
           )}
           {s.summary && (
-            <span className="text-xs text-gray-500 italic">{s.summary}</span>
+            <span className="text-xs text-[var(--foreground)]/70 italic">
+              {s.summary}
+            </span>
           )}
         </div>
         <div className="flex flex-wrap gap-2 items-center mt-2">
           {s.page_ids?.length > 0 && (
-            <span className="flex items-center gap-2 text-xs text-gray-600">
+            <span className="flex items-center gap-2 text-xs text-[var(--foreground)]/80">
               <Book className="w-4 h-4" />
               Linked:{" "}
               {s.page_ids.map((pid: number) => {

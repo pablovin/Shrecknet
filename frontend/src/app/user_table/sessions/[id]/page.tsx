@@ -31,7 +31,9 @@ export default function UserTableSessionsPage() {
           sel[s.id] = p.options
             .filter((o) => o.votes.includes(user.id))
             .map((o) => o.id);
-        } catch {/* no poll */}
+        } catch {
+          /* no poll */
+        }
       }
       setPolls(res);
       setSelections(sel);
@@ -80,7 +82,7 @@ export default function UserTableSessionsPage() {
       tableId,
       sessionId,
       selections[sessionId] || [],
-      token
+      token,
     );
     await refreshPoll(sessionId);
     setLoadingVotes((prev) => ({ ...prev, [sessionId]: false }));
@@ -88,10 +90,10 @@ export default function UserTableSessionsPage() {
 
   const now = new Date();
   const upcomingSessions = sessions.filter(
-    (s) => !s.scheduled_time || new Date(s.scheduled_time) >= now
+    (s) => !s.scheduled_time || new Date(s.scheduled_time) >= now,
   );
   const previousSessions = sessions.filter(
-    (s) => s.scheduled_time && new Date(s.scheduled_time) < now
+    (s) => s.scheduled_time && new Date(s.scheduled_time) < now,
   );
 
   // --- UI HELPERS ---
@@ -111,9 +113,11 @@ export default function UserTableSessionsPage() {
             <label
               key={opt.id}
               className={`flex items-center gap-3 rounded-xl px-3 py-2 border cursor-pointer 
-              ${selections[s.id]?.includes(opt.id)
+              ${
+                selections[s.id]?.includes(opt.id)
                   ? "border-[var(--primary)] bg-[var(--primary)]/10"
-                  : "border-yellow-100 hover:border-yellow-300"}
+                  : "border-yellow-100 hover:border-yellow-300"
+              }
               transition`}
             >
               <input
@@ -169,17 +173,24 @@ export default function UserTableSessionsPage() {
         <div className="flex items-center gap-4">
           <div className="flex-1">
             <div className="text-xl font-bold text-[var(--primary)] flex items-center gap-2">
-              {isPast ? <BookOpen size={20} className="text-gray-400" /> : <Sparkles size={20} className="text-yellow-400" />}
+              {isPast ? (
+                <BookOpen size={20} className="text-gray-400" />
+              ) : (
+                <Sparkles size={20} className="text-yellow-400" />
+              )}
               {s.name}
             </div>
-            <div className="flex items-center gap-3 text-sm text-gray-700 mt-1">
+            <div className="flex items-center gap-3 text-sm text-[var(--foreground)]/80 mt-1">
               <MapPin size={16} className="text-[var(--primary)]" />
-              {s.location || <span className="italic opacity-50">No location set</span>}
+              {s.location || (
+                <span className="italic opacity-50">No location set</span>
+              )}
               <CalendarClock size={16} className="ml-3 text-[var(--primary)]" />
-              {s.scheduled_time
-                ? new Date(s.scheduled_time).toLocaleString()
-                : <span className="italic opacity-50">Not scheduled</span>
-              }
+              {s.scheduled_time ? (
+                new Date(s.scheduled_time).toLocaleString()
+              ) : (
+                <span className="italic opacity-50">Not scheduled</span>
+              )}
             </div>
             {s.summary && (
               <div className="text-xs text-[var(--primary)]/70 mt-2 px-3 py-1 bg-[var(--surface)]/60 rounded shadow-inner border-l-4 border-[var(--primary)]/20">
@@ -203,8 +214,9 @@ export default function UserTableSessionsPage() {
             <Sparkles size={36} className="text-yellow-300" />
             Game Sessions
           </h1>
-          <div className="text-md text-gray-500 ml-2">
-            Track your table's adventures, vote on the next gathering, and relive the tales of previous quests!
+          <div className="text-md text-[var(--foreground)]/70 ml-2">
+            Track your table's adventures, vote on the next gathering, and
+            relive the tales of previous quests!
           </div>
         </div>
 
@@ -214,7 +226,10 @@ export default function UserTableSessionsPage() {
             Upcoming Sessions
           </h2>
           {upcomingSessions.length === 0 ? (
-            <div className="text-gray-400 italic mb-4">No upcoming sessions scheduled. Ask your Game Master to create one!</div>
+            <div className="text-gray-400 italic mb-4">
+              No upcoming sessions scheduled. Ask your Game Master to create
+              one!
+            </div>
           ) : (
             <ul className="space-y-4">
               {upcomingSessions.map((s) => renderSession(s, false))}
@@ -228,7 +243,9 @@ export default function UserTableSessionsPage() {
             Past Sessions
           </h2>
           {previousSessions.length === 0 ? (
-            <div className="text-gray-400 italic mb-2">No past sessions yet. Your journey begins now!</div>
+            <div className="text-gray-400 italic mb-2">
+              No past sessions yet. Your journey begins now!
+            </div>
           ) : (
             <ul className="space-y-4">
               {previousSessions.map((s) => renderSession(s, true))}

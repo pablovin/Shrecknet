@@ -67,6 +67,15 @@ async def test_gaming_session_notifications(
         for n in data
     )
 
+    resp = await async_client.get(
+        "/news/", headers={"Authorization": f"Bearer {builder_token}"}
+    )
+    data = resp.json()
+    assert any(
+        n["title"] == "Session Created" and "First Session" in n["description"]
+        for n in data
+    )
+
     # Create poll for the session
     times = [datetime.now(timezone.utc).isoformat()]
     resp = await async_client.post(

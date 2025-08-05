@@ -10,6 +10,7 @@ import EditableContent from "../../components/editor/EditableContent";
 import { M3FloatingInput } from "../../components/template/M3FloatingInput";
 import { getPages } from "../../lib/pagesAPI";
 import { autoLinkWikiContent } from "../../components/editor/autoLinkWikiContent";
+import UserShareSelect from "../../components/notes/UserShareSelect";
 
 export default function NoteDetailPage() {
   const params = useParams();
@@ -20,11 +21,15 @@ export default function NoteDetailPage() {
   const { token, user } = useAuth();
 
   const [form, setForm] = useState({ title: "", content: "" });
+  const [sharedIds, setSharedIds] = useState<number[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
   useEffect(() => {
-    if (note) setForm({ title: note.title, content: note.content || "" });
+    if (note) {
+      setForm({ title: note.title, content: note.content || "" });
+      setSharedIds(note.shared_with_user_ids || []);
+    }
   }, [note]);
 
   if (isLoading && !note) {
@@ -42,24 +47,41 @@ export default function NoteDetailPage() {
     );
   }
 
-  const creator = users.find(u => u.id === note.user_id);
-  const sharedUsers = users.filter(u => note.shared_with_user_ids?.includes(u.id));
-  const contributors = (note.contributors || []).map(c => ({
+  const creator = users.find((u) => u.id === note.user_id);
+  const sharedUsers = users.filter((u) => sharedIds.includes(u.id));
+  const contributors = (note.contributors || []).map((c) => ({
     ...c,
-    user: users.find(u => u.id === c.user_id),
+    user: users.find((u) => u.id === c.user_id),
   }));
 
-  async function handleSave(e: any) {
+  async function handleSave(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setSaving(true);
     setError("");
     try {
       const pages = await getPages(token || "");
-      const linkedContent = autoLinkWikiContent(form.content, pages, null, true);
-      await updateUserNote(noteID, { title: form.title, content: linkedContent }, token || "");
+      const linkedContent = autoLinkWikiContent(
+        form.content,
+        pages,
+        null,
+        true,
+      );
+      const payload: {
+        title: string;
+        content: string;
+        shared_with_user_ids?: number[];
+      } = {
+        title: form.title,
+        content: linkedContent,
+      };
+      if (user?.id === note.user_id) {
+        payload.shared_with_user_ids = sharedIds;
+      }
+      await updateUserNote(noteID, payload, token || "");
       mutate();
-    } catch (err: any) {
-      setError(err?.detail || err?.message || String(err));
+    } catch (err) {
+      const e = err as { detail?: string; message?: string };
+      setError(e?.detail || e?.message || String(err));
     }
     setSaving(false);
   }
@@ -69,8 +91,9 @@ export default function NoteDetailPage() {
     try {
       await deleteUserNote(noteID, token || "");
       router.push("/user_notes");
-    } catch (err: any) {
-      setError(err?.detail || err?.message || String(err));
+    } catch (err) {
+      const e = err as { detail?: string; message?: string };
+      setError(e?.detail || e?.message || String(err));
     }
     setSaving(false);
   }
@@ -81,36 +104,53 @@ export default function NoteDetailPage() {
         <div className="w-full flex flex-col gap-4">
           <button
             className="self-start px-4 py-2 rounded-xl font-bold bg-[var(--primary)] text-[var(--primary-foreground)] shadow hover:bg-[var(--accent)] hover:text-[var(--background)] transition"
-            onClick={() => router.push('/user_notes')}
+            onClick={() => router.push("/user_notes")}
           >
             Back to Notes
           </button>
           <form className="flex flex-col gap-4" onSubmit={handleSave}>
             {error && (
-              <div className="bg-red-100 text-red-700 rounded-lg px-3 py-2 text-sm">{error}</div>
+              <div className="bg-red-100 text-red-700 rounded-lg px-3 py-2 text-sm">
+                {error}
+              </div>
             )}
             <M3FloatingInput
               label="Title"
               value={form.title}
-              onChange={e => setForm({ ...form, title: e.target.value })}
+              onChange={(e) => setForm({ ...form, title: e.target.value })}
               required
             />
+            {user?.id === note.user_id && (
+              <UserShareSelect
+                users={users}
+                selectedIds={sharedIds}
+                onChange={setSharedIds}
+                currentUserId={user.id}
+              />
+            )}
             <div className="text-sm text-[var(--foreground)]/70 flex flex-col gap-1">
               <div>Creator: {creator?.nickname || note.user_id}</div>
               {sharedUsers.length > 0 && (
-                <div>Shared with: {sharedUsers.map(u => u.nickname).join(', ')}</div>
+                <div>
+                  Shared with: {sharedUsers.map((u) => u.nickname).join(", ")}
+                </div>
               )}
               {contributors.length > 0 && (
                 <div>
-                  Contributors:{' '}
-                  {contributors.map(c => ` ${c.user?.nickname || c.user_id} (${new Date(c.date).toLocaleDateString()})`).join(', ')}
+                  Contributors:{" "}
+                  {contributors
+                    .map(
+                      (c) =>
+                        ` ${c.user?.nickname || c.user_id} (${new Date(c.date).toLocaleDateString()})`,
+                    )
+                    .join(", ")}
                 </div>
               )}
             </div>
             <EditableContent
               content={form.content}
               canEdit
-              onSaveContent={html => setForm({ ...form, content: html })}
+              onSaveContent={(html) => setForm({ ...form, content: html })}
               pageType={`users/${user?.id}`}
               pageName={`${note.id}`}
               className="max-h-[400px] overflow-y-auto"
@@ -121,11 +161,11 @@ export default function NoteDetailPage() {
                 className="px-7 py-2 rounded-xl font-bold bg-[var(--primary)] text-[var(--primary-foreground)] shadow-md hover:bg-[var(--accent)] hover:text-[var(--primary)] border border-[var(--primary)]/30 transition-all"
                 disabled={saving}
               >
-                {saving ? 'Saving...' : 'Save'}
+                {saving ? "Saving..." : "Save"}
               </button>
               <button
                 type="button"
-                onClick={() => router.push('/user_notes')}
+                onClick={() => router.push("/user_notes")}
                 className="px-6 py-2 rounded-xl font-semibold bg-transparent border border-[var(--border)] text-[var(--primary)] hover:bg-[var(--surface-variant)] transition-all"
                 disabled={saving}
               >

@@ -76,17 +76,18 @@ async def create_session(
     date_info = (
         sess.scheduled_time.isoformat() if sess.scheduled_time else "unscheduled"
     )
-    if attendee_ids:
-        news = NewsCreate(
-            title="Session Created",
-            type="gaming_session",
-            description=(
-                f"Session '{sess.name}' for table '{table.name}' scheduled on {date_info}. "
-                f"View: /tables/{table.id}"
-            ),
-            user_ids=list(attendee_ids),
-        )
-        await create_news(session, news)
+    news_user_ids = set(attendee_ids)
+    news_user_ids.add(creator_id)
+    news = NewsCreate(
+        title="Session Created",
+        type="gaming_session",
+        description=(
+            f"Session '{sess.name}' for table '{table.name}' scheduled on {date_info}. "
+            f"View: /tables/{table.id}"
+        ),
+        user_ids=list(news_user_ids),
+    )
+    await create_news(session, news)
     return sess
 
 

@@ -42,7 +42,7 @@ async def list_tables_endpoint(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(get_current_user),
 ):
-    tables = await get_tables_for_user(session, user.id)
+    tables = await get_tables_for_user(session, user)
     now = datetime.now(timezone.utc)
     results: List[TableListRead] = []
     for t in tables:

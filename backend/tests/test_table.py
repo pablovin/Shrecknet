@@ -146,6 +146,102 @@ async def test_update_table_members(async_client):
 
 
 @pytest.mark.anyio
+async def test_added_member_gets_existing_sessions(async_client):
+    gm_payload = {
+        "nickname": "gm_add",
+        "email": "gm_add@example.com",
+        "password": "secret123",
+        "role": "world builder",
+        "image_url": "no image",
+    }
+    resp = await async_client.post("/user/", json=gm_payload)
+    gm_id = resp.json()["id"]
+    login = await async_client.post(
+        "/user/login",
+        data={"username": gm_payload["email"], "password": gm_payload["password"]},
+    )
+    token = login.json()["access_token"]
+    gm_headers = {"Authorization": f"Bearer {token}"}
+
+    player_payload = {
+        "nickname": "player_added",
+        "email": "player_added@example.com",
+        "password": "secret123",
+        "role": "world builder",
+        "image_url": "no image",
+    }
+    resp = await async_client.post("/user/", json=player_payload)
+    player_id = resp.json()["id"]
+
+    gw_payload = {"name": "World", "system": "dnd", "description": "", "logo": ""}
+    resp = await async_client.post("/gameworlds/", json=gw_payload, headers=gm_headers)
+    world_id = resp.json()["id"]
+
+    resp = await async_client.post(
+        "/tables/",
+        json={"world_id": world_id, "name": "Party", "member_ids": []},
+        headers=gm_headers,
+    )
+    table_id = resp.json()["id"]
+
+    sess_payload = {
+        "name": "Session",
+        "scheduled_time": datetime.now(timezone.utc).isoformat(),
+        "summary": "",
+        "location": "",
+        "table_id": table_id,
+        "timezone": "UTC",
+        "attendee_ids": [],
+        "page_ids": [],
+    }
+    resp = await async_client.post(
+        f"/tables/{table_id}/sessions", json=sess_payload, headers=gm_headers
+    )
+    session_id = resp.json()["id"]
+
+    poll_payload = {"proposed_times": [datetime.now(timezone.utc).isoformat()]}
+    resp = await async_client.post(
+        f"/tables/{table_id}/sessions/{session_id}/poll",
+        json=poll_payload,
+        headers=gm_headers,
+    )
+    option_id = resp.json()["options"][0]["id"]
+
+    resp = await async_client.patch(
+        f"/tables/{table_id}",
+        json={"member_ids": [gm_id, player_id]},
+        headers=gm_headers,
+    )
+    assert resp.status_code == 200
+
+    login = await async_client.post(
+        "/user/login",
+        data={
+            "username": player_payload["email"],
+            "password": player_payload["password"],
+        },
+    )
+    player_token = login.json()["access_token"]
+    player_headers = {"Authorization": f"Bearer {player_token}"}
+
+    resp = await async_client.get(
+        f"/tables/{table_id}/sessions?joined=true", headers=player_headers
+    )
+    assert resp.status_code == 200
+    sessions = resp.json()
+    assert any(s["id"] == session_id for s in sessions)
+
+    resp = await async_client.post(
+        f"/tables/{table_id}/sessions/{session_id}/poll/vote",
+        json={"option_ids": [option_id]},
+        headers=player_headers,
+    )
+    assert resp.status_code == 200
+    poll = resp.json()
+    assert player_id in poll["options"][0]["votes"]
+
+
+@pytest.mark.anyio
 async def test_list_tables_handles_naive_session_times(async_client):
     user_payload = {
         "nickname": "gm2",

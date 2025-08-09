@@ -89,6 +89,24 @@ export async function voteSessionPoll(
   return await res.json();
 }
 
+export async function removeSessionPollVote(
+  tableId: number,
+  sessionId: number,
+  userId: number,
+  optionId: number,
+  token: string,
+) {
+  const res = await fetch(
+    `${API_URL}/tables/${tableId}/sessions/${sessionId}/poll/vote/${userId}/${optionId}`,
+    {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+  if (!res.ok) throw await res.json();
+  return await res.json();
+}
+
 export async function finalizeSessionPoll(
   tableId: number,
   sessionId: number,

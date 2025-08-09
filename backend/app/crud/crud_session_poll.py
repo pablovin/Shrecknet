@@ -74,6 +74,19 @@ async def cast_vote(
     await session.commit()
 
 
+async def remove_vote(
+    session: AsyncSession, poll: SessionPoll, user_id: int, option_id: int
+) -> None:
+    await session.execute(
+        delete(SessionPollVote).where(
+            (SessionPollVote.poll_id == poll.id)
+            & (SessionPollVote.user_id == user_id)
+            & (SessionPollVote.option_id == option_id)
+        )
+    )
+    await session.commit()
+
+
 async def finalize_poll(
     session: AsyncSession, poll: SessionPoll, option_id: int
 ) -> SessionPoll:

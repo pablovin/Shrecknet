@@ -196,7 +196,7 @@ async def generate_pages_worker(
 
     all_name_to_page = {**name_to_page, **new_name_to_page}
 
-    today_dt = datetime.now(timezone.utc)
+    today_dt = datetime.now(timezone.utc).date()
     results: List[dict] = []
     updated: List[dict] = []
 
@@ -209,7 +209,8 @@ async def generate_pages_worker(
             continue
 
         unique_events = {json.dumps(ev, sort_keys=True) for ev in info["events"]}
-        unique_rels = {json.dumps(rel, sort_keys=True) for rel in info["rels"]}
+
+        seen_targets: set[str] = set()
 
         for ev_json in unique_events:
             ev = json.loads(ev_json)
@@ -227,7 +228,9 @@ async def generate_pages_worker(
                 except ValueError:
                     ev_date = None
             if not ev_date:
-                ev_date = today_dt
+                ev_date = datetime.combine(
+                    today_dt, datetime.min.time(), tzinfo=timezone.utc
+                )
             ev["event_date"] = ev_date
             related_names = ev.get("related_pages", [])
             related_ids: List[int] = []
@@ -240,8 +243,13 @@ async def generate_pages_worker(
 
             await crud_page.create_key_event(session, PageKeyEvent(**ev))
 
-        for rel_json in unique_rels:
-            rel = json.loads(rel_json)
+        for rel in info["rels"]:
+            target_name = rel.get("target_page")
+            norm_name = normalize_name(target_name) if target_name else None
+            if norm_name and norm_name in seen_targets:
+                continue
+            if norm_name:
+                seen_targets.add(norm_name)
             rel.update(
                 {
                     "page_id": page_obj.id,
@@ -249,12 +257,7 @@ async def generate_pages_worker(
                     "author_id": agent.id,
                 }
             )
-            target_name = rel.get("target_page")
-            target_page = (
-                all_name_to_page.get(normalize_name(target_name))
-                if target_name
-                else None
-            )
+            target_page = all_name_to_page.get(norm_name) if norm_name else None
             if target_page:
                 rel["target_page_id"] = target_page.id
                 rel.pop("target_page", None)
@@ -350,7 +353,6 @@ async def generate_pages_worker(
                 (
                     ev.event_type,
                     ev.summary,
-                    ev.event_date,
                 )
                 for ev in existing_events
             }
@@ -370,7 +372,9 @@ async def generate_pages_worker(
                     except ValueError:
                         ev_date = None
                 if not ev_date:
-                    ev_date = today_dt
+                    ev_date = datetime.combine(
+                        today_dt, datetime.min.time(), tzinfo=timezone.utc
+                    )
                 ev["event_date"] = ev_date
                 rel_names = ev.get("related_pages", [])
                 rel_ids: List[int] = []
@@ -383,18 +387,19 @@ async def generate_pages_worker(
                 sig = (
                     ev.get("event_type"),
                     ev.get("summary"),
-                    ev["event_date"],
                 )
                 if sig in existing_event_sigs:
                     continue
                 await crud_page.create_key_event(session, PageKeyEvent(**ev))
                 existing_event_sigs.add(sig)
 
+            seen_targets: set[int] = set()
             for rel in info["rels"]:
                 tname = rel.get("target_page")
                 tpage = all_name_to_page.get(normalize_name(tname)) if tname else None
-                if not tpage:
+                if not tpage or tpage.id in seen_targets:
                     continue
+                seen_targets.add(tpage.id)
                 await remove_existing_relationships(target_page.id, tpage.id)
                 rel_obj = PageRelationship(
                     page_id=target_page.id,

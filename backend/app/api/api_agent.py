@@ -24,12 +24,19 @@ import json
 from uuid import uuid4
 from pathlib import Path
 from app.config import settings
-from app.task_queue import task_analyze_pages_job, task_rebuild_vectordb, task_create_novel_job, task_analyze_pages_job, task_generate_pages_job
+from app.task_queue import (
+    task_analyze_pages_job,
+    task_rebuild_vectordb,
+    task_create_novel_job,
+    task_analyze_pages_job,
+    task_generate_pages_job,
+)
 
 
 class ChatMessage(BaseModel):
     role: Literal["system", "user", "assistant"]
     content: str
+
 
 class ChatRequest(BaseModel):
     messages: List[ChatMessage]
@@ -47,7 +54,9 @@ class PageSpec(BaseModel):
     model_config = ConfigDict(extra="allow")
 
 
-router = APIRouter(prefix="/agents", tags=["Agents"], dependencies=[Depends(get_current_user)])
+router = APIRouter(
+    prefix="/agents", tags=["Agents"], dependencies=[Depends(get_current_user)]
+)
 
 
 @router.post("/{agent_id}/update_vector_db")
@@ -61,7 +70,10 @@ async def update_vector_job(
     job_dir.mkdir(parents=True, exist_ok=True)
     job_path = job_dir / f"{job_id}.json"
     with open(job_path, "w") as f:
-        json.dump({"status": "queued", "agent_id": agent_id, "job_type": "update_vector_db"}, f)
+        json.dump(
+            {"status": "queued", "agent_id": agent_id, "job_type": "update_vector_db"},
+            f,
+        )
 
     task_rebuild_vectordb.delay(agent_id, job_id)
     return {"job_id": job_id}
@@ -191,6 +203,7 @@ async def list_novelist_jobs():
         jobs.append(data)
     return jobs
 
+
 @router.post("/{agent_id}/chat")
 async def chat(
     agent_id: int,
@@ -255,6 +268,7 @@ async def chat_test(
 
     query = msgs[-1].get("content", "") if msgs else ""
     from app.crud import crud_agent_embedding
+
     embeddings = await crud_agent_embedding.get_embeddings(session, agent_id)
     valid_embeds = [e for e in embeddings if e.last_index_time]
     if not valid_embeds:
@@ -301,7 +315,9 @@ async def update_agent_endpoint(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(require_role(UserRole.world_builder)),
 ):
-    agent = await update_agent(session, agent_id, updates.model_dump(exclude_unset=True))
+    agent = await update_agent(
+        session, agent_id, updates.model_dump(exclude_unset=True)
+    )
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
     return agent
@@ -331,7 +347,9 @@ async def analyze_page_endpoint(
     if not agent or not page:
         raise HTTPException(status_code=404, detail="Agent or page not found")
     if agent.world_id != page.gameworld_id:
-        raise HTTPException(status_code=400, detail="Agent and page belong to different worlds")
+        raise HTTPException(
+            status_code=400, detail="Agent and page belong to different worlds"
+        )
 
     result = await crud_agent_writer.analyze_pages(session, agent, [page])
     return {"suggestions": result}
@@ -339,6 +357,7 @@ async def analyze_page_endpoint(
 
 class GeneratePagesRequest(BaseModel):
     pages: List[PageSpec]
+    merge_groups: Optional[List[List[str]]] = None
 
 
 @router.post("/{agent_id}/pages/{page_id}/generate")
@@ -354,10 +373,14 @@ async def generate_pages_endpoint(
     if not agent or not page:
         raise HTTPException(status_code=404, detail="Agent or page not found")
     if agent.world_id != page.gameworld_id:
-        raise HTTPException(status_code=400, detail="Agent and page belong to different worlds")
+        raise HTTPException(
+            status_code=400, detail="Agent and page belong to different worlds"
+        )
 
     page_specs = [p.model_dump() for p in payload.pages]
-    result = await crud_agent_writer.generate_pages(session, agent, page, page_specs)
+    result = await crud_agent_writer.generate_pages(
+        session, agent, page, page_specs, payload.merge_groups
+    )
     return result
 
 
@@ -500,7 +523,6 @@ async def create_novel_job_endpoint(
     user: User = Depends(get_current_user),
 ):
 
-
     job_id = uuid4().hex
     job_dir = Path(settings.novelist_job_dir)
     job_dir.mkdir(parents=True, exist_ok=True)
@@ -524,5 +546,3 @@ async def create_novel_job_endpoint(
         job_id,
     )
     return {"job_id": job_id}
-
-

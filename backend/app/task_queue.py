@@ -515,7 +515,9 @@ def task_generate_pages_job(
                         default=str,
                     )
                 return
-            result = await crud_agent_writer.generate_pages(session, agent, page, pages)
+            result = await crud_agent_writer.generate_pages(
+                session, agent, page, pages, merge_groups
+            )
             result_pages = result.get("pages", [])
             auto_updated = []
             embedding_jobs = result.get("embedding_jobs", [])

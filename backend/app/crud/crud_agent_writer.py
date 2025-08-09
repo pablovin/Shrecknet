@@ -442,9 +442,24 @@ async def generate_pages(
     agent: Agent,
     page: Page,
     page_specs: List[dict],
+    merge_groups: Optional[List[List[str]]] = None,
 ) -> dict:
-    """Orchestrate generation or update of pages from specs."""
+    """Orchestrate generation or update of pages from specs.
+
+    Parameters
+    ----------
+    session: AsyncSession
+        Database session.
+    agent: Agent
+        Agent performing the generation.
+    page: Page
+        Target page for generation.
+    page_specs: List[dict]
+        Specifications for pages to create or update.
+    merge_groups: Optional[List[List[str]]]
+        Groups of page names to treat as aliases during generation.
+    """
 
     if page.gameworld_id != agent.world_id:
         raise ValueError("Agent and page belong to different worlds")
-    return await generate_pages_worker(session, agent, page, page_specs)
+    return await generate_pages_worker(session, agent, page, page_specs, merge_groups)

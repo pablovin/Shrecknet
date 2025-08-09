@@ -1,4 +1,5 @@
 """LLM-based worker functions."""
+
 from __future__ import annotations
 
 import asyncio
@@ -54,13 +55,15 @@ async def process_chunks_worker(
         "\nThese is the list of existing Concepts. Suggest pages based only on these concepts:\n"
         + "\n".join(f"- {name}: {desc}" for name, desc in concept_defs.items())
         + "\nReturn a JSON object mapping each page name to its concept (category), e.g.:\n"
-        + "{{\n  \"Barão de Karst\": \"NPC\",\n  \"Abelardo\": \"NPC\",\n  \"Yudennach\": \"Reino\",\n  \"Green Dragon\": \"Monstro\"\n}}"
+        + '{{\n  "Barão de Karst": "NPC",\n  "Abelardo": "NPC",\n  "Yudennach": "Reino",\n  "Green Dragon": "Monstro"\n}}'
         + "\nDo not include mentions that are not mapped to a concept. Only return the JSON object."
     )
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", system_prompt),
-        ("user", "{chunk}"),
-    ])
+    prompt = ChatPromptTemplate.from_messages(
+        [
+            ("system", system_prompt),
+            ("user", "{chunk}"),
+        ]
+    )
     llm = ChatOpenAI(api_key=settings.openai_api_key, model=settings.open_ai_model)
     chain = prompt | llm
 
@@ -102,7 +105,7 @@ def merge_and_deduplicate_worker(
         if a in b.split() or b in a.split():
             return True
         return SequenceMatcher(None, a, b).ratio() >= 0.67
-    
+
     groups: Dict[str, Dict] = {}
     for name, concept_name in all_pairs:
         norm = normalize_name(name)
@@ -126,8 +129,15 @@ def merge_and_deduplicate_worker(
             for exist_norm, exist_page in existing_titles_norm.items():
                 if _similar(norm, exist_norm):
                     # If possible, also compare concept/category for more precision
-                    sugg_concept_obj = concepts_by_name.get(normalize_name(all_concepts[0])) if all_concepts else None
-                    if (not exist_page.concept_id) or (sugg_concept_obj and exist_page.concept_id == sugg_concept_obj.id):
+                    sugg_concept_obj = (
+                        concepts_by_name.get(normalize_name(all_concepts[0]))
+                        if all_concepts
+                        else None
+                    )
+                    if (not exist_page.concept_id) or (
+                        sugg_concept_obj
+                        and exist_page.concept_id == sugg_concept_obj.id
+                    ):
                         page_obj = exist_page
                         exists = True
                         break
@@ -183,7 +193,19 @@ async def generate_process_chunk_worker(
     spec_data: Dict[int, Dict[str, list]],
 ) -> None:
     pages_instructions = "\n".join(
-        f"Page: {s['name']}\nInstructions: {concept_map[s['concept_id']].auto_generated_prompt or '(no instructions, just summarize relevant content for this page)'}"
+        (
+            f"Page: {s['name']}"
+            + (
+                f" (also known as: {', '.join(s['aliases'])})"
+                if s.get("aliases")
+                else ""
+            )
+            + "\nInstructions: "
+            + (
+                concept_map[s["concept_id"]].auto_generated_prompt
+                or "(no instructions, just summarize relevant content for this page)"
+            )
+        )
         for s in specs
     )
     system_prompt = (
@@ -197,10 +219,12 @@ async def generate_process_chunk_worker(
         "Your output MUST be valid JSON, mapping page names to their extracted data.\n\n"
         f"{pages_instructions}\n"
     )
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", system_prompt),
-        ("user", "Text chunk:\n{text}"),
-    ])
+    prompt = ChatPromptTemplate.from_messages(
+        [
+            ("system", system_prompt),
+            ("user", "Text chunk:\n{text}"),
+        ]
+    )
     chain = prompt | llm
     try:
         resp = await chain.ainvoke({"text": chunk})
@@ -238,22 +262,31 @@ async def generate_process_source_worker(
     )
 
 
-def make_validator_prompt(query: str, answer: str, user_nickname: str | None, tone: str) -> str:
+def make_validator_prompt(
+    query: str, answer: str, user_nickname: str | None, tone: str
+) -> str:
     checks = [
         "1. Does the answer fully address the user's question?",
-        "2. Does the answer address the user directly" + (f" as '{user_nickname}'" if user_nickname else "") + "?",
-        "3. Does the answer maintain the agent's tone/personality? (" + (tone or "No special tone") + ")",
+        "2. Does the answer address the user directly"
+        + (f" as '{user_nickname}'" if user_nickname else "")
+        + "?",
+        "3. Does the answer maintain the agent's tone/personality? ("
+        + (tone or "No special tone")
+        + ")",
     ]
     prompt = (
         f"User question: {query}\n"
         f"Proposed answer: {answer}\n"
-        "Evaluate the answer based on the following criteria:\n" + "\n".join(checks) +
-        "\nFor each point, respond with 'yes' or 'no', then summarize briefly in 2-3 sentences."
+        "Evaluate the answer based on the following criteria:\n"
+        + "\n".join(checks)
+        + "\nFor each point, respond with 'yes' or 'no', then summarize briefly in 2-3 sentences."
     )
     return prompt
 
 
-async def validate_response(query: str, answer: str, user_nickname: str | None, tone: str) -> bool:
+async def validate_response(
+    query: str, answer: str, user_nickname: str | None, tone: str
+) -> bool:
     """Return True if the answer passes validation."""
     llm = ChatOpenAI(api_key=settings.openai_api_key, model=openai_model)
     validator_prompt = make_validator_prompt(query, answer, user_nickname, tone)

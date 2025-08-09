@@ -5,7 +5,7 @@ import json
 from difflib import SequenceMatcher
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
 from uuid import uuid4
 
 from langchain_openai import ChatOpenAI
@@ -99,9 +99,32 @@ async def analyze_pages(
 
 
 async def generate_pages_worker(
-    session: AsyncSession, agent: Agent, page: Page, page_specs: List[dict]
+    session: AsyncSession,
+    agent: Agent,
+    page: Page,
+    page_specs: List[dict],
+    merge_groups: Optional[List[List[str]]] = None,
 ) -> dict:
     """Generate or update pages based on specifications."""
+
+    # Attach alias names from merge groups so the LLM can treat them as the same page
+    if merge_groups:
+        norm_to_spec = {normalize_name(s["name"]): s for s in page_specs}
+        for group in merge_groups:
+            base_spec = None
+            for name in group:
+                ns = normalize_name(name)
+                if ns in norm_to_spec:
+                    base_spec = norm_to_spec[ns]
+                    break
+            if base_spec:
+                aliases = [
+                    n
+                    for n in group
+                    if normalize_name(n) != normalize_name(base_spec["name"])
+                ]
+                if aliases:
+                    base_spec["aliases"] = aliases
 
     create_specs = [s for s in page_specs if s.get("mode", "create") == "create"]
     update_specs = [s for s in page_specs if s.get("mode") == "update"]

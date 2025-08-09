@@ -129,17 +129,21 @@ export default function UserTableSessionsPage() {
               <span className="font-mono text-xs">
                 {new Date(opt.proposed_time).toLocaleString()}
               </span>
-              <div className="flex -space-x-2">
+              <div className="flex flex-wrap gap-2">
                 {opt.votes.map((uid) => {
                   const u = users.find((usr) => usr.id === uid);
                   return (
-                    <img
-                      key={uid}
-                      src={u?.image_url || "/images/avatars/default.png"}
-                      alt={u?.nickname || "?"}
-                      className="w-7 h-7 rounded-full border-2 border-white bg-white shadow"
-                      title={u?.nickname}
-                    />
+                    <div key={uid} className="flex items-center gap-1">
+                      <img
+                        src={u?.image_url || "/images/avatars/default.png"}
+                        alt={u?.nickname || "?"}
+                        className="w-7 h-7 rounded-full border-2 border-white bg-white shadow"
+                        title={u?.nickname}
+                      />
+                      <span className="text-xs text-yellow-700">
+                        {u?.nickname}
+                      </span>
+                    </div>
                   );
                 })}
               </div>

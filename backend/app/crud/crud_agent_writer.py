@@ -349,7 +349,7 @@ async def generate_pages_worker(
             existing_event_sigs = {
                 (
                     ev.event_type,
-                    ev.description,
+                    ev.summary,
                     ev.event_date,
                 )
                 for ev in existing_events
@@ -382,7 +382,7 @@ async def generate_pages_worker(
                 ev.pop("related_pages", None)
                 sig = (
                     ev.get("event_type"),
-                    ev.get("description"),
+                    ev.get("summary"),
                     ev["event_date"],
                 )
                 if sig in existing_event_sigs:

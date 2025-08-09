@@ -218,7 +218,7 @@ export default function ReviewPage() {
               {newPages.length > 0 && (
                 <div className="bg-[var(--card)] border border-green-600 rounded-xl p-4 shadow">
                   <h2 className="text-lg font-bold text-green-700 mb-3">
-                    New Pages
+                    {t("new_pages")}
                   </h2>
                   <div className="flex flex-col gap-2">
                     {newPages.map((p, idx) => (
@@ -250,7 +250,7 @@ export default function ReviewPage() {
               {updatedPages.length > 0 && (
                 <div className="bg-[var(--card)] border border-blue-600 rounded-xl p-4 shadow">
                   <h2 className="text-lg font-bold text-blue-700 mb-3">
-                    Updated Pages
+                    {t("updated_pages")}
                   </h2>
                   <div className="flex flex-col gap-2">
                     {updatedPages.map((p, idx) => (

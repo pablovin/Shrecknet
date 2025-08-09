@@ -361,3 +361,81 @@ async def test_list_tables_handles_null_session_times(async_client):
     table_info = tables[0]
     assert table_info["latest_session"] is None
     assert table_info["next_session"] is None
+
+
+@pytest.mark.anyio
+async def test_admin_can_list_all_tables(async_client):
+    admin_payload = {
+        "nickname": "admin",
+        "email": "admin@example.com",
+        "password": "secret123",
+        "role": "system admin",
+        "image_url": "no image",
+    }
+    resp = await async_client.post("/user/", json=admin_payload)
+    assert resp.status_code == 200, resp.text
+    login_admin = await async_client.post(
+        "/user/login",
+        data={
+            "username": admin_payload["email"],
+            "password": admin_payload["password"],
+        },
+    )
+    assert login_admin.status_code == 200, login_admin.text
+    admin_token = login_admin.json()["access_token"]
+    admin_headers = {"Authorization": f"Bearer {admin_token}"}
+
+    gm1 = {
+        "nickname": "gm_a",
+        "email": "gm_a@example.com",
+        "password": "secret123",
+        "role": "world builder",
+        "image_url": "no image",
+    }
+    resp = await async_client.post("/user/", json=gm1)
+    assert resp.status_code == 200, resp.text
+    login_gm1 = await async_client.post(
+        "/user/login", data={"username": gm1["email"], "password": gm1["password"]}
+    )
+    token_gm1 = login_gm1.json()["access_token"]
+    headers_gm1 = {"Authorization": f"Bearer {token_gm1}"}
+
+    gm2 = {
+        "nickname": "gm_b",
+        "email": "gm_b@example.com",
+        "password": "secret123",
+        "role": "world builder",
+        "image_url": "no image",
+    }
+    resp = await async_client.post("/user/", json=gm2)
+    assert resp.status_code == 200, resp.text
+    login_gm2 = await async_client.post(
+        "/user/login", data={"username": gm2["email"], "password": gm2["password"]}
+    )
+    token_gm2 = login_gm2.json()["access_token"]
+    headers_gm2 = {"Authorization": f"Bearer {token_gm2}"}
+
+    gw_payload = {"name": "WorldA", "system": "dnd", "description": "", "logo": ""}
+    resp = await async_client.post("/gameworlds/", json=gw_payload, headers=headers_gm1)
+    world1_id = resp.json()["id"]
+    resp = await async_client.post(
+        "/tables/",
+        json={"world_id": world1_id, "name": "TableA", "member_ids": []},
+        headers=headers_gm1,
+    )
+    assert resp.status_code == 200, resp.text
+
+    gw_payload = {"name": "WorldB", "system": "dnd", "description": "", "logo": ""}
+    resp = await async_client.post("/gameworlds/", json=gw_payload, headers=headers_gm2)
+    world2_id = resp.json()["id"]
+    resp = await async_client.post(
+        "/tables/",
+        json={"world_id": world2_id, "name": "TableB", "member_ids": []},
+        headers=headers_gm2,
+    )
+    assert resp.status_code == 200, resp.text
+
+    resp = await async_client.get("/tables/", headers=admin_headers)
+    assert resp.status_code == 200, resp.text
+    tables = resp.json()
+    assert len(tables) == 2

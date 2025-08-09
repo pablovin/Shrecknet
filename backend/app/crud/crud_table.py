@@ -10,6 +10,7 @@ from app.models.model_session import (
     SessionPollOption,
     SessionPollVote,
 )
+from app.models.model_user import User, UserRole
 from app.schemas.schema_table import TableCreate, TableUpdate
 from app.crud.crud_news import create_news
 from app.schemas.schema_news import NewsCreate
@@ -48,10 +49,13 @@ async def create_table(
     return table
 
 
-async def get_tables_for_user(session: AsyncSession, user_id: int) -> List[Table]:
-    result = await session.execute(
-        select(Table).join(TableMember).where(TableMember.user_id == user_id)
-    )
+async def get_tables_for_user(session: AsyncSession, user: User) -> List[Table]:
+    if user.role == UserRole.system_admin:
+        result = await session.execute(select(Table))
+    else:
+        result = await session.execute(
+            select(Table).join(TableMember).where(TableMember.user_id == user.id)
+        )
     return result.scalars().all()
 
 

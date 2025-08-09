@@ -18,19 +18,25 @@ from app.schemas.schema_page_characteristic_value import PageCharacteristicValue
 
 # --- PAGE CRUD ---
 
+
 async def create_page(session: AsyncSession, page: Page) -> Page:
     session.add(page)
     await session.commit()
     await session.flush()
     return page
 
+
 async def get_page(session: AsyncSession, page_id: int) -> Optional[Page]:
-    result = await session.execute(
-        select(Page).where(Page.id == page_id)
-    )
+    result = await session.execute(select(Page).where(Page.id == page_id))
     return result.scalar_one_or_none()
 
-async def get_pages(session: AsyncSession, *, gameworld_id: Optional[int] = None, concept_id: Optional[int] = None) -> List[Page]:
+
+async def get_pages(
+    session: AsyncSession,
+    *,
+    gameworld_id: Optional[int] = None,
+    concept_id: Optional[int] = None,
+) -> List[Page]:
     query = select(Page)
     if gameworld_id:
         query = query.where(Page.gameworld_id == gameworld_id)
@@ -39,12 +45,13 @@ async def get_pages(session: AsyncSession, *, gameworld_id: Optional[int] = None
     result = await session.execute(query)
     return result.scalars().all()
 
+
 async def search_pages(
     session: AsyncSession,
     *,
     search: Optional[str] = None,
     gameworld_id: Optional[int] = None,
-    concept_id: Optional[int] = None
+    concept_id: Optional[int] = None,
 ) -> List[PageSummary]:
     query = select(Page.id, Page.name, Page.gameworld_id, Page.concept_id, Page.logo)
     if gameworld_id:
@@ -68,7 +75,10 @@ async def search_pages(
         for row in rows
     ]
 
-async def update_page(session: AsyncSession, page_id: int, updates: dict) -> Optional[Page]:
+
+async def update_page(
+    session: AsyncSession, page_id: int, updates: dict
+) -> Optional[Page]:
     db_page = await get_page(session, page_id)
     if not db_page:
         return None
@@ -79,6 +89,7 @@ async def update_page(session: AsyncSession, page_id: int, updates: dict) -> Opt
     await session.flush()
     return db_page
 
+
 async def delete_page(session: AsyncSession, page_id: int) -> bool:
     page = await get_page(session, page_id)
     if not page:
@@ -87,8 +98,8 @@ async def delete_page(session: AsyncSession, page_id: int) -> bool:
     # Remove references to this page in page_ref characteristics within the same world
     result = await session.execute(
         select(Characteristic).where(
-            (Characteristic.type == "page_ref") &
-            (Characteristic.gameworld_id == page.gameworld_id)
+            (Characteristic.type == "page_ref")
+            & (Characteristic.gameworld_id == page.gameworld_id)
         )
     )
     page_ref_characteristics = result.scalars().all()
@@ -111,9 +122,13 @@ async def delete_page(session: AsyncSession, page_id: int) -> bool:
     await session.flush()
     return True
 
+
 # --- PAGE CHARACTERISTIC VALUE CRUD ---
 
-async def create_page_characteristic_value(session: AsyncSession, value_obj: PageCharacteristicValue) -> PageCharacteristicValue:
+
+async def create_page_characteristic_value(
+    session: AsyncSession, value_obj: PageCharacteristicValue
+) -> PageCharacteristicValue:
     existing = await session.get(
         PageCharacteristicValue,
         (value_obj.page_id, value_obj.characteristic_id),
@@ -128,11 +143,17 @@ async def create_page_characteristic_value(session: AsyncSession, value_obj: Pag
     await session.flush()
     return value_obj
 
-async def get_page_characteristic_values(session: AsyncSession, page_id: int) -> List[PageCharacteristicValue]:
+
+async def get_page_characteristic_values(
+    session: AsyncSession, page_id: int
+) -> List[PageCharacteristicValue]:
     result = await session.execute(
-        select(PageCharacteristicValue).where(PageCharacteristicValue.page_id == page_id)
+        select(PageCharacteristicValue).where(
+            PageCharacteristicValue.page_id == page_id
+        )
     )
     return result.scalars().all()
+
 
 async def get_pages_characteristic_values(
     session: AsyncSession, page_ids: List[int]
@@ -140,7 +161,9 @@ async def get_pages_characteristic_values(
     if not page_ids:
         return {}
     result = await session.execute(
-        select(PageCharacteristicValue).where(PageCharacteristicValue.page_id.in_(page_ids))
+        select(PageCharacteristicValue).where(
+            PageCharacteristicValue.page_id.in_(page_ids)
+        )
     )
     all_values = result.scalars().all()
     values_by_page: Dict[int, List[PageCharacteristicValue]] = {}
@@ -148,14 +171,21 @@ async def get_pages_characteristic_values(
         values_by_page.setdefault(val.page_id, []).append(val)
     return values_by_page
 
-async def delete_page_characteristic_values(session: AsyncSession, page_id: int) -> None:
+
+async def delete_page_characteristic_values(
+    session: AsyncSession, page_id: int
+) -> None:
     await session.execute(
-        delete(PageCharacteristicValue).where(PageCharacteristicValue.page_id == page_id)
+        delete(PageCharacteristicValue).where(
+            PageCharacteristicValue.page_id == page_id
+        )
     )
     await session.commit()
     await session.flush()
 
+
 # --- Page key events, relationships and changelog CRUD ---
+
 
 async def create_key_event(session: AsyncSession, event: PageKeyEvent) -> PageKeyEvent:
     session.add(event)
@@ -163,11 +193,15 @@ async def create_key_event(session: AsyncSession, event: PageKeyEvent) -> PageKe
     await session.flush()
     return event
 
+
 async def get_key_events(session: AsyncSession, page_id: int) -> List[PageKeyEvent]:
     result = await session.execute(
-        select(PageKeyEvent).where(PageKeyEvent.page_id == page_id).order_by(PageKeyEvent.added_at)
+        select(PageKeyEvent)
+        .where(PageKeyEvent.page_id == page_id)
+        .order_by(PageKeyEvent.added_at)
     )
     return result.scalars().all()
+
 
 async def get_pages_key_events(
     session: AsyncSession, page_ids: List[int]
@@ -185,8 +219,13 @@ async def get_pages_key_events(
         events_by_page.setdefault(ev.page_id, []).append(ev)
     return events_by_page
 
-async def update_key_event(session: AsyncSession, event_id: int, updates: dict) -> Optional[PageKeyEvent]:
-    result = await session.execute(select(PageKeyEvent).where(PageKeyEvent.id == event_id))
+
+async def update_key_event(
+    session: AsyncSession, event_id: int, updates: dict
+) -> Optional[PageKeyEvent]:
+    result = await session.execute(
+        select(PageKeyEvent).where(PageKeyEvent.id == event_id)
+    )
     event = result.scalar_one_or_none()
     if not event:
         return None
@@ -196,25 +235,59 @@ async def update_key_event(session: AsyncSession, event_id: int, updates: dict) 
     await session.flush()
     return event
 
+
 async def delete_key_event(session: AsyncSession, event_id: int) -> None:
     await session.execute(delete(PageKeyEvent).where(PageKeyEvent.id == event_id))
     await session.commit()
     await session.flush()
 
-async def create_relationship(session: AsyncSession, rel: PageRelationship) -> PageRelationship:
+
+async def create_relationship(
+    session: AsyncSession, rel: PageRelationship
+) -> PageRelationship:
+    """Create a relationship and its inverse if needed.
+
+    This function guards against duplicate relationships being created by first
+    checking if the relationship already exists. When adding the inverse
+    relationship, it selects at most one existing record to avoid
+    ``MultipleResultsFound`` errors if duplicates are already present in the
+    database.
+    """
+
+    # Check for an existing relationship to avoid duplicates
+    result = await session.execute(
+        select(PageRelationship)
+        .where(
+            PageRelationship.page_id == rel.page_id,
+            PageRelationship.target_page_id == rel.target_page_id,
+            PageRelationship.relationship_type == rel.relationship_type,
+            PageRelationship.direction == rel.direction,
+            PageRelationship.source_page_id == rel.source_page_id,
+        )
+        .limit(1)
+    )
+    existing_rel = result.scalar_one_or_none()
+    if existing_rel:
+        await session.commit()
+        await session.flush()
+        return existing_rel
+
     session.add(rel)
+
     inverse_dir = "incoming" if rel.direction == "outgoing" else "outgoing"
     result = await session.execute(
-        select(PageRelationship).where(
+        select(PageRelationship)
+        .where(
             PageRelationship.page_id == rel.target_page_id,
             PageRelationship.target_page_id == rel.page_id,
             PageRelationship.relationship_type == rel.relationship_type,
             PageRelationship.direction == inverse_dir,
             PageRelationship.source_page_id == rel.source_page_id,
         )
+        .limit(1)
     )
-    existing = result.scalar_one_or_none()
-    if not existing:
+    existing_inverse = result.scalar_one_or_none()
+    if not existing_inverse:
         inverse = PageRelationship(
             page_id=rel.target_page_id,
             target_page_id=rel.page_id,
@@ -226,15 +299,22 @@ async def create_relationship(session: AsyncSession, rel: PageRelationship) -> P
             author_id=rel.author_id,
         )
         session.add(inverse)
+
     await session.commit()
     await session.flush()
     return rel
 
-async def get_relationships(session: AsyncSession, page_id: int) -> List[PageRelationship]:
+
+async def get_relationships(
+    session: AsyncSession, page_id: int
+) -> List[PageRelationship]:
     result = await session.execute(
-        select(PageRelationship).where(PageRelationship.page_id == page_id).order_by(PageRelationship.added_at)
+        select(PageRelationship)
+        .where(PageRelationship.page_id == page_id)
+        .order_by(PageRelationship.added_at)
     )
     return result.scalars().all()
+
 
 async def get_pages_relationships(
     session: AsyncSession, page_ids: List[int]
@@ -252,8 +332,13 @@ async def get_pages_relationships(
         rels_by_page.setdefault(rel.page_id, []).append(rel)
     return rels_by_page
 
-async def update_relationship(session: AsyncSession, rel_id: int, updates: dict) -> Optional[PageRelationship]:
-    result = await session.execute(select(PageRelationship).where(PageRelationship.id == rel_id))
+
+async def update_relationship(
+    session: AsyncSession, rel_id: int, updates: dict
+) -> Optional[PageRelationship]:
+    result = await session.execute(
+        select(PageRelationship).where(PageRelationship.id == rel_id)
+    )
     rel = result.scalar_one_or_none()
     if not rel:
         return None
@@ -263,12 +348,15 @@ async def update_relationship(session: AsyncSession, rel_id: int, updates: dict)
     await session.flush()
     return rel
 
+
 async def delete_relationship(session: AsyncSession, rel_id: int) -> None:
     await session.execute(delete(PageRelationship).where(PageRelationship.id == rel_id))
     await session.commit()
     await session.flush()
 
+
 from app.utils import serialize_value
+
 
 async def create_page_change(session: AsyncSession, change: PageChange) -> PageChange:
     if change.values is not None:
@@ -278,11 +366,15 @@ async def create_page_change(session: AsyncSession, change: PageChange) -> PageC
     await session.flush()
     return change
 
+
 async def get_page_changes(session: AsyncSession, page_id: int) -> List[PageChange]:
     result = await session.execute(
-        select(PageChange).where(PageChange.page_id == page_id).order_by(PageChange.date)
+        select(PageChange)
+        .where(PageChange.page_id == page_id)
+        .order_by(PageChange.date)
     )
     return result.scalars().all()
+
 
 async def get_pages_changes(
     session: AsyncSession, page_ids: List[int]
@@ -300,13 +392,17 @@ async def get_pages_changes(
         changes_by_page.setdefault(change.page_id, []).append(change)
     return changes_by_page
 
+
 # --- Optional: update individual value (not used in atomic pattern) ---
 
-async def update_page_characteristic_value(session: AsyncSession, page_id: int, characteristic_id: int, value: List[str]):
+
+async def update_page_characteristic_value(
+    session: AsyncSession, page_id: int, characteristic_id: int, value: List[str]
+):
     result = await session.execute(
         select(PageCharacteristicValue).where(
             PageCharacteristicValue.page_id == page_id,
-            PageCharacteristicValue.characteristic_id == characteristic_id
+            PageCharacteristicValue.characteristic_id == characteristic_id,
         )
     )
     val = result.scalar_one_or_none()
@@ -316,11 +412,14 @@ async def update_page_characteristic_value(session: AsyncSession, page_id: int, 
         await session.flush()
     return val
 
-async def delete_page_characteristic_value(session: AsyncSession, page_id: int, characteristic_id: int) -> None:
+
+async def delete_page_characteristic_value(
+    session: AsyncSession, page_id: int, characteristic_id: int
+) -> None:
     await session.execute(
         delete(PageCharacteristicValue).where(
             PageCharacteristicValue.page_id == page_id,
-            PageCharacteristicValue.characteristic_id == characteristic_id
+            PageCharacteristicValue.characteristic_id == characteristic_id,
         )
     )
     await session.commit()

@@ -3,7 +3,12 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "./AuthProvider";
-import { getUserCount, loginUser, registerUser, userExists } from "../../lib/usersApi";
+import {
+  getUserCount,
+  loginUser,
+  registerUser,
+  userExists,
+} from "../../lib/usersApi";
 import { useTranslation } from "../../hooks/useTranslation";
 
 // Material 3 Floating Label Field
@@ -44,7 +49,11 @@ enum FormMode {
   FIRST_USER,
 }
 
-export default function AuthCard({ initialError = null }: { initialError?: string | null }) {
+export default function AuthCard({
+  initialError = null,
+}: {
+  initialError?: string | null;
+}) {
   const [formMode, setFormMode] = useState<FormMode>(FormMode.LOGIN);
   const [usersExist, setUsersExist] = useState<boolean | null>(null);
   const [form, setForm] = useState({
@@ -80,13 +89,17 @@ export default function AuthCard({ initialError = null }: { initialError?: strin
     setInfo(null);
     try {
       if (formMode === FormMode.LOGIN) {
-        const { access_token } = await loginUser({ email: form.email, password: form.password });
+        const { access_token } = await loginUser({
+          email: form.email,
+          password: form.password,
+        });
         setToken(access_token);
         const redirectTo = getRedirectAfterLogin() || "/worlds";
         setRedirectAfterLogin(null);
         router.replace(redirectTo);
       } else {
-        const role = formMode === FormMode.FIRST_USER ? "system admin" : "player";
+        const role =
+          formMode === FormMode.FIRST_USER ? "system admin" : "player";
         await registerUser({
           nickname: form.nickname,
           email: form.email,
@@ -94,7 +107,10 @@ export default function AuthCard({ initialError = null }: { initialError?: strin
           role,
           image_url: "/images/default/avatars/logo.png",
         });
-        const { access_token } = await loginUser({ email: form.email, password: form.password });
+        const { access_token } = await loginUser({
+          email: form.email,
+          password: form.password,
+        });
         setToken(access_token);
         setRedirectAfterLogin(null);
         router.replace("/worlds");
@@ -104,7 +120,8 @@ export default function AuthCard({ initialError = null }: { initialError?: strin
         formMode === FormMode.LOGIN &&
         typeof err === "object" &&
         err !== null &&
-        (err as Record<string, unknown>).detail === "Incorrect email or password"
+        (err as Record<string, unknown>).detail ===
+          "Incorrect email or password"
       ) {
         try {
           const exists = await userExists(form.email);
@@ -120,7 +137,7 @@ export default function AuthCard({ initialError = null }: { initialError?: strin
         setError(
           (typeof errObj.detail === "string" && errObj.detail) ||
             (typeof errObj.message === "string" && errObj.message) ||
-            "Unknown error!" + err
+            "Unknown error!" + err,
         );
       } else {
         setError("Unknown error!");
@@ -129,7 +146,6 @@ export default function AuthCard({ initialError = null }: { initialError?: strin
       setLoading(false);
     }
   };
-
 
   if (usersExist === null)
     return <div className="text-white text-center py-8">{t("loading")}</div>;
@@ -173,8 +189,8 @@ export default function AuthCard({ initialError = null }: { initialError?: strin
           {formMode === FormMode.LOGIN
             ? t("sign_in_adventure")
             : formMode === FormMode.REGISTER
-            ? t("create_your_account")
-            : t("welcome_builder")}
+              ? t("create_your_account")
+              : t("welcome_builder")}
         </h3>
         {formMode === FormMode.FIRST_USER && (
           <div className="font-sans text-base text-[var(--accent)] mb-5 text-left">
@@ -195,7 +211,8 @@ export default function AuthCard({ initialError = null }: { initialError?: strin
           </div>
         )}
         <form className="w-full flex flex-col gap-5" onSubmit={handleSubmit}>
-          {(formMode === FormMode.REGISTER || formMode === FormMode.FIRST_USER) && (
+          {(formMode === FormMode.REGISTER ||
+            formMode === FormMode.FIRST_USER) && (
             <M3TextField
               label={t("nickname")}
               name="nickname"
@@ -233,9 +250,14 @@ export default function AuthCard({ initialError = null }: { initialError?: strin
             {loading
               ? t("processing")
               : formMode === FormMode.LOGIN
-              ? t("sign_in")
-              : t("create_account")}
+                ? t("sign_in")
+                : t("create_account")}
           </button>
+          {formMode === FormMode.LOGIN && (
+            <p className="text-sm text-[var(--accent)] text-center mt-2">
+              {t("forgot_password_contact_admin")}
+            </p>
+          )}
         </form>
       </div>
     </div>

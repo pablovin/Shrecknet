@@ -16,6 +16,7 @@
   "processing": "Elaborazione...",
   "sign_in": "Accedi",
   "create_account": "Crea Account",
+  "forgot_password_contact_admin": "Hai dimenticato la password? Contatta un amministratore per crearne una nuova.",
   "first_login_error": "Per favore effettua il login prima",
   "welcome_first_login": "Benvenuto su Shrecknet! Prima devi creare un account!",
   "visit_worlds": "Visita Mondi",

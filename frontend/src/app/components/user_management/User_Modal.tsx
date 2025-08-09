@@ -71,7 +71,7 @@ export default function UserModal({
         image_url: form.image_url,
         timezone: form.timezone,
       };
-      if (isProfile && password) updatePayload.password = password;
+      if (password) updatePayload.password = password;
       await updateUser(user.id, updatePayload, token);
       onSave?.();
       onClose();
@@ -185,19 +185,17 @@ export default function UserModal({
             Timezone
           </label>
         </div>
-        {isProfile && (
-          <M3FloatingInput
-            label="New Password"
-            name="password"
-            type="password"
-            value={password}
-            autoComplete="new-password"
-            onChange={(e) => setPassword(e.target.value)}
-            minLength={8}
-            maxLength={100}
-            placeholder=" "
-          />
-        )}
+        <M3FloatingInput
+          label={isProfile ? "New Password" : "New Password (optional)"}
+          name="password"
+          type="password"
+          value={password}
+          autoComplete="new-password"
+          onChange={(e) => setPassword(e.target.value)}
+          minLength={8}
+          maxLength={100}
+          placeholder=" "
+        />
 
         <div className="flex flex-row-reverse gap-3 mt-3">
           <button

@@ -41,9 +41,9 @@
 
 [data-theme="dark"] {
   --background: #19112a;               /* Near-black, deep purple-blue */
-  --foreground: #f6f1fc;
-  --primary: #b69cfa;                  /* Lighter purple for dark bg */
-  --primary-foreground: #221342;
+  --foreground: rgb(128, 42, 233)
+  --primary: #45298a;                  /* Lighter purple for dark bg */
+  --primary-foreground: #b799f7;
   --accent: #7b2ff2;
   --surface: #241b36;                  /* Card surface */
   --surface-variant: #251944;          /* Slightly lighter for variants */

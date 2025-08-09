@@ -1,4 +1,5 @@
 "use client";
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { useParams, useRouter } from "next/navigation";
 import DashboardLayout from "@/app/components/DashboardLayout";
 import AuthGuard from "@/app/components/auth/AuthGuard";
@@ -6,7 +7,11 @@ import { useAuth } from "@/app/components/auth/AuthProvider";
 import { useEffect, useRef, useState } from "react";
 import Image from "next/image";
 import SuggestionCard from "@/app/components/agents/SuggestionCard";
-import { getWriterJob, startGenerateJob, updateWriterJob } from "@/app/lib/agentAPI";
+import {
+  getWriterJob,
+  startGenerateJob,
+  updateWriterJob,
+} from "@/app/lib/agentAPI";
 import { useAgentById } from "@/app/lib/useAgentById";
 import { useConcepts } from "@/app/lib/useConcept";
 import { useWorld } from "@/app/lib/useWorld";
@@ -31,14 +36,20 @@ function Stepper({ step }: { step: number }) {
               step === idx
                 ? "bg-[var(--primary)] text-[var(--primary-foreground)] border-[var(--primary)] scale-110 shadow"
                 : step > idx
-                ? "bg-[var(--accent)]/70 text-white border-[var(--accent)]"
-                : "bg-[var(--muted)] text-gray-400 border-gray-300"
+                  ? "bg-[var(--accent)]/70 text-white border-[var(--accent)]"
+                  : "bg-[var(--muted)] text-gray-400 border-gray-300"
             } font-bold`}
           >
             {idx + 1}
           </div>
-          <div className={`text-xs font-semibold mt-2 text-center ${step === idx ? "text-[var(--primary)]" : "text-gray-400"}`}>{s.label}</div>
-          {idx < STEPS.length - 1 && <span className="w-6 h-1 bg-gradient-to-r from-[var(--primary)]/40 to-[var(--accent)]/30 rounded"></span>}
+          <div
+            className={`text-xs font-semibold mt-2 text-center ${step === idx ? "text-[var(--primary)]" : "text-gray-400"}`}
+          >
+            {s.label}
+          </div>
+          {idx < STEPS.length - 1 && (
+            <span className="w-6 h-1 bg-gradient-to-r from-[var(--primary)]/40 to-[var(--accent)]/30 rounded"></span>
+          )}
         </div>
       ))}
     </div>
@@ -81,13 +92,15 @@ export default function SuggestionsPage() {
 
   const [job, setJob] = useState<any>(null);
   const [selectedSuggestions, setSelectedSuggestions] = useState<any[]>([]);
-  const [subStep, setSubStep] = useState<'a' | 'b' | 'c'>('a');
+  const [subStep, setSubStep] = useState<"a" | "b" | "c">("a");
   const [loading, setLoading] = useState(false);
 
   const { agent } = useAgentById(Number(agentID));
   const { concepts } = useConcepts(agent?.world_id);
   const { world } = useWorld(agent?.world_id);
-  const { pages: allPages } = usePages(agent?.world_id ? { gameworld_id: agent.world_id } : {});
+  const { pages: allPages } = usePages(
+    agent?.world_id ? { gameworld_id: agent.world_id } : {},
+  );
 
   const suggestionRefs = useRef<HTMLDivElement[]>([]);
 
@@ -97,7 +110,7 @@ export default function SuggestionsPage() {
       .then((data) => {
         setJob(data);
         const mapped = (data.suggestions || []).map((s: any) =>
-          s.exists && !s.mode ? { ...s, mode: "update" } : s
+          s.exists && !s.mode ? { ...s, mode: "update" } : s,
         );
         setSelectedSuggestions(mapped);
       })
@@ -106,7 +119,8 @@ export default function SuggestionsPage() {
 
   const scrollToCard = (idx: number) => {
     const ref = suggestionRefs.current[idx];
-    if (ref && ref.scrollIntoView) ref.scrollIntoView({ behavior: "smooth", block: "start" });
+    if (ref && ref.scrollIntoView)
+      ref.scrollIntoView({ behavior: "smooth", block: "start" });
   };
 
   function buildMergeGroups(suggestions: any[]) {
@@ -134,18 +148,20 @@ export default function SuggestionsPage() {
       }
       groups.push(Array.from(group));
     }
-    const independent = suggestions.filter((s) => !graph.has(s.name)).map((s) => [s.name]);
+    const independent = suggestions
+      .filter((s) => !graph.has(s.name))
+      .map((s) => [s.name]);
     return [...groups, ...independent];
   }
 
   const advanceSubStep = () => {
-    if (subStep === 'a') setSubStep('b');
-    else if (subStep === 'b') setSubStep('c');
+    if (subStep === "a") setSubStep("b");
+    else if (subStep === "b") setSubStep("c");
   };
 
   const goBackSubStep = () => {
-    if (subStep === 'c') setSubStep('b');
-    else if (subStep === 'b') setSubStep('a');
+    if (subStep === "c") setSubStep("b");
+    else if (subStep === "b") setSubStep("a");
   };
 
   const handleBulkDelete = () => {
@@ -172,8 +188,9 @@ export default function SuggestionsPage() {
           });
         });
         const base =
-          group.find((g) => Array.isArray(g.merge_targets) && g.merge_targets.length > 0) ||
-          group[0];
+          group.find(
+            (g) => Array.isArray(g.merge_targets) && g.merge_targets.length > 0,
+          ) || group[0];
         base.source_pages = Object.values(sourcesMap);
       }
 
@@ -182,27 +199,45 @@ export default function SuggestionsPage() {
           .map((n) => prepared.find((ss) => ss.name === n))
           .filter(Boolean) as any[];
         const base =
-          group.find((g) => Array.isArray(g.merge_targets) && g.merge_targets.length > 0) ||
-          group[0];
+          group.find(
+            (g) => Array.isArray(g.merge_targets) && g.merge_targets.length > 0,
+          ) || group[0];
         const ids = Array.from(
           new Set(
-            group.flatMap((g) => (g.source_pages || []).map((sp: any) => sp.id))
-          )
+            group.flatMap((g) =>
+              (g.source_pages || []).map((sp: any) => sp.id),
+            ),
+          ),
         );
-        return { name: base.name, concept_id: base.concept_id, source_page_ids: ids };
+        const spec: any = {
+          name: base.name,
+          concept_id: base.concept_id,
+          source_page_ids: ids,
+        };
+        const mode = base.mode || (base.exists ? "update" : "create");
+        spec.mode = mode;
+        if (mode === "update" && base.target_page_id) {
+          spec.target_page_id = base.target_page_id;
+        }
+        return spec;
       });
-      const basePageId = job.page_id || (Array.isArray(job.page_ids) ? job.page_ids[0] : 0);
-      const res = await startGenerateJob(
+      const basePageId =
+        job.page_id || (Array.isArray(job.page_ids) ? job.page_ids[0] : 0);
+      await startGenerateJob(
         Number(agentID),
         basePageId,
         allPages as any[],
         token || "",
         prepared,
         mergeGroups,
-        jobID as string
+        jobID as string,
       );
       if (jobID)
-        await updateWriterJob(jobID as string, { action_needed: "done" }, token || "");
+        await updateWriterJob(
+          jobID as string,
+          { action_needed: "done" },
+          token || "",
+        );
       // router.push(`/agent_writer/${agentID}/review/${res.job_id}`);
       router.push(`/agent_writer?agent=${agentID}`);
     } catch (err) {
@@ -212,16 +247,17 @@ export default function SuggestionsPage() {
     setLoading(false);
   }
 
-  if (!job) return (
-    <AuthGuard>
-      <DashboardLayout>Loading...</DashboardLayout>
-    </AuthGuard>
-  );
+  if (!job)
+    return (
+      <AuthGuard>
+        <DashboardLayout>Loading...</DashboardLayout>
+      </AuthGuard>
+    );
 
   const step = 2;
 
   const sortedSuggestions = [...selectedSuggestions].sort((a, b) =>
-    a.name.localeCompare(b.name)
+    a.name.localeCompare(b.name),
   );
 
   const handleDragMerge = (fromIdx: number, toIdx: number) => {
@@ -245,51 +281,61 @@ export default function SuggestionsPage() {
             {agent && (
               <div className="flex flex-col items-center gap-2 mb-3">
                 <div className="flex items-center gap-4">
-                  <Image src={agent.logo || "/images/default/avatars/logo.png"} alt={agent.name} width={64} height={64} className="rounded-full border-2 border-[var(--primary)] shadow-lg" />
+                  <Image
+                    src={agent.logo || "/images/default/avatars/logo.png"}
+                    alt={agent.name}
+                    width={64}
+                    height={64}
+                    className="rounded-full border-2 border-[var(--primary)] shadow-lg"
+                  />
                   <div>
-                    <h1 className="text-2xl font-extrabold text-[var(--primary)]">{agent.name}, Scribe of {world?.name}</h1>
+                    <h1 className="text-2xl font-extrabold text-[var(--primary)]">
+                      {agent.name}, Scribe of {world?.name}
+                    </h1>
                   </div>
                 </div>
-                <div className="w-full mt-6"><Stepper step={step} /></div>
+                <div className="w-full mt-6">
+                  <Stepper step={step} />
+                </div>
               </div>
             )}
 
             {/* Substep bubble */}
             <div className="w-full max-w-screen-2xl mx-auto px-4 mb-4">
               <AgentBubble agent={agent}>
-                {subStep === 'a' && (
+                {subStep === "a" && (
                   <>
-                    <b>{t('step2a_remove')}</b>
+                    <b>{t("step2a_remove")}</b>
                     <br />
                     {user?.nickname
-                      ? `${user.nickname}, ${t('step2a_desc')}`
-                      : t('step2a_desc')}
+                      ? `${user.nickname}, ${t("step2a_desc")}`
+                      : t("step2a_desc")}
                     <p className="mt-2 text-sm italic text-[var(--muted-foreground)]">
-                      {t('step2a_hint')}
+                      {t("step2a_hint")}
                     </p>
                   </>
                 )}
-                {subStep === 'b' && (
+                {subStep === "b" && (
                   <>
-                    <b>{t('step2b_merge')}</b>
+                    <b>{t("step2b_merge")}</b>
                     <br />
                     {user?.nickname
-                      ? `${user.nickname}, ${t('step2b_desc')}`
-                      : t('step2b_desc')}
+                      ? `${user.nickname}, ${t("step2b_desc")}`
+                      : t("step2b_desc")}
                     <p className="mt-2 text-sm italic text-[var(--muted-foreground)]">
-                      {t('step2b_hint')}
+                      {t("step2b_hint")}
                     </p>
                   </>
                 )}
-                {subStep === 'c' && (
+                {subStep === "c" && (
                   <>
-                    <b>{t('step2c_finalize')}</b>
+                    <b>{t("step2c_finalize")}</b>
                     <br />
                     {user?.nickname
-                      ? `${user.nickname}, ${t('step2c_desc')}`
-                      : t('step2c_desc')}
+                      ? `${user.nickname}, ${t("step2c_desc")}`
+                      : t("step2c_desc")}
                     <p className="mt-2 text-sm italic text-[var(--muted-foreground)]">
-                      {t('step2c_hint')}
+                      {t("step2c_hint")}
                     </p>
                   </>
                 )}
@@ -301,46 +347,69 @@ export default function SuggestionsPage() {
                 {sortedSuggestions.map((sugg, idx) => {
                   const origIndex = selectedSuggestions.indexOf(sugg);
                   return (
-                  <div key={idx} ref={(el) => (suggestionRefs.current[idx] = el!)}>
-                    <SuggestionCard
-                      index={origIndex}
-                      suggestion={sugg}
-                      suggestions={sortedSuggestions}
-                      concepts={concepts}
-                      pages={allPages}
-                      token={token}
-                      subStep={subStep}
-                      onDragMerge={handleDragMerge}
-                      onUpdate={(i: number, data: any) => {
-                        const copy = [...selectedSuggestions];
-                        copy[i] = { ...copy[i], ...data };
-                        setSelectedSuggestions(copy);
-                      }}
-                    />
-                  </div>
-                )})}
+                    <div
+                      key={idx}
+                      ref={(el) => (suggestionRefs.current[idx] = el!)}
+                    >
+                      <SuggestionCard
+                        index={origIndex}
+                        suggestion={sugg}
+                        suggestions={sortedSuggestions}
+                        concepts={concepts}
+                        pages={allPages}
+                        token={token}
+                        subStep={subStep}
+                        onDragMerge={handleDragMerge}
+                        onUpdate={(i: number, data: any) => {
+                          const copy = [...selectedSuggestions];
+                          copy[i] = { ...copy[i], ...data };
+                          setSelectedSuggestions(copy);
+                        }}
+                      />
+                    </div>
+                  );
+                })}
               </div>
 
               <div className="sticky top-10 bg-[var(--surface)] border border-[var(--border)] rounded-lg p-4">
-                <h2 className="text-xl font-bold mb-3 text-[var(--primary)] border-b border-[var(--primary)] pb-1">📋 {t('summary')}</h2>
-                <p className="text-sm mb-4 text-[var(--muted-foreground)]">{selectedSuggestions.length} {t('suggestions_label')}</p>
-                <p className="mb-4">{t('track_progress')}</p>
+                <h2 className="text-xl font-bold mb-3 text-[var(--primary)] border-b border-[var(--primary)] pb-1">
+                  📋 {t("summary")}
+                </h2>
+                <p className="text-sm mb-4 text-[var(--muted-foreground)]">
+                  {selectedSuggestions.length} {t("suggestions_label")}
+                </p>
+                <p className="mb-4">{t("track_progress")}</p>
                 <div className="grid grid-cols-2 gap-2 text-sm">
                   {sortedSuggestions.map((s, idx) => {
                     const targetedByOther = selectedSuggestions.some(
                       (other) =>
                         other !== s &&
                         Array.isArray(other.merge_targets) &&
-                        other.merge_targets.includes(s.name)
+                        other.merge_targets.includes(s.name),
                     );
-                    const firstIndex = selectedSuggestions.findIndex((ss) => ss.name === s.name);
+                    const firstIndex = selectedSuggestions.findIndex(
+                      (ss) => ss.name === s.name,
+                    );
                     const isMerged =
                       targetedByOther ||
                       (firstIndex !== selectedSuggestions.indexOf(s) &&
-                        Array.isArray(selectedSuggestions[firstIndex]?.merge_targets) &&
-                        selectedSuggestions[firstIndex].merge_targets.includes(s.name));
-                    const type = isMerged ? "Merged" : s.mode === "update" || s.exists ? "Update" : "Create";
-                    const color = type === "Update" ? "text-blue-500" : type === "Create" ? "text-green-500" : "text-gray-500";
+                        Array.isArray(
+                          selectedSuggestions[firstIndex]?.merge_targets,
+                        ) &&
+                        selectedSuggestions[firstIndex].merge_targets.includes(
+                          s.name,
+                        ));
+                    const type = isMerged
+                      ? "Merged"
+                      : s.mode === "update" || s.exists
+                        ? "Update"
+                        : "Create";
+                    const color =
+                      type === "Update"
+                        ? "text-blue-500"
+                        : type === "Create"
+                          ? "text-green-500"
+                          : "text-gray-500";
                     return (
                       <div
                         key={idx}
@@ -348,10 +417,13 @@ export default function SuggestionsPage() {
                         className="cursor-pointer px-3 py-2 rounded border border-[var(--border)] bg-[var(--surface-variant)] hover:bg-[var(--surface)] transition"
                       >
                         <div className={`font-semibold ${color}`}>{s.name}</div>
-                        <div className="text-xs text-[var(--muted-foreground)]">{type} in {s.concept || "(No Concept)"}</div>
+                        <div className="text-xs text-[var(--muted-foreground)]">
+                          {type} in {s.concept || "(No Concept)"}
+                        </div>
                         {!s.concept && (
                           <div className="text-red-500 text-xs flex items-center gap-1 mt-1">
-                            <AlertTriangle className="w-3 h-3" /> {t('missing_concept')}
+                            <AlertTriangle className="w-3 h-3" />{" "}
+                            {t("missing_concept")}
                           </div>
                         )}
                       </div>
@@ -366,25 +438,25 @@ export default function SuggestionsPage() {
                 onClick={goBackSubStep}
                 className="px-4 py-2 rounded-xl border border-[var(--primary)] text-[var(--primary)] font-bold shadow hover:bg-[var(--accent)]/30 transition"
               >
-                {t('back')}
+                {t("back")}
               </button>
 
-              {subStep === 'a' && selectedSuggestions.some((s) => s._delete) && (
-                <button
-                  onClick={handleBulkDelete}
-                  className="px-4 py-2 rounded-xl bg-red-600 text-white font-bold shadow hover:bg-red-700 transition"
-                >
-                  {t('delete_selected')}
-                </button>
-              )}
+              {subStep === "a" &&
+                selectedSuggestions.some((s) => s._delete) && (
+                  <button
+                    onClick={handleBulkDelete}
+                    className="px-4 py-2 rounded-xl bg-red-600 text-white font-bold shadow hover:bg-red-700 transition"
+                  >
+                    {t("delete_selected")}
+                  </button>
+                )}
 
-
-              {subStep !== 'c' ? (
+              {subStep !== "c" ? (
                 <button
                   onClick={advanceSubStep}
                   className="px-4 py-2 rounded-xl bg-[var(--primary)] text-white font-bold shadow hover:bg-[var(--accent)] transition"
                 >
-                  {t('continue_to_step')} {subStep === 'a' ? '2B' : '2C'}
+                  {t("continue_to_step")} {subStep === "a" ? "2B" : "2C"}
                 </button>
               ) : (
                 <button
@@ -394,10 +466,11 @@ export default function SuggestionsPage() {
                 >
                   {loading ? (
                     <>
-                      <Loader2 className="w-4 h-4 animate-spin" /> {t('processing')}
+                      <Loader2 className="w-4 h-4 animate-spin" />{" "}
+                      {t("processing")}
                     </>
                   ) : (
-                    t('inscribe_legends')
+                    t("inscribe_legends")
                   )}
                 </button>
               )}

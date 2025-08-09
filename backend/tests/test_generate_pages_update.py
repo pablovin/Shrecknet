@@ -53,6 +53,8 @@ async def test_update_existing_page_no_duplicate(session):
         "mode": "update",
         "target_page_id": page.id,
         "concept_id": concept.id,
+        "name": "Hero",
+        "source_page_ids": [other.id],
     }
 
     payload = {
@@ -67,12 +69,24 @@ async def test_update_existing_page_no_duplicate(session):
         ],
     }
 
-    async def dummy_llm(_input, **_kwargs):
-        return SimpleNamespace(content=json.dumps(payload))
+    async def chunk_llm(_input, **_kwargs):
+        return SimpleNamespace(content=json.dumps({"Hero": payload}))
+
+    async def merge_llm(_input, **_kwargs):
+        return SimpleNamespace(content="Old text.\n\nNew text.")
+
+    def chat_openai_side_effect(*_args, **_kwargs):
+        if chat_openai_side_effect.calls == 0:
+            chat_openai_side_effect.calls += 1
+            return RunnableLambda(chunk_llm)
+        chat_openai_side_effect.calls += 1
+        return RunnableLambda(merge_llm)
+
+    chat_openai_side_effect.calls = 0
 
     with patch(
         "app.crud.crud_agent_writer.ChatOpenAI",
-        return_value=RunnableLambda(dummy_llm),
+        side_effect=chat_openai_side_effect,
     ):
         result = await generate_pages_worker(session, agent, page, [spec])
         assert result["pages"] == []
@@ -90,9 +104,10 @@ async def test_update_existing_page_no_duplicate(session):
     assert rels[0].target_page_id == other.id
 
     # Run again to ensure no duplicates are created
+    chat_openai_side_effect.calls = 0
     with patch(
         "app.crud.crud_agent_writer.ChatOpenAI",
-        return_value=RunnableLambda(dummy_llm),
+        side_effect=chat_openai_side_effect,
     ):
         await generate_pages_worker(session, agent, page, [spec])
 

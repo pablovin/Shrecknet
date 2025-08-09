@@ -359,28 +359,28 @@ async def generate_pages_worker(
         updated.append({"name": target_page.name, "id": target_page.id})
 
     embedding_jobs: list[dict] = []
-    embeddings = await crud_world_embedding.get_embeddings(session, page.gameworld_id)
-    if embeddings:
-        from app.task_queue import (
-            task_rebuild_world_embedding,
-        )  # local import to avoid circular
+    # embeddings = await crud_world_embedding.get_embeddings(session, page.gameworld_id)
+    # if embeddings:
+    #     from app.task_queue import (
+    #         task_rebuild_world_embedding,
+    #     )  # local import to avoid circular
 
-        job_dir = Path(settings.world_embedding_job_dir)
-        job_dir.mkdir(parents=True, exist_ok=True)
-        for emb in embeddings:
-            job_id = uuid4().hex
-            job_path = job_dir / f"{job_id}.json"
-            with open(job_path, "w") as f:
-                json.dump(
-                    {
-                        "status": "queued",
-                        "embedding_id": emb.id,
-                        "job_type": "rebuild_world_embedding",
-                    },
-                    f,
-                )
-            task_rebuild_world_embedding.delay(emb.id, job_id)
-            embedding_jobs.append({"embedding_id": emb.id, "job_id": job_id})
+    #     job_dir = Path(settings.world_embedding_job_dir)
+    #     job_dir.mkdir(parents=True, exist_ok=True)
+    #     for emb in embeddings:
+    #         job_id = uuid4().hex
+    #         job_path = job_dir / f"{job_id}.json"
+    #         with open(job_path, "w") as f:
+    #             json.dump(
+    #                 {
+    #                     "status": "queued",
+    #                     "embedding_id": emb.id,
+    #                     "job_type": "rebuild_world_embedding",
+    #                 },
+    #                 f,
+    #             )
+    #         task_rebuild_world_embedding.delay(emb.id, job_id)
+    #         embedding_jobs.append({"embedding_id": emb.id, "job_id": job_id})
 
     return {"pages": results, "updated": updated, "embedding_jobs": embedding_jobs}
 

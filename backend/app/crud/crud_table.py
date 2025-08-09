@@ -90,6 +90,30 @@ async def update_table(
             if member.user_id not in new_ids:
                 await session.delete(member)
 
+        if added_ids:
+            session_rows = await session.execute(
+                select(Session.id).where(Session.table_id == table_id)
+            )
+            session_ids = list(session_rows.scalars().all())
+            if session_ids:
+                existing_attendance = await session.execute(
+                    select(
+                        SessionAttendance.session_id,
+                        SessionAttendance.user_id,
+                    )
+                    .where(SessionAttendance.session_id.in_(session_ids))
+                    .where(SessionAttendance.user_id.in_(added_ids))
+                )
+                existing_pairs = {(sid, uid) for sid, uid in existing_attendance.all()}
+                for sid in session_ids:
+                    for uid in added_ids:
+                        if (sid, uid) not in existing_pairs:
+                            session.add(
+                                SessionAttendance(
+                                    session_id=sid, user_id=uid, attending=True
+                                )
+                            )
+
     await session.commit()
     await session.refresh(table)
 

@@ -23,6 +23,7 @@ from app.crud.crud_session_poll import (
     cast_vote,
     finalize_poll,
     poll_to_read,
+    remove_vote,
 )
 
 router = APIRouter(
@@ -159,6 +160,25 @@ async def vote_poll_endpoint(
     if not poll:
         raise HTTPException(status_code=404, detail="Poll not found")
     await cast_vote(session, poll, user.id, vote)
+    return await poll_to_read(session, poll)
+
+
+@router.delete(
+    "/{table_id}/sessions/{session_id}/poll/vote/{user_id}/{option_id}",
+    response_model=SessionPollRead,
+)
+async def remove_vote_poll_endpoint(
+    table_id: int,
+    session_id: int,
+    user_id: int,
+    option_id: int,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    poll = await get_poll(session, session_id)
+    if not poll:
+        raise HTTPException(status_code=404, detail="Poll not found")
+    await remove_vote(session, poll, user_id, option_id)
     return await poll_to_read(session, poll)
 
 

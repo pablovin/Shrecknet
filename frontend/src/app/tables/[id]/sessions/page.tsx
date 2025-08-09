@@ -526,32 +526,39 @@ export default function TableSessionsPage() {
                   <span className="font-bold text-xs">
                     {new Date(opt.proposed_time).toLocaleString()}
                   </span>
-                  <div className="flex -space-x-2 mt-1">
+                  <div className="flex flex-wrap gap-2 mt-1">
                     {opt.votes.map((uid: number) => {
                       const u = users.find((usr: any) => usr.id === uid);
                       return (
-                        <div key={uid} className="relative group">
-                          <img
-                            src={u?.image_url || "/images/avatars/default.png"}
-                            alt={u?.nickname || "?"}
-                            className="w-5 h-5 rounded-full border border-white bg-white shadow"
-                            title={u?.nickname}
-                          />
-                          <button
-                            className="absolute -top-1 -right-1 hidden group-hover:block bg-white rounded-full p-0.5"
-                            onClick={async () => {
-                              await removeSessionPollVote(
-                                tableId,
-                                s.id,
-                                uid,
-                                opt.id,
-                                token,
-                              );
-                              refreshPoll(s.id);
-                            }}
-                          >
-                            <X className="w-3 h-3 text-rose-500" />
-                          </button>
+                        <div key={uid} className="flex items-center gap-1">
+                          <div className="relative group">
+                            <img
+                              src={
+                                u?.image_url || "/images/avatars/default.png"
+                              }
+                              alt={u?.nickname || "?"}
+                              className="w-5 h-5 rounded-full border border-white bg-white shadow"
+                              title={u?.nickname}
+                            />
+                            <button
+                              className="absolute -top-1 -right-1 hidden group-hover:block bg-white rounded-full p-0.5"
+                              onClick={async () => {
+                                await removeSessionPollVote(
+                                  tableId,
+                                  s.id,
+                                  uid,
+                                  opt.id,
+                                  token,
+                                );
+                                refreshPoll(s.id);
+                              }}
+                            >
+                              <X className="w-3 h-3 text-rose-500" />
+                            </button>
+                          </div>
+                          <span className="text-xs text-yellow-700">
+                            {u?.nickname}
+                          </span>
                         </div>
                       );
                     })}

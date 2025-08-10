@@ -2,31 +2,30 @@
 import React, { createContext, useContext, useEffect, useState } from "react";
 
 const ThemeContext = createContext({
-  theme: "dark",
+  theme: "light",
   toggleTheme: () => {},
 });
 
 export function ThemeProvider({ children }) {
-  const [theme, setTheme] = useState("dark");
+  const [theme, setTheme] = useState("light");
 
   useEffect(() => {
     // On first mount, try to load theme from localStorage
     const stored = localStorage.getItem("theme");
-    if (stored) setTheme(stored);
-    // Optionally, check system preference
-    else if (window.matchMedia?.("(prefers-color-scheme: dark)").matches) setTheme("dark");
+    if (stored === "dark" || stored === "light") setTheme(stored);
     else setTheme("light");
   }, []);
 
   useEffect(() => {
     // Persist theme to localStorage
     localStorage.setItem("theme", theme);
-    // Optionally, set a data-theme on the html element for CSS
+    // Update attributes/classes for styling
     document.documentElement.setAttribute("data-theme", theme);
+    document.documentElement.classList.toggle("dark", theme === "dark");
   }, [theme]);
 
   function toggleTheme() {
-    setTheme(prev => (prev === "dark" ? "light" : "dark"));
+    setTheme((prev) => (prev === "dark" ? "light" : "dark"));
   }
 
   return (

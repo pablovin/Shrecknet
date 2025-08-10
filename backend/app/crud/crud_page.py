@@ -214,7 +214,7 @@ async def get_key_events(session: AsyncSession, page_id: int) -> List[PageKeyEve
     result = await session.execute(
         select(PageKeyEvent)
         .where(PageKeyEvent.page_id == page_id)
-        .order_by(PageKeyEvent.added_at)
+        .order_by(PageKeyEvent.event_date.desc(), PageKeyEvent.added_at.desc())
     )
     return result.scalars().all()
 
@@ -227,7 +227,7 @@ async def get_pages_key_events(
     result = await session.execute(
         select(PageKeyEvent)
         .where(PageKeyEvent.page_id.in_(page_ids))
-        .order_by(PageKeyEvent.added_at)
+        .order_by(PageKeyEvent.event_date.desc(), PageKeyEvent.added_at.desc())
     )
     events = result.scalars().all()
     events_by_page: Dict[int, List[PageKeyEvent]] = {}

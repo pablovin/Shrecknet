@@ -5,18 +5,37 @@ import { useAuth } from "../components/auth/AuthProvider";
 import useRoleRedirect from "../hooks/useRoleRedirect";
 import { useWorlds } from "../lib/userWorlds";
 import { useWorldEmbeddings } from "../lib/useWorldEmbeddings";
-import { createWorldEmbedding, deleteWorldEmbedding, startWorldEmbeddingJob } from "../lib/worldEmbeddingAPI";
+import {
+  createWorldEmbedding,
+  deleteWorldEmbedding,
+  startWorldEmbeddingJob,
+} from "../lib/worldEmbeddingAPI";
 import { useWorldEmbeddingJobs } from "../lib/useWorldEmbeddingJobs";
 import { useState } from "react";
-import { Sparkles, BookOpen, Trash2, Globe, Pencil, Loader2, CheckCircle2, XCircle, Clock } from "lucide-react";
+import {
+  Sparkles,
+  BookOpen,
+  Trash2,
+  Globe,
+  Pencil,
+  Loader2,
+  CheckCircle2,
+  XCircle,
+  Clock,
+} from "lucide-react";
 import WorldEmbeddingModal from "../components/world_embeddings/WorldEmbeddingModal";
 
 const statusStyle = {
-  queued: "bg-yellow-50 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-100 border-yellow-200 dark:border-yellow-700",
-  running: "bg-blue-50 text-blue-800 dark:bg-blue-900 dark:text-blue-100 border-blue-200 dark:border-blue-700 animate-pulse",
-  success: "bg-green-50 text-green-800 dark:bg-green-900 dark:text-green-100 border-green-200 dark:border-green-700",
-  failed: "bg-rose-50 text-rose-800 dark:bg-rose-900 dark:text-rose-100 border-rose-200 dark:border-rose-700",
-  default: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-100 border-slate-200 dark:border-slate-700"
+  queued:
+    "bg-yellow-50 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-100 border-yellow-200 dark:border-yellow-700",
+  running:
+    "bg-blue-50 text-blue-800 dark:bg-blue-900 dark:text-blue-100 border-blue-200 dark:border-blue-700 animate-pulse",
+  success:
+    "bg-green-50 text-green-800 dark:bg-green-900 dark:text-green-100 border-green-200 dark:border-green-700",
+  failed:
+    "bg-rose-50 text-rose-800 dark:bg-rose-900 dark:text-rose-100 border-rose-200 dark:border-rose-700",
+  default:
+    "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-100 border-slate-200 dark:border-slate-700",
 };
 
 const statusIcon = {
@@ -46,7 +65,7 @@ export default function WorldEmbeddingsPage() {
         world_id: Number(worldId),
         name,
       },
-      token || ""
+      token || "",
     );
     setName("");
     mutate();
@@ -54,7 +73,8 @@ export default function WorldEmbeddingsPage() {
   }
 
   async function handleDelete(id: number) {
-    if (!confirm("Are you sure you want to shatter this World Crystal?")) return;
+    if (!confirm("Are you sure you want to shatter this World Crystal?"))
+      return;
     setDeletingId(id);
     await deleteWorldEmbedding(id, token || "");
     setDeletingId(null);
@@ -97,7 +117,8 @@ export default function WorldEmbeddingsPage() {
               World Embeddings Codex
             </h1>
             <p className="text-md md:text-lg text-slate-700 dark:text-slate-200 mt-2 italic">
-              As Loremaster, you oversee the World Crystals. Harness their power to reveal the secrets of each realm.
+              As Loremaster, you oversee the World Crystals. Harness their power
+              to reveal the secrets of each realm.
             </p>
           </div>
 
@@ -108,7 +129,7 @@ export default function WorldEmbeddingsPage() {
           >
             <select
               value={worldId}
-              onChange={e => setWorldId(e.target.value)}
+              onChange={(e) => setWorldId(e.target.value)}
               className="flex-1 border-2 border-purple-300 dark:border-purple-700 rounded-xl px-3 py-2 bg-white/90 dark:bg-purple-950 text-lg focus:ring-2 focus:ring-purple-400"
               required
             >
@@ -121,7 +142,7 @@ export default function WorldEmbeddingsPage() {
             </select>
             <input
               value={name}
-              onChange={e => setName(e.target.value)}
+              onChange={(e) => setName(e.target.value)}
               placeholder="Crystal Name"
               className="flex-1 border-2 border-purple-300 dark:border-purple-700 rounded-xl px-3 py-2 bg-white/90 dark:bg-purple-950 text-lg focus:ring-2 focus:ring-purple-400"
               required
@@ -140,80 +161,114 @@ export default function WorldEmbeddingsPage() {
           <div className="w-full max-w-5xl grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {embeddings.length === 0 && (
               <div className="col-span-full text-center p-10 text-lg text-slate-500 italic">
-                No World Crystals yet.<br />Begin your ritual to forge the first!
+                No World Crystals yet.
+                <br />
+                Begin your ritual to forge the first!
               </div>
             )}
-            {embeddings.map((e: any) => (
-              <div
-                key={e.id}
-                className="group relative bg-gradient-to-tr from-white via-purple-50 to-purple-200 dark:from-purple-950 dark:via-purple-900 dark:to-purple-800 border-2 border-purple-200 dark:border-purple-700 rounded-2xl p-5 shadow-xl flex flex-col gap-2 transition-transform hover:-translate-y-1 hover:shadow-2xl"
-              >
-                <div className="absolute top-3 right-3 flex gap-2">
-                  <button
-                    className="rounded-full bg-blue-100 hover:bg-blue-300 dark:bg-blue-900 dark:hover:bg-blue-700 p-2 shadow text-blue-600 dark:text-blue-300 transition"
-                    title="Edit Crystal"
-                    onClick={() => openEdit(e)}
-                  >
-                    <Pencil className="w-5 h-5" />
-                  </button>
-                  <button
-                    className="rounded-full bg-red-100 hover:bg-red-300 dark:bg-red-900 dark:hover:bg-red-700 p-2 shadow text-red-600 dark:text-red-300 transition"
-                    title="Shatter Crystal"
-                    disabled={deletingId === e.id}
-                    onClick={() => handleDelete(e.id)}
-                  >
-                    <Trash2 className="w-5 h-5" />
-                  </button>
-                </div>
-                <div className="flex items-center gap-3 mb-2">
-                  <BookOpen className="w-7 h-7 text-indigo-500 dark:text-indigo-300" />
-                  <span className="text-lg font-semibold text-purple-900 dark:text-purple-200">
-                    {e.name}
-                  </span>
-                </div>
-                <div className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300">
-                  <Globe className="w-5 h-5 text-purple-400" />
-                  <span>
-                    <span className="font-semibold">{getWorldName(e.world_id)}</span> (ID: {e.world_id})
-                  </span>
-                </div>
-                <div className="text-xs text-purple-800/70 dark:text-purple-100/70 mt-2">
-                  Codex Entry ID: <span className="font-mono">{e.id}</span>
-                </div>
-                <div className="text-xs mt-1">Pages: {e.page_count ?? 'None'}</div>
-                <div className="text-xs mt-1">Last Build: {e.last_index_time ? new Date(e.last_index_time).toLocaleString() : 'Never'}</div>
-                <div className="text-xs mt-1">Build Time: {e.build_seconds ? `${e.build_seconds}s` : '-'}</div>
-                <button
-                  className="mt-2 px-3 py-1 rounded-xl bg-purple-600 text-white text-sm hover:bg-purple-700 transition"
-                  onClick={() => handleRebuild(e.id)}
+            {embeddings.map((e: any) => {
+              const jobsForEmbedding = jobsByEmbedding[e.id] || [];
+              const recentJobs = [...jobsForEmbedding]
+                .sort(
+                  (a: any, b: any) =>
+                    new Date(b.start_time).getTime() -
+                    new Date(a.start_time).getTime(),
+                )
+                .slice(0, 3);
+              return (
+                <div
+                  key={e.id}
+                  className="group relative bg-gradient-to-tr from-white via-purple-50 to-purple-200 dark:from-purple-950 dark:via-purple-900 dark:to-purple-800 border-2 border-purple-200 dark:border-purple-700 rounded-2xl p-5 shadow-xl flex flex-col gap-2 transition-transform hover:-translate-y-1 hover:shadow-2xl"
                 >
-                  Rebuild
-                </button>
-                {/* Jobs for this embedding */}
-                {Array.isArray(jobsByEmbedding[e.id]) && jobsByEmbedding[e.id].length > 0 && (
-                  <div className="mt-3">
-                    <div className="text-xs font-semibold mb-1 text-purple-700 dark:text-purple-300 flex items-center gap-2">
-                      <Sparkles className="w-4 h-4" /> Ritual Log
-                    </div>
-                    <ul className="flex flex-col gap-2">
-                      {jobsByEmbedding[e.id].map((j: any) => (
-                        <li
-                          key={j.job_id}
-                          className={
-                            "flex items-center gap-2 px-3 py-1 rounded-lg border " +
-                            (statusStyle[j.status as keyof typeof statusStyle] || statusStyle.default)
-                          }
-                        >
-                          {statusIcon[j.status as keyof typeof statusIcon] || <Clock className="w-4 h-4 mr-1" />}
-                          <span className="font-mono">{j.job_id}</span>
-                          <span className="capitalize text-xs">{j.status}</span>
-                        </li>
-                      ))}
-                    </ul>
+                  <div className="absolute top-3 right-3 flex gap-2">
+                    <button
+                      className="rounded-full bg-blue-100 hover:bg-blue-300 dark:bg-blue-900 dark:hover:bg-blue-700 p-2 shadow text-blue-600 dark:text-blue-300 transition"
+                      title="Edit Crystal"
+                      onClick={() => openEdit(e)}
+                    >
+                      <Pencil className="w-5 h-5" />
+                    </button>
+                    <button
+                      className="rounded-full bg-red-100 hover:bg-red-300 dark:bg-red-900 dark:hover:bg-red-700 p-2 shadow text-red-600 dark:text-red-300 transition"
+                      title="Shatter Crystal"
+                      disabled={deletingId === e.id}
+                      onClick={() => handleDelete(e.id)}
+                    >
+                      <Trash2 className="w-5 h-5" />
+                    </button>
                   </div>
-                )}
-              </div>
-            ))}
+                  <div className="flex items-center gap-3 mb-2">
+                    <BookOpen className="w-7 h-7 text-indigo-500 dark:text-indigo-300" />
+                    <span className="text-lg font-semibold text-purple-900 dark:text-purple-200">
+                      {e.name}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300">
+                    <Globe className="w-5 h-5 text-purple-400" />
+                    <span>
+                      <span className="font-semibold">
+                        {getWorldName(e.world_id)}
+                      </span>{" "}
+                      (ID: {e.world_id})
+                    </span>
+                  </div>
+                  <div className="text-xs text-purple-800/70 dark:text-purple-100/70 mt-2">
+                    Codex Entry ID: <span className="font-mono">{e.id}</span>
+                  </div>
+                  <div className="text-xs mt-1">
+                    Pages: {e.page_count ?? "None"}
+                  </div>
+                  <div className="text-xs mt-1">
+                    Last Build:{" "}
+                    {e.last_index_time
+                      ? new Date(e.last_index_time).toLocaleString()
+                      : "Never"}
+                  </div>
+                  <div className="text-xs mt-1">
+                    Build Time: {e.build_seconds ? `${e.build_seconds}s` : "-"}
+                  </div>
+                  <button
+                    className="mt-2 px-3 py-1 rounded-xl bg-purple-600 text-white text-sm hover:bg-purple-700 transition"
+                    onClick={() => handleRebuild(e.id)}
+                  >
+                    Rebuild
+                  </button>
+                  {/* Jobs for this embedding */}
+                  {recentJobs.length > 0 && (
+                    <div className="mt-3">
+                      <div className="text-xs font-semibold mb-1 text-purple-700 dark:text-purple-300 flex items-center gap-2">
+                        <Sparkles className="w-4 h-4" /> Ritual Log
+                      </div>
+                      <ul className="flex flex-col gap-2">
+                        {recentJobs.map((j: any) => (
+                          <li
+                            key={j.job_id}
+                            className={
+                              "flex items-center gap-2 px-3 py-1 rounded-lg border " +
+                              (statusStyle[
+                                j.status as keyof typeof statusStyle
+                              ] || statusStyle.default)
+                            }
+                          >
+                            {statusIcon[
+                              j.status as keyof typeof statusIcon
+                            ] || <Clock className="w-4 h-4 mr-1" />}
+                            <span className="capitalize text-xs">
+                              {j.status}
+                            </span>
+                            {j.start_time && (
+                              <span className="text-xs ml-auto">
+                                {new Date(j.start_time).toLocaleString()}
+                              </span>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </div>
       </DashboardLayout>

@@ -57,14 +57,14 @@ function EventForm({
   const [type, setType] = useState(initial?.event_type || eventTypes[0] || "");
   const [typeFilter, setTypeFilter] = useState("");
   const [date, setDate] = useState(
-    initial?.event_date ? initial.event_date.substring(0, 10) : ""
+    initial?.event_date ? initial.event_date.substring(0, 10) : "",
   );
   const [summary, setSummary] = useState(initial?.summary || "");
   const [sourcePage, setSourcePage] = useState(
-    initial?.source_page_id?.toString() || ""
+    initial?.source_page_id?.toString() || "",
   );
   const [related, setRelated] = useState<string[]>(
-    (initial?.related_page_ids || []).map(String)
+    (initial?.related_page_ids || []).map(String),
   );
   const [sourceFilter, setSourceFilter] = useState("");
   const [relatedFilter, setRelatedFilter] = useState("");
@@ -98,7 +98,9 @@ function EventForm({
             />
             <Combobox.Options className="absolute mt-1 max-h-60 w-full overflow-auto rounded bg-[var(--surface)] shadow-lg z-20 border">
               {eventTypes
-                .filter((t) => t.toLowerCase().includes(typeFilter.toLowerCase()))
+                .filter((t) =>
+                  t.toLowerCase().includes(typeFilter.toLowerCase()),
+                )
                 .map((t) => (
                   <Combobox.Option
                     key={t}
@@ -111,7 +113,7 @@ function EventForm({
             </Combobox.Options>
           </div>
         </Combobox>
-        {sourcePage && (
+        {sourcePage &&
           (() => {
             const p = pages.find((pg) => String(pg.id) === sourcePage);
             if (!p) return null;
@@ -124,8 +126,7 @@ function EventForm({
                 View Selected Page
               </Link>
             );
-          })()
-        )}
+          })()}
       </div>
       <div className="flex flex-col gap-1">
         <label className="font-semibold text-sm">Date</label>
@@ -161,11 +162,16 @@ function EventForm({
               placeholder="Search page..."
             />
             <Combobox.Options className="absolute mt-1 max-h-60 w-full overflow-auto rounded bg-[var(--surface)] shadow-lg z-20 border">
-              <Combobox.Option value="" className="px-2 py-1 cursor-pointer hover:bg-[var(--accent)]/20">
+              <Combobox.Option
+                value=""
+                className="px-2 py-1 cursor-pointer hover:bg-[var(--accent)]/20"
+              >
                 None
               </Combobox.Option>
               {pages
-                .filter((p) => p.name.toLowerCase().includes(sourceFilter.toLowerCase()))
+                .filter((p) =>
+                  p.name.toLowerCase().includes(sourceFilter.toLowerCase()),
+                )
                 .map((p) => (
                   <Combobox.Option
                     key={p.id}
@@ -173,7 +179,13 @@ function EventForm({
                     className="flex items-center gap-2 px-2 py-1 cursor-pointer hover:bg-[var(--accent)]/20"
                   >
                     {p.logo && (
-                      <Image src={p.logo} alt={p.name} width={16} height={16} className="w-4 h-4 rounded-full object-cover" />
+                      <Image
+                        src={p.logo}
+                        alt={p.name}
+                        width={16}
+                        height={16}
+                        className="w-4 h-4 rounded-full object-cover"
+                      />
                     )}
                     <span className="flex-1">{p.name}</span>
                     <a
@@ -192,9 +204,13 @@ function EventForm({
       </div>
       <div className="flex flex-col gap-1">
         <label className="font-semibold text-sm">Related Pages</label>
-        <Combobox value="" onChange={(val: number) => {
-            if (!related.includes(String(val))) setRelated([...related, String(val)]);
-          }}>
+        <Combobox
+          value=""
+          onChange={(val: number) => {
+            if (!related.includes(String(val)))
+              setRelated([...related, String(val)]);
+          }}
+        >
           <div className="relative">
             <Combobox.Input
               className="border rounded-md px-3 py-1 bg-[var(--surface)] w-full"
@@ -206,8 +222,10 @@ function EventForm({
               {pages
                 .filter(
                   (p) =>
-                    p.name.toLowerCase().includes(relatedFilter.toLowerCase()) &&
-                    !related.includes(String(p.id))
+                    p.name
+                      .toLowerCase()
+                      .includes(relatedFilter.toLowerCase()) &&
+                    !related.includes(String(p.id)),
                 )
                 .map((p) => (
                   <Combobox.Option
@@ -216,7 +234,13 @@ function EventForm({
                     className="flex items-center gap-2 px-2 py-1 cursor-pointer hover:bg-[var(--accent)]/20"
                   >
                     {p.logo && (
-                      <Image src={p.logo} alt={p.name} width={16} height={16} className="w-4 h-4 rounded-full object-cover" />
+                      <Image
+                        src={p.logo}
+                        alt={p.name}
+                        width={16}
+                        height={16}
+                        className="w-4 h-4 rounded-full object-cover"
+                      />
                     )}
                     <span className="flex-1">{p.name}</span>
                     <a
@@ -237,18 +261,33 @@ function EventForm({
             const p = pages.find((pg) => pg.id === Number(id));
             if (!p) return null;
             return (
-              <span key={id} className="flex items-center gap-1 px-2 py-1 rounded-full bg-[var(--surface)] border text-xs">
+              <span
+                key={id}
+                className="flex items-center gap-1 px-2 py-1 rounded-full bg-[var(--surface)] border text-xs"
+              >
                 <Link
                   href={`/worlds/${p.gameworld_id}/concept/${p.concept_id}/page/${p.id}`}
                   target="_blank"
                   className="flex items-center gap-1"
                 >
                   {p.logo && (
-                    <Image src={p.logo} alt={p.name} width={16} height={16} className="w-4 h-4 rounded-full object-cover" />
+                    <Image
+                      src={p.logo}
+                      alt={p.name}
+                      width={16}
+                      height={16}
+                      className="w-4 h-4 rounded-full object-cover"
+                    />
                   )}
                   {p.name}
                 </Link>
-                <button type="button" onClick={() => setRelated(related.filter((r) => r !== id))} className="ml-1">×</button>
+                <button
+                  type="button"
+                  onClick={() => setRelated(related.filter((r) => r !== id))}
+                  className="ml-1"
+                >
+                  ×
+                </button>
               </span>
             );
           })}
@@ -285,15 +324,22 @@ export default function EventTimeline({
   const [pageMap, setPageMap] = useState<Record<number, PageInfo>>({});
 
   const { users } = useUsers();
-  const worldId = pages[0]?.gameworld_id || Object.values(pageMap)[0]?.gameworld_id;
+  const worldId =
+    pages[0]?.gameworld_id || Object.values(pageMap)[0]?.gameworld_id;
   const { agents } = useAgents(worldId);
 
   const getAuthorName = (ev: Event) => {
     if (ev.author_type === "user") {
-      return users.find((u) => u.id === ev.author_id)?.nickname || `User ${ev.author_id}`;
+      return (
+        users.find((u) => u.id === ev.author_id)?.nickname ||
+        `User ${ev.author_id}`
+      );
     }
     if (ev.author_type === "agent") {
-      return agents.find((a) => a.id === ev.author_id)?.name || `Agent ${ev.author_id}`;
+      return (
+        agents.find((a) => a.id === ev.author_id)?.name ||
+        `Agent ${ev.author_id}`
+      );
     }
     return ev.author_type || "";
   };
@@ -318,7 +364,7 @@ export default function EventTimeline({
                 gameworld_id: p.gameworld_id,
                 concept_id: p.concept_id,
               },
-            }))
+            })),
           )
           .catch(() => {});
       }
@@ -336,14 +382,16 @@ export default function EventTimeline({
         ?.map((id) => pageMap[id]?.name || "")
         .join(" ")
         .toLowerCase();
-      const sourceName = e.source_page_id ? pageMap[e.source_page_id]?.name || "" : "";
+      const sourceName = e.source_page_id
+        ? pageMap[e.source_page_id]?.name || ""
+        : "";
       return (
         text.includes(query.toLowerCase()) ||
         relatedNames?.includes(query.toLowerCase()) ||
         sourceName.toLowerCase().includes(query.toLowerCase())
       );
     })
-    .sort((a, b) => (a.event_date || "").localeCompare(b.event_date || ""));
+    .sort((a, b) => (b.event_date || "").localeCompare(a.event_date || ""));
   const visible = showAll ? filtered : filtered.slice(0, 10);
 
   const handleSave = async (ev: Event) => {
@@ -352,7 +400,11 @@ export default function EventTimeline({
       if (ev.id) {
         await updateKeyEvent(ev.id, ev, token);
       } else {
-        await createKeyEvent(pageId, { ...ev, page_id: pageId, author_type: "user", author_id: 0 }, token);
+        await createKeyEvent(
+          pageId,
+          { ...ev, page_id: pageId, author_type: "user", author_id: 0 },
+          token,
+        );
       }
       onUpdated();
       setShowForm(false);
@@ -413,7 +465,10 @@ export default function EventTimeline({
               event={e}
               pageMap={pageMap}
               canEdit={canEdit}
-              onEdit={(ev) => { setEditEvent(ev); setShowForm(true); }}
+              onEdit={(ev) => {
+                setEditEvent(ev);
+                setShowForm(true);
+              }}
               onDelete={handleDelete}
               authorName={getAuthorName(e)}
             />
@@ -428,7 +483,9 @@ export default function EventTimeline({
           </button>
         )}
         {filtered.length === 0 && (
-          <div className="text-sm text-center text-[var(--foreground)]/70">No events found.</div>
+          <div className="text-sm text-center text-[var(--foreground)]/70">
+            No events found.
+          </div>
         )}
       </div>
       {canEdit && (

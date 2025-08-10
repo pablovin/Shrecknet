@@ -83,8 +83,14 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
     // -------------------------------------------------
 
     const urlBase = isTable ? "/uploads/tables" : "/uploads/images";
+
+    // Build the URL path mirroring where the file was stored on disk
+    const urlPath = isTable
+      ? path.join(urlBase, pageName, fileName)
+      : path.join(urlBase, pageType, pageName, fileName);
+
     res.status(200).json({
-      url: path.join(urlBase, pageName, fileName).replace(/\\+/g, "/"),
+      url: urlPath.replace(/\\+/g, "/"),
     });
   });
 }

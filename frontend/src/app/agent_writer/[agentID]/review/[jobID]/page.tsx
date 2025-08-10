@@ -70,8 +70,7 @@ export default function ReviewPage() {
         setEmbeddingJobs(data.embedding_jobs || []);
         if (data.status === "done") {
           const newList = data.generated?.pages || data.pages || [];
-          const updList =
-            data.generated?.auto_updated || data.auto_updated || [];
+          const updList = data.generated?.updated || data.updated || [];
 
           const newFull = await Promise.all(
             newList.map(async (p: any) => {

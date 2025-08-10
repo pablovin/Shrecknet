@@ -109,7 +109,8 @@ const MENU_GROUPS = [
         label: "World Builder",
         icon: <Hammer className="w-5 h-5" />,
         href: "/world_builder",
-        show: (user) => user && ["world builder", "system admin"].includes(user.role),
+        show: (user) =>
+          user && ["world builder", "system admin"].includes(user.role),
       },
       {
         key: "system_settings",
@@ -122,7 +123,10 @@ const MENU_GROUPS = [
   },
 ];
 
-export default function Sidebar({ mobileOpen = false, setMobileOpen = () => {} }) {
+export default function Sidebar({
+  mobileOpen = false,
+  setMobileOpen = () => {},
+}) {
   const { user, token, isLoading: authLoading, refreshUser } = useAuth();
   const { t } = useTranslation();
   const [profileModalOpen, setProfileModalOpen] = useState(false);
@@ -158,7 +162,9 @@ export default function Sidebar({ mobileOpen = false, setMobileOpen = () => {} }
   useEffect(() => {
     if (mobileOpen) document.body.style.overflow = "hidden";
     else document.body.style.overflow = "";
-    return () => { document.body.style.overflow = ""; };
+    return () => {
+      document.body.style.overflow = "";
+    };
   }, [mobileOpen]);
 
   // Mark all news seen on open
@@ -195,7 +201,7 @@ export default function Sidebar({ mobileOpen = false, setMobileOpen = () => {} }
         className={`
           fixed left-0 top-0 z-50 h-full w-[90vw] max-w-[320px] md:w-64
           bg-gradient-to-b from-[var(--sidebar-bg)] to-white border-r border-[var(--border)]
-          shadow-xl flex flex-col transition-transform duration-300 ease-in-out
+          shadow-xl flex flex-col overflow-y-auto transition-transform duration-300 ease-in-out
           ${mobileOpen ? "translate-x-0" : "-translate-x-full"}
           md:translate-x-0 md:relative md:block
         `}
@@ -223,15 +229,14 @@ export default function Sidebar({ mobileOpen = false, setMobileOpen = () => {} }
           />
         </div>
         {/* ----------- User Profile FIRST ----------- */}
-          <div className="flex flex-col items-center gap-2 pt-4 pb-2 border-b border-[var(--border)] bg-transparent w-full relative">
+        <div className="flex flex-col items-center gap-2 pt-4 pb-2 border-b border-[var(--border)] bg-transparent w-full relative">
           <div className="relative flex flex-col items-center w-full">
-
             {/* Avatar (80% of sidebar width) */}
             <div className="relative flex items-center justify-center w-[80%] mx-auto aspect-square">
               <Image
                 src={user?.image_url || "/images/avatars/default.png"}
                 alt="avatar"
-                width={256}  // For clarity, you might want a higher src
+                width={256} // For clarity, you might want a higher src
                 height={256}
                 className="object-cover w-full h-full rounded-3xl border-4 border-[var(--primary)] shadow-lg"
               />
@@ -252,9 +257,11 @@ export default function Sidebar({ mobileOpen = false, setMobileOpen = () => {} }
               className={`
                 w-[80%] mx-auto mt-3 flex items-center justify-center gap-2 px-3 py-2 rounded-lg font-semibold
                 transition-all
-                ${newsItems.some((n) => !n.seen)
-                  ? 'bg-red-600 text-white shadow-lg animate-pulse'
-                  : 'bg-[var(--surface)] text-[var(--primary)] border'}
+                ${
+                  newsItems.some((n) => !n.seen)
+                    ? "bg-red-600 text-white shadow-lg animate-pulse"
+                    : "bg-[var(--surface)] text-[var(--primary)] border"
+                }
               `}
               aria-label={t("news")}
               style={{ boxShadow: "0 1px 6px rgba(80,0,130,.09)" }}
@@ -284,7 +291,7 @@ export default function Sidebar({ mobileOpen = false, setMobileOpen = () => {} }
               {profileError}
             </div>
           )}
-          </div>
+        </div>
         {/* ------------------------------------------ */}
         {/* ----------- Main Link at the Top ----------- */}
         <Link
@@ -292,9 +299,11 @@ export default function Sidebar({ mobileOpen = false, setMobileOpen = () => {} }
           className={`
             flex items-center gap-3 px-4 py-3 mt-2 mb-2 rounded-2xl font-semibold
             text-base transition
-            ${pathname.startsWith("/main")
-              ? "bg-[var(--primary)]/10 text-[var(--primary)] shadow"
-              : "text-[var(--foreground)] hover:bg-[var(--primary)]/5"}
+            ${
+              pathname.startsWith("/main")
+                ? "bg-[var(--primary)]/10 text-[var(--primary)] shadow"
+                : "text-[var(--foreground)] hover:bg-[var(--primary)]/5"
+            }
           `}
           style={{
             borderLeft: pathname.startsWith("/main")
@@ -304,7 +313,14 @@ export default function Sidebar({ mobileOpen = false, setMobileOpen = () => {} }
           onClick={() => setMobileOpen(false)}
         >
           <span className="text-2xl">
-            <svg width="20" height="20" fill="none"><path d="M10 3L3 10h2v7h3v-4h2v4h3v-7h2L10 3z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"/></svg>
+            <svg width="20" height="20" fill="none">
+              <path
+                d="M10 3L3 10h2v7h3v-4h2v4h3v-7h2L10 3z"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinejoin="round"
+              />
+            </svg>
           </span>
           <span>Main</span>
         </Link>
@@ -386,7 +402,11 @@ export default function Sidebar({ mobileOpen = false, setMobileOpen = () => {} }
         )}
       </aside>
       {/* News Dialog */}
-      <NewsDialog open={newsOpen} onClose={() => setNewsOpen(false)} news={newsItems} />
+      <NewsDialog
+        open={newsOpen}
+        onClose={() => setNewsOpen(false)}
+        news={newsItems}
+      />
     </>
   );
 }

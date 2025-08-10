@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy import delete
+from sqlalchemy import delete, or_
 
 from app.models.model_page import (
     Page,
@@ -116,6 +116,22 @@ async def delete_page(session: AsyncSession, page_id: int) -> bool:
             value_list = [str(v) for v in pcv.value]
             if str(page_id) in value_list:
                 pcv.value = [v for v in value_list if v != str(page_id)]
+
+    # Remove page-specific data
+    await session.execute(
+        delete(PageCharacteristicValue).where(
+            PageCharacteristicValue.page_id == page_id
+        )
+    )
+    await session.execute(delete(PageKeyEvent).where(PageKeyEvent.page_id == page_id))
+    await session.execute(
+        delete(PageRelationship).where(
+            or_(
+                PageRelationship.page_id == page_id,
+                PageRelationship.target_page_id == page_id,
+            )
+        )
+    )
 
     await session.delete(page)
     await session.commit()

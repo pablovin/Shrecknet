@@ -519,7 +519,7 @@ def task_generate_pages_job(
                 session, agent, page, pages, merge_groups
             )
             result_pages = result.get("pages", [])
-            auto_updated = []
+            updated_pages = result.get("updated", [])
             embedding_jobs = result.get("embedding_jobs", [])
 
         end_time = datetime.now(timezone.utc).isoformat()
@@ -531,7 +531,7 @@ def task_generate_pages_job(
                     "page_id": page_id,
                     "job_type": "generate_pages",
                     "pages": result_pages,
-                    "auto_updated": auto_updated,
+                    "updated": updated_pages,
                     "embedding_jobs": embedding_jobs,
                     "start_time": start_time,
                     "end_time": end_time,
@@ -547,7 +547,7 @@ def task_generate_pages_job(
             json.dump(
                 {
                     "pages": result_pages,
-                    "auto_updated": auto_updated,
+                    "updated": updated_pages,
                     "embedding_jobs": embedding_jobs,
                 },
                 gf,

@@ -263,11 +263,11 @@ async def create_relationship(
 ) -> PageRelationship:
     """Create a relationship and its inverse if needed.
 
-    This function guards against duplicate relationships being created by first
-    checking if the relationship already exists. When adding the inverse
-    relationship, it selects at most one existing record to avoid
-    ``MultipleResultsFound`` errors if duplicates are already present in the
-    database.
+    This function guards against duplicate relationships by first checking if
+    the relationship already exists. When adding the inverse relationship, it
+    ensures that no other relationship of the same type exists between the two
+    pages, regardless of direction, to avoid ``MultipleResultsFound`` errors if
+    duplicates are already present in the database.
     """
 
     # Check for an existing relationship to avoid duplicates
@@ -297,13 +297,12 @@ async def create_relationship(
             PageRelationship.page_id == rel.target_page_id,
             PageRelationship.target_page_id == rel.page_id,
             PageRelationship.relationship_type == rel.relationship_type,
-            PageRelationship.direction == inverse_dir,
             PageRelationship.source_page_id == rel.source_page_id,
         )
         .limit(1)
     )
-    existing_inverse = result.scalar_one_or_none()
-    if not existing_inverse:
+    existing_between = result.scalar_one_or_none()
+    if not existing_between:
         inverse = PageRelationship(
             page_id=rel.target_page_id,
             target_page_id=rel.page_id,

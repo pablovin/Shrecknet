@@ -1,7 +1,11 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
-from langgraph.graph import Graph
+
+try:
+    from langgraph.graph import Graph
+except ImportError:  # pragma: no cover - backwards compatibility
+    from langgraph.graph import StateGraph as Graph
 
 from app.config import settings
 from app.crud.crud_agent import get_agent, ensure_personality_prompts
@@ -56,10 +60,14 @@ async def chat_with_agent(
         }
 
     # Step 3: aggregate and build context
-    context, sources = aggregate_prune_and_dedup(all_results, n_results, max_decomp_questions)
+    context, sources = aggregate_prune_and_dedup(
+        all_results, n_results, max_decomp_questions
+    )
 
     history_txt = "\n".join(f"{m['role']}: {m['content']}" for m in messages[:-1])
-    personalities = [p.strip() for p in (agent.personality or "helpful NPC").split(",") if p.strip()]
+    personalities = [
+        p.strip() for p in (agent.personality or "helpful NPC").split(",") if p.strip()
+    ]
     agent_name = agent.name or "Agent"
     prompts = await ensure_personality_prompts(personalities)
     tone = "\n".join(prompts.get(p, "") for p in personalities if prompts.get(p))
@@ -81,12 +89,24 @@ async def chat_with_agent(
         + "If no relevant information is found in the context, admit it, or speculate gently based on the context."
     )
 
-    gen_prompt = ChatPromptTemplate.from_messages([
-        ("system", system_prompt),
-        ("system", f"World context:\n{context}" if context else "World context: none"),
-        ("system", f"Chat history:\n{history_txt}" if history_txt else "Chat history: none"),
-        ("user", "{input}"),
-    ])
+    gen_prompt = ChatPromptTemplate.from_messages(
+        [
+            ("system", system_prompt),
+            (
+                "system",
+                f"World context:\n{context}" if context else "World context: none",
+            ),
+            (
+                "system",
+                (
+                    f"Chat history:\n{history_txt}"
+                    if history_txt
+                    else "Chat history: none"
+                ),
+            ),
+            ("user", "{input}"),
+        ]
+    )
     final_llm = ChatOpenAI(api_key=settings.openai_api_key, model=openai_model)
     chain = gen_prompt | final_llm
     builder = Graph()
@@ -118,12 +138,24 @@ async def chat_with_agent(
             + ", and to use the agent's unique tone and personality. "
             + "If you don't know the answer, speculate creatively but make clear when you are guessing."
         )
-        gen_prompt = ChatPromptTemplate.from_messages([
-            ("system", fallback_prompt),
-            ("system", f"World context:\n{context}" if context else "World context: none"),
-            ("system", f"Chat history:\n{history_txt}" if history_txt else "Chat history: none"),
-            ("user", "{input}"),
-        ])
+        gen_prompt = ChatPromptTemplate.from_messages(
+            [
+                ("system", fallback_prompt),
+                (
+                    "system",
+                    f"World context:\n{context}" if context else "World context: none",
+                ),
+                (
+                    "system",
+                    (
+                        f"Chat history:\n{history_txt}"
+                        if history_txt
+                        else "Chat history: none"
+                    ),
+                ),
+                ("user", "{input}"),
+            ]
+        )
         fallback_chain = gen_prompt | final_llm
         builder = Graph()
         builder.add_node("chat", fallback_chain)

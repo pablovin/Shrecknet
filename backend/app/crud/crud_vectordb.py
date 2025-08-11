@@ -4,8 +4,10 @@ from typing import List, Dict, Optional
 try:
     from chromadb.errors import ChromaError
 except Exception:
+
     class ChromaError(Exception):
         pass
+
 
 import chromadb
 from langchain_chroma import Chroma
@@ -16,7 +18,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from datetime import datetime, timezone
 
-from app.models.model_page import Page, PageCharacteristicValue, PageKeyEvent, PageRelationship
+from app.models.model_page import (
+    Page,
+    PageCharacteristicValue,
+    PageKeyEvent,
+    PageRelationship,
+)
 from app.models.model_concept import Concept
 from app.models.model_characteristic import Characteristic
 from app.models.model_gameworld import GameWorld
@@ -27,25 +34,30 @@ import asyncio
 
 from bs4 import BeautifulSoup
 
+
 def strip_html(text):
     soup = BeautifulSoup(text or "", "html.parser")
     return soup.get_text(separator=" ", strip=True)
+
 
 def split_html_by_headers(html, header_tags=("h1", "h2", "h3")):
     soup = BeautifulSoup(html, "html.parser")
     headers = []
     for tag in header_tags:
         headers += soup.find_all(tag)
-    headers = sorted(headers, key=lambda x: x.sourceline if hasattr(x, 'sourceline') and x.sourceline else 0)
+    headers = sorted(
+        headers,
+        key=lambda x: x.sourceline if hasattr(x, "sourceline") and x.sourceline else 0,
+    )
 
     chunks = []
     for i, h in enumerate(headers):
-        section_texts = [h.get_text(separator=' ', strip=True)]
+        section_texts = [h.get_text(separator=" ", strip=True)]
         for sib in h.next_siblings:
-            if getattr(sib, 'name', None) in header_tags:
+            if getattr(sib, "name", None) in header_tags:
                 break
-            if getattr(sib, 'get_text', None):
-                txt = sib.get_text(separator=' ', strip=True)
+            if getattr(sib, "get_text", None):
+                txt = sib.get_text(separator=" ", strip=True)
                 if txt:
                     section_texts.append(txt)
             elif isinstance(sib, str):
@@ -81,6 +93,7 @@ chromadbURL = os.getenv("VECTOR_DB_URL", settings.vector_db_url)
 chromadbPort = int(os.getenv("VECTOR_DB_PORT", settings.vector_db_port))
 os.makedirs(_db_path, exist_ok=True)
 
+
 def _delete_collection(name: str, _client) -> None:
     try:
         if hasattr(_client, "delete_collection"):
@@ -93,8 +106,10 @@ def _delete_collection(name: str, _client) -> None:
     except Exception:
         pass
 
+
 def get_chroma_client():
     return chromadb.HttpClient(host=chromadbURL, port=chromadbPort)
+
 
 def _get_embedding_collection(embedding_id: int) -> Chroma:
     name = f"embedding_{embedding_id}"
@@ -105,8 +120,10 @@ def _get_embedding_collection(embedding_id: int) -> Chroma:
         embedding_function=_embedding_fn,
     )
 
+
 def _normalize_view_name(view: str) -> str:
     return view.lower().replace(" ", "_")
+
 
 def _build_document_chunks(text: str, metadata: dict):
     docs = _text_splitter.create_documents([text], metadatas=[metadata])
@@ -114,10 +131,17 @@ def _build_document_chunks(text: str, metadata: dict):
         doc.metadata["chunk_index"] = i
     return docs
 
-def _safe_add_documents(collection: Chroma, docs: List[Document], chroma_max_size=500) -> None:
+
+def _safe_add_documents(
+    collection: Chroma, docs: List[Document], chroma_max_size=500
+) -> None:
     client = collection._collection._client
     try:
-        max_size = client.get_max_batch_size() if hasattr(client, "get_max_batch_size") else getattr(client, "max_batch_size", 0)
+        max_size = (
+            client.get_max_batch_size()
+            if hasattr(client, "get_max_batch_size")
+            else getattr(client, "max_batch_size", 0)
+        )
     except Exception:
         max_size = 0
 
@@ -131,7 +155,12 @@ def _safe_add_documents(collection: Chroma, docs: List[Document], chroma_max_siz
             collection.add_documents(batch)
         except Exception as exc:
             msg = str(exc).lower()
-            if (isinstance(exc, ChromaError) or "payload" in msg or "length" in msg or "413" in msg) and len(batch) > 1:
+            if (
+                isinstance(exc, ChromaError)
+                or "payload" in msg
+                or "length" in msg
+                or "413" in msg
+            ) and len(batch) > 1:
                 mid = len(batch) // 2
                 _add_batch(batch[:mid])
                 _add_batch(batch[mid:])
@@ -139,7 +168,8 @@ def _safe_add_documents(collection: Chroma, docs: List[Document], chroma_max_siz
                 raise
 
     for i in range(0, len(docs), max_size):
-        _add_batch(docs[i: i + max_size])
+        _add_batch(docs[i : i + max_size])
+
 
 async def add_page(session: AsyncSession, page_id: int, embedding_id: int):
     # Fetch the page
@@ -177,18 +207,25 @@ async def add_page(session: AsyncSession, page_id: int, embedding_id: int):
         metadata = dict(metadata_base)
         metadata["view"] = "narrative"
         metadata["section"] = "autogenerated_content"
-        chunks.extend(_build_document_chunks(strip_html(page.autogenerated_content), metadata))
+        chunks.extend(
+            _build_document_chunks(strip_html(page.autogenerated_content), metadata)
+        )
 
     # ---- Narrative: all characteristics/values ----
     values = await session.execute(
         select(PageCharacteristicValue, Characteristic)
-        .join(Characteristic, PageCharacteristicValue.characteristic_id == Characteristic.id)
+        .join(
+            Characteristic,
+            PageCharacteristicValue.characteristic_id == Characteristic.id,
+        )
         .where(PageCharacteristicValue.page_id == page.id)
     )
     char_texts = []
     for val, char in values.all():
         if val.value:
-            val_str = ", ".join(val.value) if isinstance(val.value, list) else str(val.value)
+            val_str = (
+                ", ".join(val.value) if isinstance(val.value, list) else str(val.value)
+            )
             char_texts.append(f"{char.name}: {val_str}")
     if char_texts:
         metadata = dict(metadata_base)
@@ -198,9 +235,12 @@ async def add_page(session: AsyncSession, page_id: int, embedding_id: int):
         chunks.extend(_build_document_chunks(text, metadata))
 
     # ---- Event: all events as one chunk ----
-    event_result = await session.execute(select(PageKeyEvent).where(PageKeyEvent.page_id == page.id))
+    event_result = await session.execute(
+        select(PageKeyEvent).where(PageKeyEvent.page_id == page.id)
+    )
     event_parts = [
-        f"EVENT [{e.event_type}] on {e.event_date}: {e.summary or ''}" for e in event_result.scalars()
+        f"EVENT [{e.event_type}] on {e.event_date}: {e.summary or ''}"
+        for e in event_result.scalars()
     ]
     if event_parts:
         metadata = dict(metadata_base)
@@ -210,7 +250,9 @@ async def add_page(session: AsyncSession, page_id: int, embedding_id: int):
         chunks.extend(_build_document_chunks(text, metadata))
 
     # ---- Relationship: all relationships as one chunk ----
-    rel_result = await session.execute(select(PageRelationship).where(PageRelationship.page_id == page.id))
+    rel_result = await session.execute(
+        select(PageRelationship).where(PageRelationship.page_id == page.id)
+    )
     rel_parts = [
         f"RELATIONSHIP {'->' if r.direction == 'outgoing' else '<-'} {r.target_page_id} ({r.relationship_type}): {r.description or ''}"
         for r in rel_result.scalars()
@@ -229,6 +271,7 @@ async def add_page(session: AsyncSession, page_id: int, embedding_id: int):
 
     _safe_add_documents(collection, chunks)
     return True
+
 
 def get_page_chunks(
     embedding_id: int,
@@ -265,8 +308,20 @@ def get_page_chunks(
     return [doc for _, doc in ordered]
 
 
+def delete_page(embedding_id: int, page_id: int) -> None:
+    """Remove all vectors for a given page from an embedding."""
 
-async def rebuild_embedding(session: AsyncSession, world_id: int, embedding_id: int) -> int:
+    collection = _get_embedding_collection(embedding_id)
+    try:
+        collection.delete(where={"page_id": page_id})
+    except Exception:
+        # If the collection or vectors do not exist, ignore the error.
+        pass
+
+
+async def rebuild_embedding(
+    session: AsyncSession, world_id: int, embedding_id: int
+) -> int:
     name = f"embedding_{embedding_id}"
     collection_obj = _get_embedding_collection(embedding_id)
     _delete_collection(name, collection_obj)
@@ -310,9 +365,9 @@ def query_world(
             else:
                 conditions.append({key: {"$eq": value}})
     chroma_filter = (
-        None if not conditions
-        else conditions[0] if len(conditions) == 1
-        else {"$and": conditions}
+        None
+        if not conditions
+        else conditions[0] if len(conditions) == 1 else {"$and": conditions}
     )
 
     # --- Query vectorstore ---
@@ -322,7 +377,7 @@ def query_world(
     retrieved = collection_obj.max_marginal_relevance_search(
         query,
         k=n_results * 12,  # Large enough for top-N pages with several chunks each
-        filter=chroma_filter if chroma_filter else None
+        filter=chroma_filter if chroma_filter else None,
     )
 
     retrieved2 = collection_obj.max_marginal_relevance_search(query, k=20)
@@ -350,18 +405,23 @@ def query_world(
         chunk_ids_seen.add(unique_chunk_id)
 
         entry = pages.setdefault(
-            page_id, {
+            page_id,
+            {
                 "chunks": [],
-                "metadata": {k: v for k, v in meta.items() if k not in ("chunk_index",)},
+                "metadata": {
+                    k: v for k, v in meta.items() if k not in ("chunk_index",)
+                },
+            },
+        )
+        entry["chunks"].append(
+            {
+                "retrieval_order": order,
+                "chunk_index": chunk_index,
+                "content": doc.page_content,
+                "metadata": meta,
+                "score": getattr(doc, "score", None),  # If available
             }
         )
-        entry["chunks"].append({
-            "retrieval_order": order,
-            "chunk_index": chunk_index,
-            "content": doc.page_content,
-            "metadata": meta,
-            "score": getattr(doc, "score", None)  # If available
-        })
 
     # --- Prepare results: up to n_results pages, each with up to max_chunks_per_page highlight chunks ---
     results: List[Dict] = []
@@ -380,25 +440,26 @@ def query_world(
                 "chunk_index": c["chunk_index"],
                 "content": c["content"],
                 "metadata": c["metadata"],
-                "score": c.get("score")
+                "score": c.get("score"),
             }
             for c in sorted_by_relevance
         ]
-        result = {
-            "document": document,
-            "highlights": highlights,
-            **page["metadata"]
-        }
+        result = {"document": document, "highlights": highlights, **page["metadata"]}
         results.append(result)
 
     # Optionally sort results by most relevant chunk (lowest retrieval_order across all chunks)
     results = sorted(
         results,
-        key=lambda r: r["highlights"][0]["score"] if r["highlights"] and r["highlights"][0].get("score") is not None else 0,
-        reverse=True
+        key=lambda r: (
+            r["highlights"][0]["score"]
+            if r["highlights"] and r["highlights"][0].get("score") is not None
+            else 0
+        ),
+        reverse=True,
     )
 
     return results[:n_results]
+
 
 def query_embedding(*args, **kwargs):
     """Deprecated alias for ``query_world``."""

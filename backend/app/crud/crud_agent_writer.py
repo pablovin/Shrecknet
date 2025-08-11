@@ -4,9 +4,7 @@ import asyncio
 import json
 from difflib import SequenceMatcher
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Dict, List, Optional
-from uuid import uuid4
 
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
@@ -25,9 +23,8 @@ from app.agentic_ai.agentic_worker_llm import (
 from app.agentic_ai.agentic_worker_utils import (
     normalize_name,
     strip_html,
-    split_html_by_headers,
 )
-from app.crud import crud_concept, crud_page, crud_world_embedding
+from app.crud import crud_concept, crud_page, crud_world_embedding, crud_vectordb
 from app.models.model_agent import Agent
 from app.models.model_page import Page, PageKeyEvent, PageRelationship
 
@@ -416,28 +413,24 @@ async def generate_pages_worker(
             updated.append({"name": target_page.name, "id": target_page.id})
 
     embedding_jobs: list[dict] = []
-    # embeddings = await crud_world_embedding.get_embeddings(session, page.gameworld_id)
-    # if embeddings:
-    #     from app.task_queue import (
-    #         task_rebuild_world_embedding,
-    #     )  # local import to avoid circular
+    embeddings = await crud_world_embedding.get_embeddings(session, page.gameworld_id)
+    affected_ids = [p["id"] for p in results] + [p["id"] for p in updated]
 
-    #     job_dir = Path(settings.world_embedding_job_dir)
-    #     job_dir.mkdir(parents=True, exist_ok=True)
-    #     for emb in embeddings:
-    #         job_id = uuid4().hex
-    #         job_path = job_dir / f"{job_id}.json"
-    #         with open(job_path, "w") as f:
-    #             json.dump(
-    #                 {
-    #                     "status": "queued",
-    #                     "embedding_id": emb.id,
-    #                     "job_type": "rebuild_world_embedding",
-    #                 },
-    #                 f,
-    #             )
-    #         task_rebuild_world_embedding.delay(emb.id, job_id)
-    #         embedding_jobs.append({"embedding_id": emb.id, "job_id": job_id})
+    if embeddings and affected_ids:
+        for emb in embeddings:
+            for pid in affected_ids:
+                crud_vectordb.delete_page(emb.id, pid)
+            await asyncio.gather(
+                *(crud_vectordb.add_page(session, pid, emb.id) for pid in affected_ids)
+            )
+            await crud_world_embedding.update_embedding(
+                session,
+                emb.id,
+                {
+                    "last_index_time": datetime.now(timezone.utc),
+                    "page_count": len(affected_ids),
+                },
+            )
 
     return {"pages": results, "updated": updated, "embedding_jobs": embedding_jobs}
 

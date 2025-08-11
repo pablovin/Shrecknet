@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 from pathlib import Path
 from app.config import settings
 from app.models.model_world_embedding import WorldEmbedding
@@ -94,7 +94,14 @@ async def test_generate_pages_triggers_embedding(
     settings.world_embedding_job_dir = str(tmp_path)
     Path(settings.world_embedding_job_dir).mkdir(parents=True, exist_ok=True)
 
-    with patch("app.task_queue.task_rebuild_world_embedding.delay") as delay:
+    with (
+        patch("app.crud.crud_vectordb.add_page", new_callable=AsyncMock) as add_page,
+        patch("app.crud.crud_vectordb.delete_page") as delete_page,
+        patch(
+            "app.crud.crud_world_embedding.update_embedding",
+            new_callable=AsyncMock,
+        ) as update_emb,
+    ):
         payload = {
             "pages": [
                 {
@@ -110,8 +117,8 @@ async def test_generate_pages_triggers_embedding(
             headers={"Authorization": f"Bearer {writer_token}"},
         )
         assert resp.status_code == 200
-        assert delay.called
-        args = delay.call_args[0]
-        assert args[0] == emb.id
+        assert add_page.await_count > 0
+        assert delete_page.called
+        assert update_emb.await_count > 0
     job_files = list(Path(settings.world_embedding_job_dir).glob("*.json"))
-    assert len(job_files) == 1
+    assert len(job_files) == 0

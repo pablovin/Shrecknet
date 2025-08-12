@@ -17,11 +17,24 @@ async def init_db():
         await conn.run_sync(_migrate)
 
 
+def _migrate_sessionpolloption(conn, inspector, text):
+    """Ensure SessionPollOption has a timezone column."""
+    if "sessionpolloption" in inspector.get_table_names():
+        columns = [c["name"] for c in inspector.get_columns("sessionpolloption")]
+        if "timezone" not in columns:
+            conn.execute(
+                text(
+                    "ALTER TABLE sessionpolloption ADD COLUMN timezone TEXT DEFAULT 'UTC'"
+                )
+            )
+
+
 def _migrate(conn):
     """Simple migration to add new columns without dropping data."""
     from sqlalchemy import inspect, text
 
     inspector = inspect(conn)
+    _migrate_sessionpolloption(conn, inspector, text)
     columns = [c["name"] for c in inspector.get_columns("agent")]
     if "task" not in columns:
         conn.execute(text("ALTER TABLE agent ADD COLUMN task TEXT"))

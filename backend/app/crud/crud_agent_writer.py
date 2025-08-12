@@ -8,6 +8,7 @@ from typing import Dict, List, Optional
 
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -423,12 +424,16 @@ async def generate_pages_worker(
             await asyncio.gather(
                 *(crud_vectordb.add_page(session, pid, emb.id) for pid in affected_ids)
             )
+            result = await session.execute(
+                select(func.count(Page.id)).where(Page.gameworld_id == emb.world_id)
+            )
+            total_pages = result.scalar_one()
             await crud_world_embedding.update_embedding(
                 session,
                 emb.id,
                 {
                     "last_index_time": datetime.now(timezone.utc),
-                    "page_count": len(affected_ids),
+                    "page_count": total_pages,
                 },
             )
 

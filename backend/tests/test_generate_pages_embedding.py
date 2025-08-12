@@ -120,5 +120,7 @@ async def test_generate_pages_triggers_embedding(
         assert add_page.await_count > 0
         assert delete_page.called
         assert update_emb.await_count > 0
+        args, _ = update_emb.await_args
+        assert args[2]["page_count"] == 2
     job_files = list(Path(settings.world_embedding_job_dir).glob("*.json"))
     assert len(job_files) == 0

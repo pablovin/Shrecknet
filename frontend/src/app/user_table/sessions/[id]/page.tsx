@@ -7,12 +7,15 @@ import { getSessionPoll, voteSessionPoll } from "@/app/lib/sessionAPI";
 import { useAuth } from "@/app/components/auth/AuthProvider";
 import { useUsers } from "@/app/lib/useUsers";
 // import icons (Heroicons/Lucide etc)
-import { Sparkles, MapPin, CalendarClock, BookOpen, User } from "lucide-react";
+import { Sparkles, MapPin, CalendarClock, BookOpen } from "lucide-react";
+import { formatInTimeZone, zonedTimeToUtc } from "date-fns-tz";
 
 export default function UserTableSessionsPage() {
   const params = useParams();
   const tableId = Number(params?.id);
   const { token, user } = useAuth();
+  const userTz =
+    user?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
   const { sessions } = useSessions(tableId, true);
   const { users } = useUsers();
   const [polls, setPolls] = useState({});
@@ -87,16 +90,31 @@ export default function UserTableSessionsPage() {
     await refreshPoll(sessionId);
     setLoadingVotes((prev) => ({ ...prev, [sessionId]: false }));
   }
-
   const now = new Date();
   const upcomingSessions = sessions.filter(
-    (s) => !s.scheduled_time || new Date(s.scheduled_time) >= now,
+    (s) =>
+      !s.scheduled_time || zonedTimeToUtc(s.scheduled_time, s.timezone) >= now,
   );
   const previousSessions = sessions.filter(
-    (s) => s.scheduled_time && new Date(s.scheduled_time) < now,
+    (s) =>
+      s.scheduled_time && zonedTimeToUtc(s.scheduled_time, s.timezone) < now,
   );
 
   // --- UI HELPERS ---
+
+  function renderTime(timeStr: string, tz: string) {
+    const utc = zonedTimeToUtc(timeStr, tz);
+    const original = formatInTimeZone(utc, tz, "yyyy-MM-dd HH:mm");
+    const userTime = formatInTimeZone(utc, userTz, "yyyy-MM-dd HH:mm");
+    return (
+      <span className="font-mono text-xs">
+        {original} ({tz}){" "}
+        <span className="ml-2">
+          {userTime} ({userTz})
+        </span>
+      </span>
+    );
+  }
 
   function renderPoll(s) {
     const poll = polls[s.id];
@@ -127,7 +145,7 @@ export default function UserTableSessionsPage() {
                 className="w-5 h-5 accent-[var(--primary)] rounded-md border-2"
               />
               <span className="font-mono text-xs">
-                {new Date(opt.proposed_time).toLocaleString()}
+                {renderTime(opt.proposed_time, opt.timezone)}
               </span>
               <div className="flex flex-wrap gap-2">
                 {opt.votes.map((uid) => {
@@ -191,7 +209,7 @@ export default function UserTableSessionsPage() {
               )}
               <CalendarClock size={16} className="ml-3 text-[var(--primary)]" />
               {s.scheduled_time ? (
-                new Date(s.scheduled_time).toLocaleString()
+                renderTime(s.scheduled_time, s.timezone)
               ) : (
                 <span className="italic opacity-50">Not scheduled</span>
               )}
@@ -219,7 +237,7 @@ export default function UserTableSessionsPage() {
             Game Sessions
           </h1>
           <div className="text-md text-[var(--foreground)]/70 ml-2">
-            Track your table's adventures, vote on the next gathering, and
+            Track your table&apos;s adventures, vote on the next gathering, and
             relive the tales of previous quests!
           </div>
         </div>

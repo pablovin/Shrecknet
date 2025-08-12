@@ -27,7 +27,11 @@ async def create_poll(
     await session.refresh(poll)
 
     for dt in poll_in.proposed_times:
-        session.add(SessionPollOption(poll_id=poll.id, proposed_time=dt))
+        session.add(
+            SessionPollOption(
+                poll_id=poll.id, proposed_time=dt, timezone=poll_in.timezone
+            )
+        )
     await session.commit()
     await session.refresh(poll)
     sess = await session.get(Session, session_id)
@@ -95,6 +99,7 @@ async def finalize_poll(
     sess = await session.get(Session, poll.session_id)
     if option and sess:
         sess.scheduled_time = option.proposed_time
+        sess.timezone = option.timezone
     await session.commit()
     await session.refresh(poll)
     return poll
@@ -115,7 +120,10 @@ async def poll_to_read(session: AsyncSession, poll: SessionPoll) -> SessionPollR
         votes = list(vote_result.scalars().all())
         options_read.append(
             SessionPollOptionRead(
-                id=option.id, proposed_time=option.proposed_time, votes=votes
+                id=option.id,
+                proposed_time=option.proposed_time,
+                timezone=option.timezone,
+                votes=votes,
             )
         )
     return SessionPollRead(

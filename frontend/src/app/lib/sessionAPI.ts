@@ -51,6 +51,7 @@ export async function createSessionPoll(
   tableId: number,
   sessionId: number,
   proposedTimes: string[],
+  timezone: string,
   token: string,
 ) {
   const res = await fetch(
@@ -61,7 +62,7 @@ export async function createSessionPoll(
         Authorization: `Bearer ${token}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ proposed_times: proposedTimes }),
+      body: JSON.stringify({ proposed_times: proposedTimes, timezone }),
     },
   );
   if (!res.ok) throw await res.json();

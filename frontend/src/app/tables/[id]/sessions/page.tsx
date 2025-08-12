@@ -1,4 +1,5 @@
 "use client";
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { useState, useEffect } from "react";
 import { useParams } from "next/navigation";
 import DashboardLayout from "@/app/components/DashboardLayout";
@@ -17,6 +18,7 @@ import { M3FloatingInput } from "@/app/components/template/M3FloatingInput";
 import PageRefSelectorMD3 from "@/app/components/create_page/PageRefSelectorMD3";
 import { getPages } from "@/app/lib/pagesAPI";
 import { useUsers } from "@/app/lib/useUsers";
+import { formatInTimeZone, zonedTimeToUtc } from "date-fns-tz";
 import {
   CalendarDays,
   Trash2,
@@ -251,9 +253,25 @@ function PollModal({
 export default function TableSessionsPage() {
   const params = useParams();
   const tableId = Number(params?.id);
-  const { token } = useAuth();
+  const { token, user } = useAuth();
+  const userTz =
+    user?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
   const { sessions, mutate } = useSessions(tableId);
   const { t } = useTranslation();
+
+  function renderTime(timeStr: string, tz: string) {
+    const utc = zonedTimeToUtc(timeStr, tz);
+    const original = formatInTimeZone(utc, tz, "yyyy-MM-dd HH:mm");
+    const userTime = formatInTimeZone(utc, userTz, "yyyy-MM-dd HH:mm");
+    return (
+      <span className="font-mono text-xs">
+        {original} ({tz}){" "}
+        <span className="ml-2">
+          {userTime} ({userTz})
+        </span>
+      </span>
+    );
+  }
 
   const [deleteId, setDeleteId] = useState<number | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -334,7 +352,7 @@ export default function TableSessionsPage() {
       token,
     );
     if (usePoll && proposed.length) {
-      await createSessionPoll(tableId, sess.id, proposed, token);
+      await createSessionPoll(tableId, sess.id, proposed, userTz, token);
       await refreshPoll(sess.id);
     }
     resetModal();
@@ -402,7 +420,7 @@ export default function TableSessionsPage() {
   }
   async function savePollModal() {
     if (!pollSession) return;
-    await createSessionPoll(tableId, pollSession, pollProposed, token);
+    await createSessionPoll(tableId, pollSession, pollProposed, userTz, token);
     await refreshPoll(pollSession);
     setPollSession(null);
     setPollProposed([]);
@@ -413,15 +431,24 @@ export default function TableSessionsPage() {
   // --- Sessions ---
   const now = new Date();
   const upcoming = sessions.filter(
-    (s: any) => !s.scheduled_time || new Date(s.scheduled_time) >= now,
+    (s: any) =>
+      !s.scheduled_time || zonedTimeToUtc(s.scheduled_time, s.timezone) >= now,
   );
   const past = sessions
-    .filter((s: any) => s.scheduled_time && new Date(s.scheduled_time) < now)
-    .sort((a, b) => new Date(b.scheduled_time) - new Date(a.scheduled_time));
+    .filter(
+      (s: any) =>
+        s.scheduled_time && zonedTimeToUtc(s.scheduled_time, s.timezone) < now,
+    )
+    .sort(
+      (a, b) =>
+        zonedTimeToUtc(b.scheduled_time, b.timezone).getTime() -
+        zonedTimeToUtc(a.scheduled_time, a.timezone).getTime(),
+    );
 
   // --- Card components ---
   function SessionCard({ s, pollData }: { s: any; pollData?: any }) {
-    const isPast = s.scheduled_time && new Date(s.scheduled_time) < now;
+    const isPast =
+      s.scheduled_time && zonedTimeToUtc(s.scheduled_time, s.timezone) < now;
     return (
       <div
         className={`
@@ -451,7 +478,7 @@ export default function TableSessionsPage() {
             <div className="text-xs text-[var(--foreground)]/80 flex items-center gap-1">
               <CalendarDays className="w-4 h-4" />
               {s.scheduled_time ? (
-                new Date(s.scheduled_time).toLocaleString()
+                renderTime(s.scheduled_time, s.timezone)
               ) : pollData ? (
                 <span className="font-semibold text-yellow-600">Voting!</span>
               ) : (
@@ -524,7 +551,7 @@ export default function TableSessionsPage() {
                   `}
                 >
                   <span className="font-bold text-xs">
-                    {new Date(opt.proposed_time).toLocaleString()}
+                    {renderTime(opt.proposed_time, opt.timezone)}
                   </span>
                   <div className="flex flex-wrap gap-2 mt-1">
                     {opt.votes.map((uid: number) => {

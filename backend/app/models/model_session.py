@@ -63,6 +63,7 @@ class SessionPollOption(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     poll_id: int = Field(foreign_key="sessionpoll.id")
     proposed_time: datetime
+    timezone: str = Field(default="UTC")
 
     poll: "SessionPoll" = Relationship(
         back_populates="options",

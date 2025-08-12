@@ -18,7 +18,7 @@ import { M3FloatingInput } from "@/app/components/template/M3FloatingInput";
 import PageRefSelectorMD3 from "@/app/components/create_page/PageRefSelectorMD3";
 import { getPages } from "@/app/lib/pagesAPI";
 import { useUsers } from "@/app/lib/useUsers";
-import { formatInTimeZone, zonedTimeToUtc } from "date-fns-tz";
+import { formatInTimeZone, fromZonedTime } from "date-fns-tz";
 import {
   CalendarDays,
   Trash2,
@@ -260,7 +260,7 @@ export default function TableSessionsPage() {
   const { t } = useTranslation();
 
   function renderTime(timeStr: string, tz: string) {
-    const utc = zonedTimeToUtc(timeStr, tz);
+    const utc = fromZonedTime(timeStr, tz);
     const original = formatInTimeZone(utc, tz, "yyyy-MM-dd HH:mm");
     const userTime = formatInTimeZone(utc, userTz, "yyyy-MM-dd HH:mm");
     return (
@@ -432,23 +432,23 @@ export default function TableSessionsPage() {
   const now = new Date();
   const upcoming = sessions.filter(
     (s: any) =>
-      !s.scheduled_time || zonedTimeToUtc(s.scheduled_time, s.timezone) >= now,
+      !s.scheduled_time || fromZonedTime(s.scheduled_time, s.timezone) >= now,
   );
   const past = sessions
     .filter(
       (s: any) =>
-        s.scheduled_time && zonedTimeToUtc(s.scheduled_time, s.timezone) < now,
+        s.scheduled_time && fromZonedTime(s.scheduled_time, s.timezone) < now,
     )
     .sort(
       (a, b) =>
-        zonedTimeToUtc(b.scheduled_time, b.timezone).getTime() -
-        zonedTimeToUtc(a.scheduled_time, a.timezone).getTime(),
+        fromZonedTime(b.scheduled_time, b.timezone).getTime() -
+        fromZonedTime(a.scheduled_time, a.timezone).getTime(),
     );
 
   // --- Card components ---
   function SessionCard({ s, pollData }: { s: any; pollData?: any }) {
     const isPast =
-      s.scheduled_time && zonedTimeToUtc(s.scheduled_time, s.timezone) < now;
+      s.scheduled_time && fromZonedTime(s.scheduled_time, s.timezone) < now;
     return (
       <div
         className={`

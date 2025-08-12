@@ -8,7 +8,7 @@ import { useAuth } from "@/app/components/auth/AuthProvider";
 import { useUsers } from "@/app/lib/useUsers";
 // import icons (Heroicons/Lucide etc)
 import { Sparkles, MapPin, CalendarClock, BookOpen } from "lucide-react";
-import { formatInTimeZone, zonedTimeToUtc } from "date-fns-tz";
+import { formatInTimeZone, fromZonedTime } from "date-fns-tz";
 
 export default function UserTableSessionsPage() {
   const params = useParams();
@@ -93,17 +93,17 @@ export default function UserTableSessionsPage() {
   const now = new Date();
   const upcomingSessions = sessions.filter(
     (s) =>
-      !s.scheduled_time || zonedTimeToUtc(s.scheduled_time, s.timezone) >= now,
+      !s.scheduled_time || fromZonedTime(s.scheduled_time, s.timezone) >= now,
   );
   const previousSessions = sessions.filter(
     (s) =>
-      s.scheduled_time && zonedTimeToUtc(s.scheduled_time, s.timezone) < now,
+      s.scheduled_time && fromZonedTime(s.scheduled_time, s.timezone) < now,
   );
 
   // --- UI HELPERS ---
 
   function renderTime(timeStr: string, tz: string) {
-    const utc = zonedTimeToUtc(timeStr, tz);
+    const utc = fromZonedTime(timeStr, tz);
     const original = formatInTimeZone(utc, tz, "yyyy-MM-dd HH:mm");
     const userTime = formatInTimeZone(utc, userTz, "yyyy-MM-dd HH:mm");
     return (

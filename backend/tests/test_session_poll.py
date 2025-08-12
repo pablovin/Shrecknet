@@ -56,7 +56,7 @@ async def test_session_poll_sets_session_date(async_client):
     ]
     resp = await async_client.post(
         f"/tables/{table_id}/sessions/{session_id}/poll",
-        json={"proposed_times": times},
+        json={"proposed_times": times, "timezone": "UTC"},
         headers=headers,
     )
     assert resp.status_code == 200, resp.text
@@ -75,6 +75,7 @@ async def test_session_poll_sets_session_date(async_client):
     sessions = resp.json()
     session_info = next(s for s in sessions if s["id"] == session_id)
     assert session_info["scheduled_time"] == times[0]
+    assert session_info["timezone"] == "UTC"
 
 
 @pytest.mark.anyio
@@ -128,7 +129,7 @@ async def test_session_poll_multi_vote(async_client):
     ]
     resp = await async_client.post(
         f"/tables/{table_id}/sessions/{session_id}/poll",
-        json={"proposed_times": times},
+        json={"proposed_times": times, "timezone": "UTC"},
         headers=headers,
     )
     poll = resp.json()
@@ -219,7 +220,7 @@ async def test_remove_vote(async_client):
     times = [datetime.now(timezone.utc).isoformat()]
     resp = await async_client.post(
         f"/tables/{table_id}/sessions/{session_id}/poll",
-        json={"proposed_times": times},
+        json={"proposed_times": times, "timezone": "UTC"},
         headers=gm_headers,
     )
     option_id = resp.json()["options"][0]["id"]

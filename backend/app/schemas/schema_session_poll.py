@@ -5,6 +5,7 @@ from sqlmodel import SQLModel
 
 class SessionPollCreate(SQLModel):
     proposed_times: List[datetime]
+    timezone: str
 
 
 class SessionPollVoteCreate(SQLModel):
@@ -18,6 +19,7 @@ class SessionPollSelect(SQLModel):
 class SessionPollOptionRead(SQLModel):
     id: int
     proposed_time: datetime
+    timezone: str
     votes: List[int] = []
 
 

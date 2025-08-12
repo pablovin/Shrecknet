@@ -7,8 +7,19 @@ import { getSessionPoll, voteSessionPoll } from "@/app/lib/sessionAPI";
 import { useAuth } from "@/app/components/auth/AuthProvider";
 import { useUsers } from "@/app/lib/useUsers";
 // import icons (Heroicons/Lucide etc)
-import { Sparkles, MapPin, CalendarClock, BookOpen } from "lucide-react";
+import {
+  Sparkles,
+  MapPin,
+  CalendarClock,
+  BookOpen,
+  HelpCircle,
+} from "lucide-react";
 import { formatInTimeZone, fromZonedTime } from "date-fns-tz";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/tiptap-ui-primitive/tooltip";
 
 export default function UserTableSessionsPage() {
   const params = useParams();
@@ -107,11 +118,19 @@ export default function UserTableSessionsPage() {
     const original = formatInTimeZone(utc, tz, "yyyy-MM-dd HH:mm");
     const userTime = formatInTimeZone(utc, userTz, "yyyy-MM-dd HH:mm");
     return (
-      <span className="font-mono text-xs">
-        {original} ({tz}){" "}
-        <span className="ml-2">
-          {userTime} ({userTz})
-        </span>
+      <span className="font-mono text-xs flex items-center gap-1">
+        {userTime} ({userTz})
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <HelpCircle
+              size={14}
+              className="text-[var(--primary)] cursor-help"
+            />
+          </TooltipTrigger>
+          <TooltipContent>
+            Original timezone: {original} ({tz})
+          </TooltipContent>
+        </Tooltip>
       </span>
     );
   }

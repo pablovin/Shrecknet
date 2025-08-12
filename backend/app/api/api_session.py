@@ -159,6 +159,8 @@ async def vote_poll_endpoint(
     poll = await get_poll(session, session_id)
     if not poll:
         raise HTTPException(status_code=404, detail="Poll not found")
+    if poll.final_option_id is not None:
+        raise HTTPException(status_code=400, detail="Poll already finalized")
     await cast_vote(session, poll, user.id, vote)
     return await poll_to_read(session, poll)
 
@@ -178,6 +180,8 @@ async def remove_vote_poll_endpoint(
     poll = await get_poll(session, session_id)
     if not poll:
         raise HTTPException(status_code=404, detail="Poll not found")
+    if poll.final_option_id is not None:
+        raise HTTPException(status_code=400, detail="Poll already finalized")
     await remove_vote(session, poll, user_id, option_id)
     return await poll_to_read(session, poll)
 

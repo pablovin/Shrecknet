@@ -138,6 +138,7 @@ export default function UserTableSessionsPage() {
   function renderPoll(s) {
     const poll = polls[s.id];
     if (!poll) return null;
+    const votingClosed = poll.final_option_id !== null;
 
     return (
       <div className="mt-3 bg-yellow-50/90 rounded-xl border-2 border-yellow-200 p-3 shadow-inner">
@@ -147,22 +148,28 @@ export default function UserTableSessionsPage() {
         </div>
         <div className="flex flex-col gap-2 mb-2">
           {poll.options.map((opt) => (
-            <label
+            <div
               key={opt.id}
-              className={`flex items-center gap-3 rounded-xl px-3 py-2 border cursor-pointer 
+              className={`flex items-center gap-3 rounded-xl px-3 py-2 border
               ${
-                selections[s.id]?.includes(opt.id)
-                  ? "border-[var(--primary)] bg-[var(--primary)]/10"
-                  : "border-yellow-100 hover:border-yellow-300"
+                votingClosed
+                  ? poll.final_option_id === opt.id
+                    ? "border-[var(--primary)] bg-[var(--primary)]/10"
+                    : "border-yellow-100"
+                  : selections[s.id]?.includes(opt.id)
+                    ? "border-[var(--primary)] bg-[var(--primary)]/10"
+                    : "border-yellow-100 hover:border-yellow-300"
               }
-              transition`}
+              ${votingClosed ? "" : "cursor-pointer"} transition`}
             >
-              <input
-                type="checkbox"
-                checked={selections[s.id]?.includes(opt.id) || false}
-                onChange={() => toggleOption(s.id, opt.id)}
-                className="w-5 h-5 accent-[var(--primary)] rounded-md border-2"
-              />
+              {!votingClosed && (
+                <input
+                  type="checkbox"
+                  checked={selections[s.id]?.includes(opt.id) || false}
+                  onChange={() => toggleOption(s.id, opt.id)}
+                  className="w-5 h-5 accent-[var(--primary)] rounded-md border-2"
+                />
+              )}
               <span className="font-mono text-xs">
                 {renderTime(opt.proposed_time, opt.timezone)}
               </span>
@@ -187,19 +194,21 @@ export default function UserTableSessionsPage() {
               <span className="text-xs text-yellow-600 ml-2">
                 {opt.votes.length} vote{opt.votes.length === 1 ? "" : "s"}
               </span>
-            </label>
+            </div>
           ))}
         </div>
-        <button
-          className={`mt-2 px-4 py-2 rounded-lg bg-[var(--primary)] text-white font-bold shadow 
-            hover:scale-105 transition 
+        {!votingClosed && (
+          <button
+            className={`mt-2 px-4 py-2 rounded-lg bg-[var(--primary)] text-white font-bold shadow
+            hover:scale-105 transition
             ${loadingVotes[s.id] ? "opacity-60 cursor-not-allowed" : ""}
           `}
-          disabled={loadingVotes[s.id]}
-          onClick={() => submitVote(s.id)}
-        >
-          {loadingVotes[s.id] ? "Saving..." : "Cast My Vote"}
-        </button>
+            disabled={loadingVotes[s.id]}
+            onClick={() => submitVote(s.id)}
+          >
+            {loadingVotes[s.id] ? "Saving..." : "Cast My Vote"}
+          </button>
+        )}
       </div>
     );
   }

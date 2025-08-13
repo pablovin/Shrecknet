@@ -5,6 +5,7 @@ from sqlalchemy.future import select
 from sqlalchemy import or_
 from app.models.model_user_note import UserNote
 
+
 async def create_user_note(session: AsyncSession, note: UserNote) -> UserNote:
     note.locked_by_user_id = None
     note.locked_at = None
@@ -13,9 +14,11 @@ async def create_user_note(session: AsyncSession, note: UserNote) -> UserNote:
     await session.refresh(note)
     return note
 
+
 async def get_user_note(session: AsyncSession, note_id: int) -> Optional[UserNote]:
     result = await session.execute(select(UserNote).where(UserNote.id == note_id))
     return result.scalar_one_or_none()
+
 
 async def get_user_notes(
     session: AsyncSession,
@@ -25,20 +28,28 @@ async def get_user_notes(
     start_date: Optional[datetime] = None,
     end_date: Optional[datetime] = None,
 ) -> List[UserNote]:
-    query = select(UserNote).where(
-        (UserNote.user_id == user_id) | (UserNote.shared_with_user_ids.contains([user_id]))
-    )
+    query = select(UserNote)
     if search:
         like = f"%{search}%"
-        query = query.where(or_(UserNote.title.ilike(like), UserNote.content.ilike(like)))
+        query = query.where(
+            or_(UserNote.title.ilike(like), UserNote.content.ilike(like))
+        )
     if start_date:
         query = query.where(UserNote.note_date >= start_date)
     if end_date:
         query = query.where(UserNote.note_date <= end_date)
     result = await session.execute(query)
-    return result.scalars().all()
+    notes = result.scalars().all()
+    return [
+        n
+        for n in notes
+        if n.user_id == user_id or user_id in (n.shared_with_user_ids or [])
+    ]
 
-async def update_user_note(session: AsyncSession, note_id: int, updates: dict, editor_id: int) -> Optional[UserNote]:
+
+async def update_user_note(
+    session: AsyncSession, note_id: int, updates: dict, editor_id: int
+) -> Optional[UserNote]:
     note = await get_user_note(session, note_id)
     if not note:
         return None
@@ -56,6 +67,7 @@ async def update_user_note(session: AsyncSession, note_id: int, updates: dict, e
     await session.commit()
     await session.refresh(note)
     return note
+
 
 async def delete_user_note(session: AsyncSession, note_id: int) -> bool:
     note = await get_user_note(session, note_id)

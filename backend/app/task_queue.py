@@ -564,7 +564,7 @@ def task_create_novel_job(
     text: str,
     instructions: str,
     previous_page_id: int | None,
-    helper_agents: list[int],
+    inspiration_page_id: int | None,
     job_id: str,
 ):
     async def run():
@@ -621,7 +621,7 @@ def task_create_novel_job(
                 text,
                 instructions,
                 previous_page_id,
-                helper_agents,
+                inspiration_page_id,
                 progress_cb,
             )
 

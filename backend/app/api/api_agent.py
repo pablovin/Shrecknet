@@ -485,7 +485,7 @@ class NovelJobRequest(BaseModel):
     text: str
     instructions: str
     previous_page_id: int | None = None
-    helper_agents: Optional[List[int]] = None
+    inspiration_page_id: int | None = None
 
 
 @router.post("/{agent_id}/analyze_job")
@@ -542,7 +542,7 @@ async def create_novel_job_endpoint(
         payload.text,
         payload.instructions,
         payload.previous_page_id,
-        payload.helper_agents or [],
+        payload.inspiration_page_id,
         job_id,
     )
     return {"job_id": job_id}

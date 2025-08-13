@@ -7,7 +7,6 @@ import useRoleRedirect from "../../hooks/useRoleRedirect";
 import { useSearchParams, useRouter } from "next/navigation";
 import { Suspense, useEffect, useState, useMemo, useRef } from "react";
 import { useAgentById } from "../../lib/useAgentById";
-import { useAgents } from "../../lib/useAgents";
 import { usePages } from "../../lib/usePage";
 import { startNovelJob, updateNovelistJob } from "../../lib/agentAPI";
 import { useNovelistJobs } from "../../lib/useNovelistJobs";
@@ -19,44 +18,77 @@ import { X, Search, BookOpen } from "lucide-react";
 import { useTranslation } from "../../hooks/useTranslation";
 
 const AGENT_PERSONALITIES: Record<string, string> = {
-  "Lorekeeper Lyra": "“A tale untold is a world unseen. Let’s weave a new legend!”",
+  "Lorekeeper Lyra":
+    "“A tale untold is a world unseen. Let’s weave a new legend!”",
   "Archivist Axion": "“Every saga begins with a spark. Ready when you are!”",
-  "Chronicle": "“Words are the threads of fate. Let me spin them for you.”",
+  Chronicle: "“Words are the threads of fate. Let me spin them for you.”",
   default: "“I am here to craft stories from your world’s lore.”",
 };
 
-function NovelistJobStatus({ agentId, jobs }: { agentId: number; jobs: any[] }) {
-  const agentJobs = jobs.filter(j => j.agent_id === agentId);
+function NovelistJobStatus({
+  agentId,
+  jobs,
+}: {
+  agentId: number;
+  jobs: any[];
+}) {
+  const agentJobs = jobs.filter((j) => j.agent_id === agentId);
   if (agentJobs.length === 0) return null;
 
-  const running = agentJobs.filter(j => j.status !== "done");
-  const waiting = agentJobs.filter(j => j.status === "done" && j.action_needed === "review");
+  const running = agentJobs.filter((j) => j.status !== "done");
+  const waiting = agentJobs.filter(
+    (j) => j.status === "done" && j.action_needed === "review",
+  );
   const recent = agentJobs
-    .filter(j => j.status === "done" && j.action_needed !== "review")
-    .sort((a, b) => new Date(b.end_time || b.start_time || 0).getTime() - new Date(a.end_time || a.start_time || 0).getTime())
+    .filter((j) => j.status === "done" && j.action_needed !== "review")
+    .sort(
+      (a, b) =>
+        new Date(b.end_time || b.start_time || 0).getTime() -
+        new Date(a.end_time || a.start_time || 0).getTime(),
+    )
     .slice(0, 3);
 
   function Row({ job }: { job: any }) {
     const { token } = useAuth();
     const { mutate } = useNovelistJobs();
     const { t } = useTranslation();
-    const duration = job.start_time && job.end_time
-      ? Math.round((new Date(job.end_time).getTime() - new Date(job.start_time).getTime()) / 1000) + "s"
-      : "-";
+    const duration =
+      job.start_time && job.end_time
+        ? Math.round(
+            (new Date(job.end_time).getTime() -
+              new Date(job.start_time).getTime()) /
+              1000,
+          ) + "s"
+        : "-";
     return (
       <tr className="border-t border-indigo-100 text-sm">
-        <td className="p-1 font-semibold">{job.status === "done" ? "Needs Review" : job.status}</td>
-        <td className="p-1">{job.start_time ? new Date(job.start_time).toLocaleString() : "-"}</td>
-        <td className="p-1">{job.end_time ? new Date(job.end_time).toLocaleString() : "-"}</td>
+        <td className="p-1 font-semibold">
+          {job.status === "done" ? "Needs Review" : job.status}
+        </td>
+        <td className="p-1">
+          {job.start_time ? new Date(job.start_time).toLocaleString() : "-"}
+        </td>
+        <td className="p-1">
+          {job.end_time ? new Date(job.end_time).toLocaleString() : "-"}
+        </td>
         <td className="p-1">{duration}</td>
         <td className="p-1 space-x-2">
           {job.status === "done" && (
             <>
-              <Link className="text-indigo-700 underline" href={`review/${job.job_id}?agent=${agentId}`}>Review</Link>
+              <Link
+                className="text-indigo-700 underline"
+                href={`review/${job.job_id}?agent=${agentId}`}
+              >
+                Review
+              </Link>
               <button
                 className="text-red-600 underline"
                 onClick={async () => {
-                  await updateNovelistJob(job.job_id, { action_needed: "done" }, token || "");
+                  await updateNovelistJob(
+                    job.job_id,
+                    { action_needed: "done" },
+                    token || "",
+                  );
                   mutate();
                 }}
               >
@@ -84,7 +116,9 @@ function NovelistJobStatus({ agentId, jobs }: { agentId: number; jobs: any[] }) 
           </tr>
         </thead>
         <tbody>
-          {all.map(j => <Row key={j.job_id} job={j} />)}
+          {all.map((j) => (
+            <Row key={j.job_id} job={j} />
+          ))}
         </tbody>
       </table>
     </div>
@@ -95,14 +129,26 @@ const stepTitles = [
   "Source Text",
   "Instructions",
   "Previous Session",
-  "Helper Agents",
+  "Inspiration Session",
   "Summary",
 ];
 
-function AgentTip({ agent, children }: { agent: any; children: React.ReactNode }) {
+function AgentTip({
+  agent,
+  children,
+}: {
+  agent: any;
+  children: React.ReactNode;
+}) {
   return (
     <div className="flex gap-3 items-center bg-indigo-50 border border-indigo-200 rounded-xl px-4 py-2 mb-3">
-      <Image src={agent?.logo || "/images/default/avatars/logo.png"} alt={agent?.name} width={32} height={32} className="w-8 h-8 rounded-full object-cover border" />
+      <Image
+        src={agent?.logo || "/images/default/avatars/logo.png"}
+        alt={agent?.name}
+        width={32}
+        height={32}
+        className="w-8 h-8 rounded-full object-cover border"
+      />
       <div className="text-sm text-indigo-700">{children}</div>
     </div>
   );
@@ -126,7 +172,15 @@ function StepIndicator({ step, total }: { step: number; total: number }) {
   );
 }
 
-function Modal({ open, onClose, children }: { open: boolean; onClose: () => void; children: React.ReactNode }) {
+function Modal({
+  open,
+  onClose,
+  children,
+}: {
+  open: boolean;
+  onClose: () => void;
+  children: React.ReactNode;
+}) {
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -165,7 +219,10 @@ function Modal({ open, onClose, children }: { open: boolean; onClose: () => void
         animate={{ scale: 1, opacity: 1, y: 0 }}
         exit={{ scale: 0.92, opacity: 0, y: 40 }}
       >
-        <button className="absolute top-2 right-2 text-indigo-400 hover:text-indigo-700" onClick={onClose}>
+        <button
+          className="absolute top-2 right-2 text-indigo-400 hover:text-indigo-700"
+          onClick={onClose}
+        >
           <X className="w-6 h-6" />
         </button>
         {children}
@@ -176,20 +233,18 @@ function Modal({ open, onClose, children }: { open: boolean; onClose: () => void
 
 function CreateStoryModal({
   agent,
-  agents,
   pages,
   onClose,
   onComplete,
 }: {
   agent: any;
-  agents: any[];
   pages: any[];
   onClose: () => void;
   onComplete: (params: {
     text: string;
     instructions: string;
     previous: number | "";
-    helpers: number[];
+    inspiration: number | "";
   }) => void;
 }) {
   const [step, setStep] = useState(1);
@@ -211,14 +266,22 @@ function CreateStoryModal({
       !previousSearch
         ? pages
         : pages.filter((p) =>
-            p.name.toLowerCase().includes(previousSearch.toLowerCase())
+            p.name.toLowerCase().includes(previousSearch.toLowerCase()),
           ),
-    [pages, previousSearch]
+    [pages, previousSearch],
   );
 
-  // Step 4: helpers
-  const [helpers, setHelpers] = useState<number[]>(() =>
-    agents.filter((a) => a.world_id === agent.world_id && a.id !== agent.id && a.task === "conversational").map(a => a.id)
+  // Step 4: inspiration session page
+  const [inspirationPage, setInspirationPage] = useState<number | "">("");
+  const [inspirationSearch, setInspirationSearch] = useState("");
+  const inspirationFiltered = useMemo(
+    () =>
+      !inspirationSearch
+        ? pages
+        : pages.filter((p) =>
+            p.name.toLowerCase().includes(inspirationSearch.toLowerCase()),
+          ),
+    [pages, inspirationSearch],
   );
 
   // Step 5: summary
@@ -238,17 +301,14 @@ function CreateStoryModal({
     step > 2;
 
   function handleComplete() {
-    onComplete({ text, instructions, previous: previousPage, helpers });
+    onComplete({
+      text,
+      instructions,
+      previous: previousPage,
+      inspiration: inspirationPage,
+    });
     onClose();
   }
-
-  // Helper agent selection candidates
-  const helperCandidates = agents.filter(
-    (a) =>
-      a.world_id === agent.world_id &&
-      a.id !== agent.id &&
-      a.task === "conversational"
-  );
 
   return (
     <div>
@@ -259,7 +319,8 @@ function CreateStoryModal({
       {step === 1 && (
         <>
           <AgentTip agent={agent}>
-            What’s the source of your story? Upload a file or write/paste your base text.
+            What’s the source of your story? Upload a file or write/paste your
+            base text.
           </AgentTip>
           <div className="flex gap-2 mb-2">
             <button
@@ -284,7 +345,13 @@ function CreateStoryModal({
             </button>
           </div>
           {inputMode === "manual" ? (
-            <RichEditor value={text} onChange={setText} onSave={() => {}} onCancel={undefined} showSaveButtons={false} />
+            <RichEditor
+              value={text}
+              onChange={setText}
+              onSave={() => {}}
+              onCancel={undefined}
+              showSaveButtons={false}
+            />
           ) : (
             <div className="flex flex-col gap-2">
               <input
@@ -302,7 +369,8 @@ function CreateStoryModal({
               />
               {uploadName && (
                 <div className="text-sm text-indigo-700">
-                  Loaded {uploadName} ({text.split(/\s+/).filter(Boolean).length} words)
+                  Loaded {uploadName} (
+                  {text.split(/\s+/).filter(Boolean).length} words)
                 </div>
               )}
               {text && (
@@ -319,7 +387,8 @@ function CreateStoryModal({
       {step === 2 && (
         <>
           <AgentTip agent={agent}>
-            What instructions should I follow to novelize this text? Tell me about style, themes, or special requests.
+            What instructions should I follow to novelize this text? Tell me
+            about style, themes, or special requests.
           </AgentTip>
           <textarea
             value={instructions}
@@ -329,13 +398,23 @@ function CreateStoryModal({
           />
           <div className="flex gap-2 mt-1 text-xs text-indigo-400">
             <span>Examples:</span>
-            <button onClick={() => setInstructions("Make it an epic fantasy adventure!")}>
+            <button
+              onClick={() =>
+                setInstructions("Make it an epic fantasy adventure!")
+              }
+            >
               Epic fantasy
             </button>
-            <button onClick={() => setInstructions("Write as a dark detective story.")}>
+            <button
+              onClick={() =>
+                setInstructions("Write as a dark detective story.")
+              }
+            >
               Detective noir
             </button>
-            <button onClick={() => setInstructions("Make it funny and whimsical.")}>
+            <button
+              onClick={() => setInstructions("Make it funny and whimsical.")}
+            >
               Whimsical
             </button>
           </div>
@@ -345,7 +424,8 @@ function CreateStoryModal({
       {step === 3 && (
         <>
           <AgentTip agent={agent}>
-            Optionally pick the page from your previous session to help keep the story consistent.
+            Optionally pick the page from your previous session to help keep the
+            story consistent.
           </AgentTip>
           <div className="mb-2 flex items-center gap-2">
             <Search className="w-4 h-4 text-indigo-500" />
@@ -382,9 +462,16 @@ function CreateStoryModal({
             </ul>
           </div>
           <div className="text-xs text-indigo-600">
-            {previousPage
-              ? <>Selected: <span className="font-semibold">{pages.find(p => p.id === previousPage)?.name}</span></>
-              : "No previous session selected."}
+            {previousPage ? (
+              <>
+                Selected:{" "}
+                <span className="font-semibold">
+                  {pages.find((p) => p.id === previousPage)?.name}
+                </span>
+              </>
+            ) : (
+              "No previous session selected."
+            )}
           </div>
         </>
       )}
@@ -392,46 +479,54 @@ function CreateStoryModal({
       {step === 4 && (
         <>
           <AgentTip agent={agent}>
-            Would you like to summon any conversational helper agents to give richer world context?
+            Select an existing session whose writing style should inspire the
+            new story.
           </AgentTip>
-          <div className="grid grid-cols-2 gap-2 mt-1">
-            {helperCandidates.length === 0 && (
-              <div className="col-span-2 text-indigo-400">No conversational agents available in this world.</div>
+          <div className="mb-2 flex items-center gap-2">
+            <Search className="w-4 h-4 text-indigo-500" />
+            <input
+              type="text"
+              className="border rounded px-2 py-1 text-sm w-full"
+              placeholder="Search pages by name..."
+              value={inspirationSearch}
+              onChange={(e) => setInspirationSearch(e.target.value)}
+            />
+          </div>
+          <div className="max-h-40 overflow-auto mb-2 border border-indigo-100 rounded">
+            <ul>
+              {inspirationFiltered.length === 0 && (
+                <li className="px-3 py-2 text-indigo-400 italic">
+                  No pages found
+                </li>
+              )}
+              {inspirationFiltered.slice(0, 15).map((p) => (
+                <li key={p.id}>
+                  <button
+                    onClick={() => setInspirationPage(p.id)}
+                    className={`flex items-center gap-2 px-3 py-2 w-full text-left ${
+                      inspirationPage === p.id
+                        ? "bg-indigo-100 font-bold"
+                        : "hover:bg-indigo-50"
+                    }`}
+                  >
+                    <BookOpen className="w-4 h-4 text-indigo-500" />
+                    <span>{p.name}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+          <div className="text-xs text-indigo-600">
+            {inspirationPage ? (
+              <>
+                Selected:{" "}
+                <span className="font-semibold">
+                  {pages.find((p) => p.id === inspirationPage)?.name}
+                </span>
+              </>
+            ) : (
+              "No inspiration session selected."
             )}
-            {helperCandidates.map((a) => (
-              <label
-                key={a.id}
-                className={`flex items-center gap-2 border rounded-xl p-2 cursor-pointer ${
-                  helpers.includes(a.id)
-                    ? "bg-indigo-100 border-indigo-300"
-                    : "bg-white border-indigo-200"
-                }`}
-              >
-                <input
-                  type="checkbox"
-                  className="accent-indigo-600"
-                  checked={helpers.includes(a.id)}
-                  onChange={(e) => {
-                    if (e.target.checked) setHelpers((h) => [...h, a.id]);
-                    else setHelpers((h) => h.filter((id) => id !== a.id));
-                  }}
-                />
-                {a.logo ? (
-                  <Image
-                    src={a.logo}
-                    alt={a.name}
-                    width={24}
-                    height={24}
-                    className="w-6 h-6 rounded-full object-cover"
-                  />
-                ) : (
-                  <span className="w-6 h-6 rounded-full bg-indigo-200 flex items-center justify-center text-indigo-800 text-xs">
-                    {a.name.slice(0, 1)}
-                  </span>
-                )}
-                <span className="text-sm text-indigo-800">{a.name}</span>
-              </label>
-            ))}
           </div>
         </>
       )}
@@ -444,14 +539,13 @@ function CreateStoryModal({
           <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-3 text-sm text-indigo-800 space-y-2 mb-2">
             <div>
               <strong>Source:</strong>{" "}
-              {text
-                ? `${text.split(/\s+/).length} words`
-                : "None"}
+              {text ? `${text.split(/\s+/).length} words` : "None"}
             </div>
             <div>
               <strong>Instructions:</strong>{" "}
               {instructions
-                ? instructions.slice(0, 120) + (instructions.length > 120 ? "..." : "")
+                ? instructions.slice(0, 120) +
+                  (instructions.length > 120 ? "..." : "")
                 : "None"}
             </div>
             <div>
@@ -461,11 +555,10 @@ function CreateStoryModal({
                 : "None"}
             </div>
             <div>
-              <strong>Helpers:</strong>{" "}
-              {helperCandidates
-                .filter((a) => helpers.includes(a.id))
-                .map((a) => a.name)
-                .join(", ") || "None"}
+              <strong>Inspiration Session:</strong>{" "}
+              {inspirationPage
+                ? pages.find((p) => p.id === inspirationPage)?.name
+                : "None"}
             </div>
           </div>
         </>
@@ -511,7 +604,6 @@ function CreateNovelPageContent() {
   const router = useRouter();
   const agentId = Number(searchParams.get("agent") || 0);
   const { agent } = useAgentById(agentId);
-  const { agents } = useAgents();
   const { jobs, mutate } = useNovelistJobs();
   const { pages } = usePages(agent ? { gameworld_id: agent.world_id } : {});
 
@@ -521,22 +613,22 @@ function CreateNovelPageContent() {
     text,
     instructions,
     previous,
-    helpers,
+    inspiration,
   }: {
     text: string;
     instructions: string;
     previous: number | "";
-    helpers: number[];
+    inspiration: number | "";
   }) {
-    const res = await startNovelJob(
+    await startNovelJob(
       agentId,
       {
         text,
         instructions,
         previous_page_id: previous || null,
-        helper_agents: helpers,
+        inspiration_page_id: inspiration || null,
       },
-      token || ""
+      token || "",
     );
     router.push(`/ai_novelist/create_novel?agent= ${agentId}`);
   }
@@ -592,7 +684,6 @@ function CreateNovelPageContent() {
                 <Modal open={modalOpen} onClose={() => setModalOpen(false)}>
                   <CreateStoryModal
                     agent={agent}
-                    agents={agents}
                     pages={pages}
                     onClose={() => setModalOpen(false)}
                     onComplete={handleCreate}

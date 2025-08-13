@@ -81,7 +81,8 @@ from app.crud.crud_agent import get_agent
 from app.crud.crud_page import get_page, update_page, get_pages
 from app.database import async_session_maker
 from app.config import settings
-from app.crud import crud_vectordb, crud_specialist_vectordb, crud_novel
+from app.crud import crud_vectordb, crud_specialist_vectordb
+from app.crud import crud_agent_novelist
 from app.crud import crud_library_vectordb
 from datetime import datetime, timezone
 import json
@@ -614,7 +615,7 @@ def task_create_novel_job(
                         default=str,
                     )
 
-            novel = await crud_novel.create_novel(
+            novel = await crud_agent_novelist.create_novel(
                 session,
                 agent,
                 text,

@@ -61,6 +61,11 @@ async def test_user_notes_crud_and_sharing(
     )
     assert resp.status_code == 200
 
+    resp = await async_client.get(
+        "/user_notes/", headers={"Authorization": f"Bearer {token2}"}
+    )
+    assert any(n["id"] == note_id for n in resp.json())
+
     resp = await async_client.patch(
         f"/user_notes/{note_id}",
         json={"title": "Updated by user2"},

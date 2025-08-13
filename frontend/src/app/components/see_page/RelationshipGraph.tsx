@@ -1,5 +1,6 @@
 "use client";
 import { useState } from "react";
+import { Maximize2, Minimize2 } from "lucide-react";
 import { GraphCanvas, lightTheme, GraphNode, GraphEdge } from "reagraph";
 
 interface NodeInfo {
@@ -32,6 +33,7 @@ export default function RelationshipGraph({
     x: number;
     y: number;
   } | null>(null);
+  const [isFull, setIsFull] = useState(false);
 
   const graphNodes: GraphNode<NodeInfo>[] = nodes.map((n) => ({
     id: n.id,
@@ -48,7 +50,23 @@ export default function RelationshipGraph({
   }));
 
   return (
-    <div className="relative h-96 w-full">
+    <div
+      className={
+        isFull
+          ? "fixed inset-0 z-50 h-screen w-screen bg-[var(--surface)]"
+          : "relative h-96 w-full"
+      }
+    >
+      <button
+        className="absolute top-2 right-2 z-10 p-1 bg-[var(--surface)] border border-[var(--border)] rounded"
+        onClick={() => setIsFull((f) => !f)}
+      >
+        {isFull ? (
+          <Minimize2 className="w-4 h-4" />
+        ) : (
+          <Maximize2 className="w-4 h-4" />
+        )}
+      </button>
       <GraphCanvas
         nodes={graphNodes}
         edges={graphEdges}

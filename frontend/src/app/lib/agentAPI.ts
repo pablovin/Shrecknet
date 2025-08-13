@@ -236,7 +236,7 @@ export async function startNovelJob(
     text: string;
     instructions: string;
     previous_page_id?: number | null;
-    helper_agents?: number[];
+    inspiration_page_id?: number | null;
   },
   token: string,
 ) {

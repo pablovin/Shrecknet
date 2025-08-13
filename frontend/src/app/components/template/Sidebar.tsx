@@ -11,7 +11,6 @@ import NotificationsIcon from "@mui/icons-material/NotificationsRounded";
 import EditIcon from "@mui/icons-material/EditRounded";
 import {
   BookOpenText,
-  FileText,
   PenLine,
   Sparkles,
   ScrollText,
@@ -21,6 +20,7 @@ import {
   Settings,
   StickyNote,
   Users,
+  Dices,
 } from "lucide-react";
 import { getNews, markNewsSeen } from "../../lib/newsAPI";
 
@@ -39,6 +39,14 @@ const MENU_GROUPS = [
         label: "Notes",
         icon: <StickyNote className="w-5 h-5" />,
         href: "/user_notes",
+      },
+      {
+        key: "virtual_table",
+        label: "Virtual Table",
+        icon: <Dices className="w-5 h-5" />,
+        href: "https://foundry.shrecknet.club/",
+        target: "_blank",
+        rel: "noopener noreferrer",
       },
     ],
   },
@@ -339,6 +347,8 @@ export default function Sidebar({
                     <Link
                       key={item.key}
                       href={item.href}
+                      target={item.target}
+                      rel={item.rel}
                       className={`
                         flex items-center gap-3 px-4 py-3 rounded-2xl font-semibold
                         text-base group transition

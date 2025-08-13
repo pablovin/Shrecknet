@@ -1,4 +1,5 @@
 """Utility helpers for agentic workers."""
+
 from __future__ import annotations
 
 import unicodedata
@@ -27,7 +28,7 @@ def normalize_name(name: str | None) -> str:
     name = name.lower().strip()
     for prefix in ["o ", "a ", "os ", "as ", "barão ", "lady ", "rei ", "rainha "]:
         if name.startswith(prefix):
-            name = name[len(prefix):]
+            name = name[len(prefix) :]
             break
     return name
 
@@ -79,3 +80,24 @@ def split_html_by_headers(
         chunk_overlap=fallback_overlap * 8,
     )
     return splitter.split_text(visible_text)
+
+
+def split_into_arcs(
+    text: str, min_words_per_arc: int = 1000, max_arcs: int = 5
+) -> List[str]:
+    """Split long text into roughly equal-sized arcs by word count."""
+    words = text.split()
+    n_words = len(words)
+    if n_words <= min_words_per_arc:
+        return [" ".join(words)]
+
+    n_arcs = min((n_words + min_words_per_arc - 1) // min_words_per_arc, max_arcs)
+    arc_sizes = [
+        n_words // n_arcs + (1 if i < n_words % n_arcs else 0) for i in range(n_arcs)
+    ]
+    arcs: List[str] = []
+    start = 0
+    for size in arc_sizes:
+        arcs.append(" ".join(words[start : start + size]))
+        start += size
+    return arcs

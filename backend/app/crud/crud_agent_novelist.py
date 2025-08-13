@@ -1,90 +1,30 @@
+"""CRUD operations for the novelist agent."""
+
+from __future__ import annotations
+
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.models.model_agent import Agent
 from app.crud.crud_agent import ensure_personality_prompts
-
-# conversational chat logic lives in a separate CRUD module to avoid circular imports.
-from app.crud.crud_agent_conversational import (
-    chat_with_agent,
-)  # For RAG context fetching!
-from app.config import settings
-
-from langchain_openai import ChatOpenAI
-from langchain_core.prompts import ChatPromptTemplate
-
-try:
-    from langgraph.graph import Graph
-except ImportError:  # pragma: no cover - compatibility with newer langgraph
-    from langgraph.graph import StateGraph as Graph
-import textwrap
-
-
-def split_into_arcs(text, min_words_per_arc=1000, max_arcs=5):
-    words = text.split()
-    n_words = len(words)
-    if n_words <= min_words_per_arc:
-        return [" ".join(words)]
-    n_arcs = min((n_words + min_words_per_arc - 1) // min_words_per_arc, max_arcs)
-    arc_sizes = [
-        n_words // n_arcs + (1 if i < n_words % n_arcs else 0) for i in range(n_arcs)
-    ]
-    arcs = []
-    start = 0
-    for size in arc_sizes:
-        arcs.append(" ".join(words[start : start + size]))
-        start += size
-    return arcs
-
-
-async def langchain_chat_completion(
-    system_prompt: str,
-    user_prompt: str,
-    temperature: float = 0.7,
-    max_tokens: int = 2048,
-):
-    llm = ChatOpenAI(
-        api_key=settings.openai_api_key,
-        model=settings.open_ai_model,
-        temperature=temperature,
-        max_tokens=max_tokens,
-    )
-
-    prompt = ChatPromptTemplate.from_messages(
-        [
-            ("system", system_prompt),
-            ("user", user_prompt),
-        ]
-    )
-
-    chain = prompt | llm
-
-    builder = Graph()
-    builder.add_node("chat", chain)
-    builder.set_entry_point("chat")
-    builder.set_finish_point("chat")
-    graph = builder.compile()
-
-    response = await graph.ainvoke({"input": ""})
-    answer = getattr(response, "content", str(response))
-    return answer.strip()
+from app.crud.crud_agent_conversational import chat_with_agent
+from app.agentic_ai.agentic_worker_utils import split_into_arcs
+from app.agentic_ai.agentic_worker_llm import chat_completion_worker
 
 
 async def create_novel(
     session: AsyncSession,
-    agent: Agent,  # The main writer (personality, name, etc.)
+    agent: Agent,
     text: str,
     instructions: str,
     previous_page_id: int | None = None,
-    helper_agent_ids: list[int] | None = None,  # For RAG
+    helper_agent_ids: list[int] | None = None,
     progress_cb=None,
 ) -> str:
-    """
-    Generate a novelized summary from transcript using LangChain LLM graph for all LLM calls,
-    the in-db agent personality, and world context per arc.
-    """
+    """Generate a novelized summary from transcript and world context."""
+
     helper_agent_ids = helper_agent_ids or []
     rag_agent_id = helper_agent_ids[0] if helper_agent_ids else None
 
-    # 1. Prepare main agent personality/tone
     personalities = [
         p.strip() for p in (agent.personality or "helpful NPC").split(",") if p.strip()
     ]
@@ -107,7 +47,7 @@ async def create_novel(
                 "Summarize the following previous session notes in a short paragraph highlighting important characters, actions and dialogues.\n\n"
                 f"{prev_text}"
             )
-            previous_summary = await langchain_chat_completion(
+            previous_summary = await chat_completion_worker(
                 system_prompt="You are a helpful editor summarizing an RPG session.",
                 user_prompt=summary_prompt,
                 temperature=0.3,
@@ -120,21 +60,18 @@ async def create_novel(
         else ""
     )
 
-    # 2. Chunk transcript
     arcs = split_into_arcs(text, min_words_per_arc=1000, max_arcs=5)
-    arc_novels = []
-    arc_critic_notes = []
+    arc_novels: list[str] = []
+    arc_critic_notes: list[str] = []
 
-    # 3. Process each arc
     for idx, arc_text in enumerate(arcs):
         if progress_cb:
             progress_cb(idx, len(arcs) + 2)
 
-        # 3a. Fetch world context (RAG) using chat_with_agent and the RAG agent id
         arc_context = ""
         if rag_agent_id:
             context_prompt = (
-                f"Given this RPG transcript fragment, extract and return a brief world/setting summary for each of the character names/roles, places, organizations or any important information you find on the context, and relevant background from your knowledge.\n"
+                "Given this RPG transcript fragment, extract and return a brief world/setting summary for each of the character names/roles, places, organizations or any important information you find on the context, and relevant background from your knowledge.\n"
                 + "Be brief, do not repeat the transcript.\n"
                 + "Instructions:\n"
                 + f"{instructions}\n"
@@ -145,10 +82,7 @@ async def create_novel(
                 session, rag_agent_id, [{"role": "user", "content": context_prompt}]
             )
             arc_context = rag_resp.get("answer", "").strip()
-        else:
-            arc_context = ""
 
-        # 3b. Writer agent: novelize this arc (LangChain LLM)
         novel_prompt = (
             "You are a talented fantasy novelist. Rewrite the following RPG transcript arc as a **brief, engaging, and flowing novel segment** (max 1000 words).\n"
             + "Use the context below to make the story immersive and accurate.\n"
@@ -167,13 +101,12 @@ async def create_novel(
             + "Transcript:\n"
             + f"{arc_text}\n"
         )
-        novel_arc = await langchain_chat_completion(
+        novel_arc = await chat_completion_worker(
             system_prompt=tone,
             user_prompt=novel_prompt,
         )
         arc_novels.append(novel_arc)
 
-        # 3c. Critic: feedback per arc (LangChain LLM)
         critic_system_prompt = "You are an experienced, constructive but critical fantasy literature reviewer."
         critic_prompt = (
             "You are a fantasy literary critic. Read this novelized arc and the context. Give bullet-point feedback on:\n"
@@ -184,11 +117,10 @@ async def create_novel(
             + f" - history continuity based on the previous sessions.\n"
             + f" Point out anything that contradicts the world, characters, or instructions. Suggest brief improvements if needed.\n"
             + f"{previous_session_text}\n"
-            + f" Novelized arc:\n"
+            + " Novelized arc:\n"
             + f"{novel_arc}\n"
         )
-
-        critic_notes = await langchain_chat_completion(
+        critic_notes = await chat_completion_worker(
             system_prompt=critic_system_prompt,
             user_prompt=critic_prompt,
             temperature=0.2,
@@ -196,7 +128,6 @@ async def create_novel(
         )
         arc_critic_notes.append(critic_notes)
 
-    # 4. Synthesize all arcs (main agent)
     if progress_cb:
         progress_cb(len(arcs) + 1, len(arcs) + 2)
 
@@ -210,25 +141,24 @@ async def create_novel(
         + f"{arc_critic_notes_joined}\n"
         + f"Novelized arcs:\n"
         + f"{arc_novels_joined}\n"
-        + f" Instructions:\n"
-        + f"- Incorporate important world details where appropriate.\n"
-        + f"- Apply the critic's suggestions to improve narrative flow, character depth, and world consistency.\n"
-        + f"- You may invent brief dialogue lines or transitions if needed for story cohesion, as long as they do not contradict the story so far.\n"
-        + f"- Take in consideration what happened in the previous session! Make continuity with scenes, dialogues, events, and characters.\n"
-        + f"- The entire output must be **no more than 4000 words**.\n"
-        + f"- Eliminate repetition, awkward transitions, or extraneous detail.\n"
-        + f" - Make the final chapter emotionally engaging and easy to read.\n"
-        + f"- Format the output using valid HTML: wrap each paragraph in <p>. Use <h2>/<h3> for titles if relevant. Format dialogue as you would in a novel, with each line in its own <p> or <blockquote> if appropriate.\n"
+        + " Instructions:\n"
+        + "- Incorporate important world details where appropriate.\n"
+        + "- Apply the critic's suggestions to improve narrative flow, character depth, and world consistency.\n"
+        + "- You may invent brief dialogue lines or transitions if needed for story cohesion, as long as they do not contradict the story so far.\n"
+        + "- Take in consideration what happened in the previous session! Make continuity with scenes, dialogues, events, and characters.\n"
+        + "- The entire output must be **no more than 4000 words**.\n"
+        + "- Eliminate repetition, awkward transitions, or extraneous detail.\n"
+        + " - Make the final chapter emotionally engaging and easy to read.\n"
+        + "- Format the output using valid HTML: wrap each paragraph in <p>. Use <h2>/<h3> for titles if relevant. Format dialogue as you would in a novel, with each line in its own <p> or <blockquote> if appropriate.\n"
     )
 
-    draft = await langchain_chat_completion(
+    draft = await chat_completion_worker(
         system_prompt=tone,
         user_prompt=final_writer_prompt,
         max_tokens=4000,
     )
-    draft = draft.strip()
 
     if progress_cb:
         progress_cb(len(arcs) + 2, len(arcs) + 2)
 
-    return draft
+    return draft.strip()

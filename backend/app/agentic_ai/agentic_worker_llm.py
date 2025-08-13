@@ -9,11 +9,49 @@ from typing import Dict, List, Tuple
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 
+try:
+    from langgraph.graph import Graph
+except ImportError:  # pragma: no cover - compatibility with newer langgraph
+    from langgraph.graph import StateGraph as Graph
+
 from app.config import settings
 from app.agentic_ai.agentic_worker_utils import normalize_name, split_html_by_headers
 from app.models.model_page import Page
 
 openai_model = settings.open_ai_model
+
+
+async def chat_completion_worker(
+    system_prompt: str,
+    user_prompt: str,
+    temperature: float = 0.7,
+    max_tokens: int = 2048,
+) -> str:
+    """Run a simple chat completion and return the trimmed response."""
+    llm = ChatOpenAI(
+        api_key=settings.openai_api_key,
+        model=openai_model,
+        temperature=temperature,
+        max_tokens=max_tokens,
+    )
+
+    prompt = ChatPromptTemplate.from_messages(
+        [
+            ("system", system_prompt),
+            ("user", user_prompt),
+        ]
+    )
+
+    chain = prompt | llm
+    builder = Graph()
+    builder.add_node("chat", chain)
+    builder.set_entry_point("chat")
+    builder.set_finish_point("chat")
+    graph = builder.compile()
+
+    response = await graph.ainvoke({"input": ""})
+    answer = getattr(response, "content", str(response))
+    return answer.strip()
 
 
 async def decompose_question(query: str, max_questions: int = 8) -> List[str]:

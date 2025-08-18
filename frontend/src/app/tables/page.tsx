@@ -201,7 +201,14 @@ export default function TablesPage() {
                   <Calendar className="w-4 h-4" />
                   {t.latest_session ? (
                     <span>
-                      Last: {new Date(t.latest_session).toLocaleDateString()} (
+                      Last:{" "}
+                      {new Date(t.latest_session).toLocaleDateString(
+                        undefined,
+                        {
+                          timeZone: "UTC",
+                        },
+                      )}{" "}
+                      (
                       {Math.floor(
                         (Date.now() - new Date(t.latest_session).getTime()) /
                           (1000 * 60 * 60 * 24),
@@ -215,9 +222,11 @@ export default function TablesPage() {
                 {t.next_session && (
                   <div className="flex items-center gap-2 text-xs text-[var(--primary)] font-semibold">
                     <Calendar className="w-4 h-4" />
-                    Next: {new Date(
-                      t.next_session,
-                    ).toLocaleDateString()} (in{" "}
+                    Next:{" "}
+                    {new Date(t.next_session).toLocaleDateString(undefined, {
+                      timeZone: "UTC",
+                    })}{" "}
+                    (in{" "}
                     {Math.ceil(
                       (new Date(t.next_session).getTime() - Date.now()) /
                         (1000 * 60 * 60 * 24),

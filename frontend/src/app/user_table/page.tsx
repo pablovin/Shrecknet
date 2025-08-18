@@ -23,6 +23,16 @@ interface TableItem {
 
 export default function UserTablesPage() {
   const { tables } = useTables();
+  const now = Date.now();
+  const sortedTables = [...tables].sort((a, b) => {
+    const aDiff = a.next_session
+      ? new Date(a.next_session).getTime() - now
+      : Infinity;
+    const bDiff = b.next_session
+      ? new Date(b.next_session).getTime() - now
+      : Infinity;
+    return aDiff - bDiff;
+  });
 
   return (
     <DashboardLayout>
@@ -35,11 +45,11 @@ export default function UserTablesPage() {
         </div>
 
         <ul className="grid gap-7 sm:grid-cols-1">
-          {tables.map((t: TableItem) => (
-              <li
-                key={t.id}
-                className="relative flex flex-col min-h-[154px] rounded-3xl border border-[var(--primary)]/15 bg-white shadow-lg overflow-hidden group hover:shadow-2xl hover:border-[var(--primary-dark)] transition"
-              >
+          {sortedTables.map((t: TableItem) => (
+            <li
+              key={t.id}
+              className="relative flex flex-col min-h-[154px] rounded-3xl border border-[var(--primary)]/15 bg-white shadow-lg overflow-hidden group hover:shadow-2xl hover:border-[var(--primary-dark)] transition"
+            >
               <div className="flex items-center gap-4 px-5 pt-5 pb-2">
                 <Image
                   src={t.crest_url || "/images/worlds/new_game.png"}

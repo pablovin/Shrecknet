@@ -64,6 +64,20 @@ async def test_create_and_manage_ontology(client):
     assert entity_response.status_code == 201, entity_response.text
     entity_id = entity_response.json()["id"]
 
+    # create destiny entity
+    destiny_payload = {
+        "name": "Mentor",
+        "description": "Mentor figure",
+        "auto_generatable": False,
+        "author_type": AuthorType.HUMAN.value,
+        "user_id": "user-456",
+    }
+    destiny_response = await client.post(
+        f"/ontologies/{ontology_id}/entities", json=destiny_payload, headers=headers
+    )
+    assert destiny_response.status_code == 201, destiny_response.text
+    destiny_entity_id = destiny_response.json()["id"]
+
     # Update entity
     update_response = await client.put(
         f"/ontologies/{ontology_id}/entities/{entity_id}",
@@ -97,6 +111,7 @@ async def test_create_and_manage_ontology(client):
         "bi_directional": True,
         "author_type": AuthorType.AGENT.value,
         "agent_id": "agent-2",
+        "destiny_entity_id": destiny_entity_id,
     }
     relationship_response = await client.post(
         f"/ontologies/{ontology_id}/entities/{entity_id}/relationships",
@@ -106,6 +121,7 @@ async def test_create_and_manage_ontology(client):
     assert relationship_response.status_code == 201, relationship_response.text
     relationship_id = relationship_response.json()["id"]
     assert relationship_response.json()["entity_id"] == entity_id
+    assert relationship_response.json()["destiny_entity_id"] == destiny_entity_id
 
     # Delete property and relationship
     delete_property = await client.delete(

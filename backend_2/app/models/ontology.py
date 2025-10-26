@@ -152,11 +152,15 @@ class OntologyRelationship(Base):
     entity_id: Mapped[int] = mapped_column(
         ForeignKey("ontology_entities.id", ondelete="CASCADE")
     )
+    destiny_entity_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("ontology_entities.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     image_urls: Mapped[list[str]] = mapped_column(JSON, default=list)
     bi_directional: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    destiny: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     auto_generatable: Mapped[bool] = mapped_column(
         Boolean, default=False, nullable=False
     )
@@ -172,4 +176,7 @@ class OntologyRelationship(Base):
 
     entity: Mapped[OntologyEntity] = relationship(
         "OntologyEntity", back_populates="relationships"
+    )
+    destiny_entity: Mapped[Optional[OntologyEntity]] = relationship(
+        "OntologyEntity", foreign_keys=[destiny_entity_id]
     )

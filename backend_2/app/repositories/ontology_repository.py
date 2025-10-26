@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, Sequence
 
 from sqlalchemy import Select, select
+from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.ontology import (
@@ -160,9 +161,14 @@ class OntologyRepository(BaseRepository):
         entity = await self.get_entity(ontology_id, entity_id)
         if entity is None:
             raise ValueError("Entity not found for ontology")
+        destiny_id = data.get("destiny_entity_id")
+        if destiny_id is not None:
+            destiny = await self.get_entity(ontology_id, destiny_id)
+            if destiny is None:
+                raise ValueError("Destiny entity not found in ontology")
         rel = OntologyRelationship(entity_id=entity_id, **data)
         await self.save(rel)
-        await self.session.refresh(rel)
+        await self.session.refresh(rel, attribute_names=["entity", "destiny_entity"])
         return rel
 
     async def get_relationship(
@@ -170,12 +176,13 @@ class OntologyRepository(BaseRepository):
     ) -> OntologyRelationship | None:
         result = await self.session.execute(
             select(OntologyRelationship)
-            .join(OntologyEntity)
+            .options(selectinload(OntologyRelationship.entity))
             .where(
-                OntologyEntity.ontology_id == ontology_id,
                 OntologyRelationship.entity_id == entity_id,
                 OntologyRelationship.id == relationship_id,
             )
+            .join(OntologyEntity)
+            .where(OntologyEntity.ontology_id == ontology_id)
         )
         return result.scalar_one_or_none()
 
@@ -184,11 +191,10 @@ class OntologyRepository(BaseRepository):
     ) -> Sequence[OntologyRelationship]:
         result = await self.session.execute(
             select(OntologyRelationship)
+            .where(OntologyRelationship.entity_id == entity_id)
+            .options(selectinload(OntologyRelationship.entity))
             .join(OntologyEntity)
-            .where(
-                OntologyEntity.ontology_id == ontology_id,
-                OntologyRelationship.entity_id == entity_id,
-            )
+            .where(OntologyEntity.ontology_id == ontology_id)
         )
         return result.scalars().all()
 
@@ -198,7 +204,9 @@ class OntologyRepository(BaseRepository):
         for key, value in data.items():
             setattr(relationship, key, value)
         await self.save(relationship)
-        await self.session.refresh(relationship)
+        await self.session.refresh(
+            relationship, attribute_names=["entity", "destiny_entity"]
+        )
         return relationship
 
     async def remove_relationship(self, relationship: OntologyRelationship) -> None:

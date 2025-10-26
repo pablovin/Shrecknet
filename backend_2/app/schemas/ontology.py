@@ -123,7 +123,7 @@ class OntologyRelationshipBase(AuthorMixin):
     description: str | None = None
     image_urls: list[str] = Field(default_factory=list)
     bi_directional: bool = False
-    destiny: str | None = None
+    destiny_entity_id: int | None = None
     auto_generatable: bool = False
 
 
@@ -136,7 +136,7 @@ class OntologyRelationshipUpdate(BaseModel):
     description: str | None = None
     image_urls: list[str] | None = None
     bi_directional: bool | None = None
-    destiny: str | None = None
+    destiny_entity_id: int | None = None
     auto_generatable: bool | None = None
     author_type: AuthorType | None = None
     user_id: str | None = None

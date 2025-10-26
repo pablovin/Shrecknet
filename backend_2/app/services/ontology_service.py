@@ -112,6 +112,9 @@ class OntologyService:
         self, ontology_id: int, entity_id: int, data: dict
     ) -> OntologyRelationship:
         self._validate_author_payload(data)
+        await self._validate_relationship_entities(
+            ontology_id, entity_id, data, allow_missing=True
+        )
         rel = await self.repository.add_relationship(ontology_id, entity_id, data)
         await self.session.commit()
         return rel
@@ -132,6 +135,11 @@ class OntologyService:
         self, relationship: OntologyRelationship, data: dict,
     ) -> OntologyRelationship:
         self._validate_author_payload(data, allow_missing=True)
+        ontology_id = relationship.entity.ontology_id
+        entity_id = relationship.entity_id
+        await self._validate_relationship_entities(
+            ontology_id, entity_id, data, allow_missing=True
+        )
         updated = await self.repository.update_relationship(relationship, data)
         await self.session.commit()
         return updated
@@ -168,3 +176,20 @@ class OntologyService:
 
         if user_id and agent_id:
             raise ValueError("Only one of user_id or agent_id can be set")
+
+    async def _validate_relationship_entities(
+        self,
+        ontology_id: int,
+        entity_id: int,
+        data: dict,
+        *,
+        allow_missing: bool = False,
+    ) -> None:
+        if allow_missing and "destiny_entity_id" not in data:
+            return
+        destiny_id = data.get("destiny_entity_id")
+        if destiny_id is None:
+            return
+        destiny = await self.repository.get_entity(ontology_id, destiny_id)
+        if destiny is None:
+            raise ValueError("Destiny entity must belong to the same ontology")

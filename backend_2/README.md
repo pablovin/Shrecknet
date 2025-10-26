@@ -78,8 +78,9 @@ Cross-origin access is controlled via environment variables exposed by `Settings
 
 - Users: username, hashed password, full name, email, timezone, role, optional avatar URL, optional
   linked ontology entity ids.
-- Ontologies: contain entities; each entity owns its properties and relationships (with provenance
-  metadata and AI-generation flags) plus optional media references.
+- Ontologies: contain entities; each entity owns its properties and relationships (relationships
+  reference a source entity and an optional destination entity within the same ontology) alongside
+  provenance metadata and optional media references.
 
 ## Testing
 

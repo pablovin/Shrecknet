@@ -415,7 +415,12 @@ async def create_relationship(
         entity_type=AuditEntityType.ONTOLOGY_RELATIONSHIP,
         entity_id=relationship.id,
         payload=_sanitize_payload(
-            payload.model_dump() | {"ontology_id": ontology_id, "entity_id": entity_id,}
+            payload.model_dump()
+            | {
+                "ontology_id": ontology_id,
+                "entity_id": entity_id,
+                "destiny_entity_id": payload.destiny_entity_id,
+            }
         ),
         description="Created entity relationship",
     )
@@ -474,6 +479,7 @@ async def update_relationship(
                 "ontology_id": ontology_id,
                 "entity_id": entity_id,
                 "relationship_id": relationship_id,
+                "destiny_entity_id": updated.destiny_entity_id,
             }
         ),
         description="Updated entity relationship",
@@ -513,6 +519,7 @@ async def delete_relationship(
             "entity_id": entity_id,
             "relationship_id": relationship_id,
             "name": relationship.name,
+            "destiny_entity_id": relationship.destiny_entity_id,
         },
         description="Deleted entity relationship",
     )

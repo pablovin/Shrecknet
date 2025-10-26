@@ -1,0 +1,104 @@
+from __future__ import annotations
+
+import imghdr
+import os
+import secrets
+from io import BytesIO
+from pathlib import Path
+from typing import Any
+
+from fastapi import UploadFile
+from PIL import Image
+
+from app.core.config import get_settings
+
+settings = get_settings()
+
+
+class ImageValidationError(ValueError):
+    pass
+
+
+class MediaService:
+    def __init__(self, *, base_path: Path | None = None) -> None:
+        self.base_path = base_path or Path(settings.media_root)
+        self.base_path.mkdir(parents=True, exist_ok=True)
+        self.max_size = settings.max_image_upload_bytes
+        self.max_width = settings.image_max_width
+        self.max_height = settings.image_max_height
+
+    async def save_image(
+        self,
+        upload: UploadFile,
+        *,
+        category: str,
+        identifier: str,
+        resize: tuple[int, int] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> str:
+        contents = await self._read_limited(upload)
+        self._validate_format(contents)
+
+        image = Image.open(BytesIO(contents))
+        image = image.convert("RGBA" if image.mode in ("RGBA", "P") else "RGB")
+
+        target_size = resize or (self.max_width, self.max_height)
+        if target_size:
+            max_width, max_height = target_size
+            width, height = image.size
+            if width > max_width or height > max_height:
+                ratio = min(max_width / width, max_height / height)
+                new_size = (int(width * ratio), int(height * ratio))
+                if hasattr(Image, "Resampling"):
+                    image = image.resize(new_size, Image.Resampling.LANCZOS)
+                else:  # pragma: no cover - older Pillow fallback
+                    image = image.resize(new_size, Image.ANTIALIAS)  # type: ignore[attr-defined]
+
+        filename = self._build_filename(upload.filename, identifier)
+        relative_path = Path(category) / filename
+        absolute_path = self.base_path / relative_path
+        absolute_path.parent.mkdir(parents=True, exist_ok=True)
+
+        image_format = image.format or self._guess_format(contents) or "PNG"
+        if image_format.upper() == "JPG":
+            image_format = "JPEG"
+        image.save(absolute_path, format=image_format, optimize=True)
+
+        return self._build_url(relative_path)
+
+    async def _read_limited(self, upload: UploadFile) -> bytes:
+        data = await upload.read()
+        if len(data) > self.max_size:
+            raise ImageValidationError("Uploaded file exceeds size limit")
+        return data
+
+    def _validate_format(self, contents: bytes) -> None:
+        detected = imghdr.what(None, h=contents)
+        if detected not in {"png", "jpeg", "gif", "bmp", "webp"}:
+            raise ImageValidationError("Unsupported image type")
+
+    def _guess_format(self, contents: bytes) -> str | None:
+        detected = imghdr.what(None, h=contents)
+        if detected is None:
+            return None
+        return detected.upper()
+
+    def _build_filename(self, original_name: str | None, identifier: str) -> str:
+        safe_identifier = identifier.replace("/", "_").replace("..", "")
+        ext = self._extract_extension(original_name) or "png"
+        token = secrets.token_urlsafe(8)
+        return f"{safe_identifier}_{token}.{ext}"
+
+    def _extract_extension(self, original_name: str | None) -> str | None:
+        if not original_name:
+            return None
+        _, ext = os.path.splitext(original_name)
+        ext = ext.lower().strip(".")
+        if ext in {"jpg", "jpeg", "png", "gif", "bmp", "webp"}:
+            return "jpg" if ext == "jpeg" else ext
+        return None
+
+    def _build_url(self, relative_path: Path) -> str:
+        relative_str = relative_path.as_posix()
+        base_url = settings.media_base_url.rstrip("/")
+        return f"{base_url}/{relative_str}"

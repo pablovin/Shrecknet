@@ -3,10 +3,12 @@ from __future__ import annotations
 import logging
 import time
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from starlette import status
 
 from app.api.routers import get_api_router
@@ -28,6 +30,9 @@ def create_app() -> FastAPI:
     config = get_app_config(settings)
     app = FastAPI(title=config.app_name, debug=config.debug, lifespan=lifespan)
 
+    media_root = Path(settings.media_root)
+    media_root.mkdir(parents=True, exist_ok=True)
+
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_allow_origins,
@@ -36,6 +41,12 @@ def create_app() -> FastAPI:
         allow_methods=settings.cors_allow_methods,
         allow_headers=settings.cors_allow_headers,
         max_age=settings.cors_max_age,
+    )
+
+    app.mount(
+        settings.media_base_url,
+        StaticFiles(directory=str(media_root), html=False),
+        name="media",
     )
 
     request_logger = logging.getLogger("backend_2.requests")

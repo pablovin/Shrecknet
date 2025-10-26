@@ -50,6 +50,18 @@ FastAPI automatically generates interactive docs at `/docs` and `/redoc`.
   can review history via `GET /logs/`, filtering by actor type (user/agent), actor id, entity type,
   entity id, action, and date window.
 
+## Media uploads
+
+- Configure where images live with `BACKEND_2_MEDIA_ROOT` (default `./media`) and how they are
+  exposed with `BACKEND_2_MEDIA_BASE_URL` (default `/media`). The directory is mounted automatically
+  by FastAPI.
+- Files are validated (<10 MB by default), resized to fit within the configured max dimensions, and
+  optimized before being written to disk.
+- Users can update their avatar with `POST /users/{user_id}/avatar` (multipart form upload). The
+  endpoint returns the final URL for frontend use.
+- Admins or world builders can upload other assets via `POST /media/images`, providing a category
+  and identifier to control where the image is stored.
+
 ### CORS configuration
 
 Cross-origin access is controlled via environment variables exposed by `Settings`:

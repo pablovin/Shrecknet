@@ -2,14 +2,16 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile, status
 
 from app.api.deps import (
     get_audit_service,
     get_current_user,
     get_user_service,
+    get_media_service,
     require_roles,
 )
+from app.core.config import get_settings
 from app.models.audit import AuditAction, AuditActorType, AuditEntityType
 from app.models.user import User, UserRole
 from app.schemas.user import (
@@ -19,9 +21,12 @@ from app.schemas.user import (
     UserUpdate,
 )
 from app.services.audit_service import AuditService
+from app.services.media_service import ImageValidationError, MediaService
 from app.services.user_service import UserService
 
 router = APIRouter(prefix="/users", tags=["users"])
+
+settings = get_settings()
 
 
 def _sanitize_payload(data: dict[str, Any]) -> dict[str, Any]:
@@ -184,3 +189,53 @@ async def delete_user(
 
     await service.delete_user(user)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/{user_id}/avatar", response_model=UserRead)
+async def upload_user_avatar(
+    user_id: int,
+    file: UploadFile = File(...),
+    service: UserService = Depends(get_user_service),
+    current_user: User = Depends(get_current_user),
+    media_service: MediaService = Depends(get_media_service),
+    audit_service: AuditService = Depends(get_audit_service),
+) -> UserRead:
+    user = await service.get_user(user_id)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
+        )
+    if current_user.id != user_id and current_user.role != UserRole.ADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions"
+        )
+
+    try:
+        avatar_url = await media_service.save_image(
+            file,
+            category="avatars",
+            identifier=f"user_{user_id}",
+            resize=(settings.image_max_width, settings.image_max_height),
+        )
+    except ImageValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
+
+    updated = await service.update_user(
+        user,
+        {"avatar_url": avatar_url},
+        actor=current_user,
+    )
+
+    await audit_service.log_action(
+        actor_type=AuditActorType.USER,
+        actor_user_id=current_user.id,
+        action=AuditAction.UPDATE,
+        entity_type=AuditEntityType.USER,
+        entity_id=user_id,
+        payload={"avatar_url": avatar_url},
+        description="Updated user avatar",
+    )
+
+    return UserRead.model_validate(updated)

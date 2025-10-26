@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from io import BytesIO
+
 import pytest
+from PIL import Image
 
 from app.models.audit import AuditAction, AuditActorType, AuditEntityType
 from app.models.user import UserRole
@@ -253,3 +256,41 @@ async def test_admin_can_delete_user(client):
         and log["entity_id"] == victim_id
         for log in logs
     )
+
+
+@pytest.mark.asyncio
+async def test_user_can_upload_avatar(client):
+    payload = {
+        "username": "avatar-user",
+        "password": "Avatar123",
+        "full_name": "Avatar User",
+        "email": "avatar@example.com",
+        "timezone": "UTC",
+        "role": UserRole.PLAYER.value,
+    }
+    register_response = await client.post("/users/", json=payload)
+    assert register_response.status_code == 201, register_response.text
+    user_id = register_response.json()["id"]
+
+    token_response = await client.post(
+        "/auth/token",
+        data={"username": payload["username"], "password": payload["password"]},
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    assert token_response.status_code == 200, token_response.text
+    token = token_response.json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    image = Image.new("RGB", (200, 200), color="blue")
+    buffer = BytesIO()
+    image.save(buffer, format="PNG")
+    buffer.seek(0)
+
+    avatar_response = await client.post(
+        f"/users/{user_id}/avatar",
+        headers=headers,
+        files={"file": ("avatar.png", buffer, "image/png")},
+    )
+    assert avatar_response.status_code == 200, avatar_response.text
+    data = avatar_response.json()
+    assert data["avatar_url"].startswith("/media/")

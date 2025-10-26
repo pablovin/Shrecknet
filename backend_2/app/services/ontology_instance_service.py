@@ -297,14 +297,19 @@ class OntologyInstanceService:
             """
             MATCH (i:OntologyInstance {instance_id: $instance_id})-[:HAS_ENTITY]->(source:EntityInstance)
             OPTIONAL MATCH (source)-[r:RELATES_TO]->(target:EntityInstance)
-            RETURN source.entity_instance_id AS source_id, r, target.entity_instance_id AS target_id
+            RETURN source.entity_instance_id AS source_id,
+                   r.relationship_instance_id AS relationship_instance_id,
+                   r.relationship_definition_id AS definition_id,
+                   r.destiny_entity_definition_id AS destiny_definition_id,
+                   r.data AS rel_data,
+                   target.entity_instance_id AS target_id
             """,
             instance_id=instance_id,
         )
         rel_records = await relationships_result.data()
         for record in rel_records:
-            relationship_edge = record.get("r")
-            if not relationship_edge:
+            relationship_instance_id = record.get("relationship_instance_id")
+            if relationship_instance_id is None:
                 continue
             source_id = record["source_id"]
             target_id = record.get("target_id")
@@ -312,17 +317,13 @@ class OntologyInstanceService:
                 continue
             entities_map[source_id]["relationships"].append(
                 {
-                    "relationship_instance_id": relationship_edge[
-                        "relationship_instance_id"
-                    ],
-                    "definition_id": relationship_edge[
-                        "relationship_definition_id"
-                    ],
+                    "relationship_instance_id": relationship_instance_id,
+                    "definition_id": record.get("definition_id"),
                     "target_entity_id": target_id,
-                    "destiny_entity_definition_id": relationship_edge.get(
-                        "destiny_entity_definition_id"
+                    "destiny_entity_definition_id": record.get(
+                        "destiny_definition_id"
                     ),
-                    "data": json.loads(relationship_edge.get("data") or "{}"),
+                    "data": json.loads(record.get("rel_data") or "{}"),
                 }
             )
 

@@ -19,16 +19,15 @@ class Settings(BaseSettings):
             "http://localhost",
             "http://localhost:3000",
             "https://lovableproject.com",
+            "https://shrecknet.club",
+            "https://c56f54ad-02b8-428f-9e87-43f81dab0914.lovableproject.com",
         ]
     )
     cors_allow_origin_regex: str | None = r"https://.*\\.lovableproject\\.com"
     cors_allow_credentials: bool = True
-    cors_allow_methods: list[str] = Field(
-        default_factory=lambda: ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
-    )
-    cors_allow_headers: list[str] = Field(
-        default_factory=lambda: ["Authorization", "Content-Type"]
-    )
+    cors_allow_methods: list[str] = Field(default_factory=lambda: ["*"])
+    cors_allow_headers: list[str] = Field(default_factory=lambda: ["*"])
+    cors_max_age: int = 3600
 
 
 class AppConfig(BaseModel):

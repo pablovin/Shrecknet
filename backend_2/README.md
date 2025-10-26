@@ -40,6 +40,8 @@ FastAPI automatically generates interactive docs at `/docs` and `/redoc`.
 - Users can update their own profile data; only admins may change user roles.
 - Pre-registration UI can call `GET /users/availability?username=...&email=...` to check whether
   credentials are free before attempting signup.
+- All API errors are logged with method, path, status, and detail to help operators diagnose issues
+  quickly; general request timing is also recorded for non-successful responses.
 
 ### CORS configuration
 

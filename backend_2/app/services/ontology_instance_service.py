@@ -1,0 +1,493 @@
+from __future__ import annotations
+
+from collections.abc import Sequence
+from datetime import datetime
+from typing import Any
+from uuid import uuid4
+
+from neo4j import AsyncSession as AsyncNeo4jSession
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+
+from app.models.ontology import OntologyEntity
+from app.repositories.ontology_repository import OntologyRepository
+from app.schemas.ontology_instance import (
+    OntologyInstanceCreate,
+    OntologyInstanceEntityCreate,
+    OntologyInstanceRead,
+    OntologyInstanceUpdate,
+)
+
+ISO_FORMAT = "%Y-%m-%dT%H:%M:%S.%fZ"
+
+
+def _utcnow_str() -> str:
+    return datetime.utcnow().strftime(ISO_FORMAT)
+
+
+def _parse_dt(raw: str) -> datetime:
+    if raw.endswith("Z"):
+        raw = raw[:-1] + "+00:00"
+    return datetime.fromisoformat(raw)
+
+
+class OntologyInstanceService:
+    def __init__(self, sql_session: AsyncSession, graph_session: AsyncNeo4jSession) -> None:
+        self.sql_session = sql_session
+        self.graph_session = graph_session
+        self.repository = OntologyRepository(sql_session)
+
+    # ------------------------------------------------------------------
+    async def create_instance(self, payload: OntologyInstanceCreate) -> OntologyInstanceRead:
+        ontology = await self.repository.get(payload.ontology_id)
+        if not ontology:
+            raise ValueError("Ontology not found")
+
+        definitions = await self._load_entity_definitions(payload.ontology_id)
+        self._validate_entities_payload(payload.entities, definitions)
+
+        instance_id = str(uuid4())
+        timestamp = _utcnow_str()
+
+        alias_to_ids: dict[str, str] = {}
+        nodes_payload: list[tuple[str, OntologyInstanceEntityCreate, dict[str, Any]]] = []
+        for entity_payload in payload.entities:
+            entity_node_id = str(uuid4())
+            alias_to_ids[entity_payload.alias] = entity_node_id
+            prop_map = {
+                str(prop.definition_id): prop.value for prop in entity_payload.properties
+            }
+            nodes_payload.append((entity_node_id, entity_payload, prop_map))
+
+        async with self.graph_session.begin_transaction() as tx:
+            await tx.run(
+                """
+                CREATE (i:OntologyInstance {
+                    instance_id: $instance_id,
+                    ontology_id: $ontology_id,
+                    name: $name,
+                    description: $description,
+                    created_at: $created_at,
+                    updated_at: $updated_at
+                })
+                """,
+                instance_id=instance_id,
+                ontology_id=payload.ontology_id,
+                name=payload.name,
+                description=payload.description,
+                created_at=timestamp,
+                updated_at=timestamp,
+            )
+
+            for entity_node_id, entity_payload, prop_map in nodes_payload:
+                await tx.run(
+                    """
+                    MATCH (i:OntologyInstance {instance_id: $instance_id})
+                    CREATE (i)-[:HAS_ENTITY]->(e:EntityInstance {
+                        entity_instance_id: $entity_instance_id,
+                        instance_id: $instance_id,
+                        entity_definition_id: $entity_definition_id,
+                        properties: $properties,
+                        created_at: $created_at,
+                        updated_at: $updated_at,
+                        alias: $alias
+                    })
+                    """,
+                    instance_id=instance_id,
+                    entity_instance_id=entity_node_id,
+                    entity_definition_id=entity_payload.definition_id,
+                    properties=prop_map,
+                    created_at=timestamp,
+                    updated_at=timestamp,
+                    alias=entity_payload.alias,
+                )
+
+            for entity_node_id, entity_payload, _ in nodes_payload:
+                relationship_definitions = definitions[entity_payload.definition_id][
+                    "relationships"
+                ]
+                for relationship_payload in entity_payload.relationships:
+                    target_alias = relationship_payload.target_alias
+                    if target_alias not in alias_to_ids:
+                        raise ValueError(
+                            f"Unknown target alias '{target_alias}' for relationship"
+                        )
+                    rel_definition = relationship_definitions[relationship_payload.definition_id]
+                    target_id = alias_to_ids[target_alias]
+                    relationship_id = str(uuid4())
+                    await tx.run(
+                        """
+                        MATCH (source:EntityInstance {entity_instance_id: $source_id})
+                        MATCH (target:EntityInstance {entity_instance_id: $target_id})
+                        CREATE (source)-[r:RELATES_TO {
+                            relationship_instance_id: $relationship_id,
+                            relationship_definition_id: $relationship_definition_id,
+                            destiny_entity_definition_id: $destiny_definition_id,
+                            data: $data,
+                            created_at: $created_at,
+                            updated_at: $updated_at
+                        }]->(target)
+                        """,
+                        source_id=entity_node_id,
+                        target_id=target_id,
+                        relationship_id=relationship_id,
+                        relationship_definition_id=relationship_payload.definition_id,
+                        destiny_definition_id=rel_definition.destiny_entity_id,
+                        data=relationship_payload.data or {},
+                        created_at=timestamp,
+                        updated_at=timestamp,
+                    )
+                    if rel_definition.bi_directional:
+                        reverse_id = str(uuid4())
+                        await tx.run(
+                            """
+                            MATCH (source:EntityInstance {entity_instance_id: $source_id})
+                            MATCH (target:EntityInstance {entity_instance_id: $target_id})
+                            CREATE (target)-[r:RELATES_TO {
+                                relationship_instance_id: $relationship_id,
+                                relationship_definition_id: $relationship_definition_id,
+                                destiny_entity_definition_id: $destiny_definition_id,
+                                data: $data,
+                                created_at: $created_at,
+                                updated_at: $updated_at
+                            }]->(source)
+                            """,
+                            source_id=entity_node_id,
+                            target_id=target_id,
+                            relationship_id=reverse_id,
+                            relationship_definition_id=relationship_payload.definition_id,
+                            destiny_definition_id=entity_payload.definition_id,
+                            data=relationship_payload.data or {},
+                            created_at=timestamp,
+                            updated_at=timestamp,
+                        )
+
+        return await self.get_instance(instance_id)
+
+    async def list_instances(
+        self,
+        *,
+        skip: int = 0,
+        limit: int = 50,
+        search: str | None = None,
+        ontology_id: int | None = None,
+    ) -> Sequence[OntologyInstanceRead]:
+        clauses = ["MATCH (i:OntologyInstance)"]
+        filters: list[str] = []
+        params: dict[str, Any] = {"skip": skip, "limit": limit}
+        if ontology_id is not None:
+            filters.append("i.ontology_id = $ontology_id")
+            params["ontology_id"] = ontology_id
+        if search:
+            filters.append(
+                "(toLower(i.name) CONTAINS toLower($search) OR toLower(coalesce(i.description,'')) CONTAINS toLower($search))"
+            )
+            params["search"] = search
+        if filters:
+            clauses.append("WHERE " + " AND ".join(filters))
+        clauses.append("RETURN i ORDER BY i.updated_at DESC SKIP $skip LIMIT $limit")
+        query = "\n".join(clauses)
+        result = await self.graph_session.run(query, params)
+        records = await result.data()
+        instance_ids = [record["i"]["instance_id"] for record in records]
+        return [await self.get_instance(instance_id) for instance_id in instance_ids]
+
+    async def get_instance(self, instance_id: str) -> OntologyInstanceRead:
+        record = await self.graph_session.run(
+            """
+            MATCH (i:OntologyInstance {instance_id: $instance_id})
+            RETURN i
+            """,
+            instance_id=instance_id,
+        )
+        instance_data = await record.single()
+        if not instance_data:
+            raise ValueError("Ontology instance not found")
+        instance_node = instance_data["i"]
+
+        entities_result = await self.graph_session.run(
+            """
+            MATCH (i:OntologyInstance {instance_id: $instance_id})-[:HAS_ENTITY]->(e:EntityInstance)
+            RETURN e
+            """,
+            instance_id=instance_id,
+        )
+        entity_records = await entities_result.data()
+        entities_map: dict[str, dict[str, Any]] = {}
+        for record in entity_records:
+            node = record["e"]
+            entities_map[node["entity_instance_id"]] = {
+                "entity_instance_id": node["entity_instance_id"],
+                "definition_id": node["entity_definition_id"],
+                "alias": node.get("alias"),
+                "properties": node.get("properties", {}),
+                "relationships": [],
+            }
+
+        relationships_result = await self.graph_session.run(
+            """
+            MATCH (i:OntologyInstance {instance_id: $instance_id})-[:HAS_ENTITY]->(source:EntityInstance)
+            OPTIONAL MATCH (source)-[r:RELATES_TO]->(target:EntityInstance)
+            RETURN source.entity_instance_id AS source_id, r, target.entity_instance_id AS target_id
+            """,
+            instance_id=instance_id,
+        )
+        rel_records = await relationships_result.data()
+        for record in rel_records:
+            relationship_edge = record.get("r")
+            if not relationship_edge:
+                continue
+            source_id = record["source_id"]
+            target_id = record.get("target_id")
+            if source_id not in entities_map or target_id is None:
+                continue
+            entities_map[source_id]["relationships"].append(
+                {
+                    "relationship_instance_id": relationship_edge[
+                        "relationship_instance_id"
+                    ],
+                    "definition_id": relationship_edge[
+                        "relationship_definition_id"
+                    ],
+                    "target_entity_id": target_id,
+                    "destiny_entity_definition_id": relationship_edge.get(
+                        "destiny_entity_definition_id"
+                    ),
+                    "data": relationship_edge.get("data", {}),
+                }
+            )
+
+        return OntologyInstanceRead(
+            instance_id=instance_node["instance_id"],
+            ontology_id=instance_node["ontology_id"],
+            name=instance_node.get("name"),
+            description=instance_node.get("description"),
+            created_at=_parse_dt(instance_node["created_at"]),
+            updated_at=_parse_dt(instance_node["updated_at"]),
+            entities=[
+                {
+                    "entity_instance_id": entity_data["entity_instance_id"],
+                    "definition_id": entity_data["definition_id"],
+                    "alias": entity_data.get("alias"),
+                    "properties": [
+                        {
+                            "definition_id": int(prop_id),
+                            "value": value,
+                        }
+                        for prop_id, value in entity_data["properties"].items()
+                    ],
+                    "relationships": entity_data["relationships"],
+                }
+                for entity_data in entities_map.values()
+            ],
+        )
+
+    async def delete_instance(self, instance_id: str) -> None:
+        await self.graph_session.run(
+            """
+            MATCH (i:OntologyInstance {instance_id: $instance_id})
+            DETACH DELETE i
+            """,
+            instance_id=instance_id,
+        )
+
+    async def update_instance(
+        self, instance_id: str, payload: OntologyInstanceUpdate
+    ) -> OntologyInstanceRead:
+        current = await self.get_instance(instance_id)
+        timestamp = _utcnow_str()
+
+        await self.graph_session.run(
+            """
+            MATCH (i:OntologyInstance {instance_id: $instance_id})
+            SET i.name = coalesce($name, i.name),
+                i.description = coalesce($description, i.description),
+                i.updated_at = $updated_at
+            """,
+            instance_id=instance_id,
+            name=payload.name,
+            description=payload.description,
+            updated_at=timestamp,
+        )
+
+        if payload.entities is None:
+            return await self.get_instance(instance_id)
+
+        definitions = await self._load_entity_definitions(current.ontology_id)
+        self._validate_entities_payload(payload.entities, definitions)
+
+        async with self.graph_session.begin_transaction() as tx:
+            await tx.run(
+                """
+                MATCH (i:OntologyInstance {instance_id: $instance_id})-[:HAS_ENTITY]->(e)
+                DETACH DELETE e
+                """,
+                instance_id=instance_id,
+            )
+
+            alias_to_ids: dict[str, str] = {}
+            nodes_payload: list[tuple[str, OntologyInstanceEntityCreate, dict[str, Any]]] = []
+            for entity_payload in payload.entities:
+                entity_node_id = str(uuid4())
+                alias_to_ids[entity_payload.alias] = entity_node_id
+                prop_map = {
+                    str(prop.definition_id): prop.value
+                    for prop in entity_payload.properties
+                }
+                nodes_payload.append((entity_node_id, entity_payload, prop_map))
+
+            for entity_node_id, entity_payload, prop_map in nodes_payload:
+                await tx.run(
+                    """
+                    MATCH (i:OntologyInstance {instance_id: $instance_id})
+                    CREATE (i)-[:HAS_ENTITY]->(e:EntityInstance {
+                        entity_instance_id: $entity_instance_id,
+                        instance_id: $instance_id,
+                        entity_definition_id: $entity_definition_id,
+                        properties: $properties,
+                        created_at: $created_at,
+                        updated_at: $updated_at,
+                        alias: $alias
+                    })
+                    """,
+                    instance_id=instance_id,
+                    entity_instance_id=entity_node_id,
+                    entity_definition_id=entity_payload.definition_id,
+                    properties=prop_map,
+                    created_at=timestamp,
+                    updated_at=timestamp,
+                    alias=entity_payload.alias,
+                )
+
+            for entity_node_id, entity_payload, _ in nodes_payload:
+                relationship_definitions = definitions[entity_payload.definition_id][
+                    "relationships"
+                ]
+                for relationship_payload in entity_payload.relationships:
+                    target_alias = relationship_payload.target_alias
+                    if target_alias not in alias_to_ids:
+                        raise ValueError(
+                            f"Unknown target alias '{target_alias}' for relationship"
+                        )
+                    rel_definition = relationship_definitions[relationship_payload.definition_id]
+                    target_id = alias_to_ids[target_alias]
+                    relationship_id = str(uuid4())
+                    await tx.run(
+                        """
+                        MATCH (source:EntityInstance {entity_instance_id: $source_id})
+                        MATCH (target:EntityInstance {entity_instance_id: $target_id})
+                        CREATE (source)-[r:RELATES_TO {
+                            relationship_instance_id: $relationship_id,
+                            relationship_definition_id: $relationship_definition_id,
+                            destiny_entity_definition_id: $destiny_definition_id,
+                            data: $data,
+                            created_at: $created_at,
+                            updated_at: $updated_at
+                        }]->(target)
+                        """,
+                        source_id=entity_node_id,
+                        target_id=target_id,
+                        relationship_id=relationship_id,
+                        relationship_definition_id=relationship_payload.definition_id,
+                        destiny_definition_id=rel_definition.destiny_entity_id,
+                        data=relationship_payload.data or {},
+                        created_at=timestamp,
+                        updated_at=timestamp,
+                    )
+                    if rel_definition.bi_directional:
+                        reverse_id = str(uuid4())
+                        await tx.run(
+                            """
+                            MATCH (source:EntityInstance {entity_instance_id: $source_id})
+                            MATCH (target:EntityInstance {entity_instance_id: $target_id})
+                            CREATE (target)-[r:RELATES_TO {
+                                relationship_instance_id: $relationship_id,
+                                relationship_definition_id: $relationship_definition_id,
+                                destiny_entity_definition_id: $destiny_definition_id,
+                                data: $data,
+                                created_at: $created_at,
+                                updated_at: $updated_at
+                            }]->(source)
+                            """,
+                            source_id=entity_node_id,
+                            target_id=target_id,
+                            relationship_id=reverse_id,
+                            relationship_definition_id=relationship_payload.definition_id,
+                            destiny_definition_id=entity_payload.definition_id,
+                            data=relationship_payload.data or {},
+                            created_at=timestamp,
+                            updated_at=timestamp,
+                        )
+
+        return await self.get_instance(instance_id)
+
+    # ------------------------------------------------------------------
+    async def _load_entity_definitions(
+        self, ontology_id: int
+    ) -> dict[int, dict[str, Any]]:
+        result = await self.sql_session.execute(
+            select(OntologyEntity)
+            .options(
+                selectinload(OntologyEntity.properties),
+                selectinload(OntologyEntity.relationships),
+            )
+            .where(OntologyEntity.ontology_id == ontology_id)
+        )
+        entities = result.scalars().unique().all()
+        definitions: dict[int, dict[str, Any]] = {}
+        for entity in entities:
+            definitions[entity.id] = {
+                "entity": entity,
+                "properties": {prop.id: prop for prop in entity.properties},
+                "relationships": {rel.id: rel for rel in entity.relationships},
+            }
+        return definitions
+
+    def _validate_entities_payload(
+        self,
+        entities: Sequence[OntologyInstanceEntityCreate],
+        definitions: dict[int, dict[str, Any]],
+    ) -> None:
+        alias_to_definition: dict[str, int] = {}
+        for entity_payload in entities:
+            if entity_payload.alias in alias_to_definition:
+                raise ValueError(
+                    f"Duplicate entity alias '{entity_payload.alias}' in payload"
+                )
+            if entity_payload.definition_id not in definitions:
+                raise ValueError(
+                    f"Entity definition {entity_payload.definition_id} does not belong to ontology"
+                )
+            alias_to_definition[entity_payload.alias] = entity_payload.definition_id
+
+            definition = definitions[entity_payload.definition_id]
+            property_map = definition["properties"]
+            for prop in entity_payload.properties:
+                if prop.definition_id not in property_map:
+                    raise ValueError(
+                        f"Property definition {prop.definition_id} does not belong to entity"
+                    )
+
+        for entity_payload in entities:
+            definition = definitions[entity_payload.definition_id]
+            relationship_map = definition["relationships"]
+            for rel in entity_payload.relationships:
+                if rel.definition_id not in relationship_map:
+                    raise ValueError(
+                        f"Relationship definition {rel.definition_id} does not belong to entity"
+                    )
+                target_alias = rel.target_alias
+                if target_alias not in alias_to_definition:
+                    raise ValueError(
+                        f"Relationship refers to unknown target alias '{target_alias}'"
+                    )
+                destiny_entity_id = relationship_map[rel.definition_id].destiny_entity_id
+                if (
+                    destiny_entity_id is not None
+                    and alias_to_definition[target_alias] != destiny_entity_id
+                ):
+                    raise ValueError(
+                        "Relationship target alias does not match destiny entity definition"
+                    )
+*** End Patch

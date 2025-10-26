@@ -62,6 +62,26 @@ FastAPI automatically generates interactive docs at `/docs` and `/redoc`.
 - Admins or world builders can upload other assets via `POST /media/images`, providing a category
   and identifier to control where the image is stored.
 
+## Ontology instances & Neo4j
+
+- Ontology definitions remain in the SQL database; ontology *instances* (runtime graphs) are stored
+  in Neo4j, allowing the structure to evolve without SQL migrations.
+- Configure Neo4j via `BACKEND_2_NEO4J_URI`, `BACKEND_2_NEO4J_USER`, `BACKEND_2_NEO4J_PASSWORD`,
+  and `BACKEND_2_NEO4J_DATABASE` (defaults expect `neo4j/neo4j` running on `bolt://localhost:7687`).
+- Quick start Neo4j locally:
+
+  ```bash
+  docker run --rm -p 7474:7474 -p 7687:7687 \
+    -e NEO4J_AUTH=neo4j/neo4j \
+    -e NEO4J_PLUGINS='["apoc", "graph-data-science"]' \
+    --name shrecknet-neo4j neo4j:5-community
+  ```
+
+  Update the password on first login (and mirror it in the backend env vars).
+- CRUD endpoints under `/ontology-instances` let admins/world builders materialise ontology
+  entities, populate property values, and wire relationships (respecting the ontology
+  definitions). Search supports name/description filters and pagination.
+
 ### CORS configuration
 
 Cross-origin access is controlled via environment variables exposed by `Settings`:

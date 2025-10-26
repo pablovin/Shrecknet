@@ -1,0 +1,153 @@
+from __future__ import annotations
+
+import os
+
+import pytest
+
+from app.models.ontology import AuthorType, Cardinality, PropertyDataType
+from app.models.user import UserRole
+
+pytestmark = pytest.mark.skipif(
+    not os.getenv("NEO4J_TEST_URI"),
+    reason="Neo4j test environment not configured",
+)
+
+
+@pytest.mark.asyncio
+async def test_create_ontology_instance_flow(client):
+    # Bootstrap admin user
+    admin_payload = {
+        "username": "graph-admin",
+        "password": "GraphAdmin1",
+        "full_name": "Graph Admin",
+        "email": "graph-admin@example.com",
+        "timezone": "UTC",
+        "role": UserRole.ADMIN.value,
+    }
+    register_response = await client.post("/users/", json=admin_payload)
+    assert register_response.status_code == 201, register_response.text
+
+    token_response = await client.post(
+        "/auth/token",
+        data={
+            "username": admin_payload["username"],
+            "password": admin_payload["password"],
+        },
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    assert token_response.status_code == 200, token_response.text
+    token = token_response.json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # Create ontology definition
+    ontology_response = await client.post(
+        "/ontologies/",
+        json={"name": "Graph Test", "description": "Test ontology"},
+        headers=headers,
+    )
+    assert ontology_response.status_code == 201, ontology_response.text
+    ontology_id = ontology_response.json()["id"]
+
+    entity_payload = {
+        "name": "Character",
+        "description": "Character definition",
+        "auto_generatable": False,
+        "author_type": AuthorType.HUMAN.value,
+        "user_id": "def-1",
+    }
+    entity_response = await client.post(
+        f"/ontologies/{ontology_id}/entities",
+        json=entity_payload,
+        headers=headers,
+    )
+    assert entity_response.status_code == 201, entity_response.text
+    entity_definition = entity_response.json()
+    entity_id = entity_definition["id"]
+
+    property_payload = {
+        "name": "Age",
+        "cardinality": Cardinality.ONE.value,
+        "data_type": PropertyDataType.NUMBER.value,
+        "author_type": AuthorType.HUMAN.value,
+        "user_id": "def-1",
+    }
+    property_response = await client.post(
+        f"/ontologies/{ontology_id}/entities/{entity_id}/properties",
+        json=property_payload,
+        headers=headers,
+    )
+    assert property_response.status_code == 201, property_response.text
+    property_definition_id = property_response.json()["id"]
+
+    relationship_payload = {
+        "name": "Knows",
+        "bi_directional": True,
+        "author_type": AuthorType.HUMAN.value,
+        "user_id": "def-1",
+        "destiny_entity_id": entity_id,
+    }
+    relationship_response = await client.post(
+        f"/ontologies/{ontology_id}/entities/{entity_id}/relationships",
+        json=relationship_payload,
+        headers=headers,
+    )
+    assert relationship_response.status_code == 201, relationship_response.text
+    relationship_definition_id = relationship_response.json()["id"]
+
+    # Create ontology instance
+    instance_payload = {
+        "ontology_id": ontology_id,
+        "name": "Graph Instance",
+        "description": "Instance description",
+        "entities": [
+            {
+                "definition_id": entity_id,
+                "alias": "hero",
+                "properties": [
+                    {"definition_id": property_definition_id, "value": 30}
+                ],
+                "relationships": [
+                    {
+                        "definition_id": relationship_definition_id,
+                        "target_alias": "villain",
+                        "data": {"met": "2025"},
+                    }
+                ],
+            },
+            {
+                "definition_id": entity_id,
+                "alias": "villain",
+                "properties": [
+                    {"definition_id": property_definition_id, "value": 40}
+                ],
+                "relationships": [],
+            },
+        ],
+    }
+    instance_response = await client.post(
+        "/ontology-instances/", json=instance_payload, headers=headers
+    )
+    assert instance_response.status_code == 201, instance_response.text
+    instance = instance_response.json()
+    instance_id = instance["instance_id"]
+
+    # Fetch instance
+    fetched = await client.get(
+        f"/ontology-instances/{instance_id}", headers=headers
+    )
+    assert fetched.status_code == 200
+
+    # Update instance (rename)
+    update_response = await client.put(
+        f"/ontology-instances/{instance_id}",
+        json={"name": "Updated Graph Instance"},
+        headers=headers,
+    )
+    assert update_response.status_code == 200
+    assert update_response.json()["name"] == "Updated Graph Instance"
+
+    # Delete instance
+    delete_response = await client.delete(
+        f"/ontology-instances/{instance_id}", headers=headers
+    )
+    assert delete_response.status_code == 204

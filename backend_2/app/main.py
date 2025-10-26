@@ -16,12 +16,16 @@ from app.core.config import get_app_config, get_settings
 from app.core.logging_config import configure_logging
 from app.db.init_db import init_db
 from app.db.session import engine
+from app.graph.neo4j import close_driver as close_neo4j_driver
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db(engine)
-    yield
+    try:
+        yield
+    finally:
+        await close_neo4j_driver()
 
 
 def create_app() -> FastAPI:

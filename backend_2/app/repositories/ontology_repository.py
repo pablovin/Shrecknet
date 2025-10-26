@@ -4,6 +4,7 @@ from typing import Any, Sequence
 
 from sqlalchemy import Select, select
 from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.ontology import (
@@ -78,7 +79,12 @@ class OntologyRepository(BaseRepository):
         self, ontology_id: int, entity_id: int
     ) -> OntologyEntity | None:
         result = await self.session.execute(
-            select(OntologyEntity).where(
+            select(OntologyEntity)
+            .options(
+                selectinload(OntologyEntity.properties),
+                selectinload(OntologyEntity.relationships),
+            )
+            .where(
                 OntologyEntity.ontology_id == ontology_id,
                 OntologyEntity.id == entity_id,
             )
@@ -87,7 +93,12 @@ class OntologyRepository(BaseRepository):
 
     async def list_entities(self, ontology_id: int) -> Sequence[OntologyEntity]:
         result = await self.session.execute(
-            select(OntologyEntity).where(OntologyEntity.ontology_id == ontology_id)
+            select(OntologyEntity)
+            .options(
+                selectinload(OntologyEntity.properties),
+                selectinload(OntologyEntity.relationships),
+            )
+            .where(OntologyEntity.ontology_id == ontology_id)
         )
         return result.scalars().all()
 

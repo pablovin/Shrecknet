@@ -33,6 +33,10 @@ class Settings(BaseSettings):
     max_image_upload_bytes: int = 10 * 1024 * 1024
     image_max_width: int = 1024
     image_max_height: int = 1024
+    neo4j_uri: str = "bolt://localhost:7687"
+    neo4j_user: str = "neo4j"
+    neo4j_password: str = "neo4j"
+    neo4j_database: str = "neo4j"
 
 
 class AppConfig(BaseModel):

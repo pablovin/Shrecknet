@@ -24,11 +24,18 @@ def create_app() -> FastAPI:
 
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=settings.cors_allow_origins,
-        allow_origin_regex=settings.cors_allow_origin_regex,
-        allow_credentials=settings.cors_allow_credentials,
-        allow_methods=settings.cors_allow_methods,
-        allow_headers=settings.cors_allow_headers,
+        allow_origins=[
+            "https://c56f54ad-02b8-428f-9e87-43f81dab0914.lovableproject.com",
+            "https://lovableproject.com",
+            "http://localhost",
+            "http://localhost:3000",
+            "https://shrecknet.club",
+        ],
+        allow_origin_regex=r"https://.*\.lovableproject\.com",
+        allow_credentials=True,
+        allow_methods=["*"],           # or ["GET","POST","PUT","DELETE","OPTIONS"]
+        allow_headers=["*"],           # temporarily wide; tighten later if desired
+        max_age=3600,
     )
     app.include_router(get_api_router())
 

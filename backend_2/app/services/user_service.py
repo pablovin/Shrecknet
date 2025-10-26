@@ -24,6 +24,10 @@ class UserService:
         password = data.pop("password")
         entity_ids = data.pop("entity_ids", None)
 
+        is_first_user = not await self.repository.has_any()
+        if is_first_user:
+            data["role"] = UserRole.ADMIN
+
         await self._ensure_unique_constraints(username=username, email=email)
 
         user = await self.repository.create(

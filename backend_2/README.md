@@ -32,6 +32,8 @@ FastAPI automatically generates interactive docs at `/docs` and `/redoc`.
 ## Authentication & authorization
 
 - Register users with `POST /users/`; passwords are hashed using bcrypt before persistence.
+- The first account created automatically becomes an `admin`, regardless of the requested role,
+  so newly deployed environments always begin with a privileged operator.
 - Exchange credentials for a JWT access token via `POST /auth/token` and include it as
   `Authorization: Bearer <token>` on protected requests.
 - Only `admin` and `world_builder` roles may access ontology CRUD routes.

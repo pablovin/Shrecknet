@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Sequence
 
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -55,3 +55,7 @@ class UserRepository(BaseRepository):
 
     async def remove(self, user: User) -> None:
         await self.delete(user)
+
+    async def has_any(self) -> bool:
+        result = await self.session.execute(select(func.count()).select_from(User))
+        return bool(result.scalar())

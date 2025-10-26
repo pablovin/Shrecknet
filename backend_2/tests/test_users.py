@@ -18,6 +18,7 @@ async def test_user_registration_and_self_update(client):
     register_response = await client.post("/users/", json=payload)
     assert register_response.status_code == 201, register_response.text
     user_id = register_response.json()["id"]
+    assert register_response.json()["role"] == UserRole.ADMIN.value
 
     token_response = await client.post(
         "/auth/token",
@@ -68,6 +69,18 @@ async def test_registration_enforces_uniqueness(client):
 
 @pytest.mark.asyncio
 async def test_ontology_endpoints_require_privileged_roles(client):
+    await client.post(
+        "/users/",
+        json={
+            "username": "bootstrap",
+            "password": "Bootstrap123",
+            "full_name": "Bootstrap Admin",
+            "email": "bootstrap@example.com",
+            "timezone": "UTC",
+            "role": UserRole.ADMIN.value,
+        },
+    )
+
     player_payload = {
         "username": "player1",
         "password": "PlayerPass123",

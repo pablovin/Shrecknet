@@ -56,6 +56,14 @@ class UserService:
     async def get_user(self, user_id: int) -> User | None:
         return await self.repository.get(user_id)
 
+    async def is_username_available(self, username: str) -> bool:
+        existing = await self.repository.get_by_username(username)
+        return existing is None
+
+    async def is_email_available(self, email: str) -> bool:
+        existing = await self.repository.get_by_email(email)
+        return existing is None
+
     async def update_user(self, user: User, data: dict, *, actor: User,) -> User:
         entity_ids = data.pop("entity_ids", None)
         new_password = data.pop("password", None)

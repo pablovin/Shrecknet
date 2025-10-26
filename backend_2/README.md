@@ -38,6 +38,8 @@ FastAPI automatically generates interactive docs at `/docs` and `/redoc`.
   `Authorization: Bearer <token>` on protected requests.
 - Only `admin` and `world_builder` roles may access ontology CRUD routes.
 - Users can update their own profile data; only admins may change user roles.
+- Pre-registration UI can call `GET /users/availability?username=...&email=...` to check whether
+  credentials are free before attempting signup.
 
 ### CORS configuration
 

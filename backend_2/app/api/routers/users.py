@@ -4,7 +4,12 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.api.deps import get_current_user, get_user_service, require_roles
 from app.models.user import User, UserRole
-from app.schemas.user import UserCreate, UserRead, UserUpdate
+from app.schemas.user import (
+    UserAvailabilityResponse,
+    UserCreate,
+    UserRead,
+    UserUpdate,
+)
 from app.services.user_service import UserService
 
 router = APIRouter(prefix="/users", tags=["users"])
@@ -21,6 +26,26 @@ async def register_user(
             status_code=status.HTTP_409_CONFLICT, detail=str(exc)
         ) from exc
     return UserRead.model_validate(user)
+
+
+@router.get("/availability", response_model=UserAvailabilityResponse)
+async def check_user_availability(
+    username: str | None = None,
+    email: str | None = None,
+    service: UserService = Depends(get_user_service),
+) -> UserAvailabilityResponse:
+    if username is None and email is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="At least one of username or email must be provided",
+        )
+
+    response = UserAvailabilityResponse()
+    if username is not None:
+        response.username_available = await service.is_username_available(username)
+    if email is not None:
+        response.email_available = await service.is_email_available(email)
+    return response
 
 
 @router.get(

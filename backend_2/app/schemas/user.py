@@ -76,3 +76,8 @@ class Token(BaseModel):
 class TokenPayload(BaseModel):
     sub: str | None = None
     exp: datetime | None = None
+
+
+class UserAvailabilityResponse(BaseModel):
+    username_available: bool | None = None
+    email_available: bool | None = None

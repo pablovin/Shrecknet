@@ -41,6 +41,44 @@ async def test_user_registration_and_self_update(client):
 
 
 @pytest.mark.asyncio
+async def test_user_availability_endpoint(client):
+    availability_response = await client.get(
+        "/users/availability",
+        params={"username": "newuser", "email": "new@example.com"},
+    )
+    assert availability_response.status_code == 200
+    assert availability_response.json() == {
+        "username_available": True,
+        "email_available": True,
+    }
+
+    await client.post(
+        "/users/",
+        json={
+            "username": "newuser",
+            "password": "SomeStrongPass123",
+            "full_name": "New User",
+            "email": "new@example.com",
+            "timezone": "UTC",
+            "role": UserRole.PLAYER.value,
+        },
+    )
+
+    availability_after = await client.get(
+        "/users/availability",
+        params={"username": "newuser", "email": "new@example.com"},
+    )
+    assert availability_after.status_code == 200
+    assert availability_after.json() == {
+        "username_available": False,
+        "email_available": False,
+    }
+
+    missing_params = await client.get("/users/availability")
+    assert missing_params.status_code == 400
+
+
+@pytest.mark.asyncio
 async def test_registration_enforces_uniqueness(client):
     first_user = {
         "username": "unique1",

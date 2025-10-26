@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from app.models.audit import AuditAction, AuditActorType, AuditEntityType
 from app.models.user import UserRole
 
 
@@ -38,6 +39,17 @@ async def test_user_registration_and_self_update(client):
     )
     assert update_response.status_code == 200
     assert update_response.json()["full_name"] == "Updated Writer"
+
+    logs_response = await client.get("/logs/", headers=headers)
+    assert logs_response.status_code == 200
+
+    logs = logs_response.json()
+    assert any(
+        log["entity_type"] == AuditEntityType.USER.value
+        and log["actor_type"] == AuditActorType.USER.value
+        and log["action"] == AuditAction.CREATE.value
+        for log in logs
+    )
 
 
 @pytest.mark.asyncio
@@ -147,6 +159,9 @@ async def test_ontology_endpoints_require_privileged_roles(client):
     no_auth_response = await client.get("/ontologies/")
     assert no_auth_response.status_code == 401
 
+    logs_response = await client.get("/logs/", headers=headers)
+    assert logs_response.status_code == 200
+
 
 @pytest.mark.asyncio
 async def test_long_password_allowed_and_truncated(client):
@@ -184,3 +199,57 @@ async def test_short_password_rejected(client):
 
     response = await client.post("/users/", json=payload)
     assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_admin_can_delete_user(client):
+    admin_payload = {
+        "username": "deleter-admin",
+        "password": "DeleteAdmin1",
+        "full_name": "Delete Admin",
+        "email": "deleter-admin@example.com",
+        "timezone": "UTC",
+        "role": UserRole.ADMIN.value,
+    }
+    admin_register = await client.post("/users/", json=admin_payload)
+    assert admin_register.status_code == 201, admin_register.text
+
+    token_response = await client.post(
+        "/auth/token",
+        data={
+            "username": admin_payload["username"],
+            "password": admin_payload["password"],
+        },
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    assert token_response.status_code == 200, token_response.text
+    admin_token = token_response.json()["access_token"]
+    admin_headers = {"Authorization": f"Bearer {admin_token}"}
+
+    user_payload = {
+        "username": "victim-user",
+        "password": "VictimUser1",
+        "full_name": "Victim User",
+        "email": "victim@example.com",
+        "timezone": "UTC",
+        "role": UserRole.PLAYER.value,
+    }
+    user_register = await client.post("/users/", json=user_payload)
+    assert user_register.status_code == 201, user_register.text
+    victim_id = user_register.json()["id"]
+
+    delete_response = await client.delete(f"/users/{victim_id}", headers=admin_headers)
+    assert delete_response.status_code == 204
+
+    get_response = await client.get(f"/users/{victim_id}", headers=admin_headers)
+    assert get_response.status_code == 404
+
+    logs_response = await client.get("/logs/", headers=admin_headers)
+    assert logs_response.status_code == 200
+    logs = logs_response.json()
+    assert any(
+        log["entity_type"] == AuditEntityType.USER.value
+        and log["action"] == AuditAction.DELETE.value
+        and log["entity_id"] == victim_id
+        for log in logs
+    )

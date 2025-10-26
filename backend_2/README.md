@@ -40,10 +40,15 @@ FastAPI automatically generates interactive docs at `/docs` and `/redoc`.
   `Authorization: Bearer <token>` on protected requests.
 - Only `admin` and `world_builder` roles may access ontology CRUD routes.
 - Users can update their own profile data; only admins may change user roles.
+- Admins (or the user themselves) can remove accounts via `DELETE /users/{user_id}`; deletions are
+  audited like other mutations.
 - Pre-registration UI can call `GET /users/availability?username=...&email=...` to check whether
   credentials are free before attempting signup.
 - All API errors are logged with method, path, status, and detail to help operators diagnose issues
   quickly; general request timing is also recorded for non-successful responses.
+- Every create/update/delete on users or ontologies is persisted to the `audit_logs` table. Admins
+  can review history via `GET /logs/`, filtering by actor type (user/agent), actor id, entity type,
+  entity id, action, and date window.
 
 ### CORS configuration
 

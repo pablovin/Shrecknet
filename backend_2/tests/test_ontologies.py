@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from app.models.audit import AuditAction, AuditActorType, AuditEntityType
 from app.models.ontology import AuthorType, Cardinality, PropertyDataType
 from app.models.user import UserRole
 
@@ -120,3 +121,13 @@ async def test_create_and_manage_ontology(client):
     # Ensure ontology no longer exists
     get_response = await client.get(f"/ontologies/{ontology_id}", headers=headers)
     assert get_response.status_code == 404
+
+    logs_response = await client.get("/logs/", headers=headers)
+    assert logs_response.status_code == 200
+    logs = logs_response.json()
+    assert any(
+        log["entity_type"] == AuditEntityType.ONTOLOGY.value
+        and log["actor_type"] == AuditActorType.USER.value
+        and log["action"] == AuditAction.CREATE.value
+        for log in logs
+    )

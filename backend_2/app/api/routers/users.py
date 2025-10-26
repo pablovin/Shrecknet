@@ -1,8 +1,16 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from typing import Any
 
-from app.api.deps import get_current_user, get_user_service, require_roles
+from fastapi import APIRouter, Depends, HTTPException, Response, status
+
+from app.api.deps import (
+    get_audit_service,
+    get_current_user,
+    get_user_service,
+    require_roles,
+)
+from app.models.audit import AuditAction, AuditActorType, AuditEntityType
 from app.models.user import User, UserRole
 from app.schemas.user import (
     UserAvailabilityResponse,
@@ -10,14 +18,27 @@ from app.schemas.user import (
     UserRead,
     UserUpdate,
 )
+from app.services.audit_service import AuditService
 from app.services.user_service import UserService
 
 router = APIRouter(prefix="/users", tags=["users"])
 
 
+def _sanitize_payload(data: dict[str, Any]) -> dict[str, Any]:
+    sanitized: dict[str, Any] = {}
+    for key, value in data.items():
+        if key.lower() in {"password", "hashed_password"} and value is not None:
+            sanitized[key] = "***"
+        else:
+            sanitized[key] = value
+    return sanitized
+
+
 @router.post("/", response_model=UserRead, status_code=status.HTTP_201_CREATED)
 async def register_user(
-    payload: UserCreate, service: UserService = Depends(get_user_service),
+    payload: UserCreate,
+    service: UserService = Depends(get_user_service),
+    audit_service: AuditService = Depends(get_audit_service),
 ) -> UserRead:
     try:
         user = await service.register_user(payload.model_dump())
@@ -25,6 +46,15 @@ async def register_user(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail=str(exc)
         ) from exc
+    await audit_service.log_action(
+        actor_type=AuditActorType.USER,
+        actor_user_id=user.id,
+        action=AuditAction.CREATE,
+        entity_type=AuditEntityType.USER,
+        entity_id=user.id,
+        payload=_sanitize_payload(payload.model_dump()),
+        description="User registration",
+    )
     return UserRead.model_validate(user)
 
 
@@ -89,6 +119,7 @@ async def update_user(
     payload: UserUpdate,
     service: UserService = Depends(get_user_service),
     current_user: User = Depends(get_current_user),
+    audit_service: AuditService = Depends(get_audit_service),
 ) -> UserRead:
     user = await service.get_user(user_id)
     if not user:
@@ -112,5 +143,44 @@ async def update_user(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail=str(exc)
         ) from exc
-
+    await audit_service.log_action(
+        actor_type=AuditActorType.USER,
+        actor_user_id=current_user.id,
+        action=AuditAction.UPDATE,
+        entity_type=AuditEntityType.USER,
+        entity_id=user_id,
+        payload=_sanitize_payload(payload.model_dump(exclude_unset=True)),
+        description="User profile updated",
+    )
     return UserRead.model_validate(updated)
+
+
+@router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_user(
+    user_id: int,
+    service: UserService = Depends(get_user_service),
+    current_user: User = Depends(get_current_user),
+    audit_service: AuditService = Depends(get_audit_service),
+) -> Response:
+    user = await service.get_user(user_id)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
+        )
+    if current_user.id != user_id and current_user.role != UserRole.ADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions"
+        )
+
+    await audit_service.log_action(
+        actor_type=AuditActorType.USER,
+        actor_user_id=current_user.id,
+        action=AuditAction.DELETE,
+        entity_type=AuditEntityType.USER,
+        entity_id=user_id,
+        payload={"user_id": user_id, "username": user.username},
+        description="User deleted",
+    )
+
+    await service.delete_user(user)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

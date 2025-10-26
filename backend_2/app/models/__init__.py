@@ -1,3 +1,4 @@
+from app.models.audit import AuditAction, AuditActorType, AuditEntityType, AuditLog
 from app.models.ontology import (
     Ontology,
     OntologyEntity,
@@ -7,6 +8,10 @@ from app.models.ontology import (
 from app.models.user import User, UserRole
 
 __all__ = [
+    "AuditAction",
+    "AuditActorType",
+    "AuditEntityType",
+    "AuditLog",
     "Ontology",
     "OntologyEntity",
     "OntologyProperty",

@@ -89,6 +89,10 @@ class UserService:
         await self.session.refresh(updated, attribute_names=["entities"])
         return updated
 
+    async def delete_user(self, user: User) -> None:
+        await self.repository.remove(user)
+        await self.session.commit()
+
     async def _apply_entity_assignments(
         self, user: User, entity_ids: Iterable[int]
     ) -> None:

@@ -11,7 +11,7 @@ Requires-Dist: pydantic<3,>=2.6
 Requires-Dist: pydantic-settings<3,>=2.2
 Requires-Dist: alembic<1.14,>=1.13
 Requires-Dist: python-jose[cryptography]<4,>=3.3
-Requires-Dist: passlib[bcrypt]<2,>=1.7
+Requires-Dist: passlib[argon2]<2,>=1.7
 Requires-Dist: email-validator<3,>=2.1
 Requires-Dist: python-multipart<1,>=0.0.9
 Provides-Extra: test

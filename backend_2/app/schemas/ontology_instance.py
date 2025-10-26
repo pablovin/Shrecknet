@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 
 from app.models.ontology import AuthorType
 
@@ -40,16 +40,16 @@ class OntologyInstanceEntityCreate(BaseModel):
     properties: list[OntologyInstancePropertyValue] = Field(default_factory=list)
     relationships: list[OntologyInstanceRelationshipCreate] = Field(default_factory=list)
 
-    @validator("alias", "author_id", pre=True)
-    def validate_non_empty(cls, value: str, field):
+    @field_validator("alias", "author_id", mode="before")
+    def validate_non_empty(cls, value: str, info):
         if value is None:
-            raise ValueError(f"{field.name} cannot be empty")
+            raise ValueError(f"{info.field_name} cannot be empty")
         value = value.strip()
         if not value:
-            raise ValueError(f"{field.name} cannot be empty")
+            raise ValueError(f"{info.field_name} cannot be empty")
         return value
 
-    @validator("text")
+    @field_validator("text")
     def validate_text(cls, value: str) -> str:
         value = value.strip()
         if not value:

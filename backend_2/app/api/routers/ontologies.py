@@ -3,7 +3,8 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import Response
 
-from app.api.deps import get_ontology_service
+from app.api.deps import get_ontology_service, require_roles
+from app.models.user import UserRole
 from app.schemas.ontology import (
     OntologyCreate,
     OntologyEntityCreate,
@@ -20,7 +21,11 @@ from app.schemas.ontology import (
 )
 from app.services.ontology_service import OntologyService
 
-router = APIRouter(prefix="/ontologies", tags=["ontologies"])
+router = APIRouter(
+    prefix="/ontologies",
+    tags=["ontologies"],
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.WORLD_BUILDER))],
+)
 
 
 @router.post("/", response_model=OntologyRead, status_code=status.HTTP_201_CREATED)

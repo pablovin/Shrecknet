@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
-from typing import List, Optional
+from typing import List, Optional, TYPE_CHECKING
 
 from sqlalchemy import (
     JSON,
@@ -18,6 +18,10 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
+from app.models.user import user_entities
+
+if TYPE_CHECKING:  # pragma: no cover
+    from app.models.user import User
 
 
 class AuthorType(str, Enum):
@@ -102,6 +106,9 @@ class OntologyEntity(Base):
     )
 
     ontology: Mapped[Ontology] = relationship("Ontology", back_populates="entities")
+    players: Mapped[list["User"]] = relationship(
+        "User", secondary=user_entities, back_populates="entities",
+    )
 
 
 class OntologyProperty(Base):

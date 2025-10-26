@@ -104,27 +104,40 @@ class OntologyRepository(BaseRepository):
 
     # Property operations -----------------------------------------------
     async def add_property(
-        self, ontology_id: int, data: dict[str, Any],
+        self, ontology_id: int, entity_id: int, data: dict[str, Any]
     ) -> OntologyProperty:
-        prop = OntologyProperty(ontology_id=ontology_id, **data)
+        entity = await self.get_entity(ontology_id, entity_id)
+        if entity is None:
+            raise ValueError("Entity not found for ontology")
+        prop = OntologyProperty(entity_id=entity_id, **data)
         await self.save(prop)
         await self.session.refresh(prop)
         return prop
 
     async def get_property(
-        self, ontology_id: int, property_id: int,
+        self, ontology_id: int, entity_id: int, property_id: int
     ) -> OntologyProperty | None:
         result = await self.session.execute(
-            select(OntologyProperty).where(
-                OntologyProperty.ontology_id == ontology_id,
+            select(OntologyProperty)
+            .join(OntologyEntity)
+            .where(
+                OntologyEntity.ontology_id == ontology_id,
+                OntologyProperty.entity_id == entity_id,
                 OntologyProperty.id == property_id,
             )
         )
         return result.scalar_one_or_none()
 
-    async def list_properties(self, ontology_id: int) -> Sequence[OntologyProperty]:
+    async def list_properties(
+        self, ontology_id: int, entity_id: int
+    ) -> Sequence[OntologyProperty]:
         result = await self.session.execute(
-            select(OntologyProperty).where(OntologyProperty.ontology_id == ontology_id)
+            select(OntologyProperty)
+            .join(OntologyEntity)
+            .where(
+                OntologyEntity.ontology_id == ontology_id,
+                OntologyProperty.entity_id == entity_id,
+            )
         )
         return result.scalars().all()
 
@@ -142,30 +155,39 @@ class OntologyRepository(BaseRepository):
 
     # Relationship operations ------------------------------------------
     async def add_relationship(
-        self, ontology_id: int, data: dict[str, Any],
+        self, ontology_id: int, entity_id: int, data: dict[str, Any]
     ) -> OntologyRelationship:
-        rel = OntologyRelationship(ontology_id=ontology_id, **data)
+        entity = await self.get_entity(ontology_id, entity_id)
+        if entity is None:
+            raise ValueError("Entity not found for ontology")
+        rel = OntologyRelationship(entity_id=entity_id, **data)
         await self.save(rel)
         await self.session.refresh(rel)
         return rel
 
     async def get_relationship(
-        self, ontology_id: int, relationship_id: int,
+        self, ontology_id: int, entity_id: int, relationship_id: int
     ) -> OntologyRelationship | None:
         result = await self.session.execute(
-            select(OntologyRelationship).where(
-                OntologyRelationship.ontology_id == ontology_id,
+            select(OntologyRelationship)
+            .join(OntologyEntity)
+            .where(
+                OntologyEntity.ontology_id == ontology_id,
+                OntologyRelationship.entity_id == entity_id,
                 OntologyRelationship.id == relationship_id,
             )
         )
         return result.scalar_one_or_none()
 
     async def list_relationships(
-        self, ontology_id: int
+        self, ontology_id: int, entity_id: int
     ) -> Sequence[OntologyRelationship]:
         result = await self.session.execute(
-            select(OntologyRelationship).where(
-                OntologyRelationship.ontology_id == ontology_id
+            select(OntologyRelationship)
+            .join(OntologyEntity)
+            .where(
+                OntologyEntity.ontology_id == ontology_id,
+                OntologyRelationship.entity_id == entity_id,
             )
         )
         return result.scalars().all()

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
-from typing import List, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, List, Optional
 
 from sqlalchemy import (
     JSON,
@@ -67,18 +67,6 @@ class Ontology(Base):
         cascade="all, delete-orphan",
         passive_deletes=True,
     )
-    properties: Mapped[List[OntologyProperty]] = relationship(
-        "OntologyProperty",
-        back_populates="ontology",
-        cascade="all, delete-orphan",
-        passive_deletes=True,
-    )
-    relationships: Mapped[List[OntologyRelationship]] = relationship(
-        "OntologyRelationship",
-        back_populates="ontology",
-        cascade="all, delete-orphan",
-        passive_deletes=True,
-    )
 
 
 class OntologyEntity(Base):
@@ -106,17 +94,29 @@ class OntologyEntity(Base):
     )
 
     ontology: Mapped[Ontology] = relationship("Ontology", back_populates="entities")
-    players: Mapped[list["User"]] = relationship(
-        "User", secondary=user_entities, back_populates="entities",
+    players: Mapped[List["User"]] = relationship(
+        "User", secondary=user_entities, back_populates="entities"
+    )
+    properties: Mapped[List[OntologyProperty]] = relationship(
+        "OntologyProperty",
+        back_populates="entity",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    relationships: Mapped[List[OntologyRelationship]] = relationship(
+        "OntologyRelationship",
+        back_populates="entity",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
     )
 
 
 class OntologyProperty(Base):
-    __tablename__ = "ontology_properties"
+    __tablename__ = "entity_properties"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    ontology_id: Mapped[int] = mapped_column(
-        ForeignKey("ontologies.id", ondelete="CASCADE")
+    entity_id: Mapped[int] = mapped_column(
+        ForeignKey("ontology_entities.id", ondelete="CASCADE")
     )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -140,15 +140,17 @@ class OntologyProperty(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
-    ontology: Mapped[Ontology] = relationship("Ontology", back_populates="properties")
+    entity: Mapped[OntologyEntity] = relationship(
+        "OntologyEntity", back_populates="properties"
+    )
 
 
 class OntologyRelationship(Base):
-    __tablename__ = "ontology_relationships"
+    __tablename__ = "entity_relationships"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    ontology_id: Mapped[int] = mapped_column(
-        ForeignKey("ontologies.id", ondelete="CASCADE")
+    entity_id: Mapped[int] = mapped_column(
+        ForeignKey("ontology_entities.id", ondelete="CASCADE")
     )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -161,13 +163,13 @@ class OntologyRelationship(Base):
     author_type: Mapped[AuthorType] = mapped_column(SqlEnum(AuthorType), nullable=False)
     user_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     agent_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
-    created_at: Mapped[DateTime] = mapped_column(
+    created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
-    updated_at: Mapped[DateTime] = mapped_column(
+    updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
-    ontology: Mapped[Ontology] = relationship(
-        "Ontology", back_populates="relationships"
+    entity: Mapped[OntologyEntity] = relationship(
+        "OntologyEntity", back_populates="relationships"
     )

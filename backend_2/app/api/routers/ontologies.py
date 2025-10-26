@@ -259,60 +259,70 @@ async def delete_entity(
 
 
 @router.post(
-    "/{ontology_id}/properties",
+    "/{ontology_id}/entities/{entity_id}/properties",
     response_model=OntologyPropertyRead,
     status_code=status.HTTP_201_CREATED,
 )
 async def create_property(
     ontology_id: int,
+    entity_id: int,
     payload: OntologyPropertyCreate,
     service: OntologyService = Depends(get_ontology_service),
     audit_service: AuditService = Depends(get_audit_service),
     current_user: User = Depends(get_current_user),
 ) -> OntologyPropertyRead:
-    ontology = await service.get_ontology(ontology_id)
-    if not ontology:
+    entity = await service.get_entity(ontology_id, entity_id)
+    if not entity:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Ontology not found"
+            status_code=status.HTTP_404_NOT_FOUND, detail="Entity not found"
         )
-    prop = await service.add_property(ontology_id, payload.model_dump())
+    prop = await service.add_property(ontology_id, entity_id, payload.model_dump())
     await audit_service.log_action(
         actor_type=AuditActorType.USER,
         actor_user_id=current_user.id,
         action=AuditAction.CREATE,
         entity_type=AuditEntityType.ONTOLOGY_PROPERTY,
         entity_id=prop.id,
-        payload=_sanitize_payload(payload.model_dump() | {"ontology_id": ontology_id}),
-        description="Created ontology property",
+        payload=_sanitize_payload(
+            payload.model_dump() | {"ontology_id": ontology_id, "entity_id": entity_id,}
+        ),
+        description="Created entity property",
     )
     return OntologyPropertyRead.model_validate(prop)
 
 
-@router.get("/{ontology_id}/properties", response_model=list[OntologyPropertyRead])
+@router.get(
+    "/{ontology_id}/entities/{entity_id}/properties",
+    response_model=list[OntologyPropertyRead],
+)
 async def list_properties(
-    ontology_id: int, service: OntologyService = Depends(get_ontology_service),
+    ontology_id: int,
+    entity_id: int,
+    service: OntologyService = Depends(get_ontology_service),
 ) -> list[OntologyPropertyRead]:
-    ontology = await service.get_ontology(ontology_id)
-    if not ontology:
+    entity = await service.get_entity(ontology_id, entity_id)
+    if not entity:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Ontology not found"
+            status_code=status.HTTP_404_NOT_FOUND, detail="Entity not found"
         )
-    properties = await service.list_properties(ontology_id)
+    properties = await service.list_properties(ontology_id, entity_id)
     return [OntologyPropertyRead.model_validate(p) for p in properties]
 
 
 @router.put(
-    "/{ontology_id}/properties/{property_id}", response_model=OntologyPropertyRead
+    "/{ontology_id}/entities/{entity_id}/properties/{property_id}",
+    response_model=OntologyPropertyRead,
 )
 async def update_property(
     ontology_id: int,
+    entity_id: int,
     property_id: int,
     payload: OntologyPropertyUpdate,
     service: OntologyService = Depends(get_ontology_service),
     audit_service: AuditService = Depends(get_audit_service),
     current_user: User = Depends(get_current_user),
 ) -> OntologyPropertyRead:
-    prop = await service.get_property(ontology_id, property_id)
+    prop = await service.get_property(ontology_id, entity_id, property_id)
     if not prop:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Property not found"
@@ -325,25 +335,33 @@ async def update_property(
         action=AuditAction.UPDATE,
         entity_type=AuditEntityType.ONTOLOGY_PROPERTY,
         entity_id=property_id,
-        payload=_sanitize_payload(update_data | {"ontology_id": ontology_id}),
-        description="Updated ontology property",
+        payload=_sanitize_payload(
+            update_data
+            | {
+                "ontology_id": ontology_id,
+                "entity_id": entity_id,
+                "property_id": property_id,
+            }
+        ),
+        description="Updated entity property",
     )
     return OntologyPropertyRead.model_validate(updated)
 
 
 @router.delete(
-    "/{ontology_id}/properties/{property_id}",
+    "/{ontology_id}/entities/{entity_id}/properties/{property_id}",
     status_code=status.HTTP_204_NO_CONTENT,
     response_class=Response,
 )
 async def delete_property(
     ontology_id: int,
+    entity_id: int,
     property_id: int,
     service: OntologyService = Depends(get_ontology_service),
     audit_service: AuditService = Depends(get_audit_service),
     current_user: User = Depends(get_current_user),
 ) -> Response:
-    prop = await service.get_property(ontology_id, property_id)
+    prop = await service.get_property(ontology_id, entity_id, property_id)
     if not prop:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Property not found"
@@ -357,10 +375,11 @@ async def delete_property(
         entity_id=property_id,
         payload={
             "ontology_id": ontology_id,
+            "entity_id": entity_id,
             "property_id": property_id,
             "name": prop.name,
         },
-        description="Deleted ontology property",
+        description="Deleted entity property",
     )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -369,63 +388,74 @@ async def delete_property(
 
 
 @router.post(
-    "/{ontology_id}/relationships",
+    "/{ontology_id}/entities/{entity_id}/relationships",
     response_model=OntologyRelationshipRead,
     status_code=status.HTTP_201_CREATED,
 )
 async def create_relationship(
     ontology_id: int,
+    entity_id: int,
     payload: OntologyRelationshipCreate,
     service: OntologyService = Depends(get_ontology_service),
     audit_service: AuditService = Depends(get_audit_service),
     current_user: User = Depends(get_current_user),
 ) -> OntologyRelationshipRead:
-    ontology = await service.get_ontology(ontology_id)
-    if not ontology:
+    entity = await service.get_entity(ontology_id, entity_id)
+    if not entity:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Ontology not found"
+            status_code=status.HTTP_404_NOT_FOUND, detail="Entity not found"
         )
-    relationship = await service.add_relationship(ontology_id, payload.model_dump())
+    relationship = await service.add_relationship(
+        ontology_id, entity_id, payload.model_dump()
+    )
     await audit_service.log_action(
         actor_type=AuditActorType.USER,
         actor_user_id=current_user.id,
         action=AuditAction.CREATE,
         entity_type=AuditEntityType.ONTOLOGY_RELATIONSHIP,
         entity_id=relationship.id,
-        payload=_sanitize_payload(payload.model_dump() | {"ontology_id": ontology_id}),
-        description="Created ontology relationship",
+        payload=_sanitize_payload(
+            payload.model_dump() | {"ontology_id": ontology_id, "entity_id": entity_id,}
+        ),
+        description="Created entity relationship",
     )
     return OntologyRelationshipRead.model_validate(relationship)
 
 
 @router.get(
-    "/{ontology_id}/relationships", response_model=list[OntologyRelationshipRead]
+    "/{ontology_id}/entities/{entity_id}/relationships",
+    response_model=list[OntologyRelationshipRead],
 )
 async def list_relationships(
-    ontology_id: int, service: OntologyService = Depends(get_ontology_service),
+    ontology_id: int,
+    entity_id: int,
+    service: OntologyService = Depends(get_ontology_service),
 ) -> list[OntologyRelationshipRead]:
-    ontology = await service.get_ontology(ontology_id)
-    if not ontology:
+    entity = await service.get_entity(ontology_id, entity_id)
+    if not entity:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Ontology not found"
+            status_code=status.HTTP_404_NOT_FOUND, detail="Entity not found"
         )
-    relationships = await service.list_relationships(ontology_id)
+    relationships = await service.list_relationships(ontology_id, entity_id)
     return [OntologyRelationshipRead.model_validate(r) for r in relationships]
 
 
 @router.put(
-    "/{ontology_id}/relationships/{relationship_id}",
+    "/{ontology_id}/entities/{entity_id}/relationships/{relationship_id}",
     response_model=OntologyRelationshipRead,
 )
 async def update_relationship(
     ontology_id: int,
+    entity_id: int,
     relationship_id: int,
     payload: OntologyRelationshipUpdate,
     service: OntologyService = Depends(get_ontology_service),
     audit_service: AuditService = Depends(get_audit_service),
     current_user: User = Depends(get_current_user),
 ) -> OntologyRelationshipRead:
-    relationship = await service.get_relationship(ontology_id, relationship_id)
+    relationship = await service.get_relationship(
+        ontology_id, entity_id, relationship_id
+    )
     if not relationship:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Relationship not found"
@@ -438,25 +468,35 @@ async def update_relationship(
         action=AuditAction.UPDATE,
         entity_type=AuditEntityType.ONTOLOGY_RELATIONSHIP,
         entity_id=relationship_id,
-        payload=_sanitize_payload(update_data | {"ontology_id": ontology_id}),
-        description="Updated ontology relationship",
+        payload=_sanitize_payload(
+            update_data
+            | {
+                "ontology_id": ontology_id,
+                "entity_id": entity_id,
+                "relationship_id": relationship_id,
+            }
+        ),
+        description="Updated entity relationship",
     )
     return OntologyRelationshipRead.model_validate(updated)
 
 
 @router.delete(
-    "/{ontology_id}/relationships/{relationship_id}",
+    "/{ontology_id}/entities/{entity_id}/relationships/{relationship_id}",
     status_code=status.HTTP_204_NO_CONTENT,
     response_class=Response,
 )
 async def delete_relationship(
     ontology_id: int,
+    entity_id: int,
     relationship_id: int,
     service: OntologyService = Depends(get_ontology_service),
     audit_service: AuditService = Depends(get_audit_service),
     current_user: User = Depends(get_current_user),
 ) -> Response:
-    relationship = await service.get_relationship(ontology_id, relationship_id)
+    relationship = await service.get_relationship(
+        ontology_id, entity_id, relationship_id
+    )
     if not relationship:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Relationship not found"
@@ -470,9 +510,10 @@ async def delete_relationship(
         entity_id=relationship_id,
         payload={
             "ontology_id": ontology_id,
+            "entity_id": entity_id,
             "relationship_id": relationship_id,
             "name": relationship.name,
         },
-        description="Deleted ontology relationship",
+        description="Deleted entity relationship",
     )
     return Response(status_code=status.HTTP_204_NO_CONTENT)

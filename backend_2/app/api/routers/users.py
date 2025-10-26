@@ -2,7 +2,15 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    HTTPException,
+    Response,
+    UploadFile,
+    status,
+)
 
 from app.api.deps import (
     get_audit_service,
@@ -223,9 +231,7 @@ async def upload_user_avatar(
         ) from exc
 
     updated = await service.update_user(
-        user,
-        {"avatar_url": avatar_url},
-        actor=current_user,
+        user, {"avatar_url": avatar_url}, actor=current_user,
     )
 
     await audit_service.log_action(

@@ -83,10 +83,13 @@ async def test_create_and_manage_ontology(client):
         "agent_id": "agent-1",
     }
     property_response = await client.post(
-        f"/ontologies/{ontology_id}/properties", json=property_payload, headers=headers,
+        f"/ontologies/{ontology_id}/entities/{entity_id}/properties",
+        json=property_payload,
+        headers=headers,
     )
     assert property_response.status_code == 201, property_response.text
     property_id = property_response.json()["id"]
+    assert property_response.json()["entity_id"] == entity_id
 
     # Add relationship
     relationship_payload = {
@@ -96,21 +99,24 @@ async def test_create_and_manage_ontology(client):
         "agent_id": "agent-2",
     }
     relationship_response = await client.post(
-        f"/ontologies/{ontology_id}/relationships",
+        f"/ontologies/{ontology_id}/entities/{entity_id}/relationships",
         json=relationship_payload,
         headers=headers,
     )
     assert relationship_response.status_code == 201, relationship_response.text
     relationship_id = relationship_response.json()["id"]
+    assert relationship_response.json()["entity_id"] == entity_id
 
     # Delete property and relationship
     delete_property = await client.delete(
-        f"/ontologies/{ontology_id}/properties/{property_id}", headers=headers,
+        f"/ontologies/{ontology_id}/entities/{entity_id}/properties/{property_id}",
+        headers=headers,
     )
     assert delete_property.status_code == 204
 
     delete_relationship = await client.delete(
-        f"/ontologies/{ontology_id}/relationships/{relationship_id}", headers=headers,
+        f"/ontologies/{ontology_id}/entities/{entity_id}/relationships/{relationship_id}",
+        headers=headers,
     )
     assert delete_relationship.status_code == 204
 

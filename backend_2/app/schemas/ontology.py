@@ -113,7 +113,7 @@ class OntologyPropertyRead(OntologyPropertyBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
-    ontology_id: int
+    entity_id: int
     created_at: datetime
     updated_at: datetime
 
@@ -147,6 +147,6 @@ class OntologyRelationshipRead(OntologyRelationshipBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
-    ontology_id: int
+    entity_id: int
     created_at: datetime
     updated_at: datetime

@@ -77,19 +77,23 @@ class OntologyService:
         await self.session.commit()
 
     # Properties --------------------------------------------------------
-    async def add_property(self, ontology_id: int, data: dict) -> OntologyProperty:
+    async def add_property(
+        self, ontology_id: int, entity_id: int, data: dict
+    ) -> OntologyProperty:
         self._validate_author_payload(data)
-        prop = await self.repository.add_property(ontology_id, data)
+        prop = await self.repository.add_property(ontology_id, entity_id, data)
         await self.session.commit()
         return prop
 
-    async def list_properties(self, ontology_id: int) -> Sequence[OntologyProperty]:
-        return await self.repository.list_properties(ontology_id)
+    async def list_properties(
+        self, ontology_id: int, entity_id: int
+    ) -> Sequence[OntologyProperty]:
+        return await self.repository.list_properties(ontology_id, entity_id)
 
     async def get_property(
-        self, ontology_id: int, property_id: int
+        self, ontology_id: int, entity_id: int, property_id: int
     ) -> OntologyProperty | None:
-        return await self.repository.get_property(ontology_id, property_id)
+        return await self.repository.get_property(ontology_id, entity_id, property_id)
 
     async def update_property(
         self, prop: OntologyProperty, data: dict
@@ -105,22 +109,24 @@ class OntologyService:
 
     # Relationships -----------------------------------------------------
     async def add_relationship(
-        self, ontology_id: int, data: dict,
+        self, ontology_id: int, entity_id: int, data: dict
     ) -> OntologyRelationship:
         self._validate_author_payload(data)
-        rel = await self.repository.add_relationship(ontology_id, data)
+        rel = await self.repository.add_relationship(ontology_id, entity_id, data)
         await self.session.commit()
         return rel
 
     async def list_relationships(
-        self, ontology_id: int
+        self, ontology_id: int, entity_id: int
     ) -> Sequence[OntologyRelationship]:
-        return await self.repository.list_relationships(ontology_id)
+        return await self.repository.list_relationships(ontology_id, entity_id)
 
     async def get_relationship(
-        self, ontology_id: int, relationship_id: int,
+        self, ontology_id: int, entity_id: int, relationship_id: int
     ) -> OntologyRelationship | None:
-        return await self.repository.get_relationship(ontology_id, relationship_id)
+        return await self.repository.get_relationship(
+            ontology_id, entity_id, relationship_id
+        )
 
     async def update_relationship(
         self, relationship: OntologyRelationship, data: dict,

@@ -8,7 +8,11 @@ from app.api.deps import get_current_user, get_media_service, require_roles
 from app.models.user import User, UserRole
 from app.services.media_service import ImageValidationError, MediaService
 
-router = APIRouter(prefix="/media", tags=["media"], dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.WORLD_BUILDER))])
+router = APIRouter(
+    prefix="/media",
+    tags=["media"],
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.WORLD_BUILDER))],
+)
 
 VALID_CATEGORY_RE = re.compile(r"^[a-zA-Z0-9_\-./]+$")
 
@@ -17,8 +21,7 @@ def _sanitize_category(category: str) -> str:
     category = category.strip().lower().replace("..", "")
     if not category or not VALID_CATEGORY_RE.match(category):
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid category name",
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid category name",
         )
     return category
 
@@ -42,8 +45,7 @@ async def upload_image(
         )
     except ImageValidationError as exc:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc),
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc),
         ) from exc
 
     return {"url": url}

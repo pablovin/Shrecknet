@@ -108,6 +108,7 @@ class OntologyEntity(Base):
         back_populates="entity",
         cascade="all, delete-orphan",
         passive_deletes=True,
+        foreign_keys="OntologyRelationship.entity_id",
     )
 
 
@@ -175,7 +176,9 @@ class OntologyRelationship(Base):
     )
 
     entity: Mapped[OntologyEntity] = relationship(
-        "OntologyEntity", back_populates="relationships"
+        "OntologyEntity",
+        back_populates="relationships",
+        foreign_keys=[entity_id],
     )
     destiny_entity: Mapped[Optional[OntologyEntity]] = relationship(
         "OntologyEntity", foreign_keys=[destiny_entity_id]

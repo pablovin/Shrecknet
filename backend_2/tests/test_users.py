@@ -9,7 +9,7 @@ from app.models.user import UserRole
 async def test_user_registration_and_self_update(client):
     payload = {
         "username": "writer1",
-        "password": "WriterPass123",
+        "password": "Writer1",
         "full_name": "Writer One",
         "email": "writer1@example.com",
         "timezone": "UTC",
@@ -56,7 +56,7 @@ async def test_user_availability_endpoint(client):
         "/users/",
         json={
             "username": "newuser",
-            "password": "SomeStrongPass123",
+            "password": "Strong1",
             "full_name": "New User",
             "email": "new@example.com",
             "timezone": "UTC",
@@ -82,7 +82,7 @@ async def test_user_availability_endpoint(client):
 async def test_registration_enforces_uniqueness(client):
     first_user = {
         "username": "unique1",
-        "password": "UniquePass123",
+        "password": "Unique1",
         "full_name": "Unique User",
         "email": "unique@example.com",
         "timezone": "UTC",
@@ -90,7 +90,7 @@ async def test_registration_enforces_uniqueness(client):
     }
     second_user = {
         "username": "unique2",
-        "password": "UniquePass456",
+        "password": "Unique2",
         "full_name": "Unique User 2",
         "email": "unique@example.com",
         "timezone": "UTC",
@@ -111,7 +111,7 @@ async def test_ontology_endpoints_require_privileged_roles(client):
         "/users/",
         json={
             "username": "bootstrap",
-            "password": "Bootstrap123",
+            "password": "Boot12",
             "full_name": "Bootstrap Admin",
             "email": "bootstrap@example.com",
             "timezone": "UTC",
@@ -121,7 +121,7 @@ async def test_ontology_endpoints_require_privileged_roles(client):
 
     player_payload = {
         "username": "player1",
-        "password": "PlayerPass123",
+        "password": "Player1",
         "full_name": "Player One",
         "email": "player1@example.com",
         "timezone": "UTC",
@@ -146,3 +146,41 @@ async def test_ontology_endpoints_require_privileged_roles(client):
 
     no_auth_response = await client.get("/ontologies/")
     assert no_auth_response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_long_password_allowed_and_truncated(client):
+    long_password = "superlongpassword" * 10  # well over bcrypt limit
+    payload = {
+        "username": "longpass",
+        "password": long_password,
+        "full_name": "Long Password User",
+        "email": "longpass@example.com",
+        "timezone": "UTC",
+        "role": UserRole.PLAYER.value,
+    }
+
+    registration = await client.post("/users/", json=payload)
+    assert registration.status_code == 201, registration.text
+
+    token_response = await client.post(
+        "/auth/token",
+        data={"username": payload["username"], "password": long_password},
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    assert token_response.status_code == 200, token_response.text
+
+
+@pytest.mark.asyncio
+async def test_short_password_rejected(client):
+    payload = {
+        "username": "shortpass",
+        "password": "abc",
+        "full_name": "Short Password",
+        "email": "shortpass@example.com",
+        "timezone": "UTC",
+        "role": UserRole.PLAYER.value,
+    }
+
+    response = await client.post("/users/", json=payload)
+    assert response.status_code == 422

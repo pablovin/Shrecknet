@@ -32,6 +32,8 @@ FastAPI automatically generates interactive docs at `/docs` and `/redoc`.
 ## Authentication & authorization
 
 - Register users with `POST /users/`; passwords are hashed using bcrypt before persistence.
+- Passwords accept any characters, require at least six, and longer inputs are automatically
+  truncated to the bcrypt-safe length.
 - The first account created automatically becomes an `admin`, regardless of the requested role,
   so newly deployed environments always begin with a privileged operator.
 - Exchange credentials for a JWT access token via `POST /auth/token` and include it as

@@ -18,7 +18,7 @@ class UserBase(BaseModel):
 
 
 class UserCreate(UserBase):
-    password: str = Field(min_length=8)
+    password: str = Field(min_length=6)
 
     @model_validator(mode="after")
     def ensure_entity_ids_unique(self) -> "UserCreate":
@@ -29,7 +29,7 @@ class UserCreate(UserBase):
 
 class UserUpdate(BaseModel):
     username: str | None = None
-    password: str | None = Field(default=None, min_length=8)
+    password: str | None = Field(default=None, min_length=6)
     full_name: str | None = None
     email: EmailStr | None = None
     timezone: str | None = None

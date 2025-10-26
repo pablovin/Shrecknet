@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from typing import Iterable
 
-from sqlalchemy import select
+from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import get_password_hash, verify_password
 from app.models.ontology import OntologyEntity
-from app.models.user import User, UserRole
+from app.models.user import User, UserRole, user_entities
 from app.repositories.user_repository import UserRepository
 
 
@@ -94,8 +94,10 @@ class UserService:
     ) -> None:
         unique_ids = {int(entity_id) for entity_id in entity_ids}
         if not unique_ids:
-            user.entities.clear()
-            await self.session.flush()
+            if user.id is not None:
+                await self.session.execute(
+                    delete(user_entities).where(user_entities.c.user_id == user.id)
+                )
             return
 
         result = await self.session.execute(

@@ -1,0 +1,183 @@
+from __future__ import annotations
+
+from typing import Any, Sequence
+
+from sqlalchemy import Select, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.models.ontology import (
+    Ontology,
+    OntologyEntity,
+    OntologyProperty,
+    OntologyRelationship,
+)
+from app.repositories.base import BaseRepository
+
+
+class OntologyRepository(BaseRepository):
+    """Data access helpers for ontologies and related objects."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        super().__init__(session)
+
+    async def list(
+        self,
+        *,
+        skip: int = 0,
+        limit: int = 50,
+        name: str | None = None,
+        description: str | None = None,
+    ) -> Sequence[Ontology]:
+        query: Select[tuple[Ontology]] = select(Ontology).offset(skip).limit(limit)
+        if name:
+            query = query.where(Ontology.name.ilike(f"%{name}%"))
+        if description:
+            query = query.where(Ontology.description.ilike(f"%{description}%"))
+        result = await self.session.execute(query)
+        return result.scalars().unique().all()
+
+    async def get(self, ontology_id: int) -> Ontology | None:
+        result = await self.session.execute(
+            select(Ontology).where(Ontology.id == ontology_id)
+        )
+        return result.scalar_one_or_none()
+
+    async def get_by_name(self, name: str) -> Ontology | None:
+        result = await self.session.execute(
+            select(Ontology).where(Ontology.name == name)
+        )
+        return result.scalar_one_or_none()
+
+    async def create(self, data: dict[str, Any]) -> Ontology:
+        ontology = Ontology(**data)
+        await self.save(ontology)
+        await self.session.refresh(ontology)
+        return ontology
+
+    async def update(self, ontology: Ontology, data: dict[str, Any]) -> Ontology:
+        for key, value in data.items():
+            setattr(ontology, key, value)
+        await self.save(ontology)
+        await self.session.refresh(ontology)
+        return ontology
+
+    async def remove(self, ontology: Ontology) -> None:
+        await self.delete(ontology)
+
+    # Entity operations --------------------------------------------------
+    async def add_entity(
+        self, ontology_id: int, data: dict[str, Any],
+    ) -> OntologyEntity:
+        entity = OntologyEntity(ontology_id=ontology_id, **data)
+        await self.save(entity)
+        await self.session.refresh(entity)
+        return entity
+
+    async def get_entity(
+        self, ontology_id: int, entity_id: int
+    ) -> OntologyEntity | None:
+        result = await self.session.execute(
+            select(OntologyEntity).where(
+                OntologyEntity.ontology_id == ontology_id,
+                OntologyEntity.id == entity_id,
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def list_entities(self, ontology_id: int) -> Sequence[OntologyEntity]:
+        result = await self.session.execute(
+            select(OntologyEntity).where(OntologyEntity.ontology_id == ontology_id)
+        )
+        return result.scalars().all()
+
+    async def update_entity(
+        self, entity: OntologyEntity, data: dict[str, Any],
+    ) -> OntologyEntity:
+        for key, value in data.items():
+            setattr(entity, key, value)
+        await self.save(entity)
+        await self.session.refresh(entity)
+        return entity
+
+    async def remove_entity(self, entity: OntologyEntity) -> None:
+        await self.delete(entity)
+
+    # Property operations -----------------------------------------------
+    async def add_property(
+        self, ontology_id: int, data: dict[str, Any],
+    ) -> OntologyProperty:
+        prop = OntologyProperty(ontology_id=ontology_id, **data)
+        await self.save(prop)
+        await self.session.refresh(prop)
+        return prop
+
+    async def get_property(
+        self, ontology_id: int, property_id: int,
+    ) -> OntologyProperty | None:
+        result = await self.session.execute(
+            select(OntologyProperty).where(
+                OntologyProperty.ontology_id == ontology_id,
+                OntologyProperty.id == property_id,
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def list_properties(self, ontology_id: int) -> Sequence[OntologyProperty]:
+        result = await self.session.execute(
+            select(OntologyProperty).where(OntologyProperty.ontology_id == ontology_id)
+        )
+        return result.scalars().all()
+
+    async def update_property(
+        self, prop: OntologyProperty, data: dict[str, Any],
+    ) -> OntologyProperty:
+        for key, value in data.items():
+            setattr(prop, key, value)
+        await self.save(prop)
+        await self.session.refresh(prop)
+        return prop
+
+    async def remove_property(self, prop: OntologyProperty) -> None:
+        await self.delete(prop)
+
+    # Relationship operations ------------------------------------------
+    async def add_relationship(
+        self, ontology_id: int, data: dict[str, Any],
+    ) -> OntologyRelationship:
+        rel = OntologyRelationship(ontology_id=ontology_id, **data)
+        await self.save(rel)
+        await self.session.refresh(rel)
+        return rel
+
+    async def get_relationship(
+        self, ontology_id: int, relationship_id: int,
+    ) -> OntologyRelationship | None:
+        result = await self.session.execute(
+            select(OntologyRelationship).where(
+                OntologyRelationship.ontology_id == ontology_id,
+                OntologyRelationship.id == relationship_id,
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def list_relationships(
+        self, ontology_id: int
+    ) -> Sequence[OntologyRelationship]:
+        result = await self.session.execute(
+            select(OntologyRelationship).where(
+                OntologyRelationship.ontology_id == ontology_id
+            )
+        )
+        return result.scalars().all()
+
+    async def update_relationship(
+        self, relationship: OntologyRelationship, data: dict[str, Any],
+    ) -> OntologyRelationship:
+        for key, value in data.items():
+            setattr(relationship, key, value)
+        await self.save(relationship)
+        await self.session.refresh(relationship)
+        return relationship
+
+    async def remove_relationship(self, relationship: OntologyRelationship) -> None:
+        await self.delete(relationship)

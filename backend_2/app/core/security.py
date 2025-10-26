@@ -6,6 +6,22 @@ from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 
+# Some environments ship a bcrypt build that omits the __about__ attribute expected by passlib.
+# When that happens passlib's backend loader raises AttributeError. Patch the module lazily here
+# so hashing keeps working even with minimal bcrypt wheels.
+try:  # pragma: no cover - environment specific
+    import bcrypt
+    from types import SimpleNamespace
+
+    version = getattr(bcrypt, "__version__", "0")
+    for module in (bcrypt, getattr(bcrypt, "_bcrypt", None)):
+        if module is None:
+            continue
+        if not hasattr(module, "__about__"):
+            module.__about__ = SimpleNamespace(__version__=version)
+except Exception:  # pragma: no cover - best effort patching
+    pass
+
 from app.core.config import get_settings
 
 settings = get_settings()

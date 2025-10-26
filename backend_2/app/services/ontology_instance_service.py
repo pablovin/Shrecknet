@@ -166,6 +166,7 @@ class OntologyInstanceService:
                             relationship_definitions[
                                 relationship_payload.definition_id
                             ].destiny_entity_id,
+                            tx,
                         )
                     rel_definition = relationship_definitions[relationship_payload.definition_id]
                     relationship_id = str(uuid4())
@@ -484,6 +485,7 @@ class OntologyInstanceService:
                             relationship_definitions[
                                 relationship_payload.definition_id
                             ].destiny_entity_id,
+                            tx,
                         )
                     rel_definition = relationship_definitions[relationship_payload.definition_id]
                     relationship_id = str(uuid4())
@@ -621,8 +623,9 @@ class OntologyInstanceService:
         entity_instance_id: str,
         ontology_id: int,
         expected_definition_id: int | None,
+        tx,
     ) -> None:
-        result = await self.graph_session.run(
+        result = await tx.run(
             """
             MATCH (e:EntityInstance {entity_instance_id: $entity_instance_id})<-[:HAS_ENTITY]-(inst:OntologyInstance)
             RETURN e.entity_definition_id AS definition_id, inst.ontology_id AS ontology_id

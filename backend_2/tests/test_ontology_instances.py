@@ -84,7 +84,7 @@ async def test_create_ontology_instance_flow(client):
         "bi_directional": True,
         "author_type": AuthorType.HUMAN.value,
         "user_id": "def-1",
-        "destiny_entity_id": entity_id,
+        "destiny_entity_id": destiny_entity_id,
     }
     relationship_response = await client.post(
         f"/ontologies/{ontology_id}/entities/{entity_id}/relationships",
@@ -93,6 +93,24 @@ async def test_create_ontology_instance_flow(client):
     )
     assert relationship_response.status_code == 201, relationship_response.text
     relationship_definition_id = relationship_response.json()["id"]
+
+    hero_relationships = await client.get(
+        f"/ontologies/{ontology_id}/entities/{entity_id}/relationships",
+        headers=headers,
+    )
+    assert hero_relationships.status_code == 200
+    relationships_data = hero_relationships.json()
+    assert any(
+        rel["destiny_entity_id"] == destiny_entity_id for rel in relationships_data
+    )
+
+    mirror_response = await client.get(
+        f"/ontologies/{ontology_id}/entities/{destiny_entity_id}/relationships",
+        headers=headers,
+    )
+    assert mirror_response.status_code == 200
+    mirror_data = mirror_response.json()
+    assert any(rel["destiny_entity_id"] == entity_id for rel in mirror_data)
 
     # Create ontology instance
     instance_payload = {

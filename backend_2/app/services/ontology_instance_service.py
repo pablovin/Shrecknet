@@ -76,7 +76,8 @@ class OntologyInstanceService:
                 }
             )
 
-        async with self.graph_session.begin_transaction() as tx:
+        tx = await self.graph_session.begin_transaction()
+        try:
             await tx.run(
                 """
                 CREATE (i:OntologyInstance {
@@ -197,8 +198,14 @@ class OntologyInstanceService:
                             created_at=timestamp,
                             updated_at=timestamp,
                         )
-
-        return await self.get_instance(instance_id)
+        except Exception:
+            await tx.rollback()
+            await tx.close()
+            raise
+        else:
+            await tx.commit()
+            await tx.close()
+            return await self.get_instance(instance_id)
 
     async def list_instances(
         self,
@@ -366,7 +373,8 @@ class OntologyInstanceService:
         definitions = await self._load_entity_definitions(current.ontology_id)
         self._validate_entities_payload(payload.entities, definitions)
 
-        async with self.graph_session.begin_transaction() as tx:
+        tx = await self.graph_session.begin_transaction()
+        try:
             await tx.run(
                 """
                 MATCH (i:OntologyInstance {instance_id: $instance_id})-[:HAS_ENTITY]->(e)
@@ -492,8 +500,14 @@ class OntologyInstanceService:
                             created_at=timestamp,
                             updated_at=timestamp,
                         )
-
-        return await self.get_instance(instance_id)
+        except Exception:
+            await tx.rollback()
+            await tx.close()
+            raise
+        else:
+            await tx.commit()
+            await tx.close()
+            return await self.get_instance(instance_id)
 
     # ------------------------------------------------------------------
     async def _load_entity_definitions(
@@ -562,4 +576,3 @@ class OntologyInstanceService:
                     raise ValueError(
                         "Relationship target alias does not match destiny entity definition"
                     )
-

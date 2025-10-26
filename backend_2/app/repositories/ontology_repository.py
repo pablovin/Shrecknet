@@ -205,7 +205,10 @@ class OntologyRepository(BaseRepository):
     ) -> Sequence[OntologyRelationship]:
         result = await self.session.execute(
             select(OntologyRelationship)
-            .options(selectinload(OntologyRelationship.entity))
+            .options(
+                selectinload(OntologyRelationship.entity),
+                selectinload(OntologyRelationship.destiny_entity),
+            )
             .join(
                 OntologyEntity,
                 OntologyRelationship.entity_id == OntologyEntity.id,
@@ -230,3 +233,26 @@ class OntologyRepository(BaseRepository):
 
     async def remove_relationship(self, relationship: OntologyRelationship) -> None:
         await self.delete(relationship)
+
+    async def find_relationship_between(
+        self, ontology_id: int, source_entity_id: int, destiny_entity_id: int | None
+    ) -> OntologyRelationship | None:
+        if destiny_entity_id is None:
+            return None
+        result = await self.session.execute(
+            select(OntologyRelationship)
+            .options(
+                selectinload(OntologyRelationship.entity),
+                selectinload(OntologyRelationship.destiny_entity),
+            )
+            .join(
+                OntologyEntity,
+                OntologyRelationship.entity_id == OntologyEntity.id,
+            )
+            .where(
+                OntologyEntity.ontology_id == ontology_id,
+                OntologyRelationship.entity_id == source_entity_id,
+                OntologyRelationship.destiny_entity_id == destiny_entity_id,
+            )
+        )
+        return result.scalar_one_or_none()

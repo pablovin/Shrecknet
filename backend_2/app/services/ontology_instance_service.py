@@ -490,4 +490,3 @@ class OntologyInstanceService:
                     raise ValueError(
                         "Relationship target alias does not match destiny entity definition"
                     )
-*** End Patch

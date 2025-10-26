@@ -35,7 +35,7 @@ class Settings(BaseSettings):
     image_max_height: int = 1024
     neo4j_uri: str = "bolt://localhost:7687"
     neo4j_user: str = "neo4j"
-    neo4j_password: str = "neo4j"
+    neo4j_password: str = "VeryStrongPass123"
     neo4j_database: str = "neo4j"
 
 

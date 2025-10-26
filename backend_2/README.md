@@ -71,10 +71,12 @@ FastAPI automatically generates interactive docs at `/docs` and `/redoc`.
 - Quick start Neo4j locally:
 
   ```bash
-  docker run --rm -p 7474:7474 -p 7687:7687 \
-    -e NEO4J_AUTH=neo4j/neo4j \
-    -e NEO4J_PLUGINS='["apoc", "graph-data-science"]' \
-    --name shrecknet-neo4j neo4j:5-community
+  docker run --rm \
+  -p 7474:7474 -p 7687:7687 \
+  -e NEO4J_AUTH=neo4j/VeryStrongPass123 \
+  -e NEO4J_PLUGINS='["apoc", "graph-data-science"]' \
+  --name shrecknet-neo4j neo4j:5-community
+
   ```
 
   Update the password on first login (and mirror it in the backend env vars).

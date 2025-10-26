@@ -31,6 +31,10 @@ test = [
 requires = ["setuptools>=65", "wheel"]
 build-backend = "setuptools.build_meta"
 
+[tool.setuptools.packages.find]
+include = ["app*", "tests*"]
+exclude = ["media"]
+
 [tool.black]
 line-length = 88
 

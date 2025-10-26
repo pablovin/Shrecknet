@@ -147,12 +147,27 @@ class OntologyInstanceService:
                 ]
                 for relationship_payload in entity_payload.relationships:
                     target_alias = relationship_payload.target_alias
-                    if target_alias not in alias_to_ids:
-                        raise ValueError(
-                            f"Unknown target alias '{target_alias}' for relationship"
+                    target_id: str | None
+                    if target_alias:
+                        if target_alias not in alias_to_ids:
+                            raise ValueError(
+                                f"Unknown target alias '{target_alias}' for relationship"
+                            )
+                        target_id = alias_to_ids[target_alias]
+                    else:
+                        target_id = relationship_payload.target_entity_instance_id
+                        if target_id is None:
+                            raise ValueError(
+                                "Relationship must specify target alias or entity instance id"
+                            )
+                        await self._validate_existing_target_entity(
+                            target_id,
+                            payload.ontology_id,
+                            relationship_definitions[
+                                relationship_payload.definition_id
+                            ].destiny_entity_id,
                         )
                     rel_definition = relationship_definitions[relationship_payload.definition_id]
-                    target_id = alias_to_ids[target_alias]
                     relationship_id = str(uuid4())
                     relationship_data = json.dumps(relationship_payload.data or {})
                     await tx.run(
@@ -173,10 +188,10 @@ class OntologyInstanceService:
                         relationship_id=relationship_id,
                         relationship_definition_id=relationship_payload.definition_id,
                         destiny_definition_id=rel_definition.destiny_entity_id,
-                        data=relationship_data,
-                        created_at=timestamp,
-                        updated_at=timestamp,
-                    )
+                            data=relationship_data,
+                            created_at=timestamp,
+                            updated_at=timestamp,
+                        )
                     if rel_definition.bi_directional:
                         reverse_id = str(uuid4())
                         await tx.run(
@@ -450,12 +465,27 @@ class OntologyInstanceService:
                 ]
                 for relationship_payload in entity_payload.relationships:
                     target_alias = relationship_payload.target_alias
-                    if target_alias not in alias_to_ids:
-                        raise ValueError(
-                            f"Unknown target alias '{target_alias}' for relationship"
+                    target_id: str | None
+                    if target_alias:
+                        if target_alias not in alias_to_ids:
+                            raise ValueError(
+                                f"Unknown target alias '{target_alias}' for relationship"
+                            )
+                        target_id = alias_to_ids[target_alias]
+                    else:
+                        target_id = relationship_payload.target_entity_instance_id
+                        if target_id is None:
+                            raise ValueError(
+                                "Relationship must specify target alias or entity instance id"
+                            )
+                        await self._validate_existing_target_entity(
+                            target_id,
+                            current.ontology_id,
+                            relationship_definitions[
+                                relationship_payload.definition_id
+                            ].destiny_entity_id,
                         )
                     rel_definition = relationship_definitions[relationship_payload.definition_id]
-                    target_id = alias_to_ids[target_alias]
                     relationship_id = str(uuid4())
                     relationship_data = json.dumps(relationship_payload.data or {})
                     await tx.run(
@@ -568,15 +598,50 @@ class OntologyInstanceService:
                         f"Relationship definition {rel.definition_id} does not belong to entity"
                     )
                 target_alias = rel.target_alias
-                if target_alias not in alias_to_definition:
+                if target_alias:
+                    if target_alias not in alias_to_definition:
+                        raise ValueError(
+                            f"Relationship refers to unknown target alias '{target_alias}'"
+                        )
+                    destiny_entity_id = relationship_map[rel.definition_id].destiny_entity_id
+                    if (
+                        destiny_entity_id is not None
+                        and alias_to_definition[target_alias] != destiny_entity_id
+                    ):
+                        raise ValueError(
+                            "Relationship target alias does not match destiny entity definition"
+                        )
+                elif not rel.target_entity_instance_id:
                     raise ValueError(
-                        f"Relationship refers to unknown target alias '{target_alias}'"
+                        "Relationship must provide a target alias or entity instance id"
                     )
-                destiny_entity_id = relationship_map[rel.definition_id].destiny_entity_id
-                if (
-                    destiny_entity_id is not None
-                    and alias_to_definition[target_alias] != destiny_entity_id
-                ):
-                    raise ValueError(
-                        "Relationship target alias does not match destiny entity definition"
-                    )
+
+    async def _validate_existing_target_entity(
+        self,
+        entity_instance_id: str,
+        ontology_id: int,
+        expected_definition_id: int | None,
+    ) -> None:
+        result = await self.graph_session.run(
+            """
+            MATCH (e:EntityInstance {entity_instance_id: $entity_instance_id})<-[:HAS_ENTITY]-(inst:OntologyInstance)
+            RETURN e.entity_definition_id AS definition_id, inst.ontology_id AS ontology_id
+            """,
+            entity_instance_id=entity_instance_id,
+        )
+        record = await result.single()
+        if not record:
+            raise ValueError(
+                f"Target entity instance '{entity_instance_id}' does not exist"
+            )
+        if record["ontology_id"] != ontology_id:
+            raise ValueError(
+                "Target entity belongs to a different ontology instance"
+            )
+        if (
+            expected_definition_id is not None
+            and record["definition_id"] != expected_definition_id
+        ):
+            raise ValueError(
+                "Target entity instance does not match relationship destiny definition"
+            )

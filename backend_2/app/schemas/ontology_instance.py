@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.models.ontology import AuthorType
 
@@ -15,8 +15,27 @@ class OntologyInstancePropertyValue(BaseModel):
 
 class OntologyInstanceRelationshipCreate(BaseModel):
     definition_id: int
-    target_alias: str
+    target_alias: str | None = None
+    target_entity_instance_id: str | None = None
     data: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_target(cls, values: "OntologyInstanceRelationshipCreate") -> "OntologyInstanceRelationshipCreate":
+        alias = values.target_alias.strip() if values.target_alias else None
+        target_id = values.target_entity_instance_id.strip() if values.target_entity_instance_id else None
+        if bool(alias) == bool(target_id):
+            raise ValueError(
+                "Provide exactly one of target_alias or target_entity_instance_id"
+            )
+        if alias:
+            values.target_alias = alias
+        else:
+            values.target_alias = None
+        if target_id:
+            values.target_entity_instance_id = target_id
+        else:
+            values.target_entity_instance_id = None
+        return values
 
 
 class OntologyInstanceRelationshipRead(BaseModel):

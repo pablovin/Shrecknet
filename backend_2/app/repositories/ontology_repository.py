@@ -188,12 +188,15 @@ class OntologyRepository(BaseRepository):
         result = await self.session.execute(
             select(OntologyRelationship)
             .options(selectinload(OntologyRelationship.entity))
+            .join(
+                OntologyEntity,
+                OntologyRelationship.entity_id == OntologyEntity.id,
+            )
             .where(
+                OntologyEntity.ontology_id == ontology_id,
                 OntologyRelationship.entity_id == entity_id,
                 OntologyRelationship.id == relationship_id,
             )
-            .join(OntologyEntity)
-            .where(OntologyEntity.ontology_id == ontology_id)
         )
         return result.scalar_one_or_none()
 
@@ -202,10 +205,15 @@ class OntologyRepository(BaseRepository):
     ) -> Sequence[OntologyRelationship]:
         result = await self.session.execute(
             select(OntologyRelationship)
-            .where(OntologyRelationship.entity_id == entity_id)
             .options(selectinload(OntologyRelationship.entity))
-            .join(OntologyEntity)
-            .where(OntologyEntity.ontology_id == ontology_id)
+            .join(
+                OntologyEntity,
+                OntologyRelationship.entity_id == OntologyEntity.id,
+            )
+            .where(
+                OntologyEntity.ontology_id == ontology_id,
+                OntologyRelationship.entity_id == entity_id,
+            )
         )
         return result.scalars().all()
 

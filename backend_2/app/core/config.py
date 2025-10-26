@@ -1,5 +1,5 @@
 from functools import lru_cache
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -14,6 +14,21 @@ class Settings(BaseSettings):
     secret_key: str = "change-me"
     access_token_expire_minutes: int = 30
     jwt_algorithm: str = "HS256"
+    cors_allow_origins: list[str] = Field(
+        default_factory=lambda: [
+            "http://localhost",
+            "http://localhost:3000",
+            "https://lovableproject.com",
+        ]
+    )
+    cors_allow_origin_regex: str | None = r"https://.*\\.lovableproject\\.com"
+    cors_allow_credentials: bool = True
+    cors_allow_methods: list[str] = Field(
+        default_factory=lambda: ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
+    )
+    cors_allow_headers: list[str] = Field(
+        default_factory=lambda: ["Authorization", "Content-Type"]
+    )
 
 
 class AppConfig(BaseModel):

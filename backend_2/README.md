@@ -39,6 +39,18 @@ FastAPI automatically generates interactive docs at `/docs` and `/redoc`.
 - Only `admin` and `world_builder` roles may access ontology CRUD routes.
 - Users can update their own profile data; only admins may change user roles.
 
+### CORS configuration
+
+Cross-origin access is controlled via environment variables exposed by `Settings`:
+
+- `BACKEND_2_CORS_ALLOW_ORIGINS` – comma-separated list of allowed origins (default includes
+  localhost and `https://lovableproject.com`).
+- `BACKEND_2_CORS_ALLOW_ORIGIN_REGEX` – optional regex matched against request origins (defaults to
+  allowing any subdomain of `lovableproject.com`).
+- `BACKEND_2_CORS_ALLOW_METHODS`, `BACKEND_2_CORS_ALLOW_HEADERS`, `BACKEND_2_CORS_ALLOW_CREDENTIALS`
+  – tune allowed verbs, headers (pre-populated with `GET/POST/PUT/DELETE/OPTIONS` and
+  `Authorization, Content-Type`), and credential support.
+
 ## Data model overview
 
 - Users: username, hashed password, full name, email, timezone, role, optional avatar URL, optional

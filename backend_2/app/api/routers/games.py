@@ -17,6 +17,7 @@ from app.schemas.game import (
     AttendanceRequest,
     GameCreate,
     GameRead,
+    GameMemberSummary,
     GameSessionCreate,
     GameSessionPollCreate,
     GameSessionPollOptionRead,
@@ -169,6 +170,19 @@ async def get_game(
     game = await _get_game_or_404(game_id, service)
     _ensure_member(game, current_user)
     return GameRead.model_validate(game)
+
+
+@router.get(
+    "/{game_id}/members", response_model=list[GameMemberSummary],
+)
+async def list_members(
+    game_id: int,
+    service: GameService = Depends(get_game_service),
+    current_user: User = Depends(get_current_user),
+) -> list[GameMemberSummary]:
+    game = await _get_game_or_404(game_id, service)
+    _ensure_member(game, current_user)
+    return [GameMemberSummary.model_validate(member) for member in game.members]
 
 
 @router.put(

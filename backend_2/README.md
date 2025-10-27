@@ -80,6 +80,21 @@ FastAPI automatically generates interactive docs at `/docs` and `/redoc`.
   `POST /notifications/{id}/read`, and retrieve unread totals using
   `GET /notifications/me/unread-count`.
 
+## Ontology library
+
+- Manage knowledge artifacts per ontology under `/libraries/{ontology_id}/items`. Admins/world
+  builders upload PDFs (up to 300 MB) via multipart form data; the file is stored deterministically
+  as `/library/{ontology_id}/{item_id}/content.pdf` underneath the media root, replacing prior
+  uploads in place.
+- Each item exposes metadata (title, description, optional cover URL) plus vectorisation markers
+  (`vectorized`, `last_vectorized_at`) for downstream processing; consumers fetch the file via the
+  returned `pdf_url`.
+- Authenticated users can browse library entries, flag notable pages with bookmarks, and share
+  bookmarks with selected collaborators (`POST /libraries/items/{item_id}/bookmarks`,
+  `PUT /libraries/bookmarks/{bookmark_id}`, `DELETE /libraries/bookmarks/{bookmark_id}`).
+- Bookmarks capture page, title, optional description, privacy flag, and explicit share lists so
+  personal notes stay private while team highlights are broadcast.
+
 ## Games & sessions
 
 - Tabletop campaigns live under `/games`. Admins and world builders create games tied to an ontology
@@ -136,6 +151,8 @@ Cross-origin access is controlled via environment variables exposed by `Settings
 
 - Users: username, hashed password, full name, email, timezone, role, optional avatar URL, optional
   linked ontology entity ids.
+- Library items: ontology-linked PDFs with title/description, optional cover imagery, deterministic
+  storage paths, vectorisation status metadata, and user-created bookmarks (private or shared).
 - Games: campaign containers referencing an ontology, a member roster, associated sessions, polls,
   and attendance flags for each scheduled session.
 - Ontologies: contain entities; each entity owns its properties and relationships (relationships

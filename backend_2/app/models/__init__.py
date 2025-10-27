@@ -4,6 +4,11 @@ from app.models.notification import (
     NotificationAuthorType,
     NotificationType,
 )
+from app.models.library import (
+    LibraryBookmark,
+    LibraryItem,
+    library_bookmark_shares,
+)
 from app.models.game import (
     Game,
     GameSession,
@@ -29,6 +34,9 @@ __all__ = [
     "Notification",
     "NotificationType",
     "NotificationAuthorType",
+    "LibraryItem",
+    "LibraryBookmark",
+    "library_bookmark_shares",
     "Game",
     "GameSession",
     "GameSessionAttendance",

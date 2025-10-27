@@ -15,6 +15,7 @@ from app.schemas.user import TokenPayload
 from app.services.audit_service import AuditService
 from app.services.game_service import GameService
 from app.services.library_service import LibraryService
+from app.services.note_service import NoteService
 from app.services.notification_service import NotificationService
 from app.services.media_service import MediaService
 from app.services.ontology_instance_service import OntologyInstanceService
@@ -65,6 +66,13 @@ async def get_library_service(
     session: AsyncSession = Depends(get_db_session),
 ) -> LibraryService:
     return LibraryService(session)
+
+
+async def get_note_service(
+    session: AsyncSession = Depends(get_db_session),
+    notification_service: NotificationService = Depends(get_notification_service),
+) -> NoteService:
+    return NoteService(session, notification_service)
 
 
 async def get_ontology_instance_service(

@@ -11,6 +11,7 @@ from app.db.base import Base
 if TYPE_CHECKING:  # pragma: no cover
     from app.models.game import Game, GameSessionAttendance, GameSessionPollVote
     from app.models.library import LibraryBookmark
+    from app.models.note import Note
     from app.models.ontology import OntologyEntity
 
 
@@ -68,6 +69,10 @@ class User(Base):
         "LibraryBookmark",
         secondary="library_bookmark_shares",
         back_populates="shared_with",
+    )
+    notes: Mapped[list["Note"]] = relationship("Note", back_populates="owner")
+    shared_notes: Mapped[list["Note"]] = relationship(
+        "Note", secondary="note_shares", back_populates="shared_with"
     )
 
     def __repr__(self) -> str:  # pragma: no cover - debugging helper

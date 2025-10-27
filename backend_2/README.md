@@ -95,6 +95,15 @@ FastAPI automatically generates interactive docs at `/docs` and `/redoc`.
 - Bookmarks capture page, title, optional description, privacy flag, and explicit share lists so
   personal notes stay private while team highlights are broadcast.
 
+## Notes
+
+- `/notes` lets users capture rich-text snippets with optional ontology context. Owners can edit,
+  delete, and (re)share their notes; collaborators view shared notes via `/notes/shared`.
+- Sharing accepts an explicit user list and fires `note_updates` notifications so recipients are
+  alerted immediately.
+- Updates allow changing the share roster (including clearing it) and re-issuing notifications only
+  to newly added collaborators.
+
 ## Games & sessions
 
 - Tabletop campaigns live under `/games`. Admins and world builders create games tied to an ontology
@@ -153,6 +162,8 @@ Cross-origin access is controlled via environment variables exposed by `Settings
   linked ontology entity ids.
 - Library items: ontology-linked PDFs with title/description, optional cover imagery, deterministic
   storage paths, vectorisation status metadata, and user-created bookmarks (private or shared).
+- Notes: rich-text documents owned by a user, optionally linked to an ontology, with many-to-many
+  sharing semantics and notification hooks when collaborators are added.
 - Games: campaign containers referencing an ontology, a member roster, associated sessions, polls,
   and attendance flags for each scheduled session.
 - Ontologies: contain entities; each entity owns its properties and relationships (relationships

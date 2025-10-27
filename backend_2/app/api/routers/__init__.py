@@ -6,6 +6,7 @@ from app.api.routers import (
     media,
     games,
     library,
+    notes,
     notifications,
     ontologies,
     ontology_instances,
@@ -20,6 +21,7 @@ def get_api_router() -> APIRouter:
     router.include_router(media.router)
     router.include_router(games.router)
     router.include_router(library.router)
+    router.include_router(notes.router)
     router.include_router(notifications.router)
     router.include_router(ontology_instances.router)
     router.include_router(audit_logs.router)

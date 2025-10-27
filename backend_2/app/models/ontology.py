@@ -23,6 +23,7 @@ from app.models.user import user_entities
 
 if TYPE_CHECKING:  # pragma: no cover
     from app.models.library import LibraryItem
+    from app.models.note import Note
     from app.models.user import User
 
 
@@ -74,6 +75,12 @@ class Ontology(Base):
     )
     library_items: Mapped[List["LibraryItem"]] = relationship(
         "LibraryItem",
+        back_populates="ontology",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    notes: Mapped[List["Note"]] = relationship(
+        "Note",
         back_populates="ontology",
         cascade="all, delete-orphan",
         passive_deletes=True,

@@ -65,6 +65,13 @@ class MediaService:
         absolute_path = self.base_path / relative_path
         absolute_path.parent.mkdir(parents=True, exist_ok=True)
 
+        if absolute_path.exists():
+            try:
+                absolute_path.unlink()
+            except OSError:
+                # If removal fails, attempt to overwrite directly
+                pass
+
         image_format = self._determine_format(image, contents, resolved_filename)
         image.save(absolute_path, format=image_format, optimize=True)
 

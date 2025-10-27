@@ -25,7 +25,15 @@ class GameRepository(BaseRepository):
     ) -> Sequence[Game]:
         query: Select[tuple[Game]] = (
             select(Game)
-            .options(selectinload(Game.members))
+            .options(
+                selectinload(Game.members),
+                selectinload(Game.sessions)
+                .selectinload(GameSession.attendance)
+                .selectinload(GameSessionAttendance.user),
+                selectinload(Game.sessions)
+                .selectinload(GameSession.polls)
+                .selectinload(GameSessionPoll.options),
+            )
             .order_by(Game.created_at.desc())
             .offset(skip)
             .limit(limit)
@@ -43,6 +51,9 @@ class GameRepository(BaseRepository):
             .options(
                 selectinload(Game.members),
                 selectinload(Game.sessions)
+                .selectinload(GameSession.attendance)
+                .selectinload(GameSessionAttendance.user),
+                selectinload(Game.sessions)
                 .selectinload(GameSession.polls)
                 .selectinload(GameSessionPoll.options),
             )
@@ -56,6 +67,9 @@ class GameRepository(BaseRepository):
             select(Game)
             .options(
                 selectinload(Game.members),
+                selectinload(Game.sessions)
+                .selectinload(GameSession.attendance)
+                .selectinload(GameSessionAttendance.user),
                 selectinload(Game.sessions)
                 .selectinload(GameSession.polls)
                 .selectinload(GameSessionPoll.options),

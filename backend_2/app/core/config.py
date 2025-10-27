@@ -39,6 +39,9 @@ class Settings(BaseSettings):
     neo4j_user: str = "neo4j"
     neo4j_password: str = "VeryStrongPass123"
     neo4j_database: str = "neo4j"
+    celery_broker_url: str = "redis://localhost:6379/0"
+    celery_result_backend: str = "redis://localhost:6379/1"
+    celery_task_always_eager: bool = True
 
 
 class AppConfig(BaseModel):

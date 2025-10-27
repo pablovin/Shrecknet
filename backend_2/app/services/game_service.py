@@ -31,7 +31,8 @@ class GameService:
         members = await self._fetch_users(member_ids)
         game = await self.repository.create_game(data, members)
         await self.session.commit()
-        return game
+        reloaded = await self.repository.get_game(game.id)
+        return reloaded or game
 
     async def list_games(
         self, *, skip: int = 0, limit: int = 50, name: str | None = None

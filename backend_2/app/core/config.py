@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     cors_max_age: int = 3600
     media_root: str = "./media"
     media_base_url: str = "/media"
+    media_public_url: str | None = None
     max_image_upload_bytes: int = 10 * 1024 * 1024
     image_max_width: int = 1024
     image_max_height: int = 1024

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from fastapi import (
@@ -219,11 +220,18 @@ async def upload_user_avatar(
         )
 
     try:
+        safe_username = re.sub(r"[^a-zA-Z0-9_-]+", "-", user.username.lower()).strip(
+            "-"
+        )
+        if not safe_username:
+            safe_username = f"user-{user_id}"
+        target_filename = f"user_{safe_username}.png"
         avatar_url = await media_service.save_image(
             file,
             category="avatars",
             identifier=f"user_{user_id}",
             resize=(settings.image_max_width, settings.image_max_height),
+            filename=target_filename,
         )
     except ImageValidationError as exc:
         raise HTTPException(

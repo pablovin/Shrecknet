@@ -5,6 +5,7 @@ from io import BytesIO
 import pytest
 from PIL import Image
 
+from app.core.config import get_settings
 from app.models.audit import AuditAction, AuditActorType, AuditEntityType
 from app.models.user import UserRole
 
@@ -293,4 +294,10 @@ async def test_user_can_upload_avatar(client):
     )
     assert avatar_response.status_code == 200, avatar_response.text
     data = avatar_response.json()
-    assert data["avatar_url"].startswith("/media/")
+    settings = get_settings()
+    base_url = (
+        settings.media_public_url.rstrip("/")
+        if settings.media_public_url
+        else settings.media_base_url.rstrip("/")
+    )
+    assert data["avatar_url"] == f"{base_url}/avatars/user_avatar-user.png"

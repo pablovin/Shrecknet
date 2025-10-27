@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import imghdr
 import os
+import re
 import secrets
 from io import BytesIO
 from pathlib import Path
@@ -35,6 +36,7 @@ class MediaService:
         identifier: str,
         resize: tuple[int, int] | None = None,
         metadata: dict[str, Any] | None = None,
+        filename: str | None = None,
     ) -> str:
         contents = await self._read_limited(upload)
         self._validate_format(contents)
@@ -54,14 +56,16 @@ class MediaService:
                 else:  # pragma: no cover - older Pillow fallback
                     image = image.resize(new_size, Image.ANTIALIAS)  # type: ignore[attr-defined]
 
-        filename = self._build_filename(upload.filename, identifier)
-        relative_path = Path(category) / filename
+        resolved_filename = (
+            self._sanitize_filename(filename)
+            if filename
+            else self._build_filename(upload.filename, identifier)
+        )
+        relative_path = Path(category) / resolved_filename
         absolute_path = self.base_path / relative_path
         absolute_path.parent.mkdir(parents=True, exist_ok=True)
 
-        image_format = image.format or self._guess_format(contents) or "PNG"
-        if image_format.upper() == "JPG":
-            image_format = "JPEG"
+        image_format = self._determine_format(image, contents, resolved_filename)
         image.save(absolute_path, format=image_format, optimize=True)
 
         return self._build_url(relative_path)
@@ -84,10 +88,38 @@ class MediaService:
         return detected.upper()
 
     def _build_filename(self, original_name: str | None, identifier: str) -> str:
-        safe_identifier = identifier.replace("/", "_").replace("..", "")
+        safe_identifier = self._sanitize_identifier(identifier)
         ext = self._extract_extension(original_name) or "png"
         token = secrets.token_urlsafe(8)
         return f"{safe_identifier}_{token}.{ext}"
+
+    def _sanitize_identifier(self, identifier: str) -> str:
+        identifier = identifier.strip().lower()
+        identifier = identifier.replace("..", "")
+        return re.sub(r"[^a-z0-9_-]+", "-", identifier) or "asset"
+
+    def _sanitize_filename(self, filename: str) -> str:
+        cleaned = Path(filename).name
+        cleaned = cleaned.replace("..", "")
+        cleaned = re.sub(r"[^A-Za-z0-9._-]+", "-", cleaned)
+        cleaned = cleaned.strip(".-")
+        if not cleaned:
+            return "asset.png"
+        return cleaned
+
+    def _determine_format(
+        self, image: Image.Image, contents: bytes, filename: str
+    ) -> str:
+        ext = Path(filename).suffix.lower().lstrip(".")
+        if ext in {"jpg", "jpeg"}:
+            return "JPEG"
+        if ext == "png":
+            return "PNG"
+        if ext in {"gif", "bmp", "webp"}:
+            return ext.upper()
+
+        inferred = image.format or self._guess_format(contents) or "PNG"
+        return "JPEG" if inferred.upper() == "JPG" else inferred
 
     def _extract_extension(self, original_name: str | None) -> str | None:
         if not original_name:
@@ -100,5 +132,9 @@ class MediaService:
 
     def _build_url(self, relative_path: Path) -> str:
         relative_str = relative_path.as_posix()
+        public_base = getattr(settings, "media_public_url", None)
+        if public_base:
+            public_base = public_base.rstrip("/")
+            return f"{public_base}/{relative_str}"
         base_url = settings.media_base_url.rstrip("/")
         return f"{base_url}/{relative_str}"

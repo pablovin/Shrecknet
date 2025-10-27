@@ -55,10 +55,13 @@ FastAPI automatically generates interactive docs at `/docs` and `/redoc`.
 - Configure where images live with `BACKEND_2_MEDIA_ROOT` (default `./media`) and how they are
   exposed with `BACKEND_2_MEDIA_BASE_URL` (default `/media`). The directory is mounted automatically
   by FastAPI.
+- Use `BACKEND_2_MEDIA_PUBLIC_URL` when the API sits behind a proxy or another domain (for example
+  set it to `https://shrecknet.club/media`) so generated links are fully-qualified for the frontend.
 - Files are validated (<10 MB by default), resized to fit within the configured max dimensions, and
   optimized before being written to disk.
 - Users can update their avatar with `POST /users/{user_id}/avatar` (multipart form upload). The
-  endpoint returns the final URL for frontend use.
+  endpoint stores the avatar as a deterministic `user_{username}.png` and returns the final URL for
+  frontend use.
 - Admins or world builders can upload other assets via `POST /media/images`, providing a category
   and identifier to control where the image is stored.
 

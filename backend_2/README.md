@@ -80,6 +80,19 @@ FastAPI automatically generates interactive docs at `/docs` and `/redoc`.
   `POST /notifications/{id}/read`, and retrieve unread totals using
   `GET /notifications/me/unread-count`.
 
+## Games & sessions
+
+- Tabletop campaigns live under `/games`. Admins and world builders create games tied to an ontology
+  and manage their membership; players automatically see the games they belong to via
+  `GET /games/mine`.
+- Each game owns multiple sessions with metadata (title, description, location, scheduled date) and
+  attendance tracking (`POST /games/{game_id}/sessions/{session_id}/attendance`).
+- Scheduling polls let admins propose candidate times, members vote, and the admin selects the final
+  option—automatically promoting voters of the chosen slot to the attendee list and fixing the
+  session date.
+- Session creation, poll creation, and poll finalisation send notifications to every game member so
+  they stay in sync with upcoming events.
+
 ## Ontology instances & Neo4j
 
 - Ontology definitions remain in the SQL database; ontology *instances* (runtime graphs) are stored
@@ -123,6 +136,8 @@ Cross-origin access is controlled via environment variables exposed by `Settings
 
 - Users: username, hashed password, full name, email, timezone, role, optional avatar URL, optional
   linked ontology entity ids.
+- Games: campaign containers referencing an ontology, a member roster, associated sessions, polls,
+  and attendance flags for each scheduled session.
 - Ontologies: contain entities; each entity owns its properties and relationships (relationships
   reference a source entity and an optional destination entity within the same ontology) alongside
   provenance metadata and optional media references.

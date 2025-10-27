@@ -4,6 +4,15 @@ from app.models.notification import (
     NotificationAuthorType,
     NotificationType,
 )
+from app.models.game import (
+    Game,
+    GameSession,
+    GameSessionAttendance,
+    GameSessionPoll,
+    GameSessionPollOption,
+    GameSessionPollVote,
+    game_members,
+)
 from app.models.ontology import (
     Ontology,
     OntologyEntity,
@@ -20,6 +29,13 @@ __all__ = [
     "Notification",
     "NotificationType",
     "NotificationAuthorType",
+    "Game",
+    "GameSession",
+    "GameSessionAttendance",
+    "GameSessionPoll",
+    "GameSessionPollOption",
+    "GameSessionPollVote",
+    "game_members",
     "Ontology",
     "OntologyEntity",
     "OntologyProperty",

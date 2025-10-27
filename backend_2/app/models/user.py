@@ -9,6 +9,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.base import Base
 
 if TYPE_CHECKING:  # pragma: no cover
+    from app.models.game import Game, GameSessionAttendance, GameSessionPollVote
     from app.models.ontology import OntologyEntity
 
 
@@ -49,6 +50,15 @@ class User(Base):
 
     entities: Mapped[list["OntologyEntity"]] = relationship(
         secondary=user_entities, back_populates="players",
+    )
+    games: Mapped[list["Game"]] = relationship(
+        "Game", secondary="game_members", back_populates="members",
+    )
+    session_attendance: Mapped[list["GameSessionAttendance"]] = relationship(
+        "GameSessionAttendance", back_populates="user"
+    )
+    session_poll_votes: Mapped[list["GameSessionPollVote"]] = relationship(
+        "GameSessionPollVote", back_populates="user"
     )
 
     def __repr__(self) -> str:  # pragma: no cover - debugging helper

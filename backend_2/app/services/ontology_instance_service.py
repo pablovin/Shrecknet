@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Sequence
 from datetime import datetime
 from typing import Any
@@ -66,6 +67,10 @@ class OntologyInstanceService:
         for entity_payload in payload.entities:
             entity_node_id = str(uuid4())
             alias_to_ids[entity_payload.alias] = entity_node_id
+            normalized_alias = re.sub(
+                r"[^a-z0-9_]+", "_", entity_payload.alias.strip().lower()
+            )
+            alias_to_ids[normalized_alias] = entity_node_id
             prop_map = {
                 str(prop.definition_id): prop.value
                 for prop in entity_payload.properties
@@ -157,11 +162,16 @@ class OntologyInstanceService:
                     target_alias = relationship_payload.target_alias
                     target_id: str | None
                     if target_alias:
-                        if target_alias not in alias_to_ids:
+                        target_id = alias_to_ids.get(target_alias)
+                        if target_id is None:
+                            normalized_alias = re.sub(
+                                r"[^a-z0-9_]+", "_", target_alias.strip().lower(),
+                            )
+                            target_id = alias_to_ids.get(normalized_alias)
+                        if target_id is None:
                             raise ValueError(
                                 f"Unknown target alias '{target_alias}' for relationship"
                             )
-                        target_id = alias_to_ids[target_alias]
                     else:
                         target_id = relationship_payload.target_entity_instance_id
                         if target_id is None:
@@ -430,6 +440,10 @@ class OntologyInstanceService:
             for entity_payload in payload.entities:
                 entity_node_id = str(uuid4())
                 alias_to_ids[entity_payload.alias] = entity_node_id
+                normalized_alias = re.sub(
+                    r"[^a-z0-9_]+", "_", entity_payload.alias.strip().lower()
+                )
+                alias_to_ids[normalized_alias] = entity_node_id
                 prop_map = {
                     str(prop.definition_id): prop.value
                     for prop in entity_payload.properties
@@ -501,11 +515,16 @@ class OntologyInstanceService:
                     target_alias = relationship_payload.target_alias
                     target_id: str | None
                     if target_alias:
-                        if target_alias not in alias_to_ids:
+                        target_id = alias_to_ids.get(target_alias)
+                        if target_id is None:
+                            normalized_alias = re.sub(
+                                r"[^a-z0-9_]+", "_", target_alias.strip().lower(),
+                            )
+                            target_id = alias_to_ids.get(normalized_alias)
+                        if target_id is None:
                             raise ValueError(
                                 f"Unknown target alias '{target_alias}' for relationship"
                             )
-                        target_id = alias_to_ids[target_alias]
                     else:
                         target_id = relationship_payload.target_entity_instance_id
                         if target_id is None:
@@ -612,6 +631,13 @@ class OntologyInstanceService:
         definitions: dict[int, dict[str, Any]],
     ) -> None:
         alias_to_definition: dict[str, int] = {}
+
+        def register_alias(alias: str, definition_id: int) -> None:
+            cleaned = alias.strip()
+            alias_to_definition[cleaned] = definition_id
+            normalized = re.sub(r"[^a-z0-9_]+", "_", cleaned.lower())
+            alias_to_definition[normalized] = definition_id
+
         for entity_payload in entities:
             if entity_payload.alias in alias_to_definition:
                 raise ValueError(
@@ -621,7 +647,7 @@ class OntologyInstanceService:
                 raise ValueError(
                     f"Entity definition {entity_payload.definition_id} does not belong to ontology"
                 )
-            alias_to_definition[entity_payload.alias] = entity_payload.definition_id
+            register_alias(entity_payload.alias, entity_payload.definition_id)
             definition = definitions[entity_payload.definition_id]
             property_map = definition["properties"]
             for prop in entity_payload.properties:
@@ -640,7 +666,13 @@ class OntologyInstanceService:
                     )
                 target_alias = rel.target_alias
                 if target_alias:
-                    if target_alias not in alias_to_definition:
+                    match_definition = alias_to_definition.get(target_alias)
+                    if match_definition is None:
+                        normalized = re.sub(
+                            r"[^a-z0-9_]+", "_", target_alias.strip().lower()
+                        )
+                        match_definition = alias_to_definition.get(normalized)
+                    if match_definition is None:
                         raise ValueError(
                             f"Relationship refers to unknown target alias '{target_alias}'"
                         )
@@ -649,7 +681,7 @@ class OntologyInstanceService:
                     ].destiny_entity_id
                     if (
                         destiny_entity_id is not None
-                        and alias_to_definition[target_alias] != destiny_entity_id
+                        and match_definition != destiny_entity_id
                     ):
                         raise ValueError(
                             "Relationship target alias does not match destiny entity definition"

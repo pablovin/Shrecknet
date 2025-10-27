@@ -32,7 +32,8 @@ class GameRepository(BaseRepository):
                 .selectinload(GameSessionAttendance.user),
                 selectinload(Game.sessions)
                 .selectinload(GameSession.polls)
-                .selectinload(GameSessionPoll.options),
+                .selectinload(GameSessionPoll.options)
+                .selectinload(GameSessionPollOption.votes),
             )
             .order_by(Game.created_at.desc())
             .offset(skip)
@@ -55,7 +56,8 @@ class GameRepository(BaseRepository):
                 .selectinload(GameSessionAttendance.user),
                 selectinload(Game.sessions)
                 .selectinload(GameSession.polls)
-                .selectinload(GameSessionPoll.options),
+                .selectinload(GameSessionPoll.options)
+                .selectinload(GameSessionPollOption.votes),
             )
             .order_by(Game.created_at.desc())
         )
@@ -72,11 +74,31 @@ class GameRepository(BaseRepository):
                 .selectinload(GameSessionAttendance.user),
                 selectinload(Game.sessions)
                 .selectinload(GameSession.polls)
-                .selectinload(GameSessionPoll.options),
+                .selectinload(GameSessionPoll.options)
+                .selectinload(GameSessionPollOption.votes),
             )
             .where(Game.id == game_id)
         )
         return result.scalar_one_or_none()
+
+    async def list_sessions_for_game(self, game_id: int) -> Sequence[GameSession]:
+        result = await self.session.execute(
+            select(GameSession)
+            .options(
+                selectinload(GameSession.attendance).selectinload(
+                    GameSessionAttendance.user
+                ),
+                selectinload(GameSession.polls)
+                .selectinload(GameSessionPoll.options)
+                .selectinload(GameSessionPollOption.votes),
+                selectinload(GameSession.polls).selectinload(
+                    GameSessionPoll.finalized_option
+                ),
+            )
+            .where(GameSession.game_id == game_id)
+            .order_by(GameSession.created_at.asc())
+        )
+        return result.scalars().unique().all()
 
     async def create_game(self, data: dict[str, Any], members: list[User]) -> Game:
         game = Game(**data)

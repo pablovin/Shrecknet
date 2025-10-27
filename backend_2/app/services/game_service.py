@@ -84,10 +84,14 @@ class GameService:
     async def create_session(self, game: Game, data: dict,) -> GameSession:
         session_obj = await self.repository.create_session(game.id, data)
         await self.session.commit()
-        return session_obj
+        reloaded = await self.repository.get_session(game.id, session_obj.id)
+        return reloaded or session_obj
 
     async def get_session(self, game_id: int, session_id: int) -> GameSession | None:
         return await self.repository.get_session(game_id, session_id)
+
+    async def list_sessions_for_game(self, game_id: int) -> Sequence[GameSession]:
+        return await self.repository.list_sessions_for_game(game_id)
 
     async def update_session(self, session: GameSession, data: dict) -> GameSession:
         updated = await self.repository.update_session(session, data)

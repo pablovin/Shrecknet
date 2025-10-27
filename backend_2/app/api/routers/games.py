@@ -16,11 +16,10 @@ from app.models.user import User, UserRole
 from app.schemas.game import (
     AttendanceRequest,
     GameCreate,
-    GameRead,
     GameMemberSummary,
+    GameRead,
     GameSessionCreate,
     GameSessionPollCreate,
-    GameSessionPollOptionRead,
     GameSessionPollRead,
     GameSessionRead,
     GameSessionUpdate,
@@ -81,7 +80,48 @@ def _ensure_member(game: Game, user: User) -> None:
 
 
 def _serialize_session(session: GameSession) -> GameSessionRead:
-    return GameSessionRead.model_validate(session)
+    attendance_payload = [
+        {
+            "user_id": entry.user_id,
+            "attending": entry.attending,
+            "responded_at": entry.responded_at,
+        }
+        for entry in getattr(session, "attendance", []) or []
+    ]
+
+    polls_payload = []
+    for poll in getattr(session, "polls", []) or []:
+        options_payload = [
+            {
+                "id": option.id,
+                "proposed_start": option.proposed_start,
+                "vote_count": len(getattr(option, "votes", []) or []),
+            }
+            for option in getattr(poll, "options", []) or []
+        ]
+        polls_payload.append(
+            {
+                "id": poll.id,
+                "created_at": poll.created_at,
+                "is_finalized": poll.is_finalized,
+                "finalized_option_id": poll.finalized_option_id,
+                "options": options_payload,
+            }
+        )
+
+    data = {
+        "id": session.id,
+        "game_id": session.game_id,
+        "title": session.title,
+        "scheduled_date": session.scheduled_date,
+        "location": session.location,
+        "summary": session.summary,
+        "created_at": session.created_at,
+        "updated_at": session.updated_at,
+        "attendance": attendance_payload,
+        "polls": polls_payload,
+    }
+    return GameSessionRead.model_validate(data)
 
 
 def _serialize_poll(poll: GameSessionPoll) -> GameSessionPollRead:
@@ -289,7 +329,8 @@ async def list_sessions(
 ) -> list[GameSessionRead]:
     game = await _get_game_or_404(game_id, service)
     _ensure_member(game, current_user)
-    return [_serialize_session(session) for session in game.sessions]
+    sessions = await service.list_sessions_for_game(game.id)
+    return [_serialize_session(session) for session in sessions]
 
 
 @router.get(

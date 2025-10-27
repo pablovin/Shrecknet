@@ -1,4 +1,9 @@
 from app.models.audit import AuditAction, AuditActorType, AuditEntityType, AuditLog
+from app.models.notification import (
+    Notification,
+    NotificationAuthorType,
+    NotificationType,
+)
 from app.models.ontology import (
     Ontology,
     OntologyEntity,
@@ -12,6 +17,9 @@ __all__ = [
     "AuditActorType",
     "AuditEntityType",
     "AuditLog",
+    "Notification",
+    "NotificationType",
+    "NotificationAuthorType",
     "Ontology",
     "OntologyEntity",
     "OntologyProperty",

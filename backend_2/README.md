@@ -65,6 +65,19 @@ FastAPI automatically generates interactive docs at `/docs` and `/redoc`.
 - Admins or world builders can upload other assets via `POST /media/images`, providing a category
   and identifier to control where the image is stored.
 
+## Notifications
+
+- Admins and world builders can curate player-facing updates via `/notifications/`. CRUD routes let
+  operators target a specific user, choose a type (`content_update`, `new_features`,
+  `session_updates`, or `note_updates`), supply rich-text descriptions, and decide whether the entry
+  starts marked as read.
+- Each notification tracks author attribution (`user` or `agent`), the delivery timestamp, whether
+  it should also email the recipient, and the read state; when an email is dispatched the
+  `sent_date` is recorded for auditability.
+- Authenticated users access their feed with `GET /notifications/me`, toggle the read flag via
+  `POST /notifications/{id}/read`, and retrieve unread totals using
+  `GET /notifications/me/unread-count`.
+
 ## Ontology instances & Neo4j
 
 - Ontology definitions remain in the SQL database; ontology *instances* (runtime graphs) are stored
@@ -111,6 +124,9 @@ Cross-origin access is controlled via environment variables exposed by `Settings
 - Ontologies: contain entities; each entity owns its properties and relationships (relationships
   reference a source entity and an optional destination entity within the same ontology) alongside
   provenance metadata and optional media references.
+- Notifications: per-user records with typed categories, author attribution, delivery timestamps,
+  titles, rich descriptions, read flags, and email-delivery metadata (`send_email`, `sent_date`) to
+  power inbox and messaging workflows.
 
 ## Testing
 

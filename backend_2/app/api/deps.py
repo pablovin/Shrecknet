@@ -13,6 +13,7 @@ from app.graph.neo4j import get_neo4j_session
 from app.repositories.user_repository import UserRepository
 from app.schemas.user import TokenPayload
 from app.services.audit_service import AuditService
+from app.services.notification_service import NotificationService
 from app.services.media_service import MediaService
 from app.services.ontology_instance_service import OntologyInstanceService
 from app.services.ontology_service import OntologyService
@@ -40,6 +41,11 @@ async def get_audit_service(
     session: AsyncSession = Depends(get_db_session),
 ) -> AuditService:
     return AuditService(session)
+
+async def get_notification_service(
+    session: AsyncSession = Depends(get_db_session),
+) -> NotificationService:
+    return NotificationService(session)
 
 
 def get_media_service() -> MediaService:

@@ -71,12 +71,17 @@ async def create_ontology(
 async def list_ontologies(
     name: str | None = None,
     description: str | None = None,
+    display_on_world: bool | None = None,
     skip: int = 0,
     limit: int = 50,
     service: OntologyService = Depends(get_ontology_service),
 ) -> list[OntologyRead]:
     ontologies = await service.list_ontologies(
-        name=name, description=description, skip=skip, limit=limit
+        name=name,
+        description=description,
+        display_on_world=display_on_world,
+        skip=skip,
+        limit=limit,
     )
     return [OntologyRead.model_validate(o) for o in ontologies]
 

@@ -41,6 +41,7 @@ async def test_create_and_manage_ontology(client):
     assert response.status_code == 201, response.text
     ontology = response.json()
     ontology_id = ontology["id"]
+    assert ontology["display_on_world"] is True
 
     # Ensure listing works with filters
     list_response = await client.get(
@@ -48,6 +49,19 @@ async def test_create_and_manage_ontology(client):
     )
     assert list_response.status_code == 200
     assert any(item["id"] == ontology_id for item in list_response.json())
+
+    # Toggle display flag
+    visibility_response = await client.put(
+        f"/ontologies/{ontology_id}", json={"display_on_world": False}, headers=headers,
+    )
+    assert visibility_response.status_code == 200, visibility_response.text
+    assert visibility_response.json()["display_on_world"] is False
+
+    invisible_list = await client.get(
+        "/ontologies/", params={"display_on_world": "false"}, headers=headers
+    )
+    assert invisible_list.status_code == 200
+    assert any(item["id"] == ontology_id for item in invisible_list.json())
 
     # Add entity
     entity_payload = {

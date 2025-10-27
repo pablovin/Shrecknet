@@ -15,6 +15,7 @@ from sqlalchemy import (
     Text,
     func,
 )
+from sqlalchemy.sql import expression
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -54,6 +55,9 @@ class Ontology(Base):
     name: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     image_url: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+    display_on_world: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=expression.true(),
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -176,9 +180,7 @@ class OntologyRelationship(Base):
     )
 
     entity: Mapped[OntologyEntity] = relationship(
-        "OntologyEntity",
-        back_populates="relationships",
-        foreign_keys=[entity_id],
+        "OntologyEntity", back_populates="relationships", foreign_keys=[entity_id],
     )
     destiny_entity: Mapped[Optional[OntologyEntity]] = relationship(
         "OntologyEntity", foreign_keys=[destiny_entity_id]

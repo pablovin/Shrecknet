@@ -34,9 +34,14 @@ class OntologyService:
         limit: int = 50,
         name: str | None = None,
         description: str | None = None,
+        display_on_world: bool | None = None,
     ) -> Sequence[Ontology]:
         return await self.repository.list(
-            skip=skip, limit=limit, name=name, description=description
+            skip=skip,
+            limit=limit,
+            name=name,
+            description=description,
+            display_on_world=display_on_world,
         )
 
     async def get_ontology(self, ontology_id: int) -> Ontology | None:

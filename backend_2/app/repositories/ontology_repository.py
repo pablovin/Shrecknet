@@ -29,12 +29,15 @@ class OntologyRepository(BaseRepository):
         limit: int = 50,
         name: str | None = None,
         description: str | None = None,
+        display_on_world: bool | None = None,
     ) -> Sequence[Ontology]:
         query: Select[tuple[Ontology]] = select(Ontology).offset(skip).limit(limit)
         if name:
             query = query.where(Ontology.name.ilike(f"%{name}%"))
         if description:
             query = query.where(Ontology.description.ilike(f"%{description}%"))
+        if display_on_world is not None:
+            query = query.where(Ontology.display_on_world == display_on_world)
         result = await self.session.execute(query)
         return result.scalars().unique().all()
 
@@ -188,10 +191,7 @@ class OntologyRepository(BaseRepository):
         result = await self.session.execute(
             select(OntologyRelationship)
             .options(selectinload(OntologyRelationship.entity))
-            .join(
-                OntologyEntity,
-                OntologyRelationship.entity_id == OntologyEntity.id,
-            )
+            .join(OntologyEntity, OntologyRelationship.entity_id == OntologyEntity.id,)
             .where(
                 OntologyEntity.ontology_id == ontology_id,
                 OntologyRelationship.entity_id == entity_id,
@@ -209,10 +209,7 @@ class OntologyRepository(BaseRepository):
                 selectinload(OntologyRelationship.entity),
                 selectinload(OntologyRelationship.destiny_entity),
             )
-            .join(
-                OntologyEntity,
-                OntologyRelationship.entity_id == OntologyEntity.id,
-            )
+            .join(OntologyEntity, OntologyRelationship.entity_id == OntologyEntity.id,)
             .where(
                 OntologyEntity.ontology_id == ontology_id,
                 OntologyRelationship.entity_id == entity_id,
@@ -245,10 +242,7 @@ class OntologyRepository(BaseRepository):
                 selectinload(OntologyRelationship.entity),
                 selectinload(OntologyRelationship.destiny_entity),
             )
-            .join(
-                OntologyEntity,
-                OntologyRelationship.entity_id == OntologyEntity.id,
-            )
+            .join(OntologyEntity, OntologyRelationship.entity_id == OntologyEntity.id,)
             .where(
                 OntologyEntity.ontology_id == ontology_id,
                 OntologyRelationship.entity_id == source_entity_id,

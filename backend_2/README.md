@@ -62,8 +62,10 @@ FastAPI automatically generates interactive docs at `/docs` and `/redoc`.
 - Users can update their avatar with `POST /users/{user_id}/avatar` (multipart form upload). The
   endpoint stores the avatar as a deterministic `user_{username}.png` and returns the final URL for
   frontend use.
-- Admins or world builders can upload other assets via `POST /media/images`, providing a category
-  and identifier to control where the image is stored.
+- Admins or world builders can upload other assets via `POST /media/images`, providing the target
+  model name (e.g., `user`, `ontology`, `notification`, `ontology_instance`) and the corresponding
+  entity id. Images are resized using the same limits as avatars and written deterministically to
+  `/media/{model}/{id}/image_url.png`, overwriting previous uploads for that entity.
 
 ## Notifications
 

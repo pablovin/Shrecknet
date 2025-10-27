@@ -9,7 +9,7 @@ from app.db.session import get_session
 from app.models.user import User, UserRole
 from neo4j import AsyncSession as AsyncNeo4jSession
 
-from app.graph.neo4j import get_neo4j_session
+from app.graph.neo4j import get_neo4j_session, get_optional_neo4j_session
 from app.repositories.user_repository import UserRepository
 from app.schemas.user import TokenPayload
 from app.services.audit_service import AuditService
@@ -42,6 +42,7 @@ async def get_audit_service(
 ) -> AuditService:
     return AuditService(session)
 
+
 async def get_notification_service(
     session: AsyncSession = Depends(get_db_session),
 ) -> NotificationService:
@@ -56,6 +57,15 @@ async def get_ontology_instance_service(
     sql_session: AsyncSession = Depends(get_db_session),
     graph_session: AsyncNeo4jSession = Depends(get_neo4j_session),
 ) -> OntologyInstanceService:
+    return OntologyInstanceService(sql_session, graph_session)
+
+
+async def get_optional_ontology_instance_service(
+    sql_session: AsyncSession = Depends(get_db_session),
+    graph_session: AsyncNeo4jSession | None = Depends(get_optional_neo4j_session),
+) -> OntologyInstanceService | None:
+    if graph_session is None:
+        return None
     return OntologyInstanceService(sql_session, graph_session)
 
 

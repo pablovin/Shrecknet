@@ -4,6 +4,7 @@ from collections.abc import AsyncGenerator
 from typing import Any
 
 from neo4j import AsyncDriver, AsyncGraphDatabase, AsyncSession
+from neo4j.exceptions import Neo4jError
 
 from app.core.config import get_settings
 
@@ -34,3 +35,17 @@ async def get_neo4j_session() -> AsyncGenerator[AsyncSession, None]:
     settings = get_settings()
     async with driver.session(database=settings.neo4j_database) as session:
         yield session
+
+
+async def get_optional_neo4j_session() -> AsyncGenerator[AsyncSession | None, None]:
+    try:
+        driver = get_driver()
+        settings = get_settings()
+    except Neo4jError:
+        yield None
+        return
+    try:
+        async with driver.session(database=settings.neo4j_database) as session:
+            yield session
+    except Neo4jError:
+        yield None

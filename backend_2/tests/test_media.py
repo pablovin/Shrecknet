@@ -57,7 +57,7 @@ async def test_upload_model_image_and_validation(client):
 
     buffer = _create_image()
     upload_response = await client.post(
-        "/media/images",
+        "/media-admin/images",
         headers=admin_headers,
         files={"file": ("image.png", buffer, "image/png")},
         data={"model": "user", "instance_id": user_id},
@@ -79,7 +79,7 @@ async def test_upload_model_image_and_validation(client):
     # Unsupported model
     buffer = _create_image()
     unsupported = await client.post(
-        "/media/images",
+        "/media-admin/images",
         headers=admin_headers,
         files={"file": ("image.png", buffer, "image/png")},
         data={"model": "unknown", "instance_id": "1"},
@@ -89,7 +89,7 @@ async def test_upload_model_image_and_validation(client):
     # Missing instance
     buffer = _create_image()
     missing = await client.post(
-        "/media/images",
+        "/media-admin/images",
         headers=admin_headers,
         files={"file": ("image.png", buffer, "image/png")},
         data={"model": "user", "instance_id": "9999"},

@@ -23,7 +23,7 @@ from app.services.ontology_service import OntologyService
 from app.services.user_service import UserService
 
 router = APIRouter(
-    prefix="/media",
+    prefix="/media-admin",
     tags=["media"],
     dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.WORLD_BUILDER))],
 )

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 
 from app.api.deps import (
     get_audit_service,
@@ -155,7 +155,7 @@ async def delete_notification(
     service: NotificationService = Depends(get_notification_service),
     audit_service: AuditService = Depends(get_audit_service),
     current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.WORLD_BUILDER)),
-) -> None:
+) -> Response:
     notification = await _get_notification_or_404(notification_id, service)
     await service.delete_notification(notification)
     await _log_notification_action(
@@ -166,6 +166,7 @@ async def delete_notification(
         payload={"notification_id": notification_id, "user_id": notification.user_id},
         description="Deleted notification",
     )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post(

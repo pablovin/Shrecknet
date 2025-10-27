@@ -141,6 +141,7 @@ class GameSessionPoll(Base):
         back_populates="poll",
         cascade="all, delete-orphan",
         passive_deletes=True,
+        foreign_keys="GameSessionPollOption.poll_id",
     )
     finalized_option: Mapped["GameSessionPollOption | None"] = relationship(
         "GameSessionPollOption", foreign_keys=[finalized_option_id], post_update=True,
@@ -164,7 +165,7 @@ class GameSessionPollOption(Base):
     )
 
     poll: Mapped[GameSessionPoll] = relationship(
-        "GameSessionPoll", back_populates="options"
+        "GameSessionPoll", back_populates="options", foreign_keys=[poll_id]
     )
     votes: Mapped[list["GameSessionPollVote"]] = relationship(
         "GameSessionPollVote",

@@ -4,6 +4,7 @@ import asyncio
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
+import httpx
 import pytest
 import pytest_asyncio
 from httpx import AsyncClient
@@ -55,8 +56,8 @@ async def client(test_engine: AsyncEngine) -> AsyncGenerator[AsyncClient, None]:
 
     app.router.lifespan_context = lifespan_override
 
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
+    async with AsyncClient(        
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as async_client:
         yield async_client
 

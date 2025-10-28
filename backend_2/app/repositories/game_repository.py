@@ -21,7 +21,11 @@ class GameRepository(BaseRepository):
     """Data access helpers for games, sessions, and polls."""
 
     async def list_games(
-        self, *, skip: int = 0, limit: int = 50, name: str | None = None,
+        self,
+        *,
+        skip: int = 0,
+        limit: int = 50,
+        name: str | None = None,
     ) -> Sequence[Game]:
         query: Select[tuple[Game]] = (
             select(Game)
@@ -131,7 +135,10 @@ class GameRepository(BaseRepository):
                     GameSessionPoll.finalized_option
                 ),
             )
-            .where(GameSession.id == session_id, GameSession.game_id == game_id,)
+            .where(
+                GameSession.id == session_id,
+                GameSession.game_id == game_id,
+            )
         )
         return result.scalar_one_or_none()
 
@@ -182,6 +189,9 @@ class GameRepository(BaseRepository):
         if attendance is not None:
             await self.delete(attendance)
 
+    async def delete_session(self, session: GameSession) -> None:
+        await self.delete(session)
+
     async def create_poll(
         self, session_id: int, options: list[dict[str, Any]]
     ) -> GameSessionPoll:
@@ -203,8 +213,10 @@ class GameRepository(BaseRepository):
                 )
             )
             .where(
-                GameSessionPoll.id == poll_id, GameSessionPoll.session_id == session_id,
+                GameSessionPoll.id == poll_id,
+                GameSessionPoll.session_id == session_id,
             )
+            .execution_options(populate_existing=True)
         )
         return result.scalar_one_or_none()
 
@@ -260,3 +272,6 @@ class GameRepository(BaseRepository):
         await self.save(poll)
         await self.session.refresh(poll)
         return poll
+
+    async def delete_poll(self, poll: GameSessionPoll) -> None:
+        await self.delete(poll)

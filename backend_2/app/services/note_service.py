@@ -42,7 +42,7 @@ class NoteService:
             share_users,
         )
         await self.session.commit()
-        await self.session.refresh(note)
+        # Note is already eagerly loaded by repository.create
         await self._notify_share(note, owner, share_users)
         return note
 
@@ -87,7 +87,7 @@ class NoteService:
 
         updated = await self.repository.update(note, data, share_users)
         await self.session.commit()
-        await self.session.refresh(updated)
+        # Note is already eagerly loaded by repository.update
 
         if new_recipients:
             await self._notify_share(updated, actor, new_recipients)
@@ -115,9 +115,10 @@ class NoteService:
         new_users = await self.repository.ensure_share_targets(filtered_ids)
         await self.repository.add_shared_users(note, new_users)
         await self.session.commit()
-        await self.session.refresh(note)
-        await self._notify_share(note, actor, new_users)
-        return note
+        # Re-fetch with eager loading to avoid lazy load issues
+        refreshed_note = await self.repository.get(note.id)
+        await self._notify_share(refreshed_note, actor, new_users)  # type: ignore[arg-type]
+        return refreshed_note  # type: ignore[return-value]
 
     async def remove_shared_users(self, note: Note, user_ids: Sequence[int]) -> Note:
         """Remove users from a note's share list."""
@@ -128,8 +129,8 @@ class NoteService:
 
         await self.repository.remove_shared_users(note, users_to_remove)
         await self.session.commit()
-        await self.session.refresh(note)
-        return note
+        # Re-fetch with eager loading to avoid lazy load issues
+        return await self.repository.get(note.id)  # type: ignore[return-value]
 
     async def _notify_share(
         self, note: Note, actor: User, shared_users: Sequence[User]

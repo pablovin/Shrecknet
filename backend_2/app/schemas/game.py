@@ -76,6 +76,23 @@ class GameSessionPollOptionRead(BaseModel):
     vote_count: int = 0
 
 
+class GameSessionPollVoteRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    user_id: int
+    created_at: datetime
+
+
+class GameSessionPollOptionDetailRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    proposed_start: datetime
+    vote_count: int = 0
+    votes: list[GameSessionPollVoteRead] = Field(default_factory=list)
+
+
 class GameSessionPollCreate(BaseModel):
     options: Sequence[GameSessionPollOptionCreate]
 
@@ -88,6 +105,16 @@ class GameSessionPollRead(BaseModel):
     is_finalized: bool
     finalized_option_id: int | None = None
     options: list[GameSessionPollOptionRead] = Field(default_factory=list)
+
+
+class GameSessionPollDetailRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    created_at: datetime
+    is_finalized: bool
+    finalized_option_id: int | None = None
+    options: list[GameSessionPollOptionDetailRead] = Field(default_factory=list)
 
 
 class GameSessionRead(GameSessionBase):

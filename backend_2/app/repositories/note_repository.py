@@ -80,6 +80,19 @@ class NoteRepository(BaseRepository):
             raise ValueError(f"Users not found: {sorted(missing)}")
         return list(users)
 
+    async def add_shared_users(self, note: Note, users: Sequence[User]) -> None:
+        """Add users to note's shared_with list."""
+        note.shared_with.extend(users)
+        await self.save(note)
+
+    async def remove_shared_users(self, note: Note, users: Sequence[User]) -> None:
+        """Remove users from note's shared_with list."""
+        user_ids_to_remove = {user.id for user in users}
+        note.shared_with = [
+            u for u in note.shared_with if u.id not in user_ids_to_remove
+        ]
+        await self.save(note)
+
     async def delete_instance(self, note: Note) -> None:
-        await self.session.delete(note)
+        self.session.delete(note)
         await self.session.flush()

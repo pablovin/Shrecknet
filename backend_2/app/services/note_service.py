@@ -98,6 +98,39 @@ class NoteService:
         await self.repository.delete(note)
         await self.session.commit()
 
+    async def add_shared_users(
+        self, note: Note, user_ids: Sequence[int], actor: User
+    ) -> Note:
+        """Add users to a note's share list."""
+        # Filter out owner and duplicates
+        filtered_ids = [
+            user_id
+            for user_id in user_ids
+            if user_id != note.owner_id
+            and user_id not in {u.id for u in note.shared_with}
+        ]
+        if not filtered_ids:
+            return note
+
+        new_users = await self.repository.ensure_share_targets(filtered_ids)
+        await self.repository.add_shared_users(note, new_users)
+        await self.session.commit()
+        await self.session.refresh(note)
+        await self._notify_share(note, actor, new_users)
+        return note
+
+    async def remove_shared_users(self, note: Note, user_ids: Sequence[int]) -> Note:
+        """Remove users from a note's share list."""
+        # Filter to only users currently in the share list
+        users_to_remove = [user for user in note.shared_with if user.id in user_ids]
+        if not users_to_remove:
+            return note
+
+        await self.repository.remove_shared_users(note, users_to_remove)
+        await self.session.commit()
+        await self.session.refresh(note)
+        return note
+
     async def _notify_share(
         self, note: Note, actor: User, shared_users: Sequence[User]
     ) -> None:

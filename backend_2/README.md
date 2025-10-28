@@ -121,8 +121,9 @@ FastAPI automatically generates interactive docs at `/docs` and `/redoc`.
 
 - Ontology definitions remain in the SQL database; ontology *instances* (runtime graphs) are stored
   in Neo4j, allowing the structure to evolve without SQL migrations.
-- A boolean `display_on_world` flag (default `true`) on each ontology controls whether its items
-  surface on the world page; toggle via the `/ontologies/{id}` update endpoint.
+- Each ontology entity exposes a `display_on_world` flag (default `true`) to control which entries
+  surface on the world page; toggle via
+  `/ontologies/{ontology_id}/entities/{entity_id}`.
 - Configure Neo4j via `BACKEND_2_NEO4J_URI`, `BACKEND_2_NEO4J_USER`, `BACKEND_2_NEO4J_PASSWORD`,
   and `BACKEND_2_NEO4J_DATABASE` (defaults expect `neo4j/neo4j` running on `bolt://localhost:7687`).
 - Quick start Neo4j locally:

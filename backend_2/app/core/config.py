@@ -18,6 +18,9 @@ class Settings(BaseSettings):
         default_factory=lambda: [
             "http://localhost",
             "http://localhost:3000",
+            "http://localhost:8080",
+            "http://127.0.0.1",
+            "http://127.0.0.1:8080",
             "https://lovableproject.com",
             "https://shrecknet.club",
             "https://c56f54ad-02b8-428f-9e87-43f81dab0914.lovableproject.com",

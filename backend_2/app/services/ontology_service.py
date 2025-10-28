@@ -34,14 +34,9 @@ class OntologyService:
         limit: int = 50,
         name: str | None = None,
         description: str | None = None,
-        display_on_world: bool | None = None,
     ) -> Sequence[Ontology]:
         return await self.repository.list(
-            skip=skip,
-            limit=limit,
-            name=name,
-            description=description,
-            display_on_world=display_on_world,
+            skip=skip, limit=limit, name=name, description=description,
         )
 
     async def get_ontology(self, ontology_id: int) -> Ontology | None:
@@ -63,18 +58,29 @@ class OntologyService:
         await self.session.commit()
         return entity
 
-    async def list_entities(self, ontology_id: int) -> Sequence[OntologyEntity]:
-        return await self.repository.list_entities(ontology_id)
+    async def list_entities(
+        self, ontology_id: int, *, display_on_world: bool | None = None
+    ) -> Sequence[OntologyEntity]:
+        return await self.repository.list_entities(
+            ontology_id, display_on_world=display_on_world
+        )
 
     async def get_entity(
         self, ontology_id: int, entity_id: int
     ) -> OntologyEntity | None:
         return await self.repository.get_entity(ontology_id, entity_id)
 
+    async def get_entity_by_id(self, entity_id: int) -> OntologyEntity | None:
+        return await self.repository.get_entity_by_id(entity_id)
+
     async def update_entity(self, entity: OntologyEntity, data: dict) -> OntologyEntity:
+        self._ensure_author_defaults(
+            data, existing_user_id=entity.user_id, existing_agent_id=entity.agent_id,
+        )
         self._validate_author_payload(data, allow_missing=True)
         updated = await self.repository.update_entity(entity, data)
         await self.session.commit()
+        await self.session.refresh(updated)
         return updated
 
     async def delete_entity(self, entity: OntologyEntity) -> None:
@@ -100,12 +106,19 @@ class OntologyService:
     ) -> OntologyProperty | None:
         return await self.repository.get_property(ontology_id, entity_id, property_id)
 
+    async def get_property_by_id(self, property_id: int) -> OntologyProperty | None:
+        return await self.repository.get_property_by_id(property_id)
+
     async def update_property(
         self, prop: OntologyProperty, data: dict
     ) -> OntologyProperty:
+        self._ensure_author_defaults(
+            data, existing_user_id=prop.user_id, existing_agent_id=prop.agent_id,
+        )
         self._validate_author_payload(data, allow_missing=True)
         updated = await self.repository.update_property(prop, data)
         await self.session.commit()
+        await self.session.refresh(updated)
         return updated
 
     async def delete_property(self, prop: OntologyProperty) -> None:
@@ -137,9 +150,19 @@ class OntologyService:
             ontology_id, entity_id, relationship_id
         )
 
+    async def get_relationship_by_id(
+        self, relationship_id: int
+    ) -> OntologyRelationship | None:
+        return await self.repository.get_relationship_by_id(relationship_id)
+
     async def update_relationship(
         self, relationship: OntologyRelationship, data: dict,
     ) -> OntologyRelationship:
+        self._ensure_author_defaults(
+            data,
+            existing_user_id=relationship.user_id,
+            existing_agent_id=relationship.agent_id,
+        )
         self._validate_author_payload(data, allow_missing=True)
         ontology_id = relationship.entity.ontology_id
         entity_id = relationship.entity_id
@@ -149,6 +172,7 @@ class OntologyService:
         updated = await self.repository.update_relationship(relationship, data)
         await self._sync_bidirectional_relationship(ontology_id, updated)
         await self.session.commit()
+        await self.session.refresh(updated)
         return updated
 
     async def delete_relationship(self, relationship: OntologyRelationship) -> None:
@@ -158,6 +182,32 @@ class OntologyService:
         await self.session.commit()
 
     # Helpers -----------------------------------------------------------
+    def _ensure_author_defaults(
+        self,
+        payload: dict,
+        *,
+        existing_user_id: str | None,
+        existing_agent_id: str | None,
+    ) -> None:
+        if "author_type" not in payload:
+            return
+
+        raw_author_type = payload["author_type"]
+        try:
+            author_type = (
+                raw_author_type
+                if isinstance(raw_author_type, AuthorType)
+                else AuthorType(raw_author_type)
+            )
+        except ValueError:
+            # Let validation handle invalid values later
+            return
+
+        if author_type == AuthorType.HUMAN and "user_id" not in payload:
+            payload["user_id"] = existing_user_id
+        elif author_type == AuthorType.AGENT and "agent_id" not in payload:
+            payload["agent_id"] = existing_agent_id
+
     def _validate_author_payload(
         self, payload: dict, *, allow_missing: bool = False
     ) -> None:

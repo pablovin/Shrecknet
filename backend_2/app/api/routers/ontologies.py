@@ -30,11 +30,7 @@ from app.schemas.ontology import (
 from app.services.audit_service import AuditService
 from app.services.ontology_service import OntologyService
 
-router = APIRouter(
-    prefix="/ontologies",
-    tags=["ontologies"],
-    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.WORLD_BUILDER))],
-)
+router = APIRouter(prefix="/ontologies", tags=["ontologies"])
 
 
 def _sanitize_payload(data: dict[str, Any]) -> dict[str, Any]:
@@ -46,7 +42,7 @@ async def create_ontology(
     payload: OntologyCreate,
     service: OntologyService = Depends(get_ontology_service),
     audit_service: AuditService = Depends(get_audit_service),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.WORLD_BUILDER)),
 ) -> OntologyRead:
     existing = await service.repository.get_by_name(payload.name)
     if existing:
@@ -71,24 +67,22 @@ async def create_ontology(
 async def list_ontologies(
     name: str | None = None,
     description: str | None = None,
-    display_on_world: bool | None = None,
     skip: int = 0,
     limit: int = 50,
     service: OntologyService = Depends(get_ontology_service),
+    _: User = Depends(get_current_user),
 ) -> list[OntologyRead]:
     ontologies = await service.list_ontologies(
-        name=name,
-        description=description,
-        display_on_world=display_on_world,
-        skip=skip,
-        limit=limit,
+        name=name, description=description, skip=skip, limit=limit,
     )
     return [OntologyRead.model_validate(o) for o in ontologies]
 
 
 @router.get("/{ontology_id}", response_model=OntologyRead)
 async def get_ontology(
-    ontology_id: int, service: OntologyService = Depends(get_ontology_service),
+    ontology_id: int,
+    service: OntologyService = Depends(get_ontology_service),
+    _: User = Depends(get_current_user),
 ) -> OntologyRead:
     ontology = await service.get_ontology(ontology_id)
     if not ontology:
@@ -104,7 +98,7 @@ async def update_ontology(
     payload: OntologyUpdate,
     service: OntologyService = Depends(get_ontology_service),
     audit_service: AuditService = Depends(get_audit_service),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.WORLD_BUILDER)),
 ) -> OntologyRead:
     ontology = await service.get_ontology(ontology_id)
     if not ontology:
@@ -132,7 +126,7 @@ async def delete_ontology(
     ontology_id: int,
     service: OntologyService = Depends(get_ontology_service),
     audit_service: AuditService = Depends(get_audit_service),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.WORLD_BUILDER)),
 ) -> Response:
     ontology = await service.get_ontology(ontology_id)
     if not ontology:
@@ -165,7 +159,7 @@ async def create_entity(
     payload: OntologyEntityCreate,
     service: OntologyService = Depends(get_ontology_service),
     audit_service: AuditService = Depends(get_audit_service),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.WORLD_BUILDER)),
 ) -> OntologyEntityRead:
     ontology = await service.get_ontology(ontology_id)
     if not ontology:
@@ -187,14 +181,19 @@ async def create_entity(
 
 @router.get("/{ontology_id}/entities", response_model=list[OntologyEntityRead])
 async def list_entities(
-    ontology_id: int, service: OntologyService = Depends(get_ontology_service),
+    ontology_id: int,
+    display_on_world: bool | None = None,
+    service: OntologyService = Depends(get_ontology_service),
+    _: User = Depends(get_current_user),
 ) -> list[OntologyEntityRead]:
     ontology = await service.get_ontology(ontology_id)
     if not ontology:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Ontology not found"
         )
-    entities = await service.list_entities(ontology_id)
+    entities = await service.list_entities(
+        ontology_id, display_on_world=display_on_world
+    )
     return [OntologyEntityRead.model_validate(e) for e in entities]
 
 
@@ -205,7 +204,7 @@ async def update_entity(
     payload: OntologyEntityUpdate,
     service: OntologyService = Depends(get_ontology_service),
     audit_service: AuditService = Depends(get_audit_service),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.WORLD_BUILDER)),
 ) -> OntologyEntityRead:
     entity = await service.get_entity(ontology_id, entity_id)
     if not entity:
@@ -236,7 +235,7 @@ async def delete_entity(
     entity_id: int,
     service: OntologyService = Depends(get_ontology_service),
     audit_service: AuditService = Depends(get_audit_service),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.WORLD_BUILDER)),
 ) -> Response:
     entity = await service.get_entity(ontology_id, entity_id)
     if not entity:
@@ -274,7 +273,7 @@ async def create_property(
     payload: OntologyPropertyCreate,
     service: OntologyService = Depends(get_ontology_service),
     audit_service: AuditService = Depends(get_audit_service),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.WORLD_BUILDER)),
 ) -> OntologyPropertyRead:
     entity = await service.get_entity(ontology_id, entity_id)
     if not entity:
@@ -304,6 +303,7 @@ async def list_properties(
     ontology_id: int,
     entity_id: int,
     service: OntologyService = Depends(get_ontology_service),
+    _: User = Depends(get_current_user),
 ) -> list[OntologyPropertyRead]:
     entity = await service.get_entity(ontology_id, entity_id)
     if not entity:
@@ -325,7 +325,7 @@ async def update_property(
     payload: OntologyPropertyUpdate,
     service: OntologyService = Depends(get_ontology_service),
     audit_service: AuditService = Depends(get_audit_service),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.WORLD_BUILDER)),
 ) -> OntologyPropertyRead:
     prop = await service.get_property(ontology_id, entity_id, property_id)
     if not prop:
@@ -364,7 +364,7 @@ async def delete_property(
     property_id: int,
     service: OntologyService = Depends(get_ontology_service),
     audit_service: AuditService = Depends(get_audit_service),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.WORLD_BUILDER)),
 ) -> Response:
     prop = await service.get_property(ontology_id, entity_id, property_id)
     if not prop:
@@ -403,7 +403,7 @@ async def create_relationship(
     payload: OntologyRelationshipCreate,
     service: OntologyService = Depends(get_ontology_service),
     audit_service: AuditService = Depends(get_audit_service),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.WORLD_BUILDER)),
 ) -> OntologyRelationshipRead:
     entity = await service.get_entity(ontology_id, entity_id)
     if not entity:
@@ -440,6 +440,7 @@ async def list_relationships(
     ontology_id: int,
     entity_id: int,
     service: OntologyService = Depends(get_ontology_service),
+    _: User = Depends(get_current_user),
 ) -> list[OntologyRelationshipRead]:
     entity = await service.get_entity(ontology_id, entity_id)
     if not entity:
@@ -461,7 +462,7 @@ async def update_relationship(
     payload: OntologyRelationshipUpdate,
     service: OntologyService = Depends(get_ontology_service),
     audit_service: AuditService = Depends(get_audit_service),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.WORLD_BUILDER)),
 ) -> OntologyRelationshipRead:
     relationship = await service.get_relationship(
         ontology_id, entity_id, relationship_id
@@ -503,7 +504,7 @@ async def delete_relationship(
     relationship_id: int,
     service: OntologyService = Depends(get_ontology_service),
     audit_service: AuditService = Depends(get_audit_service),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.WORLD_BUILDER)),
 ) -> Response:
     relationship = await service.get_relationship(
         ontology_id, entity_id, relationship_id

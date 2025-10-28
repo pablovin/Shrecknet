@@ -21,6 +21,7 @@ from app.schemas.game import (
     GameSessionCreate,
     GameSessionPollCreate,
     GameSessionPollRead,
+    GameSessionPollOptionRead,
     GameSessionRead,
     GameSessionUpdate,
     GameUpdate,

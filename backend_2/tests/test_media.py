@@ -7,6 +7,7 @@ import pytest
 from PIL import Image
 
 from app.core.config import get_settings
+from app.models.ontology import AuthorType, Cardinality, PropertyDataType
 from app.models.user import UserRole
 
 
@@ -73,8 +74,128 @@ async def test_upload_model_image_and_validation(client):
     assert url == f"{base_url}/user/{user_id}/image_url.png"
 
     media_root = Path(settings.media_root)
+    created_paths: list[Path] = []
     image_path = media_root / "user" / user_id / "image_url.png"
     assert image_path.exists()
+    created_paths.append(image_path)
+
+    # Prepare ontology resources for entity/property/relationship uploads
+    ontology_response = await client.post(
+        "/ontologies/",
+        json={"name": "Media Ontology", "description": "Media assets"},
+        headers=admin_headers,
+    )
+    assert ontology_response.status_code == 201, ontology_response.text
+    ontology_id = ontology_response.json()["id"]
+
+    core_entity_payload = {
+        "name": "Entity Hero",
+        "description": "Hero entity",
+        "keywords": ["hero"],
+        "author_type": AuthorType.HUMAN.value,
+        "user_id": "user-entity",
+    }
+    entity_response = await client.post(
+        f"/ontologies/{ontology_id}/entities",
+        json=core_entity_payload,
+        headers=admin_headers,
+    )
+    assert entity_response.status_code == 201, entity_response.text
+    entity_id = str(entity_response.json()["id"])
+
+    supporting_entity_payload = {
+        "name": "Entity Mentor",
+        "description": "Mentor entity",
+        "author_type": AuthorType.AGENT.value,
+        "agent_id": "agent-mentor",
+    }
+    supporting_entity_response = await client.post(
+        f"/ontologies/{ontology_id}/entities",
+        json=supporting_entity_payload,
+        headers=admin_headers,
+    )
+    assert (
+        supporting_entity_response.status_code == 201
+    ), supporting_entity_response.text
+    supporting_entity_id = str(supporting_entity_response.json()["id"])
+
+    property_payload = {
+        "name": "Courage",
+        "cardinality": Cardinality.ONE.value,
+        "data_type": PropertyDataType.NUMBER.value,
+        "author_type": AuthorType.AGENT.value,
+        "agent_id": "agent-property",
+    }
+    property_response = await client.post(
+        f"/ontologies/{ontology_id}/entities/{entity_id}/properties",
+        json=property_payload,
+        headers=admin_headers,
+    )
+    assert property_response.status_code == 201, property_response.text
+    property_id = str(property_response.json()["id"])
+
+    relationship_payload = {
+        "name": "Mentorship",
+        "bi_directional": False,
+        "destiny_entity_id": int(supporting_entity_id),
+        "author_type": AuthorType.AGENT.value,
+        "agent_id": "agent-relationship",
+    }
+    relationship_response = await client.post(
+        f"/ontologies/{ontology_id}/entities/{entity_id}/relationships",
+        json=relationship_payload,
+        headers=admin_headers,
+    )
+    assert relationship_response.status_code == 201, relationship_response.text
+    relationship_id = str(relationship_response.json()["id"])
+
+    # Entity upload
+    buffer = _create_image()
+    entity_upload = await client.post(
+        "/media-admin/images",
+        headers=admin_headers,
+        files={"file": ("entity.png", buffer, "image/png")},
+        data={"model": "entity", "instance_id": entity_id},
+    )
+    assert entity_upload.status_code == 201, entity_upload.text
+    assert entity_upload.json()["url"] == f"{base_url}/entity/{entity_id}/image_url.png"
+    entity_path = media_root / "entity" / entity_id / "image_url.png"
+    assert entity_path.exists()
+    created_paths.append(entity_path)
+
+    # Property upload
+    buffer = _create_image()
+    property_upload = await client.post(
+        "/media-admin/images",
+        headers=admin_headers,
+        files={"file": ("property.png", buffer, "image/png")},
+        data={"model": "property", "instance_id": property_id},
+    )
+    assert property_upload.status_code == 201, property_upload.text
+    assert (
+        property_upload.json()["url"]
+        == f"{base_url}/property/{property_id}/image_url.png"
+    )
+    property_path = media_root / "property" / property_id / "image_url.png"
+    assert property_path.exists()
+    created_paths.append(property_path)
+
+    # Relationship upload
+    buffer = _create_image()
+    relationship_upload = await client.post(
+        "/media-admin/images",
+        headers=admin_headers,
+        files={"file": ("relationship.png", buffer, "image/png")},
+        data={"model": "relationship", "instance_id": relationship_id},
+    )
+    assert relationship_upload.status_code == 201, relationship_upload.text
+    assert (
+        relationship_upload.json()["url"]
+        == f"{base_url}/relationship/{relationship_id}/image_url.png"
+    )
+    relationship_path = media_root / "relationship" / relationship_id / "image_url.png"
+    assert relationship_path.exists()
+    created_paths.append(relationship_path)
 
     # Unsupported model
     buffer = _create_image()
@@ -97,9 +218,10 @@ async def test_upload_model_image_and_validation(client):
     assert missing.status_code == 404
 
     # Cleanup file to avoid leaking artifacts in test runs
-    if image_path.exists():
-        image_path.unlink()
-        try:
-            image_path.parent.rmdir()
-        except OSError:
-            pass
+    for path in created_paths:
+        if path.exists():
+            path.unlink()
+            try:
+                path.parent.rmdir()
+            except OSError:
+                pass

@@ -57,9 +57,6 @@ class Ontology(Base):
     name: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     image_url: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
-    display_on_world: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=True, server_default=expression.true(),
-    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -98,6 +95,9 @@ class OntologyEntity(Base):
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     image_url: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
     keywords: Mapped[list[str]] = mapped_column(JSON, default=list)
+    display_on_world: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=expression.true(),
+    )
     auto_generatable: Mapped[bool] = mapped_column(
         Boolean, default=False, nullable=False
     )

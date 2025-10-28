@@ -65,6 +65,23 @@ async def _ensure_ontology_exists(
         )
 
 
+async def _ensure_entity_exists(
+    ontology_service: OntologyService, instance_id: str
+) -> None:
+    try:
+        entity_id = int(instance_id)
+    except ValueError as exc:  # pragma: no cover - defensive
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="instance_id must be an integer for model 'entity'",
+        ) from exc
+    entity = await ontology_service.get_entity_by_id(entity_id)
+    if not entity:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Ontology entity not found"
+        )
+
+
 async def _ensure_notification_exists(
     notification_service: NotificationService, instance_id: str
 ) -> None:
@@ -82,6 +99,23 @@ async def _ensure_notification_exists(
         )
 
 
+async def _ensure_property_exists(
+    ontology_service: OntologyService, instance_id: str
+) -> None:
+    try:
+        property_id = int(instance_id)
+    except ValueError as exc:  # pragma: no cover - defensive
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="instance_id must be an integer for model 'property'",
+        ) from exc
+    prop = await ontology_service.get_property_by_id(property_id)
+    if not prop:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Ontology property not found"
+        )
+
+
 async def _ensure_ontology_instance_exists(
     ontology_instance_service: OntologyInstanceService, instance_id: str
 ) -> None:
@@ -91,6 +125,24 @@ async def _ensure_ontology_instance_exists(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Ontology instance not found"
         ) from exc
+
+
+async def _ensure_relationship_exists(
+    ontology_service: OntologyService, instance_id: str
+) -> None:
+    try:
+        relationship_id = int(instance_id)
+    except ValueError as exc:  # pragma: no cover - defensive
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="instance_id must be an integer for model 'relationship'",
+        ) from exc
+    relationship = await ontology_service.get_relationship_by_id(relationship_id)
+    if not relationship:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Ontology relationship not found",
+        )
 
 
 def _sanitize_component(value: str, *, field: str, to_lower: bool = False) -> str:
@@ -123,6 +175,13 @@ async def upload_image(
     validators: dict[str, Callable[[str], Awaitable[None]]] = {
         "user": lambda instance: _ensure_user_exists(user_service, instance),
         "ontology": lambda instance: _ensure_ontology_exists(
+            ontology_service, instance
+        ),
+        "entity": lambda instance: _ensure_entity_exists(ontology_service, instance),
+        "property": lambda instance: _ensure_property_exists(
+            ontology_service, instance
+        ),
+        "relationship": lambda instance: _ensure_relationship_exists(
             ontology_service, instance
         ),
         "notification": lambda instance: _ensure_notification_exists(

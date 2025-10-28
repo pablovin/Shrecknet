@@ -32,7 +32,6 @@ class OntologyBase(BaseModel):
     name: str
     description: str | None = None
     image_url: str | None = Field(None, description="URL pointing to an ontology image")
-    display_on_world: bool = True
 
 
 class OntologyCreate(OntologyBase):
@@ -43,7 +42,6 @@ class OntologyUpdate(BaseModel):
     name: str | None = None
     description: str | None = None
     image_url: str | None = None
-    display_on_world: bool | None = None
 
 
 class OntologyRead(OntologyBase):
@@ -52,7 +50,6 @@ class OntologyRead(OntologyBase):
     id: int
     created_at: datetime
     updated_at: datetime
-    display_on_world: bool
 
 
 class OntologyEntityBase(AuthorMixin):
@@ -60,6 +57,7 @@ class OntologyEntityBase(AuthorMixin):
     description: str | None = None
     image_url: str | None = None
     keywords: list[str] = Field(default_factory=list)
+    display_on_world: bool = True
     auto_generatable: bool = False
 
 
@@ -72,6 +70,7 @@ class OntologyEntityUpdate(BaseModel):
     description: str | None = None
     image_url: str | None = None
     keywords: list[str] | None = None
+    display_on_world: bool | None = None
     auto_generatable: bool | None = None
     author_type: AuthorType | None = None
     user_id: str | None = None

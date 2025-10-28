@@ -41,7 +41,7 @@ async def test_create_and_manage_ontology(client):
     assert response.status_code == 201, response.text
     ontology = response.json()
     ontology_id = ontology["id"]
-    assert ontology["display_on_world"] is True
+    assert "display_on_world" not in ontology
 
     # Ensure listing works with filters
     list_response = await client.get(
@@ -49,19 +49,6 @@ async def test_create_and_manage_ontology(client):
     )
     assert list_response.status_code == 200
     assert any(item["id"] == ontology_id for item in list_response.json())
-
-    # Toggle display flag
-    visibility_response = await client.put(
-        f"/ontologies/{ontology_id}", json={"display_on_world": False}, headers=headers,
-    )
-    assert visibility_response.status_code == 200, visibility_response.text
-    assert visibility_response.json()["display_on_world"] is False
-
-    invisible_list = await client.get(
-        "/ontologies/", params={"display_on_world": "false"}, headers=headers
-    )
-    assert invisible_list.status_code == 200
-    assert any(item["id"] == ontology_id for item in invisible_list.json())
 
     # Add entity
     entity_payload = {
@@ -77,6 +64,7 @@ async def test_create_and_manage_ontology(client):
     )
     assert entity_response.status_code == 201, entity_response.text
     entity_id = entity_response.json()["id"]
+    assert entity_response.json()["display_on_world"] is True
 
     # create destiny entity
     destiny_payload = {
@@ -95,11 +83,29 @@ async def test_create_and_manage_ontology(client):
     # Update entity
     update_response = await client.put(
         f"/ontologies/{ontology_id}/entities/{entity_id}",
-        json={"description": "Updated description"},
+        json={"description": "Updated description", "display_on_world": False},
         headers=headers,
     )
     assert update_response.status_code == 200
     assert update_response.json()["description"] == "Updated description"
+    assert update_response.json()["display_on_world"] is False
+
+    # Verify list filtering by display flag
+    visible_entities = await client.get(
+        f"/ontologies/{ontology_id}/entities",
+        params={"display_on_world": "true"},
+        headers=headers,
+    )
+    assert visible_entities.status_code == 200
+    assert all(entity["display_on_world"] for entity in visible_entities.json())
+
+    hidden_entities = await client.get(
+        f"/ontologies/{ontology_id}/entities",
+        params={"display_on_world": "false"},
+        headers=headers,
+    )
+    assert hidden_entities.status_code == 200
+    assert any(item["id"] == entity_id for item in hidden_entities.json())
 
     # Add property
     property_payload = {
@@ -123,8 +129,8 @@ async def test_create_and_manage_ontology(client):
     relationship_payload = {
         "name": "Mentorship",
         "bi_directional": True,
-        "author_type": AuthorType.AGENT.value,
-        "agent_id": "agent-2",
+        "author_type": AuthorType.HUMAN.value,
+        "user_id": "user-relationship",
         "destiny_entity_id": destiny_entity_id,
     }
     relationship_response = await client.post(
@@ -136,6 +142,14 @@ async def test_create_and_manage_ontology(client):
     relationship_id = relationship_response.json()["id"]
     assert relationship_response.json()["entity_id"] == entity_id
     assert relationship_response.json()["destiny_entity_id"] == destiny_entity_id
+
+    relationship_update = await client.put(
+        f"/ontologies/{ontology_id}/entities/{entity_id}/relationships/{relationship_id}",
+        json={"description": "Mentor guidance", "author_type": AuthorType.HUMAN.value,},
+        headers=headers,
+    )
+    assert relationship_update.status_code == 200, relationship_update.text
+    assert relationship_update.json()["description"] == "Mentor guidance"
 
     # Delete property and relationship
     delete_property = await client.delete(

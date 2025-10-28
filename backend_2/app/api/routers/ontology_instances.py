@@ -3,10 +3,11 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
 from app.api.deps import (
+    get_current_user,
     get_ontology_instance_service,
     require_roles,
 )
-from app.models.user import UserRole
+from app.models.user import User, UserRole
 from app.schemas.ontology_instance import (
     OntologyInstanceCreate,
     OntologyInstanceRead,
@@ -14,17 +15,14 @@ from app.schemas.ontology_instance import (
 )
 from app.services.ontology_instance_service import OntologyInstanceService
 
-router = APIRouter(
-    prefix="/ontology-instances",
-    tags=["ontology-instances"],
-    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.WORLD_BUILDER))],
-)
+router = APIRouter(prefix="/ontology-instances", tags=["ontology-instances"])
 
 
 @router.post("/", response_model=OntologyInstanceRead, status_code=status.HTTP_201_CREATED)
 async def create_ontology_instance(
     payload: OntologyInstanceCreate,
     service: OntologyInstanceService = Depends(get_ontology_instance_service),
+    _: User = Depends(require_roles(UserRole.ADMIN, UserRole.WORLD_BUILDER)),
 ) -> OntologyInstanceRead:
     try:
         return await service.create_instance(payload)
@@ -39,6 +37,7 @@ async def list_ontology_instances(
     search: str | None = None,
     ontology_id: int | None = None,
     service: OntologyInstanceService = Depends(get_ontology_instance_service),
+    _: User = Depends(get_current_user),
 ) -> list[OntologyInstanceRead]:
     instances = await service.list_instances(
         skip=skip, limit=limit, search=search, ontology_id=ontology_id
@@ -50,6 +49,7 @@ async def list_ontology_instances(
 async def get_ontology_instance(
     instance_id: str,
     service: OntologyInstanceService = Depends(get_ontology_instance_service),
+    _: User = Depends(get_current_user),
 ) -> OntologyInstanceRead:
     try:
         return await service.get_instance(instance_id)
@@ -62,6 +62,7 @@ async def update_ontology_instance(
     instance_id: str,
     payload: OntologyInstanceUpdate,
     service: OntologyInstanceService = Depends(get_ontology_instance_service),
+    _: User = Depends(require_roles(UserRole.ADMIN, UserRole.WORLD_BUILDER)),
 ) -> OntologyInstanceRead:
     try:
         return await service.update_instance(instance_id, payload)
@@ -77,6 +78,7 @@ async def update_ontology_instance(
 async def delete_ontology_instance(
     instance_id: str,
     service: OntologyInstanceService = Depends(get_ontology_instance_service),
+    _: User = Depends(require_roles(UserRole.ADMIN, UserRole.WORLD_BUILDER)),
 ) -> Response:
     await service.delete_instance(instance_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

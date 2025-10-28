@@ -4,7 +4,6 @@ from typing import Any, Sequence
 
 from sqlalchemy import Select, select
 from sqlalchemy.orm import selectinload
-from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.ontology import (
@@ -29,15 +28,12 @@ class OntologyRepository(BaseRepository):
         limit: int = 50,
         name: str | None = None,
         description: str | None = None,
-        display_on_world: bool | None = None,
     ) -> Sequence[Ontology]:
         query: Select[tuple[Ontology]] = select(Ontology).offset(skip).limit(limit)
         if name:
             query = query.where(Ontology.name.ilike(f"%{name}%"))
         if description:
             query = query.where(Ontology.description.ilike(f"%{description}%"))
-        if display_on_world is not None:
-            query = query.where(Ontology.display_on_world == display_on_world)
         result = await self.session.execute(query)
         return result.scalars().unique().all()
 
@@ -94,8 +90,16 @@ class OntologyRepository(BaseRepository):
         )
         return result.scalar_one_or_none()
 
-    async def list_entities(self, ontology_id: int) -> Sequence[OntologyEntity]:
+    async def get_entity_by_id(self, entity_id: int) -> OntologyEntity | None:
         result = await self.session.execute(
+            select(OntologyEntity).where(OntologyEntity.id == entity_id)
+        )
+        return result.scalar_one_or_none()
+
+    async def list_entities(
+        self, ontology_id: int, *, display_on_world: bool | None = None
+    ) -> Sequence[OntologyEntity]:
+        query = (
             select(OntologyEntity)
             .options(
                 selectinload(OntologyEntity.properties),
@@ -103,6 +107,9 @@ class OntologyRepository(BaseRepository):
             )
             .where(OntologyEntity.ontology_id == ontology_id)
         )
+        if display_on_world is not None:
+            query = query.where(OntologyEntity.display_on_world == display_on_world)
+        result = await self.session.execute(query)
         return result.scalars().all()
 
     async def update_entity(
@@ -168,6 +175,12 @@ class OntologyRepository(BaseRepository):
     async def remove_property(self, prop: OntologyProperty) -> None:
         await self.delete(prop)
 
+    async def get_property_by_id(self, property_id: int) -> OntologyProperty | None:
+        result = await self.session.execute(
+            select(OntologyProperty).where(OntologyProperty.id == property_id)
+        )
+        return result.scalar_one_or_none()
+
     # Relationship operations ------------------------------------------
     async def add_relationship(
         self, ontology_id: int, entity_id: int, data: dict[str, Any]
@@ -227,6 +240,16 @@ class OntologyRepository(BaseRepository):
             relationship, attribute_names=["entity", "destiny_entity"]
         )
         return relationship
+
+    async def get_relationship_by_id(
+        self, relationship_id: int
+    ) -> OntologyRelationship | None:
+        result = await self.session.execute(
+            select(OntologyRelationship).where(
+                OntologyRelationship.id == relationship_id
+            )
+        )
+        return result.scalar_one_or_none()
 
     async def remove_relationship(self, relationship: OntologyRelationship) -> None:
         await self.delete(relationship)

@@ -154,7 +154,7 @@ The old database location can be configured using the `OLD_DATABASE_URL` environ
 export OLD_DATABASE_URL="sqlite+aiosqlite:///path/to/old/database.db"
 ```
 
-Default: `sqlite+aiosqlite:////home/runner/work/Shrecknet/Shrecknet/data/prod.db`
+Default: `sqlite+aiosqlite:///./data/prod.db` (relative to the application root)
 
 ## Idempotency
 

@@ -27,9 +27,11 @@ router = APIRouter(prefix="/imports", tags=["imports"])
 
 
 # Old backend database connection
+# Default path is relative to the repository root
+# Can be overridden with OLD_DATABASE_URL environment variable
 OLD_DATABASE_URL = os.getenv(
     "OLD_DATABASE_URL",
-    "sqlite+aiosqlite:////home/runner/work/Shrecknet/Shrecknet/data/prod.db",
+    "sqlite+aiosqlite:///./data/prod.db",
 )
 
 

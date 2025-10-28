@@ -158,7 +158,9 @@ async def _notify_members(
 
 
 @router.post(
-    "/", response_model=GameRead, status_code=status.HTTP_201_CREATED,
+    "/",
+    response_model=GameRead,
+    status_code=status.HTTP_201_CREATED,
 )
 async def create_game(
     payload: GameCreate,
@@ -201,7 +203,8 @@ async def list_my_games(
 
 
 @router.get(
-    "/{game_id}", response_model=GameRead,
+    "/{game_id}",
+    response_model=GameRead,
 )
 async def get_game(
     game_id: int,
@@ -214,7 +217,8 @@ async def get_game(
 
 
 @router.get(
-    "/{game_id}/members", response_model=list[GameMemberSummary],
+    "/{game_id}/members",
+    response_model=list[GameMemberSummary],
 )
 async def list_members(
     game_id: int,
@@ -227,7 +231,8 @@ async def list_members(
 
 
 @router.put(
-    "/{game_id}", response_model=GameRead,
+    "/{game_id}",
+    response_model=GameRead,
 )
 async def update_game(
     game_id: int,
@@ -239,7 +244,10 @@ async def update_game(
     try:
         updated = await service.update_game(
             game,
-            payload.model_dump(exclude_unset=True, exclude={"member_ids"},),
+            payload.model_dump(
+                exclude_unset=True,
+                exclude={"member_ids"},
+            ),
             member_ids=payload.member_ids,
         )
     except ValueError as exc:
@@ -250,7 +258,8 @@ async def update_game(
 
 
 @router.delete(
-    "/{game_id}", status_code=status.HTTP_204_NO_CONTENT,
+    "/{game_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
 )
 async def delete_game(
     game_id: int,
@@ -263,7 +272,8 @@ async def delete_game(
 
 
 @router.post(
-    "/{game_id}/members", response_model=GameRead,
+    "/{game_id}/members",
+    response_model=GameRead,
 )
 async def add_members(
     game_id: int,
@@ -282,7 +292,8 @@ async def add_members(
 
 
 @router.delete(
-    "/{game_id}/members/{user_id}", response_model=GameRead,
+    "/{game_id}/members/{user_id}",
+    response_model=GameRead,
 )
 async def remove_member(
     game_id: int,
@@ -321,7 +332,8 @@ async def create_session(
 
 
 @router.get(
-    "/{game_id}/sessions", response_model=list[GameSessionRead],
+    "/{game_id}/sessions",
+    response_model=list[GameSessionRead],
 )
 async def list_sessions(
     game_id: int,
@@ -335,7 +347,8 @@ async def list_sessions(
 
 
 @router.get(
-    "/{game_id}/sessions/{session_id}", response_model=GameSessionRead,
+    "/{game_id}/sessions/{session_id}",
+    response_model=GameSessionRead,
 )
 async def get_session(
     game_id: int,
@@ -350,7 +363,8 @@ async def get_session(
 
 
 @router.put(
-    "/{game_id}/sessions/{session_id}", response_model=GameSessionRead,
+    "/{game_id}/sessions/{session_id}",
+    response_model=GameSessionRead,
 )
 async def update_session(
     game_id: int,
@@ -367,7 +381,8 @@ async def update_session(
 
 
 @router.post(
-    "/{game_id}/sessions/{session_id}/attendance", response_model=GameSessionRead,
+    "/{game_id}/sessions/{session_id}/attendance",
+    response_model=GameSessionRead,
 )
 async def set_attendance(
     game_id: int,
@@ -440,7 +455,8 @@ async def add_poll_option(
     poll = await _get_poll_or_404(session_id, poll_id, service)
     if poll.is_finalized:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="Poll already finalized",
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Poll already finalized",
         )
     for option in payload.options:
         await service.add_poll_option(poll, option.model_dump())
@@ -466,7 +482,8 @@ async def vote_poll(
     poll = await _get_poll_or_404(session.id, poll_id, service)
     if poll.is_finalized:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="Poll is already finalized",
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Poll is already finalized",
         )
     option = next((item for item in poll.options if item.id == payload.option_id), None)
     if option is None:
@@ -502,13 +519,16 @@ async def finalize_poll(
     poll = await _get_poll_or_404(session.id, poll_id, service)
     if poll.is_finalized:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="Poll already finalized",
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Poll already finalized",
         )
     option = next((item for item in poll.options if item.id == payload.option_id), None)
     if option is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Option not found"
         )
+    # Capture the proposed_start before the service call to avoid SQLAlchemy detached instance access
+    proposed_start = option.proposed_start
     finalized_poll, attendees = await service.finalize_poll(session, poll, option)
     await _notify_members(
         notification_service,
@@ -516,7 +536,7 @@ async def finalize_poll(
         author=current_user,
         title=f"Session date selected: {session.title}",
         description=(
-            f"Session '{session.title}' is scheduled for {option.proposed_start.isoformat()}."
+            f"Session '{session.title}' is scheduled for {proposed_start.isoformat()}."
         ),
     )
     updated_session = await service.get_session(game.id, session.id)

@@ -127,7 +127,9 @@ def require_roles(*roles: UserRole) -> Callable[..., User]:
     return dependency
 
 
-async def get_current_admin_user(current_user: User = Depends(get_current_user)) -> User:
+async def get_current_admin_user(
+    current_user: User = Depends(get_current_user),
+) -> User:
     """Dependency to require admin role."""
     if current_user.role != UserRole.ADMIN:
         raise HTTPException(
@@ -135,4 +137,3 @@ async def get_current_admin_user(current_user: User = Depends(get_current_user))
             detail="Admin privileges required",
         )
     return current_user
-

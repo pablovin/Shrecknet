@@ -69,6 +69,8 @@ out/
 *.identifier
 *Zone.Identifier
 *.pyc
+__pycache__/
+*.egg-info/
 # Uploaded files
 frontend/uploads/
 !frontend/uploads/.gitkeep

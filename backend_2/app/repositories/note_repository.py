@@ -81,5 +81,5 @@ class NoteRepository(BaseRepository):
         return list(users)
 
     async def delete_instance(self, note: Note) -> None:
-        await self.session.delete(note)
+        self.session.delete(note)
         await self.session.flush()

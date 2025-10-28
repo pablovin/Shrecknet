@@ -20,6 +20,7 @@ from app.schemas.game import (
     GameRead,
     GameSessionCreate,
     GameSessionPollCreate,
+    GameSessionPollDetailRead,
     GameSessionPollRead,
     GameSessionPollOptionRead,
     GameSessionRead,
@@ -132,6 +133,39 @@ def _serialize_poll(poll: GameSessionPoll) -> GameSessionPollRead:
     ]
     payload.options = options
     return payload
+
+
+def _serialize_poll_detail(poll: GameSessionPoll) -> GameSessionPollDetailRead:
+    """Serialize poll with full vote details."""
+    from app.schemas.game import (
+        GameSessionPollOptionDetailRead,
+        GameSessionPollVoteRead,
+    )
+
+    options_detail = []
+    for option in poll.options:
+        votes = [
+            GameSessionPollVoteRead.model_validate(vote)
+            for vote in getattr(option, "votes", []) or []
+        ]
+        option_data = {
+            "id": option.id,
+            "proposed_start": option.proposed_start,
+            "vote_count": len(votes),
+            "votes": votes,
+        }
+        options_detail.append(
+            GameSessionPollOptionDetailRead.model_validate(option_data)
+        )
+
+    poll_data = {
+        "id": poll.id,
+        "created_at": poll.created_at,
+        "is_finalized": poll.is_finalized,
+        "finalized_option_id": poll.finalized_option_id,
+        "options": options_detail,
+    }
+    return GameSessionPollDetailRead.model_validate(poll_data)
 
 
 async def _notify_members(
@@ -436,6 +470,25 @@ async def create_poll(
     )
     poll = await service.get_poll(session.id, poll.id) or poll
     return _serialize_poll(poll)
+
+
+@router.get(
+    "/{game_id}/sessions/{session_id}/polls/{poll_id}",
+    response_model=GameSessionPollDetailRead,
+)
+async def get_poll_details(
+    game_id: int,
+    session_id: int,
+    poll_id: int,
+    service: GameService = Depends(get_game_service),
+    current_user: User = Depends(get_current_user),
+) -> GameSessionPollDetailRead:
+    """Get detailed voting information for a specific session poll."""
+    game = await _get_game_or_404(game_id, service)
+    _ensure_member(game, current_user)
+    session = await _get_session_or_404(game.id, session_id, service)
+    poll = await _get_poll_or_404(session.id, poll_id, service)
+    return _serialize_poll_detail(poll)
 
 
 @router.post(

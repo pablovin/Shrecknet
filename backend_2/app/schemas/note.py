@@ -30,3 +30,7 @@ class NoteRead(NoteBase):
     updated_at: datetime
     owner_id: int
     shared_with: list[int] = Field(default_factory=list)
+
+
+class NoteShareRequest(BaseModel):
+    user_ids: list[int] = Field(..., min_length=1)

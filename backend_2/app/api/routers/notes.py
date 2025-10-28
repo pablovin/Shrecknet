@@ -11,6 +11,7 @@ from app.models.user import User, UserRole
 from app.schemas.note import (
     NoteCreate,
     NoteRead,
+    NoteShareRequest,
     NoteUpdate,
 )
 from app.services.note_service import NoteService
@@ -138,3 +139,50 @@ async def delete_note(
         )
     await service.delete_note(note)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/{note_id}/share", response_model=NoteRead)
+async def add_shared_users(
+    note_id: int,
+    payload: NoteShareRequest,
+    service: NoteService = Depends(get_note_service),
+    current_user: User = Depends(get_current_user),
+) -> NoteRead:
+    """Add users to a note's share list. Only the note owner can share."""
+    note = await service.get(note_id)
+    if not note:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Note not found"
+        )
+    if note.owner_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the note owner can share the note",
+        )
+    try:
+        updated = await service.add_shared_users(note, payload.user_ids, current_user)
+        return _serialize_note(service, updated)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@router.delete("/{note_id}/share", response_model=NoteRead)
+async def remove_shared_users(
+    note_id: int,
+    payload: NoteShareRequest,
+    service: NoteService = Depends(get_note_service),
+    current_user: User = Depends(get_current_user),
+) -> NoteRead:
+    """Remove users from a note's share list. Only the note owner can unshare."""
+    note = await service.get(note_id)
+    if not note:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Note not found"
+        )
+    if note.owner_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the note owner can unshare the note",
+        )
+    updated = await service.remove_shared_users(note, payload.user_ids)
+    return _serialize_note(service, updated)

@@ -131,11 +131,15 @@ def _serialize_poll(poll: GameSessionPoll) -> GameSessionPollRead:
     for option in poll.options:
         votes = getattr(option, "votes", [])
         vote_count = len(votes) if votes is not None else 0
-        options.append(GameSessionPollOptionRead.model_validate({
-            "id": option.id,
-            "proposed_start": option.proposed_start,
-            "vote_count": vote_count,
-        }))
+        options.append(
+            GameSessionPollOptionRead.model_validate(
+                {
+                    "id": option.id,
+                    "proposed_start": option.proposed_start,
+                    "vote_count": vote_count,
+                }
+            )
+        )
     payload = GameSessionPollRead.model_validate(poll)
     payload.options = options
     return payload

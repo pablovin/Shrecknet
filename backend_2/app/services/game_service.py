@@ -26,7 +26,11 @@ class GameService:
         self.repository = GameRepository(session)
 
     # Games -----------------------------------------------------------------
-    async def create_game(self, data: dict, member_ids: list[int],) -> Game:
+    async def create_game(
+        self,
+        data: dict,
+        member_ids: list[int],
+    ) -> Game:
         await self._assert_ontology_exists(data["ontology_id"])
         members = await self._fetch_users(member_ids)
         game = await self.repository.create_game(data, members)
@@ -81,7 +85,11 @@ class GameService:
         return game
 
     # Sessions ---------------------------------------------------------------
-    async def create_session(self, game: Game, data: dict,) -> GameSession:
+    async def create_session(
+        self,
+        game: Game,
+        data: dict,
+    ) -> GameSession:
         session_obj = await self.repository.create_session(game.id, data)
         await self.session.commit()
         reloaded = await self.repository.get_session(game.id, session_obj.id)
@@ -117,7 +125,9 @@ class GameService:
 
     # Polls -----------------------------------------------------------------
     async def create_poll(
-        self, session: GameSession, options: list[dict],
+        self,
+        session: GameSession,
+        options: list[dict],
     ) -> GameSessionPoll:
         if await self.repository.has_open_poll(session.id):
             raise ValueError("An open poll already exists for this session")

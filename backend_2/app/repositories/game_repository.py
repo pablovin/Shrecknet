@@ -21,7 +21,11 @@ class GameRepository(BaseRepository):
     """Data access helpers for games, sessions, and polls."""
 
     async def list_games(
-        self, *, skip: int = 0, limit: int = 50, name: str | None = None,
+        self,
+        *,
+        skip: int = 0,
+        limit: int = 50,
+        name: str | None = None,
     ) -> Sequence[Game]:
         query: Select[tuple[Game]] = (
             select(Game)
@@ -131,7 +135,10 @@ class GameRepository(BaseRepository):
                     GameSessionPoll.finalized_option
                 ),
             )
-            .where(GameSession.id == session_id, GameSession.game_id == game_id,)
+            .where(
+                GameSession.id == session_id,
+                GameSession.game_id == game_id,
+            )
         )
         return result.scalar_one_or_none()
 
@@ -206,7 +213,8 @@ class GameRepository(BaseRepository):
                 )
             )
             .where(
-                GameSessionPoll.id == poll_id, GameSessionPoll.session_id == session_id,
+                GameSessionPoll.id == poll_id,
+                GameSessionPoll.session_id == session_id,
             )
             .execution_options(populate_existing=True)
         )

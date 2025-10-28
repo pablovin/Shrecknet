@@ -100,7 +100,9 @@ async def test_game_session_poll_flow(client):
         "scheduled_date": None,
     }
     session_response = await client.post(
-        f"/games/{game_id}/sessions", json=session_payload, headers=admin_headers,
+        f"/games/{game_id}/sessions",
+        json=session_payload,
+        headers=admin_headers,
     )
     assert session_response.status_code == 201, session_response.text
     session = session_response.json()
@@ -120,7 +122,10 @@ async def test_game_session_poll_flow(client):
 
     # Admin opens a scheduling poll
     poll_payload = {
-        "options": [{"proposed_start": _dt(24)}, {"proposed_start": _dt(48)},]
+        "options": [
+            {"proposed_start": _dt(24)},
+            {"proposed_start": _dt(48)},
+        ]
     }
     poll_response = await client.post(
         f"/games/{game_id}/sessions/{session_id}/polls",
@@ -199,7 +204,10 @@ async def test_admin_delete_vote(client):
 
     admin_token_response = await client.post(
         "/auth/token",
-        data={"username": admin_payload["username"], "password": admin_payload["password"]},
+        data={
+            "username": admin_payload["username"],
+            "password": admin_payload["password"],
+        },
         headers={"Content-Type": "application/x-www-form-urlencoded"},
     )
     assert admin_token_response.status_code == 200
@@ -221,7 +229,10 @@ async def test_admin_delete_vote(client):
 
     player_token_response = await client.post(
         "/auth/token",
-        data={"username": player_payload["username"], "password": player_payload["password"]},
+        data={
+            "username": player_payload["username"],
+            "password": player_payload["password"],
+        },
         headers={"Content-Type": "application/x-www-form-urlencoded"},
     )
     assert player_token_response.status_code == 200
@@ -238,13 +249,23 @@ async def test_admin_delete_vote(client):
     ontology_id = ontology_response.json()["id"]
 
     # Create game
-    game_payload = {"name": "Delete Test Game", "ontology_id": ontology_id, "member_ids": [admin_id, player_id]}
-    game_response = await client.post("/games/", json=game_payload, headers=admin_headers)
+    game_payload = {
+        "name": "Delete Test Game",
+        "ontology_id": ontology_id,
+        "member_ids": [admin_id, player_id],
+    }
+    game_response = await client.post(
+        "/games/", json=game_payload, headers=admin_headers
+    )
     assert game_response.status_code == 201
     game_id = game_response.json()["id"]
 
     # Create session
-    session_payload = {"title": "Delete Test Session", "summary": "Test", "location": "Online"}
+    session_payload = {
+        "title": "Delete Test Session",
+        "summary": "Test",
+        "location": "Online",
+    }
     session_response = await client.post(
         f"/games/{game_id}/sessions", json=session_payload, headers=admin_headers
     )
@@ -252,7 +273,9 @@ async def test_admin_delete_vote(client):
     session_id = session_response.json()["id"]
 
     # Create poll
-    poll_payload = {"options": [{"proposed_start": _dt(24)}, {"proposed_start": _dt(48)}]}
+    poll_payload = {
+        "options": [{"proposed_start": _dt(24)}, {"proposed_start": _dt(48)}]
+    }
     poll_response = await client.post(
         f"/games/{game_id}/sessions/{session_id}/polls",
         json=poll_payload,
@@ -277,7 +300,9 @@ async def test_admin_delete_vote(client):
         headers=admin_headers,
     )
     assert poll_details.status_code == 200
-    option_votes = [opt for opt in poll_details.json()["options"] if opt["id"] == option_id][0]["votes"]
+    option_votes = [
+        opt for opt in poll_details.json()["options"] if opt["id"] == option_id
+    ][0]["votes"]
     assert player_id in [v["user_id"] for v in option_votes]
 
     # Admin deletes the vote
@@ -293,7 +318,9 @@ async def test_admin_delete_vote(client):
         headers=admin_headers,
     )
     assert poll_details_after.status_code == 200
-    option_votes_after = [opt for opt in poll_details_after.json()["options"] if opt["id"] == option_id][0]["votes"]
+    option_votes_after = [
+        opt for opt in poll_details_after.json()["options"] if opt["id"] == option_id
+    ][0]["votes"]
     assert player_id not in [v["user_id"] for v in option_votes_after]
 
 
@@ -314,7 +341,10 @@ async def test_admin_delete_poll(client):
 
     admin_token_response = await client.post(
         "/auth/token",
-        data={"username": admin_payload["username"], "password": admin_payload["password"]},
+        data={
+            "username": admin_payload["username"],
+            "password": admin_payload["password"],
+        },
         headers={"Content-Type": "application/x-www-form-urlencoded"},
     )
     assert admin_token_response.status_code == 200
@@ -331,13 +361,23 @@ async def test_admin_delete_poll(client):
     ontology_id = ontology_response.json()["id"]
 
     # Create game
-    game_payload = {"name": "Poll Delete Game", "ontology_id": ontology_id, "member_ids": []}
-    game_response = await client.post("/games/", json=game_payload, headers=admin_headers)
+    game_payload = {
+        "name": "Poll Delete Game",
+        "ontology_id": ontology_id,
+        "member_ids": [],
+    }
+    game_response = await client.post(
+        "/games/", json=game_payload, headers=admin_headers
+    )
     assert game_response.status_code == 201
     game_id = game_response.json()["id"]
 
     # Create session
-    session_payload = {"title": "Poll Delete Session", "summary": "Test", "location": "Online"}
+    session_payload = {
+        "title": "Poll Delete Session",
+        "summary": "Test",
+        "location": "Online",
+    }
     session_response = await client.post(
         f"/games/{game_id}/sessions", json=session_payload, headers=admin_headers
     )
@@ -386,7 +426,10 @@ async def test_admin_delete_session(client):
 
     admin_token_response = await client.post(
         "/auth/token",
-        data={"username": admin_payload["username"], "password": admin_payload["password"]},
+        data={
+            "username": admin_payload["username"],
+            "password": admin_payload["password"],
+        },
         headers={"Content-Type": "application/x-www-form-urlencoded"},
     )
     assert admin_token_response.status_code == 200
@@ -396,20 +439,33 @@ async def test_admin_delete_session(client):
     # Create ontology
     ontology_response = await client.post(
         "/ontologies/",
-        json={"name": "Session Delete Ontology", "description": "For session delete testing"},
+        json={
+            "name": "Session Delete Ontology",
+            "description": "For session delete testing",
+        },
         headers=admin_headers,
     )
     assert ontology_response.status_code == 201
     ontology_id = ontology_response.json()["id"]
 
     # Create game
-    game_payload = {"name": "Session Delete Game", "ontology_id": ontology_id, "member_ids": []}
-    game_response = await client.post("/games/", json=game_payload, headers=admin_headers)
+    game_payload = {
+        "name": "Session Delete Game",
+        "ontology_id": ontology_id,
+        "member_ids": [],
+    }
+    game_response = await client.post(
+        "/games/", json=game_payload, headers=admin_headers
+    )
     assert game_response.status_code == 201
     game_id = game_response.json()["id"]
 
     # Create session
-    session_payload = {"title": "Delete Me Session", "summary": "Test", "location": "Online"}
+    session_payload = {
+        "title": "Delete Me Session",
+        "summary": "Test",
+        "location": "Online",
+    }
     session_response = await client.post(
         f"/games/{game_id}/sessions", json=session_payload, headers=admin_headers
     )

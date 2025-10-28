@@ -127,10 +127,20 @@ def _serialize_session(session: GameSession) -> GameSessionRead:
 
 
 def _serialize_poll(poll: GameSessionPoll) -> GameSessionPollRead:
+    options = []
+    for option in poll.options:
+        votes = getattr(option, "votes", [])
+        vote_count = len(votes) if votes is not None else 0
+        options.append(
+            GameSessionPollOptionRead.model_validate(
+                {
+                    "id": option.id,
+                    "proposed_start": option.proposed_start,
+                    "vote_count": vote_count,
+                }
+            )
+        )
     payload = GameSessionPollRead.model_validate(poll)
-    options = [
-        GameSessionPollOptionRead.model_validate(option) for option in poll.options
-    ]
     payload.options = options
     return payload
 
@@ -533,6 +543,7 @@ async def vote_poll(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Vote already recorded for this option",
         ) from exc
+    # Fetch a fresh poll instance to ensure votes are loaded correctly
     poll = await service.get_poll(session.id, poll_id) or poll
     return _serialize_poll(poll)
 
@@ -578,3 +589,65 @@ async def finalize_poll(
     updated_session = await service.get_session(game.id, session.id)
     assert updated_session is not None
     return _serialize_session(updated_session)
+
+
+@router.delete(
+    "/{game_id}/sessions/{session_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_session(
+    game_id: int,
+    session_id: int,
+    service: GameService = Depends(get_game_service),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.WORLD_BUILDER)),
+) -> Response:
+    """Delete a game session (admin/world_builder only)."""
+    _ = await _get_game_or_404(game_id, service)
+    session = await _get_session_or_404(game_id, session_id, service)
+    await service.delete_session(session)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.delete(
+    "/{game_id}/sessions/{session_id}/polls/{poll_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_poll(
+    game_id: int,
+    session_id: int,
+    poll_id: int,
+    service: GameService = Depends(get_game_service),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.WORLD_BUILDER)),
+) -> Response:
+    """Delete a poll session (admin/world_builder only)."""
+    _ = await _get_game_or_404(game_id, service)
+    _ = await _get_session_or_404(game_id, session_id, service)
+    poll = await _get_poll_or_404(session_id, poll_id, service)
+    await service.delete_poll(poll)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.delete(
+    "/{game_id}/sessions/{session_id}/polls/{poll_id}/votes/{user_id}/{option_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_vote(
+    game_id: int,
+    session_id: int,
+    poll_id: int,
+    user_id: int,
+    option_id: int,
+    service: GameService = Depends(get_game_service),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.WORLD_BUILDER)),
+) -> Response:
+    """Delete a specific vote from a poll (admin/world_builder only)."""
+    _ = await _get_game_or_404(game_id, service)
+    _ = await _get_session_or_404(game_id, session_id, service)
+    poll = await _get_poll_or_404(session_id, poll_id, service)
+    option = next((item for item in poll.options if item.id == option_id), None)
+    if option is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Option not found"
+        )
+    await service.unvote_poll_option(option, user_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

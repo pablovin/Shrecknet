@@ -137,35 +137,18 @@ def _serialize_poll(poll: GameSessionPoll) -> GameSessionPollRead:
 
 def _serialize_poll_detail(poll: GameSessionPoll) -> GameSessionPollDetailRead:
     """Serialize poll with full vote details."""
-    from app.schemas.game import (
-        GameSessionPollOptionDetailRead,
-        GameSessionPollVoteRead,
-    )
+    from app.schemas.game import GameSessionPollOptionDetailRead
 
     options_detail = []
     for option in poll.options:
-        votes = [
-            GameSessionPollVoteRead.model_validate(vote)
-            for vote in getattr(option, "votes", []) or []
-        ]
-        option_data = {
-            "id": option.id,
-            "proposed_start": option.proposed_start,
-            "vote_count": len(votes),
-            "votes": votes,
-        }
-        options_detail.append(
-            GameSessionPollOptionDetailRead.model_validate(option_data)
-        )
+        # Leverage from_attributes=True to use ORM attributes directly
+        option_detail = GameSessionPollOptionDetailRead.model_validate(option)
+        options_detail.append(option_detail)
 
-    poll_data = {
-        "id": poll.id,
-        "created_at": poll.created_at,
-        "is_finalized": poll.is_finalized,
-        "finalized_option_id": poll.finalized_option_id,
-        "options": options_detail,
-    }
-    return GameSessionPollDetailRead.model_validate(poll_data)
+    # Use from_attributes=True and update the options field
+    poll_detail = GameSessionPollDetailRead.model_validate(poll)
+    poll_detail.options = options_detail
+    return poll_detail
 
 
 async def _notify_members(

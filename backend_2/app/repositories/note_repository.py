@@ -17,8 +17,9 @@ class NoteRepository(BaseRepository):
         note = Note(**data)
         note.shared_with = list(shared_users)
         await self.save(note)
-        await self.session.refresh(note)
-        return note
+        await self.session.flush()
+        # Re-fetch with eager loading to avoid lazy load issues
+        return await self.get(note.id)  # type: ignore[return-value]
 
     async def get(self, note_id: int) -> Note | None:
         result = await self.session.execute(
@@ -40,8 +41,9 @@ class NoteRepository(BaseRepository):
         if shared_users is not None:
             note.shared_with = list(shared_users)
         await self.save(note)
-        await self.session.refresh(note)
-        return note
+        await self.session.flush()
+        # Re-fetch with eager loading to avoid lazy load issues
+        return await self.get(note.id)  # type: ignore[return-value]
 
     async def delete(self, note: Note) -> None:
         await self.delete_instance(note)
@@ -94,5 +96,5 @@ class NoteRepository(BaseRepository):
         await self.save(note)
 
     async def delete_instance(self, note: Note) -> None:
-        self.session.delete(note)
+        await self.session.delete(note)
         await self.session.flush()

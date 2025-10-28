@@ -111,6 +111,10 @@ class GameService:
         await self.repository.remove_attendance(session.id, user_id)
         await self.session.commit()
 
+    async def delete_session(self, session: GameSession) -> None:
+        await self.repository.delete_session(session)
+        await self.session.commit()
+
     # Polls -----------------------------------------------------------------
     async def create_poll(
         self, session: GameSession, options: list[dict],
@@ -161,6 +165,10 @@ class GameService:
 
     async def get_poll(self, session_id: int, poll_id: int) -> GameSessionPoll | None:
         return await self.repository.get_poll(session_id, poll_id)
+
+    async def delete_poll(self, poll: GameSessionPoll) -> None:
+        await self.repository.delete_poll(poll)
+        await self.session.commit()
 
     # Helpers ----------------------------------------------------------------
     async def _assert_ontology_exists(self, ontology_id: int) -> None:

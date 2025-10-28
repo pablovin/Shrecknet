@@ -5,6 +5,7 @@ from app.api.routers import (
     auth,
     media,
     games,
+    imports,
     library,
     notes,
     notifications,
@@ -20,6 +21,7 @@ def get_api_router() -> APIRouter:
     router.include_router(users.router)
     router.include_router(media.router)
     router.include_router(games.router)
+    router.include_router(imports.router)
     router.include_router(library.router)
     router.include_router(notes.router)
     router.include_router(notifications.router)

@@ -36,6 +36,8 @@ async def test_engine() -> AsyncGenerator[AsyncEngine, None]:
 
 @pytest_asyncio.fixture()
 async def client(test_engine: AsyncEngine) -> AsyncGenerator[AsyncClient, None]:
+    from httpx import ASGITransport
+
     app = create_app()
 
     session_maker = async_sessionmaker(test_engine, expire_on_commit=False)
@@ -53,7 +55,9 @@ async def client(test_engine: AsyncEngine) -> AsyncGenerator[AsyncClient, None]:
 
     app.router.lifespan_context = lifespan_override
 
-    async with AsyncClient(app=app, base_url="http://test") as async_client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as async_client:
         yield async_client
 
     app.dependency_overrides.clear()

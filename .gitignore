@@ -71,7 +71,10 @@ out/
 *.pyc
 __pycache__/
 *.egg-info/
-# Uploaded files
+
+# Uploaded files and media
 frontend/uploads/
 !frontend/uploads/.gitkeep
+backend_2/media/
+!backend_2/media/.gitkeep
 

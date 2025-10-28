@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, s
 
 from app.api.deps import (
     get_current_user,
+    get_library_service,
     get_media_service,
     get_notification_service,
     get_optional_ontology_instance_service,
@@ -16,6 +17,7 @@ from app.api.deps import (
 )
 from app.core.config import get_settings
 from app.models.user import User, UserRole
+from app.services.library_service import LibraryService
 from app.services.media_service import ImageValidationError, MediaService
 from app.services.notification_service import NotificationService
 from app.services.ontology_instance_service import OntologyInstanceService
@@ -145,6 +147,43 @@ async def _ensure_relationship_exists(
         )
 
 
+async def _ensure_library_exists(
+    library_service: LibraryService, instance_id: str
+) -> None:
+    try:
+        library_id = int(instance_id)
+    except ValueError as exc:  # pragma: no cover - defensive
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="instance_id must be an integer for model 'library'",
+        ) from exc
+    library_item = await library_service.get_item_by_id(library_id)
+    if not library_item:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Library item not found"
+        )
+
+
+async def _ensure_content_exists(instance_id: str) -> None:
+    # Content model validation - accepts any valid instance_id format
+    # No existence check as Content is a future/flexible model type
+    if not instance_id or not instance_id.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="instance_id cannot be empty for model 'content'",
+        )
+
+
+async def _ensure_agent_exists(instance_id: str) -> None:
+    # Agent model validation - accepts any valid instance_id format
+    # No existence check as Agent is a future/flexible model type
+    if not instance_id or not instance_id.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="instance_id cannot be empty for model 'agent'",
+        )
+
+
 def _sanitize_component(value: str, *, field: str, to_lower: bool = False) -> str:
     cleaned = value.strip()
     if to_lower:
@@ -152,7 +191,8 @@ def _sanitize_component(value: str, *, field: str, to_lower: bool = False) -> st
     cleaned = cleaned.replace("..", "").replace("/", "")
     if not cleaned or not _COMPONENT_RE.match(cleaned):
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid {field}",
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid {field}",
         )
     return cleaned
 
@@ -167,8 +207,10 @@ async def upload_image(
     user_service: UserService = Depends(get_user_service),
     ontology_service: OntologyService = Depends(get_ontology_service),
     notification_service: NotificationService = Depends(get_notification_service),
-    ontology_instance_service: OntologyInstanceService
-    | None = Depends(get_optional_ontology_instance_service),
+    library_service: LibraryService = Depends(get_library_service),
+    ontology_instance_service: OntologyInstanceService | None = Depends(
+        get_optional_ontology_instance_service
+    ),
 ) -> dict[str, str]:
     model_key = _sanitize_component(model, field="model", to_lower=True)
 
@@ -187,12 +229,15 @@ async def upload_image(
         "notification": lambda instance: _ensure_notification_exists(
             notification_service, instance
         ),
+        "library": lambda instance: _ensure_library_exists(library_service, instance),
+        "content": lambda instance: _ensure_content_exists(instance),
+        "agent": lambda instance: _ensure_agent_exists(instance),
     }
     if ontology_instance_service is not None:
-        validators[
-            "ontology_instance"
-        ] = lambda instance: _ensure_ontology_instance_exists(
-            ontology_instance_service, instance
+        validators["ontology_instance"] = (
+            lambda instance: _ensure_ontology_instance_exists(
+                ontology_instance_service, instance
+            )
         )
 
     validator = validators.get(model_key)
@@ -216,7 +261,8 @@ async def upload_image(
         )
     except ImageValidationError as exc:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc),
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
         ) from exc
 
     return {"url": url}

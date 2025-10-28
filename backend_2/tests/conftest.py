@@ -5,6 +5,7 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
 import pytest
+import pytest_asyncio
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
@@ -22,7 +23,7 @@ def event_loop() -> asyncio.AbstractEventLoop:
     loop.close()
 
 
-@pytest.fixture()
+@pytest_asyncio.fixture()
 async def test_engine() -> AsyncGenerator[AsyncEngine, None]:
     engine = create_async_engine(
         "sqlite+aiosqlite:///:memory:", poolclass=StaticPool, future=True
@@ -33,7 +34,7 @@ async def test_engine() -> AsyncGenerator[AsyncEngine, None]:
     await engine.dispose()
 
 
-@pytest.fixture()
+@pytest_asyncio.fixture()
 async def client(test_engine: AsyncEngine) -> AsyncGenerator[AsyncClient, None]:
     app = create_app()
 

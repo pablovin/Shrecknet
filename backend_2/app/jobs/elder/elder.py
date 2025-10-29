@@ -59,6 +59,7 @@ class ElderOrchestrator:
         self,
         agent: Agent,
         request: ElderQueryRequest,
+        chat_history: Optional[list[dict[str, str]]] = None,
     ) -> ElderQueryResponse:
         """
         Execute the Elder pipeline for a query.
@@ -66,6 +67,7 @@ class ElderOrchestrator:
         Args:
             agent: Agent instance with configuration
             request: Query request
+            chat_history: Optional chat history for context
 
         Returns:
             Query response with answer and/or context
@@ -77,7 +79,9 @@ class ElderOrchestrator:
         ontology_ids = [ont.id for ont in agent.ontologies]
 
         # Step 1: Decompose query into sub-queries
-        subqueries = await self._decompose(request.query, ontology_ids, trace)
+        subqueries = await self._decompose(
+            request.query, ontology_ids, chat_history, trace
+        )
 
         # Step 2: Retrieve context for each sub-query (parallel)
         retrieval_results = await self._retrieve(subqueries, ontology_ids, top_k, trace)
@@ -125,19 +129,33 @@ class ElderOrchestrator:
         return response
 
     async def _decompose(
-        self, query: str, ontology_ids: list[int], trace: list[TraceStep]
+        self,
+        query: str,
+        ontology_ids: list[int],
+        chat_history: Optional[list[dict[str, str]]],
+        trace: list[TraceStep],
     ) -> list[str]:
         """Decompose query into 1-5 sub-queries."""
         model = self.model_policy.get_model(LLMTask.DECOMPOSE)
+        
+        # Build conversation context if chat history exists
+        messages = []
+        if chat_history:
+            # Add recent history for context
+            for msg in chat_history[-10:]:  # Use last 10 messages for context
+                messages.append({"role": msg["role"], "content": msg["content"]})
+        
+        # Add the decomposition prompt
         prompt = DECOMPOSE_PROMPT.format(
             query=query,
             ontology_ids=", ".join(map(str, ontology_ids)) if ontology_ids else "any",
         )
+        messages.append({"role": "user", "content": prompt})
 
         try:
             response = await self.llm_client.chat(
                 model=model,
-                messages=[{"role": "user", "content": prompt}],
+                messages=messages,
                 temperature=0.7,
             )
 
@@ -157,7 +175,11 @@ class ElderOrchestrator:
                 trace.append(
                     TraceStep(
                         step="decompose",
-                        data={"subqueries": subqueries, "model": model},
+                        data={
+                            "subqueries": subqueries,
+                            "model": model,
+                            "used_chat_history": bool(chat_history),
+                        },
                     )
                 )
 

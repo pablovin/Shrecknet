@@ -22,6 +22,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.base import Base
 
 if TYPE_CHECKING:  # pragma: no cover
+    from app.models.elder_chat import ElderChat
     from app.models.ontology import Ontology
 
 
@@ -77,6 +78,11 @@ class Agent(Base):
         "Ontology",
         secondary=agent_ontologies,
         back_populates="agents",
+    )
+
+    # Relationship to elder chats
+    elder_chats: Mapped[List["ElderChat"]] = relationship(
+        "ElderChat", back_populates="agent"
     )
 
     def __repr__(self) -> str:

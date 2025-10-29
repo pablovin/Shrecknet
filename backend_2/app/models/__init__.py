@@ -27,6 +27,7 @@ from app.models.ontology import (
 )
 from app.models.user import User, UserRole
 from app.models.agent import Agent, agent_ontologies
+from app.models.elder_chat import ElderChat, ElderChatHistory
 
 __all__ = [
     "AuditAction",
@@ -56,4 +57,6 @@ __all__ = [
     "UserRole",
     "Agent",
     "agent_ontologies",
+    "ElderChat",
+    "ElderChatHistory",
 ]

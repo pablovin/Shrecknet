@@ -9,6 +9,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.base import Base
 
 if TYPE_CHECKING:  # pragma: no cover
+    from app.models.elder_chat import ElderChat
     from app.models.game import Game, GameSessionAttendance, GameSessionPollVote
     from app.models.library import LibraryBookmark
     from app.models.note import Note
@@ -76,6 +77,9 @@ class User(Base):
     notes: Mapped[list["Note"]] = relationship("Note", back_populates="owner")
     shared_notes: Mapped[list["Note"]] = relationship(
         "Note", secondary="note_shares", back_populates="shared_with"
+    )
+    elder_chats: Mapped[list["ElderChat"]] = relationship(
+        "ElderChat", back_populates="user"
     )
 
     def __repr__(self) -> str:  # pragma: no cover - debugging helper

@@ -18,7 +18,11 @@ class LibraryRepository(BaseRepository):
     """Data access helpers for library items and bookmarks."""
 
     async def list_items(
-        self, ontology_id: int, *, skip: int = 0, limit: int = 50,
+        self,
+        ontology_id: int,
+        *,
+        skip: int = 0,
+        limit: int = 50,
     ) -> Sequence[LibraryItem]:
         query: Select[tuple[LibraryItem]] = (
             select(LibraryItem)
@@ -73,7 +77,9 @@ class LibraryRepository(BaseRepository):
 
     # Bookmarks ------------------------------------------------------------
     async def list_bookmarks_for_item(
-        self, item_id: int, viewer_id: int,
+        self,
+        item_id: int,
+        viewer_id: int,
     ) -> Sequence[LibraryBookmark]:
         share_alias = library_bookmark_shares.alias()
         query = (
@@ -143,7 +149,8 @@ class LibraryRepository(BaseRepository):
         result = await self.session.execute(
             select(User)
             .join(
-                library_bookmark_shares, library_bookmark_shares.c.user_id == User.id,
+                library_bookmark_shares,
+                library_bookmark_shares.c.user_id == User.id,
             )
             .where(library_bookmark_shares.c.bookmark_id == bookmark_id)
         )

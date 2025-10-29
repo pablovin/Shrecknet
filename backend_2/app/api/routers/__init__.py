@@ -3,10 +3,11 @@ from fastapi import APIRouter
 from app.api.routers import (
     audit_logs,
     auth,
-    media,
     games,
+    graphrag,
     imports,
     library,
+    media,
     notes,
     notifications,
     ontologies,
@@ -21,6 +22,7 @@ def get_api_router() -> APIRouter:
     router.include_router(users.router)
     router.include_router(media.router)
     router.include_router(games.router)
+    router.include_router(graphrag.router)
     router.include_router(imports.router)
     router.include_router(library.router)
     router.include_router(notes.router)

@@ -18,7 +18,9 @@ from app.services.ontology_instance_service import OntologyInstanceService
 router = APIRouter(prefix="/ontology-instances", tags=["ontology-instances"])
 
 
-@router.post("/", response_model=OntologyInstanceRead, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/", response_model=OntologyInstanceRead, status_code=status.HTTP_201_CREATED
+)
 async def create_ontology_instance(
     payload: OntologyInstanceCreate,
     service: OntologyInstanceService = Depends(get_ontology_instance_service),
@@ -27,7 +29,9 @@ async def create_ontology_instance(
     try:
         return await service.create_instance(payload)
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
 
 
 @router.get("/", response_model=list[OntologyInstanceRead])
@@ -54,7 +58,9 @@ async def get_ontology_instance(
     try:
         return await service.get_instance(instance_id)
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
+        ) from exc
 
 
 @router.put("/{instance_id}", response_model=OntologyInstanceRead)
@@ -67,7 +73,9 @@ async def update_ontology_instance(
     try:
         return await service.update_instance(instance_id, payload)
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
 
 
 @router.delete(

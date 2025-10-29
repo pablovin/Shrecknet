@@ -36,7 +36,8 @@ async def _get_item_or_404(
     item = await service.get_item(ontology_id, item_id)
     if not item:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Library item not found",
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Library item not found",
         )
     return item
 
@@ -45,18 +46,21 @@ async def _get_item_by_id_or_404(service: LibraryService, item_id: int) -> Libra
     item = await service.get_item_by_id(item_id)
     if not item:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Library item not found",
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Library item not found",
         )
     return item
 
 
 async def _get_bookmark_or_404(
-    service: LibraryService, bookmark_id: int,
+    service: LibraryService,
+    bookmark_id: int,
 ) -> LibraryBookmark:
     bookmark = await service.get_bookmark(bookmark_id)
     if not bookmark:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Bookmark not found",
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Bookmark not found",
         )
     return bookmark
 
@@ -72,7 +76,8 @@ def _serialize_bookmark(
 
 
 @router.get(
-    "/{ontology_id}/items", response_model=list[LibraryItemRead],
+    "/{ontology_id}/items",
+    response_model=list[LibraryItemRead],
 )
 async def list_library_items(
     ontology_id: int,
@@ -116,7 +121,8 @@ async def create_library_item(
 
 
 @router.get(
-    "/{ontology_id}/items/{item_id}", response_model=LibraryItemRead,
+    "/{ontology_id}/items/{item_id}",
+    response_model=LibraryItemRead,
 )
 async def get_library_item(
     ontology_id: int,
@@ -129,7 +135,8 @@ async def get_library_item(
 
 
 @router.put(
-    "/{ontology_id}/items/{item_id}", response_model=LibraryItemRead,
+    "/{ontology_id}/items/{item_id}",
+    response_model=LibraryItemRead,
 )
 async def update_library_item(
     ontology_id: int,
@@ -156,7 +163,8 @@ async def update_library_item(
 
 
 @router.post(
-    "/{ontology_id}/items/{item_id}/content", response_model=LibraryItemRead,
+    "/{ontology_id}/items/{item_id}/content",
+    response_model=LibraryItemRead,
 )
 async def replace_library_pdf(
     ontology_id: int,
@@ -176,7 +184,8 @@ async def replace_library_pdf(
 
 
 @router.delete(
-    "/{ontology_id}/items/{item_id}", status_code=status.HTTP_204_NO_CONTENT,
+    "/{ontology_id}/items/{item_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
 )
 async def delete_library_item(
     ontology_id: int,
@@ -190,7 +199,8 @@ async def delete_library_item(
 
 
 @router.get(
-    "/items/{item_id}/bookmarks", response_model=list[LibraryBookmarkRead],
+    "/items/{item_id}/bookmarks",
+    response_model=list[LibraryBookmarkRead],
 )
 async def list_bookmarks(
     item_id: int,
@@ -232,7 +242,8 @@ async def create_bookmark(
 
 
 @router.put(
-    "/bookmarks/{bookmark_id}", response_model=LibraryBookmarkRead,
+    "/bookmarks/{bookmark_id}",
+    response_model=LibraryBookmarkRead,
 )
 async def update_bookmark(
     bookmark_id: int,
@@ -246,7 +257,8 @@ async def update_bookmark(
         UserRole.WORLD_BUILDER,
     }:
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions",
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Insufficient permissions",
         )
     try:
         updated = await service.update_bookmark(
@@ -266,7 +278,8 @@ async def update_bookmark(
 
 
 @router.delete(
-    "/bookmarks/{bookmark_id}", status_code=status.HTTP_204_NO_CONTENT,
+    "/bookmarks/{bookmark_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
 )
 async def delete_bookmark(
     bookmark_id: int,
@@ -279,7 +292,8 @@ async def delete_bookmark(
         UserRole.WORLD_BUILDER,
     }:
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions",
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Insufficient permissions",
         )
     await service.delete_bookmark(bookmark)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

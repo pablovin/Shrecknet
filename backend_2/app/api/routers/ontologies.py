@@ -73,7 +73,10 @@ async def list_ontologies(
     _: User = Depends(get_current_user),
 ) -> list[OntologyRead]:
     ontologies = await service.list_ontologies(
-        name=name, description=description, skip=skip, limit=limit,
+        name=name,
+        description=description,
+        skip=skip,
+        limit=limit,
     )
     return [OntologyRead.model_validate(o) for o in ontologies]
 
@@ -288,7 +291,11 @@ async def create_property(
         entity_type=AuditEntityType.ONTOLOGY_PROPERTY,
         entity_id=prop.id,
         payload=_sanitize_payload(
-            payload.model_dump() | {"ontology_id": ontology_id, "entity_id": entity_id,}
+            payload.model_dump()
+            | {
+                "ontology_id": ontology_id,
+                "entity_id": entity_id,
+            }
         ),
         description="Created entity property",
     )

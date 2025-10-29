@@ -128,9 +128,7 @@ async def test_create_ontology_instance_flow(client):
                 "last_updated_date": "2025-01-01T00:00:00Z",
                 "author_type": AuthorType.HUMAN.value,
                 "author_id": "user-hero",
-                "properties": [
-                    {"definition_id": property_definition_id, "value": 30}
-                ],
+                "properties": [{"definition_id": property_definition_id, "value": 30}],
                 "relationships": [
                     {
                         "definition_id": relationship_definition_id,
@@ -149,9 +147,7 @@ async def test_create_ontology_instance_flow(client):
                 "last_updated_date": "2025-01-02T00:00:00Z",
                 "author_type": AuthorType.HUMAN.value,
                 "author_id": "user-villain",
-                "properties": [
-                    {"definition_id": property_definition_id, "value": 40}
-                ],
+                "properties": [{"definition_id": property_definition_id, "value": 40}],
                 "relationships": [],
             },
         ],
@@ -164,9 +160,7 @@ async def test_create_ontology_instance_flow(client):
     instance_id = instance["instance_id"]
 
     # Fetch instance
-    fetched = await client.get(
-        f"/ontology-instances/{instance_id}", headers=headers
-    )
+    fetched = await client.get(f"/ontology-instances/{instance_id}", headers=headers)
     assert fetched.status_code == 200
     fetched_data = fetched.json()
     hero_entity = next(e for e in fetched_data["entities"] if e["alias"] == "hero")

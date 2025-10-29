@@ -165,7 +165,9 @@ class OntologyInstanceService:
                         target_id = alias_to_ids.get(target_alias)
                         if target_id is None:
                             normalized_alias = re.sub(
-                                r"[^a-z0-9_]+", "_", target_alias.strip().lower(),
+                                r"[^a-z0-9_]+",
+                                "_",
+                                target_alias.strip().lower(),
                             )
                             target_id = alias_to_ids.get(normalized_alias)
                         if target_id is None:
@@ -376,7 +378,10 @@ class OntologyInstanceService:
                     "author_type": entity_data["author_type"],
                     "author_id": entity_data["author_id"],
                     "properties": [
-                        {"definition_id": int(prop_id), "value": value,}
+                        {
+                            "definition_id": int(prop_id),
+                            "value": value,
+                        }
                         for prop_id, value in entity_data["properties"].items()
                     ],
                     "relationships": entity_data["relationships"],
@@ -518,7 +523,9 @@ class OntologyInstanceService:
                         target_id = alias_to_ids.get(target_alias)
                         if target_id is None:
                             normalized_alias = re.sub(
-                                r"[^a-z0-9_]+", "_", target_alias.strip().lower(),
+                                r"[^a-z0-9_]+",
+                                "_",
+                                target_alias.strip().lower(),
                             )
                             target_id = alias_to_ids.get(normalized_alias)
                         if target_id is None:

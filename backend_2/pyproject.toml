@@ -19,7 +19,9 @@ dependencies = [
     "python-multipart>=0.0.9,<1",
     "Pillow>=10,<11",
     "neo4j>=5.13,<6",
-    "celery>=5.4,<6"
+    "celery>=5.4,<6",
+    "sentence-transformers>=2.2,<3",
+    "aiosqlite>=0.19"
 ]
 
 [project.optional-dependencies]

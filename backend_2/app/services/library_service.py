@@ -234,7 +234,11 @@ class LibraryService:
                 "full_name": bookmark.owner.full_name,
             },
             "shared_with": [
-                {"id": user.id, "username": user.username, "full_name": user.full_name,}
+                {
+                    "id": user.id,
+                    "username": user.username,
+                    "full_name": user.full_name,
+                }
                 for user in bookmark.shared_with
             ],
         }

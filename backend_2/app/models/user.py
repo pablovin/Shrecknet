@@ -51,10 +51,13 @@ class User(Base):
     avatar_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
 
     entities: Mapped[list["OntologyEntity"]] = relationship(
-        secondary=user_entities, back_populates="players",
+        secondary=user_entities,
+        back_populates="players",
     )
     games: Mapped[list["Game"]] = relationship(
-        "Game", secondary="game_members", back_populates="members",
+        "Game",
+        secondary="game_members",
+        back_populates="members",
     )
     session_attendance: Mapped[list["GameSessionAttendance"]] = relationship(
         "GameSessionAttendance", back_populates="user"

@@ -96,7 +96,10 @@ class OntologyEntity(Base):
     image_url: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
     keywords: Mapped[list[str]] = mapped_column(JSON, default=list)
     display_on_world: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=True, server_default=expression.true(),
+        Boolean,
+        nullable=False,
+        default=True,
+        server_default=expression.true(),
     )
     auto_generatable: Mapped[bool] = mapped_column(
         Boolean, default=False, nullable=False
@@ -194,7 +197,9 @@ class OntologyRelationship(Base):
     )
 
     entity: Mapped[OntologyEntity] = relationship(
-        "OntologyEntity", back_populates="relationships", foreign_keys=[entity_id],
+        "OntologyEntity",
+        back_populates="relationships",
+        foreign_keys=[entity_id],
     )
     destiny_entity: Mapped[Optional[OntologyEntity]] = relationship(
         "OntologyEntity", foreign_keys=[destiny_entity_id]

@@ -122,7 +122,10 @@ def create_app() -> FastAPI:
     ) -> JSONResponse:
         error_logger.exception(
             "Unhandled server error",
-            extra={"method": request.method, "path": request.url.path,},
+            extra={
+                "method": request.method,
+                "path": request.url.path,
+            },
         )
         return JSONResponse(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

@@ -118,6 +118,7 @@ class OntologyInstanceService:
                     CREATE (i)-[:HAS_ENTITY]->(e:EntityInstance {
                         entity_instance_id: $entity_instance_id,
                         instance_id: $instance_id,
+                        ontology_id: $ontology_id,
                         entity_definition_id: $entity_definition_id,
                         properties: $properties,
                         text: $text,
@@ -131,10 +132,13 @@ class OntologyInstanceService:
                         author_id: $author_id,
                         created_at: $created_at,
                         updated_at: $updated_at,
-                        alias: $alias
+                        alias: $alias,
+                        is_embedded: false,
+                        last_embedded_date: null
                     })
                     """,
                     instance_id=instance_id,
+                    ontology_id=payload.ontology_id,
                     entity_instance_id=entity_node_id,
                     entity_definition_id=entity_payload.definition_id,
                     properties=prop_json,
@@ -478,6 +482,7 @@ class OntologyInstanceService:
                     CREATE (i)-[:HAS_ENTITY]->(e:EntityInstance {
                         entity_instance_id: $entity_instance_id,
                         instance_id: $instance_id,
+                        ontology_id: $ontology_id,
                         entity_definition_id: $entity_definition_id,
                         properties: $properties,
                         text: $text,
@@ -491,10 +496,13 @@ class OntologyInstanceService:
                         author_id: $author_id,
                         created_at: $created_at,
                         updated_at: $updated_at,
-                        alias: $alias
+                        alias: $alias,
+                        is_embedded: false,
+                        last_embedded_date: null
                     })
                     """,
                     instance_id=instance_id,
+                    ontology_id=current.ontology_id,
                     entity_instance_id=entity_node_id,
                     entity_definition_id=entity_payload.definition_id,
                     properties=json.dumps(prop_map),

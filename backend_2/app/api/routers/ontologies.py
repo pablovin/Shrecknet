@@ -599,7 +599,7 @@ async def get_embedding_stats(
     WITH count(n) AS total,
          count(CASE WHEN n.is_embedded = true THEN 1 END) AS embedded,
          count(CASE WHEN n.is_embedded IS NULL OR n.is_embedded = false THEN 1 END) AS unembedded,
-         count(CASE WHEN n.is_embedded = true AND n.last_updated_date > n.last_embedded_date THEN 1 END) AS outdated
+         count(CASE WHEN n.is_embedded = true AND n.last_embedded_date IS NOT NULL AND n.last_updated_date > n.last_embedded_date THEN 1 END) AS outdated
     RETURN total, embedded, unembedded, outdated
     """
 

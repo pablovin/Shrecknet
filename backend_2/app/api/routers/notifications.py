@@ -31,7 +31,9 @@ def _sanitize_payload(data: dict[str, Any]) -> dict[str, Any]:
 
 
 @router.post(
-    "/", response_model=NotificationRead, status_code=status.HTTP_201_CREATED,
+    "/",
+    response_model=NotificationRead,
+    status_code=status.HTTP_201_CREATED,
 )
 async def create_notification(
     payload: NotificationCreate,
@@ -76,7 +78,8 @@ async def list_notifications(
 
 
 @router.get(
-    "/me", response_model=list[NotificationRead],
+    "/me",
+    response_model=list[NotificationRead],
 )
 async def list_my_notifications(
     read: bool | None = None,
@@ -88,7 +91,8 @@ async def list_my_notifications(
 
 
 @router.get(
-    "/me/unread-count", response_model=NotificationUnreadCount,
+    "/me/unread-count",
+    response_model=NotificationUnreadCount,
 )
 async def unread_count(
     service: NotificationService = Depends(get_notification_service),
@@ -99,7 +103,8 @@ async def unread_count(
 
 
 async def _get_notification_or_404(
-    notification_id: int, service: NotificationService,
+    notification_id: int,
+    service: NotificationService,
 ) -> Notification:
     notification = await service.get_notification(notification_id)
     if not notification:
@@ -110,7 +115,8 @@ async def _get_notification_or_404(
 
 
 @router.get(
-    "/{notification_id}", response_model=NotificationRead,
+    "/{notification_id}",
+    response_model=NotificationRead,
 )
 async def get_notification(
     notification_id: int,
@@ -122,7 +128,8 @@ async def get_notification(
 
 
 @router.put(
-    "/{notification_id}", response_model=NotificationRead,
+    "/{notification_id}",
+    response_model=NotificationRead,
 )
 async def update_notification(
     notification_id: int,
@@ -170,7 +177,8 @@ async def delete_notification(
 
 
 @router.post(
-    "/{notification_id}/read", response_model=NotificationRead,
+    "/{notification_id}/read",
+    response_model=NotificationRead,
 )
 async def set_read_state(
     notification_id: int,

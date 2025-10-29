@@ -9,6 +9,7 @@ A modular FastAPI service that exposes REST endpoints to manage ontologies, thei
 - **Repository layer** (`app/repositories`) – Data access objects wrapping SQLAlchemy queries.
 - **Database layer** (`app/db`) – Session management and declarative models.
 - **Security** (`app/core/security.py`) – Password hashing, JWT handling, and reusable role checks.
+- **GraphRAG** (`app/graphrag`) – Semantic retrieval over Neo4j with multilingual embeddings.
 
 This separation keeps concerns isolated so that swapping persistence technologies or extending business rules is straightforward.
 
@@ -176,6 +177,38 @@ Cross-origin access is controlled via environment variables exposed by `Settings
 - Notifications: per-user records with typed categories, author attribution, delivery timestamps,
   titles, rich descriptions, read flags, and email-delivery metadata (`send_email`, `sent_date`) to
   power inbox and messaging workflows.
+
+## GraphRAG - Semantic Retrieval
+
+The GraphRAG module provides semantic search over Neo4j knowledge graphs using multilingual embeddings. See [GRAPHRAG.md](GRAPHRAG.md) for full documentation.
+
+**Quick start:**
+```bash
+# Ensure vector index exists
+POST /graphrag/index/ensure
+
+# Embed an ontology
+POST /graphrag/embed/ontology
+{
+  "ontology_id": 1,
+  "batch_size": 50
+}
+
+# Semantic search
+POST /graphrag/search
+{
+  "query": "Who is the Prince of Chicago?",
+  "ontology_id": 1,
+  "k": 5
+}
+```
+
+**Features:**
+- Multilingual embeddings (384-dim, 50+ languages)
+- Per-ontology compartmentalization
+- Real-time performance for chat interfaces
+- KNN search with neighborhood expansion
+- LLM-ready context formatting
 
 ## Testing
 

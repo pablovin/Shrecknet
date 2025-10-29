@@ -145,7 +145,10 @@ async def test_create_and_manage_ontology(client):
 
     relationship_update = await client.put(
         f"/ontologies/{ontology_id}/entities/{entity_id}/relationships/{relationship_id}",
-        json={"description": "Mentor guidance", "author_type": AuthorType.HUMAN.value,},
+        json={
+            "description": "Mentor guidance",
+            "author_type": AuthorType.HUMAN.value,
+        },
         headers=headers,
     )
     assert relationship_update.status_code == 200, relationship_update.text

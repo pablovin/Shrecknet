@@ -39,7 +39,9 @@ async def test_user_registration_and_self_update(client):
     assert me_response.json()["username"] == payload["username"]
 
     update_response = await client.put(
-        f"/users/{user_id}", json={"full_name": "Updated Writer"}, headers=headers,
+        f"/users/{user_id}",
+        json={"full_name": "Updated Writer"},
+        headers=headers,
     )
     assert update_response.status_code == 200
     assert update_response.json()["full_name"] == "Updated Writer"

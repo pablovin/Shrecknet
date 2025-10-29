@@ -31,7 +31,10 @@ class UserService:
         await self._ensure_unique_constraints(username=username, email=email)
 
         user = await self.repository.create(
-            {**data, "hashed_password": get_password_hash(password),}
+            {
+                **data,
+                "hashed_password": get_password_hash(password),
+            }
         )
 
         if entity_ids is not None:
@@ -64,7 +67,13 @@ class UserService:
         existing = await self.repository.get_by_email(email)
         return existing is None
 
-    async def update_user(self, user: User, data: dict, *, actor: User,) -> User:
+    async def update_user(
+        self,
+        user: User,
+        data: dict,
+        *,
+        actor: User,
+    ) -> User:
         entity_ids = data.pop("entity_ids", None)
         new_password = data.pop("password", None)
 
@@ -115,7 +124,10 @@ class UserService:
         await self.session.flush()
 
     async def _ensure_unique_constraints(
-        self, *, username: str | None = None, email: str | None = None,
+        self,
+        *,
+        username: str | None = None,
+        email: str | None = None,
     ) -> None:
         if username:
             existing_username = await self.repository.get_by_username(username)

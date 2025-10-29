@@ -63,7 +63,9 @@ class UserRead(BaseModel):
         entities = getattr(self, "entities", None)
         if entities is not None:
             object.__setattr__(
-                self, "entity_ids", [entity.id for entity in entities],
+                self,
+                "entity_ids",
+                [entity.id for entity in entities],
             )
         return self
 

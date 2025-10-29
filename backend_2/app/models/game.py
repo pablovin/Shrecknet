@@ -51,7 +51,9 @@ class Game(Base):
 
     ontology: Mapped["Ontology"] = relationship("Ontology")
     members: Mapped[list["User"]] = relationship(
-        "User", secondary=game_members, back_populates="games",
+        "User",
+        secondary=game_members,
+        back_populates="games",
     )
     sessions: Mapped[list["GameSession"]] = relationship(
         "GameSession",
@@ -132,7 +134,8 @@ class GameSessionPoll(Base):
         Boolean, nullable=False, default=False, server_default=expression.false()
     )
     finalized_option_id: Mapped[int | None] = mapped_column(
-        ForeignKey("game_session_poll_options.id", ondelete="SET NULL"), nullable=True,
+        ForeignKey("game_session_poll_options.id", ondelete="SET NULL"),
+        nullable=True,
     )
 
     session: Mapped[GameSession] = relationship("GameSession", back_populates="polls")
@@ -144,7 +147,9 @@ class GameSessionPoll(Base):
         foreign_keys="GameSessionPollOption.poll_id",
     )
     finalized_option: Mapped["GameSessionPollOption | None"] = relationship(
-        "GameSessionPollOption", foreign_keys=[finalized_option_id], post_update=True,
+        "GameSessionPollOption",
+        foreign_keys=[finalized_option_id],
+        post_update=True,
     )
 
 
@@ -199,5 +204,9 @@ class GameSessionPollVote(Base):
     user: Mapped["User"] = relationship("User", back_populates="session_poll_votes")
 
     __table_args__ = (
-        UniqueConstraint("option_id", "user_id", name="uq_poll_option_vote",),
+        UniqueConstraint(
+            "option_id",
+            "user_id",
+            name="uq_poll_option_vote",
+        ),
     )

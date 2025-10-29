@@ -25,8 +25,16 @@ if TYPE_CHECKING:  # pragma: no cover
 note_shares = Table(
     "note_shares",
     Base.metadata,
-    Column("note_id", ForeignKey("notes.id", ondelete="CASCADE"), primary_key=True,),
-    Column("user_id", ForeignKey("users.id", ondelete="CASCADE"), primary_key=True,),
+    Column(
+        "note_id",
+        ForeignKey("notes.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column(
+        "user_id",
+        ForeignKey("users.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
 )
 
 
@@ -38,7 +46,9 @@ class Note(Base):
         ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
     )
     ontology_id: Mapped[int | None] = mapped_column(
-        ForeignKey("ontologies.id", ondelete="SET NULL"), nullable=True, index=True,
+        ForeignKey("ontologies.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
     )
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
@@ -56,5 +66,7 @@ class Note(Base):
         "Ontology", back_populates="notes"
     )
     shared_with: Mapped[list["User"]] = relationship(
-        "User", secondary=note_shares, back_populates="shared_notes",
+        "User",
+        secondary=note_shares,
+        back_populates="shared_notes",
     )

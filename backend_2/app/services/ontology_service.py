@@ -36,7 +36,10 @@ class OntologyService:
         description: str | None = None,
     ) -> Sequence[Ontology]:
         return await self.repository.list(
-            skip=skip, limit=limit, name=name, description=description,
+            skip=skip,
+            limit=limit,
+            name=name,
+            description=description,
         )
 
     async def get_ontology(self, ontology_id: int) -> Ontology | None:
@@ -75,7 +78,9 @@ class OntologyService:
 
     async def update_entity(self, entity: OntologyEntity, data: dict) -> OntologyEntity:
         self._ensure_author_defaults(
-            data, existing_user_id=entity.user_id, existing_agent_id=entity.agent_id,
+            data,
+            existing_user_id=entity.user_id,
+            existing_agent_id=entity.agent_id,
         )
         self._validate_author_payload(data, allow_missing=True)
         updated = await self.repository.update_entity(entity, data)
@@ -113,7 +118,9 @@ class OntologyService:
         self, prop: OntologyProperty, data: dict
     ) -> OntologyProperty:
         self._ensure_author_defaults(
-            data, existing_user_id=prop.user_id, existing_agent_id=prop.agent_id,
+            data,
+            existing_user_id=prop.user_id,
+            existing_agent_id=prop.agent_id,
         )
         self._validate_author_payload(data, allow_missing=True)
         updated = await self.repository.update_property(prop, data)
@@ -156,7 +163,9 @@ class OntologyService:
         return await self.repository.get_relationship_by_id(relationship_id)
 
     async def update_relationship(
-        self, relationship: OntologyRelationship, data: dict,
+        self,
+        relationship: OntologyRelationship,
+        data: dict,
     ) -> OntologyRelationship:
         self._ensure_author_defaults(
             data,

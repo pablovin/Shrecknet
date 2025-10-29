@@ -147,7 +147,9 @@ async def update_user(
 
     try:
         updated = await service.update_user(
-            user, payload.model_dump(exclude_unset=True), actor=current_user,
+            user,
+            payload.model_dump(exclude_unset=True),
+            actor=current_user,
         )
     except PermissionError as exc:
         raise HTTPException(
@@ -239,7 +241,9 @@ async def upload_user_avatar(
         ) from exc
 
     updated = await service.update_user(
-        user, {"avatar_url": avatar_url}, actor=current_user,
+        user,
+        {"avatar_url": avatar_url},
+        actor=current_user,
     )
 
     await audit_service.log_action(

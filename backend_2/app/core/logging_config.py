@@ -20,7 +20,10 @@ def configure_logging() -> None:
                 }
             },
             "handlers": {
-                "console": {"class": "logging.StreamHandler", "formatter": "default",}
+                "console": {
+                    "class": "logging.StreamHandler",
+                    "formatter": "default",
+                }
             },
             "loggers": {
                 "backend_2": {
@@ -39,6 +42,9 @@ def configure_logging() -> None:
                     "propagate": False,
                 },
             },
-            "root": {"handlers": ["console"], "level": "INFO",},
+            "root": {
+                "handlers": ["console"],
+                "level": "INFO",
+            },
         }
     )

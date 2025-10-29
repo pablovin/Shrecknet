@@ -67,7 +67,9 @@ class OntologyRepository(BaseRepository):
 
     # Entity operations --------------------------------------------------
     async def add_entity(
-        self, ontology_id: int, data: dict[str, Any],
+        self,
+        ontology_id: int,
+        data: dict[str, Any],
     ) -> OntologyEntity:
         entity = OntologyEntity(ontology_id=ontology_id, **data)
         await self.save(entity)
@@ -113,7 +115,9 @@ class OntologyRepository(BaseRepository):
         return result.scalars().all()
 
     async def update_entity(
-        self, entity: OntologyEntity, data: dict[str, Any],
+        self,
+        entity: OntologyEntity,
+        data: dict[str, Any],
     ) -> OntologyEntity:
         for key, value in data.items():
             setattr(entity, key, value)
@@ -164,7 +168,9 @@ class OntologyRepository(BaseRepository):
         return result.scalars().all()
 
     async def update_property(
-        self, prop: OntologyProperty, data: dict[str, Any],
+        self,
+        prop: OntologyProperty,
+        data: dict[str, Any],
     ) -> OntologyProperty:
         for key, value in data.items():
             setattr(prop, key, value)
@@ -204,7 +210,10 @@ class OntologyRepository(BaseRepository):
         result = await self.session.execute(
             select(OntologyRelationship)
             .options(selectinload(OntologyRelationship.entity))
-            .join(OntologyEntity, OntologyRelationship.entity_id == OntologyEntity.id,)
+            .join(
+                OntologyEntity,
+                OntologyRelationship.entity_id == OntologyEntity.id,
+            )
             .where(
                 OntologyEntity.ontology_id == ontology_id,
                 OntologyRelationship.entity_id == entity_id,
@@ -222,7 +231,10 @@ class OntologyRepository(BaseRepository):
                 selectinload(OntologyRelationship.entity),
                 selectinload(OntologyRelationship.destiny_entity),
             )
-            .join(OntologyEntity, OntologyRelationship.entity_id == OntologyEntity.id,)
+            .join(
+                OntologyEntity,
+                OntologyRelationship.entity_id == OntologyEntity.id,
+            )
             .where(
                 OntologyEntity.ontology_id == ontology_id,
                 OntologyRelationship.entity_id == entity_id,
@@ -231,7 +243,9 @@ class OntologyRepository(BaseRepository):
         return result.scalars().all()
 
     async def update_relationship(
-        self, relationship: OntologyRelationship, data: dict[str, Any],
+        self,
+        relationship: OntologyRelationship,
+        data: dict[str, Any],
     ) -> OntologyRelationship:
         for key, value in data.items():
             setattr(relationship, key, value)
@@ -265,7 +279,10 @@ class OntologyRepository(BaseRepository):
                 selectinload(OntologyRelationship.entity),
                 selectinload(OntologyRelationship.destiny_entity),
             )
-            .join(OntologyEntity, OntologyRelationship.entity_id == OntologyEntity.id,)
+            .join(
+                OntologyEntity,
+                OntologyRelationship.entity_id == OntologyEntity.id,
+            )
             .where(
                 OntologyEntity.ontology_id == ontology_id,
                 OntologyRelationship.entity_id == source_entity_id,

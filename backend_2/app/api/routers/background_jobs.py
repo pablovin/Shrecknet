@@ -36,6 +36,8 @@ def _job_to_frontend_format(job: BackgroundJobResponse) -> dict[str, Any]:
         "progress": job.progress,
         "error_message": job.error_message,
         "completed_at": job.completed_at.isoformat() if job.completed_at else None,
+        "duration_seconds": job.duration_seconds,
+        "ontology_id": job.ontology_id,
         "updated_at": job.updated_at.isoformat(),
     }
 
@@ -48,6 +50,7 @@ async def list_jobs(
     author_id: str | None = Query(None),
     job_type: JobType | None = Query(None),
     status: JobStatus | None = Query(None),
+    ontology_id: int | None = Query(None),
     limit: int = Query(100, ge=1, le=1000),
     offset: int = Query(0, ge=0),
 ) -> list[dict[str, Any]]:
@@ -63,6 +66,7 @@ async def list_jobs(
         author_id=author_id,
         job_type=job_type,
         status=status,
+        ontology_id=ontology_id,
         limit=limit,
         offset=offset,
     )

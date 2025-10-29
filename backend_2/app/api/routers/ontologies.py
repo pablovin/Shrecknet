@@ -1,9 +1,11 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import Response
+from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import (
     get_audit_service,
@@ -11,7 +13,10 @@ from app.api.deps import (
     get_ontology_service,
     require_roles,
 )
+from app.db.jobs_session import get_jobs_session
+from app.graph.neo4j import get_neo4j_session
 from app.models.audit import AuditAction, AuditActorType, AuditEntityType
+from app.models.background_job import JobType
 from app.models.user import User, UserRole
 from app.schemas.ontology import (
     OntologyCreate,
@@ -28,7 +33,9 @@ from app.schemas.ontology import (
     OntologyUpdate,
 )
 from app.services.audit_service import AuditService
+from app.services.background_job_service import BackgroundJobService
 from app.services.ontology_service import OntologyService
+from app.tasks.neo4j_embedding import embed_ontology
 
 router = APIRouter(prefix="/ontologies", tags=["ontologies"])
 
@@ -537,3 +544,168 @@ async def delete_relationship(
         description="Deleted entity relationship",
     )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# Embedding endpoints ----------------------------------------------------
+
+
+class EmbeddingStatsResponse(BaseModel):
+    """Embedding statistics for an ontology."""
+
+    ontology_id: int
+    total_nodes: int
+    embedded_nodes: int
+    unembedded_nodes: int
+    outdated_nodes: int
+
+
+class TriggerEmbeddingRequest(BaseModel):
+    """Request to trigger embedding for an ontology."""
+
+    pass  # No additional fields needed
+
+
+class TriggerEmbeddingResponse(BaseModel):
+    """Response after triggering embedding."""
+
+    job_id: str
+    ontology_id: int
+    message: str
+
+
+@router.get("/{ontology_id}/embedding-stats", response_model=EmbeddingStatsResponse)
+async def get_embedding_stats(
+    ontology_id: int,
+    graph_session: Annotated[Any, Depends(get_neo4j_session)],
+    service: OntologyService = Depends(get_ontology_service),
+    _: User = Depends(get_current_user),
+) -> EmbeddingStatsResponse:
+    """
+    Get embedding statistics for an ontology.
+
+    Returns counts of total, embedded, unembedded, and outdated nodes.
+    """
+    # Verify ontology exists
+    ontology = await service.get_ontology(ontology_id)
+    if not ontology:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Ontology not found"
+        )
+
+    # Query Neo4j for statistics
+    stats_query = """
+    MATCH (n:EntityInstance)
+    WHERE n.ontology_id = $ontology_id
+    WITH count(n) AS total,
+         count(CASE WHEN n.is_embedded = true THEN 1 END) AS embedded,
+         count(CASE WHEN n.is_embedded IS NULL OR n.is_embedded = false THEN 1 END) AS unembedded,
+         count(CASE WHEN n.is_embedded = true AND n.last_updated_date > n.last_embedded_date THEN 1 END) AS outdated
+    RETURN total, embedded, unembedded, outdated
+    """
+
+    result = await graph_session.run(stats_query, ontology_id=ontology_id)
+    record = await result.single()
+
+    if not record:
+        # No nodes found for this ontology
+        return EmbeddingStatsResponse(
+            ontology_id=ontology_id,
+            total_nodes=0,
+            embedded_nodes=0,
+            unembedded_nodes=0,
+            outdated_nodes=0,
+        )
+
+    return EmbeddingStatsResponse(
+        ontology_id=ontology_id,
+        total_nodes=record["total"],
+        embedded_nodes=record["embedded"],
+        unembedded_nodes=record["unembedded"],
+        outdated_nodes=record["outdated"],
+    )
+
+
+@router.post(
+    "/{ontology_id}/trigger-embedding",
+    response_model=TriggerEmbeddingResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def trigger_embedding(
+    ontology_id: int,
+    request: TriggerEmbeddingRequest,
+    service: OntologyService = Depends(get_ontology_service),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.WORLD_BUILDER)),
+) -> TriggerEmbeddingResponse:
+    """
+    Trigger embedding job for an ontology.
+
+    This will embed all unembedded or outdated nodes in the ontology.
+    """
+    # Verify ontology exists
+    ontology = await service.get_ontology(ontology_id)
+    if not ontology:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Ontology not found"
+        )
+
+    # Trigger the Celery task
+    result = embed_ontology.delay(
+        ontology_id=ontology_id, author_type="user", author_id=str(current_user.id)
+    )
+
+    return TriggerEmbeddingResponse(
+        job_id=result.id,
+        ontology_id=ontology_id,
+        message=f"Embedding job triggered for ontology {ontology_id}",
+    )
+
+
+@router.get("/{ontology_id}/embedding-jobs", response_model=list[dict[str, Any]])
+async def get_embedding_jobs(
+    ontology_id: int,
+    jobs_session: Annotated[AsyncSession, Depends(get_jobs_session)],
+    service: OntologyService = Depends(get_ontology_service),
+    _: User = Depends(get_current_user),
+    limit: int = 10,
+) -> list[dict[str, Any]]:
+    """
+    Get recent embedding jobs for an ontology.
+
+    Returns the last 10 embedding jobs by default.
+    """
+    # Verify ontology exists
+    ontology = await service.get_ontology(ontology_id)
+    if not ontology:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Ontology not found"
+        )
+
+    # Query background jobs for this ontology
+    job_service = BackgroundJobService(jobs_session)
+    jobs = await job_service.list_jobs(
+        job_type=JobType.NEO4J_EMBEDDING,
+        ontology_id=ontology_id,
+        limit=min(limit, 10),  # Cap at 10
+        offset=0,
+    )
+
+    # Convert to frontend format
+    return [
+        {
+            "kind": job.job_type,
+            "job_id": str(job.id),
+            "start_time": job.started_at.isoformat(),
+            "status": job.status,
+            "author_type": job.author_type,
+            "author_id": job.author_id,
+            "description": job.description,
+            "details": job.details,
+            "progress": job.progress,
+            "error_message": job.error_message,
+            "completed_at": job.completed_at.isoformat() if job.completed_at else None,
+            "duration_seconds": job.duration_seconds,
+            "ontology_id": job.ontology_id,
+            "updated_at": job.updated_at.isoformat(),
+        }
+        for job in jobs
+    ]

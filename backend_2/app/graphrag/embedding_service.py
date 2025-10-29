@@ -198,7 +198,9 @@ Summary: {summary}"""
         SET n.context_text = $context_text,
             n.text_embedding = $embedding,
             n.text_embedding_model = $model_id,
-            n.text_embedding_dim = $embed_dim
+            n.text_embedding_dim = $embed_dim,
+            n.is_embedded = true,
+            n.last_embedded_date = datetime()
         RETURN n.entity_instance_id AS id
         """
 
@@ -223,7 +225,11 @@ Summary: {summary}"""
         self, ontology_id: int, batch_size: int = 50
     ) -> dict[str, Any]:
         """
-        Embed all nodes for a specific ontology.
+        Embed nodes for a specific ontology that need embedding.
+
+        Only processes nodes that are:
+        - Not yet embedded (is_embedded is NULL or false)
+        - Outdated (last_updated_date > last_embedded_date)
 
         Args:
             ontology_id: Ontology ID to embed
@@ -232,10 +238,12 @@ Summary: {summary}"""
         Returns:
             Dict with statistics
         """
-        # Fetch all node IDs for this ontology
+        # Fetch node IDs that need embedding
         query = """
         MATCH (n:EntityInstance)
         WHERE n.ontology_id = $ontology_id
+          AND (n.is_embedded IS NULL OR n.is_embedded = false 
+               OR n.last_updated_date > n.last_embedded_date)
         RETURN n.entity_instance_id AS node_id
         """
 
@@ -286,7 +294,9 @@ Summary: {summary}"""
             SET n.context_text = row.context_text,
                 n.text_embedding = row.embedding,
                 n.text_embedding_model = $model_id,
-                n.text_embedding_dim = $embed_dim
+                n.text_embedding_dim = $embed_dim,
+                n.is_embedded = true,
+                n.last_embedded_date = datetime()
             """
 
             rows = [

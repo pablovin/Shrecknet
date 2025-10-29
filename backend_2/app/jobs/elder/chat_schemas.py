@@ -27,8 +27,7 @@ class ElderChatHistoryResponse(ElderChatHistoryBase):
     chat_id: str = Field(..., description="Chat ID")
     created_at: datetime = Field(..., description="Creation timestamp")
 
-    class Config:
-        from_attributes = True
+    model_config = {"from_attributes": True}
 
 
 # Chat Schemas
@@ -71,8 +70,7 @@ class ElderChatResponse(BaseModel):
         None, description="Number of messages in chat"
     )
 
-    class Config:
-        from_attributes = True
+    model_config = {"from_attributes": True}
 
 
 class ElderChatWithHistoryResponse(ElderChatResponse):

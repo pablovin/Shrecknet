@@ -24,9 +24,10 @@ Pipeline:
 2. Query Chroma vector DB for relevant pages
 3. Generate answer with OpenAI and provide source links
 
+**Chat History**: The Elder agent now supports persistent chat sessions stored in SQLite. Users can create up to 10 chats per agent, each with custom names and colors. Chat history is automatically used as context in queries for more coherent conversations.
+
 #### TODO
 - Support multiple models
-- Better chat history visualisation
 
 ### Specialist Agent
 Uses an independent knowledge base for in depth Q&A.
@@ -71,7 +72,7 @@ Set the following environment variables or create a `.env` file in `backend`:
 - `CELERY_RESULT_BACKEND` – Result backend
 - `VECTOR_DB_URL` / `VECTOR_DB_PORT` – Chroma database location
 
-Chat history, job files and vector DB data are stored under `backend/data`.
+Elder agent chat history and metadata are stored in the SQLite database (`backend_2.db` by default). Job files and vector DB data are stored under `backend/data`.
 
 ## Running with Docker
 

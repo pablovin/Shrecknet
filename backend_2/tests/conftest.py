@@ -142,3 +142,22 @@ async def ontology_id(client: AsyncClient, admin_token: str) -> int:
     assert response.status_code == 201
     return response.json()["id"]
 
+
+@pytest_asyncio.fixture()
+async def agent_id(client: AsyncClient, admin_token: str, ontology_id: int) -> str:
+    """Create a test agent and return its ID."""
+    headers = {"Authorization": f"Bearer {admin_token}"}
+    agent_data = {
+        "name": "Test Elder Agent",
+        "description": "A test elder agent",
+        "writing_style": "Concise and wise",
+        "job": "elder",
+        "active": True,
+        "ontology_ids": [ontology_id],
+    }
+    
+    response = await client.post("/agents/", json=agent_data, headers=headers)
+    assert response.status_code == 201
+    return response.json()["id"]
+
+

@@ -145,3 +145,87 @@ class MediaService:
             return f"{public_base}/{relative_str}"
         base_url = settings.media_base_url.rstrip("/")
         return f"{base_url}/{relative_str}"
+
+    async def save_content_image(
+        self,
+        upload: UploadFile,
+        *,
+        content_type: str,
+        content_id: str,
+        is_main: bool = False,
+        resize: tuple[int, int] | None = None,
+    ) -> str:
+        """
+        Save an image for a specific content type and ID.
+
+        Args:
+            upload: The file to upload
+            content_type: String identifying the content type (e.g., 'user', 'avatar', 'post')
+            content_id: String identifying the specific content instance
+            is_main: If True, saves as 'file.png' (overwrites); if False, uses incremental naming
+            resize: Optional resize dimensions
+
+        Returns:
+            The URL path to the saved image
+        """
+        contents = await self._read_limited(upload)
+        self._validate_format(contents)
+
+        image = Image.open(BytesIO(contents))
+        image = image.convert("RGBA" if image.mode in ("RGBA", "P") else "RGB")
+
+        target_size = resize or (self.max_width, self.max_height)
+        if target_size:
+            max_width, max_height = target_size
+            width, height = image.size
+            if width > max_width or height > max_height:
+                ratio = min(max_width / width, max_height / height)
+                new_size = (int(width * ratio), int(height * ratio))
+                if hasattr(Image, "Resampling"):
+                    image = image.resize(new_size, Image.Resampling.LANCZOS)
+                else:  # pragma: no cover - older Pillow fallback
+                    image = image.resize(new_size, Image.ANTIALIAS)  # type: ignore[attr-defined]
+
+        # Create directory path: media/content_type/content_id/
+        folder_path = self.base_path / content_type / content_id
+        folder_path.mkdir(parents=True, exist_ok=True)
+
+        # Determine filename
+        if is_main:
+            # Main file: always 'file.png', overwrites existing
+            filename = "file.png"
+            file_path = folder_path / filename
+
+            # Remove existing file if it exists
+            if file_path.exists():
+                try:
+                    file_path.unlink()
+                except OSError:
+                    # If removal fails, will overwrite directly
+                    pass
+        else:
+            # Non-main file: use incremental ID
+            existing_files = list(folder_path.glob("*.png"))
+            # Extract numeric IDs from existing files (excluding 'file.png')
+            existing_ids = []
+            for f in existing_files:
+                if f.name != "file.png":
+                    try:
+                        file_id = int(f.stem)
+                        existing_ids.append(file_id)
+                    except ValueError:
+                        # Skip non-numeric filenames
+                        continue
+
+            # Get next ID
+            next_id = max(existing_ids, default=0) + 1
+            filename = f"{next_id}.png"
+            file_path = folder_path / filename
+
+        # Save the image
+        image_format = "PNG"
+        image.save(file_path, format=image_format, optimize=True)
+
+        # Build relative path for URL
+        relative_path = Path(content_type) / content_id / filename
+        return self._build_url(relative_path)

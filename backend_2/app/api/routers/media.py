@@ -1,28 +1,17 @@
 from __future__ import annotations
 
 import re
-from typing import Awaitable, Callable
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 
 from app.api.deps import (
     get_current_user,
-    get_library_service,
     get_media_service,
-    get_notification_service,
-    get_optional_ontology_instance_service,
-    get_ontology_service,
-    get_user_service,
     require_roles,
 )
 from app.core.config import get_settings
 from app.models.user import User, UserRole
-from app.services.library_service import LibraryService
 from app.services.media_service import ImageValidationError, MediaService
-from app.services.notification_service import NotificationService
-from app.services.ontology_instance_service import OntologyInstanceService
-from app.services.ontology_service import OntologyService
-from app.services.user_service import UserService
 
 router = APIRouter(
     prefix="/media-admin",
@@ -35,160 +24,16 @@ settings = get_settings()
 _COMPONENT_RE = re.compile(r"^[a-zA-Z0-9_.-]+$")
 
 
-async def _ensure_user_exists(user_service: UserService, instance_id: str) -> None:
-    try:
-        user_id = int(instance_id)
-    except ValueError as exc:  # pragma: no cover - defensive
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="instance_id must be an integer for model 'user'",
-        ) from exc
-    user = await user_service.get_user(user_id)
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
-        )
-
-
-async def _ensure_ontology_exists(
-    ontology_service: OntologyService, instance_id: str
-) -> None:
-    try:
-        ontology_id = int(instance_id)
-    except ValueError as exc:  # pragma: no cover - defensive
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="instance_id must be an integer for model 'ontology'",
-        ) from exc
-    ontology = await ontology_service.get_ontology(ontology_id)
-    if not ontology:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Ontology not found"
-        )
-
-
-async def _ensure_entity_exists(
-    ontology_service: OntologyService, instance_id: str
-) -> None:
-    try:
-        entity_id = int(instance_id)
-    except ValueError as exc:  # pragma: no cover - defensive
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="instance_id must be an integer for model 'entity'",
-        ) from exc
-    entity = await ontology_service.get_entity_by_id(entity_id)
-    if not entity:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Ontology entity not found"
-        )
-
-
-async def _ensure_notification_exists(
-    notification_service: NotificationService, instance_id: str
-) -> None:
-    try:
-        notification_id = int(instance_id)
-    except ValueError as exc:  # pragma: no cover - defensive
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="instance_id must be an integer for model 'notification'",
-        ) from exc
-    notification = await notification_service.get_notification(notification_id)
-    if not notification:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Notification not found"
-        )
-
-
-async def _ensure_property_exists(
-    ontology_service: OntologyService, instance_id: str
-) -> None:
-    try:
-        property_id = int(instance_id)
-    except ValueError as exc:  # pragma: no cover - defensive
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="instance_id must be an integer for model 'property'",
-        ) from exc
-    prop = await ontology_service.get_property_by_id(property_id)
-    if not prop:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Ontology property not found"
-        )
-
-
-async def _ensure_ontology_instance_exists(
-    ontology_instance_service: OntologyInstanceService, instance_id: str
-) -> None:
-    try:
-        await ontology_instance_service.get_instance(instance_id)
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Ontology instance not found"
-        ) from exc
-
-
-async def _ensure_relationship_exists(
-    ontology_service: OntologyService, instance_id: str
-) -> None:
-    try:
-        relationship_id = int(instance_id)
-    except ValueError as exc:  # pragma: no cover - defensive
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="instance_id must be an integer for model 'relationship'",
-        ) from exc
-    relationship = await ontology_service.get_relationship_by_id(relationship_id)
-    if not relationship:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Ontology relationship not found",
-        )
-
-
-async def _ensure_library_exists(
-    library_service: LibraryService, instance_id: str
-) -> None:
-    try:
-        library_id = int(instance_id)
-    except ValueError as exc:  # pragma: no cover - defensive
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="instance_id must be an integer for model 'library'",
-        ) from exc
-    library_item = await library_service.get_item_by_id(library_id)
-    if not library_item:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Library item not found"
-        )
-
-
-async def _ensure_content_exists(instance_id: str) -> None:
-    # Content model validation - accepts any valid instance_id format
-    # No existence check as Content is a future/flexible model type
-    if not instance_id or not instance_id.strip():
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="instance_id cannot be empty for model 'content'",
-        )
-
-
-async def _ensure_agent_exists(instance_id: str) -> None:
-    # Agent model validation - accepts any valid instance_id format
-    # No existence check as Agent is a future/flexible model type
-    if not instance_id or not instance_id.strip():
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="instance_id cannot be empty for model 'agent'",
-        )
-
-
 def _sanitize_component(value: str, *, field: str, to_lower: bool = False) -> str:
     cleaned = value.strip()
     if to_lower:
         cleaned = cleaned.lower()
-    cleaned = cleaned.replace("..", "").replace("/", "")
+    # Check for path traversal attempts before removing them
+    if ".." in cleaned or "/" in cleaned:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid {field}",
+        )
     if not cleaned or not _COMPONENT_RE.match(cleaned):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -200,64 +45,39 @@ def _sanitize_component(value: str, *, field: str, to_lower: bool = False) -> st
 @router.post("/images", status_code=status.HTTP_201_CREATED)
 async def upload_image(
     file: UploadFile = File(...),
-    model: str = Form(...),
-    instance_id: str = Form(...),
+    content_type: str = Form(...),
+    content_id: str = Form(...),
+    is_main: bool = Form(False),
     media_service: MediaService = Depends(get_media_service),
     current_user: User = Depends(get_current_user),
-    user_service: UserService = Depends(get_user_service),
-    ontology_service: OntologyService = Depends(get_ontology_service),
-    notification_service: NotificationService = Depends(get_notification_service),
-    library_service: LibraryService = Depends(get_library_service),
-    ontology_instance_service: OntologyInstanceService | None = Depends(
-        get_optional_ontology_instance_service
-    ),
 ) -> dict[str, str]:
-    model_key = _sanitize_component(model, field="model", to_lower=True)
+    """
+    Upload an image for a specific content type and ID.
 
-    validators: dict[str, Callable[[str], Awaitable[None]]] = {
-        "user": lambda instance: _ensure_user_exists(user_service, instance),
-        "ontology": lambda instance: _ensure_ontology_exists(
-            ontology_service, instance
-        ),
-        "entity": lambda instance: _ensure_entity_exists(ontology_service, instance),
-        "property": lambda instance: _ensure_property_exists(
-            ontology_service, instance
-        ),
-        "relationship": lambda instance: _ensure_relationship_exists(
-            ontology_service, instance
-        ),
-        "notification": lambda instance: _ensure_notification_exists(
-            notification_service, instance
-        ),
-        "library": lambda instance: _ensure_library_exists(library_service, instance),
-        "content": lambda instance: _ensure_content_exists(instance),
-        "agent": lambda instance: _ensure_agent_exists(instance),
-    }
-    if ontology_instance_service is not None:
-        validators["ontology_instance"] = (
-            lambda instance: _ensure_ontology_instance_exists(
-                ontology_instance_service, instance
-            )
-        )
+    Args:
+        file: The image file to upload
+        content_type: String identifying the content type (e.g., 'user', 'avatar', 'post')
+        content_id: String identifying the specific content instance
+        is_main: If True, saves as 'file.png' (overwrites); if False, uses incremental naming
 
-    validator = validators.get(model_key)
-    if validator is None:
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST, detail="Unsupported model for upload"
-        )
+    Returns:
+        Dictionary containing the URL to the uploaded image
+    """
+    # Sanitize content_type to ensure it's safe for filesystem
+    safe_content_type = _sanitize_component(
+        content_type, field="content_type", to_lower=True
+    )
 
-    await validator(instance_id)
-
-    safe_instance_id = _sanitize_component(instance_id, field="instance_id")
-    category_path = f"{model_key}/{safe_instance_id}"
+    # Sanitize content_id
+    safe_content_id = _sanitize_component(content_id, field="content_id")
 
     try:
-        url = await media_service.save_image(
+        url = await media_service.save_content_image(
             file,
-            category=category_path,
-            identifier=f"{model_key}_{safe_instance_id}",
+            content_type=safe_content_type,
+            content_id=safe_content_id,
+            is_main=is_main,
             resize=(settings.image_max_width, settings.image_max_height),
-            filename="image_url.png",
         )
     except ImageValidationError as exc:
         raise HTTPException(

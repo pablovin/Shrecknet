@@ -129,9 +129,13 @@ async def test_embedding_stats_with_instances(client):
     assert stats_response.status_code == 200, stats_response.text
     stats = stats_response.json()
     assert stats["ontology_id"] == ontology_id
-    assert stats["total_nodes"] == 4, f"Expected 4 total nodes, got {stats['total_nodes']}"
+    assert (
+        stats["total_nodes"] == 4
+    ), f"Expected 4 total nodes, got {stats['total_nodes']}"
     assert stats["embedded_nodes"] == 0
-    assert stats["unembedded_nodes"] == 4, f"Expected 4 unembedded nodes, got {stats['unembedded_nodes']}"
+    assert (
+        stats["unembedded_nodes"] == 4
+    ), f"Expected 4 unembedded nodes, got {stats['unembedded_nodes']}"
     assert stats["outdated_nodes"] == 0
 
     # Verify the instances are created with is_embedded = false
@@ -286,7 +290,9 @@ async def test_embedding_stats_multiple_ontologies(client):
     assert stats1_response.status_code == 200
     stats1 = stats1_response.json()
     assert stats1["ontology_id"] == ontology1_id
-    assert stats1["total_nodes"] == 2, f"Expected 2 nodes for ontology 1, got {stats1['total_nodes']}"
+    assert (
+        stats1["total_nodes"] == 2
+    ), f"Expected 2 nodes for ontology 1, got {stats1['total_nodes']}"
     assert stats1["unembedded_nodes"] == 2
 
     # Check stats for ontology 2 (should show 3 nodes)
@@ -297,7 +303,9 @@ async def test_embedding_stats_multiple_ontologies(client):
     assert stats2_response.status_code == 200
     stats2 = stats2_response.json()
     assert stats2["ontology_id"] == ontology2_id
-    assert stats2["total_nodes"] == 3, f"Expected 3 nodes for ontology 2, got {stats2['total_nodes']}"
+    assert (
+        stats2["total_nodes"] == 3
+    ), f"Expected 3 nodes for ontology 2, got {stats2['total_nodes']}"
     assert stats2["unembedded_nodes"] == 3
 
     # Clean up

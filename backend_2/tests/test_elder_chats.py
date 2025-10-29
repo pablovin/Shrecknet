@@ -286,6 +286,70 @@ async def test_query_with_chat_history(
 
 
 @pytest.mark.asyncio
+async def test_query_with_empty_chat(
+    client: AsyncClient, user_token: str, agent_id: str
+):
+    """Test querying elder with an empty chat (no messages)."""
+    headers = {"Authorization": f"Bearer {user_token}"}
+
+    # Create a chat with no messages
+    chat_data = {
+        "agent_id": agent_id,
+        "name": "Empty Chat Test",
+    }
+    create_response = await client.post(
+        "/jobs/elder/chats/", json=chat_data, headers=headers
+    )
+    chat_id = create_response.json()["id"]
+
+    # Query with empty chat - should NOT return "Chat not found"
+    query_data = {
+        "query": "Hi, who is Stefany?",
+        "chat_id": chat_id,
+        "mode": "nl",
+    }
+
+    response = await client.post(
+        f"/jobs/elder/{agent_id}/query", json=query_data, headers=headers
+    )
+
+    # Should not return 404 "Chat not found" even if chat is empty
+    # Should return 503 (no OpenAI config) or 500 (other error) or 200 (success)
+    assert response.status_code != 404
+
+
+@pytest.mark.asyncio
+async def test_query_with_nonexistent_chat(
+    client: AsyncClient, user_token: str, agent_id: str
+):
+    """Test querying elder with a non-existent chat ID."""
+    headers = {"Authorization": f"Bearer {user_token}"}
+
+    # Query with non-existent chat - should return "Chat not found"
+    query_data = {
+        "query": "Test query",
+        "chat_id": "nonexistent-chat-id",
+        "mode": "nl",
+    }
+
+    response = await client.post(
+        f"/jobs/elder/{agent_id}/query", json=query_data, headers=headers
+    )
+
+    # Should return 404 "Chat not found" OR 503 if OpenAI not configured
+    # The important thing is that if we get any error response, it should
+    # be either about the missing chat OR about missing LLM config
+    # (dependency injection happens before chat check in current implementation)
+    if response.status_code == 503:
+        # OpenAI not configured - this is expected in test env
+        assert "OpenAI" in response.json().get("detail", "")
+    else:
+        # If OpenAI was configured, we should get 404 for missing chat
+        assert response.status_code == 404
+        assert "Chat not found" in response.json().get("detail", "")
+
+
+@pytest.mark.asyncio
 async def test_chat_invalid_color(client: AsyncClient, user_token: str, agent_id: str):
     """Test creating chat with invalid color format."""
     headers = {"Authorization": f"Bearer {user_token}"}

@@ -1,42 +1,42 @@
 services:
-  frontend:
-   user: "33:33"
-   build:
-     context: ./frontend
-     network: host
-   ports:
-     - "3000:3000"
-   depends_on:
-     - backend
-   volumes:
-     - ./frontend/uploads:/app/uploads
-   environment:
-     - NEXT_CACHE_DIR=/tmp/next-cache
+  # frontend:
+  #  user: "33:33"
+  #  build:
+  #    context: ./frontend
+  #    network: host
+  #  ports:
+  #    - "3000:3000"
+  #  depends_on:
+  #    - backend
+  #  volumes:
+  #    - ./frontend/uploads:/app/uploads
+  #  environment:
+  #    - NEXT_CACHE_DIR=/tmp/next-cache
 
-  backend:
-   build:
-     context: ./backend
-     network: host
-   ports:
-     - "8000:8000"
-   env_file:
-     - ./backend/.env
-   environment:
-     - CELERY_BROKER_URL=redis://redis:6379/0
-     - CELERY_RESULT_BACKEND=redis://redis:6379/0
-   volumes:
-     - ./backend/data:/app/data
-     - ./frontend/uploads:/app/uploads
-   depends_on:
-     - redis
-     - chromadb
+  # backend:
+  #  build:
+  #    context: ./backend
+  #    network: host
+  #  ports:
+  #    - "8000:8000"
+  #  env_file:
+  #    - ./backend/.env
+  #  environment:
+  #    - CELERY_BROKER_URL=redis://redis:6379/0
+  #    - CELERY_RESULT_BACKEND=redis://redis:6379/0
+  #  volumes:
+  #    - ./backend/data:/app/data
+  #    - ./frontend/uploads:/app/uploads
+  #  depends_on:
+  #    - redis
+  #    - chromadb
 
   backend_2:
    build:
      context: ./backend_2
      network: host
    ports:
-     - "8080:8080"
+     - "8000:8000"
    environment:
      - BACKEND_2_NEO4J_URI=bolt://neo4j:7687
      - BACKEND_2_NEO4J_USER=neo4j
@@ -71,23 +71,23 @@ services:
      - redis
      - neo4j
 
-  celery:
-    build:
-      context: ./backend
-      network: host
-    command: celery -A app.task_queue.celery_app worker --loglevel=info
-    env_file:
-      - ./backend/.env
-    environment:
-      - CELERY_BROKER_URL=redis://redis:6379/0
-      - CELERY_RESULT_BACKEND=redis://redis:6379/0
-    volumes:
-      - ./backend/data:/app/data
-      - ./frontend/uploads:/app/uploads
-    depends_on:
-     - backend
-     - redis
-     - chromadb
+  # celery:
+  #   build:
+  #     context: ./backend
+  #     network: host
+  #   command: celery -A app.task_queue.celery_app worker --loglevel=info
+  #   env_file:
+  #     - ./backend/.env
+  #   environment:
+  #     - CELERY_BROKER_URL=redis://redis:6379/0
+  #     - CELERY_RESULT_BACKEND=redis://redis:6379/0
+  #   volumes:
+  #     - ./backend/data:/app/data
+  #     - ./frontend/uploads:/app/uploads
+  #   depends_on:
+  #    - backend
+  #    - redis
+  #    - chromadb
 
   redis:
     image: redis:7.2-alpine
@@ -98,16 +98,16 @@ services:
       - redis-data:/data
     command: redis-server --save 60 1 --loglevel warning
 
-  chromadb:
-    image: chromadb/chroma:latest
-    restart: always
-    command: run --host 0.0.0.0 --port 8001 --path /chroma/chroma
-    ports:
-      - "8001:8001"   # Host:Container
-    volumes:
-      - ./backend/data/vector_db:/chroma/chroma
-    environment:
-      - IS_PERSISTENT=TRUE
+  # chromadb:
+  #   image: chromadb/chroma:latest
+  #   restart: always
+  #   command: run --host 0.0.0.0 --port 8001 --path /chroma/chroma
+  #   ports:
+  #     - "8001:8001"   # Host:Container
+  #   volumes:
+  #     - ./backend/data/vector_db:/chroma/chroma
+  #   environment:
+  #     - IS_PERSISTENT=TRUE
 
   neo4j:
     image: neo4j:5-community

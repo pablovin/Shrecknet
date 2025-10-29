@@ -72,6 +72,11 @@ out/
 __pycache__/
 *.egg-info/
 
+# Python virtual environments
+.venv/
+venv/
+env/
+
 # Uploaded files and media
 frontend/uploads/
 !frontend/uploads/.gitkeep

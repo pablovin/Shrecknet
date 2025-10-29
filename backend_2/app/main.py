@@ -15,6 +15,8 @@ from app.api.routers import get_api_router
 from app.core.config import get_app_config, get_settings
 from app.core.logging_config import configure_logging
 from app.db.init_db import init_db
+from app.db.init_jobs_db import init_jobs_db
+from app.db.jobs_session import jobs_engine
 from app.db.session import engine
 from app.graph.neo4j import close_driver as close_neo4j_driver
 
@@ -22,6 +24,7 @@ from app.graph.neo4j import close_driver as close_neo4j_driver
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db(engine)
+    await init_jobs_db(jobs_engine)
     try:
         yield
     finally:

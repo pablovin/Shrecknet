@@ -10,6 +10,7 @@ class Settings(BaseSettings):
 
     app_name: str = "backend_2"
     database_url: str = "sqlite+aiosqlite:///./backend_2.db"
+    jobs_database_url: str = "sqlite+aiosqlite:///./backend_2_jobs.db"
     debug: bool = False
     secret_key: str = "change-me"
     access_token_expire_minutes: int = 30

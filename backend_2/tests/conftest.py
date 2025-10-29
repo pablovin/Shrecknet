@@ -13,8 +13,10 @@ from sqlalchemy.pool import StaticPool
 
 from app.api.deps import get_db_session
 from app.db.base import Base
+from app.db.jobs_session import get_jobs_session
 from app.db.session import engine as default_engine
 from app.main import create_app
+from app.models.background_job import BackgroundJob  # noqa: F401 - imported for registration
 from app.models.user import UserRole
 
 
@@ -49,6 +51,7 @@ async def client(test_engine: AsyncEngine) -> AsyncGenerator[AsyncClient, None]:
             yield session
 
     app.dependency_overrides[get_db_session] = get_test_session
+    app.dependency_overrides[get_jobs_session] = get_test_session  # Use same in-memory DB for tests
 
     @asynccontextmanager
     async def lifespan_override(_app):

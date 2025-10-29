@@ -8,18 +8,33 @@ from neo4j import AsyncSession
 from app.celery_app import celery_app
 from app.core.config import get_settings
 from app.graph.neo4j import get_driver
+from app.models.background_job import AuthorType, JobType
+from app.utils.job_tracking import (
+    create_background_job,
+    mark_job_done,
+    mark_job_failed,
+    mark_job_running,
+    update_job_progress,
+)
 from app.utils.linker import build_alias_pattern, link_text
 
 settings = get_settings()
 
 
-async def _link_instance_entities(instance_id: str) -> None:
+async def _link_instance_entities(instance_id: str, job_id: int) -> None:
     driver = get_driver()
     async with driver.session(database=settings.neo4j_database) as session:
+        # Update progress: fetching entities
+        await update_job_progress(job_id, 0.1, {"status": "fetching entities"})
+        
         records = await _fetch_entities(session, instance_id)
         if not records:
+            await update_job_progress(job_id, 1.0, {"status": "no entities found"})
             return
 
+        # Update progress: building alias map
+        await update_job_progress(job_id, 0.3, {"status": "building alias map", "entity_count": len(records)})
+        
         alias_map: dict[str, list[str]] = {}
         for record in records:
             alias = record.get("alias") or ""
@@ -29,6 +44,9 @@ async def _link_instance_entities(instance_id: str) -> None:
 
         pattern = build_alias_pattern(alias_map.keys())
 
+        # Update progress: linking text
+        await update_job_progress(job_id, 0.5, {"status": "linking text"})
+        
         payload: list[dict[str, Any]] = []
         for record in records:
             entity_id = record["entity_id"]
@@ -52,6 +70,9 @@ async def _link_instance_entities(instance_id: str) -> None:
                 }
             )
 
+        # Update progress: updating database
+        await update_job_progress(job_id, 0.8, {"status": "updating database"})
+        
         await session.run(
             """
             UNWIND $payload AS item
@@ -61,6 +82,9 @@ async def _link_instance_entities(instance_id: str) -> None:
             """,
             payload=payload,
         )
+        
+        # Final progress update
+        await update_job_progress(job_id, 0.95, {"status": "completed", "entities_linked": len(payload)})
 
 
 async def _fetch_entities(
@@ -81,5 +105,34 @@ async def _fetch_entities(
 
 
 @celery_app.task(name="ontology.link_instance")
-def link_instance(instance_id: str) -> None:
-    asyncio.run(_link_instance_entities(instance_id))
+def link_instance(instance_id: str, author_type: str = "agent", author_id: str = "system") -> dict[str, Any]:
+    """
+    Link entity instances within an ontology instance.
+    
+    Args:
+        instance_id: The ontology instance ID
+        author_type: Type of author triggering the job (user or agent)
+        author_id: ID of the author
+        
+    Returns:
+        Dictionary with job results
+    """
+    job_id = asyncio.run(
+        create_background_job(
+            author_type=AuthorType(author_type),
+            author_id=author_id,
+            job_type=JobType.GRAPH_LINK_UPDATE,
+            description=f"Linking entities for ontology instance {instance_id}",
+            celery_task_id=link_instance.request.id,
+            details={"instance_id": instance_id},
+        )
+    )
+    
+    try:
+        asyncio.run(mark_job_running(job_id))
+        asyncio.run(_link_instance_entities(instance_id, job_id))
+        asyncio.run(mark_job_done(job_id, {"instance_id": instance_id, "status": "success"}))
+        return {"job_id": job_id, "instance_id": instance_id, "status": "success"}
+    except Exception as e:
+        asyncio.run(mark_job_failed(job_id, str(e)))
+        raise

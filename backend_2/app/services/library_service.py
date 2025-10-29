@@ -124,7 +124,7 @@ class LibraryService:
                 embed_pdf_book.delay(
                     library_item_id=item.id,
                     ontology_id=ontology_id,
-                    author_type="system",
+                    author_type="agent",
                     author_id="auto",
                 )
             except Exception as e:

@@ -168,6 +168,12 @@ Content-Type: application/json
 - `mode` - Response mode: `"nl"`, `"context"`, or `"both"` (default: `"both"`)
 - `top_k` - Number of retrieval results per sub-query (default: from config, max: 50)
 - `include_trace` - Include execution trace for debugging (default: false)
+- `chat_id` - Optional chat ID to use conversation history as context and save messages (default: null)
+
+**Note**: When `chat_id` is provided:
+- The last 10 messages from the chat are used as context during query decomposition
+- Both the user's query and the assistant's answer are saved to the chat history
+- Chat history helps maintain conversation context across multiple queries
 
 **Response** (200 OK):
 ```json
@@ -341,6 +347,241 @@ Status: 503
 }
 ```
 Status: 500
+
+## Chat Management
+
+The Elder job supports persistent chat sessions that maintain conversation history. Each user can create up to 10 separate chats per agent, allowing them to organize different topics or contexts.
+
+### Chat Features
+
+- **Persistent History**: Conversations are saved and can be referenced in future queries
+- **Context Awareness**: Recent chat history (last 10 messages) is used during query decomposition
+- **Organization**: Each chat can have a custom name and color for easy identification
+- **Privacy**: Users can only access their own chats
+- **Limit**: Maximum 10 chats per user per agent
+
+### Create a Chat
+
+```http
+POST /jobs/elder/chats/
+Authorization: Bearer <user-token>
+Content-Type: application/json
+
+{
+  "agent_id": "550e8400-e29b-41d4-a716-446655440000",
+  "name": "World Politics Discussion",
+  "color": "#FF5733"
+}
+```
+
+**Request Parameters**:
+- `agent_id` (required) - The ID of the elder agent
+- `name` (required) - Chat name (1-100 characters)
+- `color` (optional) - Hex color code (e.g., `#FF5733`)
+
+**Response** (201 Created):
+```json
+{
+  "id": "chat-uuid-here",
+  "user_id": 123,
+  "agent_id": "550e8400-e29b-41d4-a716-446655440000",
+  "name": "World Politics Discussion",
+  "color": "#FF5733",
+  "created_at": "2025-10-29T10:00:00Z",
+  "updated_at": "2025-10-29T10:00:00Z",
+  "message_count": 0
+}
+```
+
+### List User Chats
+
+```http
+GET /jobs/elder/chats/?agent_id={agent_id}&limit=100&offset=0
+Authorization: Bearer <user-token>
+```
+
+**Query Parameters**:
+- `agent_id` (optional) - Filter chats by agent
+- `limit` (optional) - Maximum results (default: 100, max: 1000)
+- `offset` (optional) - Pagination offset (default: 0)
+
+**Response** (200 OK):
+```json
+{
+  "chats": [
+    {
+      "id": "chat-uuid-1",
+      "user_id": 123,
+      "agent_id": "550e8400-e29b-41d4-a716-446655440000",
+      "name": "World Politics Discussion",
+      "color": "#FF5733",
+      "created_at": "2025-10-29T10:00:00Z",
+      "updated_at": "2025-10-29T12:30:00Z",
+      "message_count": 8
+    },
+    {
+      "id": "chat-uuid-2",
+      "user_id": 123,
+      "agent_id": "550e8400-e29b-41d4-a716-446655440000",
+      "name": "Character Backstories",
+      "color": "#3498DB",
+      "created_at": "2025-10-28T15:00:00Z",
+      "updated_at": "2025-10-29T09:00:00Z",
+      "message_count": 15
+    }
+  ],
+  "total": 2,
+  "limit": 100,
+  "offset": 0
+}
+```
+
+### Get Chat with History
+
+```http
+GET /jobs/elder/chats/{chat_id}?include_history=true
+Authorization: Bearer <user-token>
+```
+
+**Query Parameters**:
+- `include_history` (optional) - Include chat messages (default: false)
+
+**Response** (200 OK):
+```json
+{
+  "id": "chat-uuid-1",
+  "user_id": 123,
+  "agent_id": "550e8400-e29b-41d4-a716-446655440000",
+  "name": "World Politics Discussion",
+  "color": "#FF5733",
+  "created_at": "2025-10-29T10:00:00Z",
+  "updated_at": "2025-10-29T12:30:00Z",
+  "message_count": 4,
+  "history": [
+    {
+      "id": 1,
+      "chat_id": "chat-uuid-1",
+      "role": "user",
+      "content": "Who is the Prince of Chicago?",
+      "created_at": "2025-10-29T10:05:00Z"
+    },
+    {
+      "id": 2,
+      "chat_id": "chat-uuid-1",
+      "role": "assistant",
+      "content": "Lodin is the Prince of Chicago. He is a Ventrue elder...",
+      "created_at": "2025-10-29T10:05:15Z"
+    },
+    {
+      "id": 3,
+      "chat_id": "chat-uuid-1",
+      "role": "user",
+      "content": "Tell me more about his relationship with the Camarilla.",
+      "created_at": "2025-10-29T12:30:00Z"
+    },
+    {
+      "id": 4,
+      "chat_id": "chat-uuid-1",
+      "role": "assistant",
+      "content": "As Prince, Lodin serves as the Camarilla's primary authority...",
+      "created_at": "2025-10-29T12:30:10Z"
+    }
+  ]
+}
+```
+
+**Note**: History is limited to the most recent 50 messages when `include_history=true`.
+
+### Update Chat
+
+```http
+PATCH /jobs/elder/chats/{chat_id}
+Authorization: Bearer <user-token>
+Content-Type: application/json
+
+{
+  "name": "Updated Chat Name",
+  "color": "#00FF00"
+}
+```
+
+**Request Parameters** (all optional):
+- `name` - New chat name (1-100 characters)
+- `color` - New hex color code
+
+**Response** (200 OK):
+```json
+{
+  "id": "chat-uuid-1",
+  "user_id": 123,
+  "agent_id": "550e8400-e29b-41d4-a716-446655440000",
+  "name": "Updated Chat Name",
+  "color": "#00FF00",
+  "created_at": "2025-10-29T10:00:00Z",
+  "updated_at": "2025-10-29T13:00:00Z",
+  "message_count": 4
+}
+```
+
+### Delete Chat
+
+```http
+DELETE /jobs/elder/chats/{chat_id}
+Authorization: Bearer <user-token>
+```
+
+**Response** (204 No Content)
+
+Deletes the chat and all its message history permanently.
+
+### Using Chats in Queries
+
+To use a chat's history as context and save the conversation:
+
+```http
+POST /jobs/elder/{agent_id}/query
+Authorization: Bearer <user-token>
+Content-Type: application/json
+
+{
+  "query": "Tell me more about his relationship with the Primogen.",
+  "chat_id": "chat-uuid-1",
+  "mode": "nl"
+}
+```
+
+The Elder will:
+1. Load the last 10 messages from the chat history
+2. Use this context during query decomposition for better understanding
+3. Save both the user's query and the assistant's answer to the chat
+
+This enables natural, context-aware follow-up questions.
+
+### Chat Error Responses
+
+#### Chat Not Found
+```json
+{
+  "detail": "Chat not found"
+}
+```
+Status: 404
+
+#### Maximum Chats Exceeded
+```json
+{
+  "detail": "Maximum of 10 chats per agent reached. Please delete a chat before creating a new one."
+}
+```
+Status: 400
+
+#### Invalid Color Format
+```json
+{
+  "detail": "Input should be a valid string"
+}
+```
+Status: 422
 
 ## Usage Examples
 

@@ -27,11 +27,11 @@ router = APIRouter(prefix="/imports", tags=["imports"])
 
 
 # Old backend database connection
-# Default path is relative to the repository root
+# Default path points to backend/data/prod.db (relative to backend_2 directory)
 # Can be overridden with OLD_DATABASE_URL environment variable
 OLD_DATABASE_URL = os.getenv(
     "OLD_DATABASE_URL",
-    "sqlite+aiosqlite:///./data/prod.db",
+    "sqlite+aiosqlite:///../backend/data/prod.db",
 )
 
 

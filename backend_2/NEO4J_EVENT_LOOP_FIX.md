@@ -42,7 +42,8 @@ def get_driver() -> AsyncDriver:
     
     # Recreate driver if loop changed
     if _driver is None or (_driver_loop is not None and current_loop is not _driver_loop):
-        if _driver is not None and _driver_loop is not None and current_loop is not _driver_loop:
+        # Reset driver if switching loops
+        if _driver is not None and current_loop is not _driver_loop:
             _driver = None
             _driver_loop = None
         

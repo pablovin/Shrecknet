@@ -38,8 +38,8 @@ def get_driver() -> AsyncDriver:
     # 1. Driver doesn't exist
     # 2. We're in a different event loop than when driver was created
     if _driver is None or (_driver_loop is not None and current_loop is not _driver_loop):
-        # Close old driver if it exists and we're switching loops
-        if _driver is not None and _driver_loop is not None and current_loop is not _driver_loop:
+        # Reset driver if switching loops
+        if _driver is not None and current_loop is not _driver_loop:
             # We can't await the close here since this is a sync function
             # The driver will be garbage collected
             _driver = None

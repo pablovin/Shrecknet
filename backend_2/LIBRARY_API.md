@@ -397,8 +397,8 @@ async function uploadPDF(token, ontologyId, file, autoExtract = false) {
 
 The PDF metadata extraction and cover generation features require:
 
-- **PyPDF2**: For basic PDF validation and metadata extraction
-- **PyMuPDF** (fitz): For advanced PDF processing and image rendering
+- **PyPDF2**: For PDF validation and test fixtures
+- **PyMuPDF** (fitz): For PDF metadata extraction and image rendering
 - **Pillow**: For image processing and optimization
 
-These are automatically included in the backend dependencies.
+PyMuPDF is the primary library used for metadata extraction and cover generation. It provides robust PDF processing capabilities including metadata reading and page rendering.

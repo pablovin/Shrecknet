@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
+from neo4j import AsyncSession as AsyncNeo4jSession
 from sqlalchemy import inspect, text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -60,3 +62,68 @@ async def migrate_jobs_database(engine: AsyncEngine) -> None:
             logger.info("Successfully added duration_seconds column")
         else:
             logger.debug("duration_seconds column already exists, skipping migration")
+
+
+async def migrate_neo4j_embedding_properties(
+    graph_session: AsyncNeo4jSession,
+) -> dict[str, Any]:
+    """
+    Add embedding properties to existing EntityInstance nodes in Neo4j.
+
+    This migration ensures all EntityInstance nodes have the is_embedded and
+    last_embedded_date properties that are required for the embedding system.
+
+    Nodes created before this migration won't have these properties set,
+    which causes them to not appear in embedding stats.
+
+    Args:
+        graph_session: Neo4j async session
+
+    Returns:
+        Dictionary with migration statistics
+    """
+    logger.info("Starting Neo4j embedding properties migration")
+
+    # Check if there are any nodes missing the embedding properties
+    check_query = """
+    MATCH (n:EntityInstance)
+    WHERE n.is_embedded IS NULL
+    RETURN count(n) AS count
+    """
+
+    result = await graph_session.run(check_query)
+    record = await result.single()
+    nodes_to_migrate = record["count"] if record else 0
+
+    if nodes_to_migrate == 0:
+        logger.info("No nodes need migration for embedding properties")
+        return {
+            "nodes_migrated": 0,
+            "nodes_already_migrated": 0,
+            "status": "success",
+        }
+
+    logger.info(f"Found {nodes_to_migrate} nodes to migrate")
+
+    # Update nodes that don't have the embedding properties
+    # Set is_embedded to false and last_embedded_date to null
+    update_query = """
+    MATCH (n:EntityInstance)
+    WHERE n.is_embedded IS NULL
+    SET n.is_embedded = false,
+        n.last_embedded_date = null
+    RETURN count(n) AS updated
+    """
+
+    result = await graph_session.run(update_query)
+    record = await result.single()
+    nodes_migrated = record["updated"] if record else 0
+
+    logger.info(
+        f"Successfully migrated {nodes_migrated} nodes with embedding properties"
+    )
+
+    return {
+        "nodes_migrated": nodes_migrated,
+        "status": "success",
+    }

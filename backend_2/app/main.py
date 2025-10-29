@@ -17,14 +17,25 @@ from app.core.logging_config import configure_logging
 from app.db.init_db import init_db
 from app.db.init_jobs_db import init_jobs_db
 from app.db.jobs_session import jobs_engine
+from app.db.migrations import migrate_neo4j_embedding_properties
 from app.db.session import engine
 from app.graph.neo4j import close_driver as close_neo4j_driver
+from app.graph.neo4j import get_neo4j_session
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db(engine)
     await init_jobs_db(jobs_engine)
+    # Run Neo4j migrations
+    async for session in get_neo4j_session():
+        try:
+            await migrate_neo4j_embedding_properties(session)
+        except Exception as e:
+            logging.getLogger("backend_2.migrations").error(
+                f"Neo4j migration failed: {e}"
+            )
+        break  # Only use the first session
     try:
         yield
     finally:

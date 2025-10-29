@@ -62,12 +62,18 @@ class BackgroundJob(Base):
         Float, nullable=False, default=0.0
     )  # 0.0 to 1.0
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    ontology_id: Mapped[int | None] = mapped_column(
+        Integer, nullable=True, index=True
+    )  # For jobs related to a specific ontology
     started_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
     completed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    duration_seconds: Mapped[float | None] = mapped_column(
+        Float, nullable=True
+    )  # Total duration in seconds
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )

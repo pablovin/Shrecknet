@@ -46,6 +46,7 @@ class BackgroundJobService:
         author_id: str | None = None,
         job_type: JobType | None = None,
         status: JobStatus | None = None,
+        ontology_id: int | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[BackgroundJobResponse]:
@@ -55,6 +56,7 @@ class BackgroundJobService:
             author_id=author_id,
             job_type=job_type,
             status=status,
+            ontology_id=ontology_id,
             limit=limit,
             offset=offset,
         )
@@ -75,6 +77,7 @@ class BackgroundJobService:
                 progress=update_data.progress,
                 error_message=update_data.error_message,
                 completed_at=update_data.completed_at,
+                duration_seconds=update_data.duration_seconds,
             )
         elif update_data.progress is not None:
             job = await self.repo.update_progress(

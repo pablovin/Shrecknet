@@ -17,6 +17,7 @@ class BackgroundJobBase(BaseModel):
     job_type: JobType
     description: str
     details: str | None = None
+    ontology_id: int | None = None
 
 
 class BackgroundJobCreate(BackgroundJobBase):
@@ -33,6 +34,7 @@ class BackgroundJobUpdate(BaseModel):
     error_message: str | None = None
     details: str | None = None
     completed_at: datetime | None = None
+    duration_seconds: float | None = None
 
 
 class BackgroundJobResponse(BackgroundJobBase):
@@ -45,6 +47,7 @@ class BackgroundJobResponse(BackgroundJobBase):
     error_message: str | None
     started_at: datetime
     completed_at: datetime | None
+    duration_seconds: float | None
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)

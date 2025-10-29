@@ -95,6 +95,7 @@ async def create_background_job(
     description: str,
     celery_task_id: str | None = None,
     details: dict | None = None,
+    ontology_id: int | None = None,
 ) -> int:
     """
     Create a background job entry in the database.
@@ -111,6 +112,7 @@ async def create_background_job(
             description=description,
             celery_task_id=celery_task_id,
             details=details_str,
+            ontology_id=ontology_id,
         )
         return job.id
 

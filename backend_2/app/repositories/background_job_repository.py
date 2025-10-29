@@ -24,6 +24,7 @@ class BackgroundJobRepository:
         description: str,
         celery_task_id: str | None = None,
         details: str | None = None,
+        ontology_id: int | None = None,
     ) -> BackgroundJob:
         """Create a new background job."""
         job = BackgroundJob(
@@ -33,6 +34,7 @@ class BackgroundJobRepository:
             job_type=job_type,
             description=description,
             details=details,
+            ontology_id=ontology_id,
             status=JobStatus.QUEUED,
             progress=0.0,
         )
@@ -61,6 +63,7 @@ class BackgroundJobRepository:
         author_id: str | None = None,
         job_type: JobType | None = None,
         status: JobStatus | None = None,
+        ontology_id: int | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[BackgroundJob]:
@@ -75,6 +78,8 @@ class BackgroundJobRepository:
             query = query.where(BackgroundJob.job_type == job_type)
         if status:
             query = query.where(BackgroundJob.status == status)
+        if ontology_id is not None:
+            query = query.where(BackgroundJob.ontology_id == ontology_id)
 
         query = query.order_by(BackgroundJob.started_at.desc())
         query = query.limit(limit).offset(offset)
@@ -89,6 +94,7 @@ class BackgroundJobRepository:
         progress: float | None = None,
         error_message: str | None = None,
         completed_at: datetime | None = None,
+        duration_seconds: float | None = None,
     ) -> BackgroundJob | None:
         """Update the status of a background job."""
         job = await self.get_by_id(job_id)
@@ -102,6 +108,8 @@ class BackgroundJobRepository:
             job.error_message = error_message
         if completed_at is not None:
             job.completed_at = completed_at
+        if duration_seconds is not None:
+            job.duration_seconds = duration_seconds
 
         await self.session.commit()
         await self.session.refresh(job)
@@ -141,6 +149,11 @@ class BackgroundJobRepository:
         if details is not None:
             job.details = details
 
+        # Calculate duration
+        if job.started_at and job.completed_at:
+            duration = (job.completed_at - job.started_at).total_seconds()
+            job.duration_seconds = duration
+
         await self.session.commit()
         await self.session.refresh(job)
         return job
@@ -156,6 +169,11 @@ class BackgroundJobRepository:
         job.status = JobStatus.FAILED
         job.error_message = error_message
         job.completed_at = datetime.now(timezone.utc)
+
+        # Calculate duration
+        if job.started_at and job.completed_at:
+            duration = (job.completed_at - job.started_at).total_seconds()
+            job.duration_seconds = duration
 
         await self.session.commit()
         await self.session.refresh(job)

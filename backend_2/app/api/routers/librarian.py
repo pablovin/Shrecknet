@@ -116,9 +116,7 @@ async def query_librarian(
         return response
 
     except Exception as e:
-        logger.error(
-            f"Librarian query failed for agent {agent_id}: {e}", exc_info=True
-        )
+        logger.error(f"Librarian query failed for agent {agent_id}: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Librarian query execution failed: {str(e)}",

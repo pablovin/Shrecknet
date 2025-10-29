@@ -353,13 +353,13 @@ async def get_embedding_status(
     Returns information about whether the PDF has been embedded
     and how many chunks are in the vector database.
     """
-    from app.graph.neo4j import get_neo4j_driver
+    from app.graph.neo4j import get_driver
     from app.services.pdf_embedding_service import PdfEmbeddingService
 
     item = await _get_item_or_404(service, ontology_id, item_id)
 
     # Get stats from Neo4j
-    driver = get_neo4j_driver()
+    driver = get_driver()
     async with driver.session() as graph_session:
         pdf_service = PdfEmbeddingService(graph_session)
         stats = await pdf_service.get_embedding_stats(item.id)

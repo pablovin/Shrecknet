@@ -98,9 +98,7 @@ class LibrarianOrchestrator:
         ]
 
         # Get unique library items used
-        library_items_used = list(
-            {chunk.library_item_id for chunk in retrieved_chunks}
-        )
+        library_items_used = list({chunk.library_item_id for chunk in retrieved_chunks})
 
         # Step 2: Generate answer if mode includes 'nl'
         answer = None
@@ -117,9 +115,7 @@ class LibrarianOrchestrator:
 
                 # Step 3: Apply writing style if configured
                 if agent.writing_style:
-                    answer = await self._apply_style(
-                        answer, agent.writing_style, trace
-                    )
+                    answer = await self._apply_style(answer, agent.writing_style, trace)
 
         # Return response based on mode
         return LibrarianQueryResponse(
@@ -225,9 +221,9 @@ class LibrarianOrchestrator:
                     "data": {
                         "model": self.answer_model,
                         "chunks_used": len(chunks),
-                        "answer_preview": answer[:200] + "..."
-                        if len(answer) > 200
-                        else answer,
+                        "answer_preview": (
+                            answer[:200] + "..." if len(answer) > 200 else answer
+                        ),
                     },
                 }
             )
@@ -270,12 +266,16 @@ class LibrarianOrchestrator:
                     "step": "style",
                     "data": {
                         "model": self.style_model,
-                        "writing_style": writing_style[:100] + "..."
-                        if len(writing_style) > 100
-                        else writing_style,
-                        "styled_preview": styled_answer[:200] + "..."
-                        if len(styled_answer) > 200
-                        else styled_answer,
+                        "writing_style": (
+                            writing_style[:100] + "..."
+                            if len(writing_style) > 100
+                            else writing_style
+                        ),
+                        "styled_preview": (
+                            styled_answer[:200] + "..."
+                            if len(styled_answer) > 200
+                            else styled_answer
+                        ),
                     },
                 }
             )

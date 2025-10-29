@@ -219,9 +219,7 @@ class PdfEmbeddingService:
                 dim=self.embedding_service.embedding_dim,
             )
 
-    async def get_embedding_stats(
-        self, library_item_id: int
-    ) -> dict[str, int | bool]:
+    async def get_embedding_stats(self, library_item_id: int) -> dict[str, int | bool]:
         """
         Get embedding statistics for a library item.
 

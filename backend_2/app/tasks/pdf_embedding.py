@@ -9,7 +9,7 @@ from typing import Any
 
 from app.celery_app import celery_app
 from app.core.config import get_settings
-from app.graph.neo4j import get_neo4j_driver
+from app.graph.neo4j import get_driver
 from app.models.background_job import AuthorType, JobType
 from app.repositories.library_repository import LibraryRepository
 from app.services.pdf_embedding_service import PdfEmbeddingService
@@ -100,13 +100,11 @@ def embed_pdf_book(
             raise FileNotFoundError(f"PDF file not found: {pdf_path}")
 
         # Update progress: Processing PDF
-        asyncio.run(
-            update_job_progress(job_id, 0.2, {"status": "Reading PDF file"})
-        )
+        asyncio.run(update_job_progress(job_id, 0.2, {"status": "Reading PDF file"}))
 
         # Embed the PDF
         async def embed_pdf():
-            driver = get_neo4j_driver()
+            driver = get_driver()
             async with driver.session() as graph_session:
                 service = PdfEmbeddingService(graph_session)
 
@@ -136,9 +134,7 @@ def embed_pdf_book(
 
         # Update library item to mark as vectorized
         asyncio.run(
-            update_job_progress(
-                job_id, 0.9, {"status": "Updating library item status"}
-            )
+            update_job_progress(job_id, 0.9, {"status": "Updating library item status"})
         )
 
         async def update_item():

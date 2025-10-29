@@ -50,6 +50,7 @@ class LibraryItem(Base):
         ForeignKey("ontologies.id", ondelete="CASCADE"), nullable=False, index=True
     )
     title: Mapped[str] = mapped_column(String(255), nullable=False)
+    authors: Mapped[str | None] = mapped_column(String(512), nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     cover_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
     pdf_path: Mapped[str] = mapped_column(String(512), nullable=False)

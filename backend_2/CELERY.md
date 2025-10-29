@@ -388,6 +388,30 @@ Use the `details` field for job-specific information:
 details={"instance_id": instance_id, "entity_count": 42}
 ```
 
+### 6. Use driver.session() for Neo4j Operations
+
+When working with Neo4j in Celery tasks, use `driver.session()` directly instead of async generators:
+
+```python
+from app.graph.neo4j import get_driver
+from app.core.config import get_settings
+
+async def my_task_impl(job_id: int):
+    """Task implementation using driver.session() pattern."""
+    driver = get_driver()
+    settings = get_settings()
+    async with driver.session(database=settings.neo4j_database) as session:
+        # Perform Neo4j operations
+        result = await session.run("MATCH (n) RETURN count(n)")
+        # ...
+```
+
+**Why?** When using `run_async()` helper (which handles both eager and async execution modes), 
+using `driver.session()` avoids "Future attached to a different loop" errors that can occur 
+with async generator patterns like `async for session in get_neo4j_session()`.
+
+**Example:** See `app/tasks/neo4j_embedding.py` and `app/tasks/ontology_links.py` for reference implementations.
+
 ## Troubleshooting
 
 ### Worker Not Processing Tasks
@@ -406,6 +430,37 @@ details={"instance_id": instance_id, "entity_count": 42}
    ```bash
    celery -A app.celery_app worker --loglevel=debug
    ```
+
+### "Future attached to a different loop" Error
+
+This error occurs when async code tries to use futures/tasks from a different event loop.
+
+**Symptoms:**
+```
+Exception: Embedding failed: Task <Task pending name='Task-466'> got Future <Future pending> attached to a different loop
+```
+
+**Solution:**
+Use `driver.session()` directly instead of async generators when working with Neo4j in tasks:
+
+```python
+# ❌ Don't do this
+async for session in get_neo4j_session():
+    # This creates futures attached to the wrong loop
+    result = await session.run(query)
+
+# ✅ Do this instead
+driver = get_driver()
+settings = get_settings()
+async with driver.session(database=settings.neo4j_database) as session:
+    # This works correctly with run_async()
+    result = await session.run(query)
+```
+
+**Why:** The `run_async()` helper creates a new event loop in a separate thread when called 
+from an async context (like FastAPI with `CELERY_TASK_ALWAYS_EAGER=true`). Async generators 
+can create tasks attached to the caller's loop, causing conflicts. Using `driver.session()` 
+directly creates all async operations in the correct loop.
 
 ### Tasks Execute Synchronously
 

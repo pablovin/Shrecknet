@@ -6,7 +6,6 @@ import asyncio
 from typing import Any
 
 from app.celery_app import celery_app
-from app.graph.neo4j import get_neo4j_session
 from app.graphrag.embedding_service import EmbeddingService
 from app.models.background_job import AuthorType, JobType
 from app.utils.async_helpers import run_async
@@ -73,7 +72,12 @@ async def _embed_ontology_impl(job_id: int, ontology_id: int) -> dict[str, Any]:
     Returns:
         Dictionary with embedding statistics
     """
-    async for session in get_neo4j_session():
+    from app.graph.neo4j import get_driver
+    from app.core.config import get_settings
+
+    driver = get_driver()
+    settings = get_settings()
+    async with driver.session(database=settings.neo4j_database) as session:
         try:
             embedding_service = EmbeddingService(session)
 

@@ -316,8 +316,6 @@ async def test_query_with_empty_chat(
     # Should not return 404 "Chat not found" even if chat is empty
     # Should return 503 (no OpenAI config) or 500 (other error) or 200 (success)
     assert response.status_code != 404
-    if response.status_code == 404:
-        assert "Chat not found" not in response.json().get("detail", "")
 
 
 @pytest.mark.asyncio

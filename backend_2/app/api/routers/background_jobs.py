@@ -14,7 +14,6 @@ from app.models.background_job import AuthorType, JobStatus, JobType
 from app.models.user import User
 from app.schemas.background_job import (
     BackgroundJobCreate,
-    BackgroundJobDeleteRequest,
     BackgroundJobResponse,
     BackgroundJobUpdate,
 )

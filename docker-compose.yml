@@ -31,6 +31,46 @@ services:
      - redis
      - chromadb
 
+  backend_2:
+   build:
+     context: ./backend_2
+     network: host
+   ports:
+     - "8080:8080"
+   environment:
+     - BACKEND_2_NEO4J_URI=bolt://neo4j:7687
+     - BACKEND_2_NEO4J_USER=neo4j
+     - BACKEND_2_NEO4J_PASSWORD=VeryStrongPass123
+     - BACKEND_2_NEO4J_DATABASE=neo4j
+     - BACKEND_2_CELERY_BROKER_URL=redis://redis:6379/0
+     - BACKEND_2_CELERY_RESULT_BACKEND=redis://redis:6379/1
+     - BACKEND_2_CELERY_TASK_ALWAYS_EAGER=false
+   volumes:
+     - ./backend_2/media:/app/media
+   depends_on:
+     - redis
+     - neo4j
+
+  backend_2_worker:
+   build:
+     context: ./backend_2
+     network: host
+   command: celery -A app.celery_app worker --loglevel=info
+   environment:
+     - BACKEND_2_NEO4J_URI=bolt://neo4j:7687
+     - BACKEND_2_NEO4J_USER=neo4j
+     - BACKEND_2_NEO4J_PASSWORD=VeryStrongPass123
+     - BACKEND_2_NEO4J_DATABASE=neo4j
+     - BACKEND_2_CELERY_BROKER_URL=redis://redis:6379/0
+     - BACKEND_2_CELERY_RESULT_BACKEND=redis://redis:6379/1
+     - BACKEND_2_CELERY_TASK_ALWAYS_EAGER=false
+   volumes:
+     - ./backend_2/media:/app/media
+   depends_on:
+     - backend_2
+     - redis
+     - neo4j
+
   celery:
     build:
       context: ./backend
@@ -54,6 +94,9 @@ services:
     restart: always
     ports:
       - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --save 60 1 --loglevel warning
 
   chromadb:
     image: chromadb/chroma:latest
@@ -65,3 +108,28 @@ services:
       - ./backend/data/vector_db:/chroma/chroma
     environment:
       - IS_PERSISTENT=TRUE
+
+  neo4j:
+    image: neo4j:5-community
+    restart: always
+    ports:
+      - "7474:7474"   # HTTP
+      - "7687:7687"   # Bolt
+    volumes:
+      - neo4j-data:/data
+      - neo4j-logs:/logs
+      - neo4j-import:/var/lib/neo4j/import
+      - neo4j-plugins:/plugins
+    environment:
+      - NEO4J_AUTH=neo4j/VeryStrongPass123
+      - NEO4J_PLUGINS=["apoc", "graph-data-science"]
+      - NEO4J_dbms_memory_pagecache_size=512M
+      - NEO4J_dbms_memory_heap_initial__size=512M
+      - NEO4J_dbms_memory_heap_max__size=1G
+
+volumes:
+  redis-data:
+  neo4j-data:
+  neo4j-logs:
+  neo4j-import:
+  neo4j-plugins:

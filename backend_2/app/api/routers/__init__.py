@@ -4,6 +4,7 @@ from app.api.routers import (
     agents,
     audit_logs,
     auth,
+    background_jobs,
     elder,
     games,
     graphrag,
@@ -34,4 +35,5 @@ def get_api_router() -> APIRouter:
     router.include_router(ontologies.router)
     router.include_router(agents.router)
     router.include_router(elder.router)
+    router.include_router(background_jobs.router)
     return router

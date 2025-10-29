@@ -197,17 +197,19 @@ class ElderChatService:
 
     async def get_chat_history_for_context(
         self, chat_id: str, user_id: int, limit: int = 20
-    ) -> list[dict[str, str]]:
+    ) -> Optional[list[dict[str, str]]]:
         """
         Get chat history formatted for LLM context.
 
-        Returns list of {"role": "user"/"assistant", "content": "..."} dicts.
-        Validates that the chat belongs to the user.
+        Returns:
+            - None if chat doesn't exist or doesn't belong to user
+            - Empty list if chat exists but has no messages
+            - List of {"role": "user"/"assistant", "content": "..."} dicts otherwise
         """
         # Check if chat exists and belongs to user
         chat = await self.chat_repo.get_by_id(chat_id)
         if not chat or chat.user_id != user_id:
-            return []
+            return None
 
         # Get recent history
         total_messages = await self.chat_repo.count_chat_history(chat_id)

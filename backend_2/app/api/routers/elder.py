@@ -130,7 +130,7 @@ async def query_elder(
         chat_history = await chat_service.get_chat_history_for_context(
             chat_id=request.chat_id, user_id=_current_user.id, limit=20
         )
-        if not chat_history and request.chat_id:
+        if chat_history is None:
             # Chat doesn't exist or doesn't belong to user
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,

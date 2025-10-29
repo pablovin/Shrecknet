@@ -118,7 +118,7 @@ async def create_library_item(
         authors: Authors of the item (optional if auto_extract_metadata=True)
         description: Description of the item (optional if auto_extract_metadata=True)
         cover_url: URL to cover image (optional if auto_extract_metadata=True)
-        auto_extract_metadata: If True, extract metadata (title, authors, description) 
+        auto_extract_metadata: If True, extract metadata (title, authors, description)
                                from PDF and use first page as cover image when fields are not provided
         auto_embed: If True, automatically trigger embedding job for this item
 
@@ -392,9 +392,9 @@ async def get_embedding_status(
         "library_item_id": item.id,
         "ontology_id": ontology_id,
         "vectorized": item.vectorized,
-        "last_vectorized_at": item.last_vectorized_at.isoformat()
-        if item.last_vectorized_at
-        else None,
+        "last_vectorized_at": (
+            item.last_vectorized_at.isoformat() if item.last_vectorized_at else None
+        ),
         "total_chunks": stats.get("total_chunks", 0),
         "is_embedded": stats.get("is_embedded", False),
     }
@@ -440,9 +440,9 @@ async def list_embedding_jobs(
                 "progress": job.progress,
                 "description": job.description,
                 "started_at": job.started_at.isoformat(),
-                "completed_at": job.completed_at.isoformat()
-                if job.completed_at
-                else None,
+                "completed_at": (
+                    job.completed_at.isoformat() if job.completed_at else None
+                ),
                 "duration_seconds": job.duration_seconds,
                 "error_message": job.error_message,
                 "details": job.details,

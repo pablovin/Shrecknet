@@ -308,9 +308,7 @@ class LibraryService:
         }
 
     # PDF Metadata Extraction Methods ------------------------------------
-    async def extract_pdf_metadata(
-        self, pdf_path: Path
-    ) -> dict[str, str | None]:
+    async def extract_pdf_metadata(self, pdf_path: Path) -> dict[str, str | None]:
         """
         Extract metadata from a PDF file.
 
@@ -398,7 +396,9 @@ class LibraryService:
             from fastapi import UploadFile
 
             upload = UploadFile(
-                file=img_bytes, filename="cover.png", headers={"content-type": "image/png"}
+                file=img_bytes,
+                filename="cover.png",
+                headers={"content-type": "image/png"},
             )
 
             # Save using save_content_image

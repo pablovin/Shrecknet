@@ -18,13 +18,13 @@ def _ensure_entity_display_column(sync_conn) -> None:
 
 def _ensure_library_item_authors_column(sync_conn) -> None:
     inspector = inspect(sync_conn)
+    # Check if the table exists first
+    if "library_items" not in inspector.get_table_names():
+        return
     columns = {column["name"] for column in inspector.get_columns("library_items")}
     if "authors" not in columns:
         sync_conn.execute(
-            text(
-                "ALTER TABLE library_items "
-                "ADD COLUMN authors VARCHAR(512)"
-            )
+            text("ALTER TABLE library_items " "ADD COLUMN authors VARCHAR(512)")
         )
 
 

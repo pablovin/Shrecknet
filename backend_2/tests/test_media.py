@@ -61,7 +61,7 @@ async def test_upload_model_image_and_validation(client):
         "/media-admin/images",
         headers=admin_headers,
         files={"file": ("image.png", buffer, "image/png")},
-        data={"model": "user", "instance_id": user_id},
+        data={"content_type": "user", "content_id": user_id, "is_main": "true"},
     )
     assert upload_response.status_code == 201, upload_response.text
     url = upload_response.json()["url"]
@@ -71,11 +71,11 @@ async def test_upload_model_image_and_validation(client):
         if settings.media_public_url
         else settings.media_base_url.rstrip("/")
     )
-    assert url == f"{base_url}/user/{user_id}/image_url.png"
+    assert url == f"{base_url}/user/{user_id}/file.png"
 
     media_root = Path(settings.media_root)
     created_paths: list[Path] = []
-    image_path = media_root / "user" / user_id / "image_url.png"
+    image_path = media_root / "user" / user_id / "file.png"
     assert image_path.exists()
     created_paths.append(image_path)
 
@@ -155,11 +155,11 @@ async def test_upload_model_image_and_validation(client):
         "/media-admin/images",
         headers=admin_headers,
         files={"file": ("entity.png", buffer, "image/png")},
-        data={"model": "entity", "instance_id": entity_id},
+        data={"content_type": "entity", "content_id": entity_id, "is_main": "true"},
     )
     assert entity_upload.status_code == 201, entity_upload.text
-    assert entity_upload.json()["url"] == f"{base_url}/entity/{entity_id}/image_url.png"
-    entity_path = media_root / "entity" / entity_id / "image_url.png"
+    assert entity_upload.json()["url"] == f"{base_url}/entity/{entity_id}/file.png"
+    entity_path = media_root / "entity" / entity_id / "file.png"
     assert entity_path.exists()
     created_paths.append(entity_path)
 
@@ -169,14 +169,13 @@ async def test_upload_model_image_and_validation(client):
         "/media-admin/images",
         headers=admin_headers,
         files={"file": ("property.png", buffer, "image/png")},
-        data={"model": "property", "instance_id": property_id},
+        data={"content_type": "property", "content_id": property_id, "is_main": "true"},
     )
     assert property_upload.status_code == 201, property_upload.text
     assert (
-        property_upload.json()["url"]
-        == f"{base_url}/property/{property_id}/image_url.png"
+        property_upload.json()["url"] == f"{base_url}/property/{property_id}/file.png"
     )
-    property_path = media_root / "property" / property_id / "image_url.png"
+    property_path = media_root / "property" / property_id / "file.png"
     assert property_path.exists()
     created_paths.append(property_path)
 
@@ -186,36 +185,41 @@ async def test_upload_model_image_and_validation(client):
         "/media-admin/images",
         headers=admin_headers,
         files={"file": ("relationship.png", buffer, "image/png")},
-        data={"model": "relationship", "instance_id": relationship_id},
+        data={
+            "content_type": "relationship",
+            "content_id": relationship_id,
+            "is_main": "true",
+        },
     )
     assert relationship_upload.status_code == 201, relationship_upload.text
     assert (
         relationship_upload.json()["url"]
-        == f"{base_url}/relationship/{relationship_id}/image_url.png"
+        == f"{base_url}/relationship/{relationship_id}/file.png"
     )
-    relationship_path = media_root / "relationship" / relationship_id / "image_url.png"
+    relationship_path = media_root / "relationship" / relationship_id / "file.png"
     assert relationship_path.exists()
     created_paths.append(relationship_path)
 
-    # Unsupported model
+    # Invalid content_type test
     buffer = _create_image()
     unsupported = await client.post(
         "/media-admin/images",
         headers=admin_headers,
         files={"file": ("image.png", buffer, "image/png")},
-        data={"model": "unknown", "instance_id": "1"},
+        data={"content_type": "unknown/../etc", "content_id": "1", "is_main": "false"},
     )
     assert unsupported.status_code == 400
 
-    # Missing instance
+    # Empty content_id test
     buffer = _create_image()
     missing = await client.post(
         "/media-admin/images",
         headers=admin_headers,
         files={"file": ("image.png", buffer, "image/png")},
-        data={"model": "user", "instance_id": "9999"},
+        data={"content_type": "user", "content_id": "", "is_main": "false"},
     )
-    assert missing.status_code == 404
+    # Empty string is caught by Pydantic validation (422) before our sanitization (400)
+    assert missing.status_code in [400, 422]
 
     # Cleanup file to avoid leaking artifacts in test runs
     for path in created_paths:

@@ -63,11 +63,114 @@ FastAPI automatically generates interactive docs at `/docs` and `/redoc`.
 - Users can update their avatar with `POST /users/{user_id}/avatar` (multipart form upload). The
   endpoint stores the avatar as a deterministic `user_{username}.png` and returns the final URL for
   frontend use.
-- Admins or world builders can upload other assets via `POST /media-admin/images`, providing the target
-  model name (e.g., `user`, `ontology`, `notification`, `ontology_instance`) and the corresponding
-  entity id. Images are resized using the same limits as avatars and written deterministically to
-  `/media/{model}/{id}/image_url.png`, overwriting previous uploads for that entity.
 
+
+### Admin Media Upload Endpoint
+
+Admins and world builders can upload images via `POST /media-admin/images` with a flexible content-based organization system.
+
+**Endpoint:** `POST /media-admin/images`
+
+**Authentication:** Requires `ADMIN` or `WORLD_BUILDER` role
+
+**Request Parameters (multipart/form-data):**
+- `file` (required): The image file to upload (PNG, JPEG, GIF, BMP, WebP)
+- `content_type` (required): String identifying the content type (e.g., `user`, `avatar`, `post`, `gallery`)
+- `content_id` (required): String identifying the specific content instance (e.g., user ID, post ID)
+- `is_main` (optional, default: `false`): Boolean indicating if this is the main image for this content
+
+**Folder Structure:**
+Images are organized as: `media/{content_type}/{content_id}/`
+
+**File Naming:**
+- **Main images** (`is_main=true`): Saved as `file.png` and overwrites any existing main file
+- **Non-main images** (`is_main=false`): Saved with incremental IDs (`1.png`, `2.png`, `3.png`, etc.)
+
+**Example: Upload a user avatar (main image)**
+```bash
+curl -X POST "http://localhost:8000/media-admin/images" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -F "file=@avatar.png" \
+  -F "content_type=user" \
+  -F "content_id=123" \
+  -F "is_main=true"
+```
+**Response:**
+```json
+{
+  "url": "/media/user/123/file.png"
+}
+```
+
+**Example: Upload gallery images (non-main)**
+```bash
+# First image
+curl -X POST "http://localhost:8000/media-admin/images" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -F "file=@photo1.jpg" \
+  -F "content_type=gallery" \
+  -F "content_id=456" \
+  -F "is_main=false"
+```
+**Response:**
+```json
+{
+  "url": "/media/gallery/456/1.png"
+}
+```
+
+```bash
+# Second image
+curl -X POST "http://localhost:8000/media-admin/images" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -F "file=@photo2.jpg" \
+  -F "content_type=gallery" \
+  -F "content_id=456" \
+  -F "is_main=false"
+```
+**Response:**
+```json
+{
+  "url": "/media/gallery/456/2.png"
+}
+```
+
+**Example: Upload a post with main image and additional images**
+```bash
+# Main image
+curl -X POST "http://localhost:8000/media-admin/images" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -F "file=@post-cover.png" \
+  -F "content_type=post" \
+  -F "content_id=789" \
+  -F "is_main=true"
+# Response: {"url": "/media/post/789/file.png"}
+
+# Additional images
+curl -X POST "http://localhost:8000/media-admin/images" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -F "file=@screenshot1.png" \
+  -F "content_type=post" \
+  -F "content_id=789" \
+  -F "is_main=false"
+# Response: {"url": "/media/post/789/1.png"}
+
+curl -X POST "http://localhost:8000/media-admin/images" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -F "file=@screenshot2.png" \
+  -F "content_type=post" \
+  -F "content_id=789" \
+  -F "is_main=false"
+# Response: {"url": "/media/post/789/2.png"}
+```
+
+**Notes:**
+- All images are automatically converted to PNG format and optimized
+- Images are resized to fit within the configured max dimensions (default 1024x1024)
+- The `content_type` is converted to lowercase and used as a folder name
+- File size limit is 10 MB by default (configurable via `BACKEND_2_MAX_IMAGE_UPLOAD_BYTES`)
+- Main images always overwrite the previous main image for that content
+- Non-main images use incremental numbering starting from 1
 ## Notifications
 
 - Admins and world builders can curate player-facing updates via `/notifications/`. CRUD routes let

@@ -297,3 +297,131 @@ async def delete_bookmark(
         )
     await service.delete_bookmark(bookmark)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# PDF Embedding endpoints -----------------------------------------------
+
+
+@router.post(
+    "/{ontology_id}/items/{item_id}/trigger-embedding",
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def trigger_pdf_embedding(
+    ontology_id: int,
+    item_id: int,
+    service: LibraryService = Depends(get_library_service),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.WORLD_BUILDER)),
+) -> dict:
+    """
+    Trigger background job to embed a PDF book into Neo4j.
+
+    This creates embeddings for semantic search and retrieval by Librarian agents.
+    Requires admin or world_builder role.
+    """
+    from app.tasks.pdf_embedding import embed_pdf_book
+
+    item = await _get_item_or_404(service, ontology_id, item_id)
+
+    # Trigger the embedding task
+    result = embed_pdf_book.delay(
+        library_item_id=item.id,
+        ontology_id=ontology_id,
+        author_type="user",
+        author_id=str(current_user.id),
+    )
+
+    return {
+        "message": f"Embedding job triggered for library item {item_id}",
+        "library_item_id": item_id,
+        "ontology_id": ontology_id,
+        "celery_task_id": result.id,
+    }
+
+
+@router.get(
+    "/{ontology_id}/items/{item_id}/embedding-status",
+)
+async def get_embedding_status(
+    ontology_id: int,
+    item_id: int,
+    service: LibraryService = Depends(get_library_service),
+    current_user: User = Depends(get_current_user),  # noqa: ARG001
+) -> dict:
+    """
+    Get embedding status for a library item.
+
+    Returns information about whether the PDF has been embedded
+    and how many chunks are in the vector database.
+    """
+    from app.graph.neo4j import get_neo4j_driver
+    from app.services.pdf_embedding_service import PdfEmbeddingService
+
+    item = await _get_item_or_404(service, ontology_id, item_id)
+
+    # Get stats from Neo4j
+    driver = get_neo4j_driver()
+    async with driver.session() as graph_session:
+        pdf_service = PdfEmbeddingService(graph_session)
+        stats = await pdf_service.get_embedding_stats(item.id)
+
+    return {
+        "library_item_id": item.id,
+        "ontology_id": ontology_id,
+        "vectorized": item.vectorized,
+        "last_vectorized_at": item.last_vectorized_at.isoformat()
+        if item.last_vectorized_at
+        else None,
+        "total_chunks": stats.get("total_chunks", 0),
+        "is_embedded": stats.get("is_embedded", False),
+    }
+
+
+@router.get(
+    "/embedding-jobs",
+)
+async def list_embedding_jobs(
+    ontology_id: int | None = None,
+    limit: int = 10,
+    current_user: User = Depends(get_current_user),  # noqa: ARG001
+) -> list[dict]:
+    """
+    Get recent PDF embedding jobs.
+
+    Returns a list of background jobs for PDF embedding, optionally
+    filtered by ontology_id.
+    """
+    from app.db.jobs_session import async_jobs_session_maker
+    from app.models.background_job import BackgroundJob, JobType
+    from sqlalchemy import select
+
+    async with async_jobs_session_maker() as session:
+        query = select(BackgroundJob).where(
+            BackgroundJob.job_type == JobType.PDF_BOOK_EMBEDDING
+        )
+
+        if ontology_id is not None:
+            query = query.where(BackgroundJob.ontology_id == ontology_id)
+
+        query = query.order_by(BackgroundJob.started_at.desc()).limit(min(limit, 100))
+
+        result = await session.execute(query)
+        jobs = result.scalars().all()
+
+        return [
+            {
+                "job_id": job.id,
+                "library_item_id": None,  # Would need to parse from details
+                "ontology_id": job.ontology_id,
+                "status": job.status.value,
+                "progress": job.progress,
+                "description": job.description,
+                "started_at": job.started_at.isoformat(),
+                "completed_at": job.completed_at.isoformat()
+                if job.completed_at
+                else None,
+                "duration_seconds": job.duration_seconds,
+                "error_message": job.error_message,
+                "details": job.details,
+            }
+            for job in jobs
+        ]

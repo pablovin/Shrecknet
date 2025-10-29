@@ -19,7 +19,7 @@ class AgentService:
     async def create_agent(self, agent_data: AgentCreate) -> AgentRead:
         """Create a new agent."""
         # Validate job type
-        valid_jobs = ["elder"]
+        valid_jobs = ["elder", "librarian"]
         if agent_data.job not in valid_jobs:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -96,7 +96,7 @@ class AgentService:
         """Update an agent."""
         # Validate job type if provided
         if agent_data.job is not None:
-            valid_jobs = ["elder"]
+            valid_jobs = ["elder", "librarian"]
             if agent_data.job not in valid_jobs:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
@@ -196,4 +196,4 @@ class AgentService:
     @staticmethod
     def get_available_jobs() -> list[str]:
         """Get list of available job types."""
-        return ["elder"]
+        return ["elder", "librarian"]

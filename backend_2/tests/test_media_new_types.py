@@ -71,7 +71,7 @@ async def test_upload_library_image(client):
         "/media-admin/images",
         headers=admin_headers,
         files={"file": ("library.png", buffer, "image/png")},
-        data={"model": "library", "instance_id": library_id},
+        data={"content_type": "library", "content_id": library_id, "is_main": "true"},
     )
     assert upload_response.status_code == 201, upload_response.text
     url = upload_response.json()["url"]
@@ -81,11 +81,11 @@ async def test_upload_library_image(client):
         if settings.media_public_url
         else settings.media_base_url.rstrip("/")
     )
-    assert url == f"{base_url}/library/{library_id}/image_url.png"
+    assert url == f"{base_url}/library/{library_id}/file.png"
 
     # Verify file exists
     media_root = Path(settings.media_root)
-    image_path = media_root / "library" / library_id / "image_url.png"
+    image_path = media_root / "library" / library_id / "file.png"
     assert image_path.exists()
 
     # Cleanup
@@ -124,13 +124,13 @@ async def test_upload_content_image(client):
     admin_token = admin_token_response.json()["access_token"]
     admin_headers = {"Authorization": f"Bearer {admin_token}"}
 
-    # Upload image for content (no validation, just accepts instance_id)
+    # Upload image for content (no validation, just accepts content_id)
     buffer = _create_image()
     upload_response = await client.post(
         "/media-admin/images",
         headers=admin_headers,
         files={"file": ("content.png", buffer, "image/png")},
-        data={"model": "content", "instance_id": "content-123"},
+        data={"content_type": "content", "content_id": "content-123", "is_main": "true"},
     )
     assert upload_response.status_code == 201, upload_response.text
     url = upload_response.json()["url"]
@@ -140,11 +140,11 @@ async def test_upload_content_image(client):
         if settings.media_public_url
         else settings.media_base_url.rstrip("/")
     )
-    assert url == f"{base_url}/content/content-123/image_url.png"
+    assert url == f"{base_url}/content/content-123/file.png"
 
     # Verify file exists
     media_root = Path(settings.media_root)
-    image_path = media_root / "content" / "content-123" / "image_url.png"
+    image_path = media_root / "content" / "content-123" / "file.png"
     assert image_path.exists()
 
     # Cleanup
@@ -183,13 +183,13 @@ async def test_upload_agent_image(client):
     admin_token = admin_token_response.json()["access_token"]
     admin_headers = {"Authorization": f"Bearer {admin_token}"}
 
-    # Upload image for agent (no validation, just accepts instance_id)
+    # Upload image for agent (no validation, just accepts content_id)
     buffer = _create_image()
     upload_response = await client.post(
         "/media-admin/images",
         headers=admin_headers,
         files={"file": ("agent.png", buffer, "image/png")},
-        data={"model": "agent", "instance_id": "agent-456"},
+        data={"content_type": "agent", "content_id": "agent-456", "is_main": "true"},
     )
     assert upload_response.status_code == 201, upload_response.text
     url = upload_response.json()["url"]
@@ -199,11 +199,11 @@ async def test_upload_agent_image(client):
         if settings.media_public_url
         else settings.media_base_url.rstrip("/")
     )
-    assert url == f"{base_url}/agent/agent-456/image_url.png"
+    assert url == f"{base_url}/agent/agent-456/file.png"
 
     # Verify file exists
     media_root = Path(settings.media_root)
-    image_path = media_root / "agent" / "agent-456" / "image_url.png"
+    image_path = media_root / "agent" / "agent-456" / "file.png"
     assert image_path.exists()
 
     # Cleanup
@@ -242,24 +242,24 @@ async def test_upload_empty_instance_id_rejection(client):
     admin_token = admin_token_response.json()["access_token"]
     admin_headers = {"Authorization": f"Bearer {admin_token}"}
 
-    # Test empty instance_id for content
+    # Test empty content_id for content
     buffer = _create_image()
     upload_response = await client.post(
         "/media-admin/images",
         headers=admin_headers,
         files={"file": ("content.png", buffer, "image/png")},
-        data={"model": "content", "instance_id": ""},
+        data={"content_type": "content", "content_id": "", "is_main": "false"},
     )
     # FastAPI returns 422 for empty form fields before custom validation
     assert upload_response.status_code in (400, 422)
 
-    # Test empty instance_id for agent
+    # Test empty content_id for agent
     buffer = _create_image()
     upload_response = await client.post(
         "/media-admin/images",
         headers=admin_headers,
         files={"file": ("agent.png", buffer, "image/png")},
-        data={"model": "agent", "instance_id": "   "},
+        data={"content_type": "agent", "content_id": "   ", "is_main": "false"},
     )
     # FastAPI returns 422 for empty form fields before custom validation
     assert upload_response.status_code in (400, 422)

@@ -13,6 +13,7 @@ from app.graph.neo4j import get_driver
 from app.models.background_job import AuthorType, JobType
 from app.repositories.library_repository import LibraryRepository
 from app.services.pdf_embedding_service import PdfEmbeddingService
+from app.utils.async_helpers import run_async
 from app.utils.job_tracking import (
     create_background_job,
     mark_job_done,
@@ -51,7 +52,7 @@ def embed_pdf_book(
         Dictionary with job_id and status
     """
     # Create job entry
-    job_id = asyncio.run(
+    job_id = run_async(
         create_background_job(
             author_type=AuthorType(author_type),
             author_id=author_id,
@@ -68,10 +69,10 @@ def embed_pdf_book(
 
     try:
         # Mark as running
-        asyncio.run(mark_job_running(job_id))
+        run_async(mark_job_running(job_id))
 
         # Update progress: Getting library item
-        asyncio.run(
+        run_async(
             update_job_progress(
                 job_id, 0.1, {"status": "Fetching library item details"}
             )
@@ -85,7 +86,7 @@ def embed_pdf_book(
                 repo = LibraryRepository(session)
                 return await repo.get_item_by_id(library_item_id)
 
-        library_item = asyncio.run(get_library_item())
+        library_item = run_async(get_library_item())
 
         if not library_item:
             raise ValueError(f"Library item {library_item_id} not found")
@@ -100,7 +101,7 @@ def embed_pdf_book(
             raise FileNotFoundError(f"PDF file not found: {pdf_path}")
 
         # Update progress: Processing PDF
-        asyncio.run(update_job_progress(job_id, 0.2, {"status": "Reading PDF file"}))
+        run_async(update_job_progress(job_id, 0.2, {"status": "Reading PDF file"}))
 
         # Embed the PDF
         async def embed_pdf():
@@ -109,16 +110,14 @@ def embed_pdf_book(
                 service = PdfEmbeddingService(graph_session)
 
                 # Ensure vector index
-                asyncio.run(
-                    update_job_progress(
-                        job_id, 0.3, {"status": "Ensuring vector index"}
-                    )
+                await update_job_progress(
+                    job_id, 0.3, {"status": "Ensuring vector index"}
                 )
                 await service.ensure_vector_index()
 
                 # Embed the book
-                asyncio.run(
-                    update_job_progress(job_id, 0.4, {"status": "Embedding PDF pages"})
+                await update_job_progress(
+                    job_id, 0.4, {"status": "Embedding PDF pages"}
                 )
 
                 result = await service.embed_pdf_book(
@@ -130,10 +129,10 @@ def embed_pdf_book(
 
                 return result
 
-        result = asyncio.run(embed_pdf())
+        result = run_async(embed_pdf())
 
         # Update library item to mark as vectorized
-        asyncio.run(
+        run_async(
             update_job_progress(job_id, 0.9, {"status": "Updating library item status"})
         )
 
@@ -153,10 +152,10 @@ def embed_pdf_book(
                     )
                     await session.commit()
 
-        asyncio.run(update_item())
+        run_async(update_item())
 
         # Mark as complete
-        asyncio.run(
+        run_async(
             mark_job_done(
                 job_id,
                 {
@@ -177,5 +176,5 @@ def embed_pdf_book(
 
     except Exception as e:
         logger.error(f"PDF embedding failed for item {library_item_id}: {e}")
-        asyncio.run(mark_job_failed(job_id, str(e)))
+        run_async(mark_job_failed(job_id, str(e)))
         raise

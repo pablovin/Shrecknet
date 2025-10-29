@@ -9,6 +9,7 @@ from app.celery_app import celery_app
 from app.graph.neo4j import get_neo4j_session
 from app.graphrag.embedding_service import EmbeddingService
 from app.models.background_job import AuthorType, JobType
+from app.utils.async_helpers import run_async
 from app.utils.job_tracking import (
     create_background_job,
     mark_job_done,
@@ -36,7 +37,7 @@ def embed_ontology(
     Returns:
         Dictionary with job results
     """
-    job_id = asyncio.run(
+    job_id = run_async(
         create_background_job(
             author_type=AuthorType(author_type),
             author_id=author_id,
@@ -49,15 +50,15 @@ def embed_ontology(
     )
 
     try:
-        asyncio.run(mark_job_running(job_id))
+        run_async(mark_job_running(job_id))
 
         # Run the actual embedding
-        result = asyncio.run(_embed_ontology_impl(job_id, ontology_id))
+        result = run_async(_embed_ontology_impl(job_id, ontology_id))
 
-        asyncio.run(mark_job_done(job_id, result))
+        run_async(mark_job_done(job_id, result))
         return {"job_id": job_id, "ontology_id": ontology_id, **result}
     except Exception as e:
-        asyncio.run(mark_job_failed(job_id, str(e)))
+        run_async(mark_job_failed(job_id, str(e)))
         raise
 
 
@@ -162,7 +163,7 @@ def embed_instance(
     Returns:
         Dictionary with job results
     """
-    job_id = asyncio.run(
+    job_id = run_async(
         create_background_job(
             author_type=AuthorType(author_type),
             author_id=author_id,
@@ -174,28 +175,26 @@ def embed_instance(
     )
 
     try:
-        asyncio.run(mark_job_running(job_id))
+        run_async(mark_job_running(job_id))
 
         # Placeholder for actual embedding logic
         # This would integrate with app/graphrag/embedding_service.py
-        asyncio.run(
-            update_job_progress(job_id, 0.5, {"status": "embedding in progress"})
-        )
+        run_async(update_job_progress(job_id, 0.5, {"status": "embedding in progress"}))
 
         # TODO: Implement actual Neo4j embedding logic here
         # For now, just simulate completion
-        asyncio.run(
+        run_async(
             update_job_progress(
                 job_id, 0.9, {"status": "embedding completed (placeholder)"}
             )
         )
 
-        asyncio.run(
+        run_async(
             mark_job_done(
                 job_id, {"instance_id": instance_id, "status": "success (placeholder)"}
             )
         )
         return {"job_id": job_id, "instance_id": instance_id, "status": "success"}
     except Exception as e:
-        asyncio.run(mark_job_failed(job_id, str(e)))
+        run_async(mark_job_failed(job_id, str(e)))
         raise

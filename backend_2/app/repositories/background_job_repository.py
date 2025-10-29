@@ -151,7 +151,11 @@ class BackgroundJobRepository:
 
         # Calculate duration
         if job.started_at and job.completed_at:
-            duration = (job.completed_at - job.started_at).total_seconds()
+            # Ensure both datetimes are timezone-aware
+            started_at = job.started_at
+            if started_at.tzinfo is None:
+                started_at = started_at.replace(tzinfo=timezone.utc)
+            duration = (job.completed_at - started_at).total_seconds()
             job.duration_seconds = duration
 
         await self.session.commit()
@@ -172,7 +176,11 @@ class BackgroundJobRepository:
 
         # Calculate duration
         if job.started_at and job.completed_at:
-            duration = (job.completed_at - job.started_at).total_seconds()
+            # Ensure both datetimes are timezone-aware
+            started_at = job.started_at
+            if started_at.tzinfo is None:
+                started_at = started_at.replace(tzinfo=timezone.utc)
+            duration = (job.completed_at - started_at).total_seconds()
             job.duration_seconds = duration
 
         await self.session.commit()

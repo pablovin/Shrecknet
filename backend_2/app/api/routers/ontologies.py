@@ -660,9 +660,7 @@ async def trigger_embedding(
     )
 
 
-@router.get(
-    "/{ontology_id}/embedding-jobs", response_model=list[dict[str, Any]]
-)
+@router.get("/{ontology_id}/embedding-jobs", response_model=list[dict[str, Any]])
 async def get_embedding_jobs(
     ontology_id: int,
     jobs_session: Annotated[AsyncSession, Depends(get_jobs_session)],
@@ -711,4 +709,3 @@ async def get_embedding_jobs(
         }
         for job in jobs
     ]
-

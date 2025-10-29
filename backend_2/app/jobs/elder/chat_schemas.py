@@ -66,9 +66,7 @@ class ElderChatResponse(BaseModel):
     color: Optional[str] = Field(None, description="Hex color code")
     created_at: datetime = Field(..., description="Creation timestamp")
     updated_at: datetime = Field(..., description="Last update timestamp")
-    message_count: Optional[int] = Field(
-        None, description="Number of messages in chat"
-    )
+    message_count: Optional[int] = Field(None, description="Number of messages in chat")
 
     model_config = {"from_attributes": True}
 

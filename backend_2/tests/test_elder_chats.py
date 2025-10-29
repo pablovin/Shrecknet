@@ -14,9 +14,7 @@ async def test_create_chat(client: AsyncClient, user_token: str, agent_id: str):
         "color": "#FF5733",
     }
 
-    response = await client.post(
-        "/jobs/elder/chats/", json=chat_data, headers=headers
-    )
+    response = await client.post("/jobs/elder/chats/", json=chat_data, headers=headers)
 
     assert response.status_code == 201
     chat = response.json()
@@ -37,9 +35,7 @@ async def test_create_chat_invalid_agent(client: AsyncClient, user_token: str):
         "name": "Test Chat",
     }
 
-    response = await client.post(
-        "/jobs/elder/chats/", json=chat_data, headers=headers
-    )
+    response = await client.post("/jobs/elder/chats/", json=chat_data, headers=headers)
 
     assert response.status_code == 400
     assert "not found" in response.json()["detail"].lower()
@@ -68,9 +64,7 @@ async def test_create_chat_exceeds_limit(
         "agent_id": agent_id,
         "name": "Chat 11",
     }
-    response = await client.post(
-        "/jobs/elder/chats/", json=chat_data, headers=headers
-    )
+    response = await client.post("/jobs/elder/chats/", json=chat_data, headers=headers)
 
     assert response.status_code == 400
     assert "maximum" in response.json()["detail"].lower()
@@ -226,9 +220,7 @@ async def test_delete_chat(client: AsyncClient, user_token: str, agent_id: str):
 async def test_delete_chat_not_found(client: AsyncClient, user_token: str):
     """Test deleting a non-existent chat."""
     headers = {"Authorization": f"Bearer {user_token}"}
-    response = await client.delete(
-        "/jobs/elder/chats/nonexistent-id", headers=headers
-    )
+    response = await client.delete("/jobs/elder/chats/nonexistent-id", headers=headers)
     assert response.status_code == 404
 
 
@@ -303,8 +295,6 @@ async def test_chat_invalid_color(client: AsyncClient, user_token: str, agent_id
         "color": "red",  # Should be hex format
     }
 
-    response = await client.post(
-        "/jobs/elder/chats/", json=chat_data, headers=headers
-    )
+    response = await client.post("/jobs/elder/chats/", json=chat_data, headers=headers)
 
     assert response.status_code == 422  # Validation error

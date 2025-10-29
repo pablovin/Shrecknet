@@ -52,7 +52,7 @@ class ElderChatRepository:
             .options(joinedload(ElderChat.history))
         )
         chat = result.unique().scalar_one_or_none()
-        
+
         if chat and chat.history:
             # Sort history by created_at descending and limit
             chat.history = sorted(
@@ -60,7 +60,7 @@ class ElderChatRepository:
             )[:limit]
             # Reverse to get chronological order for the limited set
             chat.history.reverse()
-        
+
         return chat
 
     async def list_user_chats(
@@ -72,12 +72,12 @@ class ElderChatRepository:
     ) -> list[ElderChat]:
         """List chats for a user, optionally filtered by agent."""
         query = select(ElderChat).where(ElderChat.user_id == user_id)
-        
+
         if agent_id:
             query = query.where(ElderChat.agent_id == agent_id)
-        
+
         query = query.order_by(ElderChat.updated_at.desc()).limit(limit).offset(offset)
-        
+
         result = await self.session.execute(query)
         return list(result.scalars().all())
 
@@ -100,12 +100,12 @@ class ElderChatRepository:
         chat = await self.get_by_id(chat_id)
         if not chat:
             return None
-        
+
         if name is not None:
             chat.name = name
         if color is not None:
             chat.color = color
-        
+
         await self.session.flush()
         await self.session.refresh(chat)
         return chat
@@ -115,7 +115,7 @@ class ElderChatRepository:
         chat = await self.get_by_id(chat_id)
         if not chat:
             return False
-        
+
         await self.session.delete(chat)
         await self.session.flush()
         return True
@@ -130,13 +130,13 @@ class ElderChatRepository:
             content=content,
         )
         self.session.add(message)
-        
+
         # Update chat's updated_at timestamp
         chat = await self.get_by_id(chat_id)
         if chat:
             # Just accessing and modifying will trigger onupdate
             await self.session.flush()
-        
+
         await self.session.refresh(message)
         return message
 
@@ -151,7 +151,7 @@ class ElderChatRepository:
             .limit(limit)
             .offset(offset)
         )
-        
+
         result = await self.session.execute(query)
         return list(result.scalars().all())
 

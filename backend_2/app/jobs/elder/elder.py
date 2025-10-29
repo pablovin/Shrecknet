@@ -137,14 +137,14 @@ class ElderOrchestrator:
     ) -> list[str]:
         """Decompose query into 1-5 sub-queries."""
         model = self.model_policy.get_model(LLMTask.DECOMPOSE)
-        
+
         # Build conversation context if chat history exists
         messages = []
         if chat_history:
             # Add recent history for context
             for msg in chat_history[-10:]:  # Use last 10 messages for context
                 messages.append({"role": msg["role"], "content": msg["content"]})
-        
+
         # Add the decomposition prompt
         prompt = DECOMPOSE_PROMPT.format(
             query=query,

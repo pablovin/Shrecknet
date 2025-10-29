@@ -15,12 +15,14 @@ class LibraryUserSummary(BaseModel):
 
 class LibraryItemBase(BaseModel):
     title: str = Field(..., max_length=255)
+    authors: str | None = Field(None, max_length=512)
     description: str | None = None
     cover_url: str | None = Field(None, max_length=512)
 
 
 class LibraryItemUpdate(BaseModel):
     title: str | None = Field(None, max_length=255)
+    authors: str | None = Field(None, max_length=512)
     description: str | None = None
     cover_url: str | None = Field(None, max_length=512)
     vectorized: bool | None = None

@@ -50,17 +50,39 @@ class LibraryService:
         self,
         ontology_id: int,
         *,
-        title: str,
+        title: str | None,
+        authors: str | None,
         description: str | None,
         cover_url: str | None,
         pdf: UploadFile,
+        auto_extract_metadata: bool = False,
+        auto_embed: bool = False,
     ) -> LibraryItem:
+        """
+        Create a new library item.
+
+        Args:
+            ontology_id: ID of the ontology
+            title: Title of the item (if None and auto_extract_metadata=True, extracted from PDF)
+            authors: Authors of the item (if None and auto_extract_metadata=True, extracted from PDF)
+            description: Description (if None and auto_extract_metadata=True, extracted from PDF)
+            cover_url: URL to cover image (if None and auto_extract_metadata=True, extracted from PDF first page)
+            pdf: The PDF file to upload
+            auto_extract_metadata: If True, extract metadata from PDF when values are None
+            auto_embed: If True, trigger embedding job after creation
+
+        Returns:
+            The created LibraryItem
+        """
         await self._assert_ontology_exists(ontology_id)
         await self._validate_pdf(pdf)
+
+        # First, write the PDF to a temporary location to extract metadata if needed
         item = await self.repository.create_item(
             {
                 "ontology_id": ontology_id,
-                "title": title,
+                "title": title or "Untitled",
+                "authors": authors,
                 "description": description,
                 "cover_url": cover_url,
                 "pdf_path": "",
@@ -69,9 +91,47 @@ class LibraryService:
         relative_path = self._build_pdf_relative_path(ontology_id, item.id)
         await self._write_pdf(pdf, relative_path)
         item.pdf_path = relative_path.as_posix()
+
+        # Extract metadata from PDF if auto_extract_metadata is True
+        if auto_extract_metadata:
+            absolute_path = self.base_path / relative_path
+            metadata = await self.extract_pdf_metadata(absolute_path)
+
+            # Only update if the current value is None or default
+            if not title or title == "Untitled":
+                item.title = metadata.get("title") or title or "Untitled"
+            if not authors:
+                item.authors = metadata.get("authors")
+            if not description:
+                item.description = metadata.get("description")
+            if not cover_url:
+                extracted_cover = await self.extract_pdf_cover_image(
+                    absolute_path, ontology_id, item.id
+                )
+                if extracted_cover:
+                    item.cover_url = extracted_cover
+
         await self.repository.save(item)
         await self.session.commit()
         await self.session.refresh(item)
+
+        # Trigger embedding if requested
+        if auto_embed:
+            try:
+                from app.tasks.pdf_embedding import embed_pdf_book
+
+                # Trigger the embedding task asynchronously
+                embed_pdf_book.delay(
+                    library_item_id=item.id,
+                    ontology_id=ontology_id,
+                    author_type="system",
+                    author_id="auto",
+                )
+            except Exception as e:
+                import logging
+
+                logging.warning(f"Failed to trigger auto-embedding: {e}")
+
         return item
 
     async def update_item(
@@ -79,6 +139,7 @@ class LibraryService:
         item: LibraryItem,
         *,
         title: str | None = None,
+        authors: str | None = None,
         description: str | None = None,
         cover_url: str | None = None,
         vectorized: bool | None = None,
@@ -87,6 +148,8 @@ class LibraryService:
         data: dict[str, object | None] = {}
         if title is not None:
             data["title"] = title
+        if authors is not None:
+            data["authors"] = authors
         if description is not None:
             data["description"] = description
         if cover_url is not None:
@@ -210,6 +273,7 @@ class LibraryService:
             "id": item.id,
             "ontology_id": item.ontology_id,
             "title": item.title,
+            "authors": item.authors,
             "description": item.description,
             "cover_url": item.cover_url,
             "added_at": item.added_at,
@@ -242,6 +306,117 @@ class LibraryService:
                 for user in bookmark.shared_with
             ],
         }
+
+    # PDF Metadata Extraction Methods ------------------------------------
+    async def extract_pdf_metadata(
+        self, pdf_path: Path
+    ) -> dict[str, str | None]:
+        """
+        Extract metadata from a PDF file.
+
+        Args:
+            pdf_path: Path to the PDF file
+
+        Returns:
+            Dictionary with title, authors, and description (subject)
+        """
+        import fitz  # PyMuPDF
+
+        try:
+            pdf_document = fitz.open(str(pdf_path))
+            metadata = pdf_document.metadata or {}
+
+            # Extract metadata fields
+            title = metadata.get("title", "").strip() or None
+            authors = metadata.get("author", "").strip() or None
+            description = metadata.get("subject", "").strip() or None
+
+            pdf_document.close()
+
+            return {
+                "title": title,
+                "authors": authors,
+                "description": description,
+            }
+        except Exception as e:
+            # If metadata extraction fails, return None values
+            import logging
+
+            logging.warning(f"Failed to extract PDF metadata: {e}")
+            return {
+                "title": None,
+                "authors": None,
+                "description": None,
+            }
+
+    async def extract_pdf_cover_image(
+        self, pdf_path: Path, ontology_id: int, item_id: int
+    ) -> str | None:
+        """
+        Extract the first page of a PDF as a cover image.
+
+        Args:
+            pdf_path: Path to the PDF file
+            ontology_id: ID of the ontology
+            item_id: ID of the library item
+
+        Returns:
+            URL to the saved cover image, or None if extraction failed
+        """
+        import fitz  # PyMuPDF
+        from io import BytesIO
+        from PIL import Image
+        from app.services.media_service import MediaService
+
+        try:
+            pdf_document = fitz.open(str(pdf_path))
+            if len(pdf_document) == 0:
+                pdf_document.close()
+                return None
+
+            # Get first page
+            page = pdf_document[0]
+
+            # Render page to image (pixmap) at 150 DPI
+            pix = page.get_pixmap(dpi=150)
+
+            # Convert to PIL Image
+            img_data = pix.tobytes("png")
+            img = Image.open(BytesIO(img_data))
+
+            pdf_document.close()
+
+            # Save using MediaService
+            media_service = MediaService(base_path=self.base_path)
+
+            # Create a BytesIO object from the image
+            img_bytes = BytesIO()
+            img.save(img_bytes, format="PNG")
+            img_bytes.seek(0)
+
+            # Create a fake UploadFile for MediaService
+            from fastapi import UploadFile
+
+            upload = UploadFile(
+                file=img_bytes, filename="cover.png", headers={"content-type": "image/png"}
+            )
+
+            # Save using save_content_image
+            cover_url = await media_service.save_content_image(
+                upload,
+                content_type="library",
+                content_id=f"{ontology_id}/{item_id}",
+                is_main=True,
+                resize=(800, 1200),  # Max dimensions for cover
+            )
+
+            return cover_url
+
+        except Exception as e:
+            import logging
+
+            logging.warning(f"Failed to extract PDF cover image: {e}")
+            return None
 
     # Internal helpers ---------------------------------------------------
     async def _assert_ontology_exists(self, ontology_id: int) -> None:

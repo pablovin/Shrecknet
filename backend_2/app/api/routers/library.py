@@ -99,19 +99,42 @@ async def create_library_item(
     ontology_id: int,
     *,
     file: UploadFile = File(...),
-    title: str = Form(...),
+    title: str | None = Form(None),
+    authors: str | None = Form(None),
     description: str | None = Form(None),
     cover_url: str | None = Form(None),
+    auto_extract_metadata: bool = Form(False),
+    auto_embed: bool = Form(False),
     service: LibraryService = Depends(get_library_service),
     current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.WORLD_BUILDER)),
 ) -> LibraryItemRead:
+    """
+    Create a new library item with a PDF file.
+
+    Args:
+        ontology_id: ID of the ontology to add the item to
+        file: PDF file to upload
+        title: Title of the item (optional if auto_extract_metadata=True)
+        authors: Authors of the item (optional if auto_extract_metadata=True)
+        description: Description of the item (optional if auto_extract_metadata=True)
+        cover_url: URL to cover image (optional if auto_extract_metadata=True)
+        auto_extract_metadata: If True, extract metadata (title, authors, description) 
+                               from PDF and use first page as cover image when fields are not provided
+        auto_embed: If True, automatically trigger embedding job for this item
+
+    Returns:
+        The created library item with all metadata
+    """
     try:
         item = await service.create_item(
             ontology_id,
             title=title,
+            authors=authors,
             description=description,
             cover_url=cover_url,
             pdf=file,
+            auto_extract_metadata=auto_extract_metadata,
+            auto_embed=auto_embed,
         )
     except (ValueError, PdfValidationError) as exc:
         raise HTTPException(
@@ -150,6 +173,7 @@ async def update_library_item(
         updated = await service.update_item(
             item,
             title=payload.title,
+            authors=payload.authors,
             description=payload.description,
             cover_url=payload.cover_url,
             vectorized=payload.vectorized,

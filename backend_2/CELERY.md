@@ -42,12 +42,12 @@ Each background job tracks the following information:
 Configure Celery via environment variables:
 
 ```bash
-# Redis broker and result backend (default for production)
+# Redis broker and result backend (required for production mode)
 export BACKEND_2_CELERY_BROKER_URL="redis://localhost:6379/0"
 export BACKEND_2_CELERY_RESULT_BACKEND="redis://localhost:6379/1"
 
-# Run tasks synchronously in development (no worker needed)
-export BACKEND_2_CELERY_TASK_ALWAYS_EAGER="true"
+# Optional: Run tasks synchronously in development (no worker needed)
+# export BACKEND_2_CELERY_TASK_ALWAYS_EAGER="true"
 
 # Jobs database (defaults to separate SQLite file)
 export BACKEND_2_JOBS_DATABASE_URL="sqlite+aiosqlite:///./backend_2_jobs.db"
@@ -55,17 +55,18 @@ export BACKEND_2_JOBS_DATABASE_URL="sqlite+aiosqlite:///./backend_2_jobs.db"
 
 ### Development vs Production
 
-**Development Mode** (`CELERY_TASK_ALWAYS_EAGER=true`):
-- Tasks execute synchronously in the same process
-- No separate worker process needed
-- Useful for debugging and testing
-- Default configuration
-
 **Production Mode** (`CELERY_TASK_ALWAYS_EAGER=false`):
 - Tasks execute asynchronously in worker processes
 - Requires Redis (or other broker) and worker processes
 - Better performance and isolation
+- **Default configuration**
 - Recommended for production deployments
+
+**Development Mode** (`CELERY_TASK_ALWAYS_EAGER=true`):
+- Tasks execute synchronously in the same process
+- No separate worker process needed
+- Useful for debugging and testing
+- Set `BACKEND_2_CELERY_TASK_ALWAYS_EAGER=true` to enable
 
 ## Running Celery Workers
 

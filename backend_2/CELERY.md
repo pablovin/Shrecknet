@@ -435,6 +435,11 @@ with async generator patterns like `async for session in get_neo4j_session()`.
 
 This error occurs when async code tries to use futures/tasks from a different event loop.
 
+**When it happens:** This specifically occurs when `celery_task_always_eager=True` (development mode) 
+and a Celery task is called from an async context (like a FastAPI endpoint). In this mode, tasks run 
+synchronously in the caller's event loop, and the `run_async()` helper must create a separate thread 
+with its own event loop to avoid conflicts.
+
 **Symptoms:**
 ```
 Exception: Embedding failed: Task <Task pending name='Task-466'> got Future <Future pending> attached to a different loop
@@ -458,7 +463,7 @@ async with driver.session(database=settings.neo4j_database) as session:
 ```
 
 **Why:** The `run_async()` helper creates a new event loop in a separate thread when called 
-from an async context (like FastAPI with `CELERY_TASK_ALWAYS_EAGER=true`). Async generators 
+from an async context (like FastAPI with `celery_task_always_eager=True`). Async generators 
 can create tasks attached to the caller's loop, causing conflicts. Using `driver.session()` 
 directly creates all async operations in the correct loop.
 

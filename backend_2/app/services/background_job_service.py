@@ -21,9 +21,7 @@ class BackgroundJobService:
     def __init__(self, session: AsyncSession):
         self.repo = BackgroundJobRepository(session)
 
-    async def create_job(
-        self, job_data: BackgroundJobCreate
-    ) -> BackgroundJobResponse:
+    async def create_job(self, job_data: BackgroundJobCreate) -> BackgroundJobResponse:
         """Create a new background job."""
         job = await self.repo.create(
             author_type=job_data.author_type,

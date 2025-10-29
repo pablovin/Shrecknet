@@ -49,7 +49,9 @@ def embed_instance(
 
         # Placeholder for actual embedding logic
         # This would integrate with app/graphrag/embedding_service.py
-        asyncio.run(update_job_progress(job_id, 0.5, {"status": "embedding in progress"}))
+        asyncio.run(
+            update_job_progress(job_id, 0.5, {"status": "embedding in progress"})
+        )
 
         # TODO: Implement actual Neo4j embedding logic here
         # For now, just simulate completion

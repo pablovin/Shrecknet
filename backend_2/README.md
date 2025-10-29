@@ -324,3 +324,27 @@ CRUD operations end-to-end through the HTTP layer.
 - Background work uses Celery (broker/result URLs via `BACKEND_2_CELERY_BROKER_URL` and
   `BACKEND_2_CELERY_RESULT_BACKEND`). The default configuration runs tasks eagerly so development
   doesn’t require a broker; disable eagerness in production to offload processing to workers.
+
+## Background Jobs
+
+All background jobs are tracked in a separate SQLite database (`backend_2_jobs.db`) for monitoring
+and management. Each job includes:
+- Author information (user or agent ID)
+- Job type (graph link updates, Neo4j embeddings, etc.)
+- Status tracking (queued, running, done, failed)
+- Progress indication (0-100%)
+- Detailed execution history
+
+**Current background jobs:**
+- **Graph Link Updates** (`graph_link_update`): Automatically creates cross-reference links between
+  entities in an ontology instance
+- **Neo4j Embeddings** (`neo4j_embedding`): Embeds ontology instances for semantic search
+  (placeholder)
+
+**API Endpoints:**
+- `GET /jobs` - List all background jobs with filtering options
+- `GET /jobs/{job_id}` - Get specific job details
+- `DELETE /jobs` - Delete completed or failed jobs
+
+For detailed information on running Celery workers, creating new background jobs, and monitoring
+task execution, see [CELERY.md](CELERY.md).

@@ -50,9 +50,7 @@ class BackgroundJob(Base):
     )
     author_type: Mapped[AuthorType] = mapped_column(String(50), nullable=False)
     author_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
-    job_type: Mapped[JobType] = mapped_column(
-        String(100), nullable=False, index=True
-    )
+    job_type: Mapped[JobType] = mapped_column(String(100), nullable=False, index=True)
     status: Mapped[JobStatus] = mapped_column(
         String(50), nullable=False, default=JobStatus.QUEUED, index=True
     )

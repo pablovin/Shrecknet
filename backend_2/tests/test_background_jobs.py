@@ -345,7 +345,10 @@ async def test_jobs_api_delete_endpoint(client: AsyncClient, admin_token: str):
 
     # Delete the jobs
     delete_response = await client.request(
-        "DELETE", "/jobs/", json={"job_ids": job_ids}, headers=headers
+        "DELETE",
+        "/jobs/",
+        json={"jobs": [{"kind": "graph_link_update", "job_id": str(jid)} for jid in job_ids]},
+        headers=headers,
     )
     assert delete_response.status_code == 200
     result = delete_response.json()

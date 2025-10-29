@@ -48,14 +48,10 @@ class BackgroundJobRepository:
         )
         return result.scalar_one_or_none()
 
-    async def get_by_celery_task_id(
-        self, celery_task_id: str
-    ) -> BackgroundJob | None:
+    async def get_by_celery_task_id(self, celery_task_id: str) -> BackgroundJob | None:
         """Get a background job by Celery task ID."""
         result = await self.session.execute(
-            select(BackgroundJob).where(
-                BackgroundJob.celery_task_id == celery_task_id
-            )
+            select(BackgroundJob).where(BackgroundJob.celery_task_id == celery_task_id)
         )
         return result.scalar_one_or_none()
 

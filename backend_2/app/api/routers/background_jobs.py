@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
@@ -22,7 +23,25 @@ from app.services.background_job_service import BackgroundJobService
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 
 
-@router.get("/", response_model=list[BackgroundJobResponse])
+def _job_to_frontend_format(job: BackgroundJobResponse) -> dict[str, Any]:
+    """Convert internal job format to frontend-compatible format."""
+    return {
+        "kind": job.job_type,
+        "job_id": str(job.id),
+        "start_time": job.started_at.isoformat(),
+        "status": job.status,
+        "author_type": job.author_type,
+        "author_id": job.author_id,
+        "description": job.description,
+        "details": job.details,
+        "progress": job.progress,
+        "error_message": job.error_message,
+        "completed_at": job.completed_at.isoformat() if job.completed_at else None,
+        "updated_at": job.updated_at.isoformat(),
+    }
+
+
+@router.get("/", response_model=list[dict[str, Any]])
 async def list_jobs(
     jobs_session: Annotated[AsyncSession, Depends(get_jobs_session)],
     current_user: Annotated[User, Depends(get_current_user)],
@@ -32,14 +51,15 @@ async def list_jobs(
     status: JobStatus | None = Query(None),
     limit: int = Query(100, ge=1, le=1000),
     offset: int = Query(0, ge=0),
-) -> list[BackgroundJobResponse]:
+) -> list[dict[str, Any]]:
     """
     List background jobs with optional filtering.
 
+    Returns jobs in a format compatible with the frontend.
     Requires authentication.
     """
     service = BackgroundJobService(jobs_session)
-    return await service.list_jobs(
+    jobs = await service.list_jobs(
         author_type=author_type,
         author_id=author_id,
         job_type=job_type,
@@ -47,6 +67,7 @@ async def list_jobs(
         limit=limit,
         offset=offset,
     )
+    return [_job_to_frontend_format(job) for job in jobs]
 
 
 @router.get("/{job_id}", response_model=BackgroundJobResponse)
@@ -70,7 +91,9 @@ async def get_job(
     return job
 
 
-@router.post("/", response_model=BackgroundJobResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/", response_model=BackgroundJobResponse, status_code=status.HTTP_201_CREATED
+)
 async def create_job(
     job_data: BackgroundJobCreate,
     jobs_session: Annotated[AsyncSession, Depends(get_jobs_session)],
@@ -109,18 +132,28 @@ async def update_job(
     return job
 
 
+class FrontendDeleteRequest(BaseModel):
+    """Frontend-compatible delete request format."""
+
+    jobs: list[dict[str, str]]  # [{"kind": "...", "job_id": "..."}]
+
+
 @router.delete("/", status_code=status.HTTP_200_OK)
 async def delete_jobs(
-    delete_request: BackgroundJobDeleteRequest,
+    delete_request: FrontendDeleteRequest,
     jobs_session: Annotated[AsyncSession, Depends(get_jobs_session)],
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> dict[str, int]:
     """
     Delete multiple completed or failed background jobs.
 
+    Accepts frontend format: {"jobs": [{"kind": "...", "job_id": "..."}, ...]}
     Only jobs with status 'done' or 'failed' can be deleted.
     Requires authentication.
     """
+    # Convert frontend format to internal format
+    job_ids = [int(job["job_id"]) for job in delete_request.jobs]
+
     service = BackgroundJobService(jobs_session)
-    deleted_count = await service.delete_jobs(delete_request.job_ids)
+    deleted_count = await service.delete_jobs(job_ids)
     return {"deleted_count": deleted_count}

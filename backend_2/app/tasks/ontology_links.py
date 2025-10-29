@@ -26,15 +26,17 @@ async def _link_instance_entities(instance_id: str, job_id: int) -> None:
     async with driver.session(database=settings.neo4j_database) as session:
         # Update progress: fetching entities
         await update_job_progress(job_id, 0.1, {"status": "fetching entities"})
-        
+
         records = await _fetch_entities(session, instance_id)
         if not records:
             await update_job_progress(job_id, 1.0, {"status": "no entities found"})
             return
 
         # Update progress: building alias map
-        await update_job_progress(job_id, 0.3, {"status": "building alias map", "entity_count": len(records)})
-        
+        await update_job_progress(
+            job_id, 0.3, {"status": "building alias map", "entity_count": len(records)}
+        )
+
         alias_map: dict[str, list[str]] = {}
         for record in records:
             alias = record.get("alias") or ""
@@ -46,7 +48,7 @@ async def _link_instance_entities(instance_id: str, job_id: int) -> None:
 
         # Update progress: linking text
         await update_job_progress(job_id, 0.5, {"status": "linking text"})
-        
+
         payload: list[dict[str, Any]] = []
         for record in records:
             entity_id = record["entity_id"]
@@ -72,7 +74,7 @@ async def _link_instance_entities(instance_id: str, job_id: int) -> None:
 
         # Update progress: updating database
         await update_job_progress(job_id, 0.8, {"status": "updating database"})
-        
+
         await session.run(
             """
             UNWIND $payload AS item
@@ -82,9 +84,11 @@ async def _link_instance_entities(instance_id: str, job_id: int) -> None:
             """,
             payload=payload,
         )
-        
+
         # Final progress update
-        await update_job_progress(job_id, 0.95, {"status": "completed", "entities_linked": len(payload)})
+        await update_job_progress(
+            job_id, 0.95, {"status": "completed", "entities_linked": len(payload)}
+        )
 
 
 async def _fetch_entities(
@@ -105,15 +109,17 @@ async def _fetch_entities(
 
 
 @celery_app.task(name="ontology.link_instance")
-def link_instance(instance_id: str, author_type: str = "agent", author_id: str = "system") -> dict[str, Any]:
+def link_instance(
+    instance_id: str, author_type: str = "agent", author_id: str = "system"
+) -> dict[str, Any]:
     """
     Link entity instances within an ontology instance.
-    
+
     Args:
         instance_id: The ontology instance ID
         author_type: Type of author triggering the job (user or agent)
         author_id: ID of the author
-        
+
     Returns:
         Dictionary with job results
     """
@@ -127,11 +133,13 @@ def link_instance(instance_id: str, author_type: str = "agent", author_id: str =
             details={"instance_id": instance_id},
         )
     )
-    
+
     try:
         asyncio.run(mark_job_running(job_id))
         asyncio.run(_link_instance_entities(instance_id, job_id))
-        asyncio.run(mark_job_done(job_id, {"instance_id": instance_id, "status": "success"}))
+        asyncio.run(
+            mark_job_done(job_id, {"instance_id": instance_id, "status": "success"})
+        )
         return {"job_id": job_id, "instance_id": instance_id, "status": "success"}
     except Exception as e:
         asyncio.run(mark_job_failed(job_id, str(e)))

@@ -9,6 +9,7 @@ from app.celery_app import celery_app
 from app.core.config import get_settings
 from app.graph.neo4j import get_driver
 from app.models.background_job import AuthorType, JobType
+from app.utils.async_helpers import run_async
 from app.utils.job_tracking import (
     create_background_job,
     mark_job_done,
@@ -123,7 +124,7 @@ def link_instance(
     Returns:
         Dictionary with job results
     """
-    job_id = asyncio.run(
+    job_id = run_async(
         create_background_job(
             author_type=AuthorType(author_type),
             author_id=author_id,
@@ -135,12 +136,12 @@ def link_instance(
     )
 
     try:
-        asyncio.run(mark_job_running(job_id))
-        asyncio.run(_link_instance_entities(instance_id, job_id))
-        asyncio.run(
+        run_async(mark_job_running(job_id))
+        run_async(_link_instance_entities(instance_id, job_id))
+        run_async(
             mark_job_done(job_id, {"instance_id": instance_id, "status": "success"})
         )
         return {"job_id": job_id, "instance_id": instance_id, "status": "success"}
     except Exception as e:
-        asyncio.run(mark_job_failed(job_id, str(e)))
+        run_async(mark_job_failed(job_id, str(e)))
         raise

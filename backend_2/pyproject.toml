@@ -21,7 +21,11 @@ dependencies = [
     "neo4j>=5.13,<6",
     "celery>=5.4,<6",
     "sentence-transformers>=2.2,<3",
-    "aiosqlite>=0.19"
+    "aiosqlite>=0.19",
+    "langchain>=0.1,<0.4",
+    "langchain-openai>=0.0.5,<0.3",
+    "langgraph>=0.0.26,<0.3",
+    "openai>=1.0,<2"
 ]
 
 [project.optional-dependencies]

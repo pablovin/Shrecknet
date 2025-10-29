@@ -25,6 +25,7 @@ if TYPE_CHECKING:  # pragma: no cover
     from app.models.library import LibraryItem
     from app.models.note import Note
     from app.models.user import User
+    from app.models.agent import Agent
 
 
 class AuthorType(str, Enum):
@@ -81,6 +82,11 @@ class Ontology(Base):
         back_populates="ontology",
         cascade="all, delete-orphan",
         passive_deletes=True,
+    )
+    agents: Mapped[List["Agent"]] = relationship(
+        "Agent",
+        secondary="agent_ontologies",
+        back_populates="ontologies",
     )
 
 

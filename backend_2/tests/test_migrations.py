@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 from sqlalchemy import inspect, text
-from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
 from app.db.base import Base
@@ -283,9 +285,6 @@ async def test_duration_seconds_populated_on_job_completion(very_legacy_jobs_eng
     """Test that duration_seconds is calculated when marking job as done."""
     # Run migration
     await migrate_jobs_database(very_legacy_jobs_engine)
-    
-    from sqlalchemy.ext.asyncio import async_sessionmaker
-    import asyncio
     
     session_maker = async_sessionmaker(very_legacy_jobs_engine, expire_on_commit=False)
     async with session_maker() as session:

@@ -709,3 +709,45 @@ async def get_embedding_jobs(
         }
         for job in jobs
     ]
+
+
+# Migration endpoints ----------------------------------------------------
+
+
+class MigrationResponse(BaseModel):
+    """Response after running a migration."""
+
+    nodes_migrated: int
+    status: str
+    message: str
+
+
+@router.post(
+    "/migrate-embedding-properties",
+    response_model=MigrationResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def migrate_embedding_properties(
+    graph_session: Annotated[Any, Depends(get_neo4j_session)],
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> MigrationResponse:
+    """
+    Migrate existing EntityInstance nodes to have embedding properties.
+
+    This endpoint allows manual execution of the migration that adds is_embedded
+    and last_embedded_date properties to existing EntityInstance nodes.
+
+    This migration runs automatically on application startup, but this endpoint
+    allows re-running it manually if needed.
+
+    Only accessible to admin users.
+    """
+    from app.db.migrations import migrate_neo4j_embedding_properties
+
+    result = await migrate_neo4j_embedding_properties(graph_session)
+
+    return MigrationResponse(
+        nodes_migrated=result["nodes_migrated"],
+        status=result["status"],
+        message=f"Successfully migrated {result['nodes_migrated']} nodes with embedding properties",
+    )

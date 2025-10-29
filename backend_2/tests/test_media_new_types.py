@@ -124,7 +124,7 @@ async def test_upload_content_image(client):
     admin_token = admin_token_response.json()["access_token"]
     admin_headers = {"Authorization": f"Bearer {admin_token}"}
 
-    # Upload image for content (no validation, just accepts content_id)
+    # Upload image for content type
     buffer = _create_image()
     upload_response = await client.post(
         "/media-admin/images",
@@ -183,7 +183,7 @@ async def test_upload_agent_image(client):
     admin_token = admin_token_response.json()["access_token"]
     admin_headers = {"Authorization": f"Bearer {admin_token}"}
 
-    # Upload image for agent (no validation, just accepts content_id)
+    # Upload image for agent type
     buffer = _create_image()
     upload_response = await client.post(
         "/media-admin/images",
@@ -242,7 +242,7 @@ async def test_upload_empty_instance_id_rejection(client):
     admin_token = admin_token_response.json()["access_token"]
     admin_headers = {"Authorization": f"Bearer {admin_token}"}
 
-    # Test empty content_id for content
+    # Test validation rejects empty content_id
     buffer = _create_image()
     upload_response = await client.post(
         "/media-admin/images",
@@ -253,7 +253,7 @@ async def test_upload_empty_instance_id_rejection(client):
     # FastAPI returns 422 for empty form fields before custom validation
     assert upload_response.status_code in (400, 422)
 
-    # Test empty content_id for agent
+    # Test validation rejects whitespace-only content_id
     buffer = _create_image()
     upload_response = await client.post(
         "/media-admin/images",

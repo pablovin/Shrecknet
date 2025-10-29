@@ -35,6 +35,27 @@ def run_async(coro: Coroutine[Any, Any, T]) -> T:
     else:
         # A loop is already running (e.g., when task_always_eager=True)
         # We need to run the coroutine in a separate thread with its own loop
+        def run_in_thread():
+            # Create a new event loop for this thread
+            new_loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(new_loop)
+            try:
+                return new_loop.run_until_complete(coro)
+            finally:
+                try:
+                    # Clean up any remaining tasks
+                    pending = asyncio.all_tasks(new_loop)
+                    for task in pending:
+                        task.cancel()
+                    # Wait for task cancellations to complete
+                    if pending:
+                        new_loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+                    # Shutdown async generators
+                    new_loop.run_until_complete(new_loop.shutdown_asyncgens())
+                finally:
+                    new_loop.close()
+                    asyncio.set_event_loop(None)
+        
         with concurrent.futures.ThreadPoolExecutor() as pool:
-            future = pool.submit(asyncio.run, coro)
+            future = pool.submit(run_in_thread)
             return future.result()

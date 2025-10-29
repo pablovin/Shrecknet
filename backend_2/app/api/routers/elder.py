@@ -25,13 +25,13 @@ router = APIRouter(prefix="/jobs/elder", tags=["elder"])
 async def get_llm_client() -> OpenAIClient:
     """Dependency to get LLM client."""
     settings = get_settings()
-    
+
     if not settings.openai_api_key:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="OpenAI API key not configured",
         )
-    
+
     return OpenAIClient(
         api_key=settings.openai_api_key,
         timeout=60,
@@ -42,7 +42,7 @@ async def get_llm_client() -> OpenAIClient:
 async def get_model_policy() -> ModelPolicy:
     """Dependency to get model policy."""
     settings = get_settings()
-    
+
     return ModelPolicy(
         decompose_model=settings.model_decompose,
         subanswer_model=settings.model_subanswer,
@@ -66,7 +66,7 @@ async def get_elder_orchestrator(
 ) -> ElderOrchestrator:
     """Dependency to get Elder orchestrator."""
     settings = get_settings()
-    
+
     return ElderOrchestrator(
         llm_client=llm_client,
         model_policy=model_policy,
@@ -85,7 +85,7 @@ async def query_elder(
 ) -> ElderQueryResponse:
     """
     Execute an Elder query through an agent.
-    
+
     The Elder pipeline:
     1. Decomposes the query into sub-queries
     2. Retrieves relevant context from Neo4j
@@ -93,44 +93,44 @@ async def query_elder(
     4. Synthesizes a final answer
     5. Validates and optionally refines the answer
     6. Applies agent writing style if configured
-    
+
     Requires authentication. Returns answer and/or context based on mode.
     """
     # Get agent
     agent_repo = AgentRepository(db_session)
     agent = await agent_repo.get_by_id(agent_id)
-    
+
     if not agent:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Agent not found",
         )
-    
+
     # Check if agent is active
     if not agent.active:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Agent is not active",
         )
-    
+
     # Check if agent has the elder job type
     if agent.job != "elder":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Agent job type '{agent.job}' is not 'elder'",
         )
-    
+
     # Execute Elder pipeline
     try:
         logger.info(
             f"Executing Elder query for agent {agent_id} (user {_current_user.id}): {request.query[:100]}"
         )
-        
+
         response = await orchestrator.execute(agent, request)
-        
+
         logger.info(f"Elder query completed for agent {agent_id}")
         return response
-        
+
     except Exception as e:
         logger.error(f"Elder query failed for agent {agent_id}: {e}", exc_info=True)
         raise HTTPException(

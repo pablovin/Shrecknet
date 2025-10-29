@@ -25,10 +25,10 @@ class AgentService:
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Invalid job type. Must be one of: {', '.join(valid_jobs)}",
             )
-        
+
         agent = await self.repository.create(agent_data)
         await self.session.commit()
-        
+
         return AgentRead(
             id=agent.id,
             name=agent.name,
@@ -50,7 +50,7 @@ class AgentService:
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Agent not found",
             )
-        
+
         return AgentRead(
             id=agent.id,
             name=agent.name,
@@ -75,7 +75,7 @@ class AgentService:
         agents = await self.repository.list(
             job=job, active=active, limit=limit, offset=offset
         )
-        
+
         return [
             AgentRead(
                 id=agent.id,
@@ -102,19 +102,19 @@ class AgentService:
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"Invalid job type. Must be one of: {', '.join(valid_jobs)}",
                 )
-        
+
         agent = await self.repository.update(agent_id, agent_data)
         if not agent:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Agent not found",
             )
-        
-        # Extract ontology IDs before commit
+
+        # Extract ontology IDs before commit since we lose access after
         ontology_ids = [ont.id for ont in agent.ontologies]
-        
+
         await self.session.commit()
-        
+
         return AgentRead(
             id=agent.id,
             name=agent.name,
@@ -136,7 +136,7 @@ class AgentService:
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Agent not found",
             )
-        
+
         await self.session.commit()
 
     async def attach_ontology(self, agent_id: str, ontology_id: int) -> AgentRead:
@@ -147,12 +147,12 @@ class AgentService:
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Agent or ontology not found",
             )
-        
-        # Extract ontology IDs before commit
+
+        # Extract ontology IDs before commit since we lose access after
         ontology_ids = [ont.id for ont in agent.ontologies]
-        
+
         await self.session.commit()
-        
+
         return AgentRead(
             id=agent.id,
             name=agent.name,
@@ -174,12 +174,12 @@ class AgentService:
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Agent not found",
             )
-        
-        # Extract ontology IDs before commit
+
+        # Extract ontology IDs before commit since we lose access after
         ontology_ids = [ont.id for ont in agent.ontologies]
-        
+
         await self.session.commit()
-        
+
         return AgentRead(
             id=agent.id,
             name=agent.name,

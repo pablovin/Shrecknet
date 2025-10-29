@@ -26,7 +26,7 @@ async def get_available_jobs(
 ) -> list[str]:
     """
     Get list of available agent job types.
-    
+
     Requires admin role.
     """
     return AgentService.get_available_jobs()
@@ -43,7 +43,7 @@ async def list_agents(
 ) -> list[AgentRead]:
     """
     List agents with optional filters.
-    
+
     Requires admin role.
     """
     return await service.list_agents(job=job, active=active, limit=limit, offset=offset)
@@ -57,7 +57,7 @@ async def create_agent(
 ) -> AgentRead:
     """
     Create a new agent.
-    
+
     Requires admin role.
     """
     return await service.create_agent(agent_data)
@@ -71,7 +71,7 @@ async def get_agent(
 ) -> AgentRead:
     """
     Get an agent by ID.
-    
+
     Requires admin role.
     """
     return await service.get_agent(agent_id)
@@ -86,7 +86,7 @@ async def update_agent(
 ) -> AgentRead:
     """
     Update an agent.
-    
+
     Requires admin role.
     """
     return await service.update_agent(agent_id, agent_data)
@@ -100,7 +100,7 @@ async def delete_agent(
 ) -> None:
     """
     Delete an agent.
-    
+
     Requires admin role.
     """
     await service.delete_agent(agent_id)
@@ -115,7 +115,7 @@ async def attach_ontology(
 ) -> AgentRead:
     """
     Attach an ontology to an agent.
-    
+
     Requires admin role.
     """
     return await service.attach_ontology(agent_id, ontology_id)
@@ -130,7 +130,7 @@ async def detach_ontology(
 ) -> AgentRead:
     """
     Detach an ontology from an agent.
-    
+
     Requires admin role.
     """
     return await service.detach_ontology(agent_id, ontology_id)

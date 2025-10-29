@@ -29,19 +29,29 @@ if TYPE_CHECKING:  # pragma: no cover
 agent_ontologies = Table(
     "agent_ontologies",
     Base.metadata,
-    Column("agent_id", String(36), ForeignKey("agents.id", ondelete="CASCADE"), primary_key=True),
-    Column("ontology_id", Integer, ForeignKey("ontologies.id", ondelete="CASCADE"), primary_key=True),
+    Column(
+        "agent_id",
+        String(36),
+        ForeignKey("agents.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column(
+        "ontology_id",
+        Integer,
+        ForeignKey("ontologies.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
 )
 
 
 class Agent(Base):
     """
     Agent model representing an AI agent that can perform tasks.
-    
+
     Agents are persisted in SQLite and can be linked to multiple ontologies
     for context-aware task execution.
     """
-    
+
     __tablename__ = "agents"
 
     id: Mapped[str] = mapped_column(

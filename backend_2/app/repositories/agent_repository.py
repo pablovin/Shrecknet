@@ -27,14 +27,14 @@ class AgentRepository:
             job=agent_data.job,
             active=agent_data.active,
         )
-        
+
         # Link ontologies
         if agent_data.ontology_ids:
             stmt = select(Ontology).where(Ontology.id.in_(agent_data.ontology_ids))
             result = await self.session.execute(stmt)
             ontologies = result.scalars().all()
             agent.ontologies = list(ontologies)
-        
+
         self.session.add(agent)
         await self.session.flush()
         await self.session.refresh(agent, ["ontologies"])
@@ -59,32 +59,37 @@ class AgentRepository:
     ) -> list[Agent]:
         """List agents with optional filters."""
         stmt = select(Agent).options(selectinload(Agent.ontologies))
-        
+
         if job is not None:
             stmt = stmt.where(Agent.job == job)
         if active is not None:
             stmt = stmt.where(Agent.active == active)
-        
+
         stmt = stmt.limit(limit).offset(offset).order_by(Agent.created_at.desc())
-        
+
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
 
     async def update(self, agent_id: str, agent_data: AgentUpdate) -> Optional[Agent]:
         """Update an agent."""
-        agent = await self.get_by_id(agent_id)
+        # Fetch with eager loading to avoid detached instance issues
+        stmt = (
+            select(Agent)
+            .where(Agent.id == agent_id)
+            .options(selectinload(Agent.ontologies))
+        )
+        result = await self.session.execute(stmt)
+        agent = result.scalar_one_or_none()
+
         if not agent:
             return None
-        
+
         # Update fields if provided
         update_data = agent_data.model_dump(exclude_unset=True)
         for field, value in update_data.items():
             setattr(agent, field, value)
-        
+
         await self.session.flush()
-        # Force load ontologies now so they're accessible after commit
-        await self.session.refresh(agent)
-        _ = agent.ontologies  # Trigger lazy load
         return agent
 
     async def delete(self, agent_id: str) -> bool:
@@ -92,7 +97,7 @@ class AgentRepository:
         agent = await self.get_by_id(agent_id)
         if not agent:
             return False
-        
+
         await self.session.delete(agent)
         await self.session.flush()
         return True
@@ -102,21 +107,21 @@ class AgentRepository:
         agent = await self.get_by_id(agent_id)
         if not agent:
             return None
-        
+
         # Check if ontology exists
         stmt = select(Ontology).where(Ontology.id == ontology_id)
         result = await self.session.execute(stmt)
         ontology = result.scalar_one_or_none()
-        
+
         if not ontology:
             return None
-        
+
         # Add ontology if not already linked
         if ontology not in agent.ontologies:
             agent.ontologies.append(ontology)
             await self.session.flush()
             await self.session.refresh(agent, ["ontologies"])
-        
+
         return agent
 
     async def detach_ontology(self, agent_id: str, ontology_id: int) -> Optional[Agent]:
@@ -124,10 +129,10 @@ class AgentRepository:
         agent = await self.get_by_id(agent_id)
         if not agent:
             return None
-        
+
         # Remove ontology if linked
         agent.ontologies = [ont for ont in agent.ontologies if ont.id != ontology_id]
         await self.session.flush()
         await self.session.refresh(agent, ["ontologies"])
-        
+
         return agent

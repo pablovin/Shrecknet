@@ -45,7 +45,7 @@ class Settings(BaseSettings):
     neo4j_database: str = "neo4j"
     celery_broker_url: str = "redis://localhost:6379/0"
     celery_result_backend: str = "redis://localhost:6379/1"
-    celery_task_always_eager: bool = True
+    celery_task_always_eager: bool = False
     # LLM configuration for Elder agent
     openai_api_key: str = ""
     model_decompose: str = "gpt-4o-mini"

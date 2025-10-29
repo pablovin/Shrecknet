@@ -37,7 +37,7 @@ class PdfEmbeddingService:
             embedding_service: Optional embedding service (creates if None)
         """
         self.graph_session = graph_session
-        self.embedding_service = embedding_service or EmbeddingService()
+        self.embedding_service = embedding_service or EmbeddingService(graph_session)
 
     async def ensure_vector_index(self) -> dict[str, Any]:
         """
@@ -49,8 +49,8 @@ class PdfEmbeddingService:
             Dictionary with index name, exists status, model, and dimensions
         """
         index_name = "pdf_chunk_text_vec_idx"
-        model = self.embedding_service.model_name
-        dims = self.embedding_service.embedding_dim
+        model = self.embedding_service.model_id
+        dims = self.embedding_service.embed_dim
 
         # Check if index exists
         check_query = """
@@ -215,8 +215,8 @@ class PdfEmbeddingService:
                 page_number=chunk["page_number"],
                 text=chunk["text"],
                 embedding=embedding.tolist(),
-                model=self.embedding_service.model_name,
-                dim=self.embedding_service.embedding_dim,
+                model=self.embedding_service.model_id,
+                dim=self.embedding_service.embed_dim,
             )
 
     async def get_embedding_stats(self, library_item_id: int) -> dict[str, int | bool]:

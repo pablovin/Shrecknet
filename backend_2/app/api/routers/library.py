@@ -436,7 +436,7 @@ async def list_embedding_jobs(
                 "job_id": job.id,
                 "library_item_id": None,  # Would need to parse from details
                 "ontology_id": job.ontology_id,
-                "status": job.status.value,
+                "status": job.status,
                 "progress": job.progress,
                 "description": job.description,
                 "started_at": job.started_at.isoformat(),

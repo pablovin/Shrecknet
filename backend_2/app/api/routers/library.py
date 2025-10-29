@@ -414,11 +414,11 @@ async def list_embedding_jobs(
     Returns a list of background jobs for PDF embedding, optionally
     filtered by ontology_id.
     """
-    from app.db.jobs_session import async_jobs_session_maker
+    from app.db.jobs_session import JobsSessionMaker
     from app.models.background_job import BackgroundJob, JobType
     from sqlalchemy import select
 
-    async with async_jobs_session_maker() as session:
+    async with JobsSessionMaker() as session:
         query = select(BackgroundJob).where(
             BackgroundJob.job_type == JobType.PDF_BOOK_EMBEDDING
         )

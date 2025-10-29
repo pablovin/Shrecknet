@@ -66,8 +66,7 @@ services:
      - BACKEND_2_CELERY_TASK_ALWAYS_EAGER=false
    volumes:
      - ./backend_2/media:/app/media
-   depends_on:
-     - backend_2
+   depends_on:     
      - redis
      - neo4j
 

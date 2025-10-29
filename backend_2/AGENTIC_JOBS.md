@@ -496,3 +496,244 @@ Additional job types can be added following the same pattern:
 - `validator` - Check content consistency and accuracy
 
 Each job type will have its own pipeline implementation in `app/jobs/<job_type>/`.
+
+---
+
+## Librarian Job
+
+The Librarian job provides intelligent question-answering from embedded PDF rulebooks and game materials.
+
+### Pipeline Steps
+
+1. **Retrieve** - Performs semantic search across embedded PDF chunks based on user query
+2. **Answer** - Generates comprehensive answer from retrieved book excerpts
+3. **Style** - Applies agent's writing style while preserving factual accuracy and citations
+
+### Response Modes
+
+- **`nl`** - Returns only the natural language answer
+- **`context`** - Returns only retrieved PDF chunks with page numbers
+- **`both`** - Returns both answer and chunks (default)
+
+### Configuration
+
+**LLM Models** (configurable via environment variables):
+- Answer: `gpt-4o` (`BACKEND_2_MODEL_SYNTHESIS`)
+- Style: `gpt-4o-mini` (`BACKEND_2_MODEL_STYLE`)
+
+**Pipeline Settings**:
+- `BACKEND_2_DEFAULT_TOP_K` - Results per query (default: 8)
+- `BACKEND_2_ENABLE_TRACING` - Include execution trace (default: true)
+
+### PDF Embedding
+
+Before using the Librarian, PDFs must be embedded:
+
+1. **Upload PDF** to library via `/libraries/{ontology_id}/items`
+2. **Trigger Embedding** via `/libraries/{ontology_id}/items/{item_id}/trigger-embedding`
+3. **Monitor Progress** via `/libraries/embedding-jobs`
+
+Embeddings are stored in Neo4j as `PdfChunk` nodes with:
+- Page-level chunking for precise citations
+- Vector embeddings using `paraphrase-multilingual-MiniLM-L12-v2`
+- Metadata: library_item_id, ontology_id, page_number
+
+### Create a Librarian Agent
+
+```http
+POST /agents/
+Authorization: Bearer <admin-token>
+Content-Type: application/json
+
+{
+  "name": "Tome Keeper",
+  "avatar_url": "https://example.com/librarian.png",
+  "description": "A knowledgeable librarian who helps with rulebook questions",
+  "writing_style": "Clear and precise, citing page numbers for rules",
+  "job": "librarian",
+  "ontology_ids": [1, 2],
+  "active": true
+}
+```
+
+### Query a Librarian Agent
+
+```http
+POST /jobs/librarian/{agent_id}/query
+Authorization: Bearer <user-token>
+Content-Type: application/json
+
+{
+  "query": "What are the mechanics for grappling in combat?",
+  "mode": "both",
+  "top_k": 10,
+  "library_item_ids": null,
+  "include_trace": false
+}
+```
+
+**Request Parameters**:
+- `query` (required) - The user's question (1-2000 characters)
+- `mode` - Response mode: `"nl"`, `"context"`, or `"both"` (default: `"both"`)
+- `top_k` - Number of PDF chunks to retrieve (default: from config, max: 50)
+- `library_item_ids` - Optional list of library item IDs to search within
+- `include_trace` - Include execution trace for debugging (default: false)
+
+**Response** (200 OK):
+```json
+{
+  "agent_id": "550e8400-e29b-41d4-a716-446655440000",
+  "mode": "both",
+  "query": "What are the mechanics for grappling in combat?",
+  "answer": "According to the Player's Handbook (page 195), grappling follows these mechanics:\n\n1. **Initiate Grapple**: Use the Attack action to make a special melee attack. If able to make multiple attacks, this replaces one of them.\n\n2. **Contest Check**: The target must succeed on a Strength (Athletics) or Dexterity (Acrobatics) check contested by your Strength (Athletics) check.\n\n3. **Success**: The target is grappled (condition). The grappled creature's speed becomes 0.\n\n4. **Escape**: The grappled creature can use its action to escape by succeeding on the same contest.\n\nAdditionally, the Dungeon Master's Guide (page 271) clarifies that you can move a grappled creature with you, but your speed is halved unless the creature is two or more sizes smaller than you.",
+  "chunks": [
+    {
+      "library_item_id": 1,
+      "page_number": 195,
+      "text": "Grappling\nWhen you want to grab a creature or wrestle with it, you can use the Attack action to make a special melee attack, a grapple...",
+      "score": 0.89
+    },
+    {
+      "library_item_id": 2,
+      "page_number": 271,
+      "text": "Moving a Grappled Creature\nWhen you move, you can drag or carry the grappled creature with you, but your speed is halved...",
+      "score": 0.76
+    }
+  ],
+  "library_items_used": [1, 2],
+  "trace": null
+}
+```
+
+### PDF Embedding Endpoints
+
+#### Trigger Embedding
+
+```http
+POST /libraries/{ontology_id}/items/{item_id}/trigger-embedding
+Authorization: Bearer <admin-or-world-builder-token>
+```
+
+**Response** (202 Accepted):
+```json
+{
+  "message": "Embedding job triggered for library item 5",
+  "library_item_id": 5,
+  "ontology_id": 1,
+  "celery_task_id": "task-uuid-123"
+}
+```
+
+#### Check Embedding Status
+
+```http
+GET /libraries/{ontology_id}/items/{item_id}/embedding-status
+Authorization: Bearer <token>
+```
+
+**Response**:
+```json
+{
+  "library_item_id": 5,
+  "ontology_id": 1,
+  "vectorized": true,
+  "last_vectorized_at": "2025-10-29T12:00:00Z",
+  "total_chunks": 320,
+  "is_embedded": true
+}
+```
+
+#### List Embedding Jobs
+
+```http
+GET /libraries/embedding-jobs?ontology_id=1&limit=10
+Authorization: Bearer <token>
+```
+
+**Response**:
+```json
+[
+  {
+    "job_id": 42,
+    "ontology_id": 1,
+    "status": "done",
+    "progress": 1.0,
+    "description": "Embedding PDF book (library item 5)",
+    "started_at": "2025-10-29T12:00:00Z",
+    "completed_at": "2025-10-29T12:05:30Z",
+    "duration_seconds": 330.5,
+    "error_message": null,
+    "details": "{\"chunks_created\": 320, \"chunks_failed\": 0, \"total_pages\": 320}"
+  }
+]
+```
+
+### Best Practices
+
+#### Agent Configuration
+
+1. **Name**: Use descriptive names (e.g., "Rules Librarian", "Lore Keeper")
+2. **Writing Style**: Emphasize accuracy and citation format
+3. **Ontologies**: Link to ontologies containing relevant library items
+4. **Active Status**: Set `active: false` during PDF embedding
+
+#### Query Optimization
+
+1. **Specific Questions**: Better results with focused, specific questions
+2. **Use library_item_ids**: Filter to specific books when known
+3. **Adjust top_k**: Increase for complex topics spanning multiple pages
+4. **Enable Tracing**: Use during development to debug retrieval
+
+#### PDF Management
+
+1. **Embed Immediately**: Embed PDFs right after upload
+2. **Monitor Jobs**: Check embedding-jobs endpoint for progress
+3. **Re-embed on Updates**: Re-trigger embedding if PDF is replaced
+4. **Organize by Ontology**: Group related books in same ontology
+
+### Error Responses
+
+#### Agent Not Found
+```json
+{
+  "detail": "Agent not found"
+}
+```
+Status: 404
+
+#### Agent Inactive
+```json
+{
+  "detail": "Agent is not active"
+}
+```
+Status: 400
+
+#### Invalid Job Type
+```json
+{
+  "detail": "Agent job type 'elder' is not 'librarian'"
+}
+```
+Status: 400
+
+#### No Embedded Books
+```json
+{
+  "answer": "I couldn't find any relevant information in the available books to answer your question."
+}
+```
+Status: 200 (with empty chunks)
+
+### Performance
+
+Expected latency (varies by query complexity):
+- Simple queries: 2-5 seconds
+- Complex queries: 5-10 seconds
+- First query (cold start): +2-3 seconds for model loading
+
+Factors affecting performance:
+- Number of embedded PDFs in ontology
+- Top-k setting (higher = more retrieval)
+- LLM model speed
+- Neo4j vector index performance

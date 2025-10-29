@@ -182,6 +182,42 @@ result = embed_instance.delay(
 
 **Note**: This is currently a placeholder task. Full integration with the GraphRAG embedding service is planned for future development.
 
+### 3. PDF Book Embedding (`pdf_book_embedding`)
+
+Embeds a PDF book into Neo4j for semantic search by Librarian agents.
+
+**Task Name**: `library.embed_pdf_book`
+
+**Implementation**: `app/tasks/pdf_embedding.py`
+
+**Usage**:
+```python
+from app.tasks.pdf_embedding import embed_pdf_book
+
+# Trigger the task
+result = embed_pdf_book.delay(
+    library_item_id=5,
+    ontology_id=1,
+    author_type="user",
+    author_id="42"
+)
+```
+
+**Progress Updates**:
+- 10%: Fetching library item details
+- 20%: Reading PDF file
+- 30%: Ensuring vector index
+- 40%: Embedding PDF pages
+- 90%: Updating library item status
+- 100%: Completed
+
+**Details**:
+- Extracts text from each PDF page
+- Creates vector embeddings using sentence-transformers
+- Stores chunks in Neo4j as `PdfChunk` nodes
+- Updates library item `vectorized` status
+- Processes in batches of 20 pages for memory efficiency
+
 ## Creating New Background Jobs
 
 ### Step 1: Define the Task
@@ -255,7 +291,7 @@ class JobType(str, Enum):
     """Type of background job."""
     GRAPH_LINK_UPDATE = "graph_link_update"
     NEO4J_EMBEDDING = "neo4j_embedding"
-    MY_TASK_TYPE = "my_task_type"  # Add your type
+    PDF_BOOK_EMBEDDING = "pdf_book_embedding"  # Add your type
 ```
 
 ### Step 3: Register the Task

@@ -359,6 +359,211 @@ async def embed_ontology_and_wait(ontology_id: int, token: str):
 await embed_ontology_and_wait(ontology_id=1, token="your-token")
 ```
 
+---
+
+## PDF Book Embedding
+
+The PDF book embedding system extends the Neo4j embedding infrastructure to support PDF rulebooks and game materials for the Librarian job.
+
+### Overview
+
+PDF books are embedded as page-level chunks in Neo4j, enabling:
+
+- **Semantic Search**: Find relevant sections based on meaning, not just keywords
+- **Page Citations**: Precise page number references in answers
+- **Multi-Book Search**: Search across all books in an ontology
+- **Background Processing**: Non-blocking embedding via Celery tasks
+
+### Architecture
+
+#### Node Schema
+
+Each page becomes a `PdfChunk` node with:
+
+- `library_item_id` (int): Links to library item
+- `ontology_id` (int): Links to ontology for scoping
+- `chunk_index` (int): Unique index for this chunk
+- `page_number` (int): Page number in the PDF (1-indexed)
+- `text` (string): Extracted text content
+- `text_embedding` (float[]): Vector embedding (384-dim)
+- `text_embedding_model` (string): Model identifier
+- `text_embedding_dim` (int): Embedding dimensionality
+- `last_embedded_date` (datetime): When embedded
+
+#### Vector Index
+
+- **Index Name**: `pdf_chunk_text_vec_idx`
+- **Node Label**: `PdfChunk`
+- **Property**: `text_embedding`
+- **Similarity**: Cosine
+- **Dimensions**: 384 (paraphrase-multilingual-MiniLM-L12-v2)
+
+### API Endpoints
+
+#### Trigger PDF Embedding
+
+```http
+POST /libraries/{ontology_id}/items/{item_id}/trigger-embedding
+Authorization: Bearer <admin-or-world-builder-token>
+```
+
+Triggers a background Celery task to embed the PDF.
+
+**Response** (202 Accepted):
+```json
+{
+  "message": "Embedding job triggered for library item 5",
+  "library_item_id": 5,
+  "ontology_id": 1,
+  "celery_task_id": "task-uuid-123"
+}
+```
+
+#### Check Embedding Status
+
+```http
+GET /libraries/{ontology_id}/items/{item_id}/embedding-status
+Authorization: Bearer <token>
+```
+
+**Response**:
+```json
+{
+  "library_item_id": 5,
+  "ontology_id": 1,
+  "vectorized": true,
+  "last_vectorized_at": "2025-10-29T12:00:00Z",
+  "total_chunks": 320,
+  "is_embedded": true
+}
+```
+
+#### List Embedding Jobs
+
+```http
+GET /libraries/embedding-jobs?ontology_id=1&limit=10
+Authorization: Bearer <token>
+```
+
+Returns recent embedding jobs with status and progress.
+
+### Embedding Process
+
+1. **Read PDF**: Uses PyPDF2 to extract text from each page
+2. **Chunk Pages**: Each page becomes a separate chunk for precise citations
+3. **Generate Embeddings**: Uses sentence-transformers in batches
+4. **Store in Neo4j**: Creates `PdfChunk` nodes with embeddings
+5. **Update Status**: Marks library item as vectorized
+
+### Background Job
+
+**Task**: `library.embed_pdf_book`
+
+**Job Type**: `pdf_book_embedding`
+
+**Progress Stages**:
+- 10%: Fetching library item
+- 20%: Reading PDF file
+- 30%: Ensuring vector index
+- 40%: Embedding pages (updates throughout)
+- 90%: Updating library item status
+- 100%: Complete
+
+**Batch Size**: 20 pages per batch (configurable)
+
+### Search and Retrieval
+
+The Librarian job uses `PdfEmbeddingService.search_chunks()` to:
+
+1. Generate query embedding
+2. Perform vector similarity search in Neo4j
+3. Filter by ontology_id and optional library_item_ids
+4. Return top-k chunks with scores and page numbers
+
+### Performance
+
+**Embedding Speed**:
+- ~100-200 pages per minute (depends on content)
+- First run loads model into memory (~120MB)
+- Subsequent runs reuse cached model
+
+**Search Speed**:
+- ~100-500ms for semantic search
+- O(log n) with vector index
+- Scales well to thousands of chunks
+
+### Best Practices
+
+#### When to Embed
+
+1. **After Upload**: Trigger immediately after PDF upload
+2. **After Update**: Re-embed if PDF is replaced
+3. **Batch Operations**: Embed multiple books during off-peak hours
+
+#### Monitoring
+
+1. **Check Status**: Use embedding-status endpoint before queries
+2. **Review Jobs**: Monitor embedding-jobs for failures
+3. **Verify Chunks**: Ensure chunk count matches expected pages
+
+#### Optimization
+
+1. **Batch Size**: Adjust based on memory (default 20 is safe)
+2. **Filter by Book**: Use library_item_ids when searching specific books
+3. **Score Threshold**: Use 0.3-0.5 for PDF content (lower than entity search)
+
+### Troubleshooting
+
+#### PDF Extraction Fails
+
+**Symptoms**: Job completes but 0 chunks created
+
+**Causes**:
+- Scanned PDF without OCR
+- Encrypted/protected PDF
+- Corrupted PDF file
+
+**Solution**: Verify PDF is text-based and readable
+
+#### Slow Embedding
+
+**Symptoms**: Job takes very long
+
+**Causes**:
+- Large PDF (1000+ pages)
+- Complex page layouts
+- First-time model loading
+
+**Solutions**:
+- Process large PDFs during off-peak
+- Reduce batch size if memory-constrained
+- Allow extra time for first embedding
+
+#### Missing Chunks in Search
+
+**Symptoms**: Known content not returned
+
+**Causes**:
+- Score threshold too high
+- Query phrasing mismatch
+- Chunks not embedded yet
+
+**Solutions**:
+- Lower score_threshold to 0.3
+- Rephrase query
+- Check embedding-status
+
+### Integration with Librarian
+
+The Librarian job automatically:
+
+1. Searches across all embedded PDFs in agent's ontologies
+2. Retrieves top-k relevant chunks
+3. Generates answers with page citations
+4. Filters by library_item_ids if specified
+
+See AGENTIC_JOBS.md for full Librarian documentation.
+
 ## Future Enhancements
 
 Potential improvements to the embedding system:

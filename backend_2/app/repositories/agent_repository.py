@@ -82,7 +82,9 @@ class AgentRepository:
             setattr(agent, field, value)
         
         await self.session.flush()
-        await self.session.refresh(agent, ["ontologies"])
+        # Force load ontologies now so they're accessible after commit
+        await self.session.refresh(agent)
+        _ = agent.ontologies  # Trigger lazy load
         return agent
 
     async def delete(self, agent_id: str) -> bool:

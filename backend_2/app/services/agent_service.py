@@ -110,6 +110,9 @@ class AgentService:
                 detail="Agent not found",
             )
         
+        # Extract ontology IDs before commit
+        ontology_ids = [ont.id for ont in agent.ontologies]
+        
         await self.session.commit()
         
         return AgentRead(
@@ -122,7 +125,7 @@ class AgentService:
             active=agent.active,
             created_at=agent.created_at,
             updated_at=agent.updated_at,
-            ontology_ids=[ont.id for ont in agent.ontologies],
+            ontology_ids=ontology_ids,
         )
 
     async def delete_agent(self, agent_id: str) -> None:
@@ -145,6 +148,9 @@ class AgentService:
                 detail="Agent or ontology not found",
             )
         
+        # Extract ontology IDs before commit
+        ontology_ids = [ont.id for ont in agent.ontologies]
+        
         await self.session.commit()
         
         return AgentRead(
@@ -157,7 +163,7 @@ class AgentService:
             active=agent.active,
             created_at=agent.created_at,
             updated_at=agent.updated_at,
-            ontology_ids=[ont.id for ont in agent.ontologies],
+            ontology_ids=ontology_ids,
         )
 
     async def detach_ontology(self, agent_id: str, ontology_id: int) -> AgentRead:
@@ -169,6 +175,9 @@ class AgentService:
                 detail="Agent not found",
             )
         
+        # Extract ontology IDs before commit
+        ontology_ids = [ont.id for ont in agent.ontologies]
+        
         await self.session.commit()
         
         return AgentRead(
@@ -181,7 +190,7 @@ class AgentService:
             active=agent.active,
             created_at=agent.created_at,
             updated_at=agent.updated_at,
-            ontology_ids=[ont.id for ont in agent.ontologies],
+            ontology_ids=ontology_ids,
         )
 
     @staticmethod

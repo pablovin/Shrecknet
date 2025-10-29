@@ -8,6 +8,7 @@ from uuid import uuid4
 
 from sqlalchemy import (
     Boolean,
+    Column,
     DateTime,
     ForeignKey,
     Integer,
@@ -28,8 +29,8 @@ if TYPE_CHECKING:  # pragma: no cover
 agent_ontologies = Table(
     "agent_ontologies",
     Base.metadata,
-    mapped_column("agent_id", String(36), ForeignKey("agents.id", ondelete="CASCADE"), primary_key=True),
-    mapped_column("ontology_id", Integer, ForeignKey("ontologies.id", ondelete="CASCADE"), primary_key=True),
+    Column("agent_id", String(36), ForeignKey("agents.id", ondelete="CASCADE"), primary_key=True),
+    Column("ontology_id", Integer, ForeignKey("ontologies.id", ondelete="CASCADE"), primary_key=True),
 )
 
 

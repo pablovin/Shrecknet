@@ -25,7 +25,8 @@ dependencies = [
     "langchain>=0.1,<0.4",
     "langchain-openai>=0.0.5,<0.3",
     "langgraph>=0.0.26,<0.3",
-    "openai>=1.0,<2"
+    "openai>=1.0,<2",
+    "PyPDF2>=3.0,<4"
 ]
 
 [project.optional-dependencies]

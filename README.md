@@ -11,6 +11,7 @@ Shrecknet is a collaborative world building and story telling platform. It mixes
 - **CRM like wiki** with Worlds, Concepts, Characteristics and Pages
 - **Automatic cross linking** and vector search powered by Celery workers
 - **Conversational, Specialist, Writer and Novelist AI agents**
+- **Librarian agents** for intelligent Q&A from embedded PDF rulebooks
 - **Optional world embeddings** can be linked to agents to provide extra lore
 - Import/export utilities and example data
 - Docker based development environment
@@ -60,6 +61,25 @@ Pipeline:
 #### TODO
 - Chapter outlining assistant
 - Export to e‑book formats
+
+### Librarian Agent
+Answers questions from embedded PDF rulebooks and game materials.
+Pipeline:
+1. Semantic search across embedded PDF chunks
+2. Generate comprehensive answers with page citations
+3. Apply agent personality and writing style
+
+#### Features
+- Upload PDF rulebooks to library
+- Background embedding jobs for PDFs
+- Page-level chunking for precise citations
+- Multi-book search across ontologies
+- Configurable writing styles for responses
+
+#### TODO
+- Support for multiple embedding models
+- Advanced chunking strategies (sections, tables)
+- Cross-reference detection across books
 
 ## Configuration
 Set the following environment variables or create a `.env` file in `backend`:

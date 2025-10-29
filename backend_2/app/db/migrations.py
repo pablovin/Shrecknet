@@ -48,3 +48,15 @@ async def migrate_jobs_database(engine: AsyncEngine) -> None:
             logger.info("Successfully added ontology_id column")
         else:
             logger.debug("ontology_id column already exists, skipping migration")
+        
+        # Check if duration_seconds column exists
+        if "duration_seconds" not in column_names:
+            logger.info("Adding duration_seconds column to background_jobs table")
+            await conn.execute(
+                text(
+                    "ALTER TABLE background_jobs ADD COLUMN duration_seconds FLOAT DEFAULT NULL"
+                )
+            )
+            logger.info("Successfully added duration_seconds column")
+        else:
+            logger.debug("duration_seconds column already exists, skipping migration")

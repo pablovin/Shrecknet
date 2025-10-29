@@ -1,8 +1,10 @@
 from fastapi import APIRouter
 
 from app.api.routers import (
+    agents,
     audit_logs,
     auth,
+    elder,
     games,
     graphrag,
     imports,
@@ -30,4 +32,6 @@ def get_api_router() -> APIRouter:
     router.include_router(ontology_instances.router)
     router.include_router(audit_logs.router)
     router.include_router(ontologies.router)
+    router.include_router(agents.router)
+    router.include_router(elder.router)
     return router

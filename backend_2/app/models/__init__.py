@@ -26,6 +26,7 @@ from app.models.ontology import (
     OntologyRelationship,
 )
 from app.models.user import User, UserRole
+from app.models.agent import Agent, agent_ontologies
 
 __all__ = [
     "AuditAction",
@@ -53,4 +54,6 @@ __all__ = [
     "OntologyRelationship",
     "User",
     "UserRole",
+    "Agent",
+    "agent_ontologies",
 ]

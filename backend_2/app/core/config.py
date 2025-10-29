@@ -45,6 +45,17 @@ class Settings(BaseSettings):
     celery_broker_url: str = "redis://localhost:6379/0"
     celery_result_backend: str = "redis://localhost:6379/1"
     celery_task_always_eager: bool = True
+    # LLM configuration for Elder agent
+    openai_api_key: str = ""
+    model_decompose: str = "gpt-4o-mini"
+    model_subanswer: str = "gpt-4o-mini"
+    model_synthesis: str = "gpt-4o"
+    model_validation: str = "gpt-4o-mini"
+    model_style: str = "gpt-4o-mini"
+    # Elder pipeline configuration
+    default_top_k: int = 8
+    enable_tracing: bool = True
+    rate_limit_rpm: int | None = None
 
 
 class AppConfig(BaseModel):

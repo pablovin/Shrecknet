@@ -101,6 +101,11 @@ docker compose down
 docker compose up
 ```
 
+**Note:** If you encounter SSL certificate errors during the build process in certain environments, you can work around this by building with `--network=host` flag or configuring pip to trust PyPI:
+```bash
+docker compose build --build-arg PIP_TRUSTED_HOST="pypi.org pypi.python.org files.pythonhosted.org"
+```
+
 **Service URLs:**
 - Frontend: `http://localhost:3000`
 - Backend API: `http://localhost:8000`

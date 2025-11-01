@@ -28,6 +28,8 @@ services:
       - neo4j-plugins:/plugins
     environment:
       - NEO4J_AUTH=neo4j/VeryStrongPass123
+      # Only APOC plugin for performance on limited resources
+      # Removed graph-data-science plugin to reduce memory footprint
       - NEO4J_PLUGINS=["apoc"]
       # Optimized memory settings for limited RAM (16GB)
       - NEO4J_dbms_memory_pagecache_size=512M

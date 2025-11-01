@@ -53,13 +53,17 @@ Only install essential build tools, then clean up apt cache immediately.
 #### Neo4j Memory Tuning
 ```yaml
 environment:
+  - NEO4J_PLUGINS=["apoc"]                         # Only APOC, removed GDS for performance
   - NEO4J_dbms_memory_pagecache_size=512M      # Default would be 2G+
   - NEO4J_dbms_memory_heap_initial__size=512M
   - NEO4J_dbms_memory_heap_max__size=1G        # Default would be 4G+
   - NEO4J_dbms_jvm_additional=-XX:+UseG1GC    # Better GC for limited memory
 ```
 
-**Impact**: Reduces Neo4j memory footprint from ~6GB to ~1.5GB while maintaining reasonable performance.
+**Impact**: 
+- Reduces Neo4j memory footprint from ~6GB to ~1.5GB while maintaining reasonable performance
+- Removed `graph-data-science` plugin to save ~500MB-1GB memory
+- APOC plugin provides essential procedures without heavy resource requirements
 
 #### Celery Worker Concurrency
 ```yaml

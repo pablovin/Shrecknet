@@ -11,6 +11,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Copy dependency files for layer caching
 COPY pyproject.toml .
+# Create app directory structure and copy __init__.py
+RUN mkdir -p app
 COPY app/__init__.py app/__init__.py
 
 # Upgrade pip and install build tools

@@ -79,7 +79,24 @@ class LibrarianOrchestrator:
                 request.library_item_ids,
                 top_k,
                 trace,
+                score_threshold=request.score_threshold,
             )
+            try:
+                logger.info(
+                    "librarian_retrieval: ontology=%s chunks=%d",
+                    str(ontology_id),
+                    len(chunks),
+                )
+                for c in chunks[: min(5, len(chunks))]:
+                    logger.info(
+                        "chunk: item=%s page=%s score=%.3f preview=%s",
+                        c.get("library_item_id"),
+                        c.get("page_number"),
+                        c.get("score", 0.0),
+                        (c.get("text", "")[:120] + "…") if len(c.get("text", "")) > 120 else c.get("text", ""),
+                    )
+            except Exception:
+                pass
             all_chunks.extend(chunks)
 
         # Sort by score and take top_k
@@ -93,9 +110,25 @@ class LibrarianOrchestrator:
                 page_number=chunk["page_number"],
                 text=chunk["text"],
                 score=chunk["score"],
+                pdf_url=chunk.get("pdf_url"),
+                page_url=chunk.get("page_url"),
             )
             for chunk in all_chunks
         ]
+
+        # Log the sources we will use
+        try:
+            logger.info("librarian_sources_used: %d", len(retrieved_chunks))
+            for ch in retrieved_chunks[: min(5, len(retrieved_chunks))]:
+                logger.info(
+                    "source: item=%s page=%s url=%s score=%.3f",
+                    ch.library_item_id,
+                    ch.page_number,
+                    ch.page_url or (ch.pdf_url + f"#page={ch.page_number}" if ch.pdf_url else None),
+                    ch.score,
+                )
+        except Exception:
+            pass
 
         # Get unique library items used
         library_items_used = list({chunk.library_item_id for chunk in retrieved_chunks})
@@ -112,10 +145,57 @@ class LibrarianOrchestrator:
                 answer = await self._generate_answer(
                     request.query, retrieved_chunks, trace
                 )
+                raw_answer = answer
+                try:
+                    logger.info(
+                        "librarian_answer_raw_preview: %s",
+                        (answer[:400] + "…") if (answer and len(answer) > 400) else (answer or "<empty>"),
+                    )
+                except Exception:
+                    pass
+                if answer is not None:
+                    # Decorate answer inline with page links for top chunks
+                    try:
+                        decorated = self._decorate_answer_with_sources(
+                            answer, retrieved_chunks
+                        )
+                        answer = decorated
+                        try:
+                            logger.info(
+                                "librarian_answer_decorated_preview: %s",
+                                (answer[:400] + "…") if (answer and len(answer) > 400) else (answer or "<empty>"),
+                            )
+                        except Exception:
+                            pass
+                    except Exception:
+                        pass
+                # Do not append a Sources footer; frontend will render footnotes from markers
 
                 # Step 3: Apply writing style if configured
-                if agent.writing_style:
-                    answer = await self._apply_style(answer, agent.writing_style, trace)
+                if agent.writing_style and answer:
+                    styled = await self._apply_style(answer, agent.writing_style, trace)
+                    # Validate styled answer; if it loses citations/sources, keep original
+                    styled_norm = (styled or "").lower()
+                    raw_norm = (raw_answer or "").lower()
+                    insufficient_in_styled = "insufficient context" in styled_norm
+                    insufficient_in_raw = "insufficient context" in raw_norm
+                    try:
+                        logger.info(
+                            "librarian_style_output_preview: %s",
+                            (styled[:400] + "…") if (styled and len(styled) > 400) else (styled or "<empty>"),
+                        )
+                    except Exception:
+                        pass
+                    if self._looks_grounded(styled) and not (insufficient_in_styled and not insufficient_in_raw):
+                        answer = styled
+                        logger.info("librarian_style_validation: accepted styled answer")
+                    else:
+                        logger.info(
+                            "librarian_style_validation: reverted to unstyled answer (grounding=%s, styled_insufficient=%s, raw_insufficient=%s)",
+                            str(self._looks_grounded(styled)),
+                            str(insufficient_in_styled),
+                            str(insufficient_in_raw),
+                        )
 
         # Return response based on mode
         return LibrarianQueryResponse(
@@ -135,6 +215,7 @@ class LibrarianOrchestrator:
         library_item_ids: list[int] | None,
         top_k: int,
         trace: list[dict[str, Any]],
+        score_threshold: float | None = None,
     ) -> list[dict[str, Any]]:
         """
         Retrieve relevant chunks from PDFs.
@@ -156,7 +237,12 @@ class LibrarianOrchestrator:
             ontology_id=ontology_id,
             library_item_ids=library_item_ids,
             top_k=top_k,
-            score_threshold=0.3,  # Lower threshold for book content
+            score_threshold=score_threshold if score_threshold is not None else 0.3,
+        )
+
+        # Enrich chunks with neighbor pages to improve context quality
+        chunks = await self.pdf_embedding_service.enrich_chunks_with_neighbors(
+            chunks
         )
 
         if trace is not None:
@@ -206,13 +292,93 @@ class LibrarianOrchestrator:
         # Generate answer
         prompt = ANSWER_PROMPT.format(query=query, chunks=chunks_text)
 
-        response = await self.llm_client.chat_completion(
-            messages=[{"role": "user", "content": prompt}],
-            model=self.answer_model,
-            temperature=0.3,  # Lower temperature for factual accuracy
+        system_msg = (
+            "You must answer ONLY using the provided book excerpts. "
+            "If the excerpts are insufficient, reply exactly: 'Insufficient context.' "
+            "Always be factual and include page numbers from the sources."
         )
 
-        answer = response["choices"][0]["message"]["content"]
+        # Log prompt for debugging
+        try:
+            logger.info("librarian_answer_prompt:\n%s", prompt[:2000])
+        except Exception:
+            pass
+
+        answer = await self.llm_client.chat(
+            model=self.answer_model,
+            messages=[
+                {"role": "system", "content": system_msg},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.1,  # Very low for grounded answers
+        )
+
+        # Simple guardrail: if model returns ungrounded fluff, fall back to excerpt summary
+        normalized = (answer or "").lower()
+        if not answer or (
+            "nothing" in normalized and "context" not in normalized and len(chunks) > 0
+        ):
+            logger.info("librarian_guardrail_fallback: regenerating from chunks summary")
+            parts = []
+            for i, ch in enumerate(chunks[:5], 1):
+                ref = ch.page_url or (ch.pdf_url + f"#page={ch.page_number}" if ch.pdf_url else f"page {ch.page_number}")
+                parts.append(f"- (p.{ch.page_number}) {ch.text[:220]}… [source: {ref}]")
+            answer = (
+                "Based on the retrieved sources, here is a concise summary relevant to your question:\n\n"
+                + "\n".join(parts)
+            )
+
+        return answer
+
+    def _decorate_answer_with_sources(
+        self, answer: str, chunks: list[RetrievedChunk]
+    ) -> str:
+        """Embed page sources inline by adding <a> links near sentence ends.
+
+        Strategy: split answer into sentences; append an anchor for the first
+        N sentences corresponding to the top-N chunks.
+        """
+        if not chunks or not answer:
+            return answer
+        # Split sentences conservatively
+        import re
+
+        sentences = re.split(r"(\S[^.!?]*[.!?])", answer)
+        # Reconstruct while injecting anchors after some sentences
+        out: list[str] = []
+        ci = 0
+        for part in sentences:
+            if not part:
+                continue
+            if ci < len(chunks) and re.search(r"[.!?]$", part.strip()):
+                ch = chunks[ci]
+                label = f"page {ch.page_number}"
+                href = ch.page_url or (ch.pdf_url + f"#page={ch.page_number}" if ch.pdf_url else None)
+                # Lightweight footnote marker; frontend will render actual link/footnote UI
+                if href:
+                    marker = (
+                        f'<sup class="src" data-item="{ch.library_item_id}" '
+                        f'data-page="{ch.page_number}" data-url="{href}">[{label}]</sup>'
+                    )
+                else:
+                    marker = (
+                        f'<sup class="src" data-item="{ch.library_item_id}" '
+                        f'data-page="{ch.page_number}">[{label}]</sup>'
+                    )
+                out.append(part + " " + marker)
+                ci += 1
+            else:
+                out.append(part)
+        return "".join(out)
+
+    @staticmethod
+    def _looks_grounded(text: str | None) -> bool:
+        """Heuristic: ensure answer references pages/links to consider grounded."""
+        if not text:
+            return False
+        lower = text.lower()
+        has_page = "page" in lower or "#page=" in lower or "sources:" in lower
+        return has_page
 
         if trace is not None:
             trace.append(
@@ -252,13 +418,21 @@ class LibrarianOrchestrator:
 
         prompt = STYLE_PROMPT.format(answer=answer, writing_style=writing_style)
 
-        response = await self.llm_client.chat_completion(
-            messages=[{"role": "user", "content": prompt}],
-            model=self.style_model,
-            temperature=0.5,
+        system_msg = (
+            "Rewrite the answer to match the style, but PRESERVE the original meaning, structure,"
+            " citations, and page references exactly. Do NOT add or remove facts."
+            " Do NOT change citations or remove the Sources section. Do NOT replace the answer with"
+            " 'Insufficient context' if the original answer contained content."
         )
 
-        styled_answer = response["choices"][0]["message"]["content"]
+        styled_answer = await self.llm_client.chat(
+            model=self.style_model,
+            messages=[
+                {"role": "system", "content": system_msg},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.3,
+        )
 
         if trace is not None:
             trace.append(

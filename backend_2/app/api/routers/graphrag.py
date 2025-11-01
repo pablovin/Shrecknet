@@ -153,3 +153,27 @@ async def ensure_index(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
         )
+
+
+@router.post("/embed/ontology/backfill-chunks", response_model=EmbedOntologyResponse)
+async def backfill_chunks(
+    request: EmbedOntologyRequest,
+    graph_session: AsyncNeo4jSession = Depends(get_neo4j_session),
+    current_user: User = Depends(get_current_active_admin_or_world_builder),
+) -> EmbedOntologyResponse:
+    """
+    Create chunk embeddings only for large-text entities within an ontology.
+
+    Requires admin or world_builder role.
+    """
+    service = EmbeddingService(graph_session)
+    try:
+        await service.ensure_chunk_vector_index()
+        result = await service.backfill_chunks(
+            request.ontology_id, batch_size=request.batch_size
+        )
+        return EmbedOntologyResponse(**result)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
+        )

@@ -79,10 +79,10 @@ def embed_pdf_book(
         )
 
         # Get library item to find PDF path
-        from app.db.session import async_session_maker
+        from app.db.session import AsyncSessionMaker
 
         async def get_library_item():
-            async with async_session_maker() as session:
+            async with AsyncSessionMaker() as session:
                 repo = LibraryRepository(session)
                 return await repo.get_item_by_id(library_item_id)
 
@@ -137,7 +137,7 @@ def embed_pdf_book(
         )
 
         async def update_item():
-            async with async_session_maker() as session:
+            async with AsyncSessionMaker() as session:
                 repo = LibraryRepository(session)
                 item = await repo.get_item_by_id(library_item_id)
                 if item:

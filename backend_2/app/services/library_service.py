@@ -92,24 +92,28 @@ class LibraryService:
         await self._write_pdf(pdf, relative_path)
         item.pdf_path = relative_path.as_posix()
 
-        # Extract metadata from PDF if auto_extract_metadata is True
+        # Extract metadata asynchronously via Celery if requested
         if auto_extract_metadata:
-            absolute_path = self.base_path / relative_path
-            metadata = await self.extract_pdf_metadata(absolute_path)
+            try:
+                from app.tasks.library_metadata import extract_metadata
 
-            # Only update if the current value is None or default
-            if not title or title == "Untitled":
-                item.title = metadata.get("title") or title or "Untitled"
-            if not authors:
-                item.authors = metadata.get("authors")
-            if not description:
-                item.description = metadata.get("description")
-            if not cover_url:
-                extracted_cover = await self.extract_pdf_cover_image(
-                    absolute_path, ontology_id, item.id
-                )
-                if extracted_cover:
-                    item.cover_url = extracted_cover
+                extract_metadata.delay(item.id)
+            except Exception:
+                # Fallback to synchronous extraction if Celery is unavailable
+                absolute_path = self.base_path / relative_path
+                metadata = await self.extract_pdf_metadata(absolute_path)
+                if not title or title == "Untitled":
+                    item.title = metadata.get("title") or title or "Untitled"
+                if not authors:
+                    item.authors = metadata.get("authors")
+                if not description:
+                    item.description = metadata.get("description")
+                if not cover_url:
+                    extracted_cover = await self.extract_pdf_cover_image(
+                        absolute_path, ontology_id, item.id
+                    )
+                    if extracted_cover:
+                        item.cover_url = extracted_cover
 
         await self.repository.save(item)
         await self.session.commit()

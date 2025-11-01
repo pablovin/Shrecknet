@@ -140,3 +140,21 @@ async def delete_chat(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Chat not found",
         )
+
+
+@router.get("/{chat_id}/file", response_model=dict)
+async def get_chat_file(
+    chat_id: str,
+    current_user: User = Depends(get_current_user),
+    db_session: AsyncSession = Depends(get_db_session),
+) -> dict:
+    """
+    Retrieve the filesystem chat history JSON for a chat.
+
+    Returns a JSON object with keys: user_id, agent_id, chat_id, created_at, messages[].
+    """
+    service = ElderChatService(db_session)
+    data = await service.read_chat_file(chat_id=chat_id, user_id=current_user.id)
+    if data is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Chat file not found")
+    return data

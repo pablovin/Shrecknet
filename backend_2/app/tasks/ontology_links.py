@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 from typing import Any
+import re
+import logging
 
 from neo4j import AsyncSession
 
@@ -25,6 +27,7 @@ settings = get_settings()
 async def _link_instance_entities(instance_id: str, job_id: int) -> None:
     driver = get_driver()
     async with driver.session(database=settings.neo4j_database) as session:
+        logger = logging.getLogger("ontology_linker")
         # Update progress: fetching entities
         await update_job_progress(job_id, 0.1, {"status": "fetching entities"})
 
@@ -38,31 +41,138 @@ async def _link_instance_entities(instance_id: str, job_id: int) -> None:
             job_id, 0.3, {"status": "building alias map", "entity_count": len(records)}
         )
 
+        # Build alias map from ALL instances under the same ontology_id
         alias_map: dict[str, list[str]] = {}
-        for record in records:
-            alias = record.get("alias") or ""
-            entity_id = record["entity_id"]
-            normalized = alias.lower()
-            alias_map.setdefault(normalized, []).append(entity_id)
+        # Resolve all aliases for the ontology shared by this instance
+        ont_res = await session.run(
+            """
+            MATCH (inst:OntologyInstance {instance_id: $instance_id})
+            RETURN inst.ontology_id AS ontology_id
+            """,
+            instance_id=instance_id,
+        )
+        ont_row = await ont_res.single()
+        ontology_id = ont_row["ontology_id"] if ont_row else None
+        if ontology_id is not None:
+            alias_res = await session.run(
+                """
+                MATCH (inst:OntologyInstance {ontology_id: $ontology_id})-[:HAS_ENTITY]->(e:EntityInstance)
+                RETURN e.entity_instance_id AS entity_id, e.alias AS alias, inst.instance_id AS instance_id
+                """,
+                ontology_id=ontology_id,
+            )
+            alias_rows = await alias_res.data()
+            for row in alias_rows:
+                alias = row.get("alias") or ""
+                entity_id = row["entity_id"]
+                target_instance_id = row.get("instance_id")
+                normalized = alias.lower().strip()
+                if not normalized:
+                    continue
+                def _append(key: str) -> None:
+                    alias_map.setdefault(key, []).append(
+                        {"entity_id": entity_id, "instance_id": target_instance_id, "alias": alias}
+                    )
+                _append(normalized)
+                # Also map word tokens to this entity id for simple similarity
+                tokens = [t for t in re.split(r"[^a-z0-9]+", normalized) if t]
+                for token in tokens:
+                    if len(token) >= 3 and token not in {
+                        "mr","mrs","ms","miss","dr","prof","professor","sir","dame",
+                        "the","and","of","in","on","at","for","to","a","an","with","by","from"
+                    }:
+                        _append(token)
+                # Add multi-word n-grams (length>=2) excluding honorifics and common stopwords
+                filtered = [
+                    t
+                    for t in tokens
+                    if t
+                    not in {
+                        "mr",
+                        "mrs",
+                        "ms",
+                        "miss",
+                        "dr",
+                        "prof",
+                        "professor",
+                        "sir",
+                        "dame",
+                        "the",
+                        "and",
+                        "of",
+                        "in",
+                        "on",
+                        "at",
+                        "for",
+                        "to",
+                        "a",
+                        "an",
+                        "with",
+                        "by",
+                        "from",
+                    }
+                ]
+                for i in range(len(filtered)):
+                    for j in range(i + 2, len(filtered) + 1):
+                        gram = " ".join(filtered[i:j])
+                        _append(gram)
 
         pattern = build_alias_pattern(alias_map.keys())
+        alias_keys_sample = list(alias_map.keys())[:10]
+        # Map of key -> first 2 entity ids for insight
+        alias_map_sample = {k: [{"entity_id": t.get("entity_id"), "instance_id": t.get("instance_id"), "alias": t.get("alias") } for t in v[:2]] for k, v in list(alias_map.items())[:10]}
+        logger.info(
+            "link: instance=%s entities=%d alias_keys=%d sample_keys=%s sample_map=%s",
+            instance_id,
+            len(records),
+            len(alias_map),
+            alias_keys_sample,
+            alias_map_sample,
+        )
 
         # Update progress: linking text
         await update_job_progress(job_id, 0.5, {"status": "linking text"})
 
         payload: list[dict[str, Any]] = []
+        entities_linked = 0
         for record in records:
             entity_id = record["entity_id"]
             raw_text = record.get("text")
             raw_auto = record.get("autogenerated_text")
             alias = record.get("alias") or ""
             normalized = alias.lower()
+            # Log text lengths to ensure full-text processing
+            logger.info(
+                "link: instance=%s entity=%s text_len=%s auto_len=%s pattern=%s",
+                instance_id,
+                entity_id,
+                len(raw_text) if isinstance(raw_text, str) else None,
+                len(raw_auto) if isinstance(raw_auto, str) else None,
+                bool(pattern is not None),
+            )
+
             text_linked = link_text(
                 raw_text, alias_map, entity_id, instance_id, pattern
             )
             auto_linked = link_text(
                 raw_auto, alias_map, entity_id, instance_id, pattern
             )
+            if (text_linked is not None and raw_text is not None and text_linked != raw_text) or (
+                auto_linked is not None and raw_auto is not None and auto_linked != raw_auto
+            ):
+                entities_linked += 1
+                logger.info(
+                    "link: instance=%s entity=%s alias=%s updated_text=%s updated_auto=%s",
+                    instance_id,
+                    entity_id,
+                    normalized,
+                    bool(text_linked is not None and raw_text is not None and text_linked != raw_text),
+                    bool(
+                        auto_linked is not None
+                        and raw_auto is not None
+                        and auto_linked != raw_auto
+                    ),
+                )
             payload.append(
                 {
                     "entity_id": entity_id,
@@ -80,15 +190,28 @@ async def _link_instance_entities(instance_id: str, job_id: int) -> None:
             """
             UNWIND $payload AS item
             MATCH (e:EntityInstance {entity_instance_id: item.entity_id})
-            SET e.text_linked = item.text_linked,
+            SET e.text = item.text_linked,
+                e.text_linked = item.text_linked,
                 e.autogenerated_text_linked = item.autogenerated_text_linked
             """,
             payload=payload,
         )
 
         # Final progress update
+        logger.info(
+            "link: instance=%s completed entities=%d linked=%d",
+            instance_id,
+            len(payload),
+            entities_linked,
+        )
         await update_job_progress(
-            job_id, 0.95, {"status": "completed", "entities_linked": len(payload)}
+            job_id,
+            0.95,
+            {
+                "status": "completed",
+                "entities_linked": entities_linked,
+                "entities_total": len(payload),
+            },
         )
 
 

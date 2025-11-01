@@ -119,10 +119,30 @@ class PdfEmbeddingService:
             # Ensure vector index exists
             await self.ensure_vector_index()
 
-            # Read PDF content
+            # Read PDF content (prefer PyMuPDF for better text extraction)
             logger.info(f"Reading PDF from {pdf_path}")
-            reader = PdfReader(str(pdf_path))
-            total_pages = len(reader.pages)
+            use_fitz = False
+            try:
+                import fitz  # PyMuPDF
+
+                doc = fitz.open(str(pdf_path))
+                total_pages = len(doc)
+                use_fitz = True
+            except Exception:
+                logger.info("PyMuPDF not available; falling back to PyPDF2 for reading")
+                doc = None
+                reader = PdfReader(str(pdf_path))
+                total_pages = len(reader.pages)
+            # Try to get display page labels (may differ from index+1) when using PyPDF2
+            page_labels: list[str] | None = None
+            if not use_fitz:
+                try:
+                    if hasattr(reader, "get_page_labels"):
+                        labels = reader.get_page_labels()
+                        if isinstance(labels, list) and labels:
+                            page_labels = [str(l) for l in labels]
+                except Exception:
+                    page_labels = None
 
             chunks_created = 0
             chunks_failed = 0
@@ -135,15 +155,29 @@ class PdfEmbeddingService:
                 # Extract text from pages in this batch
                 for page_num in range(start_page, end_page):
                     try:
-                        page = reader.pages[page_num]
-                        text = page.extract_text()
+                        if use_fitz and doc is not None:
+                            page = doc[page_num]
+                            text = page.get_text("text")
+                        else:
+                            page = reader.pages[page_num]
+                            text = page.extract_text()
 
                         if text and text.strip():
                             # Create chunk data
+                            # Determine display page number using labels if available
+                            if page_labels and page_num < len(page_labels):
+                                label = page_labels[page_num]
+                                try:
+                                    display_page = int(label)
+                                except Exception:
+                                    display_page = page_num + 1
+                            else:
+                                display_page = page_num + 1
+
                             chunk = {
                                 "library_item_id": library_item_id,
                                 "ontology_id": ontology_id,
-                                "page_number": page_num + 1,  # 1-indexed
+                                "page_number": display_page,
                                 "text": text.strip(),
                                 "chunk_index": page_num,
                             }
@@ -166,6 +200,13 @@ class PdfEmbeddingService:
                     except Exception as e:
                         logger.error(f"Failed to embed batch: {e}")
                         chunks_failed += len(batch_chunks)
+
+            # Close PyMuPDF document if used
+            try:
+                if use_fitz and doc is not None:
+                    doc.close()
+            except Exception:
+                pass
 
             return {
                 "library_item_id": library_item_id,
@@ -214,7 +255,7 @@ class PdfEmbeddingService:
                 ontology_id=chunk["ontology_id"],
                 page_number=chunk["page_number"],
                 text=chunk["text"],
-                embedding=embedding.tolist(),
+                embedding=embedding,
                 model=self.embedding_service.model_id,
                 dim=self.embedding_service.embed_dim,
             )
@@ -319,7 +360,7 @@ class PdfEmbeddingService:
 
         result = await self.graph_session.run(
             query,
-            query_embedding=query_embedding.tolist(),
+            query_embedding=query_embedding,
             top_k=top_k * 2,  # Fetch more to account for filtering
             ontology_id=ontology_id,
             library_item_ids=library_item_ids,
@@ -327,16 +368,83 @@ class PdfEmbeddingService:
         )
 
         chunks = []
+        # Build base URL for media
+        base_url = (
+            settings.media_public_url.rstrip("/")
+            if settings.media_public_url
+            else settings.media_base_url.rstrip("/")
+        )
         async for record in result:
+            li = record["library_item_id"]
+            page = record["page_number"]
+            pdf_url = f"{base_url}/library/{ontology_id}/{li}/content.pdf"
+            page_url = f"{pdf_url}#page={page}"
             chunks.append(
                 {
-                    "library_item_id": record["library_item_id"],
+                    "library_item_id": li,
                     "chunk_index": record["chunk_index"],
-                    "page_number": record["page_number"],
+                    "page_number": page,
                     "text": record["text"],
                     "score": record["score"],
+                    "pdf_url": pdf_url,
+                    "page_url": page_url,
                 }
             )
 
         # Return top_k results
         return chunks[:top_k]
+
+    async def fetch_neighbor_text(
+        self, library_item_id: int, page_number: int
+    ) -> dict[int, str]:
+        """Fetch text for neighboring pages (page-1 and page+1) for context."""
+        query = """
+        MATCH (c:PdfChunk {library_item_id: $item_id})
+        WHERE c.page_number IN [$p1, $p2]
+        RETURN c.page_number AS page_number, c.text AS text
+        """
+        p1 = page_number - 1
+        p2 = page_number + 1
+        result = await self.graph_session.run(
+            query, item_id=library_item_id, p1=p1, p2=p2
+        )
+        rows = await result.data()
+        out: dict[int, str] = {}
+        for r in rows:
+            pn = r.get("page_number")
+            txt = r.get("text") or ""
+            if pn:
+                out[int(pn)] = txt
+        return out
+
+    async def enrich_chunks_with_neighbors(
+        self, chunks: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Append neighbor page text to each chunk's text for better context.
+
+        Keeps the main page_number for citation. Adds separators before/after.
+        """
+        enriched: list[dict[str, Any]] = []
+        for ch in chunks:
+            try:
+                neighbors = await self.fetch_neighbor_text(
+                    ch["library_item_id"], ch["page_number"]
+                )
+                parts = [ch.get("text", "").strip()]
+                if neighbors.get(ch["page_number"] - 1):
+                    parts.insert(
+                        0,
+                        f"[Neighbor p.{ch['page_number']-1}] "
+                        + neighbors[ch["page_number"] - 1].strip(),
+                    )
+                if neighbors.get(ch["page_number"] + 1):
+                    parts.append(
+                        f"[Neighbor p.{ch['page_number']+1}] "
+                        + neighbors[ch["page_number"] + 1].strip()
+                    )
+                ch2 = dict(ch)
+                ch2["text"] = "\n\n".join([p for p in parts if p])
+                enriched.append(ch2)
+            except Exception:
+                enriched.append(ch)
+        return enriched

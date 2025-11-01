@@ -2,13 +2,15 @@
 
 DECOMPOSE_PROMPT = """You are an expert query analyzer. Break down the following query into 1-5 focused sub-queries that will help answer the original question comprehensively.
 
-The query is related to ontologies with IDs: {ontology_ids}
+The query is related to the following ontology instances (name and hints):
+{ontology_instances}
 
 Original Query: {query}
 
 Guidelines:
 - Create specific, focused sub-queries
 - Each sub-query should target a distinct aspect
+- Prefer entity and place names mentioned or hinted in the listed instances
 - If the query is already focused, you may return just 1 sub-query
 - Maximum 5 sub-queries
 - Return ONLY the sub-queries, one per line, without numbering or explanations

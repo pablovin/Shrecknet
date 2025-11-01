@@ -34,8 +34,8 @@ async def get_llm_client() -> OpenAIClient:
 
     return OpenAIClient(
         api_key=settings.openai_api_key,
-        timeout=60,
-        max_retries=3,
+        timeout=15,
+        max_retries=2,
     )
 
 
@@ -143,10 +143,36 @@ async def query_elder(
             f"Executing Elder query for agent {agent_id} (user {_current_user.id}): {request.query[:100]}"
         )
 
-        response = await orchestrator.execute(agent, request, chat_history)
+        # Build entities hint from SQL ontology definitions (names + descriptions)
+        try:
+            from sqlalchemy import select
+            from app.models.ontology import OntologyEntity
+
+            if agent.ontologies:
+                ontology_ids = [o.id for o in agent.ontologies]
+                stmt = select(OntologyEntity).where(
+                    OntologyEntity.ontology_id.in_(ontology_ids)
+                )
+                res = await db_session.execute(stmt)
+                entities = res.scalars().all()
+                lines = []
+                for ent in entities[:100]:  # cap for prompt size
+                    desc = (ent.description or "").strip().replace("\n", " ")
+                    if len(desc) > 200:
+                        desc = desc[:200] + "…"
+                    lines.append(f"- {ent.name}: {desc}")
+                entities_hint = "\n".join(lines) if lines else None
+            else:
+                entities_hint = None
+        except Exception:
+            entities_hint = None
+
+        enriched_request = request.model_copy(update={"entities_hint": entities_hint})
+
+        response = await orchestrator.execute(agent, enriched_request, chat_history)
 
         # Save to chat history if chat_id provided
-        if request.chat_id and response.answer:
+        if request.chat_id and response.answer is not None:
             chat_service = ElderChatService(db_session)
             # Save user query
             await chat_service.add_message_to_chat(
@@ -156,11 +182,38 @@ async def query_elder(
                 content=request.query,
             )
             # Save assistant response
+            # Build metadata when trace is requested to persist full debug info
+            meta: dict | None = None
+            if request.include_trace:
+                subqueries: list[str] = []
+                if response.trace:
+                    for step in response.trace:
+                        try:
+                            step_name = getattr(step, "step", None) or step.get("step")
+                            data = getattr(step, "data", None) or step.get("data")
+                        except Exception:
+                            step_name = None
+                            data = None
+                        if step_name == "decompose" and data and "subqueries" in data:
+                            subqueries = data["subqueries"]
+                            break
+                # Include references via context and subanswers
+                meta = {
+                    "trace": [
+                        getattr(t, "__dict__", t) for t in (response.trace or [])
+                    ],
+                    "subqueries": subqueries,
+                    "context": [getattr(c, "__dict__", c) for c in (response.context or [])],
+                    "subanswers": [
+                        getattr(sa, "__dict__", sa) for sa in (response.subanswers or [])
+                    ],
+                }
             await chat_service.add_message_to_chat(
                 chat_id=request.chat_id,
                 user_id=_current_user.id,
                 role="assistant",
-                content=response.answer,
+                content=response.answer or "",
+                metadata=meta,
             )
 
         logger.info(f"Elder query completed for agent {agent_id}")

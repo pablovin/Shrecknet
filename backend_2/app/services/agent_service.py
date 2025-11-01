@@ -109,23 +109,27 @@ class AgentService:
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Agent not found",
             )
-
-        # Extract ontology IDs before commit since we lose access after
-        ontology_ids = [ont.id for ont in agent.ontologies]
-
+        # Commit and re-fetch eagerly to avoid async lazy-load after commit
         await self.session.commit()
 
+        refreshed = await self.repository.get_by_id(agent.id)
+        if not refreshed:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Agent not found after update",
+            )
+
         return AgentRead(
-            id=agent.id,
-            name=agent.name,
-            avatar_url=agent.avatar_url,
-            description=agent.description,
-            writing_style=agent.writing_style,
-            job=agent.job,
-            active=agent.active,
-            created_at=agent.created_at,
-            updated_at=agent.updated_at,
-            ontology_ids=ontology_ids,
+            id=refreshed.id,
+            name=refreshed.name,
+            avatar_url=refreshed.avatar_url,
+            description=refreshed.description,
+            writing_style=refreshed.writing_style,
+            job=refreshed.job,
+            active=refreshed.active,
+            created_at=refreshed.created_at,
+            updated_at=refreshed.updated_at,
+            ontology_ids=[ont.id for ont in refreshed.ontologies],
         )
 
     async def delete_agent(self, agent_id: str) -> None:
@@ -148,22 +152,26 @@ class AgentService:
                 detail="Agent or ontology not found",
             )
 
-        # Extract ontology IDs before commit since we lose access after
-        ontology_ids = [ont.id for ont in agent.ontologies]
-
         await self.session.commit()
 
+        refreshed = await self.repository.get_by_id(agent.id)
+        if not refreshed:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Agent not found after attach",
+            )
+
         return AgentRead(
-            id=agent.id,
-            name=agent.name,
-            avatar_url=agent.avatar_url,
-            description=agent.description,
-            writing_style=agent.writing_style,
-            job=agent.job,
-            active=agent.active,
-            created_at=agent.created_at,
-            updated_at=agent.updated_at,
-            ontology_ids=ontology_ids,
+            id=refreshed.id,
+            name=refreshed.name,
+            avatar_url=refreshed.avatar_url,
+            description=refreshed.description,
+            writing_style=refreshed.writing_style,
+            job=refreshed.job,
+            active=refreshed.active,
+            created_at=refreshed.created_at,
+            updated_at=refreshed.updated_at,
+            ontology_ids=[ont.id for ont in refreshed.ontologies],
         )
 
     async def detach_ontology(self, agent_id: str, ontology_id: int) -> AgentRead:
@@ -175,22 +183,26 @@ class AgentService:
                 detail="Agent not found",
             )
 
-        # Extract ontology IDs before commit since we lose access after
-        ontology_ids = [ont.id for ont in agent.ontologies]
-
         await self.session.commit()
 
+        refreshed = await self.repository.get_by_id(agent.id)
+        if not refreshed:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Agent not found after detach",
+            )
+
         return AgentRead(
-            id=agent.id,
-            name=agent.name,
-            avatar_url=agent.avatar_url,
-            description=agent.description,
-            writing_style=agent.writing_style,
-            job=agent.job,
-            active=agent.active,
-            created_at=agent.created_at,
-            updated_at=agent.updated_at,
-            ontology_ids=ontology_ids,
+            id=refreshed.id,
+            name=refreshed.name,
+            avatar_url=refreshed.avatar_url,
+            description=refreshed.description,
+            writing_style=refreshed.writing_style,
+            job=refreshed.job,
+            active=refreshed.active,
+            created_at=refreshed.created_at,
+            updated_at=refreshed.updated_at,
+            ontology_ids=[ont.id for ont in refreshed.ontologies],
         )
 
     @staticmethod

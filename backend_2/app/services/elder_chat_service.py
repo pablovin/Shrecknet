@@ -14,6 +14,7 @@ from app.jobs.elder.chat_schemas import (
 )
 from app.repositories.agent_repository import AgentRepository
 from app.repositories.elder_chat_repository import ElderChatRepository
+from app.utils.chat_store import append_message, delete_chat_file, init_chat_file, read_chat
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +65,12 @@ class ElderChatService:
         )
 
         await self.session.commit()
+
+        # Initialize filesystem chat log
+        try:
+            init_chat_file(user_id, chat.agent_id, chat.id)
+        except Exception:
+            logger.warning("Failed to init chat file for %s", chat.id)
 
         logger.info(
             f"Created chat {chat.id} for user {user_id} with agent {chat_data.agent_id}"
@@ -173,11 +180,20 @@ class ElderChatService:
         if success:
             await self.session.commit()
             logger.info(f"Deleted chat {chat_id} for user {user_id}")
+            try:
+                delete_chat_file(user_id, chat.agent_id, chat_id)
+            except Exception:
+                logger.warning("Failed to delete chat file for %s", chat_id)
 
         return success
 
     async def add_message_to_chat(
-        self, chat_id: str, user_id: int, role: str, content: str
+        self,
+        chat_id: str,
+        user_id: int,
+        role: str,
+        content: str,
+        metadata: dict | None = None,
     ) -> bool:
         """
         Add a message to chat history.
@@ -189,11 +205,21 @@ class ElderChatService:
         if not chat or chat.user_id != user_id:
             return False
 
-        # Add message
-        await self.chat_repo.add_message(chat_id=chat_id, role=role, content=content)
-        await self.session.commit()
+        # Append to filesystem log (source of truth for history)
+        try:
+            append_message(user_id, chat.agent_id, chat_id, role, content, metadata)
+        except Exception:
+            logger.warning("Failed to append chat file for %s", chat_id)
 
+        # Optionally skip DB history persistence to rely solely on JSON files
         return True
+
+    async def read_chat_file(self, chat_id: str, user_id: int) -> dict | None:
+        """Read chat history JSON from filesystem if available."""
+        chat = await self.chat_repo.get_by_id(chat_id)
+        if not chat or chat.user_id != user_id:
+            return None
+        return read_chat(user_id, chat.agent_id, chat_id)
 
     async def get_chat_history_for_context(
         self, chat_id: str, user_id: int, limit: int = 20

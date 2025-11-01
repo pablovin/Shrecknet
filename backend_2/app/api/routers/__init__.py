@@ -12,6 +12,7 @@ from app.api.routers import (
     imports,
     library,
     librarian,
+    legacy_export,
     media,
     notes,
     notifications,
@@ -39,5 +40,6 @@ def get_api_router() -> APIRouter:
     router.include_router(elder.router)
     router.include_router(elder_chats.router)
     router.include_router(librarian.router)
+    router.include_router(legacy_export.router)
     router.include_router(background_jobs.router)
     return router

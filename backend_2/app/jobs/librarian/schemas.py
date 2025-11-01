@@ -29,6 +29,12 @@ class LibrarianQueryRequest(BaseModel):
     include_trace: bool = Field(
         default=False, description="Include execution trace for debugging"
     )
+    score_threshold: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description="Optional override for similarity score threshold",
+    )
 
 
 class RetrievedChunk(BaseModel):
@@ -38,6 +44,8 @@ class RetrievedChunk(BaseModel):
     page_number: int
     text: str
     score: float
+    pdf_url: str | None = None
+    page_url: str | None = None
 
 
 class LibrarianQueryResponse(BaseModel):

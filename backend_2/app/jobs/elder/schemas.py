@@ -45,8 +45,16 @@ class ElderQueryRequest(BaseModel):
         None, ge=1, le=50, description="Number of results per sub-query"
     )
     include_trace: bool = Field(False, description="Include execution trace")
+    fast: bool = Field(
+        False,
+        description="Fast mode: single retrieval + single LLM pass (no decompose/validate/style)",
+    )
     chat_id: Optional[str] = Field(
         None, description="Optional chat ID to use conversation history as context"
+    )
+    entities_hint: Optional[str] = Field(
+        None,
+        description="Optional pre-built list of ontology entities (name + description) to guide decomposition",
     )
 
 

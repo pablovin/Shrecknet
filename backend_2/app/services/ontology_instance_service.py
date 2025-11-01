@@ -95,7 +95,6 @@ class OntologyInstanceService:
                     instance_id: $instance_id,
                     ontology_id: $ontology_id,
                     name: $name,
-                    description: $description,
                     created_at: $created_at,
                     updated_at: $updated_at
                 })
@@ -103,7 +102,6 @@ class OntologyInstanceService:
                 instance_id=instance_id,
                 ontology_id=payload.ontology_id,
                 name=payload.name,
-                description=payload.description,
                 created_at=timestamp,
                 updated_at=timestamp,
             )
@@ -272,7 +270,7 @@ class OntologyInstanceService:
             params["ontology_id"] = ontology_id
         if search:
             filters.append(
-                "(toLower(i.name) CONTAINS toLower($search) OR toLower(coalesce(i.description,'')) CONTAINS toLower($search))"
+                "toLower(i.name) CONTAINS toLower($search)"
             )
             params["search"] = search
         if filters:
@@ -362,7 +360,6 @@ class OntologyInstanceService:
             instance_id=instance_node["instance_id"],
             ontology_id=instance_node["ontology_id"],
             name=instance_node.get("name"),
-            description=instance_node.get("description"),
             created_at=_parse_dt(instance_node.get("created_at")),
             updated_at=_parse_dt(instance_node.get("updated_at")),
             entities=[
@@ -413,12 +410,10 @@ class OntologyInstanceService:
             """
             MATCH (i:OntologyInstance {instance_id: $instance_id})
             SET i.name = coalesce($name, i.name),
-                i.description = coalesce($description, i.description),
                 i.updated_at = $updated_at
             """,
             instance_id=instance_id,
             name=payload.name,
-            description=payload.description,
             updated_at=timestamp,
         )
 

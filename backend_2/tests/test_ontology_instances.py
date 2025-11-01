@@ -116,7 +116,6 @@ async def test_create_ontology_instance_flow(client):
     instance_payload = {
         "ontology_id": ontology_id,
         "name": "Graph Instance",
-        "description": "Instance description",
         "entities": [
             {
                 "definition_id": entity_id,

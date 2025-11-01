@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import time
 from typing import Any, Optional
 
 from app.integrations.llm.model_policy import LLMTask, ModelPolicy
@@ -52,8 +53,8 @@ class ElderOrchestrator:
         self.model_policy = model_policy
         self.graph_retriever = graph_retriever
         self.default_top_k = default_top_k
-        self.max_subqueries = 5
-        self.max_concurrency = 5
+        self.max_subqueries = 3
+        self.max_concurrency = 3
 
     async def execute(
         self,
@@ -73,39 +74,179 @@ class ElderOrchestrator:
             Query response with answer and/or context
         """
         trace: list[TraceStep] = [] if request.include_trace else []
+        timings: dict[str, float] = {}
+        overall_start = time.monotonic()
         top_k = request.top_k or self.default_top_k
 
         # Get ontology IDs from agent
         ontology_ids = [ont.id for ont in agent.ontologies]
 
+        # Fast path: single retrieval + single generation
+        if request.fast:
+            top_k = min(top_k, 5)
+            model = self.model_policy.get_model(LLMTask.SYNTHESIS)
+            # Retrieve once across ontologies
+            t_retr_start = time.monotonic()
+            chunks = await self.graph_retriever.search(
+                query=request.query, ontology_ids=ontology_ids, top_k=top_k
+            )
+            timings["retrieve"] = time.monotonic() - t_retr_start
+            if not chunks:
+                response = ElderQueryResponse(
+                    agent_id=agent.id,
+                    mode=request.mode,
+                    query=request.query,
+                    subanswers=[],
+                    important_nodes=[],
+                    context=[],
+                    trace=trace if request.include_trace else None,
+                    answer=None,
+                )
+                timings["overall"] = time.monotonic() - overall_start
+                logger.info(
+                    "elder_fast_timing: no_context retrieve=%.3fs overall=%.3fs",
+                    timings.get("retrieve", 0.0),
+                    timings.get("overall", 0.0),
+                )
+                return response
+            # Build a compact context
+            context_snippets = []
+            for c in chunks[:top_k]:
+                text = c.text.strip().replace("\n", " ")
+                if len(text) > 500:
+                    text = text[:500] + "…"
+                context_snippets.append(f"- {text}")
+            compact_context = "\n".join(context_snippets)
+
+            prompt = (
+                "You are a concise assistant. Using the context, answer the question briefly (<=120 words).\n"
+                f"Question: {request.query}\n"
+                f"Context:\n{compact_context}"
+            )
+            t_llm_start = time.monotonic()
+            answer = await self.llm_client.chat(
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.3,
+            )
+            timings["llm_synthesis"] = time.monotonic() - t_llm_start
+
+            # Build response
+            subanswers: list[SubAnswer] = []
+            important_nodes = [c.node_id for c in chunks]
+            response = ElderQueryResponse(
+                agent_id=agent.id,
+                mode=request.mode,
+                query=request.query,
+                subanswers=subanswers,
+                important_nodes=(
+                    important_nodes if request.mode in ("context", "both") else []
+                ),
+                context=chunks if request.mode in ("context", "both") else [],
+                trace=trace if request.include_trace else None,
+                answer=answer if request.mode in ("nl", "both") else None,
+            )
+            timings["overall"] = time.monotonic() - overall_start
+            logger.info(
+                "elder_fast_timing: retrieve=%.3fs, llm=%.3fs, overall=%.3fs",
+                timings.get("retrieve", 0.0),
+                timings.get("llm_synthesis", 0.0),
+                timings.get("overall", 0.0),
+            )
+            return response
+
         # Step 1: Decompose query into sub-queries
+        t_decomp = time.monotonic()
         subqueries = await self._decompose(
-            request.query, ontology_ids, chat_history, trace
+            request.query, ontology_ids, chat_history, trace, request.entities_hint
         )
+        timings["decompose"] = time.monotonic() - t_decomp
+        logger.info("elder_decompose: query='%s' subqueries=%s", request.query, subqueries)
 
         # Step 2: Retrieve context for each sub-query (parallel)
+        t_retrieve = time.monotonic()
         retrieval_results = await self._retrieve(subqueries, ontology_ids, top_k, trace)
+        timings["retrieve"] = time.monotonic() - t_retrieve
+        # Build debug summary of retrieval names per subquery
+        def extract_name(chunk: RetrievedChunk) -> str:
+            txt = (chunk.text or "").splitlines()
+            for line in txt[:3]:
+                if line.lower().startswith("name:"):
+                    return line.split(":", 1)[-1].strip()
+            return "(unknown)"
+        retrieval_summary = [
+            {
+                "subquery": sq,
+                "names": [extract_name(c) for c in chunks[:5]],
+                "context_preview": [
+                    (c.text[:200] + "…") if len(c.text) > 200 else c.text
+                    for c in chunks[:2]
+                ],
+            }
+            for (sq, chunks) in retrieval_results
+        ]
+
+        # If no context retrieved, return without generating an answer
+        total_chunks = sum(len(chunks) for _, chunks in retrieval_results)
+        if total_chunks == 0:
+            important_nodes: list[str] = []
+            context: list[RetrievedChunk] = []
+            # Surface retrieval errors to client via trace even if include_trace=false
+            retrieval_errors = getattr(self.graph_retriever, "last_errors", [])
+            resp_trace = trace if request.include_trace else []
+            if retrieval_errors:
+                resp_trace = resp_trace or []
+                resp_trace.append(
+                    TraceStep(step="retrieval_error", data={"errors": retrieval_errors})
+                )
+            response = ElderQueryResponse(
+                agent_id=agent.id,
+                mode=request.mode,
+                query=request.query,
+                subanswers=[],
+                important_nodes=[],
+                context=[],
+                trace=resp_trace or None,
+            )
+            timings["overall"] = time.monotonic() - overall_start
+            logger.info(
+                "elder_timing: no_context decompose=%.3fs retrieve=%.3fs overall=%.3fs",
+                timings.get("decompose", 0.0),
+                timings.get("retrieve", 0.0),
+                timings.get("overall", 0.0),
+            )
+            return response
 
         # Step 3: Generate sub-answers (parallel)
+        t_subans = time.monotonic()
         subanswers = await self._subanswer(retrieval_results, trace)
+        timings["subanswer"] = time.monotonic() - t_subans
 
         # Step 4: Synthesize final answer if mode includes 'nl'
         answer = None
         if request.mode in ("nl", "both"):
+            t_synth = time.monotonic()
             answer = await self._synthesize(request.query, subanswers, trace)
+            timings["synthesis"] = time.monotonic() - t_synth
 
             # Step 5: Validate answer
+            t_valid = time.monotonic()
             is_valid = await self._validate(request.query, answer, trace)
+            timings["validation"] = time.monotonic() - t_valid
 
             # If validation fails, refine once
             if not is_valid:
+                t_refine = time.monotonic()
                 answer = await self._synthesize(
                     request.query, subanswers, trace, refine=True
                 )
+                timings["refine"] = time.monotonic() - t_refine
 
             # Step 6: Apply writing style if configured
             if agent.writing_style:
+                t_style = time.monotonic()
                 answer = await self._style(answer, agent.writing_style, trace)
+                timings["style"] = time.monotonic() - t_style
 
         # Step 7: Build context and important nodes
         important_nodes, context = self._build_context(subanswers)
@@ -126,6 +267,36 @@ class ElderOrchestrator:
         if request.mode in ("nl", "both"):
             response.answer = answer
 
+        timings["overall"] = time.monotonic() - overall_start
+        logger.info(
+            "elder_timing: decompose=%.3fs, retrieve=%.3fs, subanswer=%.3fs, synthesis=%.3fs, validation=%.3fs, refine=%.3fs, style=%.3fs, overall=%.3fs",
+            timings.get("decompose", 0.0),
+            timings.get("retrieve", 0.0),
+            timings.get("subanswer", 0.0),
+            timings.get("synthesis", 0.0),
+            timings.get("validation", 0.0),
+            timings.get("refine", 0.0),
+            timings.get("style", 0.0),
+            timings.get("overall", 0.0),
+        )
+        # Final verbose debug block
+        try:
+            logger.info("elder_summary_original_query: %s", request.query)
+            logger.info("elder_summary_decompose_prompt:\n%s", prompt)
+            logger.info("elder_summary_subqueries: %s", subqueries)
+            for entry in retrieval_summary:
+                logger.info(
+                    "elder_summary_retrieval subquery='%s' names=%s context_preview=%s",
+                    entry["subquery"],
+                    entry["names"],
+                    entry["context_preview"],
+                )
+            if response.answer:
+                logger.info("elder_summary_synthesis: %s", response.answer)
+            # Validation and style responses are logged earlier as well
+        except Exception:
+            pass
+
         return response
 
     async def _decompose(
@@ -134,6 +305,7 @@ class ElderOrchestrator:
         ontology_ids: list[int],
         chat_history: Optional[list[dict[str, str]]],
         trace: list[TraceStep],
+        entities_hint: Optional[str] = None,
     ) -> list[str]:
         """Decompose query into 1-5 sub-queries."""
         model = self.model_policy.get_model(LLMTask.DECOMPOSE)
@@ -146,18 +318,37 @@ class ElderOrchestrator:
                 messages.append({"role": msg["role"], "content": msg["content"]})
 
         # Add the decomposition prompt
+        # Prefer SQL entities (names+descriptions) if provided by API layer
+        if entities_hint:
+            instances_text = entities_hint
+        else:
+            # Fallback to graph instance summaries
+            try:
+                summaries = await self.graph_retriever.instance_summaries(ontology_ids)
+            except Exception:
+                summaries = []
+            if summaries:
+                instances_text = "\n".join(
+                    [f"- {s['name']}: {s['hint']}" for s in summaries]
+                )
+            else:
+                instances_text = "(no instance summaries available)"
+
         prompt = DECOMPOSE_PROMPT.format(
             query=query,
-            ontology_ids=", ".join(map(str, ontology_ids)) if ontology_ids else "any",
+            ontology_instances=instances_text,
         )
         messages.append({"role": "user", "content": prompt})
 
         try:
+            # Log prompt
+            logger.info("elder_llm_decompose_prompt(model=%s):\n%s", model, "\n".join([m.get("content","") for m in messages]))
             response = await self.llm_client.chat(
                 model=model,
                 messages=messages,
                 temperature=0.7,
             )
+            logger.info("elder_llm_decompose_response: %s", response)
 
             # Parse sub-queries from response (one per line)
             lines = [
@@ -201,25 +392,36 @@ class ElderOrchestrator:
         """Retrieve context for each sub-query in parallel."""
 
         async def retrieve_one(subquery: str) -> tuple[str, list[RetrievedChunk]]:
+            # Use a fresh Neo4j session per subquery to allow safe parallel retrieval
             try:
-                chunks = await self.graph_retriever.search(
-                    query=subquery,
-                    ontology_ids=ontology_ids,
-                    top_k=top_k,
+                from app.graph.neo4j import get_driver
+                from app.core.config import get_settings as _get_settings
+                from app.integrations.retrieval.neo4j_retriever import (
+                    Neo4jGraphRetriever,
                 )
-                return (subquery, chunks)
+
+                driver = get_driver()
+                settings = _get_settings()
+                async with driver.session(database=settings.neo4j_database) as session:
+                    retr = Neo4jGraphRetriever(session)
+                    chunks = await retr.search(
+                        query=subquery,
+                        ontology_ids=ontology_ids,
+                        top_k=top_k,
+                    )
+                    return (subquery, chunks)
             except Exception as e:
                 logger.error(f"Retrieval failed for '{subquery}': {e}")
                 return (subquery, [])
 
-        # Use semaphore to limit concurrency
+        # Bounded parallel retrieval using separate sessions
         semaphore = asyncio.Semaphore(self.max_concurrency)
 
-        async def retrieve_with_limit(sq: str) -> tuple[str, list[RetrievedChunk]]:
+        async def _run_with_limit(sq: str):
             async with semaphore:
                 return await retrieve_one(sq)
 
-        results = await asyncio.gather(*[retrieve_with_limit(sq) for sq in subqueries])
+        results = await asyncio.gather(*[_run_with_limit(sq) for sq in subqueries])
 
         if trace is not None:
             trace.append(
@@ -261,11 +463,13 @@ class ElderOrchestrator:
             )
 
             try:
+                logger.info("elder_llm_subanswer_prompt(model=%s, subquery='%s'):\n%s", model, subquery, prompt)
                 answer_text = await self.llm_client.chat(
                     model=model,
                     messages=[{"role": "user", "content": prompt}],
                     temperature=0.3,
                 )
+                logger.info("elder_llm_subanswer_response(subquery='%s'): %s", subquery, answer_text)
 
                 return SubAnswer(
                     subquery=subquery,
@@ -332,11 +536,13 @@ class ElderOrchestrator:
             prompt += "\n\nNote: This is a refinement pass. Please provide a more comprehensive answer."
 
         try:
+            logger.info("elder_llm_synthesis_prompt(model=%s, refine=%s):\n%s", model, str(refine), prompt)
             answer = await self.llm_client.chat(
                 model=model,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.5,
             )
+            logger.info("elder_llm_synthesis_response(refine=%s): %s", str(refine), answer)
 
             if trace is not None:
                 trace.append(
@@ -363,11 +569,13 @@ class ElderOrchestrator:
         )
 
         try:
+            logger.info("elder_llm_validation_prompt(model=%s):\n%s", model, prompt)
             validation = await self.llm_client.chat(
                 model=model,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.0,
             )
+            logger.info("elder_llm_validation_response: %s", validation)
 
             is_ok = validation.strip().upper().startswith("OK")
 
@@ -403,11 +611,13 @@ class ElderOrchestrator:
         )
 
         try:
+            logger.info("elder_llm_style_prompt(model=%s):\n%s", model, prompt)
             styled = await self.llm_client.chat(
                 model=model,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.4,
             )
+            logger.info("elder_llm_style_response: %s", styled)
 
             if trace is not None:
                 trace.append(

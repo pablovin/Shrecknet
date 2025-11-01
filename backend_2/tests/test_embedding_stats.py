@@ -100,7 +100,6 @@ async def test_embedding_stats_with_instances(client):
     instance_payload = {
         "ontology_id": ontology_id,
         "name": "Test Instance",
-        "description": "Instance with 4 entities",
         "entities": [
             {
                 "definition_id": entity_id,

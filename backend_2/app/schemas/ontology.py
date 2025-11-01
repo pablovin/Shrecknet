@@ -152,3 +152,19 @@ class OntologyRelationshipRead(OntologyRelationshipBase):
     entity_id: int
     created_at: datetime
     updated_at: datetime
+
+
+class OntologyCopyRequest(BaseModel):
+    source_ontology_id: int
+
+
+class OntologyCopyEntityResult(BaseModel):
+    name: str
+    properties: list[str] = Field(default_factory=list)
+    relationships: list[str] = Field(default_factory=list)
+    skipped_relationships: list[str] = Field(default_factory=list)
+
+
+class OntologyCopyResponse(BaseModel):
+    copied_entities: list[OntologyCopyEntityResult] = Field(default_factory=list)
+    existing_entities: list[str] = Field(default_factory=list)

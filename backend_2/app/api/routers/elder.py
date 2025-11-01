@@ -49,6 +49,7 @@ async def get_model_policy() -> ModelPolicy:
         synthesis_model=settings.model_synthesis,
         validation_model=settings.model_validation,
         style_model=settings.model_style,
+        architect_extract_model=settings.model_architect_extract,
     )
 
 

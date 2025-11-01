@@ -12,6 +12,10 @@ from app.models.ontology import (
     OntologyRelationship,
 )
 from app.repositories.ontology_repository import OntologyRepository
+from app.schemas.ontology import (
+    OntologyCopyEntityResult,
+    OntologyCopyResponse,
+)
 
 
 class OntologyService:
@@ -189,6 +193,128 @@ class OntologyService:
         await self._remove_mirror_relationship(ontology_id, relationship)
         await self.repository.remove_relationship(relationship)
         await self.session.commit()
+
+    # Copy definitions -------------------------------------------------
+    async def copy_definitions(
+        self, source_ontology_id: int, target_ontology_id: int
+    ) -> OntologyCopyResponse:
+        if source_ontology_id == target_ontology_id:
+            raise ValueError("Source and target ontology must be different")
+
+        source = await self.repository.get(source_ontology_id)
+        if not source:
+            raise ValueError("Source ontology not found")
+
+        target = await self.repository.get(target_ontology_id)
+        if not target:
+            raise ValueError("Target ontology not found")
+
+        def _normalize(name: str) -> str:
+            return name.strip().lower()
+
+        source_entities = await self.repository.list_entities(source_ontology_id)
+        target_entities = await self.repository.list_entities(target_ontology_id)
+
+        target_by_name = {
+            _normalize(entity.name): entity for entity in target_entities
+        }
+
+        entity_map: dict[int, OntologyEntity] = {}
+        copied_records: dict[int, dict[str, list[str]]] = {}
+        existing_entities: list[str] = []
+        new_entity_pairs: list[tuple[OntologyEntity, OntologyEntity]] = []
+
+        for source_entity in source_entities:
+            norm_name = _normalize(source_entity.name)
+            if norm_name in target_by_name:
+                existing_entity = target_by_name[norm_name]
+                entity_map[source_entity.id] = existing_entity
+                existing_entities.append(source_entity.name)
+                continue
+
+            new_entity = OntologyEntity(
+                ontology_id=target_ontology_id,
+                name=source_entity.name,
+                description=source_entity.description,
+                image_url=source_entity.image_url,
+                keywords=list(source_entity.keywords or []),
+                display_on_world=source_entity.display_on_world,
+                auto_generatable=source_entity.auto_generatable,
+                author_type=source_entity.author_type,
+                user_id=source_entity.user_id,
+                agent_id=source_entity.agent_id,
+            )
+            self.session.add(new_entity)
+            await self.session.flush()
+
+            entity_map[source_entity.id] = new_entity
+            target_by_name[norm_name] = new_entity
+            new_entity_pairs.append((source_entity, new_entity))
+            copied_records[new_entity.id] = {
+                "name": source_entity.name,
+                "properties": [],
+                "relationships": [],
+                "skipped_relationships": [],
+            }
+
+        for source_entity, target_entity in new_entity_pairs:
+            record = copied_records[target_entity.id]
+            for prop in source_entity.properties or []:
+                new_prop = OntologyProperty(
+                    entity_id=target_entity.id,
+                    name=prop.name,
+                    description=prop.description,
+                    image_url=prop.image_url,
+                    cardinality=prop.cardinality,
+                    data_type=prop.data_type,
+                    auto_generatable=prop.auto_generatable,
+                    author_type=prop.author_type,
+                    user_id=prop.user_id,
+                    agent_id=prop.agent_id,
+                )
+                self.session.add(new_prop)
+                record["properties"].append(prop.name)
+
+        for source_entity, target_entity in new_entity_pairs:
+            record = copied_records[target_entity.id]
+            for rel in source_entity.relationships or []:
+                destiny_entity = None
+                if rel.destiny_entity_id is not None:
+                    destiny_entity = entity_map.get(rel.destiny_entity_id)
+                    if destiny_entity is None:
+                        record["skipped_relationships"].append(rel.name)
+                        continue
+
+                new_rel = OntologyRelationship(
+                    entity_id=target_entity.id,
+                    destiny_entity_id=destiny_entity.id if destiny_entity else None,
+                    name=rel.name,
+                    description=rel.description,
+                    image_urls=list(rel.image_urls or []),
+                    bi_directional=rel.bi_directional,
+                    auto_generatable=rel.auto_generatable,
+                    author_type=rel.author_type,
+                    user_id=rel.user_id,
+                    agent_id=rel.agent_id,
+                )
+                self.session.add(new_rel)
+                record["relationships"].append(rel.name)
+
+        await self.session.commit()
+
+        copied_entities = [
+            OntologyCopyEntityResult(
+                name=data["name"],
+                properties=data["properties"],
+                relationships=data["relationships"],
+                skipped_relationships=data["skipped_relationships"],
+            )
+            for data in copied_records.values()
+        ]
+
+        return OntologyCopyResponse(
+            copied_entities=copied_entities, existing_entities=existing_entities
+        )
 
     # Helpers -----------------------------------------------------------
     def _ensure_author_defaults(

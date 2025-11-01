@@ -20,6 +20,7 @@ from app.services.notification_service import NotificationService
 from app.services.media_service import MediaService
 from app.services.ontology_instance_service import OntologyInstanceService
 from app.services.ontology_service import OntologyService
+from app.services.architect_service import ArchitectService
 from app.services.user_service import UserService
 
 
@@ -80,6 +81,12 @@ async def get_ontology_instance_service(
     graph_session: AsyncNeo4jSession = Depends(get_neo4j_session),
 ) -> OntologyInstanceService:
     return OntologyInstanceService(sql_session, graph_session)
+
+
+async def get_architect_service(
+    session: AsyncSession = Depends(get_db_session),
+) -> ArchitectService:
+    return ArchitectService(session)
 
 
 async def get_optional_ontology_instance_service(

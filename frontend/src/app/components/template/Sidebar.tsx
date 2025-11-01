@@ -21,6 +21,7 @@ import {
   StickyNote,
   Users,
   Dices,
+  Building2,
 } from "lucide-react";
 import { getNews, markNewsSeen } from "../../lib/newsAPI";
 
@@ -106,6 +107,15 @@ const MENU_GROUPS = [
         href: "/ai_novelist",
         badge: "AI",
         show: (user) => user && ["writer", "system admin"].includes(user.role),
+      },
+      {
+        key: "architect",
+        label: "Architect",
+        icon: <Building2 className="w-5 h-5" />,
+        href: "/architect",
+        badge: "AI",
+        show: (user) =>
+          user && ["world builder", "system admin"].includes(user.role),
       },
     ],
   },

@@ -212,6 +212,33 @@ result = embed_pdf_book.delay(
 - 90%: Updating library item status
 - 100%: Completed
 
+### 4. Architect Analysis (`architect_analysis`)
+
+Analyses ontology instance narrative text to recommend new entity instances or highlight existing ones for review.
+
+**Task Name**: `architect.analyze_instance`
+
+**Implementation**: `app/tasks/architect_analysis.py`
+
+**Usage**:
+```python
+from app.tasks.architect_analysis import analyze_instance
+
+result = analyze_instance.delay(
+    run_id="run-id",
+    agent_id="architect-agent-id",
+    request_payload={"ontology_instance_id": "instance-123"},
+    author_type="user",
+    author_id="42",
+)
+```
+
+**Progress Updates**:
+- 5%: Preparing architect analysis
+- 15%: Loading ontology instance
+- 25%: Chunking story text
+- 95%: Completed and storing proposals
+
 **Details**:
 - Extracts text from each PDF page
 - Creates vector embeddings using sentence-transformers

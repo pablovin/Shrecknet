@@ -11,6 +11,7 @@ class LLMTask(str, Enum):
     SYNTHESIS = "synthesis"
     VALIDATION = "validation"
     STYLE = "style"
+    ARCHITECT_EXTRACT = "architect_extract"
 
 
 class ModelPolicy:
@@ -23,6 +24,7 @@ class ModelPolicy:
         synthesis_model: str = "gpt-4o",
         validation_model: str = "gpt-4o-mini",
         style_model: str = "gpt-4o-mini",
+        architect_extract_model: str = "gpt-4o-mini",
     ):
         self.task_to_model = {
             LLMTask.DECOMPOSE: decompose_model,
@@ -30,6 +32,7 @@ class ModelPolicy:
             LLMTask.SYNTHESIS: synthesis_model,
             LLMTask.VALIDATION: validation_model,
             LLMTask.STYLE: style_model,
+            LLMTask.ARCHITECT_EXTRACT: architect_extract_model,
         }
 
     def get_model(self, task: LLMTask) -> str:

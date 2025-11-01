@@ -28,6 +28,13 @@ from app.models.ontology import (
 from app.models.user import User, UserRole
 from app.models.agent import Agent, agent_ontologies
 from app.models.elder_chat import ElderChat, ElderChatHistory
+from app.models.architect import (
+    ArchitectAnalysisRun,
+    ArchitectProposal,
+    ArchitectProposalStatus,
+    ArchitectProposalType,
+    ArchitectRunStatus,
+)
 
 __all__ = [
     "AuditAction",
@@ -59,4 +66,9 @@ __all__ = [
     "agent_ontologies",
     "ElderChat",
     "ElderChatHistory",
+    "ArchitectAnalysisRun",
+    "ArchitectProposal",
+    "ArchitectProposalStatus",
+    "ArchitectProposalType",
+    "ArchitectRunStatus",
 ]

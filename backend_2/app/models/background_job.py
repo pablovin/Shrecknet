@@ -33,6 +33,7 @@ class JobType(str, Enum):
     GRAPH_LINK_UPDATE = "graph_link_update"
     NEO4J_EMBEDDING = "neo4j_embedding"
     PDF_BOOK_EMBEDDING = "pdf_book_embedding"
+    ARCHITECT_ANALYSIS = "architect_analysis"
 
 
 class BackgroundJob(Base):

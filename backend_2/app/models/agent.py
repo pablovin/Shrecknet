@@ -24,6 +24,7 @@ from app.db.base import Base
 if TYPE_CHECKING:  # pragma: no cover
     from app.models.elder_chat import ElderChat
     from app.models.ontology import Ontology
+    from app.models.architect import ArchitectAnalysisRun
 
 
 # Association table for many-to-many relationship between agents and ontologies
@@ -83,6 +84,10 @@ class Agent(Base):
     # Relationship to elder chats
     elder_chats: Mapped[List["ElderChat"]] = relationship(
         "ElderChat", back_populates="agent"
+    )
+    # Relationship to architect analysis runs
+    architect_runs: Mapped[List["ArchitectAnalysisRun"]] = relationship(
+        "ArchitectAnalysisRun", back_populates="agent"
     )
 
     def __repr__(self) -> str:

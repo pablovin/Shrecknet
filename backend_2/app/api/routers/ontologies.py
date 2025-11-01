@@ -31,6 +31,8 @@ from app.schemas.ontology import (
     OntologyRelationshipRead,
     OntologyRelationshipUpdate,
     OntologyUpdate,
+    OntologyCopyRequest,
+    OntologyCopyResponse,
 )
 from app.services.audit_service import AuditService
 from app.services.background_job_service import BackgroundJobService
@@ -68,6 +70,27 @@ async def create_ontology(
         description="Created ontology",
     )
     return OntologyRead.model_validate(ontology)
+
+
+@router.post(
+    "/{target_ontology_id}/copy-definitions",
+    response_model=OntologyCopyResponse,
+)
+async def copy_ontology_definitions(
+    target_ontology_id: int,
+    payload: OntologyCopyRequest,
+    service: OntologyService = Depends(get_ontology_service),
+    _: User = Depends(require_roles(UserRole.ADMIN, UserRole.WORLD_BUILDER)),
+) -> OntologyCopyResponse:
+    try:
+        result = await service.copy_definitions(
+            payload.source_ontology_id, target_ontology_id
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
+    return result
 
 
 @router.get("/", response_model=list[OntologyRead])

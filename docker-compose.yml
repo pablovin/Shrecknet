@@ -43,11 +43,13 @@ services:
       retries: 5
       start_period: 40s
 
-  # Backend_2 - Main application
   backend_2:
     build:
       context: ./backend_2
       dockerfile: Dockerfile
+      # no EXTRAS arg => API flavor (no PyTorch)
+      args:
+        EXTRAS: ""
     restart: unless-stopped
     ports:
       - "8000:8000"
@@ -63,9 +65,7 @@ services:
       - BACKEND_2_JOBS_DATABASE_URL=sqlite+aiosqlite:////data/backend_2_jobs.db
       - BACKEND_2_MEDIA_ROOT=/app/media
     volumes:
-      # Persistent media files
       - backend-media:/app/media
-      # Persistent SQLite databases
       - backend-data:/data
     depends_on:
       redis:
@@ -79,11 +79,12 @@ services:
       retries: 3
       start_period: 60s
 
-  # Backend_2 Celery Worker
   backend_2_worker:
     build:
       context: ./backend_2
       dockerfile: Dockerfile
+      args:
+        EXTRAS: "ml"   # <-- pulls sentence-transformers + torch (CPU wheels)
     restart: unless-stopped
     command: celery -A app.celery_app worker --loglevel=info --concurrency=2
     environment:
@@ -98,7 +99,6 @@ services:
       - BACKEND_2_JOBS_DATABASE_URL=sqlite+aiosqlite:////data/backend_2_jobs.db
       - BACKEND_2_MEDIA_ROOT=/app/media
     volumes:
-      # Share media and database with main app
       - backend-media:/app/media
       - backend-data:/data
     depends_on:

@@ -20,7 +20,6 @@ dependencies = [
     "Pillow>=10,<11",
     "neo4j>=5.13,<6",
     "celery>=5.4,<6",
-    "sentence-transformers>=2.2,<3",
     "aiosqlite>=0.19",
     "langchain>=0.1,<0.4",
     "langchain-openai>=0.0.5,<0.3",
@@ -35,6 +34,12 @@ test = [
     "pytest>=7.4",
     "httpx>=0.25",
     "pytest-asyncio>=0.21"
+]
+
+ml = [
+    "sentence-transformers>=2.2,<3",
+    # Use CPU wheels from the official PyTorch index at install time (see Dockerfile)
+    "torch>=2,<3"
 ]
 
 [build-system]

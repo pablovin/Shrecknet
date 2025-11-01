@@ -21,18 +21,34 @@ The docker-compose setup includes:
 
 ## Quick Start
 
+### Validate Configuration
+
+Before starting, validate the Docker setup:
+
+```bash
+./validate-docker.sh
+```
+
+This script checks:
+- Docker and Docker Compose installation
+- docker-compose.yml syntax
+- Required services are defined
+- Persistent volumes are configured
+
+### Start Services
+
 ```bash
 # Build and start all services
-docker-compose up -d
+docker compose up -d
 
 # View logs
-docker-compose logs -f
+docker compose logs -f
 
 # Stop all services
-docker-compose down
+docker compose down
 
 # Stop and remove all data (WARNING: This deletes all persistent data)
-docker-compose down -v
+docker compose down -v
 ```
 
 ## Persistent Data

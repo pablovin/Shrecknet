@@ -3,6 +3,8 @@
 import logging
 from typing import Any
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.integrations.llm.openai_client import OpenAIClient
 from app.jobs.librarian.prompts import ANSWER_PROMPT, STYLE_PROMPT, SYNTHESIS_PROMPT
 from app.jobs.librarian.schemas import (
@@ -11,6 +13,7 @@ from app.jobs.librarian.schemas import (
     RetrievedChunk,
 )
 from app.models.agent import Agent
+from app.repositories.library_repository import LibraryRepository
 from app.services.pdf_embedding_service import PdfEmbeddingService
 
 logger = logging.getLogger(__name__)
@@ -50,6 +53,7 @@ class LibrarianOrchestrator:
         self,
         agent: Agent,
         request: LibrarianQueryRequest,
+        db_session: AsyncSession,
     ) -> LibrarianQueryResponse:
         """
         Execute the Librarian pipeline for a query.
@@ -57,6 +61,7 @@ class LibrarianOrchestrator:
         Args:
             agent: Agent instance with configuration
             request: Query request
+            db_session: Database session for fetching library metadata
 
         Returns:
             Query response with answer and/or chunks
@@ -103,6 +108,12 @@ class LibrarianOrchestrator:
         all_chunks.sort(key=lambda x: x["score"], reverse=True)
         all_chunks = all_chunks[:top_k]
 
+        # Fetch library item metadata for all unique library items
+        unique_library_item_ids = list({chunk["library_item_id"] for chunk in all_chunks})
+        library_metadata = await self._fetch_library_metadata(
+            db_session, unique_library_item_ids
+        )
+
         # Convert to schema objects
         retrieved_chunks = [
             RetrievedChunk(
@@ -112,6 +123,8 @@ class LibrarianOrchestrator:
                 score=chunk["score"],
                 pdf_url=chunk.get("pdf_url"),
                 page_url=chunk.get("page_url"),
+                book_title=library_metadata.get(chunk["library_item_id"], {}).get("title"),
+                book_authors=library_metadata.get(chunk["library_item_id"], {}).get("authors"),
             )
             for chunk in all_chunks
         ]
@@ -260,6 +273,41 @@ class LibrarianOrchestrator:
 
         logger.info(f"Retrieved {len(chunks)} chunks")
         return chunks
+
+    async def _fetch_library_metadata(
+        self,
+        db_session: AsyncSession,
+        library_item_ids: list[int],
+    ) -> dict[int, dict[str, str | None]]:
+        """
+        Fetch library item metadata (title, authors) from the database.
+
+        Args:
+            db_session: Database session
+            library_item_ids: List of library item IDs to fetch
+
+        Returns:
+            Dictionary mapping library_item_id to metadata dict with title and authors
+        """
+        if not library_item_ids:
+            return {}
+
+        library_repo = LibraryRepository(db_session)
+        metadata = {}
+
+        for item_id in library_item_ids:
+            try:
+                library_item = await library_repo.get_item_by_id(item_id)
+                if library_item:
+                    metadata[item_id] = {
+                        "title": library_item.title,
+                        "authors": library_item.authors,
+                    }
+            except Exception as e:
+                logger.warning(f"Failed to fetch metadata for library item {item_id}: {e}")
+                metadata[item_id] = {"title": None, "authors": None}
+
+        return metadata
 
     async def _generate_answer(
         self,

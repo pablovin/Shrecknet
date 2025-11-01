@@ -46,6 +46,8 @@ class RetrievedChunk(BaseModel):
     score: float
     pdf_url: str | None = None
     page_url: str | None = None
+    book_title: str | None = None
+    book_authors: str | None = None
 
 
 class LibrarianQueryResponse(BaseModel):

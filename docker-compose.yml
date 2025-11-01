@@ -1,118 +1,23 @@
 services:
-  # frontend:
-  #  user: "33:33"
-  #  build:
-  #    context: ./frontend
-  #    network: host
-  #  ports:
-  #    - "3000:3000"
-  #  depends_on:
-  #    - backend
-  #  volumes:
-  #    - ./frontend/uploads:/app/uploads
-  #  environment:
-  #    - NEXT_CACHE_DIR=/tmp/next-cache
-
-  # backend:
-  #  build:
-  #    context: ./backend
-  #    network: host
-  #  ports:
-  #    - "8000:8000"
-  #  env_file:
-  #    - ./backend/.env
-  #  environment:
-  #    - CELERY_BROKER_URL=redis://redis:6379/0
-  #    - CELERY_RESULT_BACKEND=redis://redis:6379/0
-  #  volumes:
-  #    - ./backend/data:/app/data
-  #    - ./frontend/uploads:/app/uploads
-  #  depends_on:
-  #    - redis
-  #    - chromadb
-
-  # backend_2:
-  #  build:
-  #    context: ./backend_2
-  #    network: host
-  #  ports:
-  #    - "8000:8000"
-  #  environment:
-  #    - BACKEND_2_NEO4J_URI=bolt://neo4j:7687
-  #    - BACKEND_2_NEO4J_USER=neo4j
-  #    - BACKEND_2_NEO4J_PASSWORD=VeryStrongPass123
-  #    - BACKEND_2_NEO4J_DATABASE=neo4j
-  #    - BACKEND_2_CELERY_BROKER_URL=redis://redis:6379/0
-  #    - BACKEND_2_CELERY_RESULT_BACKEND=redis://redis:6379/1
-  #    - BACKEND_2_CELERY_TASK_ALWAYS_EAGER=false
-  #  volumes:
-  #    - ./backend_2/media:/app/media
-  #    - ./backend/data:/app/backend/data
-  #  depends_on:
-  #    - redis
-  #    - neo4j
-
-  # backend_2_worker:
-  #  build:
-  #    context: ./backend_2
-  #    network: host
-  #  command: celery -A app.celery_app worker --loglevel=info
-  #  environment:
-  #    - BACKEND_2_NEO4J_URI=bolt://neo4j:7687
-  #    - BACKEND_2_NEO4J_USER=neo4j
-  #    - BACKEND_2_NEO4J_PASSWORD=VeryStrongPass123
-  #    - BACKEND_2_NEO4J_DATABASE=neo4j
-  #    - BACKEND_2_CELERY_BROKER_URL=redis://redis:6379/0
-  #    - BACKEND_2_CELERY_RESULT_BACKEND=redis://redis:6379/1
-  #    - BACKEND_2_CELERY_TASK_ALWAYS_EAGER=false
-  #  volumes:
-  #    - ./backend_2/media:/app/media
-  #    - ./backend/data:/app/backend/data
-  #  depends_on:     
-  #    - redis
-  #    - neo4j
-
-  # celery:
-  #   build:
-  #     context: ./backend
-  #     network: host
-  #   command: celery -A app.task_queue.celery_app worker --loglevel=info
-  #   env_file:
-  #     - ./backend/.env
-  #   environment:
-  #     - CELERY_BROKER_URL=redis://redis:6379/0
-  #     - CELERY_RESULT_BACKEND=redis://redis:6379/0
-  #   volumes:
-  #     - ./backend/data:/app/data
-  #     - ./frontend/uploads:/app/uploads
-  #   depends_on:
-  #    - backend
-  #    - redis
-  #    - chromadb
-
+  # Redis - Message broker for Celery
   redis:
     image: redis:7.2-alpine
-    restart: always
+    restart: unless-stopped
     ports:
       - "6379:6379"
     volumes:
       - redis-data:/data
     command: redis-server --save 60 1 --loglevel warning
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
 
-  # chromadb:
-  #   image: chromadb/chroma:latest
-  #   restart: always
-  #   command: run --host 0.0.0.0 --port 8001 --path /chroma/chroma
-  #   ports:
-  #     - "8001:8001"   # Host:Container
-  #   volumes:
-  #     - ./backend/data/vector_db:/chroma/chroma
-  #   environment:
-  #     - IS_PERSISTENT=TRUE
-
+  # Neo4j - Graph database
   neo4j:
     image: neo4j:5-community
-    restart: always
+    restart: unless-stopped
     ports:
       - "7474:7474"   # HTTP
       - "7687:7687"   # Bolt
@@ -123,10 +28,86 @@ services:
       - neo4j-plugins:/plugins
     environment:
       - NEO4J_AUTH=neo4j/VeryStrongPass123
-      - NEO4J_PLUGINS=["apoc", "graph-data-science"]
+      # Only APOC plugin for performance on limited resources
+      # Removed graph-data-science plugin to reduce memory footprint
+      - NEO4J_PLUGINS=["apoc"]
+      # Optimized memory settings for limited RAM (16GB)
       - NEO4J_dbms_memory_pagecache_size=512M
       - NEO4J_dbms_memory_heap_initial__size=512M
       - NEO4J_dbms_memory_heap_max__size=1G
+      - NEO4J_dbms_jvm_additional=-XX:+UseG1GC
+    healthcheck:
+      test: ["CMD", "cypher-shell", "-u", "neo4j", "-p", "VeryStrongPass123", "RETURN 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+
+  # Backend_2 - Main application
+  backend_2:
+    build:
+      context: ./backend_2
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - BACKEND_2_NEO4J_URI=bolt://neo4j:7687
+      - BACKEND_2_NEO4J_USER=neo4j
+      - BACKEND_2_NEO4J_PASSWORD=VeryStrongPass123
+      - BACKEND_2_NEO4J_DATABASE=neo4j
+      - BACKEND_2_CELERY_BROKER_URL=redis://redis:6379/0
+      - BACKEND_2_CELERY_RESULT_BACKEND=redis://redis:6379/1
+      - BACKEND_2_CELERY_TASK_ALWAYS_EAGER=false
+      - BACKEND_2_DATABASE_URL=sqlite+aiosqlite:////data/backend_2.db
+      - BACKEND_2_JOBS_DATABASE_URL=sqlite+aiosqlite:////data/backend_2_jobs.db
+      - BACKEND_2_MEDIA_ROOT=/app/media
+    volumes:
+      # Persistent media files
+      - backend-media:/app/media
+      # Persistent SQLite databases
+      - backend-data:/data
+    depends_on:
+      redis:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # Backend_2 Celery Worker
+  backend_2_worker:
+    build:
+      context: ./backend_2
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    command: celery -A app.celery_app worker --loglevel=info --concurrency=2
+    environment:
+      - BACKEND_2_NEO4J_URI=bolt://neo4j:7687
+      - BACKEND_2_NEO4J_USER=neo4j
+      - BACKEND_2_NEO4J_PASSWORD=VeryStrongPass123
+      - BACKEND_2_NEO4J_DATABASE=neo4j
+      - BACKEND_2_CELERY_BROKER_URL=redis://redis:6379/0
+      - BACKEND_2_CELERY_RESULT_BACKEND=redis://redis:6379/1
+      - BACKEND_2_CELERY_TASK_ALWAYS_EAGER=false
+      - BACKEND_2_DATABASE_URL=sqlite+aiosqlite:////data/backend_2.db
+      - BACKEND_2_JOBS_DATABASE_URL=sqlite+aiosqlite:////data/backend_2_jobs.db
+      - BACKEND_2_MEDIA_ROOT=/app/media
+    volumes:
+      # Share media and database with main app
+      - backend-media:/app/media
+      - backend-data:/data
+    depends_on:
+      redis:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+      backend_2:
+        condition: service_started
 
 volumes:
   redis-data:
@@ -134,3 +115,5 @@ volumes:
   neo4j-logs:
   neo4j-import:
   neo4j-plugins:
+  backend-media:
+  backend-data:

@@ -83,3 +83,5 @@ frontend/uploads/
 backend_2/media/
 !backend_2/media/.gitkeep
 
+# Docker backup files
+docker-compose.yml.backup

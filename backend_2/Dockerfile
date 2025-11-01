@@ -2,17 +2,24 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install system dependencies
+# Install system dependencies - add more needed for ML packages
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
+    g++ \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy only pyproject.toml first for better layer caching
+# Copy dependency files for layer caching
 COPY pyproject.toml .
+# Create app directory structure and copy __init__.py
+RUN mkdir -p app
+COPY app/__init__.py app/__init__.py
 
-# Install dependencies from pyproject.toml
-RUN pip install --upgrade pip && \
-    pip install --no-cache-dir -e .[test]
+# Upgrade pip and install build tools
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel
+
+# Install dependencies (not in editable mode to avoid issues)
+RUN pip install --no-cache-dir .[test]
 
 # Now copy the rest of the application code
 COPY . .

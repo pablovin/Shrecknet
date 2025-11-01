@@ -96,41 +96,68 @@ Elder agent chat history and metadata are stored in the SQLite database (`backen
 
 ## Running with Docker
 
-The docker-compose setup includes all required services with persistent data storage:
-- **Frontend** (port 3000)
-- **Backend** (port 8000) - Main API
-- **Backend_2** (port 8080) - Ontology management with Neo4j
-- **Redis** - Message broker with persistent storage
-- **Neo4j** - Graph database with persistent storage (http://localhost:7474, bolt://localhost:7687)
-- **ChromaDB** - Vector database with persistent storage
-- **Celery workers** - Background task processors for both backends
+### Backend_2 (Recommended for New Deployments)
+
+For an optimized Docker setup focused on the backend_2 service with Neo4j graph database:
 
 ```bash
-docker compose up --build
+# Quick start (validates and shows instructions)
+./quick-start.sh
+
+# Or directly start services
+docker compose up -d
 ```
+
+This setup includes:
+- **Backend_2** (port 8000) - Main FastAPI application
+- **Celery Worker** - Background task processing
+- **Redis** - Message broker with persistence
+- **Neo4j** - Graph database (browser at http://localhost:7474)
+
+**Features:**
+- ✅ Optimized for limited resources (3 cores, 16GB RAM)
+- ✅ Fast builds (15-30 min first time, 30-60s subsequent)
+- ✅ All data persists across restarts
+- ✅ Media files accessible at http://localhost:8000/media/
+
+**Documentation:**
+- [DOCKER.md](DOCKER.md) - Complete setup guide
+- [DOCKER_OPTIMIZATION.md](DOCKER_OPTIMIZATION.md) - Performance details
+- [IMPLEMENTATION_DOCKER.md](IMPLEMENTATION_DOCKER.md) - Technical summary
+
+**Common Commands:**
+```bash
+# View logs
+docker compose logs -f
+
+# Check service status
+docker compose ps
+
+# Stop services (keeps data)
+docker compose down
+
+# Stop and remove all data (WARNING!)
+docker compose down -v
+```
+
+### Full Stack (Legacy)
+
+The full docker-compose setup with frontend and both backends is commented out in docker-compose.yml. 
+To use it, uncomment the relevant services. Note: The current setup focuses on backend_2 for optimal performance.
 
 **Data Persistence:**
 All data is persisted using Docker volumes:
-- Neo4j data is stored in the `neo4j-data` volume
-- Redis data is stored in the `redis-data` volume
-- ChromaDB data is stored in `./backend/data/vector_db`
-- Media files are stored in `./backend_2/media`
+- Neo4j data: `neo4j-data` volume
+- Redis data: `redis-data` volume  
+- SQLite databases: `backend-data` volume
+- Media files: `backend-media` volume
 
-You can safely stop and restart the containers without losing data:
-```bash
-docker compose down
-docker compose up
-```
-
-**Note:** If you encounter SSL certificate errors during the build process in certain environments, you can work around this by building with `--network=host` flag or configuring pip to trust PyPI:
-```bash
-docker compose build --build-arg PIP_TRUSTED_HOST="pypi.org pypi.python.org files.pythonhosted.org"
-```
+You can safely stop and restart containers without losing data.
 
 **Service URLs:**
-- Frontend: `http://localhost:3000`
-- Backend API: `http://localhost:8000`
-- Backend_2 API: `http://localhost:8080`
+- Backend_2 API: `http://localhost:8000`
+- API Documentation: `http://localhost:8000/docs`
+- Media Files: `http://localhost:8000/media/`
 - Neo4j Browser: `http://localhost:7474` (credentials: neo4j/VeryStrongPass123)
 
 ## Running without Docker

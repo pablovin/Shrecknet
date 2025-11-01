@@ -13,7 +13,6 @@ from app.jobs.librarian.schemas import (
     RetrievedChunk,
 )
 from app.models.agent import Agent
-from app.repositories.library_repository import LibraryRepository
 from app.services.pdf_embedding_service import PdfEmbeddingService
 
 logger = logging.getLogger(__name__)
@@ -121,23 +120,21 @@ class LibrarianOrchestrator:
         )
 
         # Convert to schema objects
-        retrieved_chunks = [
-            RetrievedChunk(
-                library_item_id=chunk["library_item_id"],
-                page_number=chunk["page_number"],
-                text=chunk["text"],
-                score=chunk["score"],
-                pdf_url=chunk.get("pdf_url"),
-                page_url=chunk.get("page_url"),
-                book_title=library_metadata.get(chunk["library_item_id"], {}).get(
-                    "title"
-                ),
-                book_authors=library_metadata.get(chunk["library_item_id"], {}).get(
-                    "authors"
-                ),
+        retrieved_chunks = []
+        for chunk in all_chunks:
+            metadata_for_item = library_metadata.get(chunk["library_item_id"], {})
+            retrieved_chunks.append(
+                RetrievedChunk(
+                    library_item_id=chunk["library_item_id"],
+                    page_number=chunk["page_number"],
+                    text=chunk["text"],
+                    score=chunk["score"],
+                    pdf_url=chunk.get("pdf_url"),
+                    page_url=chunk.get("page_url"),
+                    book_title=metadata_for_item.get("title"),
+                    book_authors=metadata_for_item.get("authors"),
+                )
             )
-            for chunk in all_chunks
-        ]
 
         # Log the sources we will use
         try:
@@ -317,21 +314,27 @@ class LibrarianOrchestrator:
         if not library_item_ids:
             return {}
 
-        library_repo = LibraryRepository(db_session)
-        metadata = {}
+        from sqlalchemy import select
 
+        from app.models.library import LibraryItem
+
+        # Batch fetch all library items in a single query
+        query = select(LibraryItem).where(LibraryItem.id.in_(library_item_ids))
+        result = await db_session.execute(query)
+        items = result.scalars().all()
+
+        # Build metadata dictionary
+        metadata = {}
+        for item in items:
+            metadata[item.id] = {
+                "title": item.title,
+                "authors": item.authors,
+            }
+
+        # Add None entries for any missing items
         for item_id in library_item_ids:
-            try:
-                library_item = await library_repo.get_item_by_id(item_id)
-                if library_item:
-                    metadata[item_id] = {
-                        "title": library_item.title,
-                        "authors": library_item.authors,
-                    }
-            except Exception as e:
-                logger.warning(
-                    f"Failed to fetch metadata for library item {item_id}: {e}"
-                )
+            if item_id not in metadata:
+                logger.warning(f"Library item {item_id} not found in database")
                 metadata[item_id] = {"title": None, "authors": None}
 
         return metadata

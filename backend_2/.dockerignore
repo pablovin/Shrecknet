@@ -17,3 +17,17 @@ media/
 .env
 .venv
 venv/
+.git
+.gitignore
+*.md
+tests/
+.dockerignore
+Dockerfile
+docker-compose.yml
+*.log
+.mypy_cache
+.ruff_cache
+.tox
+*.swp
+*.swo
+*~

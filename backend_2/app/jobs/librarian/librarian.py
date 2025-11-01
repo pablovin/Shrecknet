@@ -98,7 +98,11 @@ class LibrarianOrchestrator:
                         c.get("library_item_id"),
                         c.get("page_number"),
                         c.get("score", 0.0),
-                        (c.get("text", "")[:120] + "…") if len(c.get("text", "")) > 120 else c.get("text", ""),
+                        (
+                            (c.get("text", "")[:120] + "…")
+                            if len(c.get("text", "")) > 120
+                            else c.get("text", "")
+                        ),
                     )
             except Exception:
                 pass
@@ -109,7 +113,9 @@ class LibrarianOrchestrator:
         all_chunks = all_chunks[:top_k]
 
         # Fetch library item metadata for all unique library items
-        unique_library_item_ids = list({chunk["library_item_id"] for chunk in all_chunks})
+        unique_library_item_ids = list(
+            {chunk["library_item_id"] for chunk in all_chunks}
+        )
         library_metadata = await self._fetch_library_metadata(
             db_session, unique_library_item_ids
         )
@@ -123,8 +129,12 @@ class LibrarianOrchestrator:
                 score=chunk["score"],
                 pdf_url=chunk.get("pdf_url"),
                 page_url=chunk.get("page_url"),
-                book_title=library_metadata.get(chunk["library_item_id"], {}).get("title"),
-                book_authors=library_metadata.get(chunk["library_item_id"], {}).get("authors"),
+                book_title=library_metadata.get(chunk["library_item_id"], {}).get(
+                    "title"
+                ),
+                book_authors=library_metadata.get(chunk["library_item_id"], {}).get(
+                    "authors"
+                ),
             )
             for chunk in all_chunks
         ]
@@ -137,7 +147,8 @@ class LibrarianOrchestrator:
                     "source: item=%s page=%s url=%s score=%.3f",
                     ch.library_item_id,
                     ch.page_number,
-                    ch.page_url or (ch.pdf_url + f"#page={ch.page_number}" if ch.pdf_url else None),
+                    ch.page_url
+                    or (ch.pdf_url + f"#page={ch.page_number}" if ch.pdf_url else None),
                     ch.score,
                 )
         except Exception:
@@ -162,7 +173,11 @@ class LibrarianOrchestrator:
                 try:
                     logger.info(
                         "librarian_answer_raw_preview: %s",
-                        (answer[:400] + "…") if (answer and len(answer) > 400) else (answer or "<empty>"),
+                        (
+                            (answer[:400] + "…")
+                            if (answer and len(answer) > 400)
+                            else (answer or "<empty>")
+                        ),
                     )
                 except Exception:
                     pass
@@ -176,7 +191,11 @@ class LibrarianOrchestrator:
                         try:
                             logger.info(
                                 "librarian_answer_decorated_preview: %s",
-                                (answer[:400] + "…") if (answer and len(answer) > 400) else (answer or "<empty>"),
+                                (
+                                    (answer[:400] + "…")
+                                    if (answer and len(answer) > 400)
+                                    else (answer or "<empty>")
+                                ),
                             )
                         except Exception:
                             pass
@@ -195,13 +214,21 @@ class LibrarianOrchestrator:
                     try:
                         logger.info(
                             "librarian_style_output_preview: %s",
-                            (styled[:400] + "…") if (styled and len(styled) > 400) else (styled or "<empty>"),
+                            (
+                                (styled[:400] + "…")
+                                if (styled and len(styled) > 400)
+                                else (styled or "<empty>")
+                            ),
                         )
                     except Exception:
                         pass
-                    if self._looks_grounded(styled) and not (insufficient_in_styled and not insufficient_in_raw):
+                    if self._looks_grounded(styled) and not (
+                        insufficient_in_styled and not insufficient_in_raw
+                    ):
                         answer = styled
-                        logger.info("librarian_style_validation: accepted styled answer")
+                        logger.info(
+                            "librarian_style_validation: accepted styled answer"
+                        )
                     else:
                         logger.info(
                             "librarian_style_validation: reverted to unstyled answer (grounding=%s, styled_insufficient=%s, raw_insufficient=%s)",
@@ -254,9 +281,7 @@ class LibrarianOrchestrator:
         )
 
         # Enrich chunks with neighbor pages to improve context quality
-        chunks = await self.pdf_embedding_service.enrich_chunks_with_neighbors(
-            chunks
-        )
+        chunks = await self.pdf_embedding_service.enrich_chunks_with_neighbors(chunks)
 
         if trace is not None:
             trace.append(
@@ -304,7 +329,9 @@ class LibrarianOrchestrator:
                         "authors": library_item.authors,
                     }
             except Exception as e:
-                logger.warning(f"Failed to fetch metadata for library item {item_id}: {e}")
+                logger.warning(
+                    f"Failed to fetch metadata for library item {item_id}: {e}"
+                )
                 metadata[item_id] = {"title": None, "authors": None}
 
         return metadata
@@ -366,10 +393,16 @@ class LibrarianOrchestrator:
         if not answer or (
             "nothing" in normalized and "context" not in normalized and len(chunks) > 0
         ):
-            logger.info("librarian_guardrail_fallback: regenerating from chunks summary")
+            logger.info(
+                "librarian_guardrail_fallback: regenerating from chunks summary"
+            )
             parts = []
             for i, ch in enumerate(chunks[:5], 1):
-                ref = ch.page_url or (ch.pdf_url + f"#page={ch.page_number}" if ch.pdf_url else f"page {ch.page_number}")
+                ref = ch.page_url or (
+                    ch.pdf_url + f"#page={ch.page_number}"
+                    if ch.pdf_url
+                    else f"page {ch.page_number}"
+                )
                 parts.append(f"- (p.{ch.page_number}) {ch.text[:220]}… [source: {ref}]")
             answer = (
                 "Based on the retrieved sources, here is a concise summary relevant to your question:\n\n"
@@ -401,7 +434,9 @@ class LibrarianOrchestrator:
             if ci < len(chunks) and re.search(r"[.!?]$", part.strip()):
                 ch = chunks[ci]
                 label = f"page {ch.page_number}"
-                href = ch.page_url or (ch.pdf_url + f"#page={ch.page_number}" if ch.pdf_url else None)
+                href = ch.page_url or (
+                    ch.pdf_url + f"#page={ch.page_number}" if ch.pdf_url else None
+                )
                 # Lightweight footnote marker; frontend will render actual link/footnote UI
                 if href:
                     marker = (

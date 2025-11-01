@@ -3,6 +3,8 @@
 import logging
 from typing import Any
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.integrations.llm.openai_client import OpenAIClient
 from app.jobs.librarian.prompts import ANSWER_PROMPT, STYLE_PROMPT, SYNTHESIS_PROMPT
 from app.jobs.librarian.schemas import (
@@ -50,6 +52,7 @@ class LibrarianOrchestrator:
         self,
         agent: Agent,
         request: LibrarianQueryRequest,
+        db_session: AsyncSession,
     ) -> LibrarianQueryResponse:
         """
         Execute the Librarian pipeline for a query.
@@ -57,6 +60,7 @@ class LibrarianOrchestrator:
         Args:
             agent: Agent instance with configuration
             request: Query request
+            db_session: Database session for fetching library metadata
 
         Returns:
             Query response with answer and/or chunks
@@ -93,7 +97,11 @@ class LibrarianOrchestrator:
                         c.get("library_item_id"),
                         c.get("page_number"),
                         c.get("score", 0.0),
-                        (c.get("text", "")[:120] + "…") if len(c.get("text", "")) > 120 else c.get("text", ""),
+                        (
+                            (c.get("text", "")[:120] + "…")
+                            if len(c.get("text", "")) > 120
+                            else c.get("text", "")
+                        ),
                     )
             except Exception:
                 pass
@@ -103,18 +111,30 @@ class LibrarianOrchestrator:
         all_chunks.sort(key=lambda x: x["score"], reverse=True)
         all_chunks = all_chunks[:top_k]
 
+        # Fetch library item metadata for all unique library items
+        unique_library_item_ids = list(
+            {chunk["library_item_id"] for chunk in all_chunks}
+        )
+        library_metadata = await self._fetch_library_metadata(
+            db_session, unique_library_item_ids
+        )
+
         # Convert to schema objects
-        retrieved_chunks = [
-            RetrievedChunk(
-                library_item_id=chunk["library_item_id"],
-                page_number=chunk["page_number"],
-                text=chunk["text"],
-                score=chunk["score"],
-                pdf_url=chunk.get("pdf_url"),
-                page_url=chunk.get("page_url"),
+        retrieved_chunks = []
+        for chunk in all_chunks:
+            metadata_for_item = library_metadata.get(chunk["library_item_id"], {})
+            retrieved_chunks.append(
+                RetrievedChunk(
+                    library_item_id=chunk["library_item_id"],
+                    page_number=chunk["page_number"],
+                    text=chunk["text"],
+                    score=chunk["score"],
+                    pdf_url=chunk.get("pdf_url"),
+                    page_url=chunk.get("page_url"),
+                    book_title=metadata_for_item.get("title"),
+                    book_authors=metadata_for_item.get("authors"),
+                )
             )
-            for chunk in all_chunks
-        ]
 
         # Log the sources we will use
         try:
@@ -124,7 +144,8 @@ class LibrarianOrchestrator:
                     "source: item=%s page=%s url=%s score=%.3f",
                     ch.library_item_id,
                     ch.page_number,
-                    ch.page_url or (ch.pdf_url + f"#page={ch.page_number}" if ch.pdf_url else None),
+                    ch.page_url
+                    or (ch.pdf_url + f"#page={ch.page_number}" if ch.pdf_url else None),
                     ch.score,
                 )
         except Exception:
@@ -149,7 +170,11 @@ class LibrarianOrchestrator:
                 try:
                     logger.info(
                         "librarian_answer_raw_preview: %s",
-                        (answer[:400] + "…") if (answer and len(answer) > 400) else (answer or "<empty>"),
+                        (
+                            (answer[:400] + "…")
+                            if (answer and len(answer) > 400)
+                            else (answer or "<empty>")
+                        ),
                     )
                 except Exception:
                     pass
@@ -163,7 +188,11 @@ class LibrarianOrchestrator:
                         try:
                             logger.info(
                                 "librarian_answer_decorated_preview: %s",
-                                (answer[:400] + "…") if (answer and len(answer) > 400) else (answer or "<empty>"),
+                                (
+                                    (answer[:400] + "…")
+                                    if (answer and len(answer) > 400)
+                                    else (answer or "<empty>")
+                                ),
                             )
                         except Exception:
                             pass
@@ -182,13 +211,21 @@ class LibrarianOrchestrator:
                     try:
                         logger.info(
                             "librarian_style_output_preview: %s",
-                            (styled[:400] + "…") if (styled and len(styled) > 400) else (styled or "<empty>"),
+                            (
+                                (styled[:400] + "…")
+                                if (styled and len(styled) > 400)
+                                else (styled or "<empty>")
+                            ),
                         )
                     except Exception:
                         pass
-                    if self._looks_grounded(styled) and not (insufficient_in_styled and not insufficient_in_raw):
+                    if self._looks_grounded(styled) and not (
+                        insufficient_in_styled and not insufficient_in_raw
+                    ):
                         answer = styled
-                        logger.info("librarian_style_validation: accepted styled answer")
+                        logger.info(
+                            "librarian_style_validation: accepted styled answer"
+                        )
                     else:
                         logger.info(
                             "librarian_style_validation: reverted to unstyled answer (grounding=%s, styled_insufficient=%s, raw_insufficient=%s)",
@@ -241,9 +278,7 @@ class LibrarianOrchestrator:
         )
 
         # Enrich chunks with neighbor pages to improve context quality
-        chunks = await self.pdf_embedding_service.enrich_chunks_with_neighbors(
-            chunks
-        )
+        chunks = await self.pdf_embedding_service.enrich_chunks_with_neighbors(chunks)
 
         if trace is not None:
             trace.append(
@@ -260,6 +295,49 @@ class LibrarianOrchestrator:
 
         logger.info(f"Retrieved {len(chunks)} chunks")
         return chunks
+
+    async def _fetch_library_metadata(
+        self,
+        db_session: AsyncSession,
+        library_item_ids: list[int],
+    ) -> dict[int, dict[str, str | None]]:
+        """
+        Fetch library item metadata (title, authors) from the database.
+
+        Args:
+            db_session: Database session
+            library_item_ids: List of library item IDs to fetch
+
+        Returns:
+            Dictionary mapping library_item_id to metadata dict with title and authors
+        """
+        if not library_item_ids:
+            return {}
+
+        from sqlalchemy import select
+
+        from app.models.library import LibraryItem
+
+        # Batch fetch all library items in a single query
+        query = select(LibraryItem).where(LibraryItem.id.in_(library_item_ids))
+        result = await db_session.execute(query)
+        items = result.scalars().all()
+
+        # Build metadata dictionary
+        metadata = {}
+        for item in items:
+            metadata[item.id] = {
+                "title": item.title,
+                "authors": item.authors,
+            }
+
+        # Add None entries for any missing items
+        for item_id in library_item_ids:
+            if item_id not in metadata:
+                logger.warning(f"Library item {item_id} not found in database")
+                metadata[item_id] = {"title": None, "authors": None}
+
+        return metadata
 
     async def _generate_answer(
         self,
@@ -318,10 +396,16 @@ class LibrarianOrchestrator:
         if not answer or (
             "nothing" in normalized and "context" not in normalized and len(chunks) > 0
         ):
-            logger.info("librarian_guardrail_fallback: regenerating from chunks summary")
+            logger.info(
+                "librarian_guardrail_fallback: regenerating from chunks summary"
+            )
             parts = []
             for i, ch in enumerate(chunks[:5], 1):
-                ref = ch.page_url or (ch.pdf_url + f"#page={ch.page_number}" if ch.pdf_url else f"page {ch.page_number}")
+                ref = ch.page_url or (
+                    ch.pdf_url + f"#page={ch.page_number}"
+                    if ch.pdf_url
+                    else f"page {ch.page_number}"
+                )
                 parts.append(f"- (p.{ch.page_number}) {ch.text[:220]}… [source: {ref}]")
             answer = (
                 "Based on the retrieved sources, here is a concise summary relevant to your question:\n\n"
@@ -353,7 +437,9 @@ class LibrarianOrchestrator:
             if ci < len(chunks) and re.search(r"[.!?]$", part.strip()):
                 ch = chunks[ci]
                 label = f"page {ch.page_number}"
-                href = ch.page_url or (ch.pdf_url + f"#page={ch.page_number}" if ch.pdf_url else None)
+                href = ch.page_url or (
+                    ch.pdf_url + f"#page={ch.page_number}" if ch.pdf_url else None
+                )
                 # Lightweight footnote marker; frontend will render actual link/footnote UI
                 if href:
                     marker = (

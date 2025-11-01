@@ -110,7 +110,7 @@ async def query_librarian(
             f"(user {_current_user.id}): {request.query[:100]}"
         )
 
-        response = await orchestrator.execute(agent, request)
+        response = await orchestrator.execute(agent, request, db_session)
 
         logger.info(f"Librarian query completed for agent {agent_id}")
         return response

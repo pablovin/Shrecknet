@@ -97,3 +97,39 @@ async def test_update_agent_job_type(
     # Should reject invalid job type
     assert response.status_code == 400
     assert "invalid" in response.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_retrieved_chunk_schema_includes_book_metadata():
+    """Test that RetrievedChunk schema includes book metadata fields."""
+    from app.jobs.librarian.schemas import RetrievedChunk
+
+    # Create a sample chunk with all fields
+    chunk = RetrievedChunk(
+        library_item_id=1,
+        page_number=42,
+        text="Sample text from a book",
+        score=0.95,
+        pdf_url="http://example.com/book.pdf",
+        page_url="http://example.com/book.pdf#page=42",
+        book_title="Test Book Title",
+        book_authors="Test Author",
+    )
+
+    assert chunk.library_item_id == 1
+    assert chunk.page_number == 42
+    assert chunk.book_title == "Test Book Title"
+    assert chunk.book_authors == "Test Author"
+    assert chunk.pdf_url == "http://example.com/book.pdf"
+    assert chunk.page_url == "http://example.com/book.pdf#page=42"
+
+    # Test that book metadata can be None
+    chunk_without_metadata = RetrievedChunk(
+        library_item_id=2,
+        page_number=10,
+        text="Another sample",
+        score=0.8,
+    )
+
+    assert chunk_without_metadata.book_title is None
+    assert chunk_without_metadata.book_authors is None

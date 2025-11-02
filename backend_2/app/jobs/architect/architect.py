@@ -98,7 +98,7 @@ class ArchitectOrchestrator:
                             retrieval_alias_map[retrieved_chunk.node_id] = (
                                 retrieved_chunk.node_label
                             )
-                    
+
                     prompt = ARCHITECT_EXTRACTION_PROMPT.format(
                         entity_catalog=entity_catalog,
                         existing_instances=self._format_retrieval_summary(retrieval),
@@ -311,10 +311,15 @@ class ArchitectOrchestrator:
                     if alias_hint and not record.get("alias"):
                         record["alias"] = alias_hint
                     record["metadata_snippets"].append(item.metadata)
-                
+
                 # Fallback: use retrieval_alias_map if alias is not set
-                if not record.get("alias") and item.entity_instance_id in result.retrieval_alias_map:
-                    record["alias"] = result.retrieval_alias_map[item.entity_instance_id]
+                if (
+                    not record.get("alias")
+                    and item.entity_instance_id in result.retrieval_alias_map
+                ):
+                    record["alias"] = result.retrieval_alias_map[
+                        item.entity_instance_id
+                    ]
 
         proposals: list[dict[str, Any]] = []
         for record in aggregated.values():

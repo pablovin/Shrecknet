@@ -276,6 +276,7 @@ class ArchitectOrchestrator:
                         "confidence_scores": [],
                         "justifications": [],
                         "metadata_snippets": [],
+                        "chunks": [],
                     },
                 )
                 if item.confidence is not None:
@@ -284,6 +285,9 @@ class ArchitectOrchestrator:
                     record["justifications"].append(item.justification)
                 if item.metadata:
                     record["metadata_snippets"].append(item.metadata)
+                # Store chunk text for later use in step 2
+                if result.chunk_text not in record["chunks"]:
+                    record["chunks"].append(result.chunk_text)
 
             for item in result.existing_instances:
                 key = (
@@ -300,6 +304,7 @@ class ArchitectOrchestrator:
                         "confidence_scores": [],
                         "justifications": [],
                         "metadata_snippets": [],
+                        "chunks": [],
                     },
                 )
                 if item.confidence is not None:
@@ -311,6 +316,9 @@ class ArchitectOrchestrator:
                     if alias_hint and not record.get("alias"):
                         record["alias"] = alias_hint
                     record["metadata_snippets"].append(item.metadata)
+                # Store chunk text for later use in step 2
+                if result.chunk_text not in record["chunks"]:
+                    record["chunks"].append(result.chunk_text)
 
                 # Fallback: use retrieval_alias_map if alias is not set
                 if (
@@ -347,6 +355,7 @@ class ArchitectOrchestrator:
                     "confidence": confidence,
                     "justification": justification,
                     "proposal_metadata": metadata,
+                    "chunks": record["chunks"],
                 }
             )
 

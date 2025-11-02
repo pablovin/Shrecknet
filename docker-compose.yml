@@ -47,10 +47,9 @@ services:
   backend_2:
     build:
       context: ./backend_2
-      dockerfile: Dockerfile
-      # no EXTRAS arg => API flavor (no PyTorch)
+      dockerfile: Dockerfile      
       args:
-        EXTRAS: ""
+        EXTRAS: "ml"   # <-- pulls sentence-transformers + torch (CPU wheels)
     restart: unless-stopped
     ports:
       - "8000:8000"

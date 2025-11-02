@@ -14,7 +14,7 @@ import json
 import logging
 import shutil
 import tarfile
-from datetime import datetime
+from datetime import date, datetime, time
 from pathlib import Path
 from typing import Any
 
@@ -418,6 +418,30 @@ class BackupService:
 
         await db_session.commit()
 
+    @staticmethod
+    def _deserialize_column_value(column, value):
+        """Convert serialized backup values into model-compatible objects."""
+        if value is None:
+            return None
+
+        try:
+            python_type = column.type.python_type
+        except NotImplementedError:
+            return value
+
+        if python_type in (datetime, date, time):
+            if isinstance(value, python_type):
+                return value
+            if isinstance(value, str):
+                normalized = value.replace("Z", "+00:00")
+                if python_type is datetime:
+                    return datetime.fromisoformat(normalized)
+                if python_type is date:
+                    return date.fromisoformat(normalized)
+                if python_type is time:
+                    return time.fromisoformat(normalized)
+        return value
+
     async def _restore_database(
         self,
         session: AsyncSession,
@@ -490,7 +514,14 @@ class BackupService:
                             )
                             continue
 
-                    instance = model_class(**record)
+                    deserialized_record = {}
+                    for column in model_class.__table__.columns:
+                        key = column.name
+                        if key in record:
+                            deserialized_record[key] = self._deserialize_column_value(
+                                column, record[key]
+                            )
+                    instance = model_class(**deserialized_record)
                     session.add(instance)
                 logger.info(f"Restored {len(records)} records to {table_name}")
 

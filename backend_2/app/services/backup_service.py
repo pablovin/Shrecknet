@@ -430,9 +430,7 @@ class BackupService:
             admin_user = result.scalar_one_or_none()
             if admin_user:
                 # Store admin user data
-                from sqlalchemy import inspect as sqlalchemy_inspect
-
-                inspector = sqlalchemy_inspect(admin_user)
+                inspector = inspect(admin_user)
                 admin_user_data = {}
                 for column in inspector.mapper.column_attrs:
                     admin_user_data[column.key] = getattr(admin_user, column.key)

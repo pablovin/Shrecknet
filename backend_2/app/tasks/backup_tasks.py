@@ -27,7 +27,7 @@ settings = get_settings()
 
 @celery_app.task(name="backup.create_backup")
 def create_backup_task(
-    author_type: str = "user",
+    author_type: str = "agent",
     author_id: str = "system",
     admin_user_id: int | None = None,
 ) -> dict[str, Any]:
@@ -130,7 +130,7 @@ def create_backup_task(
 @celery_app.task(name="backup.restore_backup")
 def restore_backup_task(
     backup_path: str,
-    author_type: str = "user",
+    author_type: str = "agent",
     author_id: str = "system",
     admin_user_id: int | None = None,
 ) -> dict[str, Any]:

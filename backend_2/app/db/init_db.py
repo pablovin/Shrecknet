@@ -2,6 +2,7 @@ from sqlalchemy import inspect, text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from app.db.base import Base
+from app.db.migrations import migrate_architect_proposals
 
 
 def _ensure_entity_display_column(sync_conn) -> None:
@@ -33,3 +34,6 @@ async def init_db(engine: AsyncEngine) -> None:
         await conn.run_sync(Base.metadata.create_all)
         await conn.run_sync(_ensure_entity_display_column)
         await conn.run_sync(_ensure_library_item_authors_column)
+    
+    # Run architect proposals migration
+    await migrate_architect_proposals(engine)

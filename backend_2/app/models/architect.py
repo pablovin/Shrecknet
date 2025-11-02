@@ -132,6 +132,10 @@ class ArchitectProposal(Base):
     )
     corrected_alias: Mapped[str | None] = mapped_column(String(255), nullable=True)
     corrected_entity_definition_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    corrected_proposal_type: Mapped[ArchitectProposalType | None] = mapped_column(
+        SqlEnum(ArchitectProposalType), nullable=True
+    )
+    corrected_entity_instance_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     chunks: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     generated_entity_instance_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(

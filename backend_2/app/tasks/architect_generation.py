@@ -114,6 +114,8 @@ async def _execute_entity_generation(
                 status=ArchitectProposalStatus(validated["status"]),
                 corrected_alias=validated.get("corrected_alias"),
                 corrected_entity_definition_id=validated.get("corrected_entity_definition_id"),
+                corrected_proposal_type=validated.get("corrected_proposal_type"),
+                corrected_entity_instance_id=validated.get("corrected_entity_instance_id"),
                 merged_into_proposal_id=validated.get("merged_into_proposal_id"),
             )
         await session.commit()
@@ -199,17 +201,23 @@ async def _execute_entity_generation(
             new_proposals = []
             update_proposals = []
             for p in approved_proposals:
+                # Use corrected_proposal_type if provided, otherwise use original
+                effective_proposal_type = p.corrected_proposal_type or p.proposal_type
+                
+                # Use corrected_entity_instance_id if provided, otherwise use original
+                effective_entity_instance_id = p.corrected_entity_instance_id or p.entity_instance_id
+                
                 proposal_dict = {
                     "id": p.id,
-                    "proposal_type": p.proposal_type.value,
+                    "proposal_type": effective_proposal_type.value,
                     "entity_definition_id": p.entity_definition_id,
-                    "entity_instance_id": p.entity_instance_id,
+                    "entity_instance_id": effective_entity_instance_id,
                     "alias": p.alias,
                     "chunks": p.chunks or [],
                     "corrected_alias": p.corrected_alias,
                     "corrected_entity_definition_id": p.corrected_entity_definition_id,
                 }
-                if p.proposal_type == ArchitectProposalType.NEW_INSTANCE:
+                if effective_proposal_type == ArchitectProposalType.NEW_INSTANCE:
                     new_proposals.append(proposal_dict)
                 else:
                     update_proposals.append(proposal_dict)

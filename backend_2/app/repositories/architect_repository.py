@@ -147,6 +147,8 @@ class ArchitectRepository:
         status: ArchitectProposalStatus,
         corrected_alias: str | None = None,
         corrected_entity_definition_id: int | None = None,
+        corrected_proposal_type: str | None = None,
+        corrected_entity_instance_id: str | None = None,
         merged_into_proposal_id: str | None = None,
     ) -> None:
         """Update a proposal with validation data from the client."""
@@ -155,6 +157,10 @@ class ArchitectRepository:
             values["corrected_alias"] = corrected_alias
         if corrected_entity_definition_id is not None:
             values["corrected_entity_definition_id"] = corrected_entity_definition_id
+        if corrected_proposal_type is not None:
+            values["corrected_proposal_type"] = corrected_proposal_type
+        if corrected_entity_instance_id is not None:
+            values["corrected_entity_instance_id"] = corrected_entity_instance_id
         if merged_into_proposal_id is not None:
             values["merged_into_proposal_id"] = merged_into_proposal_id
 

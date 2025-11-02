@@ -812,8 +812,6 @@ async def _execute_entity_generation(
                         )
                         record = await result.single()
                         if record:
-                            import json
-
                             props = json.loads(record["props"] or "{}")
                             props[str(prop.definition_id)] = prop.value
                             await graph_session.run(
@@ -846,8 +844,6 @@ async def _execute_entity_generation(
 
                         if target_id:
                             rel_id = str(uuid4())
-                            import json
-
                             rel_data = json.dumps(
                                 {"justification": rel.justification or ""}
                             )

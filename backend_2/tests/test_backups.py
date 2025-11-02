@@ -3,6 +3,7 @@ Tests for backup and restore functionality.
 """
 
 import json
+import shutil
 import tarfile
 from pathlib import Path
 
@@ -202,7 +203,6 @@ async def test_backup_contains_expected_data(client: AsyncClient, admin_token: s
         if temp_backup.exists():
             temp_backup.unlink()
         if temp_extract.exists():
-            import shutil
             shutil.rmtree(temp_extract)
 
 
@@ -348,5 +348,4 @@ async def test_backup_excludes_backup_directory(client: AsyncClient, admin_token
         if temp_backup.exists():
             temp_backup.unlink()
         if temp_extract.exists():
-            import shutil
             shutil.rmtree(temp_extract)

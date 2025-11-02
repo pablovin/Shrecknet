@@ -490,11 +490,30 @@ class BackupService:
         # Restore nodes
         for node in data.get("nodes", []):
             old_id = node["id"]
-            labels = ":".join(node["labels"])
+            labels = node["labels"]
             properties = node["properties"]
 
+            # Validate labels to prevent Cypher injection
+            # Labels should only contain alphanumeric characters and underscores
+            validated_labels = []
+            for label in labels:
+                if not isinstance(label, str) or not all(
+                    c.isalnum() or c == "_" for c in label
+                ):
+                    logger.warning(
+                        f"Skipping invalid label: {label}. Labels must be alphanumeric with underscores only."
+                    )
+                    continue
+                validated_labels.append(label)
+
+            if not validated_labels:
+                logger.warning(f"Skipping node with no valid labels")
+                continue
+
+            labels_str = ":".join(validated_labels)
+
             # Create node with properties
-            query = f"CREATE (n:{labels}) SET n = $properties RETURN id(n) as new_id"
+            query = f"CREATE (n:{labels_str}) SET n = $properties RETURN id(n) as new_id"
             result = await session.run(query, properties=properties)
             record = await result.single()
             new_id = record["new_id"]
@@ -512,6 +531,16 @@ class BackupService:
 
             rel_type = rel["type"]
             properties = rel["properties"]
+
+            # Validate relationship type to prevent Cypher injection
+            # Relationship types should only contain alphanumeric characters and underscores
+            if not isinstance(rel_type, str) or not all(
+                c.isalnum() or c == "_" for c in rel_type
+            ):
+                logger.warning(
+                    f"Skipping invalid relationship type: {rel_type}. Types must be alphanumeric with underscores only."
+                )
+                continue
 
             query = f"""
             MATCH (a), (b)

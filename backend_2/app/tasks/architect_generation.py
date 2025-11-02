@@ -19,7 +19,10 @@ from app.models.architect import ArchitectProposalStatus, ArchitectProposalType
 from app.models.background_job import AuthorType, JobType
 from app.repositories.architect_repository import ArchitectRepository
 from app.repositories.ontology_repository import OntologyRepository
-from app.schemas.ontology_instance import OntologyInstanceCreate, OntologyInstanceEntityCreate
+from app.schemas.ontology_instance import (
+    OntologyInstanceCreate,
+    OntologyInstanceEntityCreate,
+)
 from app.services.ontology_instance_service import OntologyInstanceService
 from app.utils.async_helpers import run_async
 from app.utils.job_tracking import (
@@ -39,6 +42,8 @@ def _truncate_text(text: Optional[str], limit: int = 200) -> Optional[str]:
     if len(text) <= limit:
         return text
     return text[:limit] + "…"
+
+
 settings = get_settings()
 
 
@@ -70,7 +75,11 @@ def generate_entities(
     try:
         run_async(mark_job_running(job_id))
         run_async(_attach_generation_job_to_run(run_id, job_id))
-        run_async(update_job_progress(job_id, 0.05, {"status": "Processing validated proposals"}))
+        run_async(
+            update_job_progress(
+                job_id, 0.05, {"status": "Processing validated proposals"}
+            )
+        )
 
         result = run_async(
             _execute_entity_generation(
@@ -132,20 +141,28 @@ async def _execute_entity_generation(
         skipped_updates: list[dict[str, Any]] = []
 
         # Update proposals with validation data
-        await update_job_progress(job_id, 0.10, {"status": "Updating proposal statuses"})
+        await update_job_progress(
+            job_id, 0.10, {"status": "Updating proposal statuses"}
+        )
         for validated in validated_proposals:
             # Convert corrected_proposal_type from string to enum if provided
             corrected_proposal_type = None
             if validated.get("corrected_proposal_type") is not None:
-                corrected_proposal_type = ArchitectProposalType(validated["corrected_proposal_type"])
-            
+                corrected_proposal_type = ArchitectProposalType(
+                    validated["corrected_proposal_type"]
+                )
+
             await repo.update_proposal_validation(
                 proposal_id=validated["proposal_id"],
                 status=ArchitectProposalStatus(validated["status"]),
                 corrected_alias=validated.get("corrected_alias"),
-                corrected_entity_definition_id=validated.get("corrected_entity_definition_id"),
+                corrected_entity_definition_id=validated.get(
+                    "corrected_entity_definition_id"
+                ),
                 corrected_proposal_type=corrected_proposal_type,
-                corrected_entity_instance_id=validated.get("corrected_entity_instance_id"),
+                corrected_entity_instance_id=validated.get(
+                    "corrected_entity_instance_id"
+                ),
                 merged_into_proposal_id=validated.get("merged_into_proposal_id"),
             )
         await session.commit()
@@ -155,7 +172,9 @@ async def _execute_entity_generation(
         proposals_dict = {p.id: p for p in all_proposals}
 
         # Filter to approved/merged proposals
-        await update_job_progress(job_id, 0.15, {"status": "Filtering approved proposals"})
+        await update_job_progress(
+            job_id, 0.15, {"status": "Filtering approved proposals"}
+        )
         approved_proposals = []
         for p in all_proposals:
             if p.status == ArchitectProposalStatus.APPROVED:
@@ -177,7 +196,7 @@ async def _execute_entity_generation(
 
         onto_repo = OntologyRepository(session)
         entity_defs = await onto_repo.list_entities(ontology_id)
-        
+
         # Build entity definitions map with properties and relationships
         entity_definitions_map: dict[int, dict[str, Any]] = {}
         for entity_def in entity_defs:
@@ -198,7 +217,9 @@ async def _execute_entity_generation(
                     "name": rel.name,
                     "description": rel.description,
                     "destiny_entity_id": rel.destiny_entity_id,
-                    "destiny_entity_name": rel.destiny_entity.name if rel.destiny_entity else "any",
+                    "destiny_entity_name": (
+                        rel.destiny_entity.name if rel.destiny_entity else "any"
+                    ),
                 }
                 for rel in entity_def.relationships
                 if rel.auto_generatable
@@ -216,8 +237,10 @@ async def _execute_entity_generation(
         driver = get_driver()
         async with driver.session(database=settings.neo4j_database) as graph_session:
             instance_service = OntologyInstanceService(session, graph_session)
-            ontology_instance = await instance_service.get_instance(run.ontology_instance_id)
-            
+            ontology_instance = await instance_service.get_instance(
+                run.ontology_instance_id
+            )
+
             # Combine all entity texts for context
             original_text_parts = []
             for entity in ontology_instance.entities:
@@ -227,7 +250,7 @@ async def _execute_entity_generation(
                     original_text_parts.append(entity.autogenerated_text)
             original_text = "\n\n".join(original_text_parts)
 
-        # Separate new and update proposals
+            # Separate new and update proposals
             new_proposals = []
             update_proposals = []
             for p in approved_proposals:
@@ -302,7 +325,9 @@ async def _execute_entity_generation(
             new_proposal_map = {p["id"]: p for p in new_proposals}
             if new_proposals:
                 await update_job_progress(
-                    job_id, 0.35, {"status": f"Generating {len(new_proposals)} new entities"}
+                    job_id,
+                    0.35,
+                    {"status": f"Generating {len(new_proposals)} new entities"},
                 )
                 new_entity_results = await generator.generate_new_entities(
                     proposals=new_proposals,
@@ -349,7 +374,8 @@ async def _execute_entity_generation(
                                 proposal_id,
                                 entity_create.alias,
                                 [
-                                    prop.definition_id for prop in entity_create.properties
+                                    prop.definition_id
+                                    for prop in entity_create.properties
                                 ],
                             )
                             entity_create.properties = []
@@ -374,20 +400,26 @@ async def _execute_entity_generation(
                         entity_create.properties = filtered_properties
 
                 new_proposal_ids_ordered = [
-                    pid for pid in [p["id"] for p in new_proposals] if pid in created_entities_map
+                    pid
+                    for pid in [p["id"] for p in new_proposals]
+                    if pid in created_entities_map
                 ]
 
                 if new_proposal_ids_ordered:
                     await update_job_progress(
                         job_id,
                         0.50,
-                        {"status": f"Creating {len(new_proposal_ids_ordered)} entities in graph"},
+                        {
+                            "status": f"Creating {len(new_proposal_ids_ordered)} entities in graph"
+                        },
                     )
 
                 new_instance_ids_to_link: list[str] = []
                 proposal_entity_id_map: dict[str, str] = {}
                 created_alias_map: dict[str, str] = {}
-                created_relationship_summaries: dict[str, list[dict[str, Any]]] = defaultdict(list)
+                created_relationship_summaries: dict[str, list[dict[str, Any]]] = (
+                    defaultdict(list)
+                )
                 new_entity_base_summary: dict[str, dict[str, Any]] = {}
 
                 for proposal_id in new_proposal_ids_ordered:
@@ -401,7 +433,9 @@ async def _execute_entity_generation(
                             name=entity_create.alias,
                             entities=[entity_create],
                         )
-                        new_instance = await instance_service.create_instance(instance_payload)
+                        new_instance = await instance_service.create_instance(
+                            instance_payload
+                        )
                     except Exception as exc:  # broad to capture validation errors
                         logger.exception(
                             "architect_generation: failed creating instance for proposal %s alias=%s: %s",
@@ -429,7 +463,9 @@ async def _execute_entity_generation(
                     primary_entity = new_instance.entities[0]
                     created_entity_ids.append(primary_entity.entity_instance_id)
                     new_instance_ids_to_link.append(new_instance.instance_id)
-                    proposal_entity_id_map[proposal_id] = primary_entity.entity_instance_id
+                    proposal_entity_id_map[proposal_id] = (
+                        primary_entity.entity_instance_id
+                    )
                     created_alias_map[entity_create.alias.lower().strip()] = (
                         primary_entity.entity_instance_id
                     )
@@ -470,7 +506,9 @@ async def _execute_entity_generation(
                         continue
                     rel_defs = {
                         rel["id"]: rel
-                        for rel in entity_definitions_map[entity_create.definition_id]["relationships"]
+                        for rel in entity_definitions_map[entity_create.definition_id][
+                            "relationships"
+                        ]
                     }
                     for rel_payload in relationships:
                         rel_def = rel_defs.get(rel_payload["definition_id"])
@@ -552,16 +590,20 @@ async def _execute_entity_generation(
                     summary = new_entity_base_summary.get(proposal_id)
                     if not summary:
                         continue
-                    summary["relationships"] = created_relationship_summaries.get(proposal_id, [])
+                    summary["relationships"] = created_relationship_summaries.get(
+                        proposal_id, []
+                    )
                     created_details.append(summary)
 
             # Phase 2: Update existing entities
             updated_entity_ids = []
             if update_proposals:
                 await update_job_progress(
-                    job_id, 0.70, {"status": f"Updating {len(update_proposals)} existing entities"}
+                    job_id,
+                    0.70,
+                    {"status": f"Updating {len(update_proposals)} existing entities"},
                 )
-                
+
                 # Build map of existing entities from the current ontology instance
                 existing_entities_map = {}
                 for entity in ontology_instance.entities:
@@ -584,7 +626,7 @@ async def _execute_entity_generation(
                             for r in entity.relationships
                         ],
                     }
-                
+
                 # Check for missing entities and load them from the graph
                 # This can happen when proposals reference entities from other instances
                 missing_entity_ids = set()
@@ -592,12 +634,12 @@ async def _execute_entity_generation(
                     entity_id = proposal.get("entity_instance_id")
                     if entity_id and entity_id not in existing_entities_map:
                         missing_entity_ids.add(entity_id)
-                
+
                 if missing_entity_ids:
                     logger.info(
                         "architect_generation: loading %d missing entities from graph: %s",
                         len(missing_entity_ids),
-                        sorted(missing_entity_ids)
+                        sorted(missing_entity_ids),
                     )
                     # Fetch missing entities from the graph
                     for entity_id in missing_entity_ids:
@@ -622,7 +664,9 @@ async def _execute_entity_generation(
                                 {
                                     "definition_id": rel["definition_id"],
                                     "target_alias": None,
-                                    "target_entity_instance_id": rel["target_entity_instance_id"],
+                                    "target_entity_instance_id": rel[
+                                        "target_entity_instance_id"
+                                    ],
                                 }
                                 for rel in rels
                                 if rel.get("definition_id") is not None
@@ -632,10 +676,14 @@ async def _execute_entity_generation(
                                 "definition_id": node.get("entity_definition_id"),
                                 "alias": node.get("alias", ""),
                                 "text": node.get("text", ""),
-                                "autogenerated_text": node.get("autogenerated_text", ""),
+                                "autogenerated_text": node.get(
+                                    "autogenerated_text", ""
+                                ),
                                 "properties": [
                                     {"definition_id": int(k), "value": v}
-                                    for k, v in json.loads(node.get("properties") or "{}").items()
+                                    for k, v in json.loads(
+                                        node.get("properties") or "{}"
+                                    ).items()
                                 ],
                                 "relationships": valid_rels,
                             }
@@ -655,7 +703,9 @@ async def _execute_entity_generation(
                 )
 
                 update_result_map = {
-                    update.get("proposal_id"): update for update in updates if update.get("proposal_id")
+                    update.get("proposal_id"): update
+                    for update in updates
+                    if update.get("proposal_id")
                 }
                 for proposal in update_proposals:
                     pid = proposal["id"]
@@ -680,11 +730,15 @@ async def _execute_entity_generation(
                     entity_def_id = existing_entities_map[entity_id]["definition_id"]
                     valid_property_ids = {
                         prop_def["id"]
-                        for prop_def in entity_definitions_map[entity_def_id]["properties"]
+                        for prop_def in entity_definitions_map[entity_def_id][
+                            "properties"
+                        ]
                     }
                     raw_props = update_data.get("new_properties", [])
                     filtered_update_props = [
-                        prop for prop in raw_props if prop.definition_id in valid_property_ids
+                        prop
+                        for prop in raw_props
+                        if prop.definition_id in valid_property_ids
                     ]
                     if len(filtered_update_props) != len(raw_props):
                         invalid_defs = {
@@ -759,6 +813,7 @@ async def _execute_entity_generation(
                         record = await result.single()
                         if record:
                             import json
+
                             props = json.loads(record["props"] or "{}")
                             props[str(prop.definition_id)] = prop.value
                             await graph_session.run(
@@ -792,11 +847,16 @@ async def _execute_entity_generation(
                         if target_id:
                             rel_id = str(uuid4())
                             import json
-                            rel_data = json.dumps({"justification": rel.justification or ""})
-                            
+
+                            rel_data = json.dumps(
+                                {"justification": rel.justification or ""}
+                            )
+
                             # Get relationship definition for destiny_entity_id
                             entity_def = existing_entities_map[entity_id]
-                            rel_defs = entity_definitions_map[entity_def["definition_id"]]["relationships"]
+                            rel_defs = entity_definitions_map[
+                                entity_def["definition_id"]
+                            ]["relationships"]
                             destiny_entity_id = None
                             for rd in rel_defs:
                                 if rd["id"] == rel.definition_id:
@@ -825,7 +885,9 @@ async def _execute_entity_generation(
                             )
 
         await session.commit()
-        await update_job_progress(job_id, 0.95, {"status": "Entity generation completed"})
+        await update_job_progress(
+            job_id, 0.95, {"status": "Entity generation completed"}
+        )
 
         from app.tasks.ontology_links import link_instance as link_instance_task
         from app.tasks.neo4j_embedding import embed_ontology as embed_ontology_task

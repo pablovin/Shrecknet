@@ -84,7 +84,16 @@ class ArchitectAnalysisRun(Base):
     )
 
     agent: Mapped["Agent"] = relationship("Agent", back_populates="architect_runs")
-    background_job: Mapped["BackgroundJob"] = relationship("BackgroundJob")
+    background_job: Mapped["BackgroundJob | None"] = relationship(
+        "BackgroundJob",
+        foreign_keys=[background_job_id],
+        back_populates="architect_analysis_runs",
+    )
+    generation_job: Mapped["BackgroundJob | None"] = relationship(
+        "BackgroundJob",
+        foreign_keys=[generation_job_id],
+        back_populates="architect_generation_runs",
+    )
     proposals: Mapped[list["ArchitectProposal"]] = relationship(
         "ArchitectProposal",
         back_populates="run",

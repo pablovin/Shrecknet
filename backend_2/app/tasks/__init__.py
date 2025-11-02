@@ -6,6 +6,7 @@ from app.tasks import (
     pdf_embedding,
     library_metadata,
     architect_analysis,
+    architect_generation,
 )
 
 __all__ = [
@@ -14,4 +15,5 @@ __all__ = [
     "pdf_embedding",
     "library_metadata",
     "architect_analysis",
+    "architect_generation",
 ]

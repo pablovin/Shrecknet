@@ -4,11 +4,15 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
+from typing import TYPE_CHECKING
 
 from sqlalchemy import DateTime, Float, Integer, String, Text, func
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
+
+if TYPE_CHECKING:  # pragma: no cover
+    from app.models.architect import ArchitectAnalysisRun
 
 
 class AuthorType(str, Enum):
@@ -79,6 +83,17 @@ class BackgroundJob(Base):
     )  # Total duration in seconds
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    architect_analysis_runs: Mapped[list["ArchitectAnalysisRun"]] = relationship(
+        "ArchitectAnalysisRun",
+        back_populates="background_job",
+        foreign_keys="ArchitectAnalysisRun.background_job_id",
+    )
+    architect_generation_runs: Mapped[list["ArchitectAnalysisRun"]] = relationship(
+        "ArchitectAnalysisRun",
+        back_populates="generation_job",
+        foreign_keys="ArchitectAnalysisRun.generation_job_id",
     )
 
     def __repr__(self) -> str:

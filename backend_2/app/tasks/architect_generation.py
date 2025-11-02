@@ -109,12 +109,17 @@ async def _execute_entity_generation(
         # Update proposals with validation data
         await update_job_progress(job_id, 0.10, {"status": "Updating proposal statuses"})
         for validated in validated_proposals:
+            # Convert corrected_proposal_type from string to enum if provided
+            corrected_proposal_type = None
+            if validated.get("corrected_proposal_type"):
+                corrected_proposal_type = ArchitectProposalType(validated["corrected_proposal_type"])
+            
             await repo.update_proposal_validation(
                 proposal_id=validated["proposal_id"],
                 status=ArchitectProposalStatus(validated["status"]),
                 corrected_alias=validated.get("corrected_alias"),
                 corrected_entity_definition_id=validated.get("corrected_entity_definition_id"),
-                corrected_proposal_type=validated.get("corrected_proposal_type"),
+                corrected_proposal_type=corrected_proposal_type,
                 corrected_entity_instance_id=validated.get("corrected_entity_instance_id"),
                 merged_into_proposal_id=validated.get("merged_into_proposal_id"),
             )

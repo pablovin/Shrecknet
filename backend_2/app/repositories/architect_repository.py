@@ -11,6 +11,7 @@ from app.models.architect import (
     ArchitectAnalysisRun,
     ArchitectProposal,
     ArchitectProposalStatus,
+    ArchitectProposalType,
     ArchitectRunStatus,
 )
 
@@ -147,7 +148,7 @@ class ArchitectRepository:
         status: ArchitectProposalStatus,
         corrected_alias: str | None = None,
         corrected_entity_definition_id: int | None = None,
-        corrected_proposal_type: str | None = None,
+        corrected_proposal_type: ArchitectProposalType | None = None,
         corrected_entity_instance_id: str | None = None,
         merged_into_proposal_id: str | None = None,
     ) -> None:

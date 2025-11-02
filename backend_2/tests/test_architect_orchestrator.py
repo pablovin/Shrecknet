@@ -27,8 +27,10 @@ class StubRetriever:
             RetrievedChunk(
                 node_id="entity-1",
                 node_label="Character",
+                instance_id="instance-1",
                 text="Alice - Prince of the city, cunning and decisive.",
                 score=0.87,
+                confidence_pct=87.0,
                 source="ontology_42",
             )
         ]

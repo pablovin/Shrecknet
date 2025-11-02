@@ -34,6 +34,21 @@ class EmbedOntologyResponse(BaseModel):
     nodes_failed: int
 
 
+class ResetOntologyEmbeddingsRequest(BaseModel):
+    """Request to remove embeddings for an ontology."""
+
+    ontology_id: int = Field(..., description="Ontology ID to reset")
+
+
+class ResetOntologyEmbeddingsResponse(BaseModel):
+    """Response after removing embeddings for an ontology."""
+
+    ontology_id: int
+    nodes_reset: int
+    orphans_deleted: int
+    chunks_deleted: int
+
+
 class SemanticSearchRequest(BaseModel):
     """Request for semantic search."""
 

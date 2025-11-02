@@ -392,13 +392,36 @@ class OntologyInstanceService:
         )
 
     async def delete_instance(self, instance_id: str) -> None:
-        await self.graph_session.run(
-            """
-            MATCH (i:OntologyInstance {instance_id: $instance_id})
-            DETACH DELETE i
-            """,
-            instance_id=instance_id,
-        )
+        tx = await self.graph_session.begin_transaction()
+        try:
+            await tx.run(
+                """
+                MATCH (i:OntologyInstance {instance_id: $instance_id})-[:HAS_ENTITY]->(e:EntityInstance)-[:HAS_CHUNK]->(chunk:EntityChunk)
+                DETACH DELETE chunk
+                """,
+                instance_id=instance_id,
+            )
+            await tx.run(
+                """
+                MATCH (i:OntologyInstance {instance_id: $instance_id})-[:HAS_ENTITY]->(e:EntityInstance)
+                DETACH DELETE e
+                """,
+                instance_id=instance_id,
+            )
+            await tx.run(
+                """
+                MATCH (i:OntologyInstance {instance_id: $instance_id})
+                DETACH DELETE i
+                """,
+                instance_id=instance_id,
+            )
+        except Exception:
+            await tx.rollback()
+            await tx.close()
+            raise
+        else:
+            await tx.commit()
+            await tx.close()
 
     async def update_instance(
         self, instance_id: str, payload: OntologyInstanceUpdate

@@ -102,8 +102,8 @@ class Neo4jGraphRetriever:
                         score_threshold=0.1,
                         include_neighbors=False,
                     )
-                    names = []
-                    for node in results.get("results", []):
+                    nodes = results.get("results", [])
+                    for rank, node in enumerate(nodes, start=1):
                         context_text = node.get("context_text") or ""
                         if not context_text:
                             text_parts = []
@@ -116,29 +116,47 @@ class Neo4jGraphRetriever:
                                 if text_parts
                                 else node.get("name", "")
                             )
-                        # Try to extract a display name/alias for logging
-                        props = node.get("properties") or {}
-                        display = props.get("alias") or node.get("name") or node.get("node_id")
-                        if display:
-                            names.append(str(display))
-                        chunks.append(
-                            RetrievedChunk(
-                                node_id=node.get("node_id", ""),
-                                node_label=(
-                                    node.get("labels", [None])[0]
-                                    if node.get("labels")
-                                    else None
-                                ),
-                                text=context_text,
-                                score=node.get("score", 0.0),
-                                source=f"ontology_{oid}" if oid else None,
-                            )
+
+                        chunk = RetrievedChunk(
+                            node_id=node.get("node_id", ""),
+                            node_label=(
+                                node.get("labels", [None])[0]
+                                if node.get("labels")
+                                else None
+                            ),
+                            node_name=node.get("name"),
+                            node_alias=node.get("alias"),
+                            instance_id=node.get("instance_id"),
+                            chunk_id=node.get("chunk_id"),
+                            chunk_type=node.get("chunk_type"),
+                            chunk_index=node.get("chunk_index"),
+                            text=context_text,
+                            score=node.get("score", 0.0),
+                            confidence_pct=round(node.get("score", 0.0) * 100, 2),
+                            source=f"ontology_{oid}" if oid else None,
+                            properties=node.get("properties") or {},
                         )
+                        chunks.append(chunk)
+
+                        preview = (context_text or "").strip().replace("\n", " ")
+                        if len(preview) > 160:
+                            preview = preview[:160] + "…"
+                        logger.info(
+                            "elder_retrieval_detail subquery='%s' ontology=%s rank=%d score=%.3f chunk_type=%s node=%s instance=%s preview=\"%s\"",
+                            query,
+                            str(oid),
+                            rank,
+                            chunk.score,
+                            chunk.chunk_type,
+                            chunk.node_id,
+                            chunk.instance_id,
+                            preview,
+                        )
+
                     logger.info(
-                        "retrieval_done: ontology=%s results=%d names=%s",
+                        "retrieval_done: ontology=%s results=%d",
                         str(oid),
-                        len(results.get("results", [])),
-                        names,
+                        len(nodes),
                     )
                 except Exception as e:
                     msg = f"ontology {oid}: {e}"

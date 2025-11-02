@@ -8,13 +8,7 @@ from typing import Any, Optional
 from app.integrations.llm.model_policy import LLMTask, ModelPolicy
 from app.integrations.llm.openai_client import OpenAIClient
 from app.integrations.retrieval.neo4j_retriever import GraphRetriever
-from app.jobs.elder.prompts import (
-    DECOMPOSE_PROMPT,
-    SUBANSWER_PROMPT,
-    SYNTHESIS_PROMPT,
-    VALIDATION_PROMPT,
-    STYLE_PROMPT,
-)
+from app.jobs.elder.prompts import DECOMPOSE_PROMPT, SUBANSWER_PROMPT, SYNTHESIS_PROMPT
 from app.jobs.elder.schemas import (
     ElderQueryRequest,
     ElderQueryResponse,
@@ -30,7 +24,7 @@ logger = logging.getLogger(__name__)
 class ElderOrchestrator:
     """
     Orchestrates the Elder pipeline:
-    Decompose → Retrieve → Sub-answer → Synthesize → Validate → Style
+    Decompose → Retrieve → Sub-answer → Synthesize
     """
 
     def __init__(
@@ -55,6 +49,7 @@ class ElderOrchestrator:
         self.default_top_k = default_top_k
         self.max_subqueries = 3
         self.max_concurrency = 3
+        self.last_retrieval_debug: list[dict[str, Any]] = []
 
     async def execute(
         self,
@@ -77,6 +72,7 @@ class ElderOrchestrator:
         timings: dict[str, float] = {}
         overall_start = time.monotonic()
         top_k = request.top_k or self.default_top_k
+        self.last_retrieval_debug = []
 
         # Get ontology IDs from agent
         ontology_ids = [ont.id for ont in agent.ontologies]
@@ -85,12 +81,31 @@ class ElderOrchestrator:
         if request.fast:
             top_k = min(top_k, 5)
             model = self.model_policy.get_model(LLMTask.SYNTHESIS)
-            # Retrieve once across ontologies
             t_retr_start = time.monotonic()
             chunks = await self.graph_retriever.search(
                 query=request.query, ontology_ids=ontology_ids, top_k=top_k
             )
             timings["retrieve"] = time.monotonic() - t_retr_start
+            self.last_retrieval_debug = [
+                {
+                    "subquery": request.query,
+                    "duration": timings["retrieve"],
+                    "results": [
+                        {
+                            "node_id": c.node_id,
+                            "node_name": c.node_name,
+                            "instance_id": c.instance_id,
+                            "chunk_type": c.chunk_type,
+                            "chunk_index": c.chunk_index,
+                            "score": c.score,
+                            "confidence_pct": c.confidence_pct,
+                            "text": c.text,
+                        }
+                        for c in chunks
+                    ],
+                }
+            ]
+
             if not chunks:
                 response = ElderQueryResponse(
                     agent_id=agent.id,
@@ -100,6 +115,7 @@ class ElderOrchestrator:
                     important_nodes=[],
                     context=[],
                     trace=trace if request.include_trace else None,
+                    retrieval_debug=self.last_retrieval_debug or None,
                     answer=None,
                 )
                 timings["overall"] = time.monotonic() - overall_start
@@ -108,8 +124,12 @@ class ElderOrchestrator:
                     timings.get("retrieve", 0.0),
                     timings.get("overall", 0.0),
                 )
+                logger.info(
+                    "elder_pipeline_steps_durations: %s",
+                    {k: round(v, 3) for k, v in timings.items()},
+                )
                 return response
-            # Build a compact context
+
             context_snippets = []
             for c in chunks[:top_k]:
                 text = c.text.strip().replace("\n", " ")
@@ -131,7 +151,6 @@ class ElderOrchestrator:
             )
             timings["llm_synthesis"] = time.monotonic() - t_llm_start
 
-            # Build response
             subanswers: list[SubAnswer] = []
             important_nodes = [c.node_id for c in chunks]
             response = ElderQueryResponse(
@@ -144,6 +163,7 @@ class ElderOrchestrator:
                 ),
                 context=chunks if request.mode in ("context", "both") else [],
                 trace=trace if request.include_trace else None,
+                retrieval_debug=self.last_retrieval_debug or None,
                 answer=answer if request.mode in ("nl", "both") else None,
             )
             timings["overall"] = time.monotonic() - overall_start
@@ -152,6 +172,10 @@ class ElderOrchestrator:
                 timings.get("retrieve", 0.0),
                 timings.get("llm_synthesis", 0.0),
                 timings.get("overall", 0.0),
+            )
+            logger.info(
+                "elder_pipeline_steps_durations: %s",
+                {k: round(v, 3) for k, v in timings.items()},
             )
             return response
 
@@ -165,7 +189,9 @@ class ElderOrchestrator:
 
         # Step 2: Retrieve context for each sub-query (parallel)
         t_retrieve = time.monotonic()
-        retrieval_results = await self._retrieve(subqueries, ontology_ids, top_k, trace)
+        retrieval_results = await self._retrieve(
+            subqueries, ontology_ids, top_k, trace
+        )
         timings["retrieve"] = time.monotonic() - t_retrieve
         # Build debug summary of retrieval names per subquery
         def extract_name(chunk: RetrievedChunk) -> str:
@@ -177,17 +203,18 @@ class ElderOrchestrator:
         retrieval_summary = [
             {
                 "subquery": sq,
+                "duration": duration,
                 "names": [extract_name(c) for c in chunks[:5]],
                 "context_preview": [
                     (c.text[:200] + "…") if len(c.text) > 200 else c.text
                     for c in chunks[:2]
                 ],
             }
-            for (sq, chunks) in retrieval_results
+            for (sq, chunks, duration) in retrieval_results
         ]
 
         # If no context retrieved, return without generating an answer
-        total_chunks = sum(len(chunks) for _, chunks in retrieval_results)
+        total_chunks = sum(len(chunks) for _, chunks, _ in retrieval_results)
         if total_chunks == 0:
             important_nodes: list[str] = []
             context: list[RetrievedChunk] = []
@@ -207,6 +234,7 @@ class ElderOrchestrator:
                 important_nodes=[],
                 context=[],
                 trace=resp_trace or None,
+                retrieval_debug=self.last_retrieval_debug or None,
             )
             timings["overall"] = time.monotonic() - overall_start
             logger.info(
@@ -214,6 +242,10 @@ class ElderOrchestrator:
                 timings.get("decompose", 0.0),
                 timings.get("retrieve", 0.0),
                 timings.get("overall", 0.0),
+            )
+            logger.info(
+                "elder_pipeline_steps_durations: %s",
+                {k: round(v, 3) for k, v in timings.items()},
             )
             return response
 
@@ -225,28 +257,21 @@ class ElderOrchestrator:
         # Step 4: Synthesize final answer if mode includes 'nl'
         answer = None
         if request.mode in ("nl", "both"):
+            if len(subqueries) > 1 or total_chunks >= 4:
+                answer_mode = "expanded"
+            elif total_chunks <= 1:
+                answer_mode = "direct"
+            else:
+                answer_mode = "balanced"
             t_synth = time.monotonic()
-            answer = await self._synthesize(request.query, subanswers, trace)
+            answer = await self._synthesize(
+                agent,
+                request.query,
+                subanswers,
+                trace,
+                answer_mode,
+            )
             timings["synthesis"] = time.monotonic() - t_synth
-
-            # Step 5: Validate answer
-            t_valid = time.monotonic()
-            is_valid = await self._validate(request.query, answer, trace)
-            timings["validation"] = time.monotonic() - t_valid
-
-            # If validation fails, refine once
-            if not is_valid:
-                t_refine = time.monotonic()
-                answer = await self._synthesize(
-                    request.query, subanswers, trace, refine=True
-                )
-                timings["refine"] = time.monotonic() - t_refine
-
-            # Step 6: Apply writing style if configured
-            if agent.writing_style:
-                t_style = time.monotonic()
-                answer = await self._style(answer, agent.writing_style, trace)
-                timings["style"] = time.monotonic() - t_style
 
         # Step 7: Build context and important nodes
         important_nodes, context = self._build_context(subanswers)
@@ -263,26 +288,27 @@ class ElderOrchestrator:
             context=context if request.mode in ("context", "both") else [],
             trace=trace if request.include_trace else None,
         )
+        response.retrieval_debug = self.last_retrieval_debug or None
 
         if request.mode in ("nl", "both"):
             response.answer = answer
 
         timings["overall"] = time.monotonic() - overall_start
         logger.info(
-            "elder_timing: decompose=%.3fs, retrieve=%.3fs, subanswer=%.3fs, synthesis=%.3fs, validation=%.3fs, refine=%.3fs, style=%.3fs, overall=%.3fs",
+            "elder_timing: decompose=%.3fs, retrieve=%.3fs, subanswer=%.3fs, synthesis=%.3fs, overall=%.3fs",
             timings.get("decompose", 0.0),
             timings.get("retrieve", 0.0),
             timings.get("subanswer", 0.0),
             timings.get("synthesis", 0.0),
-            timings.get("validation", 0.0),
-            timings.get("refine", 0.0),
-            timings.get("style", 0.0),
             timings.get("overall", 0.0),
+        )
+        logger.info(
+            "elder_pipeline_steps_durations: %s",
+            {k: round(v, 3) for k, v in timings.items()},
         )
         # Final verbose debug block
         try:
             logger.info("elder_summary_original_query: %s", request.query)
-            logger.info("elder_summary_decompose_prompt:\n%s", prompt)
             logger.info("elder_summary_subqueries: %s", subqueries)
             for entry in retrieval_summary:
                 logger.info(
@@ -293,7 +319,6 @@ class ElderOrchestrator:
                 )
             if response.answer:
                 logger.info("elder_summary_synthesis: %s", response.answer)
-            # Validation and style responses are logged earlier as well
         except Exception:
             pass
 
@@ -388,11 +413,12 @@ class ElderOrchestrator:
         ontology_ids: list[int],
         top_k: int,
         trace: list[TraceStep],
-    ) -> list[tuple[str, list[RetrievedChunk]]]:
+    ) -> list[tuple[str, list[RetrievedChunk], float]]:
         """Retrieve context for each sub-query in parallel."""
 
-        async def retrieve_one(subquery: str) -> tuple[str, list[RetrievedChunk]]:
+        async def retrieve_one(subquery: str) -> tuple[str, list[RetrievedChunk], float]:
             # Use a fresh Neo4j session per subquery to allow safe parallel retrieval
+            sub_start = time.monotonic()
             try:
                 from app.graph.neo4j import get_driver
                 from app.core.config import get_settings as _get_settings
@@ -409,10 +435,12 @@ class ElderOrchestrator:
                         ontology_ids=ontology_ids,
                         top_k=top_k,
                     )
-                    return (subquery, chunks)
+                    elapsed = time.monotonic() - sub_start
+                    return (subquery, chunks, elapsed)
             except Exception as e:
                 logger.error(f"Retrieval failed for '{subquery}': {e}")
-                return (subquery, [])
+                elapsed = time.monotonic() - sub_start
+                return (subquery, [], elapsed)
 
         # Bounded parallel retrieval using separate sessions
         semaphore = asyncio.Semaphore(self.max_concurrency)
@@ -421,27 +449,65 @@ class ElderOrchestrator:
             async with semaphore:
                 return await retrieve_one(sq)
 
-        results = await asyncio.gather(*[_run_with_limit(sq) for sq in subqueries])
+        logger.info(
+            "elder_retrieval_parallel_start subqueries=%d concurrency=%d",
+            len(subqueries),
+            self.max_concurrency,
+        )
+
+        tasks = [asyncio.create_task(_run_with_limit(sq)) for sq in subqueries]
+        results = await asyncio.gather(*tasks)
+        aggregate_duration = sum(duration for _, _, duration in results)
+        max_duration = max((duration for _, _, duration in results), default=0.0)
+
+        debug_entries: list[dict[str, Any]] = []
+        for subquery, chunks, duration in results:
+            debug_entry = {
+                "subquery": subquery,
+                "duration": duration,
+                "results": [
+                    {
+                        "node_id": chunk.node_id,
+                        "node_name": chunk.node_name,
+                        "instance_id": chunk.instance_id,
+                        "chunk_type": chunk.chunk_type,
+                        "chunk_index": chunk.chunk_index,
+                        "score": chunk.score,
+                        "confidence_pct": chunk.confidence_pct,
+                        "text": chunk.text,
+                    }
+                    for chunk in chunks
+                ],
+            }
+            debug_entries.append(debug_entry)
+            logger.info(
+                "elder_retrieval_summary subquery='%s' total_chunks=%d duration=%.3fs",
+                subquery,
+                len(chunks),
+                duration,
+            )
+        self.last_retrieval_debug = debug_entries
 
         if trace is not None:
             trace.append(
                 TraceStep(
                     step="retrieve",
-                    data={
-                        "retrieval": [
-                            {"subquery": sq, "num_chunks": len(chunks)}
-                            for sq, chunks in results
-                        ]
-                    },
+                    data={"retrieval": debug_entries},
                 )
             )
 
-        logger.info(f"Retrieved context for {len(results)} sub-queries")
+        logger.info(
+            "elder_retrieval_parallel_done subqueries=%d total_chunks=%d aggregate_time=%.3fs wall_time=%.3fs",
+            len(results),
+            sum(len(chunks) for _, chunks, _ in results),
+            aggregate_duration,
+            max_duration,
+        )
         return results
 
     async def _subanswer(
         self,
-        retrieval_results: list[tuple[str, list[RetrievedChunk]]],
+        retrieval_results: list[tuple[str, list[RetrievedChunk], float]],
         trace: list[TraceStep],
     ) -> list[SubAnswer]:
         """Generate sub-answers for each sub-query in parallel."""
@@ -492,7 +558,7 @@ class ElderOrchestrator:
                 return await answer_one(sq, chunks)
 
         subanswers = await asyncio.gather(
-            *[answer_with_limit(sq, chunks) for sq, chunks in retrieval_results]
+            *[answer_with_limit(sq, chunks) for sq, chunks, _ in retrieval_results]
         )
 
         if trace is not None:
@@ -514,126 +580,68 @@ class ElderOrchestrator:
 
     async def _synthesize(
         self,
+        agent: Agent,
         query: str,
         subanswers: list[SubAnswer],
         trace: list[TraceStep],
-        refine: bool = False,
+        answer_mode: str,
     ) -> str:
-        """Synthesize final answer from sub-answers."""
+        """Synthesize final chat-style answer from sub-answers."""
         model = self.model_policy.get_model(LLMTask.SYNTHESIS)
 
-        # Format sub-answers
         subanswers_text = "\n\n".join(
             [f"Q: {sa.subquery}\nA: {sa.answer}" for sa in subanswers]
         )
 
+        if answer_mode == "expanded":
+            guidance = (
+                "Bring together the most relevant points from multiple sources. Provide a short intro, then a few concise bullet points or short paragraphs covering each angle."
+            )
+        elif answer_mode == "direct":
+            guidance = (
+                "Answer in 2-3 crisp sentences that address the question directly. Mention source confidence only if relevant."
+            )
+        else:
+            guidance = (
+                "Keep the reply compact (one short paragraph or 3-4 bullets) while touching on the key facts you found."
+            )
+
         prompt = SYNTHESIS_PROMPT.format(
+            agent_name=agent.name,
+            writing_style=agent.writing_style or "empathetic, thoughtful mentor",
+            answer_guidance=guidance,
             query=query,
             subanswers=subanswers_text,
         )
 
-        if refine:
-            prompt += "\n\nNote: This is a refinement pass. Please provide a more comprehensive answer."
-
         try:
-            logger.info("elder_llm_synthesis_prompt(model=%s, refine=%s):\n%s", model, str(refine), prompt)
+            logger.info(
+                "elder_llm_synthesis_prompt(model=%s):\n%s",
+                model,
+                prompt,
+            )
             answer = await self.llm_client.chat(
-                model=model,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.5,
-            )
-            logger.info("elder_llm_synthesis_response(refine=%s): %s", str(refine), answer)
-
-            if trace is not None:
-                trace.append(
-                    TraceStep(
-                        step="synthesize" + ("_refine" if refine else ""),
-                        data={"answer_preview": answer[:200], "model": model},
-                    )
-                )
-
-            logger.info("Synthesized final answer")
-            return answer
-
-        except Exception as e:
-            logger.error(f"Synthesis failed: {e}")
-            return "Error generating final answer."
-
-    async def _validate(self, query: str, answer: str, trace: list[TraceStep]) -> bool:
-        """Validate that answer addresses the query."""
-        model = self.model_policy.get_model(LLMTask.VALIDATION)
-
-        prompt = VALIDATION_PROMPT.format(
-            query=query,
-            answer=answer,
-        )
-
-        try:
-            logger.info("elder_llm_validation_prompt(model=%s):\n%s", model, prompt)
-            validation = await self.llm_client.chat(
-                model=model,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.0,
-            )
-            logger.info("elder_llm_validation_response: %s", validation)
-
-            is_ok = validation.strip().upper().startswith("OK")
-
-            if trace is not None:
-                trace.append(
-                    TraceStep(
-                        step="validate",
-                        data={
-                            "validation": validation,
-                            "is_ok": is_ok,
-                            "model": model,
-                        },
-                    )
-                )
-
-            logger.info(f"Validation: {'OK' if is_ok else 'needs refinement'}")
-            return is_ok
-
-        except Exception as e:
-            logger.error(f"Validation failed: {e}")
-            # Assume OK on error to avoid infinite loops
-            return True
-
-    async def _style(
-        self, answer: str, writing_style: str, trace: list[TraceStep]
-    ) -> str:
-        """Apply writing style to answer."""
-        model = self.model_policy.get_model(LLMTask.STYLE)
-
-        prompt = STYLE_PROMPT.format(
-            writing_style=writing_style,
-            answer=answer,
-        )
-
-        try:
-            logger.info("elder_llm_style_prompt(model=%s):\n%s", model, prompt)
-            styled = await self.llm_client.chat(
                 model=model,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.4,
             )
-            logger.info("elder_llm_style_response: %s", styled)
+            logger.info("elder_llm_synthesis_response: %s", answer)
 
             if trace is not None:
                 trace.append(
                     TraceStep(
-                        step="style",
-                        data={"styled_preview": styled[:200], "model": model},
+                        step="synthesize",
+                        data={"answer_preview": answer[:200], "model": model},
                     )
                 )
 
-            logger.info("Applied writing style")
-            return styled
+            logger.info("Synthesized final chat-style answer")
+            return answer
 
         except Exception as e:
-            logger.error(f"Style application failed: {e}")
-            # Return original answer on error
-            return answer
+            logger.error(f"Synthesis failed: {e}")
+            return "I'm having trouble forming a response right now. Could you try again?"
+
 
     def _build_context(
         self, subanswers: list[SubAnswer]

@@ -17,6 +17,8 @@ from app.schemas.graphrag import (
     EmbedOntologyRequest,
     EmbedOntologyResponse,
     IndexStatusResponse,
+    ResetOntologyEmbeddingsRequest,
+    ResetOntologyEmbeddingsResponse,
     SemanticSearchRequest,
     SemanticSearchResponse,
 )
@@ -173,6 +175,29 @@ async def backfill_chunks(
             request.ontology_id, batch_size=request.batch_size
         )
         return EmbedOntologyResponse(**result)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
+        )
+
+
+@router.post(
+    "/embed/ontology/reset", response_model=ResetOntologyEmbeddingsResponse
+)
+async def reset_embeddings(
+    request: ResetOntologyEmbeddingsRequest,
+    graph_session: AsyncNeo4jSession = Depends(get_neo4j_session),
+    current_user: User = Depends(get_current_active_admin_or_world_builder),
+) -> ResetOntologyEmbeddingsResponse:
+    """
+    Remove embeddings and chunk nodes for all entities in an ontology.
+
+    Requires admin or world_builder role.
+    """
+    service = EmbeddingService(graph_session)
+    try:
+        result = await service.reset_ontology_embeddings(request.ontology_id)
+        return ResetOntologyEmbeddingsResponse(**result)
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)

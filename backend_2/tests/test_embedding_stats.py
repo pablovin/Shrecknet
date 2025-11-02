@@ -310,3 +310,21 @@ async def test_embedding_stats_multiple_ontologies(client):
     # Clean up
     await client.delete(f"/ontology-instances/{instance1_id}", headers=headers)
     await client.delete(f"/ontology-instances/{instance2_id}", headers=headers)
+
+    stats1_after_response = await client.get(
+        f"/ontologies/{ontology1_id}/embedding-stats", headers=headers
+    )
+    assert stats1_after_response.status_code == 200
+    stats1_after = stats1_after_response.json()
+    assert stats1_after["total_nodes"] == 0
+    assert stats1_after["embedded_nodes"] == 0
+    assert stats1_after["unembedded_nodes"] == 0
+
+    stats2_after_response = await client.get(
+        f"/ontologies/{ontology2_id}/embedding-stats", headers=headers
+    )
+    assert stats2_after_response.status_code == 200
+    stats2_after = stats2_after_response.json()
+    assert stats2_after["total_nodes"] == 0
+    assert stats2_after["embedded_nodes"] == 0
+    assert stats2_after["unembedded_nodes"] == 0

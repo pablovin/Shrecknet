@@ -10,9 +10,21 @@ class RetrievedChunk(BaseModel):
 
     node_id: str = Field(..., description="Node ID from Neo4j")
     node_label: Optional[str] = Field(None, description="Primary node label")
+    node_name: Optional[str] = Field(None, description="Display name for the node")
+    node_alias: Optional[str] = Field(None, description="Alias of the node if present")
+    instance_id: Optional[str] = Field(
+        None, description="Parent ontology instance ID if available"
+    )
+    chunk_id: Optional[str] = Field(None, description="Chunk identifier")
+    chunk_type: Optional[str] = Field(None, description="Type of chunk (text/properties/relationships)")
+    chunk_index: Optional[int] = Field(None, description="Chunk ordering index")
     text: str = Field(..., description="Context text from the node")
     score: float = Field(..., description="Similarity score (0-1)")
+    confidence_pct: float = Field(..., description="Similarity score expressed as percentage (0-100)")
     source: Optional[str] = Field(None, description="Source identifier")
+    properties: dict[str, Any] = Field(
+        default_factory=dict, description="Node properties snapshot"
+    )
 
 
 class SubAnswer(BaseModel):
@@ -76,6 +88,10 @@ class ElderQueryResponse(BaseModel):
     context: list[RetrievedChunk] = Field(
         default_factory=list,
         description="Deduplicated context chunks (if mode includes 'context')",
+    )
+    retrieval_debug: Optional[list[dict[str, Any]]] = Field(
+        None,
+        description="Debug information about sub-query retrieval (temporary exposure)",
     )
     trace: Optional[list[TraceStep]] = Field(
         None, description="Execution trace (if include_trace=true)"

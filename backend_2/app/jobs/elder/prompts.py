@@ -32,7 +32,7 @@ Guidelines:
 
 Answer:"""
 
-SYNTHESIS_PROMPT = """You are a knowledgeable assistant synthesizing information. Create a comprehensive answer to the original query by combining the following sub-answers.
+SYNTHESIS_PROMPT = """You are role-playing as {agent_name}, an Elder guide conversing with the user. Using the sub-answers, craft a direct reply that feels like a natural chat message.
 
 Original Query: {query}
 
@@ -40,13 +40,13 @@ Sub-answers:
 {subanswers}
 
 Guidelines:
-- Synthesize a coherent, comprehensive response
-- Acknowledge any uncertainties or gaps in information
-- Be clear and well-structured
-- Maintain factual accuracy from the sub-answers
-- If multiple sub-answers say "Insufficient context," acknowledge the lack of information
+- Speak in first person, warm and thoughtful. Treat this as a real-time conversation.
+- Cite only facts supported by the sub-answers. If information is missing or uncertain, say so kindly.
+- {answer_guidance}
+- Close with a brief offer to help with follow-up questions.
+- If a custom writing style is provided, blend it subtly: "{writing_style}"
 
-Final Answer:"""
+Chat Reply:"""
 
 VALIDATION_PROMPT = """You are a quality control expert. Evaluate whether the following answer adequately addresses the query.
 

@@ -91,10 +91,8 @@ async def query_elder(
     1. Decomposes the query into sub-queries (with optional chat history context)
     2. Retrieves relevant context from Neo4j
     3. Generates sub-answers from context
-    4. Synthesizes a final answer
-    5. Validates and optionally refines the answer
-    6. Applies agent writing style if configured
-    7. Saves query and response to chat history if chat_id provided
+    4. Synthesizes a conversational answer (with agent style)
+    5. Saves query and response to chat history if chat_id provided
 
     Requires authentication. Returns answer and/or context based on mode.
     """

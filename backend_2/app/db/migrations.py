@@ -74,6 +74,23 @@ async def migrate_architect_proposals(engine: AsyncEngine) -> None:
         inspector = await conn.run_sync(lambda sync_conn: inspect(sync_conn))
         tables = await conn.run_sync(lambda sync_conn: inspector.get_table_names())
         
+        # Migrate architect_analysis_runs table
+        if "architect_analysis_runs" in tables:
+            run_columns = await conn.run_sync(
+                lambda sync_conn: inspector.get_columns("architect_analysis_runs")
+            )
+            run_column_names = [col["name"] for col in run_columns]
+            
+            # Add generation_job_id column
+            if "generation_job_id" not in run_column_names:
+                logger.info("Adding generation_job_id column to architect_analysis_runs table")
+                await conn.execute(
+                    text(
+                        "ALTER TABLE architect_analysis_runs ADD COLUMN generation_job_id INTEGER DEFAULT NULL"
+                    )
+                )
+                logger.info("Successfully added generation_job_id column")
+        
         if "architect_proposals" not in tables:
             logger.info("architect_proposals table does not exist yet, skipping migration")
             return

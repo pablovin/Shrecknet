@@ -127,6 +127,15 @@ class ArchitectRepository:
         )
         await self.session.execute(stmt)
 
+    async def attach_generation_job(self, run_id: str, job_id: int) -> None:
+        """Attach a generation (step 2) job to a run."""
+        stmt = (
+            update(ArchitectAnalysisRun)
+            .where(ArchitectAnalysisRun.id == run_id)
+            .values(generation_job_id=job_id)
+        )
+        await self.session.execute(stmt)
+
     async def update_proposal_states(
         self,
         proposal_ids: Sequence[str],

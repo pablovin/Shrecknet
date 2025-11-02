@@ -132,6 +132,7 @@ async def list_architect_runs(
                 id=run.id,
                 agent_id=run.agent_id,
                 background_job_id=run.background_job_id,
+                generation_job_id=run.generation_job_id,
                 ontology_id=run.ontology_id,
                 ontology_instance_id=run.ontology_instance_id,
                 status=run.status,

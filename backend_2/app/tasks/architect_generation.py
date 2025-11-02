@@ -58,6 +58,7 @@ def generate_entities(
 
     try:
         run_async(mark_job_running(job_id))
+        run_async(_attach_generation_job_to_run(run_id, job_id))
         run_async(update_job_progress(job_id, 0.05, {"status": "Processing validated proposals"}))
 
         result = run_async(
@@ -89,6 +90,14 @@ def generate_entities(
         )
         run_async(mark_job_failed(job_id, str(exc)))
         raise
+
+
+async def _attach_generation_job_to_run(run_id: str, job_id: int) -> None:
+    """Attach the generation job to the architect run."""
+    async with AsyncSessionMaker() as session:
+        repo = ArchitectRepository(session)
+        await repo.attach_generation_job(run_id, job_id)
+        await session.commit()
 
 
 async def _execute_entity_generation(

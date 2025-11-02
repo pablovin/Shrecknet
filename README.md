@@ -6,6 +6,20 @@
 
 Shrecknet is a collaborative world building and story telling platform. It mixes a wiki style CMS with AI agents that help populate game worlds, create content and even craft novels out of your play sessions.
 
+## Quick Start
+
+**Deploy backend_2 in 10-30 seconds** (after one-time setup):
+
+```bash
+# One-time: Build dependencies (15-30 minutes)
+cd backend_2 && ./build-venv.sh --ml && cd ..
+
+# Deploy (10-30 seconds!)
+docker compose build && docker compose up -d
+```
+
+See [QUICKSTART.md](QUICKSTART.md) for details or [VENV_DEPLOYMENT.md](VENV_DEPLOYMENT.md) for complete guide.
+
 ## Features
 
 - **CRM like wiki** with Worlds, Concepts, Characteristics and Pages

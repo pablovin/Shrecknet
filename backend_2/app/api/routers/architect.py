@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,6 +19,7 @@ from app.schemas.architect import (
     ArchitectAnalysisRunRead,
     ArchitectAnalysisRunSummary,
     ArchitectProposalStatusUpdate,
+    ArchitectValidationRequest,
 )
 from app.services.architect_service import ArchitectService
 from app.tasks.architect_analysis import analyze_instance as architect_task
@@ -159,3 +162,45 @@ async def update_proposal_statuses(
         payload.proposal_ids, status=payload.status
     )
     return {"updated": updated}
+
+
+@router.post(
+    "/runs/{run_id}/generate",
+    response_model=dict,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def generate_entities_from_validated_proposals(
+    run_id: str,
+    payload: ArchitectValidationRequest,
+    current_user: User = Depends(get_current_user),
+    service: ArchitectService = Depends(get_architect_service),
+) -> dict[str, Any]:
+    """
+    Step 2: Generate/update entities from validated proposals.
+    
+    This endpoint accepts validated proposals from the client and triggers
+    entity generation/update based on the approved proposals.
+    """
+    run = await service.get_run(run_id, include_proposals=False)
+    if not run:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Architect run not found"
+        )
+    
+    # Import here to avoid circular imports
+    from app.tasks.architect_generation import generate_entities as generation_task
+    
+    # Trigger the background task
+    result = generation_task.delay(
+        run_id=run_id,
+        validated_proposals=[p.model_dump() for p in payload.validated_proposals],
+        author_type=payload.author_type,
+        author_id=payload.author_id,
+    )
+    
+    return {
+        "status": "accepted",
+        "task_id": result.id,
+        "run_id": run_id,
+        "message": "Entity generation task started",
+    }

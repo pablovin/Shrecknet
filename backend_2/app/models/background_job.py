@@ -34,6 +34,7 @@ class JobType(str, Enum):
     NEO4J_EMBEDDING = "neo4j_embedding"
     PDF_BOOK_EMBEDDING = "pdf_book_embedding"
     ARCHITECT_ANALYSIS = "architect_analysis"
+    ARCHITECT_GENERATION = "architect_generation"
 
 
 class BackgroundJob(Base):

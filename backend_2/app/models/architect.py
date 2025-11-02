@@ -40,6 +40,7 @@ class ArchitectProposalStatus(str, Enum):
     PENDING = "pending"
     APPROVED = "approved"
     REJECTED = "rejected"
+    MERGED = "merged"
 
 
 class ArchitectProposalType(str, Enum):
@@ -126,6 +127,13 @@ class ArchitectProposal(Base):
     proposal_metadata: Mapped[dict[str, Any] | None] = mapped_column(
         "metadata", JSON, nullable=True
     )
+    merged_into_proposal_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("architect_proposals.id", ondelete="SET NULL"), nullable=True
+    )
+    corrected_alias: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    corrected_entity_definition_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    chunks: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    generated_entity_instance_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

@@ -51,6 +51,11 @@ class ArchitectProposalRead(BaseModel):
         validation_alias="proposal_metadata",
         serialization_alias="metadata",
     )
+    chunks: list[str] | None = Field(default=None, description="Text chunks related to this proposal")
+    merged_into_proposal_id: str | None = None
+    corrected_alias: str | None = None
+    corrected_entity_definition_id: int | None = None
+    generated_entity_instance_id: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -94,3 +99,28 @@ class ArchitectProposalStatusUpdate(BaseModel):
 
     proposal_ids: list[str] = Field(..., min_length=1)
     status: ArchitectProposalStatus = Field(...)
+
+
+class ValidatedProposalItem(BaseModel):
+    """A single validated proposal from the client."""
+
+    proposal_id: str
+    status: ArchitectProposalStatus
+    corrected_alias: str | None = Field(default=None, description="Corrected alias if user modified it")
+    corrected_entity_definition_id: int | None = Field(
+        default=None, description="Corrected entity definition if user modified it"
+    )
+    merged_into_proposal_id: str | None = Field(
+        default=None, description="If merged, the ID of the proposal this was merged into"
+    )
+
+
+class ArchitectValidationRequest(BaseModel):
+    """Payload for step 2: processing validated proposals."""
+
+    run_id: str = Field(..., description="The architect run ID from step 1")
+    validated_proposals: list[ValidatedProposalItem] = Field(
+        ..., min_length=1, description="List of validated proposals"
+    )
+    author_type: str = Field(default="user", description="Type of author (user or agent)")
+    author_id: str = Field(..., description="ID of the author")

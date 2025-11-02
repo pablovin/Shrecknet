@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
@@ -45,7 +46,7 @@ def generate_entities(
         create_background_job(
             author_type=AuthorType(author_type),
             author_id=author_id,
-            job_type=JobType.ARCHITECT_ANALYSIS,
+            job_type=JobType.ARCHITECT_GENERATION,
             description=description,
             celery_task_id=generate_entities.request.id,
             details={
@@ -277,17 +278,11 @@ async def _execute_entity_generation(
                     pass
 
                 # Batch create all new entities by updating the instance
-                from app.schemas.ontology_instance import OntologyInstanceUpdate
                 current_entities = list(ontology_instance.entities)
                 
                 # Convert existing entities to create format
                 existing_entity_creates = []
                 for e in current_entities:
-                    from app.schemas.ontology_instance import (
-                        OntologyInstanceEntityCreate,
-                        OntologyInstancePropertyValue,
-                        OntologyInstanceRelationshipCreate,
-                    )
                     existing_entity_creates.append(
                         OntologyInstanceEntityCreate(
                             definition_id=e.definition_id,
@@ -443,7 +438,6 @@ async def _execute_entity_generation(
                                 target_id = target_rec["eid"]
 
                         if target_id:
-                            from uuid import uuid4
                             rel_id = str(uuid4())
                             import json
                             rel_data = json.dumps({"justification": rel.justification or ""})

@@ -2,10 +2,11 @@
 Backup and restore API endpoints.
 
 Provides endpoints to:
-- Create a backup of all data (database, Neo4j, media files)
+- Create a backup of all data (database, Neo4j, media files) as a background job
 - List available backups
 - Download a backup file
-- Restore from an uploaded backup file
+- Restore from an uploaded backup file as a background job
+- Monitor backup/restore job status
 """
 
 import logging
@@ -14,52 +15,71 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse
-from neo4j import AsyncSession as Neo4jSession
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_admin_user, get_db_session
-from app.graph.neo4j import get_neo4j_session
 from app.models.user import User
+from app.repositories.background_job_repository import BackgroundJobRepository
 from app.services.backup_service import BackupService
+from app.tasks.backup_tasks import create_backup_task, restore_backup_task
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/backups", tags=["backups"])
 
 
-@router.post("/create", status_code=status.HTTP_201_CREATED)
+@router.post("/create", status_code=status.HTTP_202_ACCEPTED)
 async def create_backup(
     db_session: AsyncSession = Depends(get_db_session),
-    neo4j_session: Neo4jSession = Depends(get_neo4j_session),
     current_user: User = Depends(get_current_admin_user),
 ) -> dict[str, Any]:
     """
-    Create a complete backup of all data.
+    Create a complete backup of all data as a background job.
 
-    This endpoint creates a tar.gz archive containing:
-    - All database tables (as JSON)
-    - All Neo4j graph data (nodes and relationships as JSON)
-    - All media files
-
-    The backup is stored in /media/backups/ and can be downloaded later.
+    This endpoint creates a background job that will:
+    - Export all database tables (as JSON)
+    - Export all Neo4j graph data (nodes and relationships as JSON)
+    - Copy all media files
+    - Create a tar.gz archive in /media/backups/
 
     **Requires admin role.**
 
     Returns:
-        Backup metadata including filename, size, and creation time
+        Background job information including job_id for monitoring progress
+    
+    Example:
+        POST /backups/create
+        Response (202):
+        {
+            "job_id": 123,
+            "status": "queued",
+            "message": "Backup job created successfully. Use /jobs/123 to monitor progress."
+        }
     """
     try:
-        backup_service = BackupService()
-        result = await backup_service.create_backup(db_session, neo4j_session)
-        logger.info(
-            f"Backup created by user {current_user.username}: {result['filename']}"
+        # Launch Celery task
+        task = create_backup_task.delay(
+            author_type="user",
+            author_id=str(current_user.id),
+            admin_user_id=current_user.id,
         )
-        return result
+        
+        logger.info(
+            f"Backup task created by user {current_user.username} (celery_task_id: {task.id})"
+        )
+        
+        # Get the job_id from the repository (the task creates it)
+        # For now, we'll return the celery task id
+        return {
+            "celery_task_id": task.id,
+            "status": "queued",
+            "message": "Backup job created successfully. Monitor the background jobs to track progress.",
+        }
     except Exception as e:
-        logger.error(f"Failed to create backup: {str(e)}")
+        logger.error(f"Failed to create backup task: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to create backup: {str(e)}",
+            detail=f"Failed to create backup task: {str(e)}",
         )
 
 
@@ -125,19 +145,19 @@ async def download_backup(
         )
 
 
-@router.post("/restore", status_code=status.HTTP_200_OK)
+@router.post("/restore", status_code=status.HTTP_202_ACCEPTED)
 async def restore_backup(
     file: UploadFile = File(...),
     db_session: AsyncSession = Depends(get_db_session),
-    neo4j_session: Neo4jSession = Depends(get_neo4j_session),
     current_user: User = Depends(get_current_admin_user),
 ) -> dict[str, Any]:
     """
-    Restore from an uploaded backup file.
+    Restore from an uploaded backup file as a background job.
 
-    This endpoint will:
+    This endpoint will create a background job that:
     1. **DELETE ALL EXISTING DATA** (database, Neo4j, media files)
     2. Restore data from the uploaded backup file
+    3. **PRESERVE the admin user who invoked the restore** (won't be replaced)
 
     **WARNING: This is a destructive operation. All current data will be lost.**
 
@@ -147,7 +167,18 @@ async def restore_backup(
         file: The backup tar.gz file to restore from
 
     Returns:
-        Restoration status and metadata
+        Background job information including job_id for monitoring progress
+    
+    Example:
+        POST /backups/restore
+        Response (202):
+        {
+            "job_id": 124,
+            "celery_task_id": "abc-123-def",
+            "status": "queued",
+            "message": "Restore job created successfully. Use /jobs/124 to monitor progress.",
+            "temp_path": "/tmp/backup_20231202_153045.tar.gz"
+        }
     """
     if not file.filename or not file.filename.endswith(".tar.gz"):
         raise HTTPException(
@@ -163,32 +194,31 @@ async def restore_backup(
             content = await file.read()
             f.write(content)
 
-        # Restore from the file
-        backup_service = BackupService()
-        result = await backup_service.restore_backup(
-            temp_path, db_session, neo4j_session
+        # Launch Celery task for restore
+        task = restore_backup_task.delay(
+            backup_path=str(temp_path),
+            author_type="user",
+            author_id=str(current_user.id),
+            admin_user_id=current_user.id,
         )
 
-        logger.info(f"Backup restored by user {current_user.username}: {file.filename}")
-        return result
+        logger.info(
+            f"Restore task created by user {current_user.username}: {file.filename} (celery_task_id: {task.id})"
+        )
 
-    except FileNotFoundError as e:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(e),
-        )
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
-        )
+        return {
+            "celery_task_id": task.id,
+            "status": "queued",
+            "message": "Restore job created successfully. Monitor the background jobs to track progress.",
+            "temp_path": str(temp_path),
+        }
+
     except Exception as e:
-        logger.error(f"Failed to restore backup: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to restore backup: {str(e)}",
-        )
-    finally:
-        # Clean up temporary file
+        # Clean up temp file on error
         if temp_path.exists():
             temp_path.unlink()
+        logger.error(f"Failed to create restore task: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to create restore task: {str(e)}",
+        )

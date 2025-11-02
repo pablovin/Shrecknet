@@ -210,10 +210,10 @@ class BackupService:
 
         # library_bookmark_shares
         result = await session.execute(
-            text("SELECT library_bookmark_id, user_id FROM library_bookmark_shares")
+            text("SELECT bookmark_id, user_id FROM library_bookmark_shares")
         )
         data["library_bookmark_shares"] = [
-            {"library_bookmark_id": row[0], "user_id": row[1]}
+            {"bookmark_id": row[0], "user_id": row[1]}
             for row in result.fetchall()
         ]
 
@@ -260,6 +260,7 @@ class BackupService:
         backup_path: Path,
         db_session: AsyncSession,
         neo4j_session: Neo4jSession,
+        admin_user_id: int | None = None,
     ) -> dict[str, Any]:
         """
         Restore a backup from a tar.gz archive.
@@ -269,11 +270,13 @@ class BackupService:
         2. Restore database records
         3. Restore Neo4j graph
         4. Restore media files
+        5. Preserve the admin user who invoked the restore
 
         Args:
             backup_path: Path to the backup tar.gz file
             db_session: Database session
             neo4j_session: Neo4j session
+            admin_user_id: ID of the admin user who invoked the restore (to preserve)
 
         Returns:
             dict with restoration metadata
@@ -315,7 +318,7 @@ class BackupService:
             db_file = backup_data_dir / "database.json"
             with open(db_file, "r") as f:
                 db_data = json.load(f)
-            await self._restore_database(db_session, db_data)
+            await self._restore_database(db_session, db_data, admin_user_id)
 
             # Restore Neo4j
             logger.info("Restoring Neo4j graph...")
@@ -404,9 +407,32 @@ class BackupService:
         await db_session.commit()
 
     async def _restore_database(
-        self, session: AsyncSession, data: dict[str, list[dict]]
+        self, session: AsyncSession, data: dict[str, list[dict]], admin_user_id: int | None = None
     ) -> None:
-        """Restore database from JSON data."""
+        """
+        Restore database from JSON data.
+        
+        Args:
+            session: Database session
+            data: Backup data dictionary
+            admin_user_id: ID of the admin user who invoked the restore (to preserve)
+        """
+        # Get the admin user data before restore (if provided)
+        admin_user_data = None
+        if admin_user_id:
+            result = await session.execute(
+                select(User).where(User.id == admin_user_id)
+            )
+            admin_user = result.scalar_one_or_none()
+            if admin_user:
+                # Store admin user data
+                from sqlalchemy import inspect as sqlalchemy_inspect
+                inspector = sqlalchemy_inspect(admin_user)
+                admin_user_data = {}
+                for column in inspector.mapper.column_attrs:
+                    admin_user_data[column.key] = getattr(admin_user, column.key)
+                logger.info(f"Preserving admin user: {admin_user.username} (ID: {admin_user_id})")
+        
         # Restore in the same order as export
         table_order = [
             ("users", User),
@@ -437,6 +463,19 @@ class BackupService:
             if table_name in data:
                 records = data[table_name]
                 for record in records:
+                    # Special handling for users table
+                    if table_name == "users" and admin_user_data:
+                        # Check if this user conflicts with the admin user
+                        if (
+                            record.get("username") == admin_user_data["username"]
+                            or record.get("email") == admin_user_data["email"]
+                        ):
+                            # Skip this user from backup, we'll keep the admin user
+                            logger.info(
+                                f"Skipping backup user {record.get('username')} - conflicts with admin user"
+                            )
+                            continue
+                    
                     instance = model_class(**record)
                     session.add(instance)
                 logger.info(f"Restored {len(records)} records to {table_name}")
@@ -473,7 +512,7 @@ class BackupService:
             for record in data["library_bookmark_shares"]:
                 await session.execute(
                     text(
-                        "INSERT INTO library_bookmark_shares (library_bookmark_id, user_id) VALUES (:library_bookmark_id, :user_id)"
+                        "INSERT INTO library_bookmark_shares (bookmark_id, user_id) VALUES (:bookmark_id, :user_id)"
                     ),
                     record,
                 )

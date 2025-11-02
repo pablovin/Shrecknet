@@ -18,8 +18,9 @@ import { Ontology, getOntology } from "../lib/ontologiesAPI";
 import { useAuth } from "../components/auth/AuthProvider";
 import { OntologyInstance } from "../lib/ontologyInstancesAPI";
 import { useJobs } from "../lib/useJobs";
-import { Loader2, Search, BookOpen, Play, Check, X, Calendar } from "lucide-react";
+import { Loader2, Search, BookOpen, Play, Check, X, Calendar, Eye } from "lucide-react";
 import Image from "next/image";
+import Link from "next/link";
 import { formatDistanceToNow } from "date-fns";
 
 type Agent = {
@@ -597,13 +598,22 @@ export default function ArchitectPage() {
           </div>
         </td>
         <td className="px-4 py-3 text-right">
-          <button
-            onClick={() => setReviewRunId(run.id)}
-            disabled={run.status !== "completed"}
-            className="inline-flex items-center gap-2 rounded-lg border border-[var(--primary)] px-3 py-1.5 text-sm text-[var(--primary)] hover:bg-[var(--primary)] hover:text-white transition disabled:opacity-40 disabled:cursor-not-allowed"
-          >
-            Review proposals
-          </button>
+          <div className="flex items-center justify-end gap-2">
+            <button
+              onClick={() => setReviewRunId(run.id)}
+              disabled={run.status !== "completed"}
+              className="inline-flex items-center gap-2 rounded-lg border border-[var(--primary)] px-3 py-1.5 text-sm text-[var(--primary)] hover:bg-[var(--primary)] hover:text-white transition disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              Review proposals
+            </button>
+            <Link
+              href={`/architect/runs/${run.id}/generated`}
+              className="inline-flex items-center gap-2 rounded-lg border border-[var(--primary)]/60 px-3 py-1.5 text-sm text-[var(--primary)]/80 hover:bg-[var(--primary)]/10 hover:text-[var(--primary)] transition"
+            >
+              <Eye size={16} />
+              View Generated
+            </Link>
+          </div>
         </td>
       </tr>
     );

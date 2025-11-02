@@ -46,8 +46,7 @@ export default function ArchitectGeneratedPage() {
     return run.proposals.filter(
       (p) =>
         p.proposal_type === "new_instance" &&
-        p.generated_entity_instance_id !== null &&
-        p.generated_entity_instance_id !== undefined
+        p.generated_entity_instance_id != null
     );
   }, [run]);
 
@@ -56,8 +55,7 @@ export default function ArchitectGeneratedPage() {
     return run.proposals.filter(
       (p) =>
         p.proposal_type === "update_instance" &&
-        p.generated_entity_instance_id !== null &&
-        p.generated_entity_instance_id !== undefined
+        p.generated_entity_instance_id != null
     );
   }, [run]);
 

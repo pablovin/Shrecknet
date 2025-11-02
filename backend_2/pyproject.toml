@@ -39,7 +39,7 @@ test = [
 ml = [
     "sentence-transformers>=2.2,<3",
     # Use CPU wheels from the official PyTorch index at install time (see Dockerfile)
-    "torch>=2,<3"
+    "torch>=2,<3" --extra-index-url https://download.pytorch.org/whl/cpu
 ]
 
 [build-system]

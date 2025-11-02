@@ -46,7 +46,7 @@ async def create_backup(
 
     Returns:
         Background job information including job_id for monitoring progress
-    
+
     Example:
         POST /backups/create
         Response (202):
@@ -63,11 +63,11 @@ async def create_backup(
             author_id=str(current_user.id),
             admin_user_id=current_user.id,
         )
-        
+
         logger.info(
             f"Backup task created by user {current_user.username} (celery_task_id: {task.id})"
         )
-        
+
         # Get the job_id from the repository (the task creates it)
         # For now, we'll return the celery task id
         return {
@@ -168,7 +168,7 @@ async def restore_backup(
 
     Returns:
         Background job information including job_id for monitoring progress
-    
+
     Example:
         POST /backups/restore
         Response (202):

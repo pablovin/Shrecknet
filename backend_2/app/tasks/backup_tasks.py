@@ -68,9 +68,7 @@ def create_backup_task(
 
         # Update progress: Starting backup
         run_async(
-            update_job_progress(
-                job_id, 0.1, {"status": "Initializing backup process"}
-            )
+            update_job_progress(job_id, 0.1, {"status": "Initializing backup process"})
         )
 
         # Create backup using BackupService
@@ -79,21 +77,21 @@ def create_backup_task(
                 driver = get_driver()
                 async with driver.session() as neo4j_session:
                     backup_service = BackupService()
-                    
+
                     # Update progress: Exporting database
                     await update_job_progress(
                         job_id, 0.2, {"status": "Exporting database"}
                     )
-                    
+
                     result = await backup_service.create_backup(
                         db_session, neo4j_session
                     )
-                    
+
                     # Update progress: Backup complete
                     await update_job_progress(
                         job_id, 0.9, {"status": "Backup archive created"}
                     )
-                    
+
                     return result
 
         result = run_async(perform_backup())
@@ -176,9 +174,7 @@ def restore_backup_task(
 
         # Update progress: Starting restore
         run_async(
-            update_job_progress(
-                job_id, 0.1, {"status": "Initializing restore process"}
-            )
+            update_job_progress(job_id, 0.1, {"status": "Initializing restore process"})
         )
 
         # Restore backup using BackupService
@@ -187,21 +183,21 @@ def restore_backup_task(
                 driver = get_driver()
                 async with driver.session() as neo4j_session:
                     backup_service = BackupService()
-                    
+
                     # Update progress: Extracting backup
                     await update_job_progress(
                         job_id, 0.2, {"status": "Extracting backup archive"}
                     )
-                    
+
                     result = await backup_service.restore_backup(
                         Path(backup_path), db_session, neo4j_session, admin_user_id
                     )
-                    
+
                     # Update progress: Restore complete
                     await update_job_progress(
                         job_id, 0.9, {"status": "Restore completed"}
                     )
-                    
+
                     return result
 
         result = run_async(perform_restore())

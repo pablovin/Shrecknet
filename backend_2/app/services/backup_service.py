@@ -189,7 +189,9 @@ class BackupService:
 
         # Export many-to-many relationship tables
         # game_members
-        result = await session.execute(text("SELECT game_id, user_id FROM game_members"))
+        result = await session.execute(
+            text("SELECT game_id, user_id FROM game_members")
+        )
         data["game_members"] = [
             {"game_id": row[0], "user_id": row[1]} for row in result.fetchall()
         ]
@@ -213,8 +215,7 @@ class BackupService:
             text("SELECT bookmark_id, user_id FROM library_bookmark_shares")
         )
         data["library_bookmark_shares"] = [
-            {"bookmark_id": row[0], "user_id": row[1]}
-            for row in result.fetchall()
+            {"bookmark_id": row[0], "user_id": row[1]} for row in result.fetchall()
         ]
 
         return data
@@ -284,7 +285,9 @@ class BackupService:
         if not backup_path.exists():
             raise FileNotFoundError(f"Backup file not found: {backup_path}")
 
-        temp_extract_dir = Path("/tmp") / f"restore_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}"
+        temp_extract_dir = (
+            Path("/tmp") / f"restore_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}"
+        )
         temp_extract_dir.mkdir(parents=True, exist_ok=True)
 
         try:
@@ -407,11 +410,14 @@ class BackupService:
         await db_session.commit()
 
     async def _restore_database(
-        self, session: AsyncSession, data: dict[str, list[dict]], admin_user_id: int | None = None
+        self,
+        session: AsyncSession,
+        data: dict[str, list[dict]],
+        admin_user_id: int | None = None,
     ) -> None:
         """
         Restore database from JSON data.
-        
+
         Args:
             session: Database session
             data: Backup data dictionary
@@ -420,19 +426,20 @@ class BackupService:
         # Get the admin user data before restore (if provided)
         admin_user_data = None
         if admin_user_id:
-            result = await session.execute(
-                select(User).where(User.id == admin_user_id)
-            )
+            result = await session.execute(select(User).where(User.id == admin_user_id))
             admin_user = result.scalar_one_or_none()
             if admin_user:
                 # Store admin user data
                 from sqlalchemy import inspect as sqlalchemy_inspect
+
                 inspector = sqlalchemy_inspect(admin_user)
                 admin_user_data = {}
                 for column in inspector.mapper.column_attrs:
                     admin_user_data[column.key] = getattr(admin_user, column.key)
-                logger.info(f"Preserving admin user: {admin_user.username} (ID: {admin_user_id})")
-        
+                logger.info(
+                    f"Preserving admin user: {admin_user.username} (ID: {admin_user_id})"
+                )
+
         # Restore in the same order as export
         table_order = [
             ("users", User),
@@ -475,7 +482,7 @@ class BackupService:
                                 f"Skipping backup user {record.get('username')} - conflicts with admin user"
                             )
                             continue
-                    
+
                     instance = model_class(**record)
                     session.add(instance)
                 logger.info(f"Restored {len(records)} records to {table_name}")
@@ -552,7 +559,9 @@ class BackupService:
             labels_str = ":".join(validated_labels)
 
             # Create node with properties
-            query = f"CREATE (n:{labels_str}) SET n = $properties RETURN id(n) as new_id"
+            query = (
+                f"CREATE (n:{labels_str}) SET n = $properties RETURN id(n) as new_id"
+            )
             result = await session.run(query, properties=properties)
             record = await result.single()
             new_id = record["new_id"]
@@ -591,7 +600,9 @@ class BackupService:
                 query, start_id=start_id, end_id=end_id, properties=properties
             )
 
-        logger.info(f"Restored {len(data.get('relationships', []))} Neo4j relationships")
+        logger.info(
+            f"Restored {len(data.get('relationships', []))} Neo4j relationships"
+        )
 
     def list_backups(self) -> list[dict[str, Any]]:
         """List all available backups."""

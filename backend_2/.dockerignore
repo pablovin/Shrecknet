@@ -15,8 +15,8 @@ htmlcov
 *.sqlite3
 media/
 .env
-.venv
-venv/
+# .venv - COMMENTED OUT to allow copying pre-built venv for fast builds
+# venv/ - COMMENTED OUT to allow copying pre-built venv for fast builds
 .git
 .gitignore
 *.md

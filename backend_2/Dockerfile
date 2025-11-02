@@ -13,38 +13,56 @@ RUN printf 'Acquire::Retries "5";\nAcquire::http::Timeout "30";\n' > /etc/apt/ap
 
 WORKDIR /app
 
-# Copy metadata first for caching
-COPY pyproject.toml ./
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install "pip<25.4"  # keep resolver stable but don't hit PyPI every time
-
-# Copy minimal package structure so setuptools can resolve package
-RUN mkdir -p app
-COPY app/__init__.py app/__init__.py
-
 # By default, build the API flavor (no ML). Override via --build-arg EXTRAS=ml
 ARG EXTRAS=
-# If you need system libs (rare), add them here. We DON'T install gcc/g++ by default.
-# RUN --mount=type=cache,target=/var/cache/apt \
-#     --mount=type=cache,target=/var/lib/apt \
-#     apt-get update && apt-get install -y --no-install-recommends <libs> && rm -rf /var/lib/apt/lists/*
 
-# Install deps (API only by default)
-# NOTE: We delay full source COPY to keep cache hits when code changes.
-RUN --mount=type=cache,target=/root/.cache/pip \
-    sh -c 'if [ -z "$EXTRAS" ]; then pip install .[test]; else echo "Defer ML extras to runtime stage"; fi'
-
-# Now copy the rest of the app
+# ===== Copy all files including optional .venv =====
+# The .venv folder will be included if it exists and isn't in .dockerignore
 COPY . .
 
-# If EXTRAS=ml, install the ML extras using the official CPU wheel index for torch
-# This avoids huge GPU wheels / slow resolution.
-RUN --mount=type=cache,target=/root/.cache/pip \
-    sh -c 'if [ "$EXTRAS" = "ml" ]; then \
-      pip install --prefer-binary \
-        --extra-index-url https://download.pytorch.org/whl/cpu \
-        ".[ml]" ; \
-    fi'
+# ===== Check if .venv exists and is valid =====
+RUN if [ -d "/app/.venv" ] && [ -f "/app/.venv/bin/python" ]; then \
+      echo "========================================" && \
+      echo "==> FAST BUILD MODE: Using .venv" && \
+      echo "========================================" && \
+      /app/.venv/bin/python --version && \
+      # Update PATH to prioritize .venv
+      echo 'export PATH="/app/.venv/bin:$PATH"' >> /etc/bash.bashrc && \
+      ln -sf /app/.venv/bin/python /usr/local/bin/python && \
+      ln -sf /app/.venv/bin/pip /usr/local/bin/pip && \
+      echo "✓ .venv configured successfully" && \
+      # Mark that we're using venv
+      touch /app/.using-venv; \
+    else \
+      echo "========================================" && \
+      echo "==> STANDARD BUILD: Installing from scratch" && \
+      echo "========================================" && \
+      # Upgrade pip first
+      pip install "pip<25.4" && \
+      # Install base dependencies
+      if [ -z "$EXTRAS" ]; then \
+        pip install .[test]; \
+      else \
+        echo "Deferring ML extras..."; \
+      fi && \
+      echo "✓ Dependencies installed"; \
+    fi
+
+# ===== Install ML extras if needed =====
+RUN if [ "$EXTRAS" = "ml" ]; then \
+      if [ -f "/app/.using-venv" ] && python -c "import sentence_transformers" 2>/dev/null; then \
+        echo "✓ ML dependencies already present in .venv"; \
+      else \
+        echo "==> Installing ML dependencies..." && \
+        pip install --prefer-binary \
+          --extra-index-url https://download.pytorch.org/whl/cpu \
+          ".[ml]" && \
+        echo "✓ ML dependencies installed"; \
+      fi; \
+    fi
+
+# Ensure PATH includes .venv if it exists (for CMD)
+ENV PATH="/app/.venv/bin:${PATH}"
 
 EXPOSE 8000
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

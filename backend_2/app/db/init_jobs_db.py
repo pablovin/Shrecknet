@@ -3,7 +3,7 @@
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from app.db.base import Base
-from app.db.migrations import migrate_architect_proposals, migrate_jobs_database
+from app.db.migrations import migrate_jobs_database
 from app.models.background_job import (
     BackgroundJob,
 )  # noqa: F401 - imported for registration
@@ -17,4 +17,3 @@ async def init_jobs_db(engine: AsyncEngine) -> None:
     
     # Then, run migrations to update existing tables
     await migrate_jobs_database(engine)
-    await migrate_architect_proposals(engine)

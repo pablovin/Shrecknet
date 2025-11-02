@@ -70,6 +70,7 @@ class ArchitectAnalysisRunRead(BaseModel):
     id: str
     agent_id: str | None
     background_job_id: int | None
+    generation_job_id: int | None
     ontology_id: int | None
     ontology_instance_id: str
     status: ArchitectRunStatus
@@ -88,6 +89,7 @@ class ArchitectAnalysisRunSummary(BaseModel):
     id: str
     agent_id: str | None
     background_job_id: int | None
+    generation_job_id: int | None
     ontology_id: int | None
     ontology_instance_id: str
     status: ArchitectRunStatus

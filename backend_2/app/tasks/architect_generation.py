@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from typing import Any
+from uuid import uuid4
 
 from app.celery_app import celery_app
 from app.core.config import get_settings
@@ -17,6 +18,12 @@ from app.models.architect import ArchitectProposalStatus, ArchitectProposalType
 from app.models.background_job import AuthorType, JobType
 from app.repositories.architect_repository import ArchitectRepository
 from app.repositories.ontology_repository import OntologyRepository
+from app.schemas.ontology_instance import (
+    OntologyInstanceEntityCreate,
+    OntologyInstancePropertyValue,
+    OntologyInstanceRelationshipCreate,
+    OntologyInstanceUpdate,
+)
 from app.services.ontology_instance_service import OntologyInstanceService
 from app.utils.async_helpers import run_async
 from app.utils.job_tracking import (
@@ -58,6 +65,7 @@ def generate_entities(
 
     try:
         run_async(mark_job_running(job_id))
+        run_async(_attach_generation_job_to_run(run_id, job_id))
         run_async(update_job_progress(job_id, 0.05, {"status": "Processing validated proposals"}))
 
         result = run_async(
@@ -89,6 +97,14 @@ def generate_entities(
         )
         run_async(mark_job_failed(job_id, str(exc)))
         raise
+
+
+async def _attach_generation_job_to_run(run_id: str, job_id: int) -> None:
+    """Attach the generation job to the architect run."""
+    async with AsyncSessionMaker() as session:
+        repo = ArchitectRepository(session)
+        await repo.attach_generation_job(run_id, job_id)
+        await session.commit()
 
 
 async def _execute_entity_generation(

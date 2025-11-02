@@ -26,7 +26,7 @@ class StubRetriever:
         return [
             RetrievedChunk(
                 node_id="entity-1",
-                node_label="Character",
+                node_label="Alice",
                 instance_id="instance-1",
                 text="Alice - Prince of the city, cunning and decisive.",
                 score=0.87,
@@ -123,3 +123,5 @@ async def test_architect_orchestrator_aggregates_results():
     existing_items = [p for p in proposals if p["entity_instance_id"] == "entity-1"]
     assert existing_items[0]["entity_definition_id"] == 1
     assert existing_items[0]["confidence"] == pytest.approx(0.66, abs=0.01)
+    # Verify that the alias is populated for update proposals (from retrieval)
+    assert existing_items[0]["alias"] == "Alice"

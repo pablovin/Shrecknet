@@ -13,8 +13,8 @@
  * Each section is separated by a visual divider for clarity.
  */
 
-import { useEffect, useMemo, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useMemo } from "react";
+import { useParams } from "next/navigation";
 import DashboardLayout from "@/app/components/DashboardLayout";
 import AuthGuard from "@/app/components/auth/AuthGuard";
 import { useAuth } from "@/app/components/auth/AuthProvider";
@@ -26,7 +26,6 @@ import Link from "next/link";
 
 export default function ArchitectGeneratedPage() {
   const { runId } = useParams();
-  const router = useRouter();
   const { token } = useAuth();
   const { run, isLoading } = useArchitectRun(runId as string, true);
 

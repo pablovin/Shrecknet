@@ -1,16 +1,26 @@
 services:
+  # Redis - Message broker for Celery
   redis:
     image: redis:7.2-alpine
     restart: unless-stopped
-    ports: ["6379:6379"]
-    volumes: [redis-data:/data]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
     command: redis-server --save 60 1 --loglevel warning
-    healthcheck: { test: ["CMD", "redis-cli", "ping"], interval: 5s, timeout: 3s, retries: 5 }
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
 
+  # Neo4j - Graph database
   neo4j:
     image: neo4j:5-community
     restart: unless-stopped
-    ports: ["7474:7474","7687:7687"]
+    ports:
+      - "7474:7474"   # HTTP
+      - "7687:7687"   # Bolt
     volumes:
       - neo4j-data:/data
       - neo4j-logs:/logs
@@ -18,7 +28,10 @@ services:
       - neo4j-plugins:/plugins
     environment:
       - NEO4J_AUTH=neo4j/VeryStrongPass123
+      # Only APOC plugin for performance on limited resources
+      # Removed graph-data-science plugin to reduce memory footprint
       - NEO4J_PLUGINS=["apoc"]
+      # Optimized memory settings for limited RAM (16GB)
       - NEO4J_dbms_memory_pagecache_size=512M
       - NEO4J_dbms_memory_heap_initial__size=512M
       - NEO4J_dbms_memory_heap_max__size=1G
@@ -30,16 +43,16 @@ services:
       retries: 5
       start_period: 40s
 
-  # Build the ML-enabled image ONCE and tag it
+  # Backend_2 - Main FastAPI application
   backend_2:
-    image: backend_2:ml                         # <— shared tag
     build:
       context: ./backend_2
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile      
       args:
-        EXTRAS: "ml"                            # <— ML for this image
+        EXTRAS: "ml"   # <-- pulls sentence-transformers + torch (CPU wheels)
     restart: unless-stopped
-    ports: ["8000:8000"]
+    ports:
+      - "8000:8000"
     environment:
       - BACKEND_2_NEO4J_URI=bolt://neo4j:7687
       - BACKEND_2_NEO4J_USER=neo4j
@@ -55,8 +68,10 @@ services:
       - backend-media:/app/media
       - backend-data:/data
     depends_on:
-      redis: { condition: service_healthy }
-      neo4j: { condition: service_healthy }
+      redis:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
       interval: 30s
@@ -64,9 +79,13 @@ services:
       retries: 3
       start_period: 60s
 
-  # Reuse the SAME image; different command
+  # Backend_2 Worker - Celery worker for async tasks
   backend_2_worker:
-    image: backend_2:ml                         # <— same image, no rebuild
+    build:
+      context: ./backend_2
+      dockerfile: Dockerfile
+      args:
+        EXTRAS: "ml"   # <-- pulls sentence-transformers + torch (CPU wheels)
     restart: unless-stopped
     command: celery -A app.celery_app worker --loglevel=info --concurrency=2
     environment:
@@ -84,9 +103,12 @@ services:
       - backend-media:/app/media
       - backend-data:/data
     depends_on:
-      redis: { condition: service_healthy }
-      neo4j: { condition: service_healthy }
-      backend_2: { condition: service_healthy } # wait until API is healthy
+      redis:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+      backend_2:
+        condition: service_started
 
 volumes:
   redis-data:

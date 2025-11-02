@@ -14,7 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy only files needed to resolve deps first (cache-friendly)
-COPY pyproject.toml README.md ./
+COPY pyproject.toml ./
 
 # Keep pip toolchain fresh to dodge resolver bugs
 RUN python -m pip install --upgrade "pip>=24.3.1" setuptools wheel

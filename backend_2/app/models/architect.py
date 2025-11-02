@@ -65,7 +65,7 @@ class ArchitectAnalysisRun(Base):
         Integer, ForeignKey("background_jobs.id", ondelete="SET NULL"), nullable=True
     )
     generation_job_id: Mapped[int | None] = mapped_column(
-        Integer, nullable=True
+        Integer, ForeignKey("background_jobs.id", ondelete="SET NULL"), nullable=True
     )
     ontology_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     ontology_instance_id: Mapped[str] = mapped_column(

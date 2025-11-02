@@ -1,5 +1,18 @@
 "use client";
 
+/**
+ * Architect Generated Instances Page
+ * 
+ * This page displays the ontology instances that were generated from
+ * approved architect proposals after Step 2 (generation) completes.
+ * 
+ * It shows two sections:
+ * 1. New Instances - entities that were created from new_instance proposals
+ * 2. Updated Instances - entities that were updated from update_instance proposals
+ * 
+ * Each section is separated by a visual divider for clarity.
+ */
+
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import DashboardLayout from "@/app/components/DashboardLayout";

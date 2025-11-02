@@ -96,11 +96,18 @@ Content-Type: application/json
       "status": "approved",
       "corrected_alias": "John Smith",
       "corrected_entity_definition_id": null,
+      "corrected_proposal_type": null,
+      "corrected_entity_instance_id": null,
       "merged_into_proposal_id": null
     },
     {
       "proposal_id": "proposal-2",
-      "status": "approved"
+      "status": "approved",
+      "corrected_alias": null,
+      "corrected_entity_definition_id": null,
+      "corrected_proposal_type": null,
+      "corrected_entity_instance_id": "entity-different-target",
+      "merged_into_proposal_id": null
     },
     {
       "proposal_id": "proposal-3",
@@ -110,6 +117,15 @@ Content-Type: application/json
       "proposal_id": "proposal-4",
       "status": "merged",
       "merged_into_proposal_id": "proposal-1"
+    },
+    {
+      "proposal_id": "proposal-5",
+      "status": "approved",
+      "corrected_alias": null,
+      "corrected_entity_definition_id": null,
+      "corrected_proposal_type": "update_instance",
+      "corrected_entity_instance_id": "entity-existing-123",
+      "merged_into_proposal_id": null
     }
   ]
 }
@@ -140,7 +156,40 @@ Content-Type: application/json
 4. **Corrected data**: 
    - `corrected_alias`: Override the suggested alias
    - `corrected_entity_definition_id`: Change the entity type
+   - `corrected_proposal_type`: Convert between `new_instance` and `update_instance`
+   - `corrected_entity_instance_id`: Change which entity to update (for `update_instance` proposals)
    - `merged_into_proposal_id`: Merge this proposal into another
+
+## Client Capabilities
+
+The client can make the following changes to proposals:
+
+### 1. Approve/Reject/Merge
+- Approve proposals for processing
+- Reject proposals to skip them
+- Merge duplicate proposals together
+
+### 2. Convert Proposal Types
+- **NEW → UPDATE**: Client realizes a "new" entity already exists
+  - Set `corrected_proposal_type: "update_instance"`
+  - Provide `corrected_entity_instance_id` with the existing entity ID
+- **UPDATE → NEW**: Client realizes an "update" is actually a new entity
+  - Set `corrected_proposal_type: "new_instance"`
+  - Set `corrected_entity_instance_id: null`
+
+### 3. Change Update Target
+- For `update_instance` proposals, change which entity gets updated
+- Use `corrected_entity_instance_id` to specify a different target entity
+
+### 4. Fix Entity Type
+- Change the entity definition (e.g., from "Person" to "Deity")
+- Use `corrected_entity_definition_id`
+
+### 5. Fix Alias
+- Correct typos or formatting in entity names
+- Use `corrected_alias`
+
+**For comprehensive examples of all scenarios, see [ARCHITECT_API_EXAMPLES.md](./ARCHITECT_API_EXAMPLES.md)**
 
 ## Entity Generation Process
 

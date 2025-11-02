@@ -31,8 +31,8 @@ def test_celery_can_use_redis_transport():
         ) from e
     except AttributeError as e:
         # This is the error that was happening before the fix
-        if "'NoneType' object has no attribute 'Redis'" in str(e):
-            raise AssertionError(
-                "redis module is None. This means redis package is not installed."
-            ) from e
-        raise
+        # (when redis module is None because redis package is not installed)
+        raise AssertionError(
+            f"AttributeError when importing PrefixedStrictRedis: {e}. "
+            "This likely means redis package is not installed."
+        ) from e

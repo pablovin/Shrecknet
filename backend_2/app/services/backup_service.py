@@ -403,6 +403,8 @@ class BackupService:
             "game_sessions",
             "games",
             "agents",
+            "entity_relationships",
+            "entity_properties",
             "ontology_relationships",
             "ontology_properties",
             "ontology_entities",

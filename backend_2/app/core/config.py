@@ -48,12 +48,12 @@ class Settings(BaseSettings):
     celery_task_always_eager: bool = False
     # LLM configuration for Elder agent
     openai_api_key: str = ""
-    model_decompose: str = "gpt-4o-mini"
-    model_subanswer: str = "gpt-4o-mini"
-    model_synthesis: str = "gpt-4o"
-    model_validation: str = "gpt-4o-mini"
-    model_style: str = "gpt-4o-mini"
-    model_architect_extract: str = "gpt-4o-mini"
+    model_decompose: str = "gpt-5-mini"
+    model_subanswer: str = "gpt-5-nano"
+    model_synthesis: str = "gpt-5"
+    model_validation: str = "gpt-5-mini"
+    model_style: str = "gpt-5-nano"
+    model_architect_extract: str = "gpt-5-mini"
     # Elder pipeline configuration
     default_top_k: int = 8
     enable_tracing: bool = True

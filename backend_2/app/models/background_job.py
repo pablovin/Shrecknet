@@ -39,6 +39,8 @@ class JobType(str, Enum):
     PDF_BOOK_EMBEDDING = "pdf_book_embedding"
     ARCHITECT_ANALYSIS = "architect_analysis"
     ARCHITECT_GENERATION = "architect_generation"
+    BACKUP = "backup"
+    RESTORE = "restore"
 
 
 class BackgroundJob(Base):

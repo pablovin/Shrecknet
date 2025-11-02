@@ -7,6 +7,7 @@ from app.tasks import (
     library_metadata,
     architect_analysis,
     architect_generation,
+    backup_tasks,
 )
 
 __all__ = [
@@ -16,4 +17,5 @@ __all__ = [
     "library_metadata",
     "architect_analysis",
     "architect_generation",
+    "backup_tasks",
 ]

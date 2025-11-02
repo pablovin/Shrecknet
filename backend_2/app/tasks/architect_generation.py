@@ -202,10 +202,14 @@ async def _execute_entity_generation(
             update_proposals = []
             for p in approved_proposals:
                 # Use corrected_proposal_type if provided, otherwise use original
-                effective_proposal_type = p.corrected_proposal_type or p.proposal_type
+                effective_proposal_type = p.corrected_proposal_type if p.corrected_proposal_type is not None else p.proposal_type
                 
-                # Use corrected_entity_instance_id if provided, otherwise use original
-                effective_entity_instance_id = p.corrected_entity_instance_id or p.entity_instance_id
+                # Use corrected_entity_instance_id if explicitly set (even if None), otherwise use original
+                # This handles the case where user converts UPDATE_INSTANCE to NEW_INSTANCE
+                if p.corrected_entity_instance_id is not None or p.corrected_proposal_type == ArchitectProposalType.NEW_INSTANCE:
+                    effective_entity_instance_id = p.corrected_entity_instance_id
+                else:
+                    effective_entity_instance_id = p.entity_instance_id
                 
                 proposal_dict = {
                     "id": p.id,

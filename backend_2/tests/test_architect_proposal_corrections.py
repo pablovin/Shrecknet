@@ -62,10 +62,11 @@ def test_effective_proposal_type_with_correction(sample_new_proposal):
     proposal_dict["corrected_proposal_type"] = ArchitectProposalType.UPDATE_INSTANCE
     proposal_dict["corrected_entity_instance_id"] = "entity-existing-123"
     
-    # Simulate the logic from architect_generation.py
+    # Simulate the corrected logic from architect_generation.py
     effective_proposal_type = (
-        proposal_dict.get("corrected_proposal_type") 
-        or proposal_dict["proposal_type"]
+        proposal_dict.get("corrected_proposal_type")
+        if proposal_dict.get("corrected_proposal_type") is not None
+        else proposal_dict["proposal_type"]
     )
     
     assert effective_proposal_type == ArchitectProposalType.UPDATE_INSTANCE
@@ -75,11 +76,14 @@ def test_effective_entity_instance_id_no_correction(sample_update_proposal):
     """Test that effective entity instance ID uses original when no correction."""
     proposal_dict = sample_update_proposal
     
-    # Simulate the logic from architect_generation.py
-    effective_entity_instance_id = (
-        proposal_dict.get("corrected_entity_instance_id")
-        or proposal_dict.get("entity_instance_id")
-    )
+    # Simulate the corrected logic from architect_generation.py
+    if (
+        proposal_dict.get("corrected_entity_instance_id") is not None
+        or proposal_dict.get("corrected_proposal_type") == ArchitectProposalType.NEW_INSTANCE
+    ):
+        effective_entity_instance_id = proposal_dict.get("corrected_entity_instance_id")
+    else:
+        effective_entity_instance_id = proposal_dict.get("entity_instance_id")
     
     assert effective_entity_instance_id == "entity-alice-456"
 
@@ -89,11 +93,14 @@ def test_effective_entity_instance_id_with_correction(sample_update_proposal):
     proposal_dict = sample_update_proposal
     proposal_dict["corrected_entity_instance_id"] = "entity-alice-789"
     
-    # Simulate the logic from architect_generation.py
-    effective_entity_instance_id = (
-        proposal_dict.get("corrected_entity_instance_id")
-        or proposal_dict.get("entity_instance_id")
-    )
+    # Simulate the corrected logic from architect_generation.py
+    if (
+        proposal_dict.get("corrected_entity_instance_id") is not None
+        or proposal_dict.get("corrected_proposal_type") == ArchitectProposalType.NEW_INSTANCE
+    ):
+        effective_entity_instance_id = proposal_dict.get("corrected_entity_instance_id")
+    else:
+        effective_entity_instance_id = proposal_dict.get("entity_instance_id")
     
     assert effective_entity_instance_id == "entity-alice-789"
 
@@ -106,15 +113,19 @@ def test_convert_new_to_update_scenario(sample_new_proposal):
     proposal_dict["corrected_proposal_type"] = ArchitectProposalType.UPDATE_INSTANCE
     proposal_dict["corrected_entity_instance_id"] = "entity-john-exists-999"
     
-    # Get effective values
+    # Get effective values using corrected logic
     effective_proposal_type = (
-        proposal_dict.get("corrected_proposal_type") 
-        or proposal_dict["proposal_type"]
+        proposal_dict.get("corrected_proposal_type")
+        if proposal_dict.get("corrected_proposal_type") is not None
+        else proposal_dict["proposal_type"]
     )
-    effective_entity_instance_id = (
-        proposal_dict.get("corrected_entity_instance_id")
-        or proposal_dict.get("entity_instance_id")
-    )
+    if (
+        proposal_dict.get("corrected_entity_instance_id") is not None
+        or proposal_dict.get("corrected_proposal_type") == ArchitectProposalType.NEW_INSTANCE
+    ):
+        effective_entity_instance_id = proposal_dict.get("corrected_entity_instance_id")
+    else:
+        effective_entity_instance_id = proposal_dict.get("entity_instance_id")
     
     # Verify conversion worked
     assert effective_proposal_type == ArchitectProposalType.UPDATE_INSTANCE
@@ -130,15 +141,19 @@ def test_convert_update_to_new_scenario(sample_update_proposal):
     proposal_dict["corrected_entity_instance_id"] = None
     proposal_dict["corrected_alias"] = "Alice Jr."  # Different person
     
-    # Get effective values
+    # Get effective values using corrected logic
     effective_proposal_type = (
-        proposal_dict.get("corrected_proposal_type") 
-        or proposal_dict["proposal_type"]
+        proposal_dict.get("corrected_proposal_type")
+        if proposal_dict.get("corrected_proposal_type") is not None
+        else proposal_dict["proposal_type"]
     )
-    effective_entity_instance_id = (
-        proposal_dict.get("corrected_entity_instance_id")
-        or proposal_dict.get("entity_instance_id")
-    )
+    if (
+        proposal_dict.get("corrected_entity_instance_id") is not None
+        or proposal_dict.get("corrected_proposal_type") == ArchitectProposalType.NEW_INSTANCE
+    ):
+        effective_entity_instance_id = proposal_dict.get("corrected_entity_instance_id")
+    else:
+        effective_entity_instance_id = proposal_dict.get("entity_instance_id")
     effective_alias = (
         proposal_dict.get("corrected_alias")
         or proposal_dict.get("alias")
@@ -157,11 +172,14 @@ def test_change_update_target_scenario(sample_update_proposal):
     # Client corrects the target entity
     proposal_dict["corrected_entity_instance_id"] = "entity-correct-target-555"
     
-    # Get effective value
-    effective_entity_instance_id = (
-        proposal_dict.get("corrected_entity_instance_id")
-        or proposal_dict.get("entity_instance_id")
-    )
+    # Get effective value using corrected logic
+    if (
+        proposal_dict.get("corrected_entity_instance_id") is not None
+        or proposal_dict.get("corrected_proposal_type") == ArchitectProposalType.NEW_INSTANCE
+    ):
+        effective_entity_instance_id = proposal_dict.get("corrected_entity_instance_id")
+    else:
+        effective_entity_instance_id = proposal_dict.get("entity_instance_id")
     
     # Verify correction worked
     assert effective_entity_instance_id == "entity-correct-target-555"

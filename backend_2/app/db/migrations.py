@@ -133,6 +133,26 @@ async def migrate_architect_proposals(engine: AsyncEngine) -> None:
                 )
             )
             logger.info("Successfully added generated_entity_instance_id column")
+        
+        # Add corrected_proposal_type column
+        if "corrected_proposal_type" not in column_names:
+            logger.info("Adding corrected_proposal_type column to architect_proposals table")
+            await conn.execute(
+                text(
+                    "ALTER TABLE architect_proposals ADD COLUMN corrected_proposal_type VARCHAR(20) DEFAULT NULL"
+                )
+            )
+            logger.info("Successfully added corrected_proposal_type column")
+        
+        # Add corrected_entity_instance_id column
+        if "corrected_entity_instance_id" not in column_names:
+            logger.info("Adding corrected_entity_instance_id column to architect_proposals table")
+            await conn.execute(
+                text(
+                    "ALTER TABLE architect_proposals ADD COLUMN corrected_entity_instance_id VARCHAR(64) DEFAULT NULL"
+                )
+            )
+            logger.info("Successfully added corrected_entity_instance_id column")
 
 
 async def migrate_neo4j_embedding_properties(

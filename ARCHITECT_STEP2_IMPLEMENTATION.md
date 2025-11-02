@@ -22,6 +22,8 @@ The architect job needed a second step where:
 - `merged_into_proposal_id` - Tracks which proposal this was merged into
 - `corrected_alias` - User-corrected entity alias
 - `corrected_entity_definition_id` - User-corrected entity type
+- `corrected_proposal_type` - User-corrected proposal type (NEW_INSTANCE ↔ UPDATE_INSTANCE)
+- `corrected_entity_instance_id` - User-corrected entity instance ID for updates
 - `chunks` - Text chunks relevant to this proposal (stored as JSON array)
 - `generated_entity_instance_id` - ID of the entity created/updated by this proposal
 
@@ -44,6 +46,8 @@ The architect job needed a second step where:
             "status": "approved" | "rejected" | "merged",
             "corrected_alias": str | None,
             "corrected_entity_definition_id": int | None,
+            "corrected_proposal_type": "new_instance" | "update_instance" | None,
+            "corrected_entity_instance_id": str | None,
             "merged_into_proposal_id": str | None
         }
     ],
@@ -201,9 +205,23 @@ Prompts instruct the LLM to:
       "proposal_id": "prop-4",
       "status": "merged",
       "merged_into_proposal_id": "prop-1"  // Duplicate, merge into prop-1
+    },
+    {
+      "proposal_id": "prop-5",
+      "status": "approved",
+      "corrected_proposal_type": "update_instance",
+      "corrected_entity_instance_id": "entity-existing-123"  // Convert NEW to UPDATE
+    },
+    {
+      "proposal_id": "prop-6",
+      "status": "approved",
+      "corrected_entity_instance_id": "entity-different-target"  // Change update target
     }
   ]
 }
+```
+
+**For comprehensive examples, see [backend_2/ARCHITECT_API_EXAMPLES.md](backend_2/ARCHITECT_API_EXAMPLES.md)**
 ```
 
 ## Key Design Decisions
@@ -231,15 +249,35 @@ Prompts instruct the LLM to:
 - `tests/test_entity_generator.py` - Unit tests
 
 **Modified:**
-- `app/models/architect.py` - Added fields and MERGED status
-- `app/schemas/architect.py` - Added validation request schemas
+- `app/models/architect.py` - Added corrected_proposal_type and corrected_entity_instance_id fields
+- `app/schemas/architect.py` - Added validation request schemas with new fields
 - `app/jobs/architect/schemas.py` - Added extraction response schemas
 - `app/jobs/architect/prompts.py` - Added property extraction prompts
 - `app/jobs/architect/architect.py` - Track chunks in proposals
 - `app/api/routers/architect.py` - Added generate endpoint
-- `app/repositories/architect_repository.py` - Added update methods
-- `app/db/migrations.py` - Added migration function
+- `app/repositories/architect_repository.py` - Added update methods with new fields
+- `app/tasks/architect_generation.py` - Handle proposal type and entity instance corrections
+- `app/db/migrations.py` - Added migration function with new columns
 - `app/db/init_jobs_db.py` - Call migration
+
+**Documentation:**
+- `backend_2/ARCHITECT_API_EXAMPLES.md` - Comprehensive input/output examples for all scenarios
+- `backend_2/ARCHITECT_STEP2_API.md` - Updated with new fields and capabilities
+- `ARCHITECT_STEP2_IMPLEMENTATION.md` - Updated with new features
+
+## Client Capabilities Summary
+
+The client can now:
+
+1. **Approve/Reject/Merge** proposals
+2. **Convert proposal types**:
+   - NEW_INSTANCE → UPDATE_INSTANCE (when client finds entity already exists)
+   - UPDATE_INSTANCE → NEW_INSTANCE (when client realizes it's a new entity)
+3. **Change update targets**: Specify different entity to update
+4. **Fix entity types**: Change entity definition
+5. **Fix aliases**: Correct typos or formatting
+
+All changes are optional - the server uses original values for any null corrected fields.
 
 ## Testing
 

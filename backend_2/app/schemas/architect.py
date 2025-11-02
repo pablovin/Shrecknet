@@ -55,6 +55,8 @@ class ArchitectProposalRead(BaseModel):
     merged_into_proposal_id: str | None = None
     corrected_alias: str | None = None
     corrected_entity_definition_id: int | None = None
+    corrected_proposal_type: ArchitectProposalType | None = None
+    corrected_entity_instance_id: str | None = None
     generated_entity_instance_id: str | None = None
     created_at: datetime
     updated_at: datetime
@@ -109,6 +111,12 @@ class ValidatedProposalItem(BaseModel):
     corrected_alias: str | None = Field(default=None, description="Corrected alias if user modified it")
     corrected_entity_definition_id: int | None = Field(
         default=None, description="Corrected entity definition if user modified it"
+    )
+    corrected_proposal_type: ArchitectProposalType | None = Field(
+        default=None, description="Corrected proposal type (e.g., convert NEW_INSTANCE to UPDATE_INSTANCE)"
+    )
+    corrected_entity_instance_id: str | None = Field(
+        default=None, description="Corrected entity instance ID for UPDATE_INSTANCE proposals"
     )
     merged_into_proposal_id: str | None = Field(
         default=None, description="If merged, the ID of the proposal this was merged into"

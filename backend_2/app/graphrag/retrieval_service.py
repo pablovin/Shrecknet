@@ -17,9 +17,9 @@ from app.graphrag.embedding_service import EmbeddingService
 def _normalize_value(value: Any) -> Any:
     """Convert Neo4j temporal/complex values into JSON-serializable equivalents."""
     if isinstance(value, (DateTime, datetime)):
-        return datetime.fromisoformat(value.isoformat()).isoformat()
+        return value.isoformat()
     if isinstance(value, (Date, date)):
-        return date.fromisoformat(value.isoformat()).isoformat()
+        return value.isoformat()
     if isinstance(value, (Time, Duration)):
         return str(value)
     if isinstance(value, list):

@@ -416,6 +416,25 @@ class ElderOrchestrator:
     ) -> list[tuple[str, list[RetrievedChunk], float]]:
         """Retrieve context for each sub-query in parallel."""
 
+        def _deduplicate_chunks(chunks: list[RetrievedChunk]) -> list[RetrievedChunk]:
+            """Deduplicate chunks by (source, instance_id), keeping highest score."""
+            original_count = len(chunks)
+            seen_keys: dict[tuple[Optional[str], Optional[str]], RetrievedChunk] = {}
+            for chunk in chunks:
+                key = (chunk.source, chunk.instance_id)
+                if key not in seen_keys or chunk.score > seen_keys[key].score:
+                    seen_keys[key] = chunk
+            # Return chunks sorted by score descending
+            deduplicated = sorted(seen_keys.values(), key=lambda c: c.score, reverse=True)
+            if original_count > len(deduplicated):
+                logger.info(
+                    "elder_deduplication: original=%d deduplicated=%d removed=%d",
+                    original_count,
+                    len(deduplicated),
+                    original_count - len(deduplicated),
+                )
+            return deduplicated
+
         async def retrieve_one(subquery: str) -> tuple[str, list[RetrievedChunk], float]:
             # Use a fresh Neo4j session per subquery to allow safe parallel retrieval
             sub_start = time.monotonic()
@@ -435,6 +454,8 @@ class ElderOrchestrator:
                         ontology_ids=ontology_ids,
                         top_k=top_k,
                     )
+                    # Deduplicate chunks by (source, instance_id)
+                    chunks = _deduplicate_chunks(chunks)
                     elapsed = time.monotonic() - sub_start
                     return (subquery, chunks, elapsed)
             except Exception as e:

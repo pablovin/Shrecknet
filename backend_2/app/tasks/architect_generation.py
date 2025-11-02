@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from typing import Any
+from uuid import uuid4
 
 from app.celery_app import celery_app
 from app.core.config import get_settings
@@ -17,6 +18,12 @@ from app.models.architect import ArchitectProposalStatus, ArchitectProposalType
 from app.models.background_job import AuthorType, JobType
 from app.repositories.architect_repository import ArchitectRepository
 from app.repositories.ontology_repository import OntologyRepository
+from app.schemas.ontology_instance import (
+    OntologyInstanceEntityCreate,
+    OntologyInstancePropertyValue,
+    OntologyInstanceRelationshipCreate,
+    OntologyInstanceUpdate,
+)
 from app.services.ontology_instance_service import OntologyInstanceService
 from app.utils.async_helpers import run_async
 from app.utils.job_tracking import (

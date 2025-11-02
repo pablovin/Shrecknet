@@ -2,6 +2,8 @@
 
 This guide explains how to run the backend_2 application using Docker Compose.
 
+> **⚡ NEW: Lightning-Fast Builds!** For ~10-30 second build times, see [VENV_DEPLOYMENT.md](VENV_DEPLOYMENT.md)
+
 ## Prerequisites
 
 - Docker Engine 20.10+
@@ -20,6 +22,32 @@ The docker-compose setup includes:
 4. **neo4j** - Graph database (ports 7474, 7687)
 
 ## Quick Start
+
+### Option 1: Lightning-Fast Build (Recommended)
+
+For **10-30 second builds**, pre-build your dependencies first:
+
+```bash
+# Build .venv once (takes 15-30 minutes)
+cd backend_2
+./build-venv.sh --ml
+
+# Now Docker builds are super fast!
+cd ..
+docker compose build    # ~10-30 seconds ⚡
+docker compose up -d
+```
+
+See [VENV_DEPLOYMENT.md](VENV_DEPLOYMENT.md) for complete details.
+
+### Option 2: Standard Build
+
+Build dependencies from scratch (takes 15-30 minutes):
+
+```bash
+docker compose build    # ~15-30 minutes
+docker compose up -d
+```
 
 ### Validate Configuration
 

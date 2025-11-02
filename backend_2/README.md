@@ -15,6 +15,8 @@ This separation keeps concerns isolated so that swapping persistence technologie
 
 ## Getting started
 
+### Local Development
+
 ```bash
 python -m venv .venv
 source .venv/bin/activate
@@ -29,6 +31,29 @@ export BACKEND_2_DATABASE_URL="postgresql+asyncpg://user:pass@host/db"
 ```
 
 FastAPI automatically generates interactive docs at `/docs` and `/redoc`.
+
+### Docker Deployment (Recommended for Production)
+
+For **lightning-fast Docker builds** (~10-30 seconds), use the .venv pre-build approach:
+
+```bash
+# One-time: Build .venv with all dependencies (15-30 minutes)
+./build-venv.sh --ml
+
+# Every deploy: Super fast builds (10-30 seconds)
+cd ..
+docker compose build
+docker compose up -d
+```
+
+See [../VENV_DEPLOYMENT.md](../VENV_DEPLOYMENT.md) for complete deployment guide.
+
+**Without .venv** (traditional build, takes 15-30 minutes):
+```bash
+cd ..
+docker compose build
+docker compose up -d
+```
 
 ## Authentication & authorization
 

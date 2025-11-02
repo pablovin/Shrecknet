@@ -16,65 +16,53 @@ WORKDIR /app
 # By default, build the API flavor (no ML). Override via --build-arg EXTRAS=ml
 ARG EXTRAS=
 
-# ===== OPTION 1: Use pre-existing .venv (FASTEST) =====
-# If .venv exists in the build context, copy it directly
-# This is the fastest option: ~10-30 seconds build time
-COPY --chown=root:root .venv* /app/.venv/ 2>/dev/null || true
+# ===== Copy all files including optional .venv =====
+# The .venv folder will be included if it exists and isn't in .dockerignore
+COPY . .
 
-# Check if .venv was copied successfully
+# ===== Check if .venv exists and is valid =====
 RUN if [ -d "/app/.venv" ] && [ -f "/app/.venv/bin/python" ]; then \
-      echo "==> Using pre-existing .venv - FAST BUILD MODE" && \
-      # Verify the venv is valid
+      echo "========================================" && \
+      echo "==> FAST BUILD MODE: Using .venv" && \
+      echo "========================================" && \
       /app/.venv/bin/python --version && \
-      # Set up environment to use this venv
-      echo "export PATH=/app/.venv/bin:\$PATH" > /etc/profile.d/venv.sh && \
+      # Update PATH to prioritize .venv
+      echo 'export PATH="/app/.venv/bin:$PATH"' >> /etc/bash.bashrc && \
       ln -sf /app/.venv/bin/python /usr/local/bin/python && \
-      ln -sf /app/.venv/bin/pip /usr/local/bin/pip; \
+      ln -sf /app/.venv/bin/pip /usr/local/bin/pip && \
+      echo "✓ .venv configured successfully" && \
+      # Mark that we're using venv
+      touch /app/.using-venv; \
     else \
-      echo "==> No .venv found - will install dependencies from scratch"; \
-    fi
-
-# ===== OPTION 2: Install from scratch (FALLBACK) =====
-# Only runs if .venv doesn't exist or is invalid
-RUN if [ ! -d "/app/.venv" ] || [ ! -f "/app/.venv/bin/python" ]; then \
-      echo "==> Installing dependencies from scratch" && \
-      # Copy metadata first for caching
+      echo "========================================" && \
+      echo "==> STANDARD BUILD: Installing from scratch" && \
+      echo "========================================" && \
+      # Upgrade pip first
       pip install "pip<25.4" && \
-      mkdir -p app && \
-      true; \
-    fi
-
-# Copy minimal package structure (only needed for fresh install)
-COPY app/__init__.py app/__init__.py 2>/dev/null || true
-COPY pyproject.toml ./ 2>/dev/null || true
-
-# Install base dependencies if .venv doesn't exist
-RUN if [ ! -d "/app/.venv" ] || [ ! -f "/app/.venv/bin/python" ]; then \
+      # Install base dependencies
       if [ -z "$EXTRAS" ]; then \
         pip install .[test]; \
       else \
-        echo "Defer ML extras to next stage"; \
-      fi; \
+        echo "Deferring ML extras..."; \
+      fi && \
+      echo "✓ Dependencies installed"; \
     fi
 
-# Now copy the rest of the app
-COPY . .
-
-# Install ML extras if needed and not using pre-existing .venv with ML already installed
+# ===== Install ML extras if needed =====
 RUN if [ "$EXTRAS" = "ml" ]; then \
-      # Check if sentence-transformers is already installed (from .venv)
-      if python -c "import sentence_transformers" 2>/dev/null; then \
-        echo "==> ML dependencies already installed in .venv"; \
+      if [ -f "/app/.using-venv" ] && python -c "import sentence_transformers" 2>/dev/null; then \
+        echo "✓ ML dependencies already present in .venv"; \
       else \
-        echo "==> Installing ML dependencies" && \
+        echo "==> Installing ML dependencies..." && \
         pip install --prefer-binary \
           --extra-index-url https://download.pytorch.org/whl/cpu \
-          ".[ml]"; \
+          ".[ml]" && \
+        echo "✓ ML dependencies installed"; \
       fi; \
     fi
 
-# Ensure PATH includes .venv if it exists
+# Ensure PATH includes .venv if it exists (for CMD)
 ENV PATH="/app/.venv/bin:${PATH}"
 
 EXPOSE 8000
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

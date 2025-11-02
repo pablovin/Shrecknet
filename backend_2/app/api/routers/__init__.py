@@ -6,6 +6,7 @@ from app.api.routers import (
     audit_logs,
     auth,
     background_jobs,
+    backups,
     elder,
     elder_chats,
     games,
@@ -44,4 +45,5 @@ def get_api_router() -> APIRouter:
     router.include_router(architect.router)
     router.include_router(legacy_export.router)
     router.include_router(background_jobs.router)
+    router.include_router(backups.router)
     return router

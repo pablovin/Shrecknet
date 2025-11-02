@@ -373,3 +373,45 @@ and management. Each job includes:
 
 For detailed information on running Celery workers, creating new background jobs, and monitoring
 task execution, see [CELERY.md](CELERY.md).
+
+## Backup and Restore
+
+The backup system provides comprehensive data export and import capabilities for disaster recovery
+and data migration. See [BACKUP_API.md](BACKUP_API.md) for complete documentation.
+
+**Quick start:**
+```bash
+# Create a backup (admin only)
+curl -X POST "http://localhost:8000/backups/create" \
+  -H "Authorization: Bearer YOUR_ADMIN_TOKEN"
+
+# List available backups
+curl -X GET "http://localhost:8000/backups/" \
+  -H "Authorization: Bearer YOUR_ADMIN_TOKEN"
+
+# Download a backup
+curl -X GET "http://localhost:8000/backups/backup_20231202_153045.tar.gz/download" \
+  -H "Authorization: Bearer YOUR_ADMIN_TOKEN" \
+  -o backup.tar.gz
+
+# Restore from backup (destructive - deletes all existing data!)
+curl -X POST "http://localhost:8000/backups/restore" \
+  -H "Authorization: Bearer YOUR_ADMIN_TOKEN" \
+  -F "file=@backup.tar.gz"
+```
+
+**What's backed up:**
+- All database tables (users, games, ontologies, agents, library, notes, etc.)
+- All Neo4j graph data (nodes and relationships)
+- All media files (avatars, library PDFs, etc.)
+
+**Backup storage:**
+- Backups are stored in `/media/backups/` as timestamped `.tar.gz` archives
+- Backups can be downloaded for off-site storage
+- Automated backup scripts are available in `examples/backup_example.py`
+
+**API Endpoints:**
+- `POST /backups/create` - Create a new backup
+- `GET /backups/` - List all available backups
+- `GET /backups/{filename}/download` - Download a backup file
+- `POST /backups/restore` - Restore from an uploaded backup file

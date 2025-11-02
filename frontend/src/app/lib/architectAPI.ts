@@ -12,6 +12,7 @@ export type ArchitectProposal = {
   metadata: Record<string, unknown> | null;
   proposal_metadata?: Record<string, unknown> | null;
   evidence: Array<Record<string, unknown>> | null;
+  generated_entity_instance_id: string | null;
   created_at: string;
   updated_at: string;
 };

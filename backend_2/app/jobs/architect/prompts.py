@@ -35,6 +35,7 @@ Return STRICT JSON with the following structure:
       "confidence": 0.0,
       "justification": "why this is relevant",
       "metadata": {{
+        "alias": "entity alias from the candidate list",
         "supporting_sentences": ["optional text snippets"]
       }}
     }}
@@ -48,4 +49,6 @@ Rules:
 - entity_instance_id must come from the existing instances list.
 - Do not invent properties or relationships, only flag the entity occurrence.
 - The response MUST be valid JSON with double quotes.
+- For existing_instances, ALWAYS include the "alias" field in metadata with the entity's alias from the candidate list.
+- IMPORTANT: When matching entities, consider that names may be mentioned in different forms (e.g., "Prof. Wentworth" and "Wentworth" are the same person, "Jack" and "Jack Radford" are the same person). If an entity in the text could refer to an existing instance with a similar or abbreviated name, update the existing instance rather than creating a new one. Use the context to determine if variations of a name refer to the same entity.
 """

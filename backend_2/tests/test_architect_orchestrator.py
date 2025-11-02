@@ -26,7 +26,7 @@ class StubRetriever:
         return [
             RetrievedChunk(
                 node_id="entity-1",
-                node_label="Character",
+                node_label="Alice",
                 instance_id="instance-1",
                 text="Alice - Prince of the city, cunning and decisive.",
                 score=0.87,
@@ -123,3 +123,31 @@ async def test_architect_orchestrator_aggregates_results():
     existing_items = [p for p in proposals if p["entity_instance_id"] == "entity-1"]
     assert existing_items[0]["entity_definition_id"] == 1
     assert existing_items[0]["confidence"] == pytest.approx(0.66, abs=0.01)
+    # Verify that the alias is populated for update proposals (from retrieval)
+    assert existing_items[0]["alias"] == "Alice"
+
+
+@pytest.mark.asyncio
+async def test_architect_format_entity_catalog_includes_all_entities():
+    """Test that _format_entity_catalog formats the entity definitions correctly."""
+    orchestrator = ArchitectOrchestrator(
+        llm_client=StubLLM("{}"),
+        model_policy=StubPolicy(),
+        graph_retriever=StubRetriever(),
+    )
+
+    entity_definitions = [
+        {"id": 1, "name": "Character", "description": "Individuals in the world."},
+        {"id": 2, "name": "Location", "description": "Places of significance."},
+        {"id": 3, "name": "Item", "description": "Objects and artifacts."},
+    ]
+
+    catalog = orchestrator._format_entity_catalog(entity_definitions)
+
+    # Verify all entities are included
+    assert "1: Character" in catalog
+    assert "2: Location" in catalog
+    assert "3: Item" in catalog
+    assert "Individuals in the world" in catalog
+    assert "Places of significance" in catalog
+    assert "Objects and artifacts" in catalog

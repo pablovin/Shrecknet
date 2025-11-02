@@ -35,5 +35,9 @@ class ChunkAnalysisResult(BaseModel):
     source_entity_definition_id: int | None = None
     new_instances: list[ExtractedNewInstance] = Field(default_factory=list)
     existing_instances: list[ExtractedExistingInstance] = Field(default_factory=list)
+    retrieval_alias_map: dict[str, str] = Field(
+        default_factory=dict,
+        description="Maps entity_instance_id to alias from retrieval results",
+    )
 
     model_config = ConfigDict(arbitrary_types_allowed=True)

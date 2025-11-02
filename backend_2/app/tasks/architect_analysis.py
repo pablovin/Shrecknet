@@ -152,6 +152,7 @@ async def _execute_architect_pipeline(
                     "description": entity.description,
                 }
                 for entity in entity_defs
+                if entity.auto_generatable
             ]
 
             model_policy = ModelPolicy(

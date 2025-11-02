@@ -91,6 +91,14 @@ class ArchitectOrchestrator:
                         ontology_ids=agent_ontology_ids,
                         top_k=self.retrieval_top_k,
                     )
+                    # Build a map of entity_instance_id to alias from retrieval results
+                    retrieval_alias_map = {}
+                    for retrieved_chunk in retrieval:
+                        if retrieved_chunk.node_id and retrieved_chunk.node_label:
+                            retrieval_alias_map[retrieved_chunk.node_id] = (
+                                retrieved_chunk.node_label
+                            )
+
                     prompt = ARCHITECT_EXTRACTION_PROMPT.format(
                         entity_catalog=entity_catalog,
                         existing_instances=self._format_retrieval_summary(retrieval),
@@ -110,12 +118,14 @@ class ArchitectOrchestrator:
                     exc_info=True,
                 )
                 response_text = "{\n  \"new_instances\": [],\n  \"existing_instances\": []\n}"
+                retrieval_alias_map = {}
             parsed = self._parse_llm_response(
                 response_text,
                 chunk_index=chunk.index,
                 chunk_text=chunk.text,
                 source_alias=chunk.entity_alias,
                 source_definition_id=chunk.entity_definition_id,
+                retrieval_alias_map=retrieval_alias_map,
             )
             return parsed
 
@@ -221,6 +231,7 @@ class ArchitectOrchestrator:
         chunk_text: str,
         source_alias: str | None,
         source_definition_id: int | None,
+        retrieval_alias_map: dict[str, str] | None = None,
     ) -> ChunkAnalysisResult:
         try:
             json_block = self._extract_json_block(response_text)
@@ -241,6 +252,7 @@ class ArchitectOrchestrator:
             source_entity_definition_id=source_definition_id,
             new_instances=parsed.new_instances,
             existing_instances=parsed.existing_instances,
+            retrieval_alias_map=retrieval_alias_map or {},
         )
 
     def _aggregate_results(
@@ -299,6 +311,15 @@ class ArchitectOrchestrator:
                     if alias_hint and not record.get("alias"):
                         record["alias"] = alias_hint
                     record["metadata_snippets"].append(item.metadata)
+
+                # Fallback: use retrieval_alias_map if alias is not set
+                if (
+                    not record.get("alias")
+                    and item.entity_instance_id in result.retrieval_alias_map
+                ):
+                    record["alias"] = result.retrieval_alias_map[
+                        item.entity_instance_id
+                    ]
 
         proposals: list[dict[str, Any]] = []
         for record in aggregated.values():

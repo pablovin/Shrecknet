@@ -1,9 +1,24 @@
 """Tests for Elder orchestrator functionality."""
 
 import pytest
+from typing import Optional
 from unittest.mock import AsyncMock, MagicMock
 
 from app.jobs.elder.schemas import RetrievedChunk
+
+
+def _deduplicate_chunks(chunks: list[RetrievedChunk]) -> list[RetrievedChunk]:
+    """
+    Deduplicate chunks by (source, instance_id), keeping highest score.
+    
+    This is a copy of the logic from ElderOrchestrator._retrieve() for testing.
+    """
+    seen_keys: dict[tuple[Optional[str], Optional[str]], RetrievedChunk] = {}
+    for chunk in chunks:
+        key = (chunk.source, chunk.instance_id)
+        if key not in seen_keys or chunk.score > seen_keys[key].score:
+            seen_keys[key] = chunk
+    return sorted(seen_keys.values(), key=lambda c: c.score, reverse=True)
 
 
 class TestElderOrchestrator:
@@ -47,18 +62,6 @@ class TestElderOrchestrator:
             ),
         ]
 
-        # Import the deduplication logic inline
-        from typing import Optional
-
-        def _deduplicate_chunks(chunks):
-            """Deduplicate chunks by (source, instance_id), keeping highest score."""
-            seen_keys: dict[tuple[Optional[str], Optional[str]], RetrievedChunk] = {}
-            for chunk in chunks:
-                key = (chunk.source, chunk.instance_id)
-                if key not in seen_keys or chunk.score > seen_keys[key].score:
-                    seen_keys[key] = chunk
-            return sorted(seen_keys.values(), key=lambda c: c.score, reverse=True)
-
         # Apply deduplication
         deduplicated = _deduplicate_chunks(chunks)
 
@@ -101,17 +104,6 @@ class TestElderOrchestrator:
             ),
         ]
 
-        from typing import Optional
-
-        def _deduplicate_chunks(chunks):
-            """Deduplicate chunks by (source, instance_id), keeping highest score."""
-            seen_keys: dict[tuple[Optional[str], Optional[str]], RetrievedChunk] = {}
-            for chunk in chunks:
-                key = (chunk.source, chunk.instance_id)
-                if key not in seen_keys or chunk.score > seen_keys[key].score:
-                    seen_keys[key] = chunk
-            return sorted(seen_keys.values(), key=lambda c: c.score, reverse=True)
-
         deduplicated = _deduplicate_chunks(chunks)
 
         # Both should be kept since they have different keys
@@ -119,16 +111,5 @@ class TestElderOrchestrator:
 
     def test_deduplicate_chunks_empty_list(self):
         """Test deduplication with empty list."""
-        from typing import Optional
-
-        def _deduplicate_chunks(chunks):
-            """Deduplicate chunks by (source, instance_id), keeping highest score."""
-            seen_keys: dict[tuple[Optional[str], Optional[str]], RetrievedChunk] = {}
-            for chunk in chunks:
-                key = (chunk.source, chunk.instance_id)
-                if key not in seen_keys or chunk.score > seen_keys[key].score:
-                    seen_keys[key] = chunk
-            return sorted(seen_keys.values(), key=lambda c: c.score, reverse=True)
-
         deduplicated = _deduplicate_chunks([])
         assert len(deduplicated) == 0

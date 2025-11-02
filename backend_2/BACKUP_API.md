@@ -1,6 +1,6 @@
 # Backup and Restore API Documentation
 
-The Backup and Restore system provides a comprehensive way to create full backups of the Shrecknet backend_2 application and restore from those backups.
+The Backup and Restore system provides a comprehensive way to create full backups of the Shrecknet backend_2 application and restore from those backups **as background jobs**.
 
 ## Overview
 
@@ -11,19 +11,23 @@ The backup system captures:
 
 Backups are stored as `.tar.gz` archives in `/media/backups/` with timestamped filenames.
 
+**🆕 NEW**: Backup and restore operations now run as **background jobs** using Celery, allowing you to monitor their progress and preventing request timeouts.
+
 ## Important Warnings
 
 ⚠️ **RESTORE IS DESTRUCTIVE**: The restore operation will DELETE ALL EXISTING DATA before restoring from the backup. Make sure you have a recent backup before performing a restore.
 
 🔒 **ADMIN ONLY**: All backup endpoints require admin authentication.
 
+✨ **ADMIN USER PRESERVED**: During restore, the admin user who invoked the restore operation is preserved and won't be replaced by backup data if a conflicting user exists in the backup.
+
 ## API Endpoints
 
-### 1. Create Backup
+### 1. Create Backup (Background Job)
 
 **Endpoint:** `POST /backups/create`
 
-**Description:** Creates a complete backup of all data and stores it in `/media/backups/`.
+**Description:** Creates a complete backup of all data as a background job. Returns immediately with job information.
 
 **Authentication:** Required (Admin role)
 
@@ -33,27 +37,59 @@ curl -X POST "http://localhost:8000/backups/create" \
   -H "Authorization: Bearer YOUR_ADMIN_TOKEN"
 ```
 
-**Response:**
+**Response (202 Accepted):**
 ```json
 {
-  "filename": "backup_20231202_153045.tar.gz",
-  "path": "/path/to/media/backups/backup_20231202_153045.tar.gz",
-  "size_bytes": 15728640,
-  "created_at": "20231202_153045",
-  "database_records": 1523,
-  "neo4j_nodes": 256,
-  "neo4j_relationships": 412
+  "celery_task_id": "abc-123-def-456",
+  "status": "queued",
+  "message": "Backup job created successfully. Monitor the background jobs to track progress."
 }
 ```
 
 **Response Fields:**
-- `filename`: Name of the backup file
-- `path`: Full path to the backup file on the server
-- `size_bytes`: Size of the backup file in bytes
-- `created_at`: Timestamp when the backup was created
-- `database_records`: Total number of database records backed up
-- `neo4j_nodes`: Number of Neo4j nodes backed up
-- `neo4j_relationships`: Number of Neo4j relationships backed up
+- `celery_task_id`: Celery task identifier for the background job
+- `status`: Current status (queued, running, done, failed)
+- `message`: Human-readable message about the job
+
+**Monitoring Progress:**
+Use the background jobs API to monitor the backup job:
+
+```bash
+# List all backup jobs
+curl -X GET "http://localhost:8000/jobs/?job_type=backup" \
+  -H "Authorization: Bearer YOUR_ADMIN_TOKEN"
+
+# Get specific job details
+curl -X GET "http://localhost:8000/jobs/{job_id}" \
+  -H "Authorization: Bearer YOUR_ADMIN_TOKEN"
+```
+
+**Example Job Response:**
+```json
+{
+  "id": 123,
+  "celery_task_id": "abc-123-def-456",
+  "author_type": "user",
+  "author_id": "1",
+  "job_type": "backup",
+  "status": "done",
+  "description": "Creating system backup",
+  "details": {
+    "admin_user_id": 1,
+    "backup_filename": "backup_20231202_153045.tar.gz",
+    "backup_size": 15728640,
+    "database_records": 1523,
+    "neo4j_nodes": 256,
+    "neo4j_relationships": 412
+  },
+  "progress": 1.0,
+  "error_message": null,
+  "started_at": "2023-12-02T15:30:00.000000",
+  "completed_at": "2023-12-02T15:30:45.000000",
+  "duration_seconds": 45.2,
+  "updated_at": "2023-12-02T15:30:45.000000"
+}
+```
 
 ---
 
@@ -113,11 +149,11 @@ curl -X GET "http://localhost:8000/backups/backup_20231202_153045.tar.gz/downloa
 
 ---
 
-### 4. Restore Backup
+### 4. Restore Backup (Background Job)
 
 **Endpoint:** `POST /backups/restore`
 
-**Description:** Restores data from an uploaded backup file. **This will delete all existing data!**
+**Description:** Restores data from an uploaded backup file as a background job. **This will delete all existing data!** The admin user who invokes the restore is preserved.
 
 **Authentication:** Required (Admin role)
 
@@ -128,19 +164,61 @@ curl -X POST "http://localhost:8000/backups/restore" \
   -F "file=@backup_20231202_153045.tar.gz"
 ```
 
-**Response:**
+**Response (202 Accepted):**
 ```json
 {
-  "status": "success",
-  "restored_at": "2023-12-02T16:45:30.123456",
-  "backup_metadata": {
-    "created_at": "20231202_153045",
-    "database_records": 1523,
-    "neo4j_nodes": 256,
-    "neo4j_relationships": 412
-  }
+  "celery_task_id": "xyz-789-abc-012",
+  "status": "queued",
+  "message": "Restore job created successfully. Monitor the background jobs to track progress.",
+  "temp_path": "/tmp/backup_20231202_153045.tar.gz"
 }
 ```
+
+**Response Fields:**
+- `celery_task_id`: Celery task identifier for the background job
+- `status`: Current status (queued, running, done, failed)
+- `message`: Human-readable message about the job
+- `temp_path`: Temporary path where the uploaded backup is stored
+
+**Monitoring Progress:**
+Use the background jobs API to monitor the restore job:
+
+```bash
+# List all restore jobs
+curl -X GET "http://localhost:8000/jobs/?job_type=restore" \
+  -H "Authorization: Bearer YOUR_ADMIN_TOKEN"
+
+# Get specific job details
+curl -X GET "http://localhost:8000/jobs/{job_id}" \
+  -H "Authorization: Bearer YOUR_ADMIN_TOKEN"
+```
+
+**Example Job Response (Completed):**
+```json
+{
+  "id": 124,
+  "celery_task_id": "xyz-789-abc-012",
+  "author_type": "user",
+  "author_id": "1",
+  "job_type": "restore",
+  "status": "done",
+  "description": "Restoring backup from backup_20231202_153045.tar.gz",
+  "details": {
+    "admin_user_id": 1,
+    "backup_path": "/tmp/backup_20231202_153045.tar.gz",
+    "restored_at": "2023-12-02T16:45:30.123456"
+  },
+  "progress": 1.0,
+  "error_message": null,
+  "started_at": "2023-12-02T16:30:00.000000",
+  "completed_at": "2023-12-02T16:45:30.000000",
+  "duration_seconds": 930.5,
+  "updated_at": "2023-12-02T16:45:30.000000"
+}
+```
+
+**Admin User Preservation:**
+During restore, the admin user who invoked the restore operation is automatically preserved. If the backup contains a user with the same username or email as the admin user, that backup user is skipped, and the current admin user remains unchanged. This ensures you don't get locked out after a restore operation.
 
 ---
 
@@ -150,6 +228,7 @@ curl -X POST "http://localhost:8000/backups/restore" \
 
 ```python
 import requests
+import time
 from pathlib import Path
 
 # Configuration
@@ -160,14 +239,40 @@ headers = {
     "Authorization": f"Bearer {ADMIN_TOKEN}"
 }
 
-# 1. Create a backup
+# 1. Create a backup (returns immediately with job info)
 print("Creating backup...")
 response = requests.post(f"{BASE_URL}/backups/create", headers=headers)
 response.raise_for_status()
-backup_info = response.json()
-print(f"Backup created: {backup_info['filename']}")
-print(f"Size: {backup_info['size_bytes']} bytes")
-print(f"Records: {backup_info['database_records']}")
+backup_job = response.json()
+print(f"Backup job created: {backup_job['celery_task_id']}")
+print(f"Status: {backup_job['status']}")
+
+# Monitor backup job progress
+print("\nMonitoring backup progress...")
+while True:
+    # List recent backup jobs
+    response = requests.get(
+        f"{BASE_URL}/jobs/?job_type=backup&limit=1",
+        headers=headers
+    )
+    response.raise_for_status()
+    jobs = response.json()
+    
+    if jobs:
+        job = jobs[0]
+        print(f"Progress: {job['progress'] * 100:.1f}% - {job['status']}")
+        
+        if job['status'] in ['done', 'failed']:
+            if job['status'] == 'done':
+                print(f"Backup completed!")
+                print(f"Filename: {job['details'].get('backup_filename')}")
+                print(f"Size: {job['details'].get('backup_size')} bytes")
+                print(f"Records: {job['details'].get('database_records')}")
+            else:
+                print(f"Backup failed: {job.get('error_message')}")
+            break
+    
+    time.sleep(2)  # Wait 2 seconds before checking again
 
 # 2. List all backups
 print("\nListing all backups...")
@@ -204,9 +309,33 @@ if backup_file.exists():
             files=files
         )
         response.raise_for_status()
-        result = response.json()
-        print(f"Restore completed: {result['status']}")
-        print(f"Restored at: {result['restored_at']}")
+        restore_job = response.json()
+        print(f"Restore job created: {restore_job['celery_task_id']}")
+    
+    # Monitor restore job progress
+    print("\nMonitoring restore progress...")
+    while True:
+        # List recent restore jobs
+        response = requests.get(
+            f"{BASE_URL}/jobs/?job_type=restore&limit=1",
+            headers=headers
+        )
+        response.raise_for_status()
+        jobs = response.json()
+        
+        if jobs:
+            job = jobs[0]
+            print(f"Progress: {job['progress'] * 100:.1f}% - {job['status']}")
+            
+            if job['status'] in ['done', 'failed']:
+                if job['status'] == 'done':
+                    print(f"Restore completed!")
+                    print(f"Restored at: {job['details'].get('restored_at')}")
+                else:
+                    print(f"Restore failed: {job.get('error_message')}")
+                break
+        
+        time.sleep(2)  # Wait 2 seconds before checking again
 ```
 
 ### JavaScript Example

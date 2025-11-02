@@ -90,6 +90,7 @@ class ArchitectRepository:
                     justification=payload.get("justification"),
                     evidence=payload.get("evidence"),
                     proposal_metadata=payload.get("proposal_metadata"),
+                    chunks=payload.get("chunks"),
                 )
             )
         self.session.add_all(db_objects)
@@ -138,3 +139,49 @@ class ArchitectRepository:
         )
         result = await self.session.execute(stmt)
         return result.rowcount or 0
+
+    async def update_proposal_validation(
+        self,
+        proposal_id: str,
+        *,
+        status: ArchitectProposalStatus,
+        corrected_alias: str | None = None,
+        corrected_entity_definition_id: int | None = None,
+        merged_into_proposal_id: str | None = None,
+    ) -> None:
+        """Update a proposal with validation data from the client."""
+        values: dict[str, Any] = {"status": status}
+        if corrected_alias is not None:
+            values["corrected_alias"] = corrected_alias
+        if corrected_entity_definition_id is not None:
+            values["corrected_entity_definition_id"] = corrected_entity_definition_id
+        if merged_into_proposal_id is not None:
+            values["merged_into_proposal_id"] = merged_into_proposal_id
+
+        stmt = update(ArchitectProposal).where(ArchitectProposal.id == proposal_id).values(**values)
+        await self.session.execute(stmt)
+
+    async def update_proposal_generated_entity(
+        self, proposal_id: str, entity_instance_id: str
+    ) -> None:
+        """Update a proposal with the generated entity instance ID."""
+        stmt = (
+            update(ArchitectProposal)
+            .where(ArchitectProposal.id == proposal_id)
+            .values(generated_entity_instance_id=entity_instance_id)
+        )
+        await self.session.execute(stmt)
+
+    async def get_proposals_by_ids(
+        self, proposal_ids: Sequence[str]
+    ) -> list[ArchitectProposal]:
+        """Get proposals by their IDs."""
+        stmt = select(ArchitectProposal).where(ArchitectProposal.id.in_(proposal_ids))
+        result = await self.session.execute(stmt)
+        return list(result.scalars())
+
+    async def get_proposals_by_run(self, run_id: str) -> list[ArchitectProposal]:
+        """Get all proposals for a run."""
+        stmt = select(ArchitectProposal).where(ArchitectProposal.run_id == run_id)
+        result = await self.session.execute(stmt)
+        return list(result.scalars())

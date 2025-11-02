@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import defaultdict
 import json
 import logging
 from typing import Any, Optional
@@ -614,7 +615,6 @@ async def _execute_entity_generation(
                 for update_data in updates:
                     entity_id = update_data["entity_instance_id"]
                     updated_entity_ids.append(entity_id)
-                    entity_alias_map[entity_id] = existing_entities_map[entity_id]["alias"]
 
                     # Filter invalid properties for updates
                     entity_def_id = existing_entities_map[entity_id]["definition_id"]
@@ -768,12 +768,21 @@ async def _execute_entity_generation(
         await update_job_progress(job_id, 0.95, {"status": "Entity generation completed"})
 
         from app.tasks.ontology_links import link_instance as link_instance_task
+        from app.tasks.neo4j_embedding import embed_ontology as embed_ontology_task
 
         for instance_id in newly_created_instance_ids:
             link_instance_task.delay(instance_id)
 
         if updated_entity_ids:
             link_instance_task.delay(run.ontology_instance_id)
+
+        # Trigger embedding job for updated/added instances to keep embeddings up to date
+        if created_entity_ids or updated_entity_ids:
+            embed_ontology_task.delay(
+                ontology_id=ontology_id,
+                author_type=author_type,
+                author_id=author_id,
+            )
 
         summary_payload = {
             "created": created_details,

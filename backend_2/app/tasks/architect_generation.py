@@ -111,7 +111,7 @@ async def _execute_entity_generation(
         for validated in validated_proposals:
             # Convert corrected_proposal_type from string to enum if provided
             corrected_proposal_type = None
-            if validated.get("corrected_proposal_type"):
+            if validated.get("corrected_proposal_type") is not None:
                 corrected_proposal_type = ArchitectProposalType(validated["corrected_proposal_type"])
             
             await repo.update_proposal_validation(

@@ -161,7 +161,9 @@ async def _execute_architect_pipeline(
                 synthesis_model=settings.model_synthesis,
                 validation_model=settings.model_validation,
                 style_model=settings.model_style,
-                architect_extract_model=settings.model_architect_extract,
+                architect_extract_model=getattr(
+                    settings, "model_architect_extract", settings.model_decompose
+                ),
             )
             llm_client = OpenAIClient(
                 api_key=settings.openai_api_key,

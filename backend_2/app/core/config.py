@@ -53,6 +53,7 @@ class Settings(BaseSettings):
     model_synthesis: str = "gpt-4o"
     model_validation: str = "gpt-4o-mini"
     model_style: str = "gpt-4o-mini"
+    model_architect_extract: str = "gpt-4o-mini"
     # Elder pipeline configuration
     default_top_k: int = 8
     enable_tracing: bool = True

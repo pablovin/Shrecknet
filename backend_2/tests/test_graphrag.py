@@ -1,10 +1,59 @@
 """Tests for GraphRAG functionality."""
 
 import pytest
+from datetime import datetime, date
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.graphrag.embedding_service import EmbeddingService, EMBED_DIM, EMBED_MODEL_ID
-from app.graphrag.retrieval_service import RetrievalService
+from app.graphrag.retrieval_service import RetrievalService, _normalize_value
+from neo4j.time import DateTime, Date
+
+
+def test_normalize_value_datetime():
+    """Test datetime normalization with Neo4j DateTime objects."""
+    # Test Neo4j DateTime
+    neo4j_dt = DateTime(2025, 11, 2, 18, 52, 52, 26000000)
+    result = _normalize_value(neo4j_dt)
+    assert isinstance(result, str)
+    assert "2025-11-02" in result
+    assert "18:52:52" in result
+    
+    # Test Python datetime
+    py_dt = datetime(2025, 11, 2, 18, 52, 52, 26000)
+    result = _normalize_value(py_dt)
+    assert isinstance(result, str)
+    assert "2025-11-02" in result
+
+
+def test_normalize_value_date():
+    """Test date normalization with Neo4j Date objects."""
+    # Test Neo4j Date
+    neo4j_date = Date(2025, 11, 2)
+    result = _normalize_value(neo4j_date)
+    assert isinstance(result, str)
+    assert result == "2025-11-02"
+    
+    # Test Python date
+    py_date = date(2025, 11, 2)
+    result = _normalize_value(py_date)
+    assert isinstance(result, str)
+    assert result == "2025-11-02"
+
+
+def test_normalize_value_nested():
+    """Test normalization of nested structures with datetime objects."""
+    # Test list with datetime
+    neo4j_dt = DateTime(2025, 11, 2, 18, 52, 52, 26000000)
+    result = _normalize_value([neo4j_dt, "text", 123])
+    assert isinstance(result, list)
+    assert isinstance(result[0], str)
+    assert "2025-11-02" in result[0]
+    
+    # Test dict with datetime
+    result = _normalize_value({"created_at": neo4j_dt, "name": "test"})
+    assert isinstance(result, dict)
+    assert isinstance(result["created_at"], str)
+    assert result["name"] == "test"
 
 
 @pytest.fixture

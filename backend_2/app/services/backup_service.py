@@ -374,6 +374,12 @@ class BackupService:
         # Clear database tables in reverse dependency order
         logger.info("Clearing database tables...")
 
+        def _get_existing_tables(sync_session) -> set[str]:
+            inspector = inspect(sync_session.bind)
+            return set(inspector.get_table_names())
+
+        existing_tables = await db_session.run_sync(_get_existing_tables)
+
         # Delete in reverse order to respect foreign keys
         table_order = [
             "library_bookmark_shares",
@@ -405,7 +411,10 @@ class BackupService:
         ]
 
         for table in table_order:
-            await db_session.execute(text(f"DELETE FROM {table}"))
+            if table not in existing_tables:
+                logger.info("Skipping delete for missing table %s", table)
+                continue
+            await db_session.execute(text(f'DELETE FROM "{table}"'))
 
         await db_session.commit()
 

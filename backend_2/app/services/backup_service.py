@@ -60,6 +60,8 @@ class BackupService:
         self.media_root = Path(self.settings.media_root)
         self.backup_dir = self.media_root / "backups"
         self.backup_dir.mkdir(parents=True, exist_ok=True)
+        self.uploaded_backup_dir = self.backup_dir / "uploaded_backups"
+        self.uploaded_backup_dir.mkdir(parents=True, exist_ok=True)
 
     async def create_backup(
         self,
@@ -283,7 +285,11 @@ class BackupService:
             dict with restoration metadata
         """
         if not backup_path.exists():
-            raise FileNotFoundError(f"Backup file not found: {backup_path}")
+            candidate = self.uploaded_backup_dir / backup_path.name
+            if candidate.exists():
+                backup_path = candidate
+            else:
+                raise FileNotFoundError(f"Backup file not found: {backup_path}")
 
         temp_extract_dir = (
             Path("/tmp") / f"restore_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}"
@@ -362,6 +368,11 @@ class BackupService:
             # Clean up temporary directory
             if temp_extract_dir.exists():
                 shutil.rmtree(temp_extract_dir)
+
+    def get_uploaded_backup_path(self, filename: str) -> Path:
+        """Return absolute path for storing an uploaded backup file."""
+        safe_name = Path(filename).name
+        return self.uploaded_backup_dir / safe_name
 
     async def _clear_all_data(
         self, db_session: AsyncSession, neo4j_session: Neo4jSession

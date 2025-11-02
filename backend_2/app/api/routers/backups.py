@@ -10,7 +10,6 @@ Provides endpoints to:
 """
 
 import logging
-from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
@@ -186,17 +185,18 @@ async def restore_backup(
             detail="Invalid file format. Expected a .tar.gz backup file",
         )
 
-    # Save uploaded file to temporary location
-    temp_path = Path("/tmp") / file.filename
+    backup_service = BackupService()
+    persisted_path = backup_service.get_uploaded_backup_path(file.filename)
+
     try:
-        # Write uploaded file to disk
-        with open(temp_path, "wb") as f:
+        # Write uploaded file to disk in a shared persistent location
+        with open(persisted_path, "wb") as f:
             content = await file.read()
             f.write(content)
 
         # Launch Celery task for restore
         task = restore_backup_task.delay(
-            backup_path=str(temp_path),
+            backup_path=str(persisted_path),
             author_type="user",
             author_id=str(current_user.id),
             admin_user_id=current_user.id,
@@ -210,13 +210,13 @@ async def restore_backup(
             "celery_task_id": task.id,
             "status": "queued",
             "message": "Restore job created successfully. Monitor the background jobs to track progress.",
-            "temp_path": str(temp_path),
+            "stored_path": str(persisted_path),
         }
 
     except Exception as e:
-        # Clean up temp file on error
-        if temp_path.exists():
-            temp_path.unlink()
+        # Clean up persisted file on error
+        if persisted_path.exists():
+            persisted_path.unlink()
         logger.error(f"Failed to create restore task: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

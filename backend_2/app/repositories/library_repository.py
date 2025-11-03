@@ -84,7 +84,10 @@ class LibraryRepository(BaseRepository):
         share_alias = library_bookmark_shares.alias()
         query = (
             select(LibraryBookmark)
-            .options(selectinload(LibraryBookmark.shared_with))
+            .options(
+                selectinload(LibraryBookmark.owner),
+                selectinload(LibraryBookmark.shared_with),
+            )
             .join(LibraryBookmark.owner)
             .outerjoin(
                 share_alias,
@@ -108,10 +111,25 @@ class LibraryRepository(BaseRepository):
         result = await self.session.execute(query)
         return result.scalars().unique().all()
 
+    async def _refresh_bookmark_with_relationships(
+        self, bookmark_id: int
+    ) -> LibraryBookmark:
+        """Re-fetch bookmark with relationships eagerly loaded to avoid lazy loading issues."""
+        result = await self.session.execute(
+            select(LibraryBookmark)
+            .options(
+                selectinload(LibraryBookmark.owner),
+                selectinload(LibraryBookmark.shared_with),
+            )
+            .where(LibraryBookmark.id == bookmark_id)
+        )
+        return result.scalar_one()
+
     async def get_bookmark(self, bookmark_id: int) -> LibraryBookmark | None:
         result = await self.session.execute(
             select(LibraryBookmark)
             .options(
+                selectinload(LibraryBookmark.owner),
                 selectinload(LibraryBookmark.shared_with),
                 selectinload(LibraryBookmark.item),
             )
@@ -125,8 +143,8 @@ class LibraryRepository(BaseRepository):
         bookmark = LibraryBookmark(**data)
         bookmark.shared_with = list(shared_users)
         await self.save(bookmark)
-        await self.session.refresh(bookmark)
-        return bookmark
+        await self.session.flush()
+        return await self._refresh_bookmark_with_relationships(bookmark.id)
 
     async def update_bookmark(
         self,
@@ -139,8 +157,8 @@ class LibraryRepository(BaseRepository):
         if shared_users is not None:
             bookmark.shared_with = list(shared_users)
         await self.save(bookmark)
-        await self.session.refresh(bookmark)
-        return bookmark
+        await self.session.flush()
+        return await self._refresh_bookmark_with_relationships(bookmark.id)
 
     async def delete_bookmark(self, bookmark: LibraryBookmark) -> None:
         await self.delete(bookmark)
@@ -150,8 +168,8 @@ class LibraryRepository(BaseRepository):
     ) -> LibraryBookmark:
         bookmark.shared_with = list(shared_users)
         await self.save(bookmark)
-        await self.session.refresh(bookmark)
-        return bookmark
+        await self.session.flush()
+        return await self._refresh_bookmark_with_relationships(bookmark.id)
 
     async def list_shares(self, bookmark_id: int) -> Sequence[User]:
         result = await self.session.execute(

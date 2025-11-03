@@ -45,8 +45,8 @@ class ArchitectOrchestrator:
         model_policy: ModelPolicy,
         graph_retriever: GraphRetriever,
         *,
-        chunk_size: int = 1200,
-        chunk_overlap: int = 200,
+        chunk_size: int = 1000,
+        chunk_overlap: int = 100,
         retrieval_top_k: int = 5,
         chunk_concurrency: int = 4,
     ) -> None:
@@ -115,10 +115,14 @@ class ArchitectOrchestrator:
                     )
             except Exception as exc:  # pragma: no cover - defensive logging
                 logger.error(
-                    "architect_chunk_error: chunk=%d error=%s", chunk.index, exc,
+                    "architect_chunk_error: chunk=%d error=%s",
+                    chunk.index,
+                    exc,
                     exc_info=True,
                 )
-                response_text = "{\n  \"new_instances\": [],\n  \"existing_instances\": []\n}"
+                response_text = (
+                    '{\n  "new_instances": [],\n  "existing_instances": []\n}'
+                )
                 retrieval_alias_map = {}
             parsed = self._parse_llm_response(
                 response_text,
@@ -162,7 +166,9 @@ class ArchitectOrchestrator:
             combined = "\n\n".join(part.strip() for part in text_parts if part.strip())
             if not combined:
                 continue
-            for chunk_text in self._chunk_text(combined, chunk_size, self.chunk_overlap):
+            for chunk_text in self._chunk_text(
+                combined, chunk_size, self.chunk_overlap
+            ):
                 chunks.append(
                     ChunkInput(
                         index=chunk_index,
@@ -179,18 +185,35 @@ class ArchitectOrchestrator:
 
     @staticmethod
     def _chunk_text(text: str, chunk_size: int, overlap: int) -> Iterable[str]:
-        if len(text) <= chunk_size:
+        """
+        Split text into chunks based on word count.
+
+        Args:
+            text: The text to chunk
+            chunk_size: Number of words per chunk
+            overlap: Number of words to overlap between chunks
+
+        Returns:
+            Iterator of text chunks
+        """
+        words = text.split()
+        total_words = len(words)
+
+        if total_words <= chunk_size:
             yield text
             return
+
         start = 0
-        end = chunk_size
-        length = len(text)
-        while start < length:
-            yield text[start:end]
-            if end >= length:
+        while start < total_words:
+            end = min(start + chunk_size, total_words)
+            chunk_words = words[start:end]
+            yield " ".join(chunk_words)
+
+            if end >= total_words:
                 break
+
+            # Move start forward, accounting for overlap
             start = max(0, end - overlap)
-            end = min(length, start + chunk_size)
 
     @staticmethod
     def _format_entity_catalog(entity_definitions: Iterable[dict[str, Any]]) -> str:
@@ -331,7 +354,11 @@ class ArchitectOrchestrator:
                 if item.justification:
                     record["justifications"].append(item.justification)
                 if item.metadata:
-                    alias_hint = item.metadata.get("alias") if isinstance(item.metadata, dict) else None
+                    alias_hint = (
+                        item.metadata.get("alias")
+                        if isinstance(item.metadata, dict)
+                        else None
+                    )
                     if alias_hint and not record.get("alias"):
                         record["alias"] = alias_hint
                     record["metadata_snippets"].append(item.metadata)
@@ -531,9 +558,10 @@ class ArchitectOrchestrator:
                 canonical_alias = self._canonical_alias(proposal["alias"])
             proposal["canonical_alias"] = canonical_alias or ""
 
-            if (
-                proposal["proposal_type"] == ArchitectProposalType.UPDATE_INSTANCE
-                and proposal.get("canonical_alias")
+            if proposal[
+                "proposal_type"
+            ] == ArchitectProposalType.UPDATE_INSTANCE and proposal.get(
+                "canonical_alias"
             ):
                 update_aliases.add(proposal["canonical_alias"])
 

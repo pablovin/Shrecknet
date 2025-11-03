@@ -38,7 +38,7 @@ type AnalysisPayload = {
   ontology_instance_id: string;
   ontology_id?: number | null;
   max_chunks?: number | null;
-  chunk_size?: number | null;
+  chunk_size?: number | null; // Number of words per chunk (default: 1000)
 };
 
 async function apiFetch<T>(

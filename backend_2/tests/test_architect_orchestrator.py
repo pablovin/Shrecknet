@@ -68,8 +68,8 @@ async def test_architect_orchestrator_aggregates_results():
         llm_client=StubLLM(llm_response),
         model_policy=StubPolicy(),
         graph_retriever=StubRetriever(),
-        chunk_size=400,
-        chunk_overlap=50,
+        chunk_size=50,  # 50 words instead of 400 characters
+        chunk_overlap=10,  # 10 words instead of 50 characters
     )
 
     now = datetime.utcnow()

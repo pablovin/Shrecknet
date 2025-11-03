@@ -15,7 +15,9 @@ from app.models.architect import (
 class ArchitectAnalysisRequest(BaseModel):
     """Payload for requesting an architect analysis run."""
 
-    ontology_instance_id: str = Field(..., min_length=1, description="Target instance id")
+    ontology_instance_id: str = Field(
+        ..., min_length=1, description="Target instance id"
+    )
     ontology_id: int | None = Field(
         default=None,
         description="Optional ontology id override when the instance id is not unique",
@@ -28,9 +30,9 @@ class ArchitectAnalysisRequest(BaseModel):
     )
     chunk_size: int | None = Field(
         default=None,
-        ge=128,
-        le=4096,
-        description="Override chunk size in characters before tokenisation.",
+        ge=100,
+        le=3000,
+        description="Override chunk size in words (default: 1000 words).",
     )
 
 
@@ -51,7 +53,9 @@ class ArchitectProposalRead(BaseModel):
         validation_alias="proposal_metadata",
         serialization_alias="metadata",
     )
-    chunks: list[str] | None = Field(default=None, description="Text chunks related to this proposal")
+    chunks: list[str] | None = Field(
+        default=None, description="Text chunks related to this proposal"
+    )
     merged_into_proposal_id: str | None = None
     corrected_alias: str | None = None
     corrected_entity_definition_id: int | None = None
@@ -110,18 +114,23 @@ class ValidatedProposalItem(BaseModel):
 
     proposal_id: str
     status: ArchitectProposalStatus
-    corrected_alias: str | None = Field(default=None, description="Corrected alias if user modified it")
+    corrected_alias: str | None = Field(
+        default=None, description="Corrected alias if user modified it"
+    )
     corrected_entity_definition_id: int | None = Field(
         default=None, description="Corrected entity definition if user modified it"
     )
     corrected_proposal_type: ArchitectProposalType | None = Field(
-        default=None, description="Corrected proposal type (e.g., convert NEW_INSTANCE to UPDATE_INSTANCE)"
+        default=None,
+        description="Corrected proposal type (e.g., convert NEW_INSTANCE to UPDATE_INSTANCE)",
     )
     corrected_entity_instance_id: str | None = Field(
-        default=None, description="Corrected entity instance ID for UPDATE_INSTANCE proposals"
+        default=None,
+        description="Corrected entity instance ID for UPDATE_INSTANCE proposals",
     )
     merged_into_proposal_id: str | None = Field(
-        default=None, description="If merged, the ID of the proposal this was merged into"
+        default=None,
+        description="If merged, the ID of the proposal this was merged into",
     )
 
 
@@ -132,5 +141,7 @@ class ArchitectValidationRequest(BaseModel):
     validated_proposals: list[ValidatedProposalItem] = Field(
         ..., min_length=1, description="List of validated proposals"
     )
-    author_type: str = Field(default="user", description="Type of author (user or agent)")
+    author_type: str = Field(
+        default="user", description="Type of author (user or agent)"
+    )
     author_id: str = Field(..., description="ID of the author")

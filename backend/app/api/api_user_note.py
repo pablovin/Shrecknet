@@ -3,10 +3,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List, Optional
 from datetime import datetime
 from app.database import get_session
-from app.dependencies import get_current_user
-from app.models.model_user import User
+from app.dependencies import get_current_user, require_role
+from app.models.model_user import User, UserRole
 from app.models.model_user_note import UserNote
-from app.schemas.schema_user_note import UserNoteCreate, UserNoteRead, UserNoteUpdate
+from app.schemas.schema_user_note import UserNoteCreate, UserNoteRead, UserNoteUpdate, AdminUserNoteCreate
 from app.crud.crud_user_note import (
     create_user_note,
     get_user_note,
@@ -14,6 +14,7 @@ from app.crud.crud_user_note import (
     update_user_note,
     delete_user_note,
 )
+from app.crud.crud_users import get_user
 
 try:
     from app.task_queue import task_auto_crosslink_note_content
@@ -23,6 +24,7 @@ except Exception:  # pragma: no cover - optional task queue
 UserNoteRead.model_rebuild()
 UserNoteCreate.model_rebuild()
 UserNoteUpdate.model_rebuild()
+AdminUserNoteCreate.model_rebuild()
 
 router = APIRouter(
     prefix="/user_notes", tags=["UserNotes"], dependencies=[Depends(get_current_user)]
@@ -111,3 +113,47 @@ async def delete_note(
         raise HTTPException(status_code=404, detail="Note not found")
     await delete_user_note(session, note_id)
     return {"ok": True}
+
+
+# Admin router for note administration
+admin_router = APIRouter(
+    prefix="/admin/user_notes",
+    tags=["AdminUserNotes"],
+    dependencies=[Depends(require_role(UserRole.system_admin))],
+)
+
+
+@admin_router.post("/", response_model=UserNoteRead)
+async def admin_create_note(
+    note: AdminUserNoteCreate,
+    admin_user: User = Depends(require_role(UserRole.system_admin)),
+    session: AsyncSession = Depends(get_session),
+):
+    """
+    Admin endpoint to create a note on behalf of a user.
+    The admin specifies the author_user_id and can also specify shared_with_user_ids.
+    """
+    # Verify that the author_user_id exists
+    author = await get_user(session, note.author_user_id)
+    if not author:
+        raise HTTPException(status_code=404, detail=f"Author user with id {note.author_user_id} not found")
+    
+    # Verify that all shared_with_user_ids exist
+    for shared_user_id in note.shared_with_user_ids:
+        shared_user = await get_user(session, shared_user_id)
+        if not shared_user:
+            raise HTTPException(status_code=404, detail=f"Shared user with id {shared_user_id} not found")
+    
+    # Create the note with the specified author
+    note_data = note.model_dump(exclude={"author_user_id"})
+    db_note = UserNote(
+        **note_data,
+        user_id=note.author_user_id,
+        created_at=datetime.utcnow()
+    )
+    db_note = await create_user_note(session, db_note)
+    
+    if task_auto_crosslink_note_content:
+        task_auto_crosslink_note_content.delay(db_note.id)
+    
+    return db_note

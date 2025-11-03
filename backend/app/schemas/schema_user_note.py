@@ -30,6 +30,11 @@ class UserNoteRead(UserNoteBase):
     created_at: datetime
     updated_at: Optional[datetime]
 
+class AdminUserNoteCreate(UserNoteBase):
+    """Admin-specific schema that allows specifying the author user_id"""
+    author_user_id: int
+
 UserNoteCreate.model_rebuild()
 UserNoteUpdate.model_rebuild()
 UserNoteRead.model_rebuild()
+AdminUserNoteCreate.model_rebuild()

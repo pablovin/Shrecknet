@@ -18,12 +18,19 @@ The Elder job provides intelligent question-answering with context-aware retriev
 
 #### Pipeline Steps
 
+**Fast Mode (Default)**:
+1. **Retrieve** - Single semantic search in Neo4j for the query (max 5 results)
+2. **Synthesize** - Single LLM call to generate concise answer from context
+
+**Comprehensive Mode** (set `fast: false`):
 1. **Decompose** - Breaks user query into 1-5 focused sub-queries based on linked ontologies
 2. **Retrieve** - Performs parallel semantic search in Neo4j for each sub-query
 3. **Sub-answer** - Generates answers for each sub-query using only retrieved context
 4. **Synthesize** - Combines sub-answers into a coherent final answer
 5. **Validate** - Checks answer completeness and refines if needed
 6. **Style** - Applies agent's writing style while preserving factual accuracy
+
+**Performance**: Fast mode provides chat-level response times (2-5 seconds) vs. comprehensive mode (~60 seconds).
 
 #### Response Modes
 
@@ -190,6 +197,7 @@ Content-Type: application/json
 - `mode` - Response mode: `"nl"`, `"context"`, or `"both"` (default: `"both"`)
 - `top_k` - Number of retrieval results per sub-query (default: from config, max: 50)
 - `include_trace` - Include execution trace for debugging (default: false)
+- `fast` - Use fast mode for quick responses (default: true). When true, uses single retrieval + single LLM pass for chat-level speed (2-5 seconds). Set to false for comprehensive multi-step pipeline (~60 seconds)
 - `chat_id` - Optional chat ID to use conversation history as context and save messages (default: null)
 
 **Note**: When `chat_id` is provided:
@@ -706,8 +714,9 @@ print(f"Based on {len(result['important_nodes'])} key entities")
 
 1. **Ask Focused Questions**: Better results come from specific, well-formed questions
 2. **Use Context Mode**: For transparency, use `mode: "both"` to show sources
-3. **Adjust top_k**: Increase for complex queries, decrease for faster responses
-4. **Enable Tracing**: Use during development to debug pipeline behavior
+3. **Choose Execution Mode**: Use fast mode (default) for chat-like speed, or comprehensive mode (`fast: false`) for complex multi-faceted queries
+4. **Adjust top_k**: Increase for complex queries, decrease for faster responses
+5. **Enable Tracing**: Use during development to debug pipeline behavior
 
 ### Writing Styles
 

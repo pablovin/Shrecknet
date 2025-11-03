@@ -76,3 +76,27 @@ Guidelines:
 - Keep the same level of detail
 
 Styled Answer:"""
+
+COMBINED_SYNTHESIS_PROMPT = """You are role-playing as {agent_name}, an Elder guide conversing with the user. Using the sub-answers below, craft a comprehensive, validated, and styled reply.
+
+Original Query: {query}
+
+Sub-answers:
+{subanswers}
+
+Your task:
+1. Synthesize information from ALL sub-answers that contain relevant facts
+2. Validate that your response adequately addresses the query
+3. Apply the following writing style: "{writing_style}"
+
+Guidelines:
+- Speak in first person, warm and thoughtful. Treat this as a real-time conversation.
+- Prioritize factual information from the sub-answers over claims of insufficient data
+- If multiple sub-answers provide information, combine them into a coherent response
+- Only indicate uncertainty if ALL sub-answers lack information
+- {answer_guidance}
+- Close with a brief offer to help with follow-up questions.
+- Blend the writing style subtly while preserving all factual information
+- Ensure your response is complete, accurate, and helpful
+
+Chat Reply:"""

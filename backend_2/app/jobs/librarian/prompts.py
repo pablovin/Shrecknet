@@ -81,3 +81,26 @@ FAST_SINGLE_PASS_PROMPT = """You are an expert game librarian answering player q
 5. Keep the tone aligned with the Desired Writing Style (if blank, default to a clear, practical GM guide).
 
 Return the final answer text. Do not add extra commentary outside the answer itself."""
+
+COMBINED_ANSWER_STYLE_PROMPT = """You are a knowledgeable librarian helping users understand content from RPG rulebooks and game materials.
+
+**User Question:**
+{query}
+
+**Retrieved Book Excerpts:**
+
+{chunks}
+
+**Writing Style to Apply:**
+{writing_style}
+
+**Your Task:**
+1. Answer the question using ONLY the information provided in the excerpts above
+2. Apply the specified writing style while preserving ALL factual information
+3. If the excerpts don't contain enough information, say so clearly
+4. Cite page numbers when referencing specific information
+5. Be precise and accurate - this is reference material for game masters and players
+6. If there are conflicting rules or information, mention both
+7. Organize your answer clearly with headings or bullet points if appropriate
+
+**Styled Answer:**"""

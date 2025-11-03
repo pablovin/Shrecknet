@@ -4,7 +4,7 @@ import asyncio
 import logging
 from typing import Any, Optional
 
-from langchain_openai import ChatOpenAI
+from openai import AsyncOpenAI
 
 logger = logging.getLogger(__name__)
 
@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 class OpenAIClient:
     """
     OpenAI client wrapper with retry logic and timeout handling.
-    Uses LangChain's ChatOpenAI for better integration.
+    Uses native OpenAI SDK for optimal performance and latest features.
     """
 
     def __init__(
@@ -32,39 +32,11 @@ class OpenAIClient:
         self.api_key = api_key
         self.timeout = timeout
         self.max_retries = max_retries
-        self._clients: dict[str, ChatOpenAI] = {}
-
-    def _coerce_temperature(self, model: str, temperature: float) -> float:
-        """
-        Adjust temperature for models that only support the default value.
-
-        Some cost-optimized models (e.g. gpt-5-mini/nano) only accept the
-        provider default temperature. Falling back avoids 400 errors while
-        keeping the call best-effort deterministic.
-        """
-        restricted_models = {"gpt-5", "gpt-5-mini", "gpt-5-nano"}
-        if model in restricted_models and temperature != 1.0:
-            logger.warning(
-                "Temperature %.2f is not supported for model %s; using 1.0 instead",
-                temperature,
-                model,
-            )
-            return 1.0
-        return temperature
-
-    def _get_client(self, model: str, temperature: float = 0.7) -> ChatOpenAI:
-        """Get or create a ChatOpenAI client for the specified model."""
-        temperature = self._coerce_temperature(model, temperature)
-        cache_key = f"{model}_{temperature}"
-        if cache_key not in self._clients:
-            self._clients[cache_key] = ChatOpenAI(
-                model=model,
-                temperature=temperature,
-                timeout=self.timeout,
-                max_retries=self.max_retries,
-                api_key=self.api_key,
-            )
-        return self._clients[cache_key]
+        self._client: AsyncOpenAI = AsyncOpenAI(
+            api_key=api_key,
+            timeout=timeout,
+            max_retries=max_retries,
+        )
 
     async def chat(
         self,
@@ -74,7 +46,7 @@ class OpenAIClient:
         max_tokens: Optional[int] = None,
     ) -> str:
         """
-        Send a chat completion request.
+        Send a chat completion request using OpenAI's Chat Completions API.
 
         Args:
             model: Model name (e.g., "gpt-4o", "gpt-4o-mini")
@@ -89,27 +61,28 @@ class OpenAIClient:
             Exception: On API errors after retries
         """
         try:
-            client = self._get_client(model, temperature)
+            # Validate temperature for restricted models
+            restricted_models = {"gpt-5", "gpt-5-mini", "gpt-5-nano"}
+            if model in restricted_models and temperature != 1.0:
+                logger.warning(
+                    "Temperature %.2f is not supported for model %s; using 1.0 instead",
+                    temperature,
+                    model,
+                )
+                temperature = 1.0
 
-            # Convert messages to LangChain format
-            from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
+            # Call OpenAI API
+            kwargs: dict[str, Any] = {
+                "model": model,
+                "messages": messages,
+                "temperature": temperature,
+            }
+            if max_tokens is not None:
+                kwargs["max_tokens"] = max_tokens
 
-            lc_messages = []
-            for msg in messages:
-                role = msg.get("role", "user")
-                content = msg.get("content", "")
+            response = await self._client.chat.completions.create(**kwargs)
 
-                if role == "system":
-                    lc_messages.append(SystemMessage(content=content))
-                elif role == "assistant":
-                    lc_messages.append(AIMessage(content=content))
-                else:  # user or default
-                    lc_messages.append(HumanMessage(content=content))
-
-            # Invoke the model
-            response = await asyncio.to_thread(client.invoke, lc_messages)
-
-            return response.content
+            return response.choices[0].message.content or ""
 
         except Exception as e:
             logger.error(f"OpenAI API error for model {model}: {e}")

@@ -10,6 +10,7 @@ from app.jobs.librarian.prompts import (
     ANSWER_PROMPT,
     FAST_SINGLE_PASS_PROMPT,
     STYLE_PROMPT,
+    COMBINED_ANSWER_STYLE_PROMPT,
 )
 from app.jobs.librarian.schemas import (
     LibrarianQueryRequest,
@@ -175,19 +176,13 @@ class LibrarianOrchestrator:
                     "books to answer your question."
                 )
             else:
-                if self.fast_mode:
-                    raw_answer = await self._generate_single_pass_answer(
-                        request.query,
-                        retrieved_chunks,
-                        agent.writing_style,
-                        trace,
-                    )
-                else:
-                    raw_answer = await self._generate_answer(
-                        request.query,
-                        retrieved_chunks,
-                        trace,
-                    )
+                # Use combined answer+style generation for efficiency
+                raw_answer = await self._generate_combined_answer(
+                    request.query,
+                    retrieved_chunks,
+                    agent.writing_style,
+                    trace,
+                )
                 answer = raw_answer
 
             if answer:
@@ -222,38 +217,6 @@ class LibrarianOrchestrator:
                         pass
                 except Exception:
                     pass
-
-            if (not self.fast_mode) and agent.writing_style and answer:
-                styled = await self._apply_style(answer, agent.writing_style, trace)
-                styled_norm = (styled or "").lower()
-                raw_norm = (raw_answer or "").lower()
-                insufficient_in_styled = "insufficient context" in styled_norm
-                insufficient_in_raw = "insufficient context" in raw_norm
-                try:
-                    logger.info(
-                        "librarian_style_output_preview: %s",
-                        (
-                            (styled[:400] + "…")
-                            if (styled and len(styled) > 400)
-                            else (styled or "<empty>")
-                        ),
-                    )
-                except Exception:
-                    pass
-                if self._looks_grounded(styled) and not (
-                    insufficient_in_styled and not insufficient_in_raw
-                ):
-                    answer = styled
-                    logger.info(
-                        "librarian_style_validation: accepted styled answer"
-                    )
-                else:
-                    logger.info(
-                        "librarian_style_validation: reverted to unstyled answer (grounding=%s, styled_insufficient=%s, raw_insufficient=%s)",
-                        str(self._looks_grounded(styled)),
-                        str(insufficient_in_styled),
-                        str(insufficient_in_raw),
-                    )
 
         # Return response based on mode
         return LibrarianQueryResponse(
@@ -362,6 +325,84 @@ class LibrarianOrchestrator:
                 metadata[item_id] = {"title": None, "authors": None}
 
         return metadata
+
+    async def _generate_combined_answer(
+        self,
+        query: str,
+        chunks: list[RetrievedChunk],
+        writing_style: str | None,
+        trace: list[dict[str, Any]],
+    ) -> str:
+        """
+        Generate answer with style applied in a single LLM call for better performance.
+
+        Args:
+            query: User query
+            chunks: Retrieved chunks
+            writing_style: Writing style description
+            trace: Trace list to append to
+
+        Returns:
+            Generated styled answer
+        """
+        logger.info("Generating combined answer with style from chunks")
+
+        # Format chunks for prompt
+        chunks_text = ""
+        for i, chunk in enumerate(chunks, 1):
+            chunks_text += (
+                f"\n--- Excerpt {i} (Page {chunk.page_number}, "
+                f"Book ID: {chunk.library_item_id}) ---\n"
+                f"{chunk.text}\n"
+            )
+
+        # Use combined prompt
+        style_text = writing_style or "Use a clear, direct tone suitable for game masters."
+        prompt = COMBINED_ANSWER_STYLE_PROMPT.format(
+            query=query,
+            chunks=chunks_text,
+            writing_style=style_text,
+        )
+
+        system_msg = (
+            "You are a knowledgeable librarian. Answer using ONLY the provided excerpts, "
+            "applying the specified writing style while preserving all facts and citations."
+        )
+
+        # Log prompt for debugging
+        try:
+            logger.info("librarian_combined_answer_prompt:\n%s", prompt[:2000])
+        except Exception:
+            pass
+
+        answer = await self.llm_client.chat(
+            model=self.answer_model,
+            messages=[
+                {"role": "system", "content": system_msg},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.3,
+        )
+
+        if trace is not None:
+            try:
+                trace.append(
+                    {
+                        "step": "answer_combined",
+                        "data": {
+                            "model": self.answer_model,
+                            "chunks_used": len(chunks),
+                            "preview": (
+                                answer[:200] + "…" if len(answer or "") > 200 else answer
+                            ),
+                        },
+                    }
+                )
+            except Exception:
+                pass
+
+        logger.info("Combined answer with style generated")
+        return answer
 
     async def _generate_answer(
         self,

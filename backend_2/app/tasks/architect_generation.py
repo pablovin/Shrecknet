@@ -328,6 +328,7 @@ async def _execute_entity_generation(
             # Phase 1: Generate new entities (without relationships)
             created_entity_ids = []
             newly_created_instance_ids: list[str] = []
+            created_alias_map: dict[str, str] = {}  # Map of normalized alias -> entity_instance_id
             new_proposal_map = {p["id"]: p for p in new_proposals}
             if new_proposals:
                 await update_job_progress(
@@ -422,7 +423,6 @@ async def _execute_entity_generation(
 
                 new_instance_ids_to_link: list[str] = []
                 proposal_entity_id_map: dict[str, str] = {}
-                created_alias_map: dict[str, str] = {}
                 created_relationship_summaries: dict[str, list[dict[str, Any]]] = (
                     defaultdict(list)
                 )
@@ -500,6 +500,21 @@ async def _execute_entity_generation(
 
                 newly_created_instance_ids.extend(new_instance_ids_to_link)
 
+                # Phase 1.5: Now that ALL new entities are created, add relationships
+                # This ensures that relationships can reference entities created in the same batch
+                await update_job_progress(
+                    job_id,
+                    0.60,
+                    {
+                        "status": f"Adding relationships for {len(new_proposal_ids_ordered)} new entities"
+                    },
+                )
+                logger.info(
+                    "architect_generation: created %d new entities, now adding relationships. Created alias map: %s",
+                    len(created_alias_map),
+                    list(created_alias_map.keys()),
+                )
+
                 for proposal_id in new_proposal_ids_ordered:
                     relationships = new_relationships_map.get(proposal_id, [])
                     if not relationships:
@@ -530,9 +545,17 @@ async def _execute_entity_generation(
                         target_id = rel_payload.get("target_entity_instance_id")
                         target_alias = rel_payload.get("target_alias")
                         if not target_id and target_alias:
+                            # First check newly created entities
                             normalized_alias = target_alias.lower().strip()
                             target_id = created_alias_map.get(normalized_alias)
-                            if not target_id:
+                            if target_id:
+                                logger.debug(
+                                    "architect_generation: found target '%s' in newly created entities: %s",
+                                    target_alias,
+                                    target_id,
+                                )
+                            else:
+                                # Then check existing entities in the database
                                 target_result = await graph_session.run(
                                     """
                                     MATCH (e:EntityInstance {ontology_id: $ontology_id})
@@ -546,14 +569,20 @@ async def _execute_entity_generation(
                                 target_rec = await target_result.single()
                                 if target_rec:
                                     target_id = target_rec["eid"]
+                                    logger.debug(
+                                        "architect_generation: found target '%s' in existing entities: %s",
+                                        target_alias,
+                                        target_id,
+                                    )
 
                         if not target_id:
                             logger.warning(
-                                "architect_generation: proposal %s alias=%s relationship %s target unresolved (alias=%s)",
+                                "architect_generation: proposal %s alias=%s relationship %s target unresolved (alias=%s, checked %d new entities)",
                                 proposal_id,
                                 entity_create.alias,
                                 rel_payload["definition_id"],
                                 target_alias,
+                                len(created_alias_map),
                             )
                             continue
 
@@ -562,26 +591,42 @@ async def _execute_entity_generation(
                         rel_data_json = json.dumps({"justification": justification})
                         destiny_entity_id = rel_def.get("destiny_entity_id")
 
-                        await graph_session.run(
-                            """
-                            MATCH (source:EntityInstance {entity_instance_id: $source_id})
-                            MATCH (target:EntityInstance {entity_instance_id: $target_id})
-                            CREATE (source)-[:RELATES_TO {
-                                relationship_instance_id: $rel_id,
-                                relationship_definition_id: $rel_def_id,
-                                destiny_entity_definition_id: $destiny_id,
-                                data: $data,
-                                created_at: datetime(),
-                                updated_at: datetime()
-                            }]->(target)
-                            """,
-                            source_id=source_entity_id,
-                            target_id=target_id,
-                            rel_id=rel_id,
-                            rel_def_id=rel_payload["definition_id"],
-                            destiny_id=destiny_entity_id,
-                            data=rel_data_json,
-                        )
+                        try:
+                            await graph_session.run(
+                                """
+                                MATCH (source:EntityInstance {entity_instance_id: $source_id})
+                                MATCH (target:EntityInstance {entity_instance_id: $target_id})
+                                CREATE (source)-[:RELATES_TO {
+                                    relationship_instance_id: $rel_id,
+                                    relationship_definition_id: $rel_def_id,
+                                    destiny_entity_definition_id: $destiny_id,
+                                    data: $data,
+                                    created_at: datetime(),
+                                    updated_at: datetime()
+                                }]->(target)
+                                """,
+                                source_id=source_entity_id,
+                                target_id=target_id,
+                                rel_id=rel_id,
+                                rel_def_id=rel_payload["definition_id"],
+                                destiny_id=destiny_entity_id,
+                                data=rel_data_json,
+                            )
+                            logger.debug(
+                                "architect_generation: created relationship from %s to %s (def %s)",
+                                entity_create.alias,
+                                target_alias,
+                                rel_payload["definition_id"],
+                            )
+                        except Exception as rel_exc:
+                            logger.error(
+                                "architect_generation: failed to create relationship from %s to %s: %s",
+                                entity_create.alias,
+                                target_alias,
+                                rel_exc,
+                                exc_info=True,
+                            )
+                            continue
 
                         created_relationship_summaries[proposal_id].append(
                             {
@@ -606,7 +651,7 @@ async def _execute_entity_generation(
             if update_proposals:
                 await update_job_progress(
                     job_id,
-                    0.70,
+                    0.65,
                     {"status": f"Updating {len(update_proposals)} existing entities"},
                 )
 
@@ -833,20 +878,44 @@ async def _execute_entity_generation(
                     for rel in update_data.get("new_relationships", []):
                         target_id = rel.target_entity_instance_id
                         if not target_id and rel.target_alias:
-                            # Look up target by alias
-                            target_result = await graph_session.run(
-                                """
-                                MATCH (e:EntityInstance {instance_id: $instance_id})
-                                WHERE toLower(e.alias) = toLower($alias)
-                                RETURN e.entity_instance_id as eid
-                                LIMIT 1
-                                """,
-                                instance_id=run.ontology_instance_id,
-                                alias=rel.target_alias,
+                            # First check newly created entities from this batch
+                            normalized_alias = rel.target_alias.lower().strip()
+                            target_id = created_alias_map.get(normalized_alias)
+                            if target_id:
+                                logger.debug(
+                                    "architect_generation: update found target '%s' in newly created entities: %s",
+                                    rel.target_alias,
+                                    target_id,
+                                )
+                            else:
+                                # Then search across the entire ontology
+                                target_result = await graph_session.run(
+                                    """
+                                    MATCH (e:EntityInstance {ontology_id: $ontology_id})
+                                    WHERE toLower(e.alias) = toLower($alias)
+                                    RETURN e.entity_instance_id as eid
+                                    LIMIT 1
+                                    """,
+                                    ontology_id=run.ontology_id,
+                                    alias=rel.target_alias,
+                                )
+                                target_rec = await target_result.single()
+                                if target_rec:
+                                    target_id = target_rec["eid"]
+                                    logger.debug(
+                                        "architect_generation: update found target '%s' in existing entities: %s",
+                                        rel.target_alias,
+                                        target_id,
+                                    )
+
+                        if not target_id:
+                            logger.warning(
+                                "architect_generation: update proposal %s entity=%s relationship target unresolved (alias=%s)",
+                                update_data.get("proposal_id"),
+                                entity_id,
+                                rel.target_alias,
                             )
-                            target_rec = await target_result.single()
-                            if target_rec:
-                                target_id = target_rec["eid"]
+                            continue
 
                         if target_id:
                             rel_id = str(uuid4())
@@ -865,26 +934,39 @@ async def _execute_entity_generation(
                                     destiny_entity_id = rd.get("destiny_entity_id")
                                     break
 
-                            await graph_session.run(
-                                """
-                                MATCH (source:EntityInstance {entity_instance_id: $source_id})
-                                MATCH (target:EntityInstance {entity_instance_id: $target_id})
-                                CREATE (source)-[:RELATES_TO {
-                                    relationship_instance_id: $rel_id,
-                                    relationship_definition_id: $rel_def_id,
-                                    destiny_entity_definition_id: $destiny_id,
-                                    data: $data,
-                                    created_at: datetime(),
-                                    updated_at: datetime()
-                                }]->(target)
-                                """,
-                                source_id=entity_id,
-                                target_id=target_id,
-                                rel_id=rel_id,
-                                rel_def_id=rel.definition_id,
-                                destiny_id=destiny_entity_id,
-                                data=rel_data,
-                            )
+                            try:
+                                await graph_session.run(
+                                    """
+                                    MATCH (source:EntityInstance {entity_instance_id: $source_id})
+                                    MATCH (target:EntityInstance {entity_instance_id: $target_id})
+                                    CREATE (source)-[:RELATES_TO {
+                                        relationship_instance_id: $rel_id,
+                                        relationship_definition_id: $rel_def_id,
+                                        destiny_entity_definition_id: $destiny_id,
+                                        data: $data,
+                                        created_at: datetime(),
+                                        updated_at: datetime()
+                                    }]->(target)
+                                    """,
+                                    source_id=entity_id,
+                                    target_id=target_id,
+                                    rel_id=rel_id,
+                                    rel_def_id=rel.definition_id,
+                                    destiny_id=destiny_entity_id,
+                                    data=rel_data,
+                                )
+                                logger.debug(
+                                    "architect_generation: update created relationship to %s (def %s)",
+                                    rel.target_alias,
+                                    rel.definition_id,
+                                )
+                            except Exception as rel_exc:
+                                logger.error(
+                                    "architect_generation: update failed to create relationship to %s: %s",
+                                    rel.target_alias,
+                                    rel_exc,
+                                    exc_info=True,
+                                )
 
         await session.commit()
         await update_job_progress(

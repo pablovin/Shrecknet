@@ -38,18 +38,11 @@ class OpenAIClient:
         """
         Adjust temperature for models that only support the default value.
 
-        Some cost-optimized models (e.g. gpt-5-mini/nano) only accept the
-        provider default temperature. Falling back avoids 400 errors while
-        keeping the call best-effort deterministic.
+        This method is kept for backwards compatibility but currently no
+        models require temperature coercion. OpenAI models like gpt-4o and
+        gpt-4o-mini support the full temperature range (0-2).
         """
-        restricted_models = {"gpt-5", "gpt-5-mini", "gpt-5-nano"}
-        if model in restricted_models and temperature != 1.0:
-            logger.warning(
-                "Temperature %.2f is not supported for model %s; using 1.0 instead",
-                temperature,
-                model,
-            )
-            return 1.0
+        # No models currently require temperature coercion
         return temperature
 
     def _get_client(self, model: str, temperature: float = 0.7) -> ChatOpenAI:

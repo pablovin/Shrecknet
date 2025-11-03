@@ -214,7 +214,7 @@ class LibraryService:
             shared_users,
         )
         await self.session.commit()
-        await self.session.refresh(bookmark)
+        # No need to refresh - repository already returns eagerly loaded bookmark
         return bookmark
 
     async def get_bookmark(self, bookmark_id: int) -> LibraryBookmark | None:

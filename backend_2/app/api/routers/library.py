@@ -297,7 +297,7 @@ async def update_bookmark(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
         ) from exc
-    await service.session.refresh(updated)
+    # No need to refresh - repository already returns eagerly loaded bookmark
     return _serialize_bookmark(service, updated)
 
 
@@ -336,7 +336,7 @@ async def leave_shared_bookmark(
     if bookmark.owner_id == current_user.id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Bookmark owners cannot remove themselves."
+            detail="Bookmark owners cannot remove themselves.",
         )
     if all(user.id != current_user.id for user in bookmark.shared_with):
         raise HTTPException(

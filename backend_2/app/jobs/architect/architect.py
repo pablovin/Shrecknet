@@ -213,9 +213,7 @@ class ArchitectOrchestrator:
                 break
 
             # Move start forward, accounting for overlap
-            start = end - overlap
-            if start < 0:
-                start = 0
+            start = max(0, end - overlap)
 
     @staticmethod
     def _format_entity_catalog(entity_definitions: Iterable[dict[str, Any]]) -> str:

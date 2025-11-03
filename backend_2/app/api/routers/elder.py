@@ -173,16 +173,16 @@ async def query_elder(
         response = await orchestrator.execute(agent, enriched_request, chat_history)
 
         # Save to chat history if chat_id provided
-        if request.chat_id and response.answer is not None:
+        if request.chat_id:
             chat_service = ElderChatService(db_session)
-            # Save user query
+            # Save user query (always save the question)
             await chat_service.add_message_to_chat(
                 chat_id=request.chat_id,
                 user_id=_current_user.id,
                 role="user",
                 content=request.query,
             )
-            # Save assistant response
+            # Save assistant response (even if empty/None)
             # Build metadata when trace is requested to persist full debug info
             meta: dict | None = None
             if request.include_trace:

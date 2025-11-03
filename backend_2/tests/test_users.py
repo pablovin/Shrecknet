@@ -262,6 +262,117 @@ async def test_admin_can_delete_user(client):
 
 
 @pytest.mark.asyncio
+async def test_login_with_email(client):
+    """Test that users can login with email instead of username."""
+    payload = {
+        "username": "email-login-user",
+        "password": "EmailLogin123",
+        "full_name": "Email Login User",
+        "email": "email-login@example.com",
+        "timezone": "UTC",
+        "role": UserRole.PLAYER.value,
+    }
+    register_response = await client.post("/users/", json=payload)
+    assert register_response.status_code == 201, register_response.text
+
+    # Login with email instead of username
+    token_response = await client.post(
+        "/auth/token",
+        data={"username": payload["email"], "password": payload["password"]},
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    assert token_response.status_code == 200, token_response.text
+    token = token_response.json()["access_token"]
+    assert token is not None
+
+    # Verify token works
+    headers = {"Authorization": f"Bearer {token}"}
+    me_response = await client.get("/users/me", headers=headers)
+    assert me_response.status_code == 200
+    assert me_response.json()["username"] == payload["username"]
+    assert me_response.json()["email"] == payload["email"]
+
+
+@pytest.mark.asyncio
+async def test_login_with_username_still_works(client):
+    """Test that traditional username login still works."""
+    payload = {
+        "username": "username-login-user",
+        "password": "UsernameLogin123",
+        "full_name": "Username Login User",
+        "email": "username-login@example.com",
+        "timezone": "UTC",
+        "role": UserRole.PLAYER.value,
+    }
+    register_response = await client.post("/users/", json=payload)
+    assert register_response.status_code == 201, register_response.text
+
+    # Login with username (traditional way)
+    token_response = await client.post(
+        "/auth/token",
+        data={"username": payload["username"], "password": payload["password"]},
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    assert token_response.status_code == 200, token_response.text
+    token = token_response.json()["access_token"]
+    assert token is not None
+
+    # Verify token works
+    headers = {"Authorization": f"Bearer {token}"}
+    me_response = await client.get("/users/me", headers=headers)
+    assert me_response.status_code == 200
+    assert me_response.json()["username"] == payload["username"]
+
+
+@pytest.mark.asyncio
+async def test_login_with_wrong_email(client):
+    """Test that login fails with wrong email."""
+    payload = {
+        "username": "wrong-email-user",
+        "password": "WrongEmail123",
+        "full_name": "Wrong Email User",
+        "email": "wrong-email@example.com",
+        "timezone": "UTC",
+        "role": UserRole.PLAYER.value,
+    }
+    register_response = await client.post("/users/", json=payload)
+    assert register_response.status_code == 201, register_response.text
+
+    # Try to login with wrong email
+    token_response = await client.post(
+        "/auth/token",
+        data={"username": "nonexistent@example.com", "password": payload["password"]},
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    assert token_response.status_code == 401
+    assert "Incorrect username/email or password" in token_response.text
+
+
+@pytest.mark.asyncio
+async def test_login_with_wrong_password_for_email(client):
+    """Test that login fails with wrong password when using email."""
+    payload = {
+        "username": "wrong-pass-email-user",
+        "password": "CorrectPassword123",
+        "full_name": "Wrong Password Email User",
+        "email": "wrong-pass-email@example.com",
+        "timezone": "UTC",
+        "role": UserRole.PLAYER.value,
+    }
+    register_response = await client.post("/users/", json=payload)
+    assert register_response.status_code == 201, register_response.text
+
+    # Try to login with email but wrong password
+    token_response = await client.post(
+        "/auth/token",
+        data={"username": payload["email"], "password": "WrongPassword123"},
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    assert token_response.status_code == 401
+    assert "Incorrect username/email or password" in token_response.text
+
+
+@pytest.mark.asyncio
 async def test_user_can_upload_avatar(client):
     payload = {
         "username": "avatar-user",

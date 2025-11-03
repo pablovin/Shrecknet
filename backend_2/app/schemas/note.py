@@ -34,3 +34,27 @@ class NoteRead(NoteBase):
 
 class NoteShareRequest(BaseModel):
     user_ids: list[int] = Field(..., min_length=1)
+
+
+class NoteParticipant(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    full_name: str | None = None
+    email: str | None = None
+
+
+class NoteAdminSummary(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    title: str
+    owner: NoteParticipant
+    shared_with: list[NoteParticipant] = Field(default_factory=list)
+    updated_at: datetime
+    created_at: datetime
+    ontology_id: int | None = None
+
+
+class NoteAdminDetail(NoteAdminSummary):
+    content: str

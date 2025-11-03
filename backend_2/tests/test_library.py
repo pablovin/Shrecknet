@@ -145,6 +145,13 @@ async def test_library_item_and_bookmarks_flow(client):
     assert admin_bookmarks.status_code == 200
     assert any(entry["id"] == bookmark_id for entry in admin_bookmarks.json())
 
+    leave_share = await client.delete(
+        f"/libraries/bookmarks/{bookmark_id}/share/me",
+        headers=admin_headers,
+    )
+    assert leave_share.status_code == 200, leave_share.text
+    assert all(user["id"] != admin_id for user in leave_share.json()["shared_with"])
+
     update_bookmark = await client.put(
         f"/libraries/bookmarks/{bookmark_id}",
         json={"is_private": True},

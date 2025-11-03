@@ -263,3 +263,97 @@ async def test_upload_empty_instance_id_rejection(client):
     )
     # FastAPI returns 422 for empty form fields before custom validation
     assert upload_response.status_code in (400, 422)
+
+
+@pytest.mark.asyncio
+async def test_upload_property_pdf(client):
+    """Test uploading a PDF for a property content record."""
+    admin_payload = {
+        "username": "pdf-admin",
+        "password": "PdfAdmin123",
+        "full_name": "PDF Admin",
+        "email": "pdf-admin@example.com",
+        "timezone": "UTC",
+        "role": UserRole.ADMIN.value,
+    }
+    admin_register = await client.post("/users/", json=admin_payload)
+    assert admin_register.status_code == 201, admin_register.text
+
+    admin_token_response = await client.post(
+        "/auth/token",
+        data={
+            "username": admin_payload["username"],
+            "password": admin_payload["password"],
+        },
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    assert admin_token_response.status_code == 200, admin_token_response.text
+    admin_token = admin_token_response.json()["access_token"]
+    admin_headers = {"Authorization": f"Bearer {admin_token}"}
+
+    pdf_content = b"%PDF-1.4\n%created for testing\n1 0 obj\n<< /Type /Catalog >>\nendobj\n"
+    upload_response = await client.post(
+        "/media-admin/pdfs",
+        headers=admin_headers,
+        files={"file": ("Lore Document.pdf", BytesIO(pdf_content), "application/pdf")},
+        data={"content_id": "property-789"},
+    )
+    assert upload_response.status_code == 201, upload_response.text
+    url = upload_response.json()["url"]
+
+    settings = get_settings()
+    base_url = (
+        settings.media_public_url.rstrip("/")
+        if settings.media_public_url
+        else settings.media_base_url.rstrip("/")
+    )
+    expected_filename = "Lore-Document.pdf"
+    assert url == f"{base_url}/content/property-789/{expected_filename}"
+
+    media_root = Path(settings.media_root)
+    pdf_path = media_root / "content" / "property-789" / expected_filename
+    assert pdf_path.exists()
+
+    if pdf_path.exists():
+        pdf_path.unlink()
+        try:
+            pdf_path.parent.rmdir()
+        except OSError:
+            pass
+
+
+@pytest.mark.asyncio
+async def test_upload_property_pdf_rejects_non_pdf(client):
+    """Ensure invalid PDF uploads are rejected."""
+    admin_payload = {
+        "username": "pdf-invalid-admin",
+        "password": "PdfInvalid123",
+        "full_name": "PDF Invalid Admin",
+        "email": "pdf-invalid-admin@example.com",
+        "timezone": "UTC",
+        "role": UserRole.ADMIN.value,
+    }
+    admin_register = await client.post("/users/", json=admin_payload)
+    assert admin_register.status_code == 201, admin_register.text
+
+    admin_token_response = await client.post(
+        "/auth/token",
+        data={
+            "username": admin_payload["username"],
+            "password": admin_payload["password"],
+        },
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    assert admin_token_response.status_code == 200, admin_token_response.text
+    admin_token = admin_token_response.json()["access_token"]
+    admin_headers = {"Authorization": f"Bearer {admin_token}"}
+
+    bogus_pdf = b"This is not a pdf file"
+    upload_response = await client.post(
+        "/media-admin/pdfs",
+        headers=admin_headers,
+        files={"file": ("fake.pdf", BytesIO(bogus_pdf), "application/pdf")},
+        data={"content_id": "property-999"},
+    )
+    assert upload_response.status_code == 400, upload_response.text
+    assert "valid PDF" in upload_response.json()["detail"]

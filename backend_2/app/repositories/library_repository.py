@@ -145,6 +145,14 @@ class LibraryRepository(BaseRepository):
     async def delete_bookmark(self, bookmark: LibraryBookmark) -> None:
         await self.delete(bookmark)
 
+    async def set_shared_users(
+        self, bookmark: LibraryBookmark, shared_users: Sequence[User]
+    ) -> LibraryBookmark:
+        bookmark.shared_with = list(shared_users)
+        await self.save(bookmark)
+        await self.session.refresh(bookmark)
+        return bookmark
+
     async def list_shares(self, bookmark_id: int) -> Sequence[User]:
         result = await self.session.execute(
             select(User)

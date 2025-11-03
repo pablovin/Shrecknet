@@ -6,7 +6,11 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.integrations.llm.openai_client import OpenAIClient
-from app.jobs.librarian.prompts import ANSWER_PROMPT, STYLE_PROMPT, SYNTHESIS_PROMPT
+from app.jobs.librarian.prompts import (
+    ANSWER_PROMPT,
+    FAST_SINGLE_PASS_PROMPT,
+    STYLE_PROMPT,
+)
 from app.jobs.librarian.schemas import (
     LibrarianQueryRequest,
     LibrarianQueryResponse,
@@ -31,6 +35,8 @@ class LibrarianOrchestrator:
         default_top_k: int = 10,
         answer_model: str = "gpt-4o",
         style_model: str = "gpt-4o-mini",
+        fast_mode: bool = True,
+        max_fast_chunks: int = 6,
     ):
         """
         Initialize orchestrator.
@@ -47,6 +53,8 @@ class LibrarianOrchestrator:
         self.default_top_k = default_top_k
         self.answer_model = answer_model
         self.style_model = style_model
+        self.fast_mode = fast_mode
+        self.max_fast_chunks = max_fast_chunks
 
     async def execute(
         self,
@@ -107,9 +115,12 @@ class LibrarianOrchestrator:
                 pass
             all_chunks.extend(chunks)
 
-        # Sort by score and take top_k
+        # Sort by score and take top_k (optionally capped for fast mode)
         all_chunks.sort(key=lambda x: x["score"], reverse=True)
-        all_chunks = all_chunks[:top_k]
+        limit = top_k
+        if self.fast_mode:
+            limit = min(self.max_fast_chunks, top_k)
+        all_chunks = all_chunks[:limit]
 
         # Fetch library item metadata for all unique library items
         unique_library_item_ids = list(
@@ -156,6 +167,7 @@ class LibrarianOrchestrator:
 
         # Step 2: Generate answer if mode includes 'nl'
         answer = None
+        raw_answer = None
         if request.mode in ("nl", "both"):
             if not retrieved_chunks:
                 answer = (
@@ -163,10 +175,22 @@ class LibrarianOrchestrator:
                     "books to answer your question."
                 )
             else:
-                answer = await self._generate_answer(
-                    request.query, retrieved_chunks, trace
-                )
-                raw_answer = answer
+                if self.fast_mode:
+                    raw_answer = await self._generate_single_pass_answer(
+                        request.query,
+                        retrieved_chunks,
+                        agent.writing_style,
+                        trace,
+                    )
+                else:
+                    raw_answer = await self._generate_answer(
+                        request.query,
+                        retrieved_chunks,
+                        trace,
+                    )
+                answer = raw_answer
+
+            if answer:
                 try:
                     logger.info(
                         "librarian_answer_raw_preview: %s",
@@ -178,61 +202,58 @@ class LibrarianOrchestrator:
                     )
                 except Exception:
                     pass
-                if answer is not None:
-                    # Decorate answer inline with page links for top chunks
-                    try:
-                        decorated = self._decorate_answer_with_sources(
-                            answer, retrieved_chunks
-                        )
-                        answer = decorated
-                        try:
-                            logger.info(
-                                "librarian_answer_decorated_preview: %s",
-                                (
-                                    (answer[:400] + "…")
-                                    if (answer and len(answer) > 400)
-                                    else (answer or "<empty>")
-                                ),
-                            )
-                        except Exception:
-                            pass
-                    except Exception:
-                        pass
-                # Do not append a Sources footer; frontend will render footnotes from markers
 
-                # Step 3: Apply writing style if configured
-                if agent.writing_style and answer:
-                    styled = await self._apply_style(answer, agent.writing_style, trace)
-                    # Validate styled answer; if it loses citations/sources, keep original
-                    styled_norm = (styled or "").lower()
-                    raw_norm = (raw_answer or "").lower()
-                    insufficient_in_styled = "insufficient context" in styled_norm
-                    insufficient_in_raw = "insufficient context" in raw_norm
+            if answer is not None:
+                try:
+                    decorated = self._decorate_answer_with_sources(
+                        answer, retrieved_chunks
+                    )
+                    answer = decorated
                     try:
                         logger.info(
-                            "librarian_style_output_preview: %s",
+                            "librarian_answer_decorated_preview: %s",
                             (
-                                (styled[:400] + "…")
-                                if (styled and len(styled) > 400)
-                                else (styled or "<empty>")
+                                (answer[:400] + "…")
+                                if (answer and len(answer) > 400)
+                                else (answer or "<empty>")
                             ),
                         )
                     except Exception:
                         pass
-                    if self._looks_grounded(styled) and not (
-                        insufficient_in_styled and not insufficient_in_raw
-                    ):
-                        answer = styled
-                        logger.info(
-                            "librarian_style_validation: accepted styled answer"
-                        )
-                    else:
-                        logger.info(
-                            "librarian_style_validation: reverted to unstyled answer (grounding=%s, styled_insufficient=%s, raw_insufficient=%s)",
-                            str(self._looks_grounded(styled)),
-                            str(insufficient_in_styled),
-                            str(insufficient_in_raw),
-                        )
+                except Exception:
+                    pass
+
+            if (not self.fast_mode) and agent.writing_style and answer:
+                styled = await self._apply_style(answer, agent.writing_style, trace)
+                styled_norm = (styled or "").lower()
+                raw_norm = (raw_answer or "").lower()
+                insufficient_in_styled = "insufficient context" in styled_norm
+                insufficient_in_raw = "insufficient context" in raw_norm
+                try:
+                    logger.info(
+                        "librarian_style_output_preview: %s",
+                        (
+                            (styled[:400] + "…")
+                            if (styled and len(styled) > 400)
+                            else (styled or "<empty>")
+                        ),
+                    )
+                except Exception:
+                    pass
+                if self._looks_grounded(styled) and not (
+                    insufficient_in_styled and not insufficient_in_raw
+                ):
+                    answer = styled
+                    logger.info(
+                        "librarian_style_validation: accepted styled answer"
+                    )
+                else:
+                    logger.info(
+                        "librarian_style_validation: reverted to unstyled answer (grounding=%s, styled_insufficient=%s, raw_insufficient=%s)",
+                        str(self._looks_grounded(styled)),
+                        str(insufficient_in_styled),
+                        str(insufficient_in_raw),
+                    )
 
         # Return response based on mode
         return LibrarianQueryResponse(
@@ -278,7 +299,10 @@ class LibrarianOrchestrator:
         )
 
         # Enrich chunks with neighbor pages to improve context quality
-        chunks = await self.pdf_embedding_service.enrich_chunks_with_neighbors(chunks)
+        if not self.fast_mode:
+            chunks = await self.pdf_embedding_service.enrich_chunks_with_neighbors(
+                chunks
+            )
 
         if trace is not None:
             trace.append(
@@ -411,6 +435,76 @@ class LibrarianOrchestrator:
                 "Based on the retrieved sources, here is a concise summary relevant to your question:\n\n"
                 + "\n".join(parts)
             )
+
+        return answer
+
+    async def _generate_single_pass_answer(
+        self,
+        query: str,
+        chunks: list[RetrievedChunk],
+        writing_style: str | None,
+        trace: list[dict[str, Any]],
+    ) -> str:
+        """Generate the final answer in a single LLM call for speed."""
+        logger.info("Generating single-pass answer from chunks")
+
+        if not chunks:
+            return "Insufficient context."
+
+        style_block = (
+            writing_style.strip()
+            if writing_style and writing_style.strip()
+            else "Use a clear, direct tone suitable for game masters."
+        )
+
+        # Format chunks compactly to minimize prompt size
+        snippet_lines: list[str] = []
+        for idx, chunk in enumerate(chunks, 1):
+            title = chunk.book_title or "Unknown Source"
+            snippet = chunk.text.strip().replace("\n", " ")
+            if len(snippet) > 700:
+                snippet = snippet[:700] + "…"
+            snippet_lines.append(
+                f"Excerpt {idx} | {title} | Page {chunk.page_number}\n{snippet}"
+            )
+        chunks_block = "\n\n".join(snippet_lines)
+
+        user_prompt = FAST_SINGLE_PASS_PROMPT.format(
+            query=query,
+            writing_style=style_block,
+            chunks=chunks_block,
+        )
+
+        system_msg = (
+            "You are a veteran RPG rules librarian. Answer only from the supplied"
+            " excerpts, keeping responses concise, practical, and cite-ready."
+        )
+
+        answer = await self.llm_client.chat(
+            model=self.answer_model,
+            messages=[
+                {"role": "system", "content": system_msg},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0.6,
+        )
+
+        if trace is not None:
+            try:
+                trace.append(
+                    {
+                        "step": "answer_single_pass",
+                        "data": {
+                            "model": self.answer_model,
+                            "chunks_used": len(chunks),
+                            "preview": (
+                                answer[:200] + "…" if len(answer or "") > 200 else answer
+                            ),
+                        },
+                    }
+                )
+            except Exception:
+                pass
 
         return answer
 

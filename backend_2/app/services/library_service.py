@@ -263,6 +263,19 @@ class LibraryService:
         await self.repository.delete_bookmark(bookmark)
         await self.session.commit()
 
+    async def remove_self_from_bookmark(
+        self, bookmark: LibraryBookmark, user: User
+    ) -> LibraryBookmark:
+        if bookmark.owner_id == user.id:
+            raise ValueError("Owners cannot remove themselves from their own bookmark")
+        shared_ids = {shared_user.id for shared_user in bookmark.shared_with}
+        if user.id not in shared_ids:
+            raise ValueError("Bookmark is not shared with this user")
+        remaining_users = [u for u in bookmark.shared_with if u.id != user.id]
+        updated = await self.repository.set_shared_users(bookmark, remaining_users)
+        await self.session.commit()
+        return updated
+
     # Serialization helpers ---------------------------------------------
     def build_pdf_url(self, item: LibraryItem) -> str:
         base_url = (

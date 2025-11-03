@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from dataclasses import dataclass
 from html import unescape
 from html.parser import HTMLParser
@@ -261,26 +262,44 @@ class ArchitectOrchestrator:
         aggregated: dict[tuple[Any, ...], dict[str, Any]] = {}
         for result in chunk_results:
             for item in result.new_instances:
+                canonical_alias = self._canonical_alias(item.alias)
+                if not canonical_alias:
+                    continue
                 key = (
                     ArchitectProposalType.NEW_INSTANCE,
-                    item.entity_definition_id,
-                    self._normalize_alias(item.alias),
+                    canonical_alias,
                 )
                 record = aggregated.setdefault(
                     key,
                     {
                         "proposal_type": ArchitectProposalType.NEW_INSTANCE,
                         "entity_definition_id": item.entity_definition_id,
+                        "canonical_alias": canonical_alias,
                         "entity_instance_id": None,
                         "alias": item.alias,
                         "confidence_scores": [],
                         "justifications": [],
                         "metadata_snippets": [],
                         "chunks": [],
+                        "alias_variants": set(),
+                        "definition_votes": {},
+                        "best_alias": item.alias,
+                        "best_alias_confidence": item.confidence,
                     },
                 )
+                record["alias_variants"].add(item.alias)
+                votes = record["definition_votes"].setdefault(
+                    item.entity_definition_id,
+                    {"count": 0, "confidences": []},
+                )
+                votes["count"] += 1
                 if item.confidence is not None:
                     record["confidence_scores"].append(item.confidence)
+                    votes["confidences"].append(item.confidence)
+                    best_conf = record.get("best_alias_confidence")
+                    if best_conf is None or item.confidence > best_conf:
+                        record["best_alias"] = item.alias
+                        record["best_alias_confidence"] = item.confidence
                 if item.justification:
                     record["justifications"].append(item.justification)
                 if item.metadata:
@@ -346,16 +365,52 @@ class ArchitectOrchestrator:
                 if record["metadata_snippets"]
                 else None
             )
+            candidate_definitions: list[dict[str, Any]] = []
+            best_definition_id = record.get("entity_definition_id")
+            best_definition_score = (-1.0, -1)
+            if record["proposal_type"] == ArchitectProposalType.NEW_INSTANCE:
+                for definition_id, stats in record["definition_votes"].items():
+                    avg_conf = (
+                        sum(stats["confidences"]) / len(stats["confidences"])
+                        if stats["confidences"]
+                        else 0.0
+                    )
+                    vote_tuple = (avg_conf, stats["count"])
+                    candidate_definitions.append(
+                        {
+                            "definition_id": definition_id,
+                            "average_confidence": avg_conf,
+                            "occurrences": stats["count"],
+                        }
+                    )
+                    if vote_tuple > best_definition_score:
+                        best_definition_score = vote_tuple
+                        best_definition_id = definition_id
+            alias_value = record.get("best_alias") or record.get("alias")
+            variants_source = record.get("alias_variants")
+            if variants_source:
+                alias_variants = sorted(variants_source)
+            elif alias_value:
+                alias_variants = [alias_value]
+            else:
+                alias_variants = []
+            canonical_alias = record.get("canonical_alias", "")
+            if not canonical_alias and alias_value:
+                canonical_alias = self._canonical_alias(alias_value)
             proposals.append(
                 {
                     "proposal_type": record["proposal_type"],
-                    "entity_definition_id": record["entity_definition_id"],
+                    "entity_definition_id": best_definition_id,
                     "entity_instance_id": record.get("entity_instance_id"),
-                    "alias": record.get("alias"),
+                    "alias": alias_value,
                     "confidence": confidence,
                     "justification": justification,
                     "proposal_metadata": metadata,
                     "chunks": record["chunks"],
+                    "canonical_alias": canonical_alias or "",
+                    "alias_variants": alias_variants,
+                    "candidate_definitions": candidate_definitions,
+                    "mention_count": len(record["chunks"]),
                 }
             )
 
@@ -379,7 +434,54 @@ class ArchitectOrchestrator:
     def _normalize_alias(alias: str | None) -> str:
         if alias is None:
             return ""
-        return alias.strip().lower()
+        return " ".join(alias.strip().lower().split())
+
+    _TITLE_PREFIXES = {
+        "professor",
+        "prof",
+        "doctor",
+        "dr",
+        "mr",
+        "mrs",
+        "miss",
+        "ms",
+        "sir",
+        "lady",
+        "lord",
+        "captain",
+        "capt",
+        "major",
+        "colonel",
+        "father",
+        "mother",
+        "queen",
+        "king",
+        "prince",
+        "princess",
+    }
+    _LEADING_ARTICLES = {"the", "a", "an"}
+
+    def _canonical_alias(self, alias: str | None) -> str:
+        if not alias:
+            return ""
+        value = alias.strip().lower()
+        value = value.strip("\"'")
+        value = re.sub(r"\([^()]*\)", " ", value)
+        if ":" in value:
+            parts = [part.strip() for part in value.split(":") if part.strip()]
+            if parts:
+                value = parts[-1]
+        if "," in value:
+            value = value.split(",", 1)[0].strip()
+        words = value.split()
+        while words and words[0].rstrip(".") in self._TITLE_PREFIXES:
+            words.pop(0)
+        if words and words[0] in self._LEADING_ARTICLES:
+            words.pop(0)
+        value = " ".join(words)
+        value = re.sub(r"[^a-z0-9\s-]", " ", value)
+        value = re.sub(r"\s+", " ", value).strip()
+        return value
 
     def _strip_html(self, text: str | None) -> str:
         if not text:
@@ -424,11 +526,16 @@ class ArchitectOrchestrator:
             else:
                 proposal["alias"] = None
 
+            canonical_alias = proposal.get("canonical_alias")
+            if not canonical_alias and proposal.get("alias"):
+                canonical_alias = self._canonical_alias(proposal["alias"])
+            proposal["canonical_alias"] = canonical_alias or ""
+
             if (
                 proposal["proposal_type"] == ArchitectProposalType.UPDATE_INSTANCE
-                and proposal.get("alias")
+                and proposal.get("canonical_alias")
             ):
-                update_aliases.add(self._normalize_alias(proposal["alias"]))
+                update_aliases.add(proposal["canonical_alias"])
 
             proposal.pop("evidence", None)
 
@@ -436,21 +543,32 @@ class ArchitectOrchestrator:
         cleaned: list[dict[str, Any]] = []
 
         for proposal in proposals:
-            alias = proposal.get("alias")
-            norm_alias = self._normalize_alias(alias) if alias else ""
+            canonical_alias = proposal.get("canonical_alias", "")
 
             if proposal["proposal_type"] == ArchitectProposalType.NEW_INSTANCE:
-                if not alias:
+                if not canonical_alias:
                     continue
-                if norm_alias in update_aliases:
+                if canonical_alias in update_aliases:
                     continue
-                current = best_new.get(norm_alias)
+                if self._should_discard_new_proposal(proposal):
+                    continue
+                current = best_new.get(canonical_alias)
                 current_conf = current.get("confidence") if current else None
                 new_conf = proposal.get("confidence")
                 if current is None or (new_conf or 0) > (current_conf or 0):
-                    best_new[norm_alias] = proposal
+                    best_new[canonical_alias] = proposal
             else:
                 cleaned.append(proposal)
 
         cleaned.extend(best_new.values())
         return cleaned
+
+    def _should_discard_new_proposal(self, proposal: dict[str, Any]) -> bool:
+        mention_count = proposal.get("mention_count") or 0
+        confidence = proposal.get("confidence") or 0.0
+        alias = proposal.get("canonical_alias") or ""
+        if mention_count <= 1 and confidence < 0.6:
+            return True
+        if len(alias) <= 3 and mention_count <= 1 and confidence < 0.8:
+            return True
+        return False

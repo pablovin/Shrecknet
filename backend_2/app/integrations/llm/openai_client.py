@@ -42,7 +42,7 @@ class OpenAIClient:
         provider default temperature. Falling back avoids 400 errors while
         keeping the call best-effort deterministic.
         """
-        restricted_models = {"gpt-5-mini", "gpt-5-nano"}
+        restricted_models = {"gpt-5", "gpt-5-mini", "gpt-5-nano"}
         if model in restricted_models and temperature != 1.0:
             logger.warning(
                 "Temperature %.2f is not supported for model %s; using 1.0 instead",

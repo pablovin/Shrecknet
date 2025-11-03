@@ -135,6 +135,10 @@ async def _execute_entity_generation(
         if not run:
             raise ValueError("Architect run not found")
 
+        agent_author_id = run.agent_id or author_id
+        author_id = str(agent_author_id or author_id or "system")
+        author_type = "agent"
+
         created_details: list[dict[str, Any]] = []
         updated_details: list[dict[str, Any]] = []
         skipped_new: list[dict[str, Any]] = []

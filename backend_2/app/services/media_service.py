@@ -20,6 +20,10 @@ class ImageValidationError(ValueError):
     pass
 
 
+class PdfValidationError(ValueError):
+    """Raised when a PDF upload fails validation."""
+
+
 class MediaService:
     def __init__(self, *, base_path: Path | None = None) -> None:
         self.base_path = base_path or Path(settings.media_root)
@@ -27,6 +31,7 @@ class MediaService:
         self.max_size = settings.max_image_upload_bytes
         self.max_width = settings.image_max_width
         self.max_height = settings.image_max_height
+        self.max_pdf_bytes = settings.max_pdf_upload_bytes
 
     async def save_image(
         self,
@@ -229,3 +234,75 @@ class MediaService:
         # Build relative path for URL
         relative_path = Path(content_type) / content_id / filename
         return self._build_url(relative_path)
+
+    async def save_content_pdf(
+        self,
+        upload: UploadFile,
+        *,
+        content_id: str,
+    ) -> str:
+        """
+        Persist a PDF for a specific content item, preserving the original filename.
+
+        Raises:
+            PdfValidationError: If the upload does not look like a PDF or exceeds limits.
+        """
+        if not upload.filename:
+            raise PdfValidationError("PDF file must include a filename")
+
+        sanitized_filename = self._sanitize_pdf_filename(upload.filename)
+        content_type = (upload.content_type or "").lower()
+        if "pdf" not in content_type and not sanitized_filename.lower().endswith(".pdf"):
+            raise PdfValidationError("Uploaded file must be a PDF")
+
+        folder_path = self.base_path / "content" / content_id
+        folder_path.mkdir(parents=True, exist_ok=True)
+
+        file_path = folder_path / sanitized_filename
+        temp_path = file_path.with_suffix(file_path.suffix + ".tmp")
+
+        total = 0
+        chunk_size = 1_048_576  # 1 MB
+        first_chunk = True
+        try:
+            with temp_path.open("wb") as buffer:
+                while True:
+                    chunk = await upload.read(chunk_size)
+                    if not chunk:
+                        break
+                    if first_chunk:
+                        if not chunk.lstrip().startswith(b"%PDF"):
+                            raise PdfValidationError("Uploaded file must be a valid PDF document")
+                        first_chunk = False
+                    total += len(chunk)
+                    if total > self.max_pdf_bytes:
+                        raise PdfValidationError("Uploaded PDF exceeds size limit")
+                    buffer.write(chunk)
+
+            if total == 0:
+                raise PdfValidationError("Uploaded PDF file is empty")
+
+            temp_path.replace(file_path)
+        except Exception:
+            if temp_path.exists():
+                temp_path.unlink(missing_ok=True)
+            raise
+        finally:
+            await upload.seek(0)
+
+        relative_path = Path("content") / content_id / sanitized_filename
+        return self._build_url(relative_path)
+
+    def _sanitize_pdf_filename(self, filename: str) -> str:
+        cleaned = Path(filename).name
+        cleaned = cleaned.replace("..", "")
+        cleaned = re.sub(r"[^A-Za-z0-9._-]+", "-", cleaned)
+        cleaned = cleaned.strip()
+        if not cleaned:
+            return "document.pdf"
+        if not cleaned.lower().endswith(".pdf"):
+            cleaned = cleaned.rstrip(".-")
+            if not cleaned:
+                cleaned = "document"
+            cleaned = f"{cleaned}.pdf"
+        return cleaned

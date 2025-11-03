@@ -55,6 +55,9 @@ class NoteService:
     async def get(self, note_id: int) -> Note | None:
         return await self.repository.get(note_id)
 
+    async def list_all(self) -> list[Note]:
+        return list(await self.repository.list_all())
+
     async def update_note(
         self,
         note: Note,

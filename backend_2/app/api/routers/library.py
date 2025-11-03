@@ -323,6 +323,33 @@ async def delete_bookmark(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
+@router.delete(
+    "/bookmarks/{bookmark_id}/share/me",
+    response_model=LibraryBookmarkRead,
+)
+async def leave_shared_bookmark(
+    bookmark_id: int,
+    service: LibraryService = Depends(get_library_service),
+    current_user: User = Depends(get_current_user),
+) -> LibraryBookmarkRead:
+    bookmark = await _get_bookmark_or_404(service, bookmark_id)
+    if bookmark.owner_id == current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Bookmark owners cannot remove themselves."
+        )
+    if all(user.id != current_user.id for user in bookmark.shared_with):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Bookmark is not shared with this user.",
+        )
+    try:
+        updated = await service.remove_self_from_bookmark(bookmark, current_user)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    return _serialize_bookmark(service, updated)
+
+
 # PDF Embedding endpoints -----------------------------------------------
 
 

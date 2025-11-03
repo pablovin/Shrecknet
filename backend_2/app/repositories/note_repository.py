@@ -98,3 +98,15 @@ class NoteRepository(BaseRepository):
     async def delete_instance(self, note: Note) -> None:
         await self.session.delete(note)
         await self.session.flush()
+
+    async def list_all(self) -> Sequence[Note]:
+        result = await self.session.execute(
+            select(Note)
+            .options(
+                selectinload(Note.shared_with),
+                selectinload(Note.owner),
+                selectinload(Note.ontology),
+            )
+            .order_by(Note.updated_at.desc())
+        )
+        return result.scalars().unique().all()

@@ -11,7 +11,11 @@ from app.api.deps import (
 )
 from app.core.config import get_settings
 from app.models.user import User, UserRole
-from app.services.media_service import ImageValidationError, MediaService
+from app.services.media_service import (
+    ImageValidationError,
+    MediaService,
+    PdfValidationError,
+)
 
 router = APIRouter(
     prefix="/media-admin",
@@ -80,6 +84,32 @@ async def upload_image(
             resize=(settings.image_max_width, settings.image_max_height),
         )
     except ImageValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+
+    return {"url": url}
+
+
+@router.post("/pdfs", status_code=status.HTTP_201_CREATED)
+async def upload_pdf(
+    file: UploadFile = File(...),
+    content_id: str = Form(...),
+    media_service: MediaService = Depends(get_media_service),
+    current_user: User = Depends(get_current_user),
+) -> dict[str, str]:
+    """
+    Upload a PDF associated with a content record.
+    """
+    safe_content_id = _sanitize_component(content_id, field="content_id")
+
+    try:
+        url = await media_service.save_content_pdf(
+            file,
+            content_id=safe_content_id,
+        )
+    except PdfValidationError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(exc),

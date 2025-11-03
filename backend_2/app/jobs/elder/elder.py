@@ -8,7 +8,7 @@ from typing import Any, Optional
 from app.integrations.llm.model_policy import LLMTask, ModelPolicy
 from app.integrations.llm.openai_client import OpenAIClient
 from app.integrations.retrieval.neo4j_retriever import GraphRetriever
-from app.jobs.elder.prompts import DECOMPOSE_PROMPT, SUBANSWER_PROMPT, SYNTHESIS_PROMPT
+from app.jobs.elder.prompts import DECOMPOSE_PROMPT, SUBANSWER_PROMPT, SYNTHESIS_PROMPT, COMBINED_SYNTHESIS_PROMPT
 from app.jobs.elder.schemas import (
     ElderQueryRequest,
     ElderQueryResponse,
@@ -187,10 +187,12 @@ class ElderOrchestrator:
         timings["decompose"] = time.monotonic() - t_decomp
         logger.info("elder_decompose: query='%s' subqueries=%s", request.query, subqueries)
 
-        # Step 2: Retrieve context for each sub-query (parallel)
+        # Step 2: Retrieve context for sub-queries + main query in parallel
+        # Add the main query to retrieval list for comprehensive coverage
+        all_queries = subqueries + [request.query]
         t_retrieve = time.monotonic()
         retrieval_results = await self._retrieve(
-            subqueries, ontology_ids, top_k, trace
+            all_queries, ontology_ids, top_k, trace
         )
         timings["retrieve"] = time.monotonic() - t_retrieve
         # Build debug summary of retrieval names per subquery
@@ -607,7 +609,7 @@ class ElderOrchestrator:
         trace: list[TraceStep],
         answer_mode: str,
     ) -> str:
-        """Synthesize final chat-style answer from sub-answers."""
+        """Synthesize final chat-style answer from sub-answers using combined prompt."""
         model = self.model_policy.get_model(LLMTask.SYNTHESIS)
 
         subanswers_text = "\n\n".join(
@@ -627,7 +629,8 @@ class ElderOrchestrator:
                 "Keep the reply compact (one short paragraph or 3-4 bullets) while touching on the key facts you found."
             )
 
-        prompt = SYNTHESIS_PROMPT.format(
+        # Use combined prompt for synthesis+validation+style in single call
+        prompt = COMBINED_SYNTHESIS_PROMPT.format(
             agent_name=agent.name,
             writing_style=agent.writing_style or "empathetic, thoughtful mentor",
             answer_guidance=guidance,
@@ -637,7 +640,7 @@ class ElderOrchestrator:
 
         try:
             logger.info(
-                "elder_llm_synthesis_prompt(model=%s):\n%s",
+                "elder_llm_synthesis_combined_prompt(model=%s):\n%s",
                 model,
                 prompt,
             )
@@ -646,17 +649,17 @@ class ElderOrchestrator:
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.4,
             )
-            logger.info("elder_llm_synthesis_response: %s", answer)
+            logger.info("elder_llm_synthesis_combined_response: %s", answer)
 
             if trace is not None:
                 trace.append(
                     TraceStep(
-                        step="synthesize",
+                        step="synthesize_combined",
                         data={"answer_preview": answer[:200], "model": model},
                     )
                 )
 
-            logger.info("Synthesized final chat-style answer")
+            logger.info("Synthesized final chat-style answer (combined synthesis+validation+style)")
             return answer
 
         except Exception as e:

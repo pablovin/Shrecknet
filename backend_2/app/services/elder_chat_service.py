@@ -225,7 +225,7 @@ class ElderChatService:
         self, chat_id: str, user_id: int, limit: int = 20
     ) -> Optional[list[dict[str, str]]]:
         """
-        Get chat history formatted for LLM context.
+        Get chat history formatted for LLM context from JSON files.
 
         Returns:
             - None if chat doesn't exist or doesn't belong to user
@@ -237,12 +237,13 @@ class ElderChatService:
         if not chat or chat.user_id != user_id:
             return None
 
-        # Get recent history
-        total_messages = await self.chat_repo.count_chat_history(chat_id)
-        offset = max(0, total_messages - limit)
+        # Read from JSON file (source of truth for chat history)
+        chat_data = read_chat(user_id, chat.agent_id, chat_id)
+        if not chat_data or "messages" not in chat_data:
+            return []
 
-        history = await self.chat_repo.get_chat_history(
-            chat_id=chat_id, limit=limit, offset=offset
-        )
+        messages = chat_data["messages"]
+        # Get the last 'limit' messages
+        recent_messages = messages[-limit:] if len(messages) > limit else messages
 
-        return [{"role": msg.role, "content": msg.content} for msg in history]
+        return [{"role": msg["role"], "content": msg["content"]} for msg in recent_messages]

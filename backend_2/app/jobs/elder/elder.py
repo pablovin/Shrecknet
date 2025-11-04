@@ -54,6 +54,7 @@ class ElderOrchestrator:
         self.default_top_k = default_top_k
         self.max_subqueries = 3
         self.max_concurrency = 3
+        self.max_fast_mode_top_k = 10  # Maximum top_k for fast mode responses
         self.last_retrieval_debug: list[dict[str, Any]] = []
 
     async def execute(
@@ -84,7 +85,7 @@ class ElderOrchestrator:
 
         # Fast path: single retrieval + single generation
         if request.fast:
-            top_k = min(top_k, 10)
+            top_k = min(top_k, self.max_fast_mode_top_k)
             model = self.model_policy.get_model(LLMTask.SYNTHESIS)
             t_retr_start = time.monotonic()
             chunks = await self.graph_retriever.search(
@@ -156,6 +157,8 @@ class ElderOrchestrator:
             )
             timings["llm_synthesis"] = time.monotonic() - t_llm_start
 
+            # In fast mode, we skip decomposition and use the original query directly
+            # Include it in subanswers with retrieval sources for consistency with normal mode
             subanswers: list[SubAnswer] = [
                 SubAnswer(
                     subquery=request.query,

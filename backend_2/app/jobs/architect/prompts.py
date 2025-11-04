@@ -63,7 +63,8 @@ Rules:
 - entity_definition_id must be an integer from the entity catalog
 - entity_instance_id must come from the existing instances list
 - Never add any definition of the entity example: Mithras (God). Only Mithras is enough.
-- The response MUST be valid JSON with double quotes
+- The response MUST be valid JSON with double quotes for strings (NOT backslash-quote)
+- When including text in arrays, use proper JSON string syntax: ["text"] NOT [\\"text\\"]
 - For existing_instances, ALWAYS include the "alias" field in metadata with the entity's alias from the candidate list
 - For existing_instances, the justification should explain what NEW information is present in the text
 """

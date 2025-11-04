@@ -175,7 +175,6 @@ class Neo4jGraphRetriever:
                         print(
                             f"[LOGGING]: query: {query} \n"
                             + f"[LOGGING]: Ontology_ID: {ontology_ids} \n"
-                            f"[LOGGING]: Ontology_ID: {ontology_ids} \n"
                             f"[LOGGING]: Chunk: {chunk.json()} \n"
                             f"[LOGGING]: Chunk Name: {chunk.node_name} \n"
                         )
@@ -290,7 +289,6 @@ class Neo4jGraphRetriever:
                         print(
                             f"[LOGGING]: query: {query} \n"
                             + f"[LOGGING]: Ontology_ID: {ontology_ids} \n"
-                            f"[LOGGING]: Ontology_ID: {ontology_ids} \n"
                             f"[LOGGING]: Chunk: {chunk.json()} \n"
                             f"[LOGGING]: Chunk Name: {chunk.node_name} \n"
                         )

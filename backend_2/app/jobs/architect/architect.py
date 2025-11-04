@@ -126,14 +126,14 @@ class ArchitectOrchestrator:
                     )
                     response_time = (datetime.datetime.now() - now).total_seconds()
 
-                    # print (f"[LOGGING] entity_catalog: {entity_catalog} \n"
-                    #       +f"[LOGGING] retrieval_alias_map: {retrieval_alias_map} \n"                                                      
-                    #       +f"[LOGGING] prompt: {prompt} \n"                                                                                 
-                    #       +f"[LOGGING] response_text: {response_text} \n"                                                                                                           
-                    #       +f"[LOGGING] retrieval_time: {retrieval_time} seconds \n"    
-                    #       +f"[LOGGING] prompt_time: {prompt_time} seconds\n"    
-                    #       +f"[LOGGING] response_time: {response_time} seconds\n"    
-                    #       )                    
+                    print (f"[LOGGING] entity_catalog: {entity_catalog} \n"
+                          +f"[LOGGING] retrieval_alias_map: {retrieval_alias_map} \n"                                                      
+                          +f"[LOGGING] prompt: {prompt} \n"                                                                                 
+                          +f"[LOGGING] response_text: {response_text} \n"                                                                                                           
+                          +f"[LOGGING] retrieval_time: {retrieval_time} seconds \n"    
+                          +f"[LOGGING] prompt_time: {prompt_time} seconds\n"    
+                          +f"[LOGGING] response_time: {response_time} seconds\n"    
+                          )                    
 
             except Exception as exc:  # pragma: no cover - defensive logging
                 logger.error(

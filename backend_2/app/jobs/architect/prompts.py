@@ -1,34 +1,10 @@
 """Prompt templates for the Architect pipeline."""
 
-ARCHITECT_EXTRACTION_PROMPT = """You are the Architect Agent. Analyze a story excerpt and propose ontology instance updates.
+ARCHITECT_EXTRACTION_PROMPT = """You are the Architect Agent. Your task is to analyse a story excerpt
+and suggest ontology instance updates using the provided schema.
 
-Schema:
-Return STRICT JSON:
-{{
-  "new_instances": [
-    {{
-      "alias": "string",
-      "entity_definition_id": 123,
-      "confidence": 0.0,
-      "justification": "reason",
-      "metadata": {{"supporting_sentences": ["optional text"]}}
-    }}
-  ],
-  "existing_instances": [
-    {{
-      "entity_instance_id": "string",
-      "entity_definition_id": 123,
-      "confidence": 0.0,
-      "justification": "new info about this entity",
-      "metadata": {{
-        "alias": "existing alias",
-        "supporting_sentences": ["optional text"]
-      }}
-    }}
-  ]
-}}
+YOUR PRIMARY TASK: Identify which entities in the text should UPDATE existing instances vs CREATE new instances.
 
-Context:
 Ontology Entities (id, name, description):
 {entity_catalog}
 
@@ -38,13 +14,58 @@ Candidate Existing Instances (instance_id, alias, summary):
 Story Chunk:
 \"\"\"{chunk_text}\"\"\"
 
+Return STRICT JSON with the following structure:
+{{
+  "new_instances": [
+    {{
+      "alias": "string",
+      "entity_definition_id": 123,
+      "confidence": 0.0,
+      "justification": "why this matters",
+      "metadata": {{
+        "supporting_sentences": ["optional text snippets"]
+      }}
+    }}
+  ],
+  "existing_instances": [
+    {{
+      "entity_instance_id": "string",      
+      "entity_definition_id": 123,
+      "confidence": 0.0,
+      "justification": "why this is relevant and what NEW information is available",
+      "metadata": {{
+        "alias": "entity alias from the candidate list",
+        "supporting_sentences": ["optional text snippets"]
+      }}
+    }}
+  ]
+}}
+
+CRITICAL DECISION LOGIC:
+1. USE "existing_instances" when:
+   - An entity in the text matches (exactly or partially) an entity alias in the Candidate Existing Instances list
+   - The entity name is a variation, abbreviation, or full form of an existing entity
+   - Examples: "Wentworth" matches "Prof. Wentworth", "Jack" matches "Jack Radford", "the Prince" matches "Prince Marcus"
+   - The text provides NEW information about an entity that already exists
+   - The entity is referenced more than again with additional context or details
+   - The entity has an importance to the story told on the chunk
+
+2. USE "new_instances" ONLY when:
+   - The entity is clearly distinct from all existing instances
+   - No existing instance could reasonably refer to this entity
+   - It's a completely new character, location, organization, etc.
+   - This entity has a measurable importance to the story told on the chunk
+
 Rules:
-- Prefer updating existing entities when text matches or extends an existing alias/name (exact, partial, or variation).
-- Create new instances only for clearly distinct entities.
-- Confidence must be between 0 and 1, proportional to relevance.
-- Return valid JSON with double quotes only.
-- If no entities found, return empty arrays.
-- Do not specify the instances like Mithras (God). Only write Mithras, and avoid duplications.
+- ALWAYS prefer updating existing instances over creating new ones when there's any reasonable match
+- If there are no suggestions, return empty arrays
+- confidence must be between 0 and 1, based on the importance of this entity to the chunk
+- entity_definition_id must be an integer from the entity catalog
+- entity_instance_id must come from the existing instances list
+- Never add any definition of the entity example: Mithras (God). Only Mithras is enough.
+- The response MUST be valid JSON with double quotes
+- For existing_instances, ALWAYS include the "alias" field in metadata with the entity's alias from the candidate list
+- For existing_instances, the justification should explain what NEW information is present in the text
 """
 
 ARCHITECT_PROPERTY_EXTRACTION_PROMPT = """You are the Architect Agent. Your task is to extract properties and relationships for an entity from story text.

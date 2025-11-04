@@ -20,11 +20,11 @@ async def writer_token(client: AsyncClient, admin_token: str) -> str:
         "timezone": "UTC",
         "role": UserRole.WRITER.value,
     }
-    
+
     # Register writer
     register_response = await client.post("/users/", json=writer_payload)
     assert register_response.status_code == 201
-    
+
     # Get token
     token_response = await client.post(
         "/auth/token",
@@ -49,11 +49,11 @@ async def world_builder_token(client: AsyncClient, admin_token: str) -> str:
         "timezone": "UTC",
         "role": UserRole.WORLD_BUILDER.value,
     }
-    
+
     # Register world builder
     register_response = await client.post("/users/", json=wb_payload)
     assert register_response.status_code == 201
-    
+
     # Get token
     token_response = await client.post(
         "/auth/token",
@@ -101,7 +101,7 @@ class TestHierarchicalAccessOntologies:
         """Test that Player cannot create ontologies (requires Writer+)."""
         headers = {"Authorization": f"Bearer {user_token}"}
         ontology_data = {"name": "Player Ontology", "description": "Test"}
-        
+
         resp = await client.post("/ontologies/", json=ontology_data, headers=headers)
         assert resp.status_code == 403
 
@@ -110,7 +110,7 @@ class TestHierarchicalAccessOntologies:
     ):
         """
         Test that Writer CANNOT create ontologies in current implementation.
-        
+
         NOTE: Per problem statement, Writers should have "content creation/editing"
         but current implementation requires WORLD_BUILDER+ for ontology creation.
         This test documents current behavior - if requirements change,
@@ -118,7 +118,7 @@ class TestHierarchicalAccessOntologies:
         """
         headers = {"Authorization": f"Bearer {writer_token}"}
         ontology_data = {"name": "Writer Ontology", "description": "Test"}
-        
+
         resp = await client.post("/ontologies/", json=ontology_data, headers=headers)
         # Current implementation: Writers CANNOT create ontologies
         assert resp.status_code == 403
@@ -129,7 +129,7 @@ class TestHierarchicalAccessOntologies:
         """Test that World Builder can create ontologies (hierarchy works)."""
         headers = {"Authorization": f"Bearer {world_builder_token}"}
         ontology_data = {"name": "WB Ontology", "description": "Test"}
-        
+
         resp = await client.post("/ontologies/", json=ontology_data, headers=headers)
         assert resp.status_code == 201
 
@@ -139,7 +139,7 @@ class TestHierarchicalAccessOntologies:
         """Test that Admin can create ontologies."""
         headers = {"Authorization": f"Bearer {admin_token}"}
         ontology_data = {"name": "Admin Ontology", "description": "Test"}
-        
+
         resp = await client.post("/ontologies/", json=ontology_data, headers=headers)
         assert resp.status_code == 201
 
@@ -174,7 +174,9 @@ class TestHierarchicalAccessNotes:
                 "ontology_id": ontology_id,
             }
             resp = await client.post("/notes/", json=note_data, headers=headers)
-            assert resp.status_code == 201, f"{role_name} should be able to create notes"
+            assert (
+                resp.status_code == 201
+            ), f"{role_name} should be able to create notes"
 
     async def test_player_cannot_edit_others_notes(
         self, client: AsyncClient, admin_token: str, user_token: str, writer_token: str
@@ -195,7 +197,9 @@ class TestHierarchicalAccessNotes:
             "content": "Original content",
             "ontology_id": ontology_id,
         }
-        create_resp = await client.post("/notes/", json=note_data, headers=headers_writer)
+        create_resp = await client.post(
+            "/notes/", json=note_data, headers=headers_writer
+        )
         assert create_resp.status_code == 201
         note_id = create_resp.json()["id"]
 
@@ -208,7 +212,11 @@ class TestHierarchicalAccessNotes:
         assert update_resp.status_code == 403
 
     async def test_world_builder_can_edit_others_notes(
-        self, client: AsyncClient, admin_token: str, writer_token: str, world_builder_token: str
+        self,
+        client: AsyncClient,
+        admin_token: str,
+        writer_token: str,
+        world_builder_token: str,
     ):
         """Test that World Builder can edit notes owned by others (hierarchy privilege)."""
         # Create ontology first
@@ -226,7 +234,9 @@ class TestHierarchicalAccessNotes:
             "content": "Original content",
             "ontology_id": ontology_id,
         }
-        create_resp = await client.post("/notes/", json=note_data, headers=headers_writer)
+        create_resp = await client.post(
+            "/notes/", json=note_data, headers=headers_writer
+        )
         assert create_resp.status_code == 201
         note_id = create_resp.json()["id"]
 
@@ -350,7 +360,9 @@ class TestHierarchicalAccessAdminEndpoints:
         ]:
             headers = {"Authorization": f"Bearer {token}"}
             resp = await client.get("/users/", headers=headers)
-            assert resp.status_code == 403, f"{role_name} should not access admin endpoints"
+            assert (
+                resp.status_code == 403
+            ), f"{role_name} should not access admin endpoints"
 
     async def test_only_admin_can_access_audit_logs(
         self,

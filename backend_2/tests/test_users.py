@@ -127,7 +127,7 @@ async def test_registration_enforces_uniqueness(client):
 async def test_ontology_endpoints_require_privileged_roles(client):
     """
     Test role-based access control with hierarchical checking.
-    
+
     Player: Can READ ontologies (read-only access)
     Player: CANNOT access admin endpoints like /logs/
     """

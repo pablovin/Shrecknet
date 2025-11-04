@@ -71,7 +71,9 @@ class TestRoleHierarchyUtils:
     def test_get_minimum_role_multiple(self):
         """Test getting minimum role from multiple roles."""
         assert get_minimum_role(UserRole.ADMIN, UserRole.PLAYER) == UserRole.PLAYER
-        assert get_minimum_role(UserRole.WORLD_BUILDER, UserRole.WRITER) == UserRole.WRITER
+        assert (
+            get_minimum_role(UserRole.WORLD_BUILDER, UserRole.WRITER) == UserRole.WRITER
+        )
         assert (
             get_minimum_role(UserRole.ADMIN, UserRole.WRITER, UserRole.WORLD_BUILDER)
             == UserRole.WRITER

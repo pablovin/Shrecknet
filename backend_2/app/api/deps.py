@@ -4,6 +4,7 @@ from fastapi import Depends, HTTPException, status
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.roles import has_role, get_minimum_role
 from app.core.security import decode_access_token, oauth2_scheme
 from app.db.session import get_session
 from app.models.user import User, UserRole
@@ -123,12 +124,50 @@ async def get_current_user(
 
 
 def require_roles(*roles: UserRole) -> Callable[..., User]:
+    """
+    Dependency to require one of the specified roles using hierarchical checking.
+    
+    Uses role hierarchy: PLAYER < WRITER < WORLD_BUILDER < ADMIN
+    
+    If multiple roles are provided, the user must have at least the minimum
+    (lowest privilege) role. Higher privilege roles automatically satisfy
+    lower privilege requirements.
+    
+    Args:
+        *roles: One or more UserRole values that are acceptable
+        
+    Returns:
+        A FastAPI dependency function
+        
+    Examples:
+        # Requires at least WRITER role (WRITER, WORLD_BUILDER, or ADMIN can access)
+        require_roles(UserRole.WRITER)
+        
+        # Requires at least WRITER role (same as above due to hierarchy)
+        require_roles(UserRole.WRITER, UserRole.ADMIN)
+    """
     async def dependency(current_user: User = Depends(get_current_user)) -> User:
-        if roles and current_user.role not in roles:
+        if not roles:
+            # No role requirement, just authenticated user
+            return current_user
+            
+        # Get the minimum required role from the list
+        min_required_role = get_minimum_role(*roles)
+        
+        if min_required_role is None:
+            # No valid roles specified, deny access
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Insufficient permissions",
             )
+        
+        # Check if user has at least the minimum required role
+        if not has_role(current_user.role, min_required_role):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Insufficient permissions",
+            )
+        
         return current_user
 
     return dependency
@@ -137,8 +176,12 @@ def require_roles(*roles: UserRole) -> Callable[..., User]:
 async def get_current_admin_user(
     current_user: User = Depends(get_current_user),
 ) -> User:
-    """Dependency to require admin role."""
-    if current_user.role != UserRole.ADMIN:
+    """
+    Dependency to require admin role.
+    
+    Uses hierarchical checking - only ADMIN role has access.
+    """
+    if not has_role(current_user.role, UserRole.ADMIN):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin privileges required",
@@ -149,8 +192,12 @@ async def get_current_admin_user(
 async def get_current_active_admin_or_world_builder(
     current_user: User = Depends(get_current_user),
 ) -> User:
-    """Dependency to require admin or world_builder role."""
-    if current_user.role not in (UserRole.ADMIN, UserRole.WORLD_BUILDER):
+    """
+    Dependency to require admin or world_builder role.
+    
+    Uses hierarchical checking - WORLD_BUILDER and ADMIN roles have access.
+    """
+    if not has_role(current_user.role, UserRole.WORLD_BUILDER):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin or world builder privileges required",

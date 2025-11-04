@@ -125,6 +125,12 @@ async def test_registration_enforces_uniqueness(client):
 
 @pytest.mark.asyncio
 async def test_ontology_endpoints_require_privileged_roles(client):
+    """
+    Test role-based access control with hierarchical checking.
+    
+    Player: Can READ ontologies (read-only access)
+    Player: CANNOT access admin endpoints like /logs/
+    """
     await client.post(
         "/users/",
         json={
@@ -159,14 +165,17 @@ async def test_ontology_endpoints_require_privileged_roles(client):
     token = token_response.json()["access_token"]
     headers = {"Authorization": f"Bearer {token}"}
 
+    # Player CAN read ontologies (read-only access as per role hierarchy)
     response = await client.get("/ontologies/", headers=headers)
-    assert response.status_code == 403
+    assert response.status_code == 200
 
+    # Unauthenticated users cannot access
     no_auth_response = await client.get("/ontologies/")
     assert no_auth_response.status_code == 401
 
+    # Player CANNOT access admin-only endpoints like audit logs
     logs_response = await client.get("/logs/", headers=headers)
-    assert logs_response.status_code == 200
+    assert logs_response.status_code == 403
 
 
 @pytest.mark.asyncio

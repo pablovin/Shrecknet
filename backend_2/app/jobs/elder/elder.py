@@ -79,7 +79,7 @@ class ElderOrchestrator:
 
         # Fast path: single retrieval + single generation
         if request.fast:
-            top_k = min(top_k, 5)
+            top_k = min(top_k, 10)
             model = self.model_policy.get_model(LLMTask.SYNTHESIS)
             t_retr_start = time.monotonic()
             chunks = await self.graph_retriever.search(
@@ -151,7 +151,13 @@ class ElderOrchestrator:
             )
             timings["llm_synthesis"] = time.monotonic() - t_llm_start
 
-            subanswers: list[SubAnswer] = []
+            subanswers: list[SubAnswer] = [
+                SubAnswer(
+                    subquery=request.query,
+                    answer=answer,
+                    retrieval=chunks,
+                )
+            ]
             important_nodes = [c.node_id for c in chunks]
             response = ElderQueryResponse(
                 agent_id=agent.id,

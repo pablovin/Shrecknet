@@ -21,6 +21,8 @@ from app.schemas.ontology_instance import (
     OntologyInstanceUpdate,
 )
 
+from neo4j.time import DateTime as Neo4jDateTime
+
 ISO_FORMAT = "%Y-%m-%dT%H:%M:%S.%fZ"
 
 
@@ -28,12 +30,32 @@ def _format_dt(dt: datetime) -> str:
     return dt.strftime(ISO_FORMAT)
 
 
-def _parse_dt(raw: str | None) -> datetime:
+def _parse_dt(raw: str | datetime | Neo4jDateTime | None) -> datetime:
+    """
+    Parse various datetime formats safely:
+    - None → now (UTC)
+    - str (with or without Z) → fromisoformat
+    - neo4j.time.DateTime → convert to Python datetime
+    - datetime → returned as is
+    """
     if raw is None:
         return datetime.utcnow()
-    if raw.endswith("Z"):
-        raw = raw[:-1] + "+00:00"
-    return datetime.fromisoformat(raw)
+
+    if isinstance(raw, datetime):
+        return raw
+
+    # Handle Neo4j's custom datetime object
+    if isinstance(raw, Neo4jDateTime):
+        # convert to Python datetime
+        return raw.to_native()  # this gives a normal Python datetime
+
+    if isinstance(raw, str):
+        if raw.endswith("Z"):
+            raw = raw[:-1] + "+00:00"
+        return datetime.fromisoformat(raw)
+
+    # Fallback — if something unexpected
+    return datetime.utcnow()
 
 
 def _ensure_datetime(value: datetime | None) -> datetime:

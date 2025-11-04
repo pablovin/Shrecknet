@@ -172,18 +172,18 @@ class Neo4jGraphRetriever:
                             preview,
                         )
 
+                        print(
+                            f"[LOGGING]: query: {query} \n"
+                            + f"[LOGGING]: Ontology_ID: {ontology_ids} \n"
+                            f"[LOGGING]: Chunk: {chunk.json()} \n"
+                            f"[LOGGING]: Chunk Name: {chunk.node_name} \n"
+                        )
+
                     logger.info(
                         "retrieval_done: ontology=%s results=%d",
                         str(oid),
                         len(nodes),
                     )
-
-                    print (f"[LOGGING]: query: {query} \n"+
-                           f"[LOGGING]: Ontology_ID: {ontology_ids} \n"
-                           f"[LOGGING]: Ontology_ID: {ontology_ids} \n"                           
-                           f"[LOGGING]: Chunk: {chunk.json()} \n"                            
-                           f"[LOGGING]: Chunk Name: {chunk.node_name} \n"                                                       
-                           )
                 except Exception as e:
                     msg = f"ontology {oid}: {e}"
                     logger.error(f"Error searching ontology {oid}: {e}")
@@ -192,7 +192,6 @@ class Neo4jGraphRetriever:
         # Sort by score and take top_k
         chunks.sort(key=lambda c: c.score, reverse=True)
         return chunks[:top_k]
-
 
     async def search_aliases(
         self,
@@ -268,7 +267,7 @@ class Neo4jGraphRetriever:
                             score=node.get("score", 0.0),
                             confidence_pct=round(node.get("score", 0.0) * 100, 2),
                             source=f"ontology_{oid}" if oid else None,
-                            properties= {},
+                            properties={},
                         )
                         chunks.append(chunk)
 
@@ -287,18 +286,18 @@ class Neo4jGraphRetriever:
                             # preview,
                         )
 
+                        print(
+                            f"[LOGGING]: query: {query} \n"
+                            + f"[LOGGING]: Ontology_ID: {ontology_ids} \n"
+                            f"[LOGGING]: Chunk: {chunk.json()} \n"
+                            f"[LOGGING]: Chunk Name: {chunk.node_name} \n"
+                        )
+
                     logger.info(
                         "retrieval_done: ontology=%s results=%d",
                         str(oid),
                         len(nodes),
                     )
-
-                    print (f"[LOGGING]: query: {query} \n"+
-                           f"[LOGGING]: Ontology_ID: {ontology_ids} \n"
-                           f"[LOGGING]: Ontology_ID: {ontology_ids} \n"                           
-                           f"[LOGGING]: Chunk: {chunk.json()} \n"                            
-                           f"[LOGGING]: Chunk Name: {chunk.node_name} \n"                                                       
-                           )
                 except Exception as e:
                     msg = f"ontology {oid}: {e}"
                     logger.error(f"Error searching ontology {oid}: {e}")
@@ -307,7 +306,6 @@ class Neo4jGraphRetriever:
         # Sort by score and take top_k
         chunks.sort(key=lambda c: c.score, reverse=True)
         return chunks[:top_k]
-
 
     async def instance_summaries(
         self, ontology_ids: list[int], max_aliases: int = 8
@@ -336,9 +334,7 @@ class Neo4jGraphRetriever:
             records = await result.data()
             for r in records:
                 alias_list = [a for a in (r.get("aliases") or []) if a]
-                hint = (
-                    f"aliases: {', '.join(alias_list)} | entities: {r.get('entity_count',0)}"
-                )
+                hint = f"aliases: {', '.join(alias_list)} | entities: {r.get('entity_count',0)}"
                 summaries.append(
                     {
                         "instance_id": r.get("instance_id", ""),

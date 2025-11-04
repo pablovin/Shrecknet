@@ -295,8 +295,6 @@ class ArchitectOrchestrator:
         except json.JSONDecodeError:
             pass
 
-        import re
-
         # Fix common issue: \" instead of " in array string values
         # Pattern: [ \"text\" ] should become [ "text" ]
         fixed = json_str

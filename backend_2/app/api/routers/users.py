@@ -95,7 +95,7 @@ async def check_user_availability(
 @router.get(
     "/",
     response_model=list[UserRead],
-    dependencies=[Depends(require_roles(UserRole.ADMIN))],
+    dependencies=[Depends(require_roles(UserRole.PLAYER))],
 )
 async def list_users(
     service: UserService = Depends(get_user_service),

@@ -5,7 +5,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_admin_user, get_db_session
+from app.api.deps import get_current_admin_user, get_current_user, get_db_session
 from app.models.user import User
 from app.schemas.agent import AgentCreate, AgentRead, AgentUpdate
 from app.services.agent_service import AgentService
@@ -37,8 +37,7 @@ async def list_agents(
     job: Optional[str] = Query(None, description="Filter by job type"),
     active: Optional[bool] = Query(None, description="Filter by active status"),
     limit: int = Query(100, ge=1, le=1000, description="Maximum number of results"),
-    offset: int = Query(0, ge=0, description="Number of results to skip"),
-    _current_user: User = Depends(get_current_admin_user),
+    offset: int = Query(0, ge=0, description="Number of results to skip"),    
     service: AgentService = Depends(get_agent_service),
 ) -> list[AgentRead]:
     """
@@ -65,8 +64,7 @@ async def create_agent(
 
 @router.get("/{agent_id}", response_model=AgentRead)
 async def get_agent(
-    agent_id: str,
-    _current_user: User = Depends(get_current_admin_user),
+    agent_id: str,    
     service: AgentService = Depends(get_agent_service),
 ) -> AgentRead:
     """

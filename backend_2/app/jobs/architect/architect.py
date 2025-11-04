@@ -22,7 +22,7 @@ from app.jobs.architect.schemas import (
 from app.jobs.elder.schemas import RetrievedChunk
 from app.models.architect import ArchitectProposalType
 from app.schemas.ontology_instance import OntologyInstanceRead
-
+import datetime
 logger = logging.getLogger(__name__)
 
 
@@ -87,11 +87,15 @@ class ArchitectOrchestrator:
         async def process_chunk(chunk: ChunkInput) -> ChunkAnalysisResult:
             try:
                 async with semaphore:
-                    retrieval = await self.graph_retriever.search(
+                    now = datetime.datetime.now()
+
+                    retrieval = await self.graph_retriever.search_aliases(
                         query=chunk.text,
                         ontology_ids=agent_ontology_ids,
                         top_k=self.retrieval_top_k,
                     )
+
+                    retrieval_time = (datetime.datetime.now() - now).total_seconds()
                     # Build a map of entity_instance_id to alias from retrieval results
                     retrieval_alias_map = {}
                     for retrieved_chunk in retrieval:
@@ -100,19 +104,37 @@ class ArchitectOrchestrator:
                                 retrieved_chunk.node_label
                             )
 
+                    now = datetime.datetime.now()
                     prompt = ARCHITECT_EXTRACTION_PROMPT.format(
                         entity_catalog=entity_catalog,
                         existing_instances=self._format_retrieval_summary(retrieval),
                         chunk_text=chunk.text.strip(),
                     )
+
+                    prompt_time = (datetime.datetime.now() - now).total_seconds()
+
+                    # print (f"[LOGGING] Retrieval alias map: {retrieval_alias_map}")
+
                     logger.debug(
                         "architect_prompt_chunk=%d size=%d", chunk.index, len(prompt)
                     )
+                    now = datetime.datetime.now()
                     response_text = await self.llm_client.chat(
                         model=extract_model,
                         messages=[{"role": "user", "content": prompt}],
                         temperature=0.1,
                     )
+                    response_time = (datetime.datetime.now() - now).total_seconds()
+
+                    # print (f"[LOGGING] entity_catalog: {entity_catalog} \n"
+                    #       +f"[LOGGING] retrieval_alias_map: {retrieval_alias_map} \n"                                                      
+                    #       +f"[LOGGING] prompt: {prompt} \n"                                                                                 
+                    #       +f"[LOGGING] response_text: {response_text} \n"                                                                                                           
+                    #       +f"[LOGGING] retrieval_time: {retrieval_time} seconds \n"    
+                    #       +f"[LOGGING] prompt_time: {prompt_time} seconds\n"    
+                    #       +f"[LOGGING] response_time: {response_time} seconds\n"    
+                    #       )                    
+
             except Exception as exc:  # pragma: no cover - defensive logging
                 logger.error(
                     "architect_chunk_error: chunk=%d error=%s",
@@ -132,6 +154,8 @@ class ArchitectOrchestrator:
                 source_definition_id=chunk.entity_definition_id,
                 retrieval_alias_map=retrieval_alias_map,
             )
+
+            print (f"[[LOGGING] Parsed response for chunk {chunk.index}: {parsed}")
             return parsed
 
         chunk_results = await asyncio.gather(
@@ -231,11 +255,12 @@ class ArchitectOrchestrator:
     def _format_retrieval_summary(retrieval: Iterable[RetrievedChunk]) -> str:
         lines = []
         for chunk in retrieval:
-            preview = (chunk.text or "").strip().replace("\n", " ")
-            if len(preview) > 200:
-                preview = preview[:200] + "…"
+            # preview = (chunk.text or "").strip().replace("\n", " ")
+            # if len(preview) > 200:
+            #     preview = preview[:200] + "…"
+            
             lines.append(
-                f"- {chunk.node_id} | alias={chunk.node_label or '?'} | score={chunk.score:.3f} | {preview}"
+                f"- Entity Id = {chunk.node_id} | Entity alias={chunk.node_alias or '?'} | Retrieval Score={chunk.score:.3f} "
             )
         return "\n".join(lines) if lines else "(none)"
 

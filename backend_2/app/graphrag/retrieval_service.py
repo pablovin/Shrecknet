@@ -45,20 +45,6 @@ class RetrievalService:
         include_neighbors: bool = True,
         neighbor_limit: int = 10,
     ) -> dict[str, Any]:
-        """
-        Perform semantic search over Neo4j nodes.
-
-        Args:
-            query: Search query text
-            ontology_id: Filter by ontology ID
-            k: Number of results to return
-            score_threshold: Minimum similarity score (0-1)
-            include_neighbors: Whether to expand neighborhood
-            neighbor_limit: Max neighbors per node
-
-        Returns:
-            Dict with results and metadata
-        """
         # Ensure chunk index exists (best-effort)
         try:
             await self.embedding_service.ensure_chunk_vector_index()
@@ -73,13 +59,12 @@ class RetrievalService:
         )
         t_embed = time.monotonic() - t_embed_start
 
-        # Perform vector similarity search over chunk index, join parent entity
         search_query = """
         CALL db.index.vector.queryNodes('entity_chunk_vec_idx', $k, $query_embedding)
         YIELD node, score
         MATCH (node)<-[:HAS_CHUNK]-(parent:EntityInstance)
         WHERE score >= $score_threshold
-          AND ($ontology_id IS NULL OR node.ontology_id = $ontology_id)
+        AND ($ontology_id IS NULL OR node.ontology_id = $ontology_id)
         RETURN node AS chunk, parent AS parent, score
         ORDER BY score DESC
         LIMIT $k
@@ -88,12 +73,11 @@ class RetrievalService:
         t_query_start = time.monotonic()
         result = await self.graph_session.run(
             search_query,
-            k=k * 2,  # Fetch more to filter
+            k=k * 2,  # still fetch extra
             query_embedding=query_embedding,
             score_threshold=score_threshold,
             ontology_id=ontology_id,
         )
-
         records = await result.data()
         t_query = time.monotonic() - t_query_start
 
@@ -105,14 +89,16 @@ class RetrievalService:
                 "ontology_id": ontology_id,
             }
 
-        # Extract nodes and scores
-        nodes_data = []
-        for record in records[:k]:
+        nodes_data: list[dict[str, Any]] = []
+
+        # NEW: keep track of which entity/instance we already added
+        seen_ids: set[str] = set()
+
+        for record in records:  # iterate over all (already sorted by score desc)
             chunk = record.get("chunk") or record.get("node")
             parent = record.get("parent")
             score = record["score"]
 
-            # Support both Neo4j Node and dict-like structures defensively
             def _get(n, key, default=None):
                 try:
                     return n.get(key, default)
@@ -138,7 +124,6 @@ class RetrievalService:
             alias = parent_props.get("alias") or _get(parent, "alias")
 
             raw_properties = parent_props.get("properties")
-            parsed_properties: dict[str, Any]
             if isinstance(raw_properties, str):
                 try:
                     parsed_properties = json.loads(raw_properties)
@@ -153,11 +138,20 @@ class RetrievalService:
                 chunk_props = dict(chunk)
             except Exception:
                 chunk_props = _get(chunk, "properties", {}) or {}
-            chunk_props = {k: _normalize_value(v) for k, v in (chunk_props or {}).items()}
+            chunk_props = {
+                k: _normalize_value(v) for k, v in (chunk_props or {}).items()
+            }
 
-            chunk_text = chunk_props.get("text_chunk") or _get(chunk, "text_chunk") or ""
+            chunk_text = (
+                chunk_props.get("text_chunk") or _get(chunk, "text_chunk") or ""
+            )
 
-            node_id = _get(parent, "entity_instance_id")
+            # this is the key we'll dedupe on
+            node_id = _get(parent, "entity_instance_id") or _get(parent, "instance_id")
+
+            # if we already added this entity, skip
+            if node_id and node_id in seen_ids:
+                continue
 
             node_info = {
                 "node_id": node_id,
@@ -175,16 +169,25 @@ class RetrievalService:
                 "ontology_id": _get(parent, "ontology_id"),
                 "properties": {
                     **{k: v for k, v in parent_props.items() if k != "properties"},
-                    "properties": {k: _normalize_value(v) for k, v in parsed_properties.items()},
+                    "properties": {
+                        k: _normalize_value(v) for k, v in parsed_properties.items()
+                    },
                 },
             }
 
-            # Optionally fetch neighbors
             if include_neighbors and node_id:
                 neighbors = await self._fetch_neighbors(node_id, neighbor_limit)
                 node_info["neighbors"] = neighbors
 
             nodes_data.append(node_info)
+
+            # mark as seen
+            if node_id:
+                seen_ids.add(node_id)
+
+            # stop when we reached k uniques
+            if len(nodes_data) >= k:
+                break
 
         out = {
             "query": query,
@@ -192,7 +195,7 @@ class RetrievalService:
             "total": len(nodes_data),
             "ontology_id": ontology_id,
         }
-        # Lightweight timing log to help debugging slow retrieval
+
         try:
             import logging
 
@@ -208,6 +211,7 @@ class RetrievalService:
             pass
 
         return out
+
 
     async def _fetch_neighbors(
         self, node_id: str, limit: int = 10

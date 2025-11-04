@@ -9,10 +9,17 @@ from openai import AsyncOpenAI
 logger = logging.getLogger(__name__)
 
 
+from typing import Any, Optional, List, Dict
+from openai import AsyncOpenAI
+import logging
+
+logger = logging.getLogger(__name__)
+
+
 class OpenAIClient:
     """
     OpenAI client wrapper with retry logic and timeout handling.
-    Uses native OpenAI SDK for optimal performance and latest features.
+    Uses the new Responses API (faster + future-proof).
     """
 
     def __init__(
@@ -21,14 +28,6 @@ class OpenAIClient:
         timeout: int = 60,
         max_retries: int = 3,
     ):
-        """
-        Initialize OpenAI client.
-
-        Args:
-            api_key: OpenAI API key
-            timeout: Request timeout in seconds
-            max_retries: Maximum number of retries
-        """
         self.api_key = api_key
         self.timeout = timeout
         self.max_retries = max_retries
@@ -41,27 +40,24 @@ class OpenAIClient:
     async def chat(
         self,
         model: str,
-        messages: list[dict[str, str]],
+        messages: List[Dict[str, str]],
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
     ) -> str:
         """
-        Send a chat completion request using OpenAI's Chat Completions API.
+        Send a request using the Responses API.
 
         Args:
-            model: Model name (e.g., "gpt-4o", "gpt-4o-mini")
-            messages: List of message dicts with 'role' and 'content'
-            temperature: Sampling temperature (0-2)
-            max_tokens: Maximum tokens in response
+            model: e.g. "gpt-5", "gpt-5-mini", "gpt-5-nano"
+            messages: [{"role": "system"|"user"|"assistant", "content": "..."}, ...]
+            temperature: sampling temperature
+            max_tokens: cap on output tokens (mapped to max_output_tokens)
 
         Returns:
-            Generated text response
-
-        Raises:
-            Exception: On API errors after retries
+            str: model text
         """
         try:
-            # Validate temperature for restricted models
+            # some GPT-5-family models pin temp to 1.0
             restricted_models = {"gpt-5", "gpt-5-mini", "gpt-5-nano"}
             if model in restricted_models and temperature != 1.0:
                 logger.warning(
@@ -71,19 +67,31 @@ class OpenAIClient:
                 )
                 temperature = 1.0
 
-            # Call OpenAI API
-            kwargs: dict[str, Any] = {
+            # Responses API uses `input=...` for everything chat-like
+            # we can just pass our messages array directly
+            req: Dict[str, Any] = {
                 "model": model,
-                "messages": messages,
+                "input": messages,  # chat-style input
                 "temperature": temperature,
             }
             if max_tokens is not None:
-                kwargs["max_tokens"] = max_tokens
+                # in Responses API this is called max_output_tokens
+                req["max_output_tokens"] = max_tokens
 
-            response = await self._client.chat.completions.create(**kwargs)
+            resp = await self._client.responses.create(**req)
 
-            return response.choices[0].message.content or ""
+            # Responses API nests output a bit differently.
+            # Try to extract the main text safely.
+            text = ""
+            try:
+                # usual shape: resp.output[0].content[0].text
+                text = resp.output[0].content[0].text  # type: ignore[attr-defined]
+            except Exception:
+                # fallback: sometimes SDK gives a convenience property
+                text = getattr(resp, "output_text", "") or ""
+            return text
 
         except Exception as e:
-            logger.error(f"OpenAI API error for model {model}: {e}")
+            logger.error(f"OpenAI Responses API error for model {model}: {e}")
             raise
+

@@ -35,6 +35,21 @@ class StubRetriever:
             )
         ]
 
+    async def search_aliases(self, **kwargs):
+        """Return lightweight retrieval results for architect analysis."""
+        return [
+            RetrievedChunk(
+                node_id="entity-1",
+                node_label="Alice",
+                node_alias="Alice",
+                instance_id="instance-1",
+                text="",  # Empty for lightweight retrieval
+                score=0.87,
+                confidence_pct=87.0,
+                source="ontology_42",
+            )
+        ]
+
 
 class StubPolicy:
     def get_model(self, task):

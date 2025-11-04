@@ -8,7 +8,12 @@ from typing import Any, Optional
 from app.integrations.llm.model_policy import LLMTask, ModelPolicy
 from app.integrations.llm.openai_client import OpenAIClient
 from app.integrations.retrieval.neo4j_retriever import GraphRetriever
-from app.jobs.elder.prompts import DECOMPOSE_PROMPT, SUBANSWER_PROMPT, SYNTHESIS_PROMPT, COMBINED_SYNTHESIS_PROMPT
+from app.jobs.elder.prompts import (
+    DECOMPOSE_PROMPT,
+    SUBANSWER_PROMPT,
+    SYNTHESIS_PROMPT,
+    COMBINED_SYNTHESIS_PROMPT,
+)
 from app.jobs.elder.schemas import (
     ElderQueryRequest,
     ElderQueryResponse,
@@ -49,6 +54,7 @@ class ElderOrchestrator:
         self.default_top_k = default_top_k
         self.max_subqueries = 3
         self.max_concurrency = 3
+        self.max_fast_mode_top_k = 10  # Maximum top_k for fast mode responses
         self.last_retrieval_debug: list[dict[str, Any]] = []
 
     async def execute(
@@ -80,7 +86,7 @@ class ElderOrchestrator:
         # Fast path: single retrieval + single generation
         request.fast = True
         if request.fast:
-            top_k = min(top_k, 5)
+            top_k = min(top_k, self.max_fast_mode_top_k)
             model = self.model_policy.get_model(LLMTask.SYNTHESIS)
             t_retr_start = time.monotonic()
             chunks = await self.graph_retriever.search(
@@ -152,7 +158,15 @@ class ElderOrchestrator:
             )
             timings["llm_synthesis"] = time.monotonic() - t_llm_start
 
-            subanswers: list[SubAnswer] = []
+            # In fast mode, we skip decomposition and use the original query directly
+            # Include it in subanswers with retrieval sources for consistency with normal mode
+            subanswers: list[SubAnswer] = [
+                SubAnswer(
+                    subquery=request.query,
+                    answer=answer,
+                    retrieval=chunks,
+                )
+            ]
             important_nodes = [c.node_id for c in chunks]
             response = ElderQueryResponse(
                 agent_id=agent.id,
@@ -186,7 +200,9 @@ class ElderOrchestrator:
             request.query, ontology_ids, chat_history, trace, request.entities_hint
         )
         timings["decompose"] = time.monotonic() - t_decomp
-        logger.info("elder_decompose: query='%s' subqueries=%s", request.query, subqueries)
+        logger.info(
+            "elder_decompose: query='%s' subqueries=%s", request.query, subqueries
+        )
 
         # Step 2: Retrieve context for sub-queries + main query in parallel
         # Add the main query to retrieval list for comprehensive coverage
@@ -196,6 +212,7 @@ class ElderOrchestrator:
             all_queries, ontology_ids, top_k, trace
         )
         timings["retrieve"] = time.monotonic() - t_retrieve
+
         # Build debug summary of retrieval names per subquery
         def extract_name(chunk: RetrievedChunk) -> str:
             txt = (chunk.text or "").splitlines()
@@ -203,6 +220,7 @@ class ElderOrchestrator:
                 if line.lower().startswith("name:"):
                     return line.split(":", 1)[-1].strip()
             return "(unknown)"
+
         retrieval_summary = [
             {
                 "subquery": sq,
@@ -370,7 +388,11 @@ class ElderOrchestrator:
 
         try:
             # Log prompt
-            logger.info("elder_llm_decompose_prompt(model=%s):\n%s", model, "\n".join([m.get("content","") for m in messages]))
+            logger.info(
+                "elder_llm_decompose_prompt(model=%s):\n%s",
+                model,
+                "\n".join([m.get("content", "") for m in messages]),
+            )
             response = await self.llm_client.chat(
                 model=model,
                 messages=messages,
@@ -428,7 +450,9 @@ class ElderOrchestrator:
                 if key not in seen_keys or chunk.score > seen_keys[key].score:
                     seen_keys[key] = chunk
             # Return chunks sorted by score descending
-            deduplicated = sorted(seen_keys.values(), key=lambda c: c.score, reverse=True)
+            deduplicated = sorted(
+                seen_keys.values(), key=lambda c: c.score, reverse=True
+            )
             if original_count > len(deduplicated):
                 logger.info(
                     "elder_deduplication: original=%d deduplicated=%d removed=%d",
@@ -438,7 +462,9 @@ class ElderOrchestrator:
                 )
             return deduplicated
 
-        async def retrieve_one(subquery: str) -> tuple[str, list[RetrievedChunk], float]:
+        async def retrieve_one(
+            subquery: str,
+        ) -> tuple[str, list[RetrievedChunk], float]:
             # Use a fresh Neo4j session per subquery to allow safe parallel retrieval
             sub_start = time.monotonic()
             try:
@@ -553,13 +579,22 @@ class ElderOrchestrator:
             )
 
             try:
-                logger.info("elder_llm_subanswer_prompt(model=%s, subquery='%s'):\n%s", model, subquery, prompt)
+                logger.info(
+                    "elder_llm_subanswer_prompt(model=%s, subquery='%s'):\n%s",
+                    model,
+                    subquery,
+                    prompt,
+                )
                 answer_text = await self.llm_client.chat(
                     model=model,
                     messages=[{"role": "user", "content": prompt}],
                     temperature=0.3,
                 )
-                logger.info("elder_llm_subanswer_response(subquery='%s'): %s", subquery, answer_text)
+                logger.info(
+                    "elder_llm_subanswer_response(subquery='%s'): %s",
+                    subquery,
+                    answer_text,
+                )
 
                 return SubAnswer(
                     subquery=subquery,
@@ -618,17 +653,11 @@ class ElderOrchestrator:
         )
 
         if answer_mode == "expanded":
-            guidance = (
-                "Bring together the most relevant points from multiple sources. Provide a short intro, then a few concise bullet points or short paragraphs covering each angle."
-            )
+            guidance = "Bring together the most relevant points from multiple sources. Provide a short intro, then a few concise bullet points or short paragraphs covering each angle."
         elif answer_mode == "direct":
-            guidance = (
-                "Answer in 2-3 crisp sentences that address the question directly. Mention source confidence only if relevant."
-            )
+            guidance = "Answer in 2-3 crisp sentences that address the question directly. Mention source confidence only if relevant."
         else:
-            guidance = (
-                "Keep the reply compact (one short paragraph or 3-4 bullets) while touching on the key facts you found."
-            )
+            guidance = "Keep the reply compact (one short paragraph or 3-4 bullets) while touching on the key facts you found."
 
         # Use combined prompt for synthesis+validation+style in single call
         prompt = COMBINED_SYNTHESIS_PROMPT.format(
@@ -660,13 +689,16 @@ class ElderOrchestrator:
                     )
                 )
 
-            logger.info("Synthesized final chat-style answer (combined synthesis+validation+style)")
+            logger.info(
+                "Synthesized final chat-style answer (combined synthesis+validation+style)"
+            )
             return answer
 
         except Exception as e:
             logger.error(f"Synthesis failed: {e}")
-            return "I'm having trouble forming a response right now. Could you try again?"
-
+            return (
+                "I'm having trouble forming a response right now. Could you try again?"
+            )
 
     def _build_context(
         self, subanswers: list[SubAnswer]

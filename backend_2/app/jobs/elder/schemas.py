@@ -58,7 +58,7 @@ class ElderQueryRequest(BaseModel):
     )
     include_trace: bool = Field(False, description="Include execution trace")
     fast: bool = Field(
-        False,
+        True,
         description="Fast mode: single retrieval + single LLM pass (no decompose/validate/style)",
     )
     chat_id: Optional[str] = Field(

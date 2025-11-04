@@ -14,7 +14,7 @@ def test_validated_proposal_item_basic():
         proposal_id="prop-123",
         status=ArchitectProposalStatus.APPROVED,
     )
-    
+
     assert proposal.proposal_id == "prop-123"
     assert proposal.status == ArchitectProposalStatus.APPROVED
     assert proposal.corrected_alias is None
@@ -31,7 +31,7 @@ def test_validated_proposal_item_with_alias_correction():
         status=ArchitectProposalStatus.APPROVED,
         corrected_alias="John Smith",
     )
-    
+
     assert proposal.corrected_alias == "John Smith"
 
 
@@ -42,7 +42,7 @@ def test_validated_proposal_item_with_entity_type_correction():
         status=ArchitectProposalStatus.APPROVED,
         corrected_entity_definition_id=42,
     )
-    
+
     assert proposal.corrected_entity_definition_id == 42
 
 
@@ -54,7 +54,7 @@ def test_validated_proposal_item_convert_new_to_update():
         corrected_proposal_type=ArchitectProposalType.UPDATE_INSTANCE,
         corrected_entity_instance_id="entity-existing-456",
     )
-    
+
     assert proposal.corrected_proposal_type == ArchitectProposalType.UPDATE_INSTANCE
     assert proposal.corrected_entity_instance_id == "entity-existing-456"
 
@@ -67,7 +67,7 @@ def test_validated_proposal_item_convert_update_to_new():
         corrected_proposal_type=ArchitectProposalType.NEW_INSTANCE,
         corrected_entity_instance_id=None,
     )
-    
+
     assert proposal.corrected_proposal_type == ArchitectProposalType.NEW_INSTANCE
     assert proposal.corrected_entity_instance_id is None
 
@@ -79,7 +79,7 @@ def test_validated_proposal_item_change_update_target():
         status=ArchitectProposalStatus.APPROVED,
         corrected_entity_instance_id="entity-different-789",
     )
-    
+
     assert proposal.corrected_entity_instance_id == "entity-different-789"
 
 
@@ -90,7 +90,7 @@ def test_validated_proposal_item_merge():
         status=ArchitectProposalStatus.MERGED,
         merged_into_proposal_id="prop-main",
     )
-    
+
     assert proposal.status == ArchitectProposalStatus.MERGED
     assert proposal.merged_into_proposal_id == "prop-main"
 
@@ -101,7 +101,7 @@ def test_validated_proposal_item_reject():
         proposal_id="prop-123",
         status=ArchitectProposalStatus.REJECTED,
     )
-    
+
     assert proposal.status == ArchitectProposalStatus.REJECTED
 
 
@@ -116,7 +116,7 @@ def test_validated_proposal_item_all_corrections():
         corrected_entity_instance_id="entity-corrected-555",
         merged_into_proposal_id=None,
     )
-    
+
     assert proposal.corrected_alias == "Corrected Name"
     assert proposal.corrected_entity_definition_id == 99
     assert proposal.corrected_proposal_type == ArchitectProposalType.UPDATE_INSTANCE
@@ -148,9 +148,9 @@ def test_validated_proposal_serialization():
         corrected_entity_instance_id=None,
         merged_into_proposal_id=None,
     )
-    
+
     data = proposal.model_dump()
-    
+
     assert data["proposal_id"] == "prop-123"
     assert data["status"] == ArchitectProposalStatus.APPROVED
     assert data["corrected_alias"] == "John"
@@ -171,9 +171,9 @@ def test_validated_proposal_deserialization():
         "corrected_entity_instance_id": "entity-alice-123",
         "merged_into_proposal_id": None,
     }
-    
+
     proposal = ValidatedProposalItem(**data)
-    
+
     assert proposal.proposal_id == "prop-456"
     assert proposal.status == ArchitectProposalStatus.APPROVED
     assert proposal.corrected_alias == "Alice"

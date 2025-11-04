@@ -23,6 +23,7 @@ from app.jobs.elder.schemas import RetrievedChunk
 from app.models.architect import ArchitectProposalType
 from app.schemas.ontology_instance import OntologyInstanceRead
 import datetime
+
 logger = logging.getLogger(__name__)
 
 
@@ -47,7 +48,7 @@ class ArchitectOrchestrator:
         *,
         chunk_size: int = 1000,
         chunk_overlap: int = 100,
-        retrieval_top_k: int = 5,
+        retrieval_top_k: int = 20,
         chunk_concurrency: int = 4,
     ) -> None:
         self.llm_client = llm_client
@@ -126,14 +127,15 @@ class ArchitectOrchestrator:
                     )
                     response_time = (datetime.datetime.now() - now).total_seconds()
 
-                    print (f"[LOGGING] entity_catalog: {entity_catalog} \n"
-                          +f"[LOGGING] retrieval_alias_map: {retrieval_alias_map} \n"                                                      
-                          +f"[LOGGING] prompt: {prompt} \n"                                                                                 
-                          +f"[LOGGING] response_text: {response_text} \n"                                                                                                           
-                          +f"[LOGGING] retrieval_time: {retrieval_time} seconds \n"    
-                          +f"[LOGGING] prompt_time: {prompt_time} seconds\n"    
-                          +f"[LOGGING] response_time: {response_time} seconds\n"    
-                          )                    
+                    print(
+                        f"[LOGGING] entity_catalog: {entity_catalog} \n"
+                        + f"[LOGGING] retrieval_alias_map: {retrieval_alias_map} \n"
+                        + f"[LOGGING] prompt: {prompt} \n"
+                        + f"[LOGGING] response_text: {response_text} \n"
+                        + f"[LOGGING] retrieval_time: {retrieval_time} seconds \n"
+                        + f"[LOGGING] prompt_time: {prompt_time} seconds\n"
+                        + f"[LOGGING] response_time: {response_time} seconds\n"
+                    )
 
             except Exception as exc:  # pragma: no cover - defensive logging
                 logger.error(
@@ -155,7 +157,7 @@ class ArchitectOrchestrator:
                 retrieval_alias_map=retrieval_alias_map,
             )
 
-            print (f"[[LOGGING] Parsed response for chunk {chunk.index}: {parsed}")
+            print(f"[[LOGGING] Parsed response for chunk {chunk.index}: {parsed}")
             return parsed
 
         chunk_results = await asyncio.gather(
@@ -258,7 +260,7 @@ class ArchitectOrchestrator:
             # preview = (chunk.text or "").strip().replace("\n", " ")
             # if len(preview) > 200:
             #     preview = preview[:200] + "…"
-            
+
             lines.append(
                 f"- Entity Id = {chunk.node_id} | Entity alias={chunk.node_alias or '?'} | Retrieval Score={chunk.score:.3f} "
             )
@@ -272,6 +274,51 @@ class ArchitectOrchestrator:
             raise ValueError("No JSON object found in LLM response")
         return raw[start : end + 1]
 
+    @staticmethod
+    def _fix_escaped_quotes(json_str: str) -> str:
+        """
+        Fix improperly escaped quotes in JSON strings.
+
+        LLMs sometimes output malformed JSON with backslash-quote instead of quote:
+        "text": \\"This is a quote\\"
+
+        This should be:
+        "text": "This is a quote"
+
+        This function attempts to fix such cases by replacing \" patterns
+        in array values with proper quotes.
+        """
+        # Try to parse as-is first
+        try:
+            json.loads(json_str)
+            return json_str
+        except json.JSONDecodeError:
+            pass
+
+        import re
+
+        # Fix common issue: \" instead of " in array string values
+        # Pattern: [ \"text\" ] should become [ "text" ]
+        fixed = json_str
+
+        # Replace \" after [ or , with just "
+        # Pattern matches: [ followed by optional whitespace followed by \"
+        fixed = re.sub(r'(\[)\s*\\"', r'\1 "', fixed)
+        fixed = re.sub(r'(\,)\s*\\"', r'\1 "', fixed)
+
+        # Replace \" before ] or , with just "
+        # Pattern matches: \" followed by optional whitespace followed by ] or ,
+        fixed = re.sub(r'\\"(\s*)(\])', r'"\1\2', fixed)
+        fixed = re.sub(r'\\"(\s*)(\,)', r'"\1\2', fixed)
+
+        # Now try parsing again
+        try:
+            json.loads(fixed)
+            return fixed
+        except json.JSONDecodeError:
+            # If still failing, return original and let error handling deal with it
+            return json_str
+
     def _parse_llm_response(
         self,
         response_text: str,
@@ -284,7 +331,9 @@ class ArchitectOrchestrator:
     ) -> ChunkAnalysisResult:
         try:
             json_block = self._extract_json_block(response_text)
-            payload = json.loads(json_block)
+            # Try to fix common JSON issues from LLM responses
+            fixed_json = self._fix_escaped_quotes(json_block)
+            payload = json.loads(fixed_json)
             parsed = ArchitectLLMResponse.model_validate(payload)
         except Exception as exc:  # pragma: no cover - defensive logging
             logger.warning(

@@ -78,6 +78,7 @@ class ElderOrchestrator:
         ontology_ids = [ont.id for ont in agent.ontologies]
 
         # Fast path: single retrieval + single generation
+        request.fast = True
         if request.fast:
             top_k = min(top_k, 5)
             model = self.model_policy.get_model(LLMTask.SYNTHESIS)

@@ -37,9 +37,9 @@ async def init_db(engine: AsyncEngine) -> None:
         await conn.run_sync(Base.metadata.create_all)
         await conn.run_sync(_ensure_entity_display_column)
         await conn.run_sync(_ensure_library_item_authors_column)
-    
+
     # Run architect proposals migration
     await migrate_architect_proposals(engine)
-    
+
     # Run game datetime timezone migration
     await migrate_game_datetimes_to_brussels_timezone(engine)

@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 async def migrate_jobs_database(engine: AsyncEngine) -> None:
     """
     Apply migrations to the jobs database.
-    
+
     This handles schema updates for existing databases that were created
     before new columns were added to the models.
     """
@@ -23,17 +23,17 @@ async def migrate_jobs_database(engine: AsyncEngine) -> None:
         # Check if background_jobs table exists
         inspector = await conn.run_sync(lambda sync_conn: inspect(sync_conn))
         tables = await conn.run_sync(lambda sync_conn: inspector.get_table_names())
-        
+
         if "background_jobs" not in tables:
             logger.info("background_jobs table does not exist yet, skipping migration")
             return
-        
+
         # Check if ontology_id column exists
         columns = await conn.run_sync(
             lambda sync_conn: inspector.get_columns("background_jobs")
         )
         column_names = [col["name"] for col in columns]
-        
+
         if "ontology_id" not in column_names:
             logger.info("Adding ontology_id column to background_jobs table")
             await conn.execute(
@@ -50,7 +50,7 @@ async def migrate_jobs_database(engine: AsyncEngine) -> None:
             logger.info("Successfully added ontology_id column")
         else:
             logger.debug("ontology_id column already exists, skipping migration")
-        
+
         # Check if duration_seconds column exists
         if "duration_seconds" not in column_names:
             logger.info("Adding duration_seconds column to background_jobs table")
@@ -67,50 +67,56 @@ async def migrate_jobs_database(engine: AsyncEngine) -> None:
 async def migrate_architect_proposals(engine: AsyncEngine) -> None:
     """
     Apply migrations to the architect_proposals table for step 2 support.
-    
+
     Adds columns needed for tracking validated proposals and generated entities.
     """
     async with engine.begin() as conn:
         inspector = await conn.run_sync(lambda sync_conn: inspect(sync_conn))
         tables = await conn.run_sync(lambda sync_conn: inspector.get_table_names())
-        
+
         # Migrate architect_analysis_runs table
         if "architect_analysis_runs" in tables:
             run_columns = await conn.run_sync(
                 lambda sync_conn: inspector.get_columns("architect_analysis_runs")
             )
             run_column_names = [col["name"] for col in run_columns]
-            
+
             # Add generation_job_id column
             if "generation_job_id" not in run_column_names:
-                logger.info("Adding generation_job_id column to architect_analysis_runs table")
+                logger.info(
+                    "Adding generation_job_id column to architect_analysis_runs table"
+                )
                 await conn.execute(
                     text(
                         "ALTER TABLE architect_analysis_runs ADD COLUMN generation_job_id INTEGER DEFAULT NULL"
                     )
                 )
                 logger.info("Successfully added generation_job_id column")
-        
+
         if "architect_proposals" not in tables:
-            logger.info("architect_proposals table does not exist yet, skipping migration")
+            logger.info(
+                "architect_proposals table does not exist yet, skipping migration"
+            )
             return
-        
+
         # Check existing columns
         columns = await conn.run_sync(
             lambda sync_conn: inspector.get_columns("architect_proposals")
         )
         column_names = [col["name"] for col in columns]
-        
+
         # Add merged_into_proposal_id column
         if "merged_into_proposal_id" not in column_names:
-            logger.info("Adding merged_into_proposal_id column to architect_proposals table")
+            logger.info(
+                "Adding merged_into_proposal_id column to architect_proposals table"
+            )
             await conn.execute(
                 text(
                     "ALTER TABLE architect_proposals ADD COLUMN merged_into_proposal_id VARCHAR(36) DEFAULT NULL"
                 )
             )
             logger.info("Successfully added merged_into_proposal_id column")
-        
+
         # Add corrected_alias column
         if "corrected_alias" not in column_names:
             logger.info("Adding corrected_alias column to architect_proposals table")
@@ -120,17 +126,19 @@ async def migrate_architect_proposals(engine: AsyncEngine) -> None:
                 )
             )
             logger.info("Successfully added corrected_alias column")
-        
+
         # Add corrected_entity_definition_id column
         if "corrected_entity_definition_id" not in column_names:
-            logger.info("Adding corrected_entity_definition_id column to architect_proposals table")
+            logger.info(
+                "Adding corrected_entity_definition_id column to architect_proposals table"
+            )
             await conn.execute(
                 text(
                     "ALTER TABLE architect_proposals ADD COLUMN corrected_entity_definition_id INTEGER DEFAULT NULL"
                 )
             )
             logger.info("Successfully added corrected_entity_definition_id column")
-        
+
         # Add chunks column
         if "chunks" not in column_names:
             logger.info("Adding chunks column to architect_proposals table")
@@ -140,30 +148,36 @@ async def migrate_architect_proposals(engine: AsyncEngine) -> None:
                 )
             )
             logger.info("Successfully added chunks column")
-        
+
         # Add generated_entity_instance_id column
         if "generated_entity_instance_id" not in column_names:
-            logger.info("Adding generated_entity_instance_id column to architect_proposals table")
+            logger.info(
+                "Adding generated_entity_instance_id column to architect_proposals table"
+            )
             await conn.execute(
                 text(
                     "ALTER TABLE architect_proposals ADD COLUMN generated_entity_instance_id VARCHAR(64) DEFAULT NULL"
                 )
             )
             logger.info("Successfully added generated_entity_instance_id column")
-        
+
         # Add corrected_proposal_type column
         if "corrected_proposal_type" not in column_names:
-            logger.info("Adding corrected_proposal_type column to architect_proposals table")
+            logger.info(
+                "Adding corrected_proposal_type column to architect_proposals table"
+            )
             await conn.execute(
                 text(
                     "ALTER TABLE architect_proposals ADD COLUMN corrected_proposal_type VARCHAR(20) DEFAULT NULL"
                 )
             )
             logger.info("Successfully added corrected_proposal_type column")
-        
+
         # Add corrected_entity_instance_id column
         if "corrected_entity_instance_id" not in column_names:
-            logger.info("Adding corrected_entity_instance_id column to architect_proposals table")
+            logger.info(
+                "Adding corrected_entity_instance_id column to architect_proposals table"
+            )
             await conn.execute(
                 text(
                     "ALTER TABLE architect_proposals ADD COLUMN corrected_entity_instance_id VARCHAR(64) DEFAULT NULL"
@@ -240,18 +254,18 @@ async def migrate_neo4j_embedding_properties(
 async def migrate_game_datetimes_to_brussels_timezone(engine: AsyncEngine) -> None:
     """
     Migrate existing game, session, and poll datetime fields to Brussels timezone.
-    
-    This migration ensures all datetime fields in games, game_sessions, 
+
+    This migration ensures all datetime fields in games, game_sessions,
     game_session_polls, game_session_poll_options, game_session_poll_votes,
     and game_session_attendance tables have proper timezone information.
-    
+
     For SQLite, datetime values are stored as strings. This migration converts
     naive datetime strings to timezone-aware strings in Brussels timezone (Europe/Brussels).
     """
     async with engine.begin() as conn:
         inspector = await conn.run_sync(lambda sync_conn: inspect(sync_conn))
         tables = await conn.run_sync(lambda sync_conn: inspector.get_table_names())
-        
+
         # Define tables and their datetime columns that need migration
         table_columns = {
             "games": ["created_at", "updated_at"],
@@ -261,49 +275,59 @@ async def migrate_game_datetimes_to_brussels_timezone(engine: AsyncEngine) -> No
             "game_session_poll_votes": ["created_at"],
             "game_session_attendance": ["responded_at"],
         }
-        
-        logger.info("Starting game datetime timezone migration to Brussels (Europe/Brussels)")
-        
+
+        logger.info(
+            "Starting game datetime timezone migration to Brussels (Europe/Brussels)"
+        )
+
         for table_name, columns in table_columns.items():
             if table_name not in tables:
                 logger.debug(f"Table {table_name} does not exist, skipping")
                 continue
-            
+
             for column in columns:
                 logger.info(f"Migrating {table_name}.{column} to Brussels timezone")
-                
+
                 # For SQLite, we need to update datetime strings to include timezone
                 # Check if any rows exist without timezone info (no '+' or 'Z' in the datetime string)
-                check_query = text(f"""
+                check_query = text(
+                    f"""
                     SELECT COUNT(*) as count 
                     FROM {table_name} 
                     WHERE {column} IS NOT NULL 
                     AND {column} NOT LIKE '%+%' 
                     AND {column} NOT LIKE '%Z'
-                """)
-                
+                """
+                )
+
                 result = await conn.execute(check_query)
                 row = result.fetchone()
                 rows_to_update = row[0] if row else 0
-                
+
                 if rows_to_update == 0:
                     logger.debug(f"No rows to migrate in {table_name}.{column}")
                     continue
-                
-                logger.info(f"Found {rows_to_update} rows to migrate in {table_name}.{column}")
-                
+
+                logger.info(
+                    f"Found {rows_to_update} rows to migrate in {table_name}.{column}"
+                )
+
                 # Update naive datetime strings to include Brussels timezone offset (+01:00 or +02:00 depending on DST)
                 # For simplicity, we'll use +01:00 as Brussels standard time offset
                 # In production, you might want to use pytz to determine the correct offset for each datetime
-                update_query = text(f"""
+                update_query = text(
+                    f"""
                     UPDATE {table_name}
                     SET {column} = {column} || '+01:00'
                     WHERE {column} IS NOT NULL 
                     AND {column} NOT LIKE '%+%' 
                     AND {column} NOT LIKE '%Z'
-                """)
-                
+                """
+                )
+
                 await conn.execute(update_query)
-                logger.info(f"Successfully migrated {rows_to_update} rows in {table_name}.{column}")
-        
+                logger.info(
+                    f"Successfully migrated {rows_to_update} rows in {table_name}.{column}"
+                )
+
         logger.info("Game datetime timezone migration completed")

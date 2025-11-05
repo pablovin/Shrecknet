@@ -1,6 +1,7 @@
 from typing import Optional, List
 from datetime import datetime
 from sqlmodel import SQLModel
+from pydantic import field_validator
 
 
 class TableBase(SQLModel):
@@ -17,6 +18,14 @@ class TableRead(TableBase):
     id: int
     created_by: int
     created_at: datetime
+
+    @field_validator("created_at")
+    @classmethod
+    def validate_created_at_timezone(cls, v: datetime) -> datetime:
+        """Ensure created_at is timezone-aware."""
+        if v.tzinfo is None:
+            raise ValueError("created_at must include timezone information")
+        return v
 
 
 class TableUpdate(SQLModel):
@@ -49,6 +58,14 @@ class TableListRead(TableRead):
     members: List[TableMemberInfo] = []
     latest_session: Optional[datetime] = None
     next_session: Optional[datetime] = None
+
+    @field_validator("latest_session", "next_session")
+    @classmethod
+    def validate_session_times_timezone(cls, v: Optional[datetime]) -> Optional[datetime]:
+        """Ensure session times are timezone-aware if provided."""
+        if v is not None and v.tzinfo is None:
+            raise ValueError("Session times must include timezone information")
+        return v
 
 
 TableCreate.model_rebuild()

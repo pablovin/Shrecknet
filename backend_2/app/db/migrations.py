@@ -295,12 +295,16 @@ async def migrate_game_datetimes_to_brussels_timezone(engine: AsyncEngine) -> No
                 continue
 
             for column in columns:
-                # Both table_name and column are from VALID_TABLE_COLUMNS,
-                # so they're safe to use in SQL (not user input)
+                # Both table_name and column are from VALID_TABLE_COLUMNS hardcoded dict,
+                # making them safe to use in SQL queries (not user input).
+                # We cannot use SQLAlchemy's table()/column() constructs here because
+                # we need string concatenation (|| '+01:00') on column values, which
+                # requires raw SQL with the text() function.
                 logger.info(f"Migrating {table_name}.{column} to Brussels timezone")
 
                 # For SQLite, we need to update datetime strings to include timezone
                 # Check if any rows exist without timezone info (no '+' or 'Z' in the datetime string)
+                # Note: f-strings are safe here because table_name and column come from VALID_TABLE_COLUMNS
                 check_query = text(
                     f"""
                     SELECT COUNT(*) as count 
@@ -325,6 +329,7 @@ async def migrate_game_datetimes_to_brussels_timezone(engine: AsyncEngine) -> No
 
                 # Update naive datetime strings to include Brussels timezone offset
                 # Using +01:00 (CET) as a fixed offset for all records
+                # Note: f-strings are safe here because table_name and column come from VALID_TABLE_COLUMNS
                 update_query = text(
                     f"""
                     UPDATE {table_name}

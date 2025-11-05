@@ -4,6 +4,13 @@
 
 The Librarian query endpoint (`POST /jobs/librarian/{agent_id}/query`) searches through embedded PDF books and returns relevant chunks with complete source metadata, including book title, authors, and page information.
 
+**New Features:**
+- Automatic generation of up to 4 focused subqueries to improve retrieval
+- Parallel retrieval across main query and subqueries
+- Enhanced citation format using `<sub>` tags with library_item_id, library_item_name, and page
+- Tracking of sources actually used in the answer
+- Improved PDF page mapping for accurate citations
+
 ## Endpoint
 
 ```
@@ -41,12 +48,19 @@ Requires Bearer token authentication.
 
 ## Example Response
 
+**Note:** The answer now uses `<sub>` tags instead of `<sup>` tags for better citation tracking. See [LIBRARIAN_QUERY_OUTPUT_EXAMPLE.json](./LIBRARIAN_QUERY_OUTPUT_EXAMPLE.json) for a complete example.
+
 ```json
 {
   "agent_id": "550e8400-e29b-41d4-a716-446655440000",
   "mode": "both",
   "query": "What are the main principles of world building?",
-  "answer": "World building requires attention to several key principles<sup class=\"src\" data-item=\"42\" data-page=\"15\" data-url=\"http://localhost:8000/media/library/1/42/content.pdf#page=15\">[page 15]</sup>. First, consistency is crucial - the rules of your world must remain stable throughout<sup class=\"src\" data-item=\"42\" data-page=\"16\" data-url=\"http://localhost:8000/media/library/1/42/content.pdf#page=16\">[page 16]</sup>. Second, depth matters - even if readers don't see all the details, a well-developed world feels authentic<sup class=\"src\" data-item=\"87\" data-page=\"23\" data-url=\"http://localhost:8000/media/library/1/87/content.pdf#page=23\">[page 23]</sup>.",
+  "subqueries": [
+    "What makes a world setting consistent?",
+    "How do you create depth in fictional worlds?",
+    "What are best practices for world believability?"
+  ],
+  "answer": "World building requires attention to several key principles. First, consistency is crucial<sub library_item_id=\"42\" library_item_name=\"The Art of World Building\" page=\"15\">. The rules of your world must remain stable throughout<sub library_item_id=\"42\" library_item_name=\"The Art of World Building\" page=\"16\">. Second, depth matters<sub library_item_id=\"87\" library_item_name=\"Fictional Cultures: A Guide\" page=\"23\">...",
   "chunks": [
     {
       "library_item_id": 42,
@@ -111,14 +125,16 @@ Requires Bearer token authentication.
 - **agent_id** (string): ID of the librarian agent that processed the query
 - **mode** (string): Response mode that was used
 - **query** (string): The original query
-- **answer** (string, nullable): Natural language answer with inline citations (when mode is "nl" or "both")
-- **chunks** (array): Array of retrieved chunks with metadata (when mode is "context" or "both")
+- **subqueries** (array of strings): Up to 4 generated subqueries used to improve retrieval
+- **answer** (string, nullable): Natural language answer with inline `<sub>` citations (when mode is "nl" or "both")
+- **chunks** (array): Array of all retrieved chunks with metadata (when mode is "context" or "both")
+- **sources_used** (array): Array of chunks that were actually cited in the answer
 - **library_items_used** (array of integers): Unique list of library item IDs referenced in the response
 - **trace** (array, nullable): Execution trace for debugging (only when include_trace=true)
 
 ### Chunk Object
 
-Each chunk in the `chunks` array contains:
+Each chunk in the `chunks` and `sources_used` arrays contains:
 
 - **library_item_id** (integer): Database ID of the library item (book)
 - **page_number** (integer): Page number within the book
@@ -129,17 +145,54 @@ Each chunk in the `chunks` array contains:
 - **book_title** (string, nullable): Title of the book
 - **book_authors** (string, nullable): Authors of the book
 
+### Citation Format
+
+The answer uses `<sub>` tags for citations with three required attributes:
+
+```html
+<sub library_item_id="42" library_item_name="The Art of World Building" page="15">
+```
+
+- **library_item_id**: Database ID of the source book
+- **library_item_name**: Title of the source book
+- **page**: Page number where the information is found
+
+**Important:** Citations are added for ALL mentions of information from a source, not just the first mention.
+
 ## Frontend Integration
 
-The enhanced source metadata allows the frontend to:
+The enhanced source metadata and citation format allow the frontend to:
 
-1. **Display rich citations**: Show "Source: The Art of World Building by Jane Worldsmith, page 15" instead of just "Source: item #42, page 15"
+1. **Display rich citations**: Parse `<sub>` tags to show "Source: The Art of World Building, page 15" with the book title embedded in the citation
 
-2. **Build a sources section**: Create a formatted bibliography with all referenced books
+2. **Build a sources section**: Use the `sources_used` array to create a formatted bibliography showing only sources actually cited in the answer
 
-3. **Navigate to sources**: Use `pdf_url` and `page_url` to link directly to source pages
+3. **Navigate to sources**: Extract `pdf_url` and `page_url` from chunks to link directly to source pages
 
 4. **Group sources by book**: Use `library_item_id` and `book_title` to organize multiple citations from the same book
+
+5. **Track subqueries**: Display the generated subqueries to show users how the system approached their question
+
+### Parsing Citations
+
+Frontend code can parse `<sub>` tags like this:
+
+```javascript
+// Example: Extract citations from answer
+const citationRegex = /<sub\s+library_item_id="(\d+)"\s+library_item_name="([^"]+)"\s+page="(\d+)">/g;
+const citations = [];
+let match;
+
+while ((match = citationRegex.exec(answer)) !== null) {
+  citations.push({
+    itemId: parseInt(match[1]),
+    bookName: match[2],
+    page: parseInt(match[3])
+  });
+}
+
+// Use sources_used to get full chunk details for each citation
+```
 
 ## Example cURL Request
 
@@ -187,7 +240,25 @@ or
 
 ## Notes
 
-- The answer includes inline citations using `<sup>` tags with data attributes that can be used by the frontend to render clickable footnotes
-- The `chunks` array is sorted by relevance score (highest first)
+### Changes from Previous Version
+
+- **NEW**: Automatic subquery generation (up to 4 subqueries) for better information retrieval
+- **NEW**: Parallel retrieval across main query and subqueries
+- **CHANGED**: Citation format from `<sup>` tags to `<sub>` tags with library_item_id, library_item_name, and page attributes
+- **CHANGED**: Citations now appear for ALL mentions of a source, not just the first mention
+- **NEW**: `sources_used` field contains only chunks actually cited in the answer
+- **NEW**: `subqueries` field shows the generated subqueries
+- **IMPROVED**: PDF page mapping now correctly handles both PyMuPDF and PyPDF2, including page labels
+
+### Implementation Details
+
+- The `chunks` array contains all retrieved relevant chunks (sorted by relevance score)
+- The `sources_used` array contains only chunks that were cited in the answer (a subset of chunks)
 - Book metadata (title and authors) will be null if the library item cannot be found in the database
-- The `library_items_used` field provides a quick way to identify all unique books referenced without parsing the chunks array
+- The `library_items_used` field provides a quick way to identify all unique books referenced
+- Subquery generation is automatic and based on the question complexity and available books
+- If a question is simple, fewer than 4 subqueries may be generated
+
+### For Complete Example
+
+See [LIBRARIAN_QUERY_OUTPUT_EXAMPLE.json](./LIBRARIAN_QUERY_OUTPUT_EXAMPLE.json) for a full, detailed example of the new response format.

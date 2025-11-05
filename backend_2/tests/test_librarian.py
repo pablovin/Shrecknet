@@ -133,3 +133,61 @@ async def test_retrieved_chunk_schema_includes_book_metadata():
 
     assert chunk_without_metadata.book_title is None
     assert chunk_without_metadata.book_authors is None
+
+
+@pytest.mark.asyncio
+async def test_librarian_query_response_schema():
+    """Test that LibrarianQueryResponse schema includes new fields."""
+    from app.jobs.librarian.schemas import LibrarianQueryResponse, RetrievedChunk
+
+    # Create a sample response with all new fields
+    chunk1 = RetrievedChunk(
+        library_item_id=1,
+        page_number=10,
+        text="Sample text",
+        score=0.9,
+        book_title="Book 1",
+        book_authors="Author 1",
+    )
+    chunk2 = RetrievedChunk(
+        library_item_id=2,
+        page_number=20,
+        text="More text",
+        score=0.8,
+        book_title="Book 2",
+        book_authors="Author 2",
+    )
+
+    response = LibrarianQueryResponse(
+        agent_id="test-agent-123",
+        mode="both",
+        query="Test query",
+        subqueries=["subquery 1", "subquery 2"],
+        answer="Test answer with <sub library_item_id=\"1\" library_item_name=\"Book 1\" page=\"10\">",
+        chunks=[chunk1, chunk2],
+        sources_used=[chunk1],
+        library_items_used=[1, 2],
+    )
+
+    assert response.agent_id == "test-agent-123"
+    assert response.query == "Test query"
+    assert len(response.subqueries) == 2
+    assert response.subqueries[0] == "subquery 1"
+    assert len(response.chunks) == 2
+    assert len(response.sources_used) == 1
+    assert response.sources_used[0].library_item_id == 1
+    assert response.library_items_used == [1, 2]
+    assert "<sub library_item_id=" in response.answer
+
+    # Test with minimal fields
+    minimal_response = LibrarianQueryResponse(
+        agent_id="test-agent-456",
+        mode="context",
+        query="Another query",
+    )
+
+    assert minimal_response.subqueries == []
+    assert minimal_response.sources_used == []
+    assert minimal_response.chunks == []
+    assert minimal_response.answer is None
+

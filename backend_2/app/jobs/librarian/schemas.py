@@ -56,7 +56,9 @@ class LibrarianQueryResponse(BaseModel):
     agent_id: str
     mode: str
     query: str
+    subqueries: list[str] = Field(default_factory=list)
     answer: str | None = None
     chunks: list[RetrievedChunk] = Field(default_factory=list)
+    sources_used: list[RetrievedChunk] = Field(default_factory=list)
     library_items_used: list[int] = Field(default_factory=list)
     trace: list[dict] | None = None

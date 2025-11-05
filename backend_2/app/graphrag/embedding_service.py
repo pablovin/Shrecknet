@@ -260,20 +260,53 @@ class EmbeddingService:
         Returns:
             List of embedding vectors
         """
+        import logging
+        logger = logging.getLogger(__name__)
+        
         model = get_embedding_model()
-        try:
-            embeddings = model.encode(texts, normalize_embeddings=True)
-        except RuntimeError as exc:
-            if "meta tensor" in str(exc).lower():
-                # Clear cached model and reload
-                global _cached_model
-                with _model_lock:
-                    _cached_model = None
-                model = get_embedding_model()
+        max_retries = 2
+        
+        for attempt in range(max_retries):
+            try:
                 embeddings = model.encode(texts, normalize_embeddings=True)
-            else:
-                raise
-        return embeddings.tolist()
+                # Convert to list with explicit copy to avoid export issues
+                return embeddings.copy().tolist()
+            except RuntimeError as exc:
+                if "meta tensor" in str(exc).lower():
+                    logger.warning(
+                        f"Meta tensor error on attempt {attempt + 1}/{max_retries}, "
+                        "reloading model: %s", exc
+                    )
+                    # Clear cached model and reload
+                    global _cached_model
+                    with _model_lock:
+                        _cached_model = None
+                    model = get_embedding_model()
+                    if attempt == max_retries - 1:
+                        raise
+                else:
+                    raise
+            except (ValueError, BufferError) as exc:
+                # Handle numpy array export errors like "cannot be re-sized"
+                # This can happen when the model's output buffer is locked
+                error_msg = str(exc)
+                if "cannot be re-sized" in error_msg or "export" in error_msg.lower():
+                    logger.warning(
+                        f"Array export error on attempt {attempt + 1}/{max_retries}, "
+                        "reloading model: %s", exc
+                    )
+                    # Clear cached model and reload
+                    global _cached_model
+                    with _model_lock:
+                        _cached_model = None
+                    model = get_embedding_model()
+                    if attempt == max_retries - 1:
+                        raise
+                else:
+                    raise
+        
+        # This should never be reached due to the raise in the loop
+        raise RuntimeError("Failed to generate embeddings after all retries")
 
     def embed_text(self, text: str) -> list[float]:
         """

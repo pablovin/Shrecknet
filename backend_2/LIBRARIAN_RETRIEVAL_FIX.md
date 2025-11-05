@@ -41,7 +41,7 @@ for attempt in range(max_retries):
         return embeddings.copy().tolist()  # Explicit copy prevents export issues
     except (ValueError, BufferError) as exc:
         if "cannot be re-sized" in str(exc) or "export" in str(exc).lower():
-            logger.warning(f"Array export error, reloading model: {exc}")
+            logger.warning("Array export error, reloading model: %s", exc)
             with _model_lock:
                 _cached_model = None
             model = get_embedding_model()

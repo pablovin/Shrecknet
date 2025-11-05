@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import gc
 import json
 import logging
 import os
@@ -10,6 +11,7 @@ import threading
 import uuid
 from typing import Any
 
+import numpy as np
 from neo4j import AsyncSession as AsyncNeo4jSession
 from sentence_transformers import SentenceTransformer
 
@@ -263,9 +265,6 @@ class EmbeddingService:
         Returns:
             List of embedding vectors
         """
-        import gc
-        import numpy as np
-        
         global _cached_model
         
         model = get_embedding_model()
@@ -277,13 +276,12 @@ class EmbeddingService:
                 
                 # Convert to numpy array with C-contiguous memory layout
                 # This ensures a clean copy without buffer export locks
+                # Using float32 to match the embedding model's native precision
                 embeddings_array = np.asarray(embeddings, dtype=np.float32, order='C')
                 
                 # Convert to Python list row by row to avoid buffer reference issues
-                result = []
-                for row in embeddings_array:
-                    # Force a copy of each row and convert to Python list
-                    result.append(np.array(row, copy=True).tolist())
+                # Each row is copied independently to break any buffer locks
+                result = [np.array(row, copy=True).tolist() for row in embeddings_array]
                 
                 return result
                 

@@ -7,7 +7,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.integrations.llm.openai_client import OpenAIClient
-from app.jobs.librarian.prompts import COMBINED_ANSWER_STYLE_PROMPT
+from app.jobs.librarian.prompts import SIMPLIFIED_ANSWER_STYLE_PROMPT
 from app.jobs.librarian.schemas import (
     LibrarianQueryRequest,
     LibrarianQueryResponse,
@@ -95,6 +95,8 @@ class LibrarianOrchestrator:
             all_chunks.extend(chunks)
 
         # Sort by score and take top_k across all ontologies
+        # Note: For typical use (1-3 ontologies, ~30 total chunks), sorting is efficient.
+        # If scaling to many ontologies, consider using heapq.nlargest for better performance.
         all_chunks.sort(key=lambda x: x["score"], reverse=True)
         all_chunks = all_chunks[:top_k]
 
@@ -294,11 +296,10 @@ class LibrarianOrchestrator:
                 f"{chunk.text}\n"
             )
 
-        # Use combined prompt without subqueries section
+        # Use simplified prompt without subqueries section
         style_text = writing_style or "Use a clear, direct tone suitable for game masters."
-        prompt = COMBINED_ANSWER_STYLE_PROMPT.format(
+        prompt = SIMPLIFIED_ANSWER_STYLE_PROMPT.format(
             query=query,
-            subqueries_section="",  # No subqueries in simplified version
             chunks=chunks_text,
             writing_style=style_text,
         )

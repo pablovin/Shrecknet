@@ -540,14 +540,17 @@ async def clear_all_library_embeddings(
     Clear all library item embeddings, optionally filtered by ontology.
 
     This deletes all PdfChunk nodes in Neo4j for all library items,
-    or just those for a specific ontology.
+    or just those for a specific ontology. Also clears any pending
+    PDF_BOOK_EMBEDDING jobs for the affected ontology.
 
     Requires admin role.
     """
     from app.graph.neo4j import get_driver
     from app.services.pdf_embedding_service import PdfEmbeddingService
-    from sqlalchemy import select, update
+    from sqlalchemy import delete, select, update
     from app.models.library import LibraryItem
+    from app.models.background_job import BackgroundJob, JobStatus, JobType
+    from app.db.jobs_session import AsyncJobsSessionMaker
 
     # Get all library items to clear
     if ontology_id is not None:
@@ -580,9 +583,24 @@ async def clear_all_library_embeddings(
         )
     await service.session.commit()
 
+    # Clear pending PDF_BOOK_EMBEDDING jobs
+    jobs_deleted = 0
+    async with AsyncJobsSessionMaker() as jobs_session:
+        query = delete(BackgroundJob).where(
+            BackgroundJob.job_type == JobType.PDF_BOOK_EMBEDDING,
+            BackgroundJob.status.in_([JobStatus.QUEUED, JobStatus.RUNNING]),
+        )
+        if ontology_id is not None:
+            query = query.where(BackgroundJob.ontology_id == ontology_id)
+
+        result = await jobs_session.execute(query)
+        jobs_deleted = result.rowcount
+        await jobs_session.commit()
+
     return {
         "message": f"Cleared embeddings for {len(items)} library items",
         "items_affected": len(items),
         "ontology_id": ontology_id,
         "chunks_deleted": total_deleted,
+        "jobs_deleted": jobs_deleted,
     }

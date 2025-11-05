@@ -550,7 +550,7 @@ async def clear_all_library_embeddings(
     from sqlalchemy import delete, select, update
     from app.models.library import LibraryItem
     from app.models.background_job import BackgroundJob, JobStatus, JobType
-    from app.db.jobs_session import AsyncJobsSessionMaker
+    from app.db.jobs_session import JobsSessionMaker
 
     # Get all library items to clear
     if ontology_id is not None:
@@ -585,7 +585,7 @@ async def clear_all_library_embeddings(
 
     # Clear pending PDF_BOOK_EMBEDDING jobs
     jobs_deleted = 0
-    async with AsyncJobsSessionMaker() as jobs_session:
+    async with JobsSessionMaker() as jobs_session:
         query = delete(BackgroundJob).where(
             BackgroundJob.job_type == JobType.PDF_BOOK_EMBEDDING,
             BackgroundJob.status.in_([JobStatus.QUEUED, JobStatus.RUNNING]),

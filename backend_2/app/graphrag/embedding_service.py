@@ -263,50 +263,66 @@ class EmbeddingService:
         Returns:
             List of embedding vectors
         """
+        import gc
+        import numpy as np
+        
         global _cached_model
         
         model = get_embedding_model()
-        max_retries = 2
+        max_retries = 3
         
         for attempt in range(max_retries):
             try:
                 embeddings = model.encode(texts, normalize_embeddings=True)
-                # Convert to list with explicit copy to avoid export issues
-                return embeddings.copy().tolist()
-            except RuntimeError as exc:
-                if "meta tensor" in str(exc).lower():
-                    logger.warning(
-                        "Meta tensor error on attempt %d/%d, reloading model: %s",
-                        attempt + 1,
-                        max_retries,
-                        exc,
-                    )
-                    # Clear cached model and reload
-                    with _model_lock:
-                        _cached_model = None
-                    model = get_embedding_model()
-                    if attempt == max_retries - 1:
-                        raise
-                else:
-                    raise
-            except (ValueError, BufferError) as exc:
-                # Handle numpy array export errors like "cannot be re-sized"
-                # This can happen when the model's output buffer is locked
+                
+                # Convert to numpy array with C-contiguous memory layout
+                # This ensures a clean copy without buffer export locks
+                embeddings_array = np.asarray(embeddings, dtype=np.float32, order='C')
+                
+                # Convert to Python list row by row to avoid buffer reference issues
+                result = []
+                for row in embeddings_array:
+                    # Force a copy of each row and convert to Python list
+                    result.append(np.array(row, copy=True).tolist())
+                
+                return result
+                
+            except (RuntimeError, ValueError, BufferError) as exc:
                 error_msg = str(exc)
-                if "cannot be re-sized" in error_msg or "export" in error_msg.lower():
+                is_retryable = (
+                    "meta tensor" in error_msg.lower() or
+                    "cannot be re-sized" in error_msg or
+                    "export" in error_msg.lower() or
+                    "buffer" in error_msg.lower()
+                )
+                
+                if is_retryable:
                     logger.warning(
-                        "Array export error on attempt %d/%d, reloading model: %s",
+                        "Embedding error on attempt %d/%d: %s. Reloading model...",
                         attempt + 1,
                         max_retries,
                         exc,
                     )
+                    
+                    # Force garbage collection to release any lingering references
+                    gc.collect()
+                    
                     # Clear cached model and reload
                     with _model_lock:
                         _cached_model = None
+                    
                     model = get_embedding_model()
+                    
+                    # On the last attempt, raise the exception
                     if attempt == max_retries - 1:
+                        logger.error(
+                            "Failed to embed texts after %d attempts: %s",
+                            max_retries,
+                            exc
+                        )
                         raise
                 else:
+                    # Non-retryable error, raise immediately
                     raise
 
     def embed_text(self, text: str) -> list[float]:

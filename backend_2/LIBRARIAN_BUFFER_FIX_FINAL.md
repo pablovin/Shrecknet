@@ -42,11 +42,9 @@ The issue is **intermittent** because it depends on:
    # Instead of converting entire array at once:
    # return embeddings.copy().tolist()  # FAILS
    
-   # Convert row-by-row with explicit copies:
+   # Convert row-by-row with explicit copies using list comprehension:
    embeddings_array = np.asarray(embeddings, dtype=np.float32, order='C')
-   result = []
-   for row in embeddings_array:
-       result.append(np.array(row, copy=True).tolist())
+   result = [row.copy().tolist() for row in embeddings_array]
    return result
    ```
    

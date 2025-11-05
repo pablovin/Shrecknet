@@ -281,7 +281,7 @@ class EmbeddingService:
                 
                 # Convert to Python list row by row to avoid buffer reference issues
                 # Each row is copied independently to break any buffer locks
-                result = [np.array(row, copy=True).tolist() for row in embeddings_array]
+                result = [row.copy().tolist() for row in embeddings_array]
                 
                 return result
                 

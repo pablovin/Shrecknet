@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user
+from app.api.deps import get_current_admin_user, get_current_user
 from app.db.jobs_session import get_jobs_session
 from app.models.background_job import AuthorType, JobStatus, JobType
 from app.models.user import User
@@ -160,3 +160,60 @@ async def delete_jobs(
     service = BackgroundJobService(jobs_session)
     deleted_count = await service.delete_jobs(job_ids)
     return {"deleted_count": deleted_count}
+
+
+@router.delete("/admin/clear-all", status_code=status.HTTP_200_OK)
+async def clear_all_background_jobs(
+    jobs_session: Annotated[AsyncSession, Depends(get_jobs_session)],
+    current_user: Annotated[User, Depends(get_current_admin_user)],
+    job_type: JobType | None = Query(None, description="Filter by job type"),
+    status_filter: JobStatus | None = Query(
+        None, description="Filter by status", alias="status"
+    ),
+    ontology_id: int | None = Query(None, description="Filter by ontology_id"),
+) -> dict[str, Any]:
+    """
+    Clear all background jobs, optionally filtered by type, status, or ontology.
+
+    This deletes all jobs matching the filters. Use with caution!
+    Only jobs with status 'done' or 'failed' can be deleted unless no status filter is provided.
+
+    Requires admin role.
+    """
+    from sqlalchemy import delete, select
+    from app.models.background_job import BackgroundJob
+
+    # Build the query to find jobs to delete
+    query = select(BackgroundJob)
+
+    if job_type:
+        query = query.where(BackgroundJob.job_type == job_type)
+    if status_filter:
+        query = query.where(BackgroundJob.status == status_filter)
+    else:
+        # If no status filter, only delete done or failed jobs for safety
+        query = query.where(
+            BackgroundJob.status.in_([JobStatus.DONE, JobStatus.FAILED])
+        )
+    if ontology_id is not None:
+        query = query.where(BackgroundJob.ontology_id == ontology_id)
+
+    # Get the jobs to delete
+    result = await jobs_session.execute(query)
+    jobs_to_delete = list(result.scalars().all())
+
+    # Delete the jobs
+    if jobs_to_delete:
+        delete_query = delete(BackgroundJob).where(
+            BackgroundJob.id.in_([job.id for job in jobs_to_delete])
+        )
+        await jobs_session.execute(delete_query)
+        await jobs_session.commit()
+
+    return {
+        "message": f"Cleared {len(jobs_to_delete)} background jobs",
+        "deleted_count": len(jobs_to_delete),
+        "job_type": job_type,
+        "status": status_filter,
+        "ontology_id": ontology_id,
+    }

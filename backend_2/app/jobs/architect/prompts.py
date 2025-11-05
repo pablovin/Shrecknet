@@ -1,5 +1,79 @@
 """Prompt templates for the Architect pipeline."""
 
+# Step 1: Chunk-level entity extraction (NEW PIPELINE)
+ARCHITECT_CHUNK_EXTRACTION_PROMPT = """You are extracting entities from a single text chunk. Use ONLY the provided ontology definitions to choose the entity type.
+
+Ontology Definitions:
+{ontology_definitions}
+
+Text Chunk:
+\"\"\"{chunk_text}\"\"\"
+
+Rules:
+- Do NOT create variants like "Jessie (old)" and "Jessie". Keep only the most complete, human-readable name.
+- If two names in this chunk refer to the same entity (e.g. "Jessie" and "Jessie Williams"), keep only one, prefer the more complete one.
+- Output a SLIM JSON array, no explanations outside JSON.
+- Each item must have: name, ontology, confidence, why.
+- Confidence is a float 0-1 indicating importance to the story.
+- If the name clearly matches an ontology entry (e.g. a deity), use that ontology.
+- Only include entities that are important to the story in this chunk.
+- Do NOT include parenthetical clarifications in names (e.g., use "Mithras" not "Mithras (god)").
+
+Return JSON in this exact format:
+{{
+  "entities": [
+    {{
+      "name": "Entity Name",
+      "ontology": "Character",
+      "confidence": 0.85,
+      "why": "Brief 1-line justification"
+    }}
+  ]
+}}
+"""
+
+# Step 3: Reconciliation with existing entities (NEW PIPELINE)
+ARCHITECT_RECONCILIATION_PROMPT = """You are reconciling extracted entities with an existing knowledge graph.
+
+Ontology Definitions:
+{ontology_definitions}
+
+Proposed Entities (extracted from text):
+{proposed_entities}
+
+Existing Entities (from knowledge graph):
+{existing_entities}
+
+Your task:
+- For each proposed entity, decide if it is the same as an existing entity.
+- Prefer matches to existing entities even if the name is slightly different.
+- If a proposed entity is "Jessie" and the existing entity has alias "Jessie Williams", treat them as the SAME entity.
+- If a proposed entity is "Mithras (god)" and there is an existing "Mithras", treat them as the SAME entity. Ignore parenthesis.
+- The ontology field may be updated if the proposed entity has a more accurate ontology type than the existing one.
+
+Output ONLY JSON with two arrays: existing and new.
+- In existing, include proposed_name, matched_node_id, and ontology (updated if needed).
+- In new, include name and ontology.
+
+Return JSON in this exact format:
+{{
+  "existing": [
+    {{
+      "proposed_name": "Jessie Williams",
+      "matched_node_id": "char_001",
+      "ontology": "Character"
+    }}
+  ],
+  "new": [
+    {{
+      "name": "Baron Jackie",
+      "ontology": "Character"
+    }}
+  ]
+}}
+"""
+
+# Original extraction prompt (kept for backward compatibility)
 ARCHITECT_EXTRACTION_PROMPT = """You are the Architect Agent. Your task is to analyse a story excerpt
 and suggest ontology instance updates using the provided schema.
 

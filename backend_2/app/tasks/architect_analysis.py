@@ -10,6 +10,7 @@ from app.integrations.llm.model_policy import ModelPolicy
 from app.integrations.llm.openai_client import OpenAIClient
 from app.integrations.retrieval.neo4j_retriever import Neo4jGraphRetriever
 from app.jobs.architect.architect import ArchitectOrchestrator
+from app.jobs.architect.architect_v2 import ArchitectOrchestratorV2
 from app.models.architect import ArchitectRunStatus
 from app.models.background_job import AuthorType, JobType
 from app.repositories.agent_repository import AgentRepository
@@ -171,7 +172,9 @@ async def _execute_architect_pipeline(
                 max_retries=3,
             )
             retriever = Neo4jGraphRetriever(graph_session)
-            orchestrator = ArchitectOrchestrator(
+
+            # Use the new V2 orchestrator for improved efficiency
+            orchestrator = ArchitectOrchestratorV2(
                 llm_client=llm_client,
                 model_policy=model_policy,
                 graph_retriever=retriever,

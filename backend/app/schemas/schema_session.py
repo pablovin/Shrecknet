@@ -1,5 +1,5 @@
 from typing import Optional, List
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlmodel import SQLModel
 from pydantic import field_validator
 
@@ -33,12 +33,13 @@ class SessionRead(SessionBase):
     created_at: datetime
     page_ids: List[int] = []
 
-    @field_validator("created_at")
+    @field_validator("created_at", "scheduled_time", mode="before")
     @classmethod
-    def validate_created_at_timezone(cls, v: datetime) -> datetime:
-        """Ensure created_at is timezone-aware."""
-        if v.tzinfo is None:
-            raise ValueError("created_at must include timezone information")
+    def ensure_timezone_aware(cls, v: Optional[datetime]) -> Optional[datetime]:
+        """Ensure datetime fields are timezone-aware, defaulting to UTC if naive."""
+        if v is not None and isinstance(v, datetime) and v.tzinfo is None:
+            # If datetime is naive, assume UTC
+            return v.replace(tzinfo=timezone.utc)
         return v
 
 

@@ -1,5 +1,5 @@
 from typing import Optional, List
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlmodel import SQLModel
 from pydantic import field_validator
 
@@ -19,12 +19,12 @@ class TableRead(TableBase):
     created_by: int
     created_at: datetime
 
-    @field_validator("created_at")
+    @field_validator("created_at", mode="before")
     @classmethod
-    def validate_created_at_timezone(cls, v: datetime) -> datetime:
-        """Ensure created_at is timezone-aware."""
-        if v.tzinfo is None:
-            raise ValueError("created_at must include timezone information")
+    def ensure_timezone_aware(cls, v: datetime) -> datetime:
+        """Ensure created_at is timezone-aware, defaulting to UTC if naive."""
+        if isinstance(v, datetime) and v.tzinfo is None:
+            return v.replace(tzinfo=timezone.utc)
         return v
 
 
@@ -59,12 +59,12 @@ class TableListRead(TableRead):
     latest_session: Optional[datetime] = None
     next_session: Optional[datetime] = None
 
-    @field_validator("latest_session", "next_session")
+    @field_validator("latest_session", "next_session", mode="before")
     @classmethod
-    def validate_session_times_timezone(cls, v: Optional[datetime]) -> Optional[datetime]:
-        """Ensure session times are timezone-aware if provided."""
-        if v is not None and v.tzinfo is None:
-            raise ValueError("Session times must include timezone information")
+    def ensure_session_times_timezone_aware(cls, v: Optional[datetime]) -> Optional[datetime]:
+        """Ensure session times are timezone-aware if provided, defaulting to UTC if naive."""
+        if v is not None and isinstance(v, datetime) and v.tzinfo is None:
+            return v.replace(tzinfo=timezone.utc)
         return v
 
 

@@ -1,5 +1,5 @@
 from typing import List, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlmodel import SQLModel
 from pydantic import field_validator
 
@@ -32,12 +32,12 @@ class SessionPollOptionRead(SQLModel):
     timezone: str
     votes: List[int] = []
 
-    @field_validator("proposed_time")
+    @field_validator("proposed_time", mode="before")
     @classmethod
-    def validate_proposed_time_timezone(cls, v: datetime) -> datetime:
-        """Ensure proposed_time is timezone-aware."""
-        if v.tzinfo is None:
-            raise ValueError("proposed_time must include timezone information")
+    def ensure_timezone_aware(cls, v: datetime) -> datetime:
+        """Ensure proposed_time is timezone-aware, defaulting to UTC if naive."""
+        if isinstance(v, datetime) and v.tzinfo is None:
+            return v.replace(tzinfo=timezone.utc)
         return v
 
 
@@ -48,12 +48,12 @@ class SessionPollRead(SQLModel):
     options: List[SessionPollOptionRead] = []
     created_at: datetime
 
-    @field_validator("created_at")
+    @field_validator("created_at", mode="before")
     @classmethod
-    def validate_created_at_timezone(cls, v: datetime) -> datetime:
-        """Ensure created_at is timezone-aware."""
-        if v.tzinfo is None:
-            raise ValueError("created_at must include timezone information")
+    def ensure_timezone_aware(cls, v: datetime) -> datetime:
+        """Ensure created_at is timezone-aware, defaulting to UTC if naive."""
+        if isinstance(v, datetime) and v.tzinfo is None:
+            return v.replace(tzinfo=timezone.utc)
         return v
 
 

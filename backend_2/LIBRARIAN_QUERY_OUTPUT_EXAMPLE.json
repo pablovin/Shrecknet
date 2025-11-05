@@ -1,0 +1,158 @@
+{
+  "agent_id": "550e8400-e29b-41d4-a716-446655440000",
+  "mode": "both",
+  "query": "How do I create compelling NPCs for my campaign?",
+  "subqueries": [
+    "What are the key characteristics of memorable NPCs?",
+    "How should I develop NPC motivations and backstories?",
+    "What techniques help NPCs feel alive during gameplay?",
+    "How do I balance NPC complexity with game flow?"
+  ],
+  "answer": "Creating compelling NPCs requires several key elements. First, memorable NPCs need distinct personalities and clear motivations<sub library_item_id=\"42\" library_item_name=\"The Art of Game Mastering\" page=\"87\">. Each NPC should have at least one defining characteristic that makes them stand out<sub library_item_id=\"42\" library_item_name=\"The Art of Game Mastering\" page=\"87\">.\n\nWhen developing backstories, focus on relevant details that impact the current story<sub library_item_id=\"15\" library_item_name=\"Character Development for RPGs\" page=\"23\">. Not every NPC needs a full history - minor NPCs can have just a quirk or goal<sub library_item_id=\"15\" library_item_name=\"Character Development for RPGs\" page=\"24\">.\n\nTo make NPCs feel alive, give them distinct speech patterns or mannerisms<sub library_item_id=\"42\" library_item_name=\"The Art of Game Mastering\" page=\"89\">. React to player actions in ways consistent with their personality<sub library_item_id=\"42\" library_item_name=\"The Art of Game Mastering\" page=\"89\">. NPCs should have their own agendas that continue even when players aren't around<sub library_item_id=\"15\" library_item_name=\"Character Development for RPGs\" page=\"45\">.\n\nBalance is crucial - major NPCs deserve depth, while minor NPCs should be simple enough to run quickly during gameplay<sub library_item_id=\"87\" library_item_name=\"Running Great Sessions\" page=\"12\">. Use a simple stat block or personality template for recurring NPCs<sub library_item_id=\"87\" library_item_name=\"Running Great Sessions\" page=\"13\">.",
+  "chunks": [
+    {
+      "library_item_id": 42,
+      "page_number": 87,
+      "text": "Memorable NPCs are the heart of any great campaign. Each non-player character should have at least one defining characteristic that makes them stand out - a unique speech pattern, a specific goal, or a memorable quirk. Players will remember the blacksmith who always hums battle songs more than Generic Shopkeeper #7.\n\nThe key is personality over statistics. Give each important NPC clear motivations that drive their actions. What do they want? What do they fear? How do they react under pressure? These questions help you role-play them consistently.",
+      "score": 0.92,
+      "pdf_url": "http://localhost:8000/media/library/1/42/content.pdf",
+      "page_url": "http://localhost:8000/media/library/1/42/content.pdf#page=87",
+      "book_title": "The Art of Game Mastering",
+      "book_authors": "Sarah Storyteller, John Narrator"
+    },
+    {
+      "library_item_id": 15,
+      "page_number": 23,
+      "text": "Backstory is important, but brevity is key. Focus on the aspects of an NPC's history that directly impact the current story. A merchant's childhood trauma matters only if it affects how they interact with the players.\n\nCreate tiered NPC development:\n- Major NPCs: Full personality, goals, relationships, and history\n- Supporting NPCs: Clear role, one or two personality traits, basic motivation\n- Minor NPCs: Single defining feature or immediate purpose",
+      "score": 0.89,
+      "pdf_url": "http://localhost:8000/media/library/1/15/content.pdf",
+      "page_url": "http://localhost:8000/media/library/1/15/content.pdf#page=23",
+      "book_title": "Character Development for RPGs",
+      "book_authors": "Michael Characters"
+    },
+    {
+      "library_item_id": 42,
+      "page_number": 89,
+      "text": "Bringing NPCs to life during play requires consistent portrayal. Use distinct voices or speech patterns - even simple ones like 'speaks slowly' or 'uses formal language' help differentiate characters.\n\nReact to player actions in ways that make sense for the NPC's personality. A cowardly guard won't suddenly become brave. A greedy merchant won't give discounts without a reason. Consistency builds believability.",
+      "score": 0.87,
+      "pdf_url": "http://localhost:8000/media/library/1/42/content.pdf",
+      "page_url": "http://localhost:8000/media/library/1/42/content.pdf#page=89",
+      "book_title": "The Art of Game Mastering",
+      "book_authors": "Sarah Storyteller, John Narrator"
+    },
+    {
+      "library_item_id": 15,
+      "page_number": 24,
+      "text": "For minor NPCs encountered once, use simple templates. Keep a list of quirks (limps, eye patch, always eating, nervous laugh) and combine with a basic motivation (wants money, seeking adventure, protecting family). This creates instant personality without prep.",
+      "score": 0.85,
+      "pdf_url": "http://localhost:8000/media/library/1/15/content.pdf",
+      "page_url": "http://localhost:8000/media/library/1/15/content.pdf#page=24",
+      "book_title": "Character Development for RPGs",
+      "book_authors": "Michael Characters"
+    },
+    {
+      "library_item_id": 15,
+      "page_number": 45,
+      "text": "Remember that NPCs have lives beyond player interaction. When the party returns to town after a month, NPCs should have progressed their own goals. The blacksmith's apprentice might now run the shop. The local lord's political situation might have changed. This makes the world feel alive and reactive.",
+      "score": 0.83,
+      "pdf_url": "http://localhost:8000/media/library/1/15/content.pdf",
+      "page_url": "http://localhost:8000/media/library/1/15/content.pdf#page=45",
+      "book_title": "Character Development for RPGs",
+      "book_authors": "Michael Characters"
+    },
+    {
+      "library_item_id": 87,
+      "page_number": 12,
+      "text": "Balancing NPC complexity with game flow is essential. Complex NPCs enhance story but can slow play if overused. Reserve detailed NPCs for critical story roles. Use simpler NPCs for functional encounters (shopkeepers, guards, random travelers).\n\nDuring combat or time-sensitive scenes, simplify NPC behavior to maintain pacing. Detailed role-play works best in social scenes where players expect interaction.",
+      "score": 0.81,
+      "pdf_url": "http://localhost:8000/media/library/1/87/content.pdf",
+      "page_url": "http://localhost:8000/media/library/1/87/content.pdf#page=12",
+      "book_title": "Running Great Sessions",
+      "book_authors": "Alex Gamemaster"
+    },
+    {
+      "library_item_id": 87,
+      "page_number": 13,
+      "text": "Create NPC stat blocks or quick-reference cards for recurring characters. Include:\n- Name and key physical trait\n- Personality in 3 words or less\n- Current goal or concern\n- Typical reaction to player requests\n\nThis lets you run the NPC consistently without extensive notes.",
+      "score": 0.79,
+      "pdf_url": "http://localhost:8000/media/library/1/87/content.pdf",
+      "page_url": "http://localhost:8000/media/library/1/87/content.pdf#page=13",
+      "book_title": "Running Great Sessions",
+      "book_authors": "Alex Gamemaster"
+    }
+  ],
+  "sources_used": [
+    {
+      "library_item_id": 42,
+      "page_number": 87,
+      "text": "Memorable NPCs are the heart of any great campaign. Each non-player character should have at least one defining characteristic that makes them stand out - a unique speech pattern, a specific goal, or a memorable quirk...",
+      "score": 0.92,
+      "pdf_url": "http://localhost:8000/media/library/1/42/content.pdf",
+      "page_url": "http://localhost:8000/media/library/1/42/content.pdf#page=87",
+      "book_title": "The Art of Game Mastering",
+      "book_authors": "Sarah Storyteller, John Narrator"
+    },
+    {
+      "library_item_id": 15,
+      "page_number": 23,
+      "text": "Backstory is important, but brevity is key. Focus on the aspects of an NPC's history that directly impact the current story...",
+      "score": 0.89,
+      "pdf_url": "http://localhost:8000/media/library/1/15/content.pdf",
+      "page_url": "http://localhost:8000/media/library/1/15/content.pdf#page=23",
+      "book_title": "Character Development for RPGs",
+      "book_authors": "Michael Characters"
+    },
+    {
+      "library_item_id": 15,
+      "page_number": 24,
+      "text": "For minor NPCs encountered once, use simple templates...",
+      "score": 0.85,
+      "pdf_url": "http://localhost:8000/media/library/1/15/content.pdf",
+      "page_url": "http://localhost:8000/media/library/1/15/content.pdf#page=24",
+      "book_title": "Character Development for RPGs",
+      "book_authors": "Michael Characters"
+    },
+    {
+      "library_item_id": 42,
+      "page_number": 89,
+      "text": "Bringing NPCs to life during play requires consistent portrayal...",
+      "score": 0.87,
+      "pdf_url": "http://localhost:8000/media/library/1/42/content.pdf",
+      "page_url": "http://localhost:8000/media/library/1/42/content.pdf#page=89",
+      "book_title": "The Art of Game Mastering",
+      "book_authors": "Sarah Storyteller, John Narrator"
+    },
+    {
+      "library_item_id": 15,
+      "page_number": 45,
+      "text": "Remember that NPCs have lives beyond player interaction...",
+      "score": 0.83,
+      "pdf_url": "http://localhost:8000/media/library/1/15/content.pdf",
+      "page_url": "http://localhost:8000/media/library/1/15/content.pdf#page=45",
+      "book_title": "Character Development for RPGs",
+      "book_authors": "Michael Characters"
+    },
+    {
+      "library_item_id": 87,
+      "page_number": 12,
+      "text": "Balancing NPC complexity with game flow is essential...",
+      "score": 0.81,
+      "pdf_url": "http://localhost:8000/media/library/1/87/content.pdf",
+      "page_url": "http://localhost:8000/media/library/1/87/content.pdf#page=12",
+      "book_title": "Running Great Sessions",
+      "book_authors": "Alex Gamemaster"
+    },
+    {
+      "library_item_id": 87,
+      "page_number": 13,
+      "text": "Create NPC stat blocks or quick-reference cards for recurring characters...",
+      "score": 0.79,
+      "pdf_url": "http://localhost:8000/media/library/1/87/content.pdf",
+      "page_url": "http://localhost:8000/media/library/1/87/content.pdf#page=13",
+      "book_title": "Running Great Sessions",
+      "book_authors": "Alex Gamemaster"
+    }
+  ],
+  "library_items_used": [42, 15, 87],
+  "trace": null
+}

@@ -1,5 +1,27 @@
 """Prompts for the Librarian job pipeline."""
 
+# Prompt for generating subqueries
+SUBQUERY_GENERATION_PROMPT = """You are a librarian helping to break down a complex question into simpler, focused subqueries.
+
+**Original Question:**
+{query}
+
+**Book Context:**
+You have access to: {book_context}
+
+**Your Task:**
+Generate up to 4 focused subqueries that will help gather comprehensive information to answer the original question. Each subquery should:
+1. Be specific and focused on one aspect of the original question
+2. Be searchable in book excerpts about the mentioned books
+3. Together cover all aspects needed to answer the original question
+4. Be complementary (not redundant)
+
+Return ONLY a JSON array of subqueries, nothing else. Example format:
+["subquery 1", "subquery 2", "subquery 3", "subquery 4"]
+
+If the question is simple and doesn't need decomposition, return an empty array: []
+"""
+
 # Prompt for generating answer from retrieved chunks
 ANSWER_PROMPT = """You are a knowledgeable librarian helping users understand content from RPG rulebooks and game materials.
 
@@ -87,6 +109,8 @@ COMBINED_ANSWER_STYLE_PROMPT = """You are a knowledgeable librarian helping user
 **User Question:**
 {query}
 
+{subqueries_section}
+
 **Retrieved Book Excerpts:**
 
 {chunks}
@@ -98,9 +122,16 @@ COMBINED_ANSWER_STYLE_PROMPT = """You are a knowledgeable librarian helping user
 1. Answer the question using ONLY the information provided in the excerpts above
 2. Apply the specified writing style while preserving ALL factual information
 3. If the excerpts don't contain enough information, say so clearly
-4. Cite page numbers when referencing specific information
-5. Be precise and accurate - this is reference material for game masters and players
-6. If there are conflicting rules or information, mention both
-7. Organize your answer clearly with headings or bullet points if appropriate
+4. For EVERY piece of information you use, cite it using this exact format: <sub library_item_id="ID" library_item_name="BOOK_TITLE" page="PAGE">
+5. Use the <sub> citation tag for ALL mentions of information from a source, not just the first mention
+6. Be precise and accurate - this is reference material for game masters and players
+7. If there are conflicting rules or information, mention both
+8. Organize your answer clearly with headings or bullet points if appropriate
+
+**Important Citation Rules:**
+- Every fact, quote, or piece of information from the excerpts MUST be followed by a <sub> tag
+- Include library_item_id, library_item_name (book title), and page in every <sub> tag
+- Cite sources even when paraphrasing
+- If you mention the same source multiple times, cite it each time
 
 **Styled Answer:**"""

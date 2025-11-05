@@ -2,12 +2,7 @@
   "agent_id": "550e8400-e29b-41d4-a716-446655440000",
   "mode": "both",
   "query": "How do I create compelling NPCs for my campaign?",
-  "subqueries": [
-    "What are the key characteristics of memorable NPCs?",
-    "How should I develop NPC motivations and backstories?",
-    "What techniques help NPCs feel alive during gameplay?",
-    "How do I balance NPC complexity with game flow?"
-  ],
+  "subqueries": [],
   "answer": "Creating compelling NPCs requires several key elements. First, memorable NPCs need distinct personalities and clear motivations<sub library_item_id=\"42\" library_item_name=\"The Art of Game Mastering\" page=\"87\">. Each NPC should have at least one defining characteristic that makes them stand out<sub library_item_id=\"42\" library_item_name=\"The Art of Game Mastering\" page=\"87\">.\n\nWhen developing backstories, focus on relevant details that impact the current story<sub library_item_id=\"15\" library_item_name=\"Character Development for RPGs\" page=\"23\">. Not every NPC needs a full history - minor NPCs can have just a quirk or goal<sub library_item_id=\"15\" library_item_name=\"Character Development for RPGs\" page=\"24\">.\n\nTo make NPCs feel alive, give them distinct speech patterns or mannerisms<sub library_item_id=\"42\" library_item_name=\"The Art of Game Mastering\" page=\"89\">. React to player actions in ways consistent with their personality<sub library_item_id=\"42\" library_item_name=\"The Art of Game Mastering\" page=\"89\">. NPCs should have their own agendas that continue even when players aren't around<sub library_item_id=\"15\" library_item_name=\"Character Development for RPGs\" page=\"45\">.\n\nBalance is crucial - major NPCs deserve depth, while minor NPCs should be simple enough to run quickly during gameplay<sub library_item_id=\"87\" library_item_name=\"Running Great Sessions\" page=\"12\">. Use a simple stat block or personality template for recurring NPCs<sub library_item_id=\"87\" library_item_name=\"Running Great Sessions\" page=\"13\">.",
   "chunks": [
     {

@@ -162,7 +162,7 @@ async def test_librarian_query_response_schema():
         agent_id="test-agent-123",
         mode="both",
         query="Test query",
-        subqueries=["subquery 1", "subquery 2"],
+        subqueries=[],  # Empty in simplified version
         answer="Test answer with <sub library_item_id=\"1\" library_item_name=\"Book 1\" page=\"10\">",
         chunks=[chunk1, chunk2],
         sources_used=[chunk1],
@@ -171,8 +171,7 @@ async def test_librarian_query_response_schema():
 
     assert response.agent_id == "test-agent-123"
     assert response.query == "Test query"
-    assert len(response.subqueries) == 2
-    assert response.subqueries[0] == "subquery 1"
+    assert len(response.subqueries) == 0  # Simplified version has no subqueries
     assert len(response.chunks) == 2
     assert len(response.sources_used) == 1
     assert response.sources_used[0].library_item_id == 1

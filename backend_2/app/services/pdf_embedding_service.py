@@ -123,14 +123,14 @@ class PdfEmbeddingService:
             logger.info(f"Reading PDF from {pdf_path}")
             use_fitz = False
             page_labels: list[str] | None = None
-            
+
             try:
                 import fitz  # PyMuPDF
 
                 doc = fitz.open(str(pdf_path))
                 total_pages = len(doc)
                 use_fitz = True
-                
+
                 # Try to get page labels from PyMuPDF
                 try:
                     page_labels_list = doc.get_page_labels()  # Get once and reuse
@@ -138,7 +138,11 @@ class PdfEmbeddingService:
                         page_labels_fitz = []
                         for page_idx in range(total_pages):
                             # Get the page label if it exists
-                            label = page_labels_list[page_idx] if page_idx < len(page_labels_list) else None
+                            label = (
+                                page_labels_list[page_idx]
+                                if page_idx < len(page_labels_list)
+                                else None
+                            )
                             if label:
                                 page_labels_fitz.append(str(label))
                             else:
@@ -149,13 +153,13 @@ class PdfEmbeddingService:
                 except Exception as e:
                     logger.debug(f"Could not extract page labels from PyMuPDF: {e}")
                     page_labels = None
-                    
+
             except Exception:
                 logger.info("PyMuPDF not available; falling back to PyPDF2 for reading")
                 doc = None
                 reader = PdfReader(str(pdf_path))
                 total_pages = len(reader.pages)
-                
+
                 # Try to get display page labels (may differ from index+1) when using PyPDF2
                 try:
                     if hasattr(reader, "get_page_labels"):
@@ -187,7 +191,7 @@ class PdfEmbeddingService:
                             # Create chunk data
                             # Determine display page number using labels if available
                             display_page = page_num + 1  # Default: 1-indexed
-                            
+
                             if page_labels and page_num < len(page_labels):
                                 label = page_labels[page_num]
                                 if label:
@@ -325,7 +329,9 @@ class PdfEmbeddingService:
         """
         query = """
         MATCH (c:PdfChunk {library_item_id: $library_item_id})
-        WITH count(c) as total
+        WITH collect(c) as chunks
+        WITH chunks, size(chunks) as total
+        UNWIND chunks as c
         DETACH DELETE c
         RETURN total
         """

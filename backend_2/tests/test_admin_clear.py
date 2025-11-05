@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from io import BytesIO
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from httpx import AsyncClient
@@ -68,8 +69,6 @@ async def test_clear_library_item_embeddings(client: AsyncClient):
             ontology_id = ontology.json()["id"]
 
             # Create a library item
-            from io import BytesIO
-
             pdf_content = b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF"
             files = {"file": ("test.pdf", BytesIO(pdf_content), "application/pdf")}
             data = {
@@ -148,8 +147,6 @@ async def test_clear_library_item_embeddings_requires_admin(client: AsyncClient)
     ontology_id = ontology.json()["id"]
 
     # Create a library item
-    from io import BytesIO
-
     pdf_content = b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF"
     files = {"file": ("test.pdf", BytesIO(pdf_content), "application/pdf")}
     data = {

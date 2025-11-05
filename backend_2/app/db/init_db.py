@@ -2,7 +2,10 @@ from sqlalchemy import inspect, text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from app.db.base import Base
-from app.db.migrations import migrate_architect_proposals
+from app.db.migrations import (
+    migrate_architect_proposals,
+    migrate_game_datetimes_to_brussels_timezone,
+)
 
 
 def _ensure_entity_display_column(sync_conn) -> None:
@@ -37,3 +40,6 @@ async def init_db(engine: AsyncEngine) -> None:
     
     # Run architect proposals migration
     await migrate_architect_proposals(engine)
+    
+    # Run game datetime timezone migration
+    await migrate_game_datetimes_to_brussels_timezone(engine)

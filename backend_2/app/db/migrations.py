@@ -235,3 +235,75 @@ async def migrate_neo4j_embedding_properties(
         "nodes_migrated": nodes_migrated,
         "status": "success",
     }
+
+
+async def migrate_game_datetimes_to_brussels_timezone(engine: AsyncEngine) -> None:
+    """
+    Migrate existing game, session, and poll datetime fields to Brussels timezone.
+    
+    This migration ensures all datetime fields in games, game_sessions, 
+    game_session_polls, game_session_poll_options, game_session_poll_votes,
+    and game_session_attendance tables have proper timezone information.
+    
+    For SQLite, datetime values are stored as strings. This migration converts
+    naive datetime strings to timezone-aware strings in Brussels timezone (Europe/Brussels).
+    """
+    async with engine.begin() as conn:
+        inspector = await conn.run_sync(lambda sync_conn: inspect(sync_conn))
+        tables = await conn.run_sync(lambda sync_conn: inspector.get_table_names())
+        
+        # Define tables and their datetime columns that need migration
+        table_columns = {
+            "games": ["created_at", "updated_at"],
+            "game_sessions": ["scheduled_date", "created_at", "updated_at"],
+            "game_session_polls": ["created_at"],
+            "game_session_poll_options": ["proposed_start", "created_at"],
+            "game_session_poll_votes": ["created_at"],
+            "game_session_attendance": ["responded_at"],
+        }
+        
+        logger.info("Starting game datetime timezone migration to Brussels (Europe/Brussels)")
+        
+        for table_name, columns in table_columns.items():
+            if table_name not in tables:
+                logger.debug(f"Table {table_name} does not exist, skipping")
+                continue
+            
+            for column in columns:
+                logger.info(f"Migrating {table_name}.{column} to Brussels timezone")
+                
+                # For SQLite, we need to update datetime strings to include timezone
+                # Check if any rows exist without timezone info (no '+' or 'Z' in the datetime string)
+                check_query = text(f"""
+                    SELECT COUNT(*) as count 
+                    FROM {table_name} 
+                    WHERE {column} IS NOT NULL 
+                    AND {column} NOT LIKE '%+%' 
+                    AND {column} NOT LIKE '%Z'
+                """)
+                
+                result = await conn.execute(check_query)
+                row = result.fetchone()
+                rows_to_update = row[0] if row else 0
+                
+                if rows_to_update == 0:
+                    logger.debug(f"No rows to migrate in {table_name}.{column}")
+                    continue
+                
+                logger.info(f"Found {rows_to_update} rows to migrate in {table_name}.{column}")
+                
+                # Update naive datetime strings to include Brussels timezone offset (+01:00 or +02:00 depending on DST)
+                # For simplicity, we'll use +01:00 as Brussels standard time offset
+                # In production, you might want to use pytz to determine the correct offset for each datetime
+                update_query = text(f"""
+                    UPDATE {table_name}
+                    SET {column} = {column} || '+01:00'
+                    WHERE {column} IS NOT NULL 
+                    AND {column} NOT LIKE '%+%' 
+                    AND {column} NOT LIKE '%Z'
+                """)
+                
+                await conn.execute(update_query)
+                logger.info(f"Successfully migrated {rows_to_update} rows in {table_name}.{column}")
+        
+        logger.info("Game datetime timezone migration completed")

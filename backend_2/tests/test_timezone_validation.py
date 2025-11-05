@@ -285,7 +285,8 @@ async def test_session_with_naive_datetime_fails(client):
     game_id = game_response.json()["id"]
 
     # Try to create session with naive datetime (no timezone)
-    naive_date = "2024-12-25T10:00:00"  # No timezone info
+    # Use relative date to avoid outdated hardcoded dates
+    naive_date = (datetime.now() + timedelta(days=30)).strftime("%Y-%m-%dT%H:%M:%S")
     session_payload = {
         "title": "Naive Session",
         "scheduled_date": naive_date,
@@ -451,8 +452,10 @@ async def test_poll_with_naive_datetime_fails(client):
     session_id = session_response.json()["id"]
 
     # Try to create poll with naive datetime (no timezone)
-    naive_date1 = "2024-12-25T10:00:00"  # No timezone info
-    naive_date2 = "2024-12-26T10:00:00"  # No timezone info
+    # Use relative dates to avoid outdated hardcoded dates
+    base_date = datetime.now() + timedelta(days=30)
+    naive_date1 = base_date.strftime("%Y-%m-%dT%H:%M:%S")
+    naive_date2 = (base_date + timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%S")
     poll_payload = {
         "options": [
             {"proposed_start": naive_date1},

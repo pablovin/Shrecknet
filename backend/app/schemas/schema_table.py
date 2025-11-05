@@ -1,6 +1,7 @@
 from typing import Optional, List
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlmodel import SQLModel
+from pydantic import field_validator
 
 
 class TableBase(SQLModel):
@@ -17,6 +18,14 @@ class TableRead(TableBase):
     id: int
     created_by: int
     created_at: datetime
+
+    @field_validator("created_at", mode="before")
+    @classmethod
+    def convert_naive_to_utc(cls, v: datetime) -> datetime:
+        """Convert naive datetime to UTC for backward compatibility."""
+        if isinstance(v, datetime) and v.tzinfo is None:
+            return v.replace(tzinfo=timezone.utc)
+        return v
 
 
 class TableUpdate(SQLModel):
@@ -49,6 +58,14 @@ class TableListRead(TableRead):
     members: List[TableMemberInfo] = []
     latest_session: Optional[datetime] = None
     next_session: Optional[datetime] = None
+
+    @field_validator("latest_session", "next_session", mode="before")
+    @classmethod
+    def convert_naive_to_utc(cls, v: Optional[datetime]) -> Optional[datetime]:
+        """Convert naive datetime to UTC for backward compatibility."""
+        if v is not None and isinstance(v, datetime) and v.tzinfo is None:
+            return v.replace(tzinfo=timezone.utc)
+        return v
 
 
 TableCreate.model_rebuild()

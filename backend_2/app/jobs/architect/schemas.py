@@ -7,14 +7,18 @@ from pydantic import BaseModel, ConfigDict, Field
 
 class ExtractedNewInstance(BaseModel):
     alias: str = Field(..., min_length=1, description="Proposed instance alias")
-    entity_definition_id: int = Field(..., description="Target ontology entity definition id")
+    entity_definition_id: int = Field(
+        ..., description="Target ontology entity definition id"
+    )
     confidence: float | None = Field(default=None, ge=0.0, le=1.0)
     justification: str | None = None
     metadata: dict[str, Any] | None = None
 
 
 class ExtractedExistingInstance(BaseModel):
-    entity_instance_id: str = Field(..., description="Existing entity instance identifier")
+    entity_instance_id: str = Field(
+        ..., description="Existing entity instance identifier"
+    )
     entity_definition_id: int = Field(..., description="Ontology entity definition id")
     confidence: float | None = Field(default=None, ge=0.0, le=1.0)
     justification: str | None = None
@@ -41,6 +45,75 @@ class ChunkAnalysisResult(BaseModel):
     )
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
+
+
+# New schemas for the redesigned pipeline
+
+
+class ChunkEntityProposal(BaseModel):
+    """Slim entity proposal extracted from a single chunk."""
+
+    name: str = Field(..., min_length=1)
+    ontology: str = Field(..., description="Ontology type name")
+    confidence: float = Field(..., ge=0.0, le=1.0)
+    why: str = Field(..., description="Brief justification")
+
+
+class ChunkExtractionResponse(BaseModel):
+    """Response from LLM for chunk-level entity extraction (Step 1)."""
+
+    entities: list[ChunkEntityProposal] = Field(default_factory=list)
+
+
+class DedupedEntityProposal(BaseModel):
+    """Entity proposal after deduplication across chunks."""
+
+    name: str = Field(..., description="Canonical entity name")
+    ontology: str = Field(..., description="Ontology type name")
+    confidence: float = Field(..., ge=0.0, le=1.0)
+    justifications: list[str] = Field(default_factory=list)
+    chunk_indices: list[int] = Field(default_factory=list)
+
+
+class ExistingNodeInfo(BaseModel):
+    """Information about an existing node in the knowledge graph."""
+
+    node_id: str
+    alias: str
+    ontology: str
+
+
+class ReconciledExistingEntity(BaseModel):
+    """An entity matched to an existing node."""
+
+    proposed_name: str
+    matched_node_id: str
+    ontology: str
+
+
+class ReconciledNewEntity(BaseModel):
+    """A new entity not matched to any existing node."""
+
+    name: str
+    ontology: str
+
+
+class ReconciliationResponse(BaseModel):
+    """Response from LLM for reconciliation with existing entities (Step 3)."""
+
+    existing: list[ReconciledExistingEntity] = Field(default_factory=list)
+    new: list[ReconciledNewEntity] = Field(default_factory=list)
+
+
+class FinalEntityProposal(BaseModel):
+    """Final entity proposal with resolved status for frontend."""
+
+    name: str
+    ontology: str
+    confidence: float
+    why: str
+    resolved_status: str = Field(..., description="'existing' or 'new'")
+    resolved_node_id: str | None = Field(default=None)
 
 
 class ExtractedProperty(BaseModel):

@@ -6,12 +6,14 @@ from fastapi import (
     File,
     Form,
     HTTPException,
+    Query,
     Response,
     UploadFile,
     status,
 )
 
 from app.api.deps import (
+    get_current_admin_user,
     get_current_user,
     get_library_service,
     require_roles,
@@ -476,3 +478,111 @@ async def list_embedding_jobs(
             }
             for job in jobs
         ]
+
+
+# Admin endpoints -----------------------------------------------
+
+
+@router.delete(
+    "/{ontology_id}/items/{item_id}/embeddings",
+    status_code=status.HTTP_200_OK,
+)
+async def clear_library_item_embeddings(
+    ontology_id: int,
+    item_id: int,
+    service: LibraryService = Depends(get_library_service),
+    current_user: User = Depends(get_current_admin_user),  # noqa: ARG001
+) -> dict:
+    """
+    Clear all embeddings for a library item.
+
+    This deletes all PdfChunk nodes in Neo4j associated with the library item.
+    Useful for clearing stuck or corrupted embeddings.
+
+    Requires admin role.
+    """
+    from app.graph.neo4j import get_driver
+    from app.services.pdf_embedding_service import PdfEmbeddingService
+
+    item = await _get_item_or_404(service, ontology_id, item_id)
+
+    # Clear embeddings from Neo4j
+    driver = get_driver()
+    async with driver.session() as graph_session:
+        pdf_service = PdfEmbeddingService(graph_session)
+        deleted_count = await pdf_service.delete_embeddings(item.id)
+
+    # Update the library item to mark it as not vectorized
+    await service.update_item(
+        item,
+        vectorized=False,
+        last_vectorized_at=None,
+    )
+
+    return {
+        "message": f"Cleared embeddings for library item {item_id}",
+        "library_item_id": item_id,
+        "ontology_id": ontology_id,
+        "chunks_deleted": deleted_count,
+    }
+
+
+@router.delete(
+    "/admin/clear-all-embeddings",
+    status_code=status.HTTP_200_OK,
+)
+async def clear_all_library_embeddings(
+    current_user: User = Depends(get_current_admin_user),
+    ontology_id: int | None = Query(None, description="Filter by ontology ID"),
+    service: LibraryService = Depends(get_library_service),
+) -> dict:
+    """
+    Clear all library item embeddings, optionally filtered by ontology.
+
+    This deletes all PdfChunk nodes in Neo4j for all library items,
+    or just those for a specific ontology.
+
+    Requires admin role.
+    """
+    from app.graph.neo4j import get_driver
+    from app.services.pdf_embedding_service import PdfEmbeddingService
+    from sqlalchemy import select, update
+    from app.models.library import LibraryItem
+
+    # Get all library items to clear
+    if ontology_id is not None:
+        await service._assert_ontology_exists(ontology_id)
+        items = await service.list_items(ontology_id, skip=0, limit=10000)
+    else:
+        # Get all items across all ontologies
+        result = await service.session.execute(select(LibraryItem))
+        items = list(result.scalars().all())
+
+    # Clear embeddings from Neo4j
+    driver = get_driver()
+    total_deleted = 0
+    async with driver.session() as graph_session:
+        pdf_service = PdfEmbeddingService(graph_session)
+        for item in items:
+            deleted_count = await pdf_service.delete_embeddings(item.id)
+            total_deleted += deleted_count
+
+    # Update all library items to mark them as not vectorized
+    if ontology_id is not None:
+        await service.session.execute(
+            update(LibraryItem)
+            .where(LibraryItem.ontology_id == ontology_id)
+            .values(vectorized=False, last_vectorized_at=None)
+        )
+    else:
+        await service.session.execute(
+            update(LibraryItem).values(vectorized=False, last_vectorized_at=None)
+        )
+    await service.session.commit()
+
+    return {
+        "message": f"Cleared embeddings for {len(items)} library items",
+        "items_affected": len(items),
+        "ontology_id": ontology_id,
+        "chunks_deleted": total_deleted,
+    }

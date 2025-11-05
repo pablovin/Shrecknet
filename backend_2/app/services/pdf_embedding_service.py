@@ -133,17 +133,19 @@ class PdfEmbeddingService:
                 
                 # Try to get page labels from PyMuPDF
                 try:
-                    page_labels_fitz = []
-                    for page_idx in range(total_pages):
-                        # Get the page label if it exists
-                        label = doc.get_page_labels()[page_idx] if doc.get_page_labels() else None
-                        if label:
-                            page_labels_fitz.append(str(label))
-                        else:
-                            page_labels_fitz.append(None)
-                    # Only use labels if we got at least some non-None values
-                    if any(l is not None for l in page_labels_fitz):
-                        page_labels = page_labels_fitz
+                    page_labels_list = doc.get_page_labels()  # Get once and reuse
+                    if page_labels_list:
+                        page_labels_fitz = []
+                        for page_idx in range(total_pages):
+                            # Get the page label if it exists
+                            label = page_labels_list[page_idx] if page_idx < len(page_labels_list) else None
+                            if label:
+                                page_labels_fitz.append(str(label))
+                            else:
+                                page_labels_fitz.append(None)
+                        # Only use labels if we got at least some non-None values
+                        if any(l is not None for l in page_labels_fitz):
+                            page_labels = page_labels_fitz
                 except Exception as e:
                     logger.debug(f"Could not extract page labels from PyMuPDF: {e}")
                     page_labels = None

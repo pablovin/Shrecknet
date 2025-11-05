@@ -109,9 +109,22 @@ class LibrarianOrchestrator:
             )
 
             # Parse JSON response
-            subqueries = json.loads(response)
-            if not isinstance(subqueries, list):
+            try:
+                subqueries = json.loads(response)
+                if not isinstance(subqueries, list):
+                    logger.warning(
+                        "Subquery response was not a list: %s",
+                        type(subqueries).__name__
+                    )
+                    subqueries = []
+            except json.JSONDecodeError as e:
+                logger.warning(
+                    "Failed to parse subqueries JSON: %s. Response: %s",
+                    e,
+                    response[:200] if response else "<empty>"
+                )
                 subqueries = []
+            
             # Limit to 4 subqueries
             subqueries = [str(sq) for sq in subqueries[:4]]
 
@@ -583,11 +596,17 @@ class LibrarianOrchestrator:
             return []
 
         # Extract all library_item_id and page combinations from <sub> tags
-        pattern = r'<sub\s+library_item_id="(\d+)"[^>]*page="(\d+)"'
+        # Pattern handles attributes in any order
+        pattern = r'<sub\s+(?:[^>]*\s+)?library_item_id="(\d+)"(?:[^>]*\s+)?page="(\d+)"'
         matches = re.findall(pattern, answer)
 
-        # Build set of (item_id, page) tuples
+        # Also try the reverse order
+        pattern_reverse = r'<sub\s+(?:[^>]*\s+)?page="(\d+)"(?:[^>]*\s+)?library_item_id="(\d+)"'
+        matches_reverse = re.findall(pattern_reverse, answer)
+        
+        # Combine matches (reverse the tuple order for reverse pattern)
         cited_sources = {(int(item_id), int(page)) for item_id, page in matches}
+        cited_sources.update({(int(item_id), int(page)) for page, item_id in matches_reverse})
 
         # Filter chunks to only those that were cited
         sources_used = []

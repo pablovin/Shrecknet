@@ -61,7 +61,9 @@ class TableListRead(TableRead):
 
     @field_validator("latest_session", "next_session", mode="before")
     @classmethod
-    def ensure_session_times_timezone_aware(cls, v: Optional[datetime]) -> Optional[datetime]:
+    def ensure_session_times_timezone_aware(
+        cls, v: Optional[datetime]
+    ) -> Optional[datetime]:
         """Ensure session times are timezone-aware if provided, defaulting to UTC if naive."""
         if v is not None and isinstance(v, datetime) and v.tzinfo is None:
             return v.replace(tzinfo=timezone.utc)

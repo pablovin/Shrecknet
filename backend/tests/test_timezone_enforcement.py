@@ -57,12 +57,14 @@ async def test_session_requires_timezone_aware_datetime(async_client):
     )
     assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
     session_data = resp.json()
-    
+
     # Verify the response includes timezone info
     assert session_data["scheduled_time"] is not None
     # Check that the ISO string has timezone offset
-    assert "+" in session_data["scheduled_time"] or session_data["scheduled_time"].endswith("Z")
-    
+    assert "+" in session_data["scheduled_time"] or session_data[
+        "scheduled_time"
+    ].endswith("Z")
+
     # Verify created_at also has timezone info
     assert session_data["created_at"] is not None
     assert "+" in session_data["created_at"] or session_data["created_at"].endswith("Z")
@@ -83,7 +85,9 @@ async def test_session_requires_timezone_aware_datetime(async_client):
         f"/tables/{table_id}/sessions", json=sess_payload_naive, headers=headers
     )
     # Should fail validation
-    assert resp.status_code == 422, f"Expected 422 for naive datetime, got {resp.status_code}"
+    assert (
+        resp.status_code == 422
+    ), f"Expected 422 for naive datetime, got {resp.status_code}"
 
 
 @pytest.mark.anyio
@@ -137,10 +141,9 @@ async def test_poll_requires_timezone_aware_datetime(async_client):
     # Test 1: Poll with timezone-aware datetimes (should succeed)
     brussels_tz = ZoneInfo("Europe/Brussels")
     times_aware = [
-        (datetime.now(brussels_tz) + timedelta(days=i)).isoformat()
-        for i in range(3)
+        (datetime.now(brussels_tz) + timedelta(days=i)).isoformat() for i in range(3)
     ]
-    
+
     resp = await async_client.post(
         f"/tables/{table_id}/sessions/{session_id}/poll",
         json={"proposed_times": times_aware, "timezone": "Europe/Brussels"},
@@ -148,11 +151,11 @@ async def test_poll_requires_timezone_aware_datetime(async_client):
     )
     assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
     poll_data = resp.json()
-    
+
     # Verify all options have timezone info
     for option in poll_data["options"]:
         assert "+" in option["proposed_time"] or option["proposed_time"].endswith("Z")
-    
+
     # Verify created_at has timezone info
     assert "+" in poll_data["created_at"] or poll_data["created_at"].endswith("Z")
 
@@ -163,18 +166,17 @@ async def test_poll_requires_timezone_aware_datetime(async_client):
     session_id2 = resp.json()["id"]
 
     # Test 2: Poll with naive datetimes (should fail)
-    times_naive = [
-        (datetime.now() + timedelta(days=i)).isoformat()
-        for i in range(3)
-    ]
-    
+    times_naive = [(datetime.now() + timedelta(days=i)).isoformat() for i in range(3)]
+
     resp = await async_client.post(
         f"/tables/{table_id}/sessions/{session_id2}/poll",
         json={"proposed_times": times_naive, "timezone": "UTC"},
         headers=headers,
     )
     # Should fail validation
-    assert resp.status_code == 422, f"Expected 422 for naive datetimes, got {resp.status_code}"
+    assert (
+        resp.status_code == 422
+    ), f"Expected 422 for naive datetimes, got {resp.status_code}"
 
 
 @pytest.mark.anyio
@@ -198,7 +200,12 @@ async def test_table_list_returns_timezone_aware_datetimes(async_client):
     headers = {"Authorization": f"Bearer {token}"}
 
     # Create world and table
-    gw_payload = {"name": "TableListTZWorld", "system": "dnd", "description": "", "logo": ""}
+    gw_payload = {
+        "name": "TableListTZWorld",
+        "system": "dnd",
+        "description": "",
+        "logo": "",
+    }
     resp = await async_client.post("/gameworlds/", json=gw_payload, headers=headers)
     world_id = resp.json()["id"]
 
@@ -209,7 +216,7 @@ async def test_table_list_returns_timezone_aware_datetimes(async_client):
     )
     table_id = resp.json()["id"]
     table_created_at = resp.json()["created_at"]
-    
+
     # Verify table created_at has timezone info
     assert "+" in table_created_at or table_created_at.endswith("Z")
 
@@ -236,10 +243,10 @@ async def test_table_list_returns_timezone_aware_datetimes(async_client):
     resp = await async_client.get("/tables/", headers=headers)
     assert resp.status_code == 200
     tables = resp.json()
-    
+
     # Find our table
     our_table = next(t for t in tables if t["id"] == table_id)
-    
+
     # Verify next_session has timezone info
     assert our_table["next_session"] is not None
     assert "+" in our_table["next_session"] or our_table["next_session"].endswith("Z")

@@ -13,7 +13,9 @@ class SessionBase(SQLModel):
 
     @field_validator("scheduled_time")
     @classmethod
-    def validate_scheduled_time_timezone(cls, v: Optional[datetime]) -> Optional[datetime]:
+    def validate_scheduled_time_timezone(
+        cls, v: Optional[datetime]
+    ) -> Optional[datetime]:
         """Ensure scheduled_time is timezone-aware if provided."""
         if v is not None and v.tzinfo is None:
             raise ValueError("scheduled_time must include timezone information")
@@ -54,7 +56,9 @@ class SessionUpdate(SQLModel):
 
     @field_validator("scheduled_time")
     @classmethod
-    def validate_scheduled_time_timezone(cls, v: Optional[datetime]) -> Optional[datetime]:
+    def validate_scheduled_time_timezone(
+        cls, v: Optional[datetime]
+    ) -> Optional[datetime]:
         """Ensure scheduled_time is timezone-aware if provided."""
         if v is not None and v.tzinfo is None:
             raise ValueError("scheduled_time must include timezone information")

@@ -49,9 +49,12 @@ def upgrade() -> None:
                     text("UPDATE session SET scheduled_time = :dt WHERE id = :id"),
                     {"dt": updated_str, "id": session_id},
                 )
-            except Exception:
-                # If parsing fails, skip this record
-                pass
+            except (ValueError, TypeError) as e:
+                # If parsing fails, log and skip this record
+                print(
+                    f"Warning: Could not parse scheduled_time for session {session_id}: {e}"
+                )
+                continue
 
     # Get all session poll options with proposed_time
     result = conn.execute(
@@ -75,8 +78,11 @@ def upgrade() -> None:
                     ),
                     {"dt": updated_str, "id": option_id},
                 )
-            except Exception:
-                pass
+            except (ValueError, TypeError) as e:
+                print(
+                    f"Warning: Could not parse proposed_time for option {option_id}: {e}"
+                )
+                continue
 
     # Ensure created_at fields have timezone info (should already have UTC)
     # For session.created_at
@@ -96,8 +102,11 @@ def upgrade() -> None:
                         text("UPDATE session SET created_at = :dt WHERE id = :id"),
                         {"dt": updated_str, "id": session_id},
                     )
-            except Exception:
-                pass
+            except (ValueError, TypeError) as e:
+                print(
+                    f"Warning: Could not parse created_at for session {session_id}: {e}"
+                )
+                continue
 
     # For sessionpoll.created_at
     result = conn.execute(
@@ -116,8 +125,9 @@ def upgrade() -> None:
                         text("UPDATE sessionpoll SET created_at = :dt WHERE id = :id"),
                         {"dt": updated_str, "id": poll_id},
                     )
-            except Exception:
-                pass
+            except (ValueError, TypeError) as e:
+                print(f"Warning: Could not parse created_at for poll {poll_id}: {e}")
+                continue
 
     # For table.created_at
     result = conn.execute(
@@ -136,8 +146,9 @@ def upgrade() -> None:
                         text('UPDATE "table" SET created_at = :dt WHERE id = :id'),
                         {"dt": updated_str, "id": table_id},
                     )
-            except Exception:
-                pass
+            except (ValueError, TypeError) as e:
+                print(f"Warning: Could not parse created_at for table {table_id}: {e}")
+                continue
 
 
 def downgrade() -> None:

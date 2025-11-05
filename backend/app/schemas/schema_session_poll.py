@@ -34,8 +34,8 @@ class SessionPollOptionRead(SQLModel):
 
     @field_validator("proposed_time", mode="before")
     @classmethod
-    def ensure_timezone_aware(cls, v: datetime) -> datetime:
-        """Ensure proposed_time is timezone-aware, defaulting to UTC if naive."""
+    def convert_naive_to_utc(cls, v: datetime) -> datetime:
+        """Convert naive datetime to UTC for backward compatibility."""
         if isinstance(v, datetime) and v.tzinfo is None:
             return v.replace(tzinfo=timezone.utc)
         return v
@@ -50,8 +50,8 @@ class SessionPollRead(SQLModel):
 
     @field_validator("created_at", mode="before")
     @classmethod
-    def ensure_timezone_aware(cls, v: datetime) -> datetime:
-        """Ensure created_at is timezone-aware, defaulting to UTC if naive."""
+    def convert_naive_to_utc(cls, v: datetime) -> datetime:
+        """Convert naive datetime to UTC for backward compatibility."""
         if isinstance(v, datetime) and v.tzinfo is None:
             return v.replace(tzinfo=timezone.utc)
         return v

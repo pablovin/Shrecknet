@@ -5,6 +5,14 @@ from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo
 
 
+def assert_has_timezone_info(datetime_str: str) -> None:
+    """Helper to assert that an ISO datetime string includes timezone information."""
+    assert datetime_str is not None, "Datetime string should not be None"
+    assert "+" in datetime_str or datetime_str.endswith(
+        "Z"
+    ), f"Datetime {datetime_str} should include timezone information"
+
+
 @pytest.mark.anyio
 async def test_session_requires_timezone_aware_datetime(async_client):
     """Test that creating a session requires timezone-aware datetime."""
@@ -59,15 +67,8 @@ async def test_session_requires_timezone_aware_datetime(async_client):
     session_data = resp.json()
 
     # Verify the response includes timezone info
-    assert session_data["scheduled_time"] is not None
-    # Check that the ISO string has timezone offset
-    assert "+" in session_data["scheduled_time"] or session_data[
-        "scheduled_time"
-    ].endswith("Z")
-
-    # Verify created_at also has timezone info
-    assert session_data["created_at"] is not None
-    assert "+" in session_data["created_at"] or session_data["created_at"].endswith("Z")
+    assert_has_timezone_info(session_data["scheduled_time"])
+    assert_has_timezone_info(session_data["created_at"])
 
     # Test 2: Session with naive datetime (should fail)
     scheduled_time_naive = datetime.now()
@@ -154,10 +155,10 @@ async def test_poll_requires_timezone_aware_datetime(async_client):
 
     # Verify all options have timezone info
     for option in poll_data["options"]:
-        assert "+" in option["proposed_time"] or option["proposed_time"].endswith("Z")
+        assert_has_timezone_info(option["proposed_time"])
 
     # Verify created_at has timezone info
-    assert "+" in poll_data["created_at"] or poll_data["created_at"].endswith("Z")
+    assert_has_timezone_info(poll_data["created_at"])
 
     # Create another session for naive datetime test
     resp = await async_client.post(
@@ -218,7 +219,7 @@ async def test_table_list_returns_timezone_aware_datetimes(async_client):
     table_created_at = resp.json()["created_at"]
 
     # Verify table created_at has timezone info
-    assert "+" in table_created_at or table_created_at.endswith("Z")
+    assert_has_timezone_info(table_created_at)
 
     # Create a session with timezone-aware datetime
     brussels_tz = ZoneInfo("Europe/Brussels")
@@ -248,5 +249,4 @@ async def test_table_list_returns_timezone_aware_datetimes(async_client):
     our_table = next(t for t in tables if t["id"] == table_id)
 
     # Verify next_session has timezone info
-    assert our_table["next_session"] is not None
-    assert "+" in our_table["next_session"] or our_table["next_session"].endswith("Z")
+    assert_has_timezone_info(our_table["next_session"])

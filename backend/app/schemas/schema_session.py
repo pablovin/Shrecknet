@@ -37,8 +37,8 @@ class SessionRead(SessionBase):
 
     @field_validator("created_at", "scheduled_time", mode="before")
     @classmethod
-    def ensure_timezone_aware(cls, v: Optional[datetime]) -> Optional[datetime]:
-        """Ensure datetime fields are timezone-aware, defaulting to UTC if naive."""
+    def convert_naive_to_utc(cls, v: Optional[datetime]) -> Optional[datetime]:
+        """Convert naive datetimes to UTC for backward compatibility."""
         if v is not None and isinstance(v, datetime) and v.tzinfo is None:
             # If datetime is naive, assume UTC
             return v.replace(tzinfo=timezone.utc)

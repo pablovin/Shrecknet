@@ -477,6 +477,21 @@ class LibrarianOrchestrator:
                 + "\n".join(parts)
             )
 
+        if trace is not None:
+            trace.append(
+                {
+                    "step": "answer",
+                    "data": {
+                        "model": self.answer_model,
+                        "chunks_used": len(chunks),
+                        "answer_preview": (
+                            answer[:200] + "..." if len(answer) > 200 else answer
+                        ),
+                    },
+                }
+            )
+
+        logger.info("Answer generated")
         return answer
 
     async def _generate_single_pass_answer(
@@ -600,23 +615,6 @@ class LibrarianOrchestrator:
         lower = text.lower()
         has_page = "page" in lower or "#page=" in lower or "sources:" in lower
         return has_page
-
-        if trace is not None:
-            trace.append(
-                {
-                    "step": "answer",
-                    "data": {
-                        "model": self.answer_model,
-                        "chunks_used": len(chunks),
-                        "answer_preview": (
-                            answer[:200] + "..." if len(answer) > 200 else answer
-                        ),
-                    },
-                }
-            )
-
-        logger.info("Answer generated")
-        return answer
 
     async def _apply_style(
         self,

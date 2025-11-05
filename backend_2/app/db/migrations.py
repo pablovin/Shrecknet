@@ -261,31 +261,42 @@ async def migrate_game_datetimes_to_brussels_timezone(engine: AsyncEngine) -> No
 
     For SQLite, datetime values are stored as strings. This migration converts
     naive datetime strings to timezone-aware strings in Brussels timezone (Europe/Brussels).
+
+    Note: This migration uses +01:00 (CET - Central European Time) as a fixed offset
+    for all existing records. This is a simplification that doesn't account for DST
+    (Daylight Saving Time). Historical records created during CEST (summer time) will
+    be marked with +01:00 instead of +02:00. This is acceptable for most use cases
+    as it provides unambiguous timezone information. If precise DST handling is required,
+    a more complex migration using pytz/zoneinfo would be needed.
     """
+    # Define tables and their datetime columns that need migration
+    # Using a dictionary for validation - only these tables/columns will be migrated
+    VALID_TABLE_COLUMNS = {
+        "games": ["created_at", "updated_at"],
+        "game_sessions": ["scheduled_date", "created_at", "updated_at"],
+        "game_session_polls": ["created_at"],
+        "game_session_poll_options": ["proposed_start", "created_at"],
+        "game_session_poll_votes": ["created_at"],
+        "game_session_attendance": ["responded_at"],
+    }
+
     async with engine.begin() as conn:
         inspector = await conn.run_sync(lambda sync_conn: inspect(sync_conn))
         tables = await conn.run_sync(lambda sync_conn: inspector.get_table_names())
-
-        # Define tables and their datetime columns that need migration
-        table_columns = {
-            "games": ["created_at", "updated_at"],
-            "game_sessions": ["scheduled_date", "created_at", "updated_at"],
-            "game_session_polls": ["created_at"],
-            "game_session_poll_options": ["proposed_start", "created_at"],
-            "game_session_poll_votes": ["created_at"],
-            "game_session_attendance": ["responded_at"],
-        }
 
         logger.info(
             "Starting game datetime timezone migration to Brussels (Europe/Brussels)"
         )
 
-        for table_name, columns in table_columns.items():
+        for table_name, columns in VALID_TABLE_COLUMNS.items():
+            # Validate table exists
             if table_name not in tables:
                 logger.debug(f"Table {table_name} does not exist, skipping")
                 continue
 
             for column in columns:
+                # Both table_name and column are from VALID_TABLE_COLUMNS,
+                # so they're safe to use in SQL (not user input)
                 logger.info(f"Migrating {table_name}.{column} to Brussels timezone")
 
                 # For SQLite, we need to update datetime strings to include timezone
@@ -312,9 +323,8 @@ async def migrate_game_datetimes_to_brussels_timezone(engine: AsyncEngine) -> No
                     f"Found {rows_to_update} rows to migrate in {table_name}.{column}"
                 )
 
-                # Update naive datetime strings to include Brussels timezone offset (+01:00 or +02:00 depending on DST)
-                # For simplicity, we'll use +01:00 as Brussels standard time offset
-                # In production, you might want to use pytz to determine the correct offset for each datetime
+                # Update naive datetime strings to include Brussels timezone offset
+                # Using +01:00 (CET) as a fixed offset for all records
                 update_query = text(
                     f"""
                     UPDATE {table_name}

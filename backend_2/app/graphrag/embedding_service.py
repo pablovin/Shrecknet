@@ -261,6 +261,8 @@ class EmbeddingService:
             List of embedding vectors
         """
         import logging
+        
+        global _cached_model
         logger = logging.getLogger(__name__)
         
         model = get_embedding_model()
@@ -278,7 +280,6 @@ class EmbeddingService:
                         "reloading model: %s", exc
                     )
                     # Clear cached model and reload
-                    global _cached_model
                     with _model_lock:
                         _cached_model = None
                     model = get_embedding_model()
@@ -296,7 +297,6 @@ class EmbeddingService:
                         "reloading model: %s", exc
                     )
                     # Clear cached model and reload
-                    global _cached_model
                     with _model_lock:
                         _cached_model = None
                     model = get_embedding_model()

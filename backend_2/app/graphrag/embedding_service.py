@@ -277,16 +277,22 @@ class EmbeddingService:
                 # Convert to numpy array with C-contiguous memory layout
                 # This ensures a clean copy without buffer export locks
                 # Using float32 to match the embedding model's native precision
+                # (sentence-transformers outputs float32 by default)
                 embeddings_array = np.asarray(embeddings, dtype=np.float32, order='C')
                 
                 # Convert to Python list row by row to avoid buffer reference issues
-                # Each row is copied independently to break any buffer locks
+                # row.copy() creates a new array without buffer locks
+                # .tolist() then converts to Python list
+                # Both operations are necessary to break all buffer references
                 result = [row.copy().tolist() for row in embeddings_array]
                 
                 return result
                 
             except (RuntimeError, ValueError, BufferError) as exc:
                 error_msg = str(exc)
+                # String matching is necessary because these buffer errors don't have
+                # specific exception types - they're generic numpy/PyTorch errors
+                # with diagnostic messages
                 is_retryable = (
                     "meta tensor" in error_msg.lower() or
                     "cannot be re-sized" in error_msg or

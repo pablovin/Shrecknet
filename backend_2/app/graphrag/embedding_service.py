@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import threading
 import uuid
@@ -11,6 +12,8 @@ from typing import Any
 
 from neo4j import AsyncSession as AsyncNeo4jSession
 from sentence_transformers import SentenceTransformer
+
+logger = logging.getLogger(__name__)
 
 
 # Multilingual model with good performance/speed tradeoff
@@ -260,10 +263,7 @@ class EmbeddingService:
         Returns:
             List of embedding vectors
         """
-        import logging
-        
         global _cached_model
-        logger = logging.getLogger(__name__)
         
         model = get_embedding_model()
         max_retries = 2
@@ -276,8 +276,10 @@ class EmbeddingService:
             except RuntimeError as exc:
                 if "meta tensor" in str(exc).lower():
                     logger.warning(
-                        f"Meta tensor error on attempt {attempt + 1}/{max_retries}, "
-                        "reloading model: %s", exc
+                        "Meta tensor error on attempt %d/%d, reloading model: %s",
+                        attempt + 1,
+                        max_retries,
+                        exc,
                     )
                     # Clear cached model and reload
                     with _model_lock:
@@ -293,8 +295,10 @@ class EmbeddingService:
                 error_msg = str(exc)
                 if "cannot be re-sized" in error_msg or "export" in error_msg.lower():
                     logger.warning(
-                        f"Array export error on attempt {attempt + 1}/{max_retries}, "
-                        "reloading model: %s", exc
+                        "Array export error on attempt %d/%d, reloading model: %s",
+                        attempt + 1,
+                        max_retries,
+                        exc,
                     )
                     # Clear cached model and reload
                     with _model_lock:
@@ -304,9 +308,6 @@ class EmbeddingService:
                         raise
                 else:
                     raise
-        
-        # This should never be reached due to the raise in the loop
-        raise RuntimeError("Failed to generate embeddings after all retries")
 
     def embed_text(self, text: str) -> list[float]:
         """

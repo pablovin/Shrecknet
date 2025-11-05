@@ -4,12 +4,12 @@
 
 The Librarian query endpoint (`POST /jobs/librarian/{agent_id}/query`) searches through embedded PDF books and returns relevant chunks with complete source metadata, including book title, authors, and page information.
 
-**New Features:**
-- Automatic generation of up to 4 focused subqueries to improve retrieval
-- Parallel retrieval across main query and subqueries
+**Features:**
+- Retrieves top K chunks across all library items in the ontology
 - Enhanced citation format using `<sub>` tags with library_item_id, library_item_name, and page
 - Tracking of sources actually used in the answer
 - Improved PDF page mapping for accurate citations
+- Single-pass answer generation with writing style applied
 
 ## Endpoint
 
@@ -55,11 +55,7 @@ Requires Bearer token authentication.
   "agent_id": "550e8400-e29b-41d4-a716-446655440000",
   "mode": "both",
   "query": "What are the main principles of world building?",
-  "subqueries": [
-    "What makes a world setting consistent?",
-    "How do you create depth in fictional worlds?",
-    "What are best practices for world believability?"
-  ],
+  "subqueries": [],
   "answer": "World building requires attention to several key principles. First, consistency is crucial<sub library_item_id=\"42\" library_item_name=\"The Art of World Building\" page=\"15\">. The rules of your world must remain stable throughout<sub library_item_id=\"42\" library_item_name=\"The Art of World Building\" page=\"16\">. Second, depth matters<sub library_item_id=\"87\" library_item_name=\"Fictional Cultures: A Guide\" page=\"23\">...",
   "chunks": [
     {
@@ -125,7 +121,7 @@ Requires Bearer token authentication.
 - **agent_id** (string): ID of the librarian agent that processed the query
 - **mode** (string): Response mode that was used
 - **query** (string): The original query
-- **subqueries** (array of strings): Up to 4 generated subqueries used to improve retrieval
+- **subqueries** (array of strings): Empty array in simplified version (reserved for future use)
 - **answer** (string, nullable): Natural language answer with inline `<sub>` citations (when mode is "nl" or "both")
 - **chunks** (array): Array of all retrieved chunks with metadata (when mode is "context" or "both")
 - **sources_used** (array): Array of chunks that were actually cited in the answer
@@ -170,8 +166,6 @@ The enhanced source metadata and citation format allow the frontend to:
 3. **Navigate to sources**: Extract `pdf_url` and `page_url` from chunks to link directly to source pages
 
 4. **Group sources by book**: Use `library_item_id` and `book_title` to organize multiple citations from the same book
-
-5. **Track subqueries**: Display the generated subqueries to show users how the system approached their question
 
 ### Parsing Citations
 
@@ -242,13 +236,13 @@ or
 
 ### Changes from Previous Version
 
-- **NEW**: Automatic subquery generation (up to 4 subqueries) for better information retrieval
-- **NEW**: Parallel retrieval across main query and subqueries
-- **CHANGED**: Citation format from `<sup>` tags to `<sub>` tags with library_item_id, library_item_name, and page attributes
-- **CHANGED**: Citations now appear for ALL mentions of a source, not just the first mention
-- **NEW**: `sources_used` field contains only chunks actually cited in the answer
-- **NEW**: `subqueries` field shows the generated subqueries
-- **IMPROVED**: PDF page mapping now correctly handles both PyMuPDF and PyPDF2, including page labels
+- **SIMPLIFIED**: Removed automatic subquery generation for a more straightforward retrieval process
+- **SIMPLIFIED**: Direct retrieval of top K chunks across all library items in the ontology
+- **KEPT**: Citation format using `<sub>` tags with library_item_id, library_item_name, and page attributes
+- **KEPT**: Citations appear for ALL mentions of a source, not just the first mention
+- **KEPT**: `sources_used` field contains only chunks actually cited in the answer
+- **CHANGED**: `subqueries` field is now always an empty array (simplified pipeline)
+- **KEPT**: PDF page mapping correctly handles both PyMuPDF and PyPDF2, including page labels
 
 ### Implementation Details
 
@@ -256,8 +250,7 @@ or
 - The `sources_used` array contains only chunks that were cited in the answer (a subset of chunks)
 - Book metadata (title and authors) will be null if the library item cannot be found in the database
 - The `library_items_used` field provides a quick way to identify all unique books referenced
-- Subquery generation is automatic and based on the question complexity and available books
-- If a question is simple, fewer than 4 subqueries may be generated
+- Retrieval is direct and efficient, searching across all library items in the agent's ontologies
 
 ### For Complete Example
 

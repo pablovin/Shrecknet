@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import threading
 import uuid
@@ -11,6 +12,8 @@ from typing import Any
 
 from neo4j import AsyncSession as AsyncNeo4jSession
 from sentence_transformers import SentenceTransformer
+
+logger = logging.getLogger(__name__)
 
 
 # Multilingual model with good performance/speed tradeoff
@@ -260,20 +263,51 @@ class EmbeddingService:
         Returns:
             List of embedding vectors
         """
+        global _cached_model
+        
         model = get_embedding_model()
-        try:
-            embeddings = model.encode(texts, normalize_embeddings=True)
-        except RuntimeError as exc:
-            if "meta tensor" in str(exc).lower():
-                # Clear cached model and reload
-                global _cached_model
-                with _model_lock:
-                    _cached_model = None
-                model = get_embedding_model()
+        max_retries = 2
+        
+        for attempt in range(max_retries):
+            try:
                 embeddings = model.encode(texts, normalize_embeddings=True)
-            else:
-                raise
-        return embeddings.tolist()
+                # Convert to list with explicit copy to avoid export issues
+                return embeddings.copy().tolist()
+            except RuntimeError as exc:
+                if "meta tensor" in str(exc).lower():
+                    logger.warning(
+                        "Meta tensor error on attempt %d/%d, reloading model: %s",
+                        attempt + 1,
+                        max_retries,
+                        exc,
+                    )
+                    # Clear cached model and reload
+                    with _model_lock:
+                        _cached_model = None
+                    model = get_embedding_model()
+                    if attempt == max_retries - 1:
+                        raise
+                else:
+                    raise
+            except (ValueError, BufferError) as exc:
+                # Handle numpy array export errors like "cannot be re-sized"
+                # This can happen when the model's output buffer is locked
+                error_msg = str(exc)
+                if "cannot be re-sized" in error_msg or "export" in error_msg.lower():
+                    logger.warning(
+                        "Array export error on attempt %d/%d, reloading model: %s",
+                        attempt + 1,
+                        max_retries,
+                        exc,
+                    )
+                    # Clear cached model and reload
+                    with _model_lock:
+                        _cached_model = None
+                    model = get_embedding_model()
+                    if attempt == max_retries - 1:
+                        raise
+                else:
+                    raise
 
     def embed_text(self, text: str) -> list[float]:
         """

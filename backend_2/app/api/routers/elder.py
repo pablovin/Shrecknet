@@ -187,8 +187,25 @@ async def query_elder(
                 content=request.query,
             )
             # Save assistant response (even if empty/None)
-            # Build metadata when trace is requested to persist full debug info
-            meta: dict | None = None
+            # Build metadata with sources so the frontend can render them
+            def _to_plain(item):
+                """Convert pydantic models and other objects to JSON-friendly dicts."""
+                if item is None:
+                    return None
+                try:
+                    if hasattr(item, "model_dump"):
+                        return item.model_dump()
+                    if hasattr(item, "dict"):
+                        return item.dict()
+                except Exception:
+                    pass
+                return item
+
+            meta: dict | None = {
+                "context": [_to_plain(c) for c in (response.context or [])],
+                "subanswers": [_to_plain(sa) for sa in (response.subanswers or [])],
+            }
+
             if request.include_trace:
                 subqueries: list[str] = []
                 if response.trace:
@@ -202,17 +219,12 @@ async def query_elder(
                         if step_name == "decompose" and data and "subqueries" in data:
                             subqueries = data["subqueries"]
                             break
-                # Include references via context and subanswers
-                meta = {
-                    "trace": [
-                        getattr(t, "__dict__", t) for t in (response.trace or [])
-                    ],
-                    "subqueries": subqueries,
-                    "context": [getattr(c, "__dict__", c) for c in (response.context or [])],
-                    "subanswers": [
-                        getattr(sa, "__dict__", sa) for sa in (response.subanswers or [])
-                    ],
-                }
+                meta.update(
+                    {
+                        "trace": [_to_plain(t) for t in (response.trace or [])],
+                        "subqueries": subqueries,
+                    }
+                )
             await chat_service.add_message_to_chat(
                 chat_id=request.chat_id,
                 user_id=_current_user.id,

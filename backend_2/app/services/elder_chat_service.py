@@ -208,8 +208,10 @@ class ElderChatService:
         # Append to filesystem log (source of truth for history)
         try:
             append_message(user_id, chat.agent_id, chat_id, role, content, metadata)
-        except Exception:
-            logger.warning("Failed to append chat file for %s", chat_id)
+        except Exception as exc:
+            logger.warning(
+                "Failed to append chat file for %s: %s", chat_id, exc, exc_info=True
+            )
 
         # Optionally skip DB history persistence to rely solely on JSON files
         return True

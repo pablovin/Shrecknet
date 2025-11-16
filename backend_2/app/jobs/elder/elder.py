@@ -83,8 +83,7 @@ class ElderOrchestrator:
         # Get ontology IDs from agent
         ontology_ids = [ont.id for ont in agent.ontologies]
 
-        # Fast path: single retrieval + single generation
-        request.fast = True
+        # Fast path: single retrieval + single generation (optional)
         if request.fast:
             top_k = min(top_k, self.max_fast_mode_top_k)
             model = self.model_policy.get_model(LLMTask.SYNTHESIS)
@@ -114,6 +113,10 @@ class ElderOrchestrator:
             ]
 
             if not chunks:
+                no_context_answer = (
+                    "I couldn't find any relevant information about your question in the "
+                    "knowledge base. Please rephrase or provide more details."
+                )
                 response = ElderQueryResponse(
                     agent_id=agent.id,
                     mode=request.mode,
@@ -123,7 +126,7 @@ class ElderOrchestrator:
                     context=[],
                     trace=trace if request.include_trace else None,
                     retrieval_debug=self.last_retrieval_debug or None,
-                    answer=None,
+                    answer=no_context_answer if request.mode in ("nl", "both") else None,
                 )
                 timings["overall"] = time.monotonic() - overall_start
                 logger.info(
@@ -146,7 +149,9 @@ class ElderOrchestrator:
             compact_context = "\n".join(context_snippets)
 
             prompt = (
-                "You are a concise assistant. Using the context, answer the question briefly (<=120 words).\n"
+                "You are a helpful assistant. Use only the provided context to answer the question "
+                "with concrete facts, names, and numbers. Keep it concise but specific (<=150 words). "
+                "If the context doesn't contain the answer, say so explicitly.\n"
                 f"Question: {request.query}\n"
                 f"Context:\n{compact_context}"
             )
@@ -247,6 +252,10 @@ class ElderOrchestrator:
                 resp_trace.append(
                     TraceStep(step="retrieval_error", data={"errors": retrieval_errors})
                 )
+            no_context_answer = (
+                "I couldn't find any relevant information about your question in the "
+                "knowledge base. Please rephrase or ask about a different topic."
+            )
             response = ElderQueryResponse(
                 agent_id=agent.id,
                 mode=request.mode,
@@ -256,6 +265,7 @@ class ElderOrchestrator:
                 context=[],
                 trace=resp_trace or None,
                 retrieval_debug=self.last_retrieval_debug or None,
+                answer=no_context_answer if request.mode in ("nl", "both") else None,
             )
             timings["overall"] = time.monotonic() - overall_start
             logger.info(

@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.models.architect import (
     ArchitectProposalStatus,
@@ -134,14 +134,60 @@ class ValidatedProposalItem(BaseModel):
     )
 
 
+class RevisedSuggestion(BaseModel):
+    """Revised suggestion coming from the frontend after user curation."""
+
+    suggestion_id: str = Field(..., description="Original proposal identifier")
+    action: Literal["new", "updated", "merged"] = Field(
+        ..., description="How the suggestion should be applied"
+    )
+    alias: str | None = Field(
+        default=None, description="Alias after user edits or merges"
+    )
+    entity_definition_id: int | None = Field(
+        default=None, description="Final entity definition chosen by the user"
+    )
+    entity_instance_id: str | None = Field(
+        default=None, description="Target entity when action=updated"
+    )
+    chunk_indices: list[int] | None = Field(
+        default=None,
+        description="Relevant chunk indices for this suggestion (optional)",
+    )
+    merged_suggestion_ids: list[str] | None = Field(
+        default=None,
+        description="When merging, the proposal ids that were merged together",
+    )
+    merged_aliases: list[str] | None = Field(
+        default=None,
+        description="All aliases the user merged for this suggestion",
+    )
+    status: ArchitectProposalStatus | None = Field(
+        default=None,
+        description="Frontend approval status; only approved/merged should be generated",
+    )
+
+
 class ArchitectValidationRequest(BaseModel):
     """Payload for step 2: processing validated proposals."""
 
     run_id: str = Field(..., description="The architect run ID from step 1")
-    validated_proposals: list[ValidatedProposalItem] = Field(
-        ..., min_length=1, description="List of validated proposals"
+    validated_proposals: list[ValidatedProposalItem] | None = Field(
+        default=None, description="List of validated proposals (v1 compatibility)"
+    )
+    revised_suggestions: list[RevisedSuggestion] | None = Field(
+        default=None,
+        description="Curated suggestions coming from the frontend (v2 preferred payload)",
     )
     author_type: str = Field(
         default="user", description="Type of author (user or agent)"
     )
     author_id: str = Field(..., description="ID of the author")
+
+    @model_validator(mode="after")
+    def ensure_payload(cls, values: "ArchitectValidationRequest") -> "ArchitectValidationRequest":
+        if not values.validated_proposals and not values.revised_suggestions:
+            raise ValueError(
+                "Either validated_proposals or revised_suggestions must be provided"
+            )
+        return values

@@ -123,9 +123,6 @@ class LibrarianOrchestrator:
                 )
             )
 
-        # Log the sources we will use
-        logger.info("librarian_sources_available: %d", len(retrieved_chunks))
-
         # Step 2: Generate answer if mode includes 'nl'
         answer = None
         sources_used = []
@@ -155,13 +152,29 @@ class LibrarianOrchestrator:
         if not library_items_used:
             library_items_used = list({chunk.library_item_id for chunk in retrieved_chunks})
 
+        # Log summarized result (query, source titles, final answer)
+        source_chunks_for_log = sources_used or retrieved_chunks
+        source_titles = []
+        for chunk in source_chunks_for_log:
+            title = chunk.book_title or f"Library item {chunk.library_item_id}"
+            if title not in source_titles:
+                source_titles.append(title)
+
+        final_answer = answer if request.mode in ("nl", "both") else None
+        logger.info(
+            "librarian_query_result user_query=%s sources=%s response=%s",
+            request.query,
+            source_titles,
+            final_answer,
+        )
+
         # Return response based on mode
         return LibrarianQueryResponse(
             agent_id=agent.id,
             mode=request.mode,
             query=request.query,
             subqueries=[],  # No subqueries in simplified version
-            answer=answer if request.mode in ("nl", "both") else None,
+            answer=final_answer,
             chunks=retrieved_chunks if request.mode in ("context", "both") else [],
             sources_used=sources_used,
             library_items_used=library_items_used,
@@ -190,8 +203,6 @@ class LibrarianOrchestrator:
         Returns:
             List of retrieved chunk dictionaries
         """
-        logger.info(f"Retrieving chunks for query: {query[:50]}...")
-
         chunks = await self.pdf_embedding_service.search_chunks(
             query_text=query,
             ontology_id=ontology_id,
@@ -219,7 +230,6 @@ class LibrarianOrchestrator:
                 }
             )
 
-        logger.info(f"Retrieved {len(chunks)} chunks")
         return chunks
 
     async def _fetch_library_metadata(
@@ -282,10 +292,8 @@ class LibrarianOrchestrator:
             trace: Trace list to append to
 
         Returns:
-            Generated answer with <sub> citations
+            Generated answer with Markdown cite wrappers
         """
-        logger.info("Generating answer with style and citations")
-
         # Format chunks for prompt with book title and page
         chunks_text = ""
         for i, chunk in enumerate(chunks, 1):
@@ -306,9 +314,9 @@ class LibrarianOrchestrator:
 
         system_msg = (
             "You are a knowledgeable librarian. Answer using ONLY the provided excerpts. "
-            "For EVERY piece of information, cite it using <sub library_item_id=\"ID\" "
-            'library_item_name="TITLE" page="PAGE"> tags. Apply the writing style while '
-            "preserving all facts."
+            "For EVERY piece of information, wrap the cited text like "
+            '[text]{cite library_item_id=ID library_item_name="TITLE" page=PAGE}. '
+            "Apply the writing style while preserving all facts."
         )
 
         answer = await self.llm_client.chat(
@@ -334,7 +342,6 @@ class LibrarianOrchestrator:
                 }
             )
 
-        logger.info("Answer with style generated")
         return answer
 
     def _extract_sources_from_answer(
@@ -344,7 +351,7 @@ class LibrarianOrchestrator:
         Extract sources that were actually cited in the answer.
 
         Args:
-            answer: Generated answer with <sub> tags
+            answer: Generated answer with cite wrappers
             all_chunks: All available chunks
 
         Returns:
@@ -353,15 +360,15 @@ class LibrarianOrchestrator:
         if not answer:
             return []
 
-        # Extract all library_item_id and page combinations from <sub> tags
-        # Pattern handles attributes in any order
-        pattern = r'<sub\s+(?:[^>]*\s+)?library_item_id="(\d+)"(?:[^>]*\s+)?page="(\d+)"'
+        # Extract all library_item_id and page combinations from cite wrappers
+        # Pattern handles attributes in any order inside {cite ...}
+        pattern = r'\{cite[^}]*library_item_id\s*=\s*(\d+)[^}]*page\s*=\s*(\d+)[^}]*\}'
         matches = re.findall(pattern, answer)
 
-        # Also try the reverse order
-        pattern_reverse = r'<sub\s+(?:[^>]*\s+)?page="(\d+)"(?:[^>]*\s+)?library_item_id="(\d+)"'
+        # Also try the reverse order (page first)
+        pattern_reverse = r'\{cite[^}]*page\s*=\s*(\d+)[^}]*library_item_id\s*=\s*(\d+)[^}]*\}'
         matches_reverse = re.findall(pattern_reverse, answer)
-        
+
         # Combine matches (reverse the tuple order for reverse pattern)
         cited_sources = {(int(item_id), int(page)) for item_id, page in matches}
         cited_sources.update({(int(item_id), int(page)) for page, item_id in matches_reverse})
@@ -371,12 +378,6 @@ class LibrarianOrchestrator:
         for chunk in all_chunks:
             if (chunk.library_item_id, chunk.page_number) in cited_sources:
                 sources_used.append(chunk)
-
-        logger.info(
-            "Extracted %d sources from answer (from %d available)",
-            len(sources_used),
-            len(all_chunks),
-        )
 
         return sources_used
 

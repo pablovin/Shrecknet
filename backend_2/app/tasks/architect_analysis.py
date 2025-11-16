@@ -9,7 +9,6 @@ from app.graph.neo4j import get_driver
 from app.integrations.llm.model_policy import ModelPolicy
 from app.integrations.llm.openai_client import OpenAIClient
 from app.integrations.retrieval.neo4j_retriever import Neo4jGraphRetriever
-from app.jobs.architect.architect import ArchitectOrchestrator
 from app.jobs.architect.architect_v2 import ArchitectOrchestratorV2
 from app.models.architect import ArchitectRunStatus
 from app.models.background_job import AuthorType, JobType
@@ -172,23 +171,27 @@ async def _execute_architect_pipeline(
                 max_retries=3,
             )
             retriever = Neo4jGraphRetriever(graph_session)
+            try:
+                # Use the new V2 orchestrator for improved efficiency
+                orchestrator = ArchitectOrchestratorV2(
+                    llm_client=llm_client,
+                    model_policy=model_policy,
+                    graph_retriever=retriever,
+                )
 
-            # Use the new V2 orchestrator for improved efficiency
-            orchestrator = ArchitectOrchestratorV2(
-                llm_client=llm_client,
-                model_policy=model_policy,
-                graph_retriever=retriever,
-            )
+                await update_job_progress(
+                    job_id, 0.25, {"status": "Chunking story text"}
+                )
 
-            await update_job_progress(job_id, 0.25, {"status": "Chunking story text"})
-
-            result = await orchestrator.analyse(
-                agent_ontology_ids=[ont.id for ont in agent.ontologies],
-                ontology_instance=ontology_instance,
-                entity_definitions=entity_catalog,
-                override_chunk_size=chunk_size,
-                override_max_chunks=max_chunks,
-            )
+                result = await orchestrator.analyse(
+                    agent_ontology_ids=[ont.id for ont in agent.ontologies],
+                    ontology_instance=ontology_instance,
+                    entity_definitions=entity_catalog,
+                    override_chunk_size=chunk_size,
+                    override_max_chunks=max_chunks,
+                )
+            finally:
+                await llm_client.aclose()
 
         await repo.insert_proposals(run_id, result["proposals"])
         await repo.update_run_status(

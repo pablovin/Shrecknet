@@ -37,6 +37,24 @@ class OpenAIClient:
             max_retries=max_retries,
         )
 
+    async def aclose(self) -> None:
+        """Close the underlying HTTP client to avoid loop shutdown errors."""
+        # AsyncOpenAI exposes `close()`; some versions omit `aclose()`
+        close_fn = getattr(self._client, "aclose", None) or getattr(
+            self._client, "close", None
+        )
+        if close_fn is None:
+            return
+        maybe_coro = close_fn()
+        if asyncio.iscoroutine(maybe_coro):
+            await maybe_coro
+
+    async def __aenter__(self) -> "OpenAIClient":
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:  # noqa: ANN001
+        await self.aclose()
+
     async def chat(
         self,
         model: str,

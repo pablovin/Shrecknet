@@ -163,7 +163,10 @@ async def test_librarian_query_response_schema():
         mode="both",
         query="Test query",
         subqueries=[],  # Empty in simplified version
-        answer="Test answer with <sub library_item_id=\"1\" library_item_name=\"Book 1\" page=\"10\">",
+        answer=(
+            'Test answer with [fact]{cite library_item_id=1 '
+            'library_item_name="Book 1" page=10}'
+        ),
         chunks=[chunk1, chunk2],
         sources_used=[chunk1],
         library_items_used=[1, 2],
@@ -176,7 +179,7 @@ async def test_librarian_query_response_schema():
     assert len(response.sources_used) == 1
     assert response.sources_used[0].library_item_id == 1
     assert response.library_items_used == [1, 2]
-    assert "<sub library_item_id=" in response.answer
+    assert "{cite" in response.answer
 
     # Test with minimal fields
     minimal_response = LibrarianQueryResponse(

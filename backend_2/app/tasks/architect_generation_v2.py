@@ -1,0 +1,1208 @@
+"""Background task for Architect step 2 (generation) - streamlined v2 pipeline."""
+
+from __future__ import annotations
+
+import json
+import logging
+from dataclasses import dataclass, field
+from datetime import datetime
+from typing import Any, Iterable, Optional
+from uuid import uuid4
+
+from app.celery_app import celery_app
+from app.core.config import get_settings
+from app.db.session import AsyncSessionMaker
+from app.graph.neo4j import get_driver
+from app.integrations.llm.model_policy import LLMTask, ModelPolicy
+from app.integrations.llm.openai_client import OpenAIClient
+from app.models.architect import ArchitectProposalStatus, ArchitectProposalType
+from app.models.background_job import AuthorType, JobType
+from app.repositories.architect_repository import ArchitectRepository
+from app.repositories.ontology_repository import OntologyRepository
+from app.schemas.architect import RevisedSuggestion
+from app.schemas.ontology_instance import (
+    OntologyInstanceEntityCreate,
+    OntologyInstancePropertyValue,
+    OntologyInstanceRelationshipCreate,
+)
+from app.services.ontology_instance_service import OntologyInstanceService
+from app.utils.async_helpers import run_async
+from app.utils.job_tracking import (
+    create_background_job,
+    mark_job_done,
+    mark_job_failed,
+    mark_job_running,
+    update_job_progress,
+)
+
+logger = logging.getLogger(__name__)
+settings = get_settings()
+
+
+def _normalize_alias(alias: Optional[str]) -> str:
+    return (alias or "").strip().lower()
+
+
+def _chunk_text(text: str, *, chunk_size: int, overlap: int) -> Iterable[str]:
+    words = text.split()
+    total = len(words)
+    if total <= chunk_size:
+        yield text
+        return
+
+    start = 0
+    while start < total:
+        end = min(start + chunk_size, total)
+        yield " ".join(words[start:end])
+        if end >= total:
+            break
+        start = max(0, end - overlap)
+
+
+@dataclass
+class NormalizedSuggestion:
+    suggestion_id: str
+    mode: str  # "new" or "update"
+    alias: str
+    entity_definition_id: int
+    entity_instance_id: str | None
+    chunk_indices: list[int] = field(default_factory=list)
+    alias_variants: set[str] = field(default_factory=set)
+    merged_from: list[str] = field(default_factory=list)
+
+
+@celery_app.task(name="architect.generate_entities")
+def generate_entities(
+    run_id: str,
+    revised_suggestions: Optional[list[dict[str, Any]]] = None,
+    validated_proposals: Optional[list[dict[str, Any]]] = None,
+    *,
+    author_type: str = "user",
+    author_id: str = "system",
+) -> dict[str, Any]:
+    """Entry point for Architect generation (v2)."""
+
+    description = f"Architect entity generation (v2) for run {run_id}"
+    job_id = run_async(
+        create_background_job(
+            author_type=AuthorType(author_type),
+            author_id=author_id,
+            job_type=JobType.ARCHITECT_GENERATION,
+            description=description,
+            celery_task_id=generate_entities.request.id,
+            details={
+                "run_id": run_id,
+                "suggestion_count": len(revised_suggestions or validated_proposals or []),
+            },
+        )
+    )
+
+    try:
+        run_async(mark_job_running(job_id))
+        run_async(_attach_generation_job_to_run(run_id, job_id))
+        run_async(
+            update_job_progress(
+                job_id, 0.05, {"status": "Preparing architect generation (v2)"}
+            )
+        )
+
+        result = run_async(
+            _execute_generation(
+                run_id=run_id,
+                revised_suggestions=revised_suggestions or [],
+                validated_proposals=validated_proposals or [],
+                job_id=job_id,
+                author_type=author_type,
+                author_id=author_id,
+            )
+        )
+
+        run_async(
+            mark_job_done(
+                job_id,
+                {
+                    "run_id": run_id,
+                    "created_entities": len(result.get("created_entity_ids", [])),
+                    "updated_entities": len(result.get("updated_entity_ids", [])),
+                    "status": "completed",
+                },
+            )
+        )
+        return {"job_id": job_id, "status": "success", "run_id": run_id, **result}
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.error("architect_generation_v2 failed for run %s: %s", run_id, exc, exc_info=True)
+        run_async(mark_job_failed(job_id, str(exc)))
+        raise
+
+
+async def _attach_generation_job_to_run(run_id: str, job_id: int) -> None:
+    async with AsyncSessionMaker() as session:
+        repo = ArchitectRepository(session)
+        await repo.attach_generation_job(run_id, job_id)
+        await session.commit()
+
+
+async def _execute_generation(
+    *,
+    run_id: str,
+    revised_suggestions: list[dict[str, Any]],
+    validated_proposals: list[dict[str, Any]],
+    job_id: int,
+    author_type: str,
+    author_id: str,
+) -> dict[str, Any]:
+    async with AsyncSessionMaker() as session:
+        repo = ArchitectRepository(session)
+        run = await repo.get_run(run_id, with_proposals=False)
+        if not run:
+            raise ValueError("Architect run not found")
+
+        # Load proposals so we can map suggestion ids back to metadata stored in DB
+        all_proposals = await repo.get_proposals_by_run(run_id)
+        proposals_by_id = {p.id: p for p in all_proposals}
+
+        suggestions_payload = revised_suggestions
+        if not suggestions_payload:
+            suggestions_payload = _convert_validated_to_revised(validated_proposals, proposals_by_id)
+        if not suggestions_payload:
+            logger.info("No revised suggestions provided for run %s", run_id)
+            return {"created_entity_ids": [], "updated_entity_ids": []}
+
+        await update_job_progress(job_id, 0.12, {"status": "Loading ontology data"})
+
+        driver = get_driver()
+        async with driver.session(database=settings.neo4j_database) as graph_session:
+            instance_service = OntologyInstanceService(session, graph_session)
+            ontology_instance = await instance_service.get_instance(run.ontology_instance_id)
+
+            # Always trust the ontology attached to the actual instance to avoid mismatches.
+            ontology_id = ontology_instance.ontology_id
+            if not ontology_id:
+                raise ValueError("Ontology instance does not specify an ontology")
+            if run.ontology_id != ontology_id:
+                run.ontology_id = ontology_id
+                await session.flush()
+
+            onto_repo = OntologyRepository(session)
+            entity_defs = await onto_repo.list_entities(ontology_id)
+            entity_definitions_map = _build_entity_definitions_map(entity_defs)
+
+            # Build alias catalogue (includes auto_generatable False definitions)
+            existing_alias_map: dict[str, dict[str, Any]] = {}
+            existing_entities_map: dict[str, dict[str, Any]] = {}
+            for entity in ontology_instance.entities:
+                normalized = _normalize_alias(entity.alias)
+                if normalized:
+                    existing_alias_map[normalized] = {
+                        "entity_instance_id": entity.entity_instance_id,
+                        "definition_id": entity.definition_id,
+                    }
+                existing_entities_map[entity.entity_instance_id] = {
+                    "alias": entity.alias,
+                    "definition_id": entity.definition_id,
+                    "properties": entity.properties or [],
+                    "relationships": entity.relationships or [],
+                    "text": entity.text or "",
+                    "autogenerated_text": entity.autogenerated_text or "",
+                }
+
+            original_text = _collect_original_text(ontology_instance)
+            chunk_size = int((run.settings or {}).get("chunk_size") or 1000)
+            chunk_overlap = 100
+            max_chunks = (run.settings or {}).get("max_chunks") or None
+            chunk_texts = _chunk_instance_text(
+                ontology_instance, chunk_size=chunk_size, chunk_overlap=chunk_overlap, max_chunks=max_chunks
+            )
+
+            normalized_suggestions = _normalize_suggestions(
+                suggestions_payload, proposals_by_id, chunk_texts
+            )
+            if not normalized_suggestions:
+                return {"created_entity_ids": [], "updated_entity_ids": []}
+
+            alias_variants = _collect_alias_variants(normalized_suggestions, existing_alias_map)
+
+            model_policy = ModelPolicy(
+                decompose_model=settings.model_decompose,
+                subanswer_model=settings.model_subanswer,
+                synthesis_model=settings.model_synthesis,
+                validation_model=settings.model_validation,
+                style_model=settings.model_style,
+                architect_extract_model=getattr(settings, "model_architect_extract", settings.model_decompose),
+            )
+            llm_client = OpenAIClient(api_key=settings.openai_api_key, timeout=60, max_retries=3)
+
+            created_entity_ids: list[str] = []
+            updated_entity_ids: list[str] = []
+            created_entity_definition_map: dict[str, int] = {}
+            pending_relationships: list[dict[str, Any]] = []
+            generated_instance_ids: list[str] = []
+
+            try:
+                # --- Chunk-first extraction to minimize LLM calls ---
+                await update_job_progress(
+                    job_id, 0.30, {"status": "Extracting entities per chunk"}
+                )
+                suggestion_enrichment = await _extract_per_chunk(
+                    llm_client=llm_client,
+                    model_policy=model_policy,
+                    chunk_texts=chunk_texts,
+                    suggestions=normalized_suggestions,
+                    entity_definitions_map=entity_definitions_map,
+                )
+
+                # Build create/update payloads from aggregated chunk data
+                new_entities_map, new_relationships_map, update_results = _build_payloads_from_chunk_data(
+                    suggestions=normalized_suggestions,
+                    enrichment=suggestion_enrichment,
+                    entity_definitions=entity_definitions_map,
+                    author_type=author_type,
+                    author_id=author_id,
+                    existing_entities_map=existing_entities_map,
+                )
+
+                # --- Persist new entities, each in its own sibling ontology instance ---
+                if new_entities_map:
+                    await update_job_progress(job_id, 0.60, {"status": "Creating ontology instances for new entities"})
+                    creation_result = await _create_entities_per_instance(
+                        graph_session=graph_session,
+                        ontology_id=ontology_id,
+                        base_instance=ontology_instance,
+                        entities_by_proposal=new_entities_map,
+                        definitions=entity_definitions_map,
+                        alias_variants=alias_variants,
+                    )
+                    generated_instance_ids.extend(creation_result["instance_ids"])
+                    created_entity_ids.extend(creation_result["created_entity_ids"])
+                    created_entity_definition_map.update(creation_result["definition_map"])
+                    for suggestion in normalized_suggestions:
+                        entity_id = creation_result["proposal_to_entity_id"].get(
+                            suggestion.suggestion_id
+                        )
+                        if not entity_id:
+                            continue
+                        # Persist the generated entity id on the proposal for frontend retrieval
+                        await repo.update_proposal_generated_entity(
+                            suggestion.suggestion_id, entity_id
+                        )
+                        for variant in suggestion.alias_variants or {
+                            _normalize_alias(suggestion.alias)
+                        }:
+                            if not variant:
+                                continue
+                            current = alias_variants.get(variant)
+                            if current and current.get("entity_instance_id"):
+                                continue
+                            alias_variants[variant] = {
+                                "entity_instance_id": entity_id,
+                                "definition_id": suggestion.entity_definition_id,
+                            }
+                    pending_relationships.extend(
+                        _prepare_relationship_payloads(
+                            creation_result["proposal_to_entity_id"],
+                            new_relationships_map,
+                            normalized_suggestions,
+                        )
+                    )
+
+                # --- Apply updates (properties + relationships) ---
+                if update_results:
+                    await update_job_progress(job_id, 0.75, {"status": "Updating existing entities"})
+                    updated_entity_ids.extend(
+                        await _apply_updates(
+                            graph_session=graph_session,
+                            update_payloads=update_results,
+                            entity_definitions=entity_definitions_map,
+                            existing_entities_map=existing_entities_map,
+                            alias_variants=alias_variants,
+                            created_definitions=created_entity_definition_map,
+                        )
+                    )
+
+                # --- Add relationships after all nodes exist ---
+                if pending_relationships:
+                    await update_job_progress(job_id, 0.85, {"status": "Creating relationships"})
+                    await _create_relationships(
+                        graph_session=graph_session,
+                        relationships=pending_relationships,
+                        entity_definitions=entity_definitions_map,
+                        alias_variants=alias_variants,
+                        created_definitions=created_entity_definition_map,
+                        existing_entities_map=existing_entities_map,
+                    )
+
+                await session.commit()
+                await update_job_progress(job_id, 0.95, {"status": "Entity generation completed"})
+
+                from app.tasks.ontology_links import link_instance as link_instance_task
+                from app.tasks.neo4j_embedding import embed_ontology as embed_ontology_task
+
+                if created_entity_ids or updated_entity_ids:
+                    for inst_id in generated_instance_ids:
+                        link_instance_task.delay(inst_id)
+                    link_instance_task.delay(run.ontology_instance_id)
+                    embed_ontology_task.delay(
+                        ontology_id=ontology_id, author_type=author_type, author_id=author_id
+                    )
+
+                return {
+                    "created_entity_ids": created_entity_ids,
+                    "updated_entity_ids": updated_entity_ids,
+                }
+            finally:
+                await llm_client.aclose()
+
+
+def _convert_validated_to_revised(
+    validated: list[dict[str, Any]], proposals: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """Best-effort compatibility: convert validated proposals into the new suggestion shape."""
+    translated: list[dict[str, Any]] = []
+    for item in validated:
+        proposal_id = item.get("proposal_id")
+        status = item.get("status")
+        if status not in {
+            ArchitectProposalStatus.APPROVED,
+            ArchitectProposalStatus.MERGED,
+        }:
+            continue
+        base = proposals.get(proposal_id)
+        if not base:
+            continue
+
+        action = "new"
+        if status == ArchitectProposalStatus.MERGED:
+            action = "merged"
+        elif (
+            base.proposal_type == ArchitectProposalType.UPDATE_INSTANCE
+            or status == ArchitectProposalStatus.APPROVED
+        ):
+            action = "updated" if base.entity_instance_id else "new"
+
+        translated.append(
+            {
+                "suggestion_id": proposal_id,
+                "action": action,
+                "alias": item.get("corrected_alias") or base.corrected_alias or base.alias,
+                "entity_definition_id": item.get("corrected_entity_definition_id")
+                or base.corrected_entity_definition_id
+                or base.entity_definition_id,
+                "entity_instance_id": item.get("corrected_entity_instance_id")
+                or base.entity_instance_id,
+                "merged_suggestion_ids": (
+                    [item.get("merged_into_proposal_id")]
+                    if item.get("merged_into_proposal_id")
+                    else None
+                ),
+            }
+        )
+    return translated
+
+
+async def _extract_per_chunk(
+    *,
+    llm_client: OpenAIClient,
+    model_policy: ModelPolicy,
+    chunk_texts: list[tuple[int, str]],
+    suggestions: list[NormalizedSuggestion],
+    entity_definitions_map: dict[int, dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    """
+    Run one LLM call per chunk to extract properties/relationships for all suggestions tied to that chunk.
+    Returns a mapping suggestion_id -> aggregated data.
+    """
+    enrichment: dict[str, dict[str, Any]] = {
+        s.suggestion_id: {"properties": [], "relationships": [], "summaries": []} for s in suggestions
+    }
+    chunk_map = {idx: text for idx, text in chunk_texts}
+    suggestion_by_chunk: dict[int, list[NormalizedSuggestion]] = {}
+    for suggestion in suggestions:
+        target_indices = suggestion.chunk_indices or list(chunk_map.keys())
+        for idx in target_indices:
+            if idx not in chunk_map:
+                continue
+            suggestion_by_chunk.setdefault(idx, []).append(suggestion)
+
+    extract_model = model_policy.get_model(LLMTask.ARCHITECT_EXTRACT)
+
+    for chunk_idx, chunk_suggestions in suggestion_by_chunk.items():
+        chunk_text = chunk_map.get(chunk_idx)
+        if not chunk_text:
+            continue
+        target_payload = []
+        for s in chunk_suggestions:
+            definition = entity_definitions_map.get(s.entity_definition_id)
+            if not definition:
+                continue
+            target_payload.append(
+                {
+                    "suggestion_id": s.suggestion_id,
+                    "alias": s.alias,
+                    "entity_definition_id": s.entity_definition_id,
+                    "entity_name": definition["name"],
+                    "properties": definition["properties"],
+                    "relationships": definition["relationships"],
+                }
+            )
+        if not target_payload:
+            continue
+
+        prompt = _build_chunk_prompt(chunk_text, target_payload)
+        try:
+            response = await llm_client.chat(
+                model=extract_model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.1,
+            )
+            parsed = _parse_chunk_response(response)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.error("architect_generation_v2 chunk %s extraction failed: %s", chunk_idx, exc, exc_info=True)
+            parsed = []
+
+        for entry in parsed:
+            suggestion_id = entry.get("suggestion_id")
+            if suggestion_id not in enrichment:
+                continue
+            enrichment[suggestion_id]["properties"].extend(entry.get("properties", []))
+            enrichment[suggestion_id]["relationships"].extend(entry.get("relationships", []))
+            summary = entry.get("summary")
+            if summary:
+                enrichment[suggestion_id]["summaries"].append(summary)
+
+    return enrichment
+
+
+def _build_chunk_prompt(chunk_text: str, targets: list[dict[str, Any]]) -> str:
+    """Construct an LLM prompt to extract data for multiple entities in one call."""
+    lines = ["You are the Architect Agent. For each TARGET, extract at most one value per property and one link per relationship type.",
+             "Use only evidence in the chunk. Return strict JSON as described."]
+    lines.append("\nCHUNK:\n\"\"\"\n" + chunk_text + "\n\"\"\"")
+    lines.append("\nTARGETS:")
+    for t in targets:
+        props = "\n".join([f"- {p['id']}: {p['name']} ({p.get('description','')})" for p in t["properties"]]) or "(none)"
+        rels = "\n".join(
+            [
+                f"- {r['id']}: {r['name']} -> {r.get('destiny_entity_name') or 'entity'} ({r.get('description','')})"
+                for r in t["relationships"]
+            ]
+        ) or "(none)"
+        lines.append(
+            f"* suggestion_id={t['suggestion_id']}; alias={t['alias']}; entity={t['entity_name']} (def_id={t['entity_definition_id']})"
+            f"\n  properties:\n{props}\n  relationships:\n{rels}"
+        )
+    lines.append(
+        """
+Return JSON array:
+[
+  {
+    "suggestion_id": "...",
+    "properties": [{"definition_id": 123, "value": "text"}],
+    "relationships": [{"definition_id": 456, "target_alias": "alias in chunk", "justification": "why"}],
+    "summary": "2-3 sentence summary for this entity based on this chunk"
+  }
+]
+
+Rules:
+- Only extract information present in the chunk.
+- One property value per property definition id.
+- One relationship per relationship definition id; use target_alias, not ids.
+- If no data for a target, return empty arrays for that target.
+- Use the provided entity definitions and do not invent targets outside the chunk.
+"""
+    )
+    return "\n".join(lines)
+
+
+def _parse_chunk_response(raw: str) -> list[dict[str, Any]]:
+    try:
+        start = raw.find("[")
+        end = raw.rfind("]")
+        if start == -1 or end == -1 or end <= start:
+            raise ValueError("No JSON array found")
+        payload = json.loads(raw[start : end + 1])
+        if isinstance(payload, list):
+            return payload
+    except Exception as exc:  # pragma: no cover - lenient
+        logger.warning("architect_generation_v2 parse chunk response failed: %s", exc)
+    return []
+
+
+def _build_payloads_from_chunk_data(
+    *,
+    suggestions: list[NormalizedSuggestion],
+    enrichment: dict[str, dict[str, Any]],
+    entity_definitions: dict[int, dict[str, Any]],
+    author_type: str,
+    author_id: str,
+    existing_entities_map: dict[str, dict[str, Any]],
+) -> tuple[dict[str, OntologyInstanceEntityCreate], dict[str, list[dict[str, Any]]], list[dict[str, Any]]]:
+    new_entities: dict[str, OntologyInstanceEntityCreate] = {}
+    new_relationships: dict[str, list[dict[str, Any]]] = {}
+    updates: list[dict[str, Any]] = []
+
+    author_enum = AuthorType.AGENT if (author_type or "").lower() in {"agent", "ai", "assistant"} else AuthorType.HUMAN
+
+    for suggestion in suggestions:
+        enriched = enrichment.get(suggestion.suggestion_id, {})
+        properties = _dedup_properties(enriched.get("properties", []))
+        relationships = _dedup_relationships(enriched.get("relationships", []))
+        summary = " ".join(enriched.get("summaries", [])).strip()
+        if not summary:
+            summary = None
+
+        if suggestion.mode == "new":
+            new_entity = OntologyInstanceEntityCreate(
+                definition_id=suggestion.entity_definition_id,
+                alias=suggestion.alias,
+                text="",
+                autogenerated_text=summary or "",
+                author_type=author_enum,
+                author_id=author_id,
+                properties=properties,
+                relationships=[],
+            )
+            new_entities[suggestion.suggestion_id] = new_entity
+            new_relationships[suggestion.suggestion_id] = relationships
+        else:
+            # update
+            if not suggestion.entity_instance_id:
+                logger.warning(
+                    "architect_generation_v2: skip update suggestion %s missing entity_instance_id",
+                    suggestion.suggestion_id,
+                )
+                continue
+            if suggestion.entity_instance_id not in existing_entities_map:
+                logger.warning(
+                    "architect_generation_v2: skip update suggestion %s unknown entity_instance_id %s",
+                    suggestion.suggestion_id,
+                    suggestion.entity_instance_id,
+                )
+                continue
+            updates.append(
+                {
+                    "proposal_id": suggestion.suggestion_id,
+                    "entity_instance_id": suggestion.entity_instance_id,
+                    "new_properties": properties,
+                    "new_relationships": relationships,
+                    "updated_autogenerated_summary": summary,
+                    "author_type": author_enum.value,
+                    "author_id": author_id,
+                }
+            )
+
+    return new_entities, new_relationships, updates
+
+
+def _build_entity_definitions_map(entity_defs: Iterable[Any]) -> dict[int, dict[str, Any]]:
+    definitions: dict[int, dict[str, Any]] = {}
+    for entity_def in entity_defs:
+        properties = [
+            {
+                "id": prop.id,
+                "name": prop.name,
+                "description": prop.description,
+                "data_type": prop.data_type.value,
+                "cardinality": prop.cardinality.value,
+            }
+            for prop in entity_def.properties
+            if prop.auto_generatable
+        ]
+        relationships = [
+            {
+                "id": rel.id,
+                "name": rel.name,
+                "description": rel.description,
+                "destiny_entity_id": rel.destiny_entity_id,
+                "destiny_entity_name": rel.destiny_entity.name if rel.destiny_entity else None,
+                "bi_directional": rel.bi_directional,
+            }
+            for rel in entity_def.relationships
+            if rel.auto_generatable
+        ]
+        rel_map = {rel["id"]: rel for rel in relationships}
+        definitions[entity_def.id] = {
+            "id": entity_def.id,
+            "name": entity_def.name,
+            "description": entity_def.description,
+            "properties": properties,
+            "relationships": relationships,
+            "relationships_by_id": rel_map,
+        }
+    return definitions
+
+
+def _collect_original_text(ontology_instance: Any) -> str:
+    parts: list[str] = []
+    for entity in ontology_instance.entities:
+        if entity.text:
+            parts.append(entity.text)
+        if entity.autogenerated_text:
+            parts.append(entity.autogenerated_text)
+    return "\n\n".join(parts)
+
+
+def _chunk_instance_text(
+    ontology_instance: Any, *, chunk_size: int, chunk_overlap: int, max_chunks: Optional[int]
+) -> list[tuple[int, str]]:
+    """Chunk the source instance using the same strategy from the analysis step."""
+    chunks: list[tuple[int, str]] = []
+    index = 0
+    for entity in ontology_instance.entities:
+        text_parts: list[str] = []
+        if entity.text:
+            text_parts.append(entity.text)
+        if entity.autogenerated_text:
+            text_parts.append(entity.autogenerated_text)
+        joined = "\n\n".join([t.strip() for t in text_parts if t and t.strip()])
+        if not joined:
+            continue
+        for chunk_text in _chunk_text(joined, chunk_size=chunk_size, overlap=chunk_overlap):
+            chunks.append((index, chunk_text))
+            index += 1
+            if max_chunks and len(chunks) >= max_chunks:
+                return chunks
+    return chunks
+
+
+def _normalize_suggestions(
+    suggestions: list[dict[str, Any]],
+    proposals_by_id: dict[str, Any],
+    chunk_texts: list[tuple[int, str]],
+) -> list[NormalizedSuggestion]:
+    chunk_map = {idx: text for idx, text in chunk_texts}
+    normalized: list[NormalizedSuggestion] = []
+    for raw in suggestions:
+        try:
+            suggestion = RevisedSuggestion.model_validate(raw)
+        except Exception as exc:
+            logger.warning("Skipping invalid suggestion payload %s: %s", raw, exc)
+            continue
+
+        # Only honor approved/merged suggestions when status is provided
+        if suggestion.status and suggestion.status not in {
+            ArchitectProposalStatus.APPROVED,
+            ArchitectProposalStatus.MERGED,
+        }:
+            continue
+
+        base = proposals_by_id.get(suggestion.suggestion_id)
+        alias_candidates = [
+            suggestion.alias,
+            getattr(base, "corrected_alias", None),
+            getattr(base, "alias", None),
+        ]
+        merged_aliases = suggestion.merged_aliases or []
+        if suggestion.merged_suggestion_ids:
+            for merged_id in suggestion.merged_suggestion_ids:
+                merged_base = proposals_by_id.get(merged_id)
+                if merged_base and merged_base.alias:
+                    merged_aliases.append(merged_base.alias)
+        alias_candidates.extend(merged_aliases)
+        alias = next((a for a in alias_candidates if a), f"suggestion-{suggestion.suggestion_id}")
+
+        chunk_indices = list(suggestion.chunk_indices or [])
+        if not chunk_indices and getattr(base, "proposal_metadata", None):
+            meta_indices = (base.proposal_metadata or {}).get("chunk_indices") or []
+            chunk_indices.extend(meta_indices)
+
+        entity_definition_id = (
+            suggestion.entity_definition_id
+            or getattr(base, "corrected_entity_definition_id", None)
+            or getattr(base, "entity_definition_id", None)
+        )
+        if entity_definition_id is None:
+            logger.warning("Suggestion %s missing entity_definition_id, skipping", suggestion.suggestion_id)
+            continue
+
+        entity_instance_id = suggestion.entity_instance_id or getattr(base, "entity_instance_id", None)
+        mode = "update" if suggestion.action == "updated" else "new"
+        if mode == "update" and not entity_instance_id:
+            logger.warning("Suggestion %s marked updated but missing entity_instance_id", suggestion.suggestion_id)
+            continue
+
+        normalized.append(
+            NormalizedSuggestion(
+                suggestion_id=suggestion.suggestion_id,
+                mode=mode,
+                alias=alias,
+                entity_definition_id=entity_definition_id,
+                entity_instance_id=entity_instance_id,
+                chunk_indices=[idx for idx in chunk_indices if idx in chunk_map],
+                alias_variants={_normalize_alias(a) for a in alias_candidates if a},
+                merged_from=suggestion.merged_suggestion_ids or [],
+            )
+        )
+    return normalized
+
+
+def _collect_alias_variants(
+    normalized_suggestions: list[NormalizedSuggestion],
+    existing_alias_map: dict[str, dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    alias_variants = {**existing_alias_map}
+    for suggestion in normalized_suggestions:
+        normalized_aliases = suggestion.alias_variants or {_normalize_alias(suggestion.alias)}
+        for alias in normalized_aliases:
+            if alias and alias not in alias_variants:
+                alias_variants[alias] = {
+                    "entity_instance_id": None,
+                    "definition_id": suggestion.entity_definition_id,
+                    "suggestion_id": suggestion.suggestion_id,
+                }
+    return alias_variants
+
+
+def _build_generator_payloads(
+    normalized: list[NormalizedSuggestion],
+    chunk_texts: list[tuple[int, str]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    chunk_map = {idx: text for idx, text in chunk_texts}
+    new_payloads: list[dict[str, Any]] = []
+    update_payloads: list[dict[str, Any]] = []
+    for suggestion in normalized:
+        chunks = [chunk_map[idx] for idx in suggestion.chunk_indices] if suggestion.chunk_indices else list(
+            chunk_map.values()
+        )
+        proposal_dict = {
+            "id": suggestion.suggestion_id,
+            "proposal_type": (
+                ArchitectProposalType.NEW_INSTANCE.value
+                if suggestion.mode == "new"
+                else ArchitectProposalType.UPDATE_INSTANCE.value
+            ),
+            "entity_definition_id": suggestion.entity_definition_id,
+            "entity_instance_id": suggestion.entity_instance_id,
+            "alias": suggestion.alias,
+            "chunks": chunks,
+        }
+        if suggestion.mode == "new":
+            new_payloads.append(proposal_dict)
+        else:
+            update_payloads.append(proposal_dict)
+    return new_payloads, update_payloads
+
+
+def _dedup_properties(
+    props: Iterable[OntologyInstancePropertyValue] | Iterable[dict[str, Any]],
+) -> list[OntologyInstancePropertyValue]:
+    deduped: dict[int, OntologyInstancePropertyValue] = {}
+    for prop in props:
+        if isinstance(prop, OntologyInstancePropertyValue):
+            definition_id = prop.definition_id
+            value = prop.value
+        else:
+            definition_id = prop.get("definition_id")
+            value = prop.get("value")
+        if definition_id is None or definition_id in deduped:
+            continue
+        deduped[int(definition_id)] = OntologyInstancePropertyValue(
+            definition_id=int(definition_id), value=value
+        )
+    return list(deduped.values())
+
+
+def _dedup_relationships(relationships: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+    deduped: dict[tuple[int, str], dict[str, Any]] = {}
+    for rel in relationships or []:
+        definition_id = rel.get("definition_id")
+        target_alias = _normalize_alias(rel.get("target_alias"))
+        target_id = rel.get("target_entity_instance_id")
+        key = (int(definition_id) if definition_id is not None else None, target_alias or target_id or "")
+        if key[0] is None or key in deduped:
+            continue
+        deduped[key] = {
+            "definition_id": int(definition_id),
+            "target_alias": rel.get("target_alias"),
+            "target_entity_instance_id": target_id,
+            "justification": rel.get("justification"),
+        }
+    return list(deduped.values())
+
+
+async def _create_entities_on_instance(
+    *,
+    graph_session: Any,
+    instance_id: str,
+    ontology_id: int,
+    entities_by_proposal: dict[str, OntologyInstanceEntityCreate],
+    definitions: dict[int, dict[str, Any]],
+    alias_variants: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    timestamp = datetime.utcnow().isoformat() + "Z"
+    created_ids: list[str] = []
+    definition_map: dict[str, int] = {}
+    proposal_to_entity_id: dict[str, str] = {}
+
+    alias_to_node: dict[str, str] = {}
+    for proposal_id, entity_payload in entities_by_proposal.items():
+        node_id = str(uuid4())
+        alias_to_node[_normalize_alias(entity_payload.alias)] = node_id
+        proposal_to_entity_id[proposal_id] = node_id
+
+    for proposal_id, entity_payload in entities_by_proposal.items():
+        node_id = proposal_to_entity_id[proposal_id]
+        prop_json = json.dumps({str(prop.definition_id): prop.value for prop in entity_payload.properties})
+        await graph_session.run(
+            """
+            MATCH (i:OntologyInstance {instance_id: $instance_id})
+            CREATE (i)-[:HAS_ENTITY]->(e:EntityInstance {
+                entity_instance_id: $entity_instance_id,
+                instance_id: $instance_id,
+                ontology_id: $ontology_id,
+                entity_definition_id: $entity_definition_id,
+                properties: $properties,
+                text: $text,
+                node_avatar_url: $node_avatar_url,
+                autogenerated_text: $autogenerated_text,
+                text_linked: $text_linked,
+                autogenerated_text_linked: $autogenerated_text_linked,
+                created_date: $created_date,
+                last_updated_date: $last_updated_date,
+                author_type: $author_type,
+                author_id: $author_id,
+                created_at: $created_at,
+                updated_at: $updated_at,
+                alias: $alias,
+                is_embedded: false,
+                last_embedded_date: null
+            })
+            """,
+            instance_id=instance_id,
+            ontology_id=ontology_id,
+            entity_instance_id=node_id,
+            entity_definition_id=entity_payload.definition_id,
+            properties=prop_json,
+            text=entity_payload.text,
+            node_avatar_url=entity_payload.node_avatar_url,
+            autogenerated_text=entity_payload.autogenerated_text,
+            text_linked=entity_payload.text,
+            autogenerated_text_linked=entity_payload.autogenerated_text,
+            created_date=timestamp,
+            last_updated_date=timestamp,
+            author_type=entity_payload.author_type.value,
+            author_id=entity_payload.author_id,
+            created_at=timestamp,
+            updated_at=timestamp,
+            alias=entity_payload.alias,
+        )
+        created_ids.append(node_id)
+        definition_map[node_id] = entity_payload.definition_id
+
+        # register alias variants for relationship resolution
+        normalized_alias = _normalize_alias(entity_payload.alias)
+        alias_variants[normalized_alias] = {
+            "entity_instance_id": node_id,
+            "definition_id": entity_payload.definition_id,
+        }
+
+    return {
+        "created_entity_ids": created_ids,
+        "definition_map": definition_map,
+        "proposal_to_entity_id": proposal_to_entity_id,
+    }
+
+
+async def _create_entities_per_instance(
+    *,
+    graph_session: Any,
+    ontology_id: int,
+    base_instance: Any,
+    entities_by_proposal: dict[str, OntologyInstanceEntityCreate],
+    definitions: dict[int, dict[str, Any]],
+    alias_variants: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    created_entity_ids: list[str] = []
+    definition_map: dict[str, int] = {}
+    proposal_to_entity_id: dict[str, str] = {}
+    instance_ids: list[str] = []
+
+    for proposal_id, entity_payload in entities_by_proposal.items():
+        new_instance_id = str(uuid4())
+        now = datetime.utcnow().isoformat() + "Z"
+        name = entity_payload.alias or base_instance.name or "Generated Instance"
+        await graph_session.run(
+            """
+            CREATE (i:OntologyInstance {
+                instance_id: $instance_id,
+                ontology_id: $ontology_id,
+                name: $name,
+                created_at: $created_at,
+                updated_at: $updated_at
+            })
+            """,
+            instance_id=new_instance_id,
+            ontology_id=ontology_id,
+            name=name[:255],
+            created_at=now,
+            updated_at=now,
+        )
+        instance_ids.append(new_instance_id)
+
+        # Create the entity under this new instance
+        res = await _create_entities_on_instance(
+            graph_session=graph_session,
+            instance_id=new_instance_id,
+            ontology_id=ontology_id,
+            entities_by_proposal={proposal_id: entity_payload},
+            definitions=definitions,
+            alias_variants=alias_variants,
+        )
+        created_entity_ids.extend(res["created_entity_ids"])
+        definition_map.update(res["definition_map"])
+        proposal_to_entity_id.update(res["proposal_to_entity_id"])
+
+        # Update instance updated_at
+        await graph_session.run(
+            """
+            MATCH (i:OntologyInstance {instance_id: $instance_id})
+            SET i.updated_at = datetime()
+            """,
+            instance_id=new_instance_id,
+        )
+
+    return {
+        "created_entity_ids": created_entity_ids,
+        "definition_map": definition_map,
+        "proposal_to_entity_id": proposal_to_entity_id,
+        "instance_ids": instance_ids,
+    }
+
+
+def _prepare_relationship_payloads(
+    proposal_to_entity_id: dict[str, str],
+    relationships_map: dict[str, list[dict[str, Any]]],
+    normalized_suggestions: list[NormalizedSuggestion],
+) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    suggestion_lookup = {s.suggestion_id: s for s in normalized_suggestions}
+    for proposal_id, rels in relationships_map.items():
+        source_id = proposal_to_entity_id.get(proposal_id)
+        if not source_id:
+            continue
+        suggestion = suggestion_lookup.get(proposal_id)
+        alias_variants = suggestion.alias_variants if suggestion else set()
+        result.append(
+            {
+                "source_entity_id": source_id,
+                "definition_id": (suggestion.entity_definition_id if suggestion else None),
+                "relationships": rels,
+                "alias_variants": alias_variants,
+            }
+        )
+    return result
+
+
+async def _apply_updates(
+    *,
+    graph_session: Any,
+    update_payloads: list[dict[str, Any]],
+    entity_definitions: dict[int, dict[str, Any]],
+    existing_entities_map: dict[str, dict[str, Any]],
+    alias_variants: dict[str, dict[str, Any]],
+    created_definitions: dict[str, int],
+) -> list[str]:
+    updated_entities: list[str] = []
+    relationship_keys: set[tuple[str, int, str]] = set()
+
+    for update in update_payloads:
+        entity_id = update.get("entity_instance_id")
+        if not entity_id:
+            continue
+        updated_entities.append(entity_id)
+
+        # update autogenerated summary
+        if update.get("updated_autogenerated_summary"):
+            await graph_session.run(
+                """
+                MATCH (e:EntityInstance {entity_instance_id: $entity_id})
+                SET e.autogenerated_text = $text,
+                    e.autogenerated_text_linked = $text,
+                    e.last_updated_date = datetime(),
+                    e.author_type = $author_type,
+                    e.author_id = $author_id
+                """,
+                entity_id=entity_id,
+                text=update["updated_autogenerated_summary"],
+                author_type=update.get("author_type"),
+                author_id=update.get("author_id"),
+            )
+
+        # add properties
+        for prop in update.get("new_properties", []):
+            result = await graph_session.run(
+                """
+                MATCH (e:EntityInstance {entity_instance_id: $entity_id})
+                RETURN e.properties as props
+                """,
+                entity_id=entity_id,
+            )
+            record = await result.single()
+            props = json.loads(record["props"] or "{}") if record else {}
+            props[str(prop.definition_id)] = prop.value
+            await graph_session.run(
+                """
+                MATCH (e:EntityInstance {entity_instance_id: $entity_id})
+                SET e.properties = $props
+                """,
+                entity_id=entity_id,
+                props=json.dumps(props),
+            )
+
+        # add relationships
+        entity_definition_id = existing_entities_map.get(entity_id, {}).get("definition_id")
+        rel_defs = entity_definitions.get(entity_definition_id, {}).get("relationships_by_id", {})
+        for rel in update.get("new_relationships", []):
+            rel_def = rel_defs.get(rel.get("definition_id"))
+            if not rel_def:
+                continue
+            target_id = rel.get("target_entity_instance_id")
+            if not target_id and rel.get("target_alias"):
+                resolved = alias_variants.get(_normalize_alias(rel["target_alias"]))
+                target_id = resolved.get("entity_instance_id") if resolved else None
+            if not target_id:
+                continue
+            target_definition_id = (
+                created_definitions.get(target_id)
+                or existing_entities_map.get(target_id, {}).get("definition_id")
+            )
+            if rel_def.get("destiny_entity_id") and target_definition_id:
+                if rel_def["destiny_entity_id"] != target_definition_id:
+                    continue
+            key = (entity_id, rel_def["id"], target_id)
+            if key in relationship_keys:
+                continue
+            relationship_keys.add(key)
+            rel_data = json.dumps({"justification": rel.get("justification") or ""})
+            await graph_session.run(
+                """
+                MATCH (source:EntityInstance {entity_instance_id: $source_id})
+                MATCH (target:EntityInstance {entity_instance_id: $target_id})
+                CREATE (source)-[:RELATES_TO {
+                    relationship_instance_id: $rel_id,
+                    relationship_definition_id: $rel_def_id,
+                    destiny_entity_definition_id: $destiny_id,
+                    data: $data,
+                    created_at: datetime(),
+                    updated_at: datetime()
+                }]->(target)
+                """,
+                source_id=entity_id,
+                target_id=target_id,
+                rel_id=str(uuid4()),
+                rel_def_id=rel_def["id"],
+                destiny_id=target_definition_id,
+                data=rel_data,
+            )
+            if rel_def.get("bi_directional"):
+                reverse_key = (target_id, rel_def["id"], entity_id)
+                if reverse_key not in relationship_keys:
+                    relationship_keys.add(reverse_key)
+                    await graph_session.run(
+                        """
+                        MATCH (source:EntityInstance {entity_instance_id: $source_id})
+                        MATCH (target:EntityInstance {entity_instance_id: $target_id})
+                        CREATE (source)-[:RELATES_TO {
+                            relationship_instance_id: $rel_id,
+                            relationship_definition_id: $rel_def_id,
+                            destiny_entity_definition_id: $destiny_id,
+                            data: $data,
+                            created_at: datetime(),
+                            updated_at: datetime()
+                        }]->(target)
+                        """,
+                        source_id=target_id,
+                        target_id=entity_id,
+                        rel_id=str(uuid4()),
+                        rel_def_id=rel_def["id"],
+                        destiny_id=entity_definition_id,
+                        data=rel_data,
+                    )
+    return updated_entities
+
+
+async def _create_relationships(
+    *,
+    graph_session: Any,
+    relationships: list[dict[str, Any]],
+    entity_definitions: dict[int, dict[str, Any]],
+    alias_variants: dict[str, dict[str, Any]],
+    created_definitions: dict[str, int],
+    existing_entities_map: dict[str, dict[str, Any]],
+) -> None:
+    relationship_keys: set[tuple[str, int, str]] = set()
+    for rel_group in relationships:
+        source_id = rel_group.get("source_entity_id")
+        source_def_id = (
+            rel_group.get("definition_id")
+            or created_definitions.get(source_id)
+            or existing_entities_map.get(source_id, {}).get("definition_id")
+        )
+        rel_defs = entity_definitions.get(source_def_id, {}).get("relationships_by_id", {})
+        for rel in rel_group.get("relationships", []):
+            rel_def = rel_defs.get(rel.get("definition_id"))
+            if not rel_def:
+                continue
+            target_id = rel.get("target_entity_instance_id")
+            if not target_id and rel.get("target_alias"):
+                resolved = alias_variants.get(_normalize_alias(rel["target_alias"]))
+                target_id = resolved.get("entity_instance_id") if resolved else None
+            if not target_id:
+                continue
+            target_def_id = (
+                created_definitions.get(target_id)
+                or existing_entities_map.get(target_id, {}).get("definition_id")
+            )
+            destiny_id = rel_def.get("destiny_entity_id")
+            if destiny_id and target_def_id and destiny_id != target_def_id:
+                # ensure we don't link to the wrong entity type
+                continue
+
+            key = (source_id, rel_def["id"], target_id)
+            if key in relationship_keys:
+                continue
+            relationship_keys.add(key)
+            data = json.dumps({"justification": rel.get("justification") or ""})
+            await graph_session.run(
+                """
+                MATCH (source:EntityInstance {entity_instance_id: $source_id})
+                MATCH (target:EntityInstance {entity_instance_id: $target_id})
+                CREATE (source)-[:RELATES_TO {
+                    relationship_instance_id: $rel_id,
+                    relationship_definition_id: $rel_def_id,
+                    destiny_entity_definition_id: $destiny_id,
+                    data: $data,
+                    created_at: datetime(),
+                    updated_at: datetime()
+                }]->(target)
+                """,
+                source_id=source_id,
+                target_id=target_id,
+                rel_id=str(uuid4()),
+                rel_def_id=rel_def["id"],
+                destiny_id=destiny_id or target_def_id,
+                data=data,
+            )
+            if rel_def.get("bi_directional"):
+                reverse_key = (target_id, rel_def["id"], source_id)
+                if reverse_key not in relationship_keys:
+                    relationship_keys.add(reverse_key)
+                    await graph_session.run(
+                        """
+                        MATCH (source:EntityInstance {entity_instance_id: $source_id})
+                        MATCH (target:EntityInstance {entity_instance_id: $target_id})
+                        CREATE (source)-[:RELATES_TO {
+                            relationship_instance_id: $rel_id,
+                            relationship_definition_id: $rel_def_id,
+                            destiny_entity_definition_id: $destiny_id,
+                            data: $data,
+                            created_at: datetime(),
+                            updated_at: datetime()
+                        }]->(target)
+                        """,
+                        source_id=target_id,
+                        target_id=source_id,
+                        rel_id=str(uuid4()),
+                        rel_def_id=rel_def["id"],
+                        destiny_id=source_def_id,
+                        data=data,
+                    )

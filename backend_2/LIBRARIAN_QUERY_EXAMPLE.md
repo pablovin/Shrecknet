@@ -48,7 +48,13 @@ Requires Bearer token authentication.
 
 ## Example Response
 
-**Note:** The answer now uses `<sub>` tags instead of `<sup>` tags for better citation tracking. See [LIBRARIAN_QUERY_OUTPUT_EXAMPLE.json](./LIBRARIAN_QUERY_OUTPUT_EXAMPLE.json) for a complete example.
+**Note:** The answer now uses a Markdown citation wrapper instead of `<sub>` tags. Wrap the cited text in a Markdown span with `cite` attributes, so the frontend can parse all metadata cleanly:
+
+```md
+[consistency is crucial]{cite library_item_id=42 library_item_name="The Art of World Building" page=15}
+```
+
+See [LIBRARIAN_QUERY_OUTPUT_EXAMPLE.json](./LIBRARIAN_QUERY_OUTPUT_EXAMPLE.json) for a complete example.
 
 ```json
 {
@@ -56,7 +62,7 @@ Requires Bearer token authentication.
   "mode": "both",
   "query": "What are the main principles of world building?",
   "subqueries": [],
-  "answer": "World building requires attention to several key principles. First, consistency is crucial<sub library_item_id=\"42\" library_item_name=\"The Art of World Building\" page=\"15\">. The rules of your world must remain stable throughout<sub library_item_id=\"42\" library_item_name=\"The Art of World Building\" page=\"16\">. Second, depth matters<sub library_item_id=\"87\" library_item_name=\"Fictional Cultures: A Guide\" page=\"23\">...",
+  "answer": "World building requires attention to several key principles. First, [consistency is crucial]{cite library_item_id=42 library_item_name=\"The Art of World Building\" page=15}. [The rules of your world must remain stable throughout]{cite library_item_id=42 library_item_name=\"The Art of World Building\" page=16}. Second, [depth matters]{cite library_item_id=87 library_item_name=\"Fictional Cultures: A Guide\" page=23}...",
   "chunks": [
     {
       "library_item_id": 42,

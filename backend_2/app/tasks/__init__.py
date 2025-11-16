@@ -1,12 +1,13 @@
 """Background tasks for backend_2."""
 
-from app.tasks import (
+# Import submodules so Celery autodiscovery registers task functions.
+from . import (
     neo4j_embedding,
     ontology_links,
     pdf_embedding,
     library_metadata,
     architect_analysis,
-    architect_generation,
+    architect_generation_v2,
     backup_tasks,
 )
 
@@ -16,6 +17,6 @@ __all__ = [
     "pdf_embedding",
     "library_metadata",
     "architect_analysis",
-    "architect_generation",
+    "architect_generation_v2",
     "backup_tasks",
 ]

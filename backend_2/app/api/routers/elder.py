@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/jobs/elder", tags=["elder"])
 
 
-async def get_llm_client() -> OpenAIClient:
+async def get_llm_client():
     """Dependency to get LLM client."""
     settings = get_settings()
 
@@ -32,11 +32,15 @@ async def get_llm_client() -> OpenAIClient:
             detail="OpenAI API key not configured",
         )
 
-    return OpenAIClient(
+    client = OpenAIClient(
         api_key=settings.openai_api_key,
         timeout=15,
         max_retries=2,
     )
+    try:
+        yield client
+    finally:
+        await client.aclose()
 
 
 async def get_model_policy() -> ModelPolicy:

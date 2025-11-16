@@ -50,9 +50,17 @@ def _parse_dt(raw: str | datetime | Neo4jDateTime | None) -> datetime:
         return raw.to_native()  # this gives a normal Python datetime
 
     if isinstance(raw, str):
-        if raw.endswith("Z"):
-            raw = raw[:-1] + "+00:00"
-        return datetime.fromisoformat(raw)
+        candidate = raw[:-1] + "+00:00" if raw.endswith("Z") else raw
+        try:
+            return datetime.fromisoformat(candidate)
+        except ValueError:
+            # Neo4j may return nanosecond precision (9 digits). Trim to microseconds.
+            match = re.match(r"(.*\\.\\d{6})\\d+(.*)", candidate)
+            if match:
+                trimmed = f"{match.group(1)}{match.group(2)}"
+                return datetime.fromisoformat(trimmed)
+            # Fallback to current time if the format is still unexpected
+            return datetime.utcnow()
 
     # Fallback — if something unexpected
     return datetime.utcnow()

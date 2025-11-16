@@ -129,6 +129,7 @@ class ArchitectOrchestratorV2:
 
         # Step 3: Reconciliation with existing entities
         logger.info("Step 3: Reconciling with existing entities")
+        # logger.info(f"[ARCHITECT] Node Catalogue: {node_catalogue}")
         reconciled = await self._reconcile_with_existing(
             deduped_entities, node_catalogue, ontology_definitions
         )
@@ -138,6 +139,7 @@ class ArchitectOrchestratorV2:
         proposals = self._create_final_proposals(
             chunk_results, deduped_entities, reconciled
         )
+        # logger.info(f"[ARCHITECT] Proposals: {proposals}")
 
         return {
             "proposals": proposals,
@@ -337,8 +339,21 @@ class ArchitectOrchestratorV2:
             # Parse response
             parsed = self._parse_reconciliation(response_text)
 
+            # Only keep matches that point to ids we actually know about.
+            valid_ids = {n.node_id for n in node_catalogue}
+            filtered_existing = []
+            for entry in parsed.existing:
+                if entry.matched_node_id in valid_ids:
+                    filtered_existing.append(entry)
+                else:
+                    logger.warning(
+                        "architect_v2_invalid_match_id: proposed=%s matched_id=%s",
+                        entry.proposed_name,
+                        entry.matched_node_id,
+                    )
+
             return {
-                "existing": [e.model_dump() for e in parsed.existing],
+                "existing": [e.model_dump() for e in filtered_existing],
                 "new": [n.model_dump() for n in parsed.new],
             }
         except Exception as exc:
@@ -363,8 +378,21 @@ class ArchitectOrchestratorV2:
         Maps reconciliation results back to the original entities with metadata.
         """
         # Create lookup maps
-        existing_map = {e["proposed_name"]: e for e in reconciled.get("existing", [])}
-        new_set = {n["name"] for n in reconciled.get("new", [])}
+        existing_map = {}
+        for entry in reconciled.get("existing", []):
+            proposed = entry.get("proposed_name")
+            matched_id = entry.get("matched_node_id")
+            key = self._canonical_alias(proposed)
+            if not key or not matched_id:
+                # Without a valid match id we cannot treat it as an update
+                continue
+            existing_map[key] = entry
+
+        new_set = {
+            self._canonical_alias(n["name"])
+            for n in reconciled.get("new", [])
+            if self._canonical_alias(n.get("name"))
+        }
 
         # Create entity lookup by canonical name
         entity_lookup = {self._canonical_alias(e.name): e for e in deduped_entities}
@@ -386,14 +414,35 @@ class ArchitectOrchestratorV2:
             }
 
             # Check if it's existing or new
-            if entity.name in existing_map:
-                matched = existing_map[entity.name]
+            if canonical_name in existing_map:
+                matched = existing_map[canonical_name]
+                matched_id = matched.get("matched_node_id")
+                # print (f"[ARCHITECT] Matched ID for {canonical_name}: {entity.name}({matched_id})")
+
+                # Only treat as existing if there is a valid matched node id.
+
+                if not matched_id:
+                    metadata["resolved_status"] = "new"
+                    proposals.append(
+                        {
+                            "proposal_type": ArchitectProposalType.NEW_INSTANCE,
+                            "entity_definition_id": None,
+                            "entity_instance_id": None,
+                            "alias": entity.name,
+                            "confidence": entity.confidence,
+                            "justification": combined_justification,
+                            "proposal_metadata": metadata,
+                            "chunks": [],
+                        }
+                    )
+                    continue
                 metadata["resolved_status"] = "existing"
+                
                 proposals.append(
                     {
                         "proposal_type": ArchitectProposalType.UPDATE_INSTANCE,
                         "entity_definition_id": None,  # Will be filled by ontology name lookup
-                        "entity_instance_id": matched["matched_node_id"],
+                        "entity_instance_id": matched_id,
                         "alias": entity.name,
                         "confidence": entity.confidence,
                         "justification": combined_justification,
@@ -401,7 +450,7 @@ class ArchitectOrchestratorV2:
                         "chunks": [],  # Can be populated from chunk_results if needed
                     }
                 )
-            elif entity.name in new_set:
+            elif canonical_name in new_set:
                 metadata["resolved_status"] = "new"
                 proposals.append(
                     {
@@ -413,6 +462,21 @@ class ArchitectOrchestratorV2:
                         "justification": combined_justification,
                         "proposal_metadata": metadata,
                         "chunks": [],  # Can be populated from chunk_results if needed
+                    }
+                )
+            else:
+                # Default to new when reconciliation could not classify the entity.
+                metadata["resolved_status"] = "new"
+                proposals.append(
+                    {
+                        "proposal_type": ArchitectProposalType.NEW_INSTANCE,
+                        "entity_definition_id": None,
+                        "entity_instance_id": None,
+                        "alias": entity.name,
+                        "confidence": entity.confidence,
+                        "justification": combined_justification,
+                        "proposal_metadata": metadata,
+                        "chunks": [],
                     }
                 )
 

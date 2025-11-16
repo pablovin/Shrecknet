@@ -189,13 +189,24 @@ async def generate_entities_from_validated_proposals(
         )
     
     # Import here to avoid circular imports
-    from app.tasks.architect_generation import generate_entities as generation_task
+    from app.tasks.architect_generation_v2 import (
+        generate_entities as generation_task,
+    )
     
     # Trigger the background task
     agent_author_id = run.agent_id or payload.author_id
     result = generation_task.delay(
         run_id=run_id,
-        validated_proposals=[p.model_dump() for p in payload.validated_proposals],
+        revised_suggestions=(
+            [s.model_dump() for s in payload.revised_suggestions]
+            if payload.revised_suggestions
+            else None
+        ),
+        validated_proposals=(
+            [p.model_dump() for p in payload.validated_proposals]
+            if payload.validated_proposals
+            else None
+        ),
         author_type="agent",
         author_id=agent_author_id,
     )

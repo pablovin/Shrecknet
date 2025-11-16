@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/jobs/librarian", tags=["librarian"])
 
 
-async def get_llm_client() -> OpenAIClient:
+async def get_llm_client():
     """Dependency to get LLM client."""
     settings = get_settings()
 
@@ -31,11 +31,15 @@ async def get_llm_client() -> OpenAIClient:
             detail="OpenAI API key not configured",
         )
 
-    return OpenAIClient(
+    client = OpenAIClient(
         api_key=settings.openai_api_key,
         timeout=60,
         max_retries=3,
     )
+    try:
+        yield client
+    finally:
+        await client.aclose()
 
 
 async def get_pdf_embedding_service(

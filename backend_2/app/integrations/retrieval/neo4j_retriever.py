@@ -172,12 +172,12 @@ class Neo4jGraphRetriever:
                             preview,
                         )
 
-                        print(
-                            f"[LOGGING]: query: {query} \n"
-                            + f"[LOGGING]: Ontology_ID: {ontology_ids} \n"
-                            f"[LOGGING]: Chunk: {chunk.json()} \n"
-                            f"[LOGGING]: Chunk Name: {chunk.node_name} \n"
-                        )
+                        # print(
+                        #     f"[LOGGING]: query: {query} \n"
+                        #     + f"[LOGGING]: Ontology_ID: {ontology_ids} \n"
+                        #     f"[LOGGING]: Chunk: {chunk.json()} \n"
+                        #     f"[LOGGING]: Chunk Name: {chunk.node_name} \n"
+                        # )
 
                     logger.info(
                         "retrieval_done: ontology=%s results=%d",
@@ -286,12 +286,12 @@ class Neo4jGraphRetriever:
                             # preview,
                         )
 
-                        print(
-                            f"[LOGGING]: query: {query} \n"
-                            + f"[LOGGING]: Ontology_ID: {ontology_ids} \n"
-                            f"[LOGGING]: Chunk: {chunk.json()} \n"
-                            f"[LOGGING]: Chunk Name: {chunk.node_name} \n"
-                        )
+                        # print(
+                        #     f"[LOGGING]: query: {query} \n"
+                        #     + f"[LOGGING]: Ontology_ID: {ontology_ids} \n"
+                        #     f"[LOGGING]: Chunk: {chunk.json()} \n"
+                        #     f"[LOGGING]: Chunk Name: {chunk.node_name} \n"
+                        # )
 
                     logger.info(
                         "retrieval_done: ontology=%s results=%d",

@@ -98,6 +98,8 @@ class ArchitectOrchestratorV2:
         node_catalogue = await self._load_node_catalogue(agent_ontology_ids)
         ontology_definitions = self._format_ontology_definitions(entity_definitions)
 
+    
+
         # Build chunks
         chunks = self._build_chunks(
             ontology_instance,
@@ -118,9 +120,12 @@ class ArchitectOrchestratorV2:
                 "pipeline_version": "v2",
             }
 
+        
+
         # Step 1: Chunk-level entity extraction
         logger.info("Step 1: Extracting entities from %d chunks", len(chunks))
         chunk_results = await self._extract_chunk_entities(chunks, ontology_definitions)
+
 
         # Step 2: Global deduplication
         logger.info("Step 2: Deduplicating entities across chunks")
@@ -140,6 +145,14 @@ class ArchitectOrchestratorV2:
             chunk_results, deduped_entities, reconciled
         )
         # logger.info(f"[ARCHITECT] Proposals: {proposals}")
+
+
+        # print(f" [ANALYSE] - Note Catalogue: {node_catalogue}")
+        # print(f" [ANALYSE] - Ontology Definition: {ontology_definitions}")
+        # print(f" [ANALYSE] - chunk_results: {chunk_results}")
+        # print(f" [ANALYSE] - deduped_entities: {deduped_entities}")
+        # print(f" [ANALYSE] - reconciled: {reconciled}")
+        # print(f" [ANALYSE] - proposals: {proposals}")        
 
         return {
             "proposals": proposals,

@@ -88,8 +88,9 @@ async def _embed_ontology_impl(job_id: int, ontology_id: int) -> dict[str, Any]:
 
             # Get count of nodes that need embedding
             count_query = """
-            MATCH (n:EntityInstance)
-            WHERE n.ontology_id = $ontology_id
+            MATCH (n)
+            WHERE (n:EntityInstance OR n:TimelineEvent)
+              AND n.ontology_id = $ontology_id
               AND (n.is_embedded IS NULL OR n.is_embedded = false 
                    OR n.last_updated_date > n.last_embedded_date)
             RETURN count(n) AS count

@@ -62,9 +62,10 @@ class RetrievalService:
         search_query = """
         CALL db.index.vector.queryNodes('entity_chunk_vec_idx', $k, $query_embedding)
         YIELD node, score
-        MATCH (node)<-[:HAS_CHUNK]-(parent:EntityInstance)
-        WHERE score >= $score_threshold
-        AND ($ontology_id IS NULL OR node.ontology_id = $ontology_id)
+        MATCH (node)<-[:HAS_CHUNK]-(parent)
+        WHERE (parent:EntityInstance OR parent:TimelineEvent)
+          AND score >= $score_threshold
+          AND ($ontology_id IS NULL OR node.ontology_id = $ontology_id)
         RETURN node AS chunk, parent AS parent, score
         ORDER BY score DESC
         LIMIT $k
@@ -227,7 +228,9 @@ class RetrievalService:
             List of neighbor info dicts
         """
         query = """
-        MATCH (n:EntityInstance {entity_instance_id: $node_id})-[r]->(m:EntityInstance)
+        MATCH (n {entity_instance_id: $node_id})
+        WHERE n:EntityInstance OR n:TimelineEvent
+        MATCH (n)-[r]->(m:EntityInstance)
         RETURN type(r) AS rel_type, 
                m.entity_instance_id AS node_id,
                m.name AS name,

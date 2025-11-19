@@ -102,6 +102,47 @@ class OntologyInstanceEntityRead(BaseModel):
     relationships: list[OntologyInstanceRelationshipRead] = Field(default_factory=list)
 
 
+class TimelineEventBase(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    title: str
+    description: str
+    source_instance_id: str | None = None
+    related_instance_ids: list[str] = Field(default_factory=list)
+    before_event_id: str | None = None
+    after_event_id: str | None = None
+
+    @field_validator("title", "description", mode="before")
+    def validate_text(cls, value: str, info):
+        if value is None:
+            raise ValueError(f"{info.field_name} cannot be empty")
+        value = value.strip()
+        if not value:
+            raise ValueError(f"{info.field_name} cannot be empty")
+        return value
+
+
+class TimelineEventCreate(TimelineEventBase):
+    timeline_event_id: str | None = None
+
+
+class TimelineEventUpdate(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    title: str | None = None
+    description: str | None = None
+    source_instance_id: str | None = None
+    related_instance_ids: list[str] | None = None
+    before_event_id: str | None = None
+    after_event_id: str | None = None
+
+
+class TimelineEventRead(TimelineEventBase):
+    timeline_event_id: str
+    instance_id: str
+    ontology_id: int
+    created_at: datetime
+    updated_at: datetime
+
+
 class OntologyInstanceBase(BaseModel):
     model_config = ConfigDict(extra="ignore")
     name: str
@@ -111,12 +152,14 @@ class OntologyInstanceCreate(OntologyInstanceBase):
     model_config = ConfigDict(extra="ignore")
     ontology_id: int
     entities: list[OntologyInstanceEntityCreate]
+    timeline_events: list[TimelineEventCreate] = Field(default_factory=list)
 
 
 class OntologyInstanceUpdate(BaseModel):
     model_config = ConfigDict(extra="ignore")
     name: str | None = None
     entities: list[OntologyInstanceEntityCreate] | None = None
+    timeline_events: list[TimelineEventCreate] | None = None
 
 
 class OntologyInstanceRead(OntologyInstanceBase):
@@ -126,3 +169,4 @@ class OntologyInstanceRead(OntologyInstanceBase):
     created_at: datetime
     updated_at: datetime
     entities: list[OntologyInstanceEntityRead]
+    timeline_events: list[TimelineEventRead] = Field(default_factory=list)

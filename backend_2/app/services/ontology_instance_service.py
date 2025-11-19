@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Any
 from uuid import uuid4
 
-from neo4j import AsyncSession as AsyncNeo4jSession
+from neo4j import AsyncSession as AsyncNeo4jSession, AsyncTransaction
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -19,6 +19,9 @@ from app.schemas.ontology_instance import (
     OntologyInstanceEntityCreate,
     OntologyInstanceRead,
     OntologyInstanceUpdate,
+    TimelineEventCreate,
+    TimelineEventRead,
+    TimelineEventUpdate,
 )
 
 from neo4j.time import DateTime as Neo4jDateTime
@@ -70,6 +73,46 @@ def _ensure_datetime(value: datetime | None) -> datetime:
     return value if value is not None else datetime.utcnow()
 
 
+def _normalize_optional_str(raw: str | None) -> str | None:
+    if raw is None:
+        return None
+    cleaned = raw.strip()
+    return cleaned or None
+
+
+def _normalize_id_list(values: list[str] | None) -> list[str]:
+    normalized: list[str] = []
+    if not values:
+        return normalized
+    for value in values:
+        cleaned = _normalize_optional_str(value)
+        if cleaned:
+            normalized.append(cleaned)
+    return normalized
+
+
+def _build_timeline_text(
+    title: str,
+    description: str,
+    source_instance_id: str | None,
+    related_instance_ids: list[str],
+    before_event_id: str | None,
+    after_event_id: str | None,
+) -> str:
+    lines = [f"Timeline Event: {title}"]
+    if description:
+        lines.append(description.strip())
+    if source_instance_id:
+        lines.append(f"Source Instance: {source_instance_id}")
+    if related_instance_ids:
+        lines.append(f"Related Instances: {', '.join(related_instance_ids)}")
+    if before_event_id:
+        lines.append(f"Occurs After Event: {before_event_id}")
+    if after_event_id:
+        lines.append(f"Precedes Event: {after_event_id}")
+    return "\n".join(lines)
+
+
 class OntologyInstanceService:
     def __init__(
         self, sql_session: AsyncSession, graph_session: AsyncNeo4jSession
@@ -77,6 +120,184 @@ class OntologyInstanceService:
         self.sql_session = sql_session
         self.graph_session = graph_session
         self.repository = OntologyRepository(sql_session)
+
+    async def _timeline_event_ids(self, instance_id: str) -> set[str]:
+        result = await self.graph_session.run(
+            """
+            MATCH (:OntologyInstance {instance_id: $instance_id})-[:HAS_TIMELINE_EVENT]->(event:TimelineEvent)
+            RETURN event.timeline_event_id AS event_id
+            """,
+            instance_id=instance_id,
+        )
+        rows = await result.data()
+        return {row["event_id"] for row in rows if row.get("event_id")}
+
+    def _timeline_node_to_read(self, node: Any) -> TimelineEventRead:
+        props = dict(node)
+        related_ids = props.get("related_instance_ids") or []
+        if not isinstance(related_ids, list):
+            related_ids = [related_ids]
+        return TimelineEventRead(
+            timeline_event_id=props["timeline_event_id"],
+            instance_id=props["instance_id"],
+            ontology_id=props["ontology_id"],
+            title=props.get("title") or "",
+            description=props.get("description") or "",
+            source_instance_id=props.get("source_instance_id"),
+            related_instance_ids=[str(value) for value in related_ids],
+            before_event_id=props.get("before_event_id"),
+            after_event_id=props.get("after_event_id"),
+            created_at=_parse_dt(props.get("created_at")),
+            updated_at=_parse_dt(props.get("updated_at")),
+        )
+
+    def _prepare_timeline_event_rows(
+        self,
+        events: list[TimelineEventCreate],
+        *,
+        instance_id: str,
+        ontology_id: int,
+    ) -> list[dict[str, Any]]:
+        if not events:
+            return []
+        timestamp = _format_dt(datetime.utcnow())
+        rows: list[dict[str, Any]] = []
+        ids: set[str] = set()
+        for event in events:
+            event_id = _normalize_optional_str(event.timeline_event_id) or str(uuid4())
+            if event_id in ids:
+                raise ValueError(f"Duplicate timeline event id '{event_id}' in payload")
+            title = event.title.strip()
+            description = event.description.strip()
+            related_ids = _normalize_id_list(event.related_instance_ids)
+            before_id = _normalize_optional_str(event.before_event_id)
+            after_id = _normalize_optional_str(event.after_event_id)
+            source_id = _normalize_optional_str(event.source_instance_id)
+            text_payload = _build_timeline_text(
+                title, description, source_id, related_ids, before_id, after_id
+            )
+            row = {
+                "timeline_event_id": event_id,
+                "entity_instance_id": event_id,
+                "instance_id": instance_id,
+                "ontology_id": ontology_id,
+                "name": title,
+                "alias": title,
+                "title": title,
+                "description": description,
+                "source_instance_id": source_id,
+                "related_instance_ids": related_ids,
+                "before_event_id": before_id,
+                "after_event_id": after_id,
+                "created_at": timestamp,
+                "updated_at": timestamp,
+                "last_updated_date": timestamp,
+                "text": text_payload,
+                "autogenerated_text": text_payload,
+                "is_embedded": False,
+                "last_embedded_date": None,
+            }
+            rows.append(row)
+            ids.add(event_id)
+
+        for row in rows:
+            for pointer in ("before_event_id", "after_event_id"):
+                target_id = row[pointer]
+                if target_id and target_id not in ids:
+                    raise ValueError(
+                        f"Unknown timeline event id '{target_id}' referenced in before/after"
+                    )
+
+        return rows
+
+    async def _replace_timeline_events_in_tx(
+        self,
+        tx: AsyncTransaction,
+        *,
+        instance_id: str,
+        ontology_id: int,
+        events: list[TimelineEventCreate],
+    ) -> None:
+        await tx.run(
+            """
+            MATCH (:OntologyInstance {instance_id: $instance_id})-[:HAS_TIMELINE_EVENT]->(event:TimelineEvent)-[:HAS_CHUNK]->(chunk:EntityChunk)
+            DETACH DELETE chunk
+            """,
+            instance_id=instance_id,
+        )
+        await tx.run(
+            """
+            MATCH (:OntologyInstance {instance_id: $instance_id})-[:HAS_TIMELINE_EVENT]->(event:TimelineEvent)
+            DETACH DELETE event
+            """,
+            instance_id=instance_id,
+        )
+        rows = self._prepare_timeline_event_rows(
+            events, instance_id=instance_id, ontology_id=ontology_id
+        )
+        if not rows:
+            return
+        for row in rows:
+            await tx.run(
+                """
+                MATCH (i:OntologyInstance {instance_id: $instance_id})
+                CREATE (i)-[:HAS_TIMELINE_EVENT]->(event:TimelineEvent {
+                    timeline_event_id: $timeline_event_id,
+                    entity_instance_id: $entity_instance_id,
+                    instance_id: $instance_id,
+                    ontology_id: $ontology_id,
+                    name: $name,
+                    alias: $alias,
+                    title: $title,
+                    description: $description,
+                    source_instance_id: $source_instance_id,
+                    related_instance_ids: $related_instance_ids,
+                    before_event_id: $before_event_id,
+                    after_event_id: $after_event_id,
+                    created_at: $created_at,
+                    updated_at: $updated_at,
+                    last_updated_date: $last_updated_date,
+                    text: $text,
+                    autogenerated_text: $autogenerated_text,
+                    is_embedded: $is_embedded,
+                    last_embedded_date: $last_embedded_date
+                })
+                """,
+                **row,
+            )
+
+    async def _timeline_events_for_instance(
+        self, instance_id: str
+    ) -> list[TimelineEventRead]:
+        result = await self.graph_session.run(
+            """
+            MATCH (:OntologyInstance {instance_id: $instance_id})-[:HAS_TIMELINE_EVENT]->(event:TimelineEvent)
+            RETURN event
+            ORDER BY event.created_at ASC
+            """,
+            instance_id=instance_id,
+        )
+        rows = await result.data()
+        events: list[TimelineEventRead] = []
+        for record in rows:
+            node = record.get("event")
+            if not node:
+                continue
+            events.append(self._timeline_node_to_read(node))
+        return events
+
+    async def _get_instance_ontology_id(self, instance_id: str) -> int:
+        result = await self.graph_session.run(
+            """
+            MATCH (i:OntologyInstance {instance_id: $instance_id})
+            RETURN i.ontology_id AS ontology_id
+            """,
+            instance_id=instance_id,
+        )
+        row = await result.single()
+        if not row or row.get("ontology_id") is None:
+            raise ValueError("Ontology instance not found")
+        return row["ontology_id"]
 
     # ------------------------------------------------------------------
     async def create_instance(
@@ -271,6 +492,12 @@ class OntologyInstanceService:
                             created_at=timestamp,
                             updated_at=timestamp,
                         )
+            await self._replace_timeline_events_in_tx(
+                tx,
+                instance_id=instance_id,
+                ontology_id=payload.ontology_id,
+                events=payload.timeline_events,
+            )
         except Exception:
             await tx.rollback()
             await tx.close()
@@ -386,6 +613,8 @@ class OntologyInstanceService:
                 }
             )
 
+        timeline_events = await self._timeline_events_for_instance(instance_id)
+
         return OntologyInstanceRead(
             instance_id=instance_node["instance_id"],
             ontology_id=instance_node["ontology_id"],
@@ -419,6 +648,7 @@ class OntologyInstanceService:
                 }
                 for entity_data in entities_map.values()
             ],
+            timeline_events=timeline_events,
         )
 
     async def delete_instance(self, instance_id: str) -> None:
@@ -435,6 +665,20 @@ class OntologyInstanceService:
                 """
                 MATCH (i:OntologyInstance {instance_id: $instance_id})-[:HAS_ENTITY]->(e:EntityInstance)
                 DETACH DELETE e
+                """,
+                instance_id=instance_id,
+            )
+            await tx.run(
+                """
+                MATCH (i:OntologyInstance {instance_id: $instance_id})-[:HAS_TIMELINE_EVENT]->(event:TimelineEvent)-[:HAS_CHUNK]->(chunk:EntityChunk)
+                DETACH DELETE chunk
+                """,
+                instance_id=instance_id,
+            )
+            await tx.run(
+                """
+                MATCH (i:OntologyInstance {instance_id: $instance_id})-[:HAS_TIMELINE_EVENT]->(event:TimelineEvent)
+                DETACH DELETE event
                 """,
                 instance_id=instance_id,
             )
@@ -471,6 +715,22 @@ class OntologyInstanceService:
         )
 
         if payload.entities is None:
+            if payload.timeline_events is not None:
+                tx = await self.graph_session.begin_transaction()
+                try:
+                    await self._replace_timeline_events_in_tx(
+                        tx,
+                        instance_id=instance_id,
+                        ontology_id=current.ontology_id,
+                        events=payload.timeline_events,
+                    )
+                except Exception:
+                    await tx.rollback()
+                    await tx.close()
+                    raise
+                else:
+                    await tx.commit()
+                    await tx.close()
             instance = await self.get_instance(instance_id)
             from app.tasks.ontology_links import link_instance as link_instance_task
 
@@ -653,6 +913,13 @@ class OntologyInstanceService:
                             created_at=timestamp,
                             updated_at=timestamp,
                         )
+            if payload.timeline_events is not None:
+                await self._replace_timeline_events_in_tx(
+                    tx,
+                    instance_id=instance_id,
+                    ontology_id=current.ontology_id,
+                    events=payload.timeline_events,
+                )
         except Exception:
             await tx.rollback()
             await tx.close()
@@ -665,6 +932,207 @@ class OntologyInstanceService:
 
             link_instance_task.delay(instance.instance_id)
             return instance
+
+    async def list_timeline_events(self, instance_id: str) -> list[TimelineEventRead]:
+        await self._get_instance_ontology_id(instance_id)
+        return await self._timeline_events_for_instance(instance_id)
+
+    async def get_timeline_event(
+        self, instance_id: str, timeline_event_id: str
+    ) -> TimelineEventRead:
+        result = await self.graph_session.run(
+            """
+            MATCH (:OntologyInstance {instance_id: $instance_id})-[:HAS_TIMELINE_EVENT]->(event:TimelineEvent {timeline_event_id: $timeline_event_id})
+            RETURN event
+            """,
+            instance_id=instance_id,
+            timeline_event_id=timeline_event_id,
+        )
+        record = await result.single()
+        if not record or not record.get("event"):
+            raise ValueError("Timeline event not found")
+        return self._timeline_node_to_read(record["event"])
+
+    async def create_timeline_event(
+        self, instance_id: str, payload: TimelineEventCreate
+    ) -> TimelineEventRead:
+        ontology_id = await self._get_instance_ontology_id(instance_id)
+        existing_ids = await self._timeline_event_ids(instance_id)
+        before_id = _normalize_optional_str(payload.before_event_id)
+        after_id = _normalize_optional_str(payload.after_event_id)
+        event_id = _normalize_optional_str(payload.timeline_event_id) or str(uuid4())
+        if event_id in existing_ids:
+            raise ValueError(f"Timeline event id '{event_id}' already exists")
+        for pointer, ref in (("before_event_id", before_id), ("after_event_id", after_id)):
+            if ref == event_id:
+                raise ValueError(f"{pointer.replace('_', ' ').title()} cannot reference the same timeline event")
+            if ref and ref not in existing_ids:
+                raise ValueError(f"{pointer.replace('_', ' ').title()} '{ref}' does not exist for this instance")
+        title = payload.title.strip()
+        description = payload.description.strip()
+        related_ids = _normalize_id_list(payload.related_instance_ids)
+        source_id = _normalize_optional_str(payload.source_instance_id)
+        created_at = _format_dt(datetime.utcnow())
+        text_payload = _build_timeline_text(
+            title, description, source_id, related_ids, before_id, after_id
+        )
+
+        await self.graph_session.run(
+            """
+            MATCH (i:OntologyInstance {instance_id: $instance_id})
+            CREATE (i)-[:HAS_TIMELINE_EVENT]->(event:TimelineEvent {
+                timeline_event_id: $timeline_event_id,
+                entity_instance_id: $timeline_event_id,
+                instance_id: $instance_id,
+                ontology_id: $ontology_id,
+                name: $title,
+                alias: $title,
+                title: $title,
+                description: $description,
+                source_instance_id: $source_instance_id,
+                related_instance_ids: $related_instance_ids,
+                before_event_id: $before_event_id,
+                after_event_id: $after_event_id,
+                created_at: $created_at,
+                updated_at: $created_at,
+                last_updated_date: $created_at,
+                text: $text,
+                autogenerated_text: $text,
+                is_embedded: false,
+                last_embedded_date: null
+            })
+            """,
+            instance_id=instance_id,
+            ontology_id=ontology_id,
+            timeline_event_id=event_id,
+            title=title,
+            description=description,
+            source_instance_id=source_id,
+            related_instance_ids=related_ids,
+            before_event_id=before_id,
+            after_event_id=after_id,
+            created_at=created_at,
+            text=text_payload,
+        )
+        return await self.get_timeline_event(instance_id, event_id)
+
+    async def update_timeline_event(
+        self,
+        instance_id: str,
+        timeline_event_id: str,
+        payload: TimelineEventUpdate,
+    ) -> TimelineEventRead:
+        current_event = await self.get_timeline_event(instance_id, timeline_event_id)
+        existing_ids = await self._timeline_event_ids(instance_id)
+        updates: dict[str, Any] = {}
+
+        if payload.title is not None:
+            title = payload.title.strip()
+            if not title:
+                raise ValueError("Timeline event title cannot be empty")
+            updates["title"] = title
+            updates["name"] = title
+            updates["alias"] = title
+        if payload.description is not None:
+            description = payload.description.strip()
+            if not description:
+                raise ValueError("Timeline event description cannot be empty")
+            updates["description"] = description
+        if payload.source_instance_id is not None:
+            updates["source_instance_id"] = _normalize_optional_str(
+                payload.source_instance_id
+            )
+        if payload.related_instance_ids is not None:
+            updates["related_instance_ids"] = _normalize_id_list(
+                payload.related_instance_ids
+            )
+        if payload.before_event_id is not None:
+            before_id = _normalize_optional_str(payload.before_event_id)
+            if before_id == timeline_event_id:
+                raise ValueError("Timeline event cannot reference itself in 'before'")
+            if before_id and before_id not in existing_ids:
+                raise ValueError(f"before_event_id '{before_id}' does not exist")
+            updates["before_event_id"] = before_id
+        if payload.after_event_id is not None:
+            after_id = _normalize_optional_str(payload.after_event_id)
+            if after_id == timeline_event_id:
+                raise ValueError("Timeline event cannot reference itself in 'after'")
+            if after_id and after_id not in existing_ids:
+                raise ValueError(f"after_event_id '{after_id}' does not exist")
+            updates["after_event_id"] = after_id
+
+        now_str = _format_dt(datetime.utcnow())
+        final_title = updates.get("title", current_event.title)
+        final_description = updates.get("description", current_event.description or "")
+        final_source = updates.get("source_instance_id", current_event.source_instance_id)
+        final_related = updates.get(
+            "related_instance_ids", current_event.related_instance_ids or []
+        )
+        final_before = updates.get("before_event_id", current_event.before_event_id)
+        final_after = updates.get("after_event_id", current_event.after_event_id)
+
+        text_payload = _build_timeline_text(
+            final_title,
+            final_description,
+            final_source,
+            final_related,
+            final_before,
+            final_after,
+        )
+        updates["text"] = text_payload
+        updates["autogenerated_text"] = text_payload
+        updates["last_updated_date"] = now_str
+        updates["is_embedded"] = False
+
+        params = {
+            "instance_id": instance_id,
+            "timeline_event_id": timeline_event_id,
+            "updated_at": now_str,
+        }
+        set_parts = ["event.updated_at = $updated_at"]
+        for field, value in updates.items():
+            set_parts.append(f"event.{field} = ${field}")
+            params[field] = value
+        set_clause = ", ".join(set_parts)
+
+        await self.graph_session.run(
+            f"""
+            MATCH (:OntologyInstance {{instance_id: $instance_id}})-[:HAS_TIMELINE_EVENT]->(event:TimelineEvent {{timeline_event_id: $timeline_event_id}})
+            SET {set_clause}
+            """,
+            **params,
+        )
+        return await self.get_timeline_event(instance_id, timeline_event_id)
+
+    async def delete_timeline_event(
+        self, instance_id: str, timeline_event_id: str
+    ) -> None:
+        await self.get_timeline_event(instance_id, timeline_event_id)
+        tx = await self.graph_session.begin_transaction()
+        try:
+            await tx.run(
+                """
+                MATCH (:OntologyInstance {instance_id: $instance_id})-[:HAS_TIMELINE_EVENT]->(event:TimelineEvent {timeline_event_id: $timeline_event_id})-[:HAS_CHUNK]->(chunk:EntityChunk)
+                DETACH DELETE chunk
+                """,
+                instance_id=instance_id,
+                timeline_event_id=timeline_event_id,
+            )
+            await tx.run(
+                """
+                MATCH (:OntologyInstance {instance_id: $instance_id})-[:HAS_TIMELINE_EVENT]->(event:TimelineEvent {timeline_event_id: $timeline_event_id})
+                DETACH DELETE event
+                """,
+                instance_id=instance_id,
+                timeline_event_id=timeline_event_id,
+            )
+        except Exception:
+            await tx.rollback()
+            await tx.close()
+            raise
+        else:
+            await tx.commit()
+            await tx.close()
 
     # ------------------------------------------------------------------
     async def _load_entity_definitions(

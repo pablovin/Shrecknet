@@ -368,6 +368,8 @@ class PdfEmbeddingService:
         # Generate query embedding
         query_embedding = self.embedding_service.embed_text(query_text)
 
+        print (f"[DEBUG] Query embedding: {query_embedding}")
+
         # Build query
         if library_item_ids:
             item_filter = "AND c.library_item_id IN $library_item_ids"
@@ -400,6 +402,11 @@ class PdfEmbeddingService:
             score_threshold=score_threshold,
         )
 
+        print (f"[DEBUG] Query embedding: {query_embedding}\n"+
+               f"[DEBUG] library_item_ids: {library_item_ids}\n"+
+               f"[DEBUG] query: {query}\n"+
+               f"[DEBUG] result: {result}\n"              
+               )
         chunks = []
         # Build base URL for media
         base_url = (
@@ -408,6 +415,9 @@ class PdfEmbeddingService:
             else settings.media_base_url.rstrip("/")
         )
         async for record in result:
+            print (f"[DEBUG] record keys: {record.keys()}\n"+
+                   f"[DEBUG] record values: {record.values()}\n"               
+               )
             li = record["library_item_id"]
             page = record["page_number"]
             pdf_url = f"{base_url}/library/{ontology_id}/{li}/content.pdf"
@@ -425,6 +435,7 @@ class PdfEmbeddingService:
             )
 
         # Return top_k results
+        print (f"[DEBUG] Retrieved {chunks}")
         return chunks[:top_k]
 
     async def fetch_neighbor_text(
@@ -481,3 +492,4 @@ class PdfEmbeddingService:
             except Exception:
                 enriched.append(ch)
         return enriched
+

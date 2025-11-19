@@ -214,7 +214,8 @@ async def _execute_generation(
 
 
             original_text = _collect_original_text(ontology_instance)
-            _, language_name = _detect_language(original_text)
+            language_code, language_name = _detect_language(original_text)
+            language_context = {"code": language_code, "label": language_name}
 
             chunk_size = int((run.settings or {}).get("chunk_size") or 1000)
             chunk_overlap = 100
@@ -228,6 +229,9 @@ async def _execute_generation(
             )
             if not normalized_suggestions:
                 return {"created_entity_ids": [], "updated_entity_ids": []}
+
+            _synchronize_revised_metadata(normalized_suggestions, proposals_by_id)
+            suggestion_lookup = {s.suggestion_id: s for s in normalized_suggestions}
 
             alias_variants = _collect_alias_variants(normalized_suggestions, existing_alias_map)
 
@@ -257,6 +261,7 @@ async def _execute_generation(
             pending_relationships: list[dict[str, Any]] = []
             generated_instance_ids: list[str] = []
             succeeded_proposal_ids: set[str] = set()
+            suggestion_results: list[dict[str, Any]] = []
 
             try:
                 # --- Chunk-first extraction to minimize LLM calls ---
@@ -319,6 +324,15 @@ async def _execute_generation(
                         if not entity_id:
                             continue
                         succeeded_proposal_ids.add(suggestion.suggestion_id)
+                        suggestion_results.append(
+                            {
+                                "suggestion_id": suggestion.suggestion_id,
+                                "action": suggestion.mode,
+                                "result": "created",
+                                "entity_instance_id": entity_id,
+                                "entity_definition_id": suggestion.entity_definition_id,
+                            }
+                        )
                         # Persist the generated entity id on the proposal for frontend retrieval
                         await repo.update_proposal_generated_entity(
                             suggestion.suggestion_id, entity_id
@@ -346,16 +360,34 @@ async def _execute_generation(
                 # --- Apply updates (properties + relationships) ---
                 if update_results:
                     await update_job_progress(job_id, 0.75, {"status": "Updating existing entities"})
-                    updated_entity_ids.extend(
-                        await _apply_updates(
-                            graph_session=graph_session,
-                            update_payloads=update_results,
-                            entity_definitions=entity_definitions_map,
-                            existing_entities_map=existing_entities_map,
-                            alias_variants=alias_variants,
-                            created_definitions=created_entity_definition_map,
-                        )
+                    updated_ids = await _apply_updates(
+                        graph_session=graph_session,
+                        update_payloads=update_results,
+                        entity_definitions=entity_definitions_map,
+                        existing_entities_map=existing_entities_map,
+                        alias_variants=alias_variants,
+                        created_definitions=created_entity_definition_map,
                     )
+                    updated_entity_ids.extend(updated_ids)
+                    for payload in update_results:
+                        proposal_id = payload.get("proposal_id")
+                        entity_id = payload.get("entity_instance_id")
+                        if not proposal_id or not entity_id:
+                            continue
+                        suggestion = suggestion_lookup.get(proposal_id)
+                        suggestion_results.append(
+                            {
+                                "suggestion_id": proposal_id,
+                                "action": suggestion.mode if suggestion else "update",
+                                "result": "updated",
+                                "entity_instance_id": entity_id,
+                                "entity_definition_id": (
+                                    suggestion.entity_definition_id
+                                    if suggestion
+                                    else existing_entities_map.get(entity_id, {}).get("definition_id")
+                                ),
+                            }
+                        )
                     succeeded_proposal_ids.update(
                         {
                             payload["proposal_id"]
@@ -412,6 +444,8 @@ async def _execute_generation(
                 return {
                     "created_entity_ids": created_entity_ids,
                     "updated_entity_ids": updated_entity_ids,
+                    "suggestion_results": suggestion_results,
+                    "language": language_context,
                 }
             finally:
                 await llm_client.aclose()
@@ -527,7 +561,16 @@ async def _extract_per_chunk(
         try:
             response = await llm_client.chat(
                 model=extract_model,
-                messages=[{"role": "user", "content": prompt}],
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are an information extraction specialist. Return only the requested JSON "
+                            f"and ensure every piece of generated text is written in {language_name}."
+                        ),
+                    },
+                    {"role": "user", "content": prompt},
+                ],
                 temperature=0.1,
             )
             parsed = _parse_chunk_response(response)
@@ -1034,6 +1077,25 @@ def _normalize_suggestions(
             )
         )
     return normalized
+
+
+def _synchronize_revised_metadata(
+    suggestions: list[NormalizedSuggestion], proposals_by_id: dict[str, Any]
+) -> None:
+    for suggestion in suggestions:
+        proposal = proposals_by_id.get(suggestion.suggestion_id)
+        if not proposal:
+            continue
+        proposal.corrected_alias = suggestion.alias
+        proposal.corrected_entity_definition_id = suggestion.entity_definition_id
+        proposal.corrected_entity_instance_id = (
+            suggestion.entity_instance_id if suggestion.mode == "update" else None
+        )
+        proposal.corrected_proposal_type = (
+            ArchitectProposalType.UPDATE_INSTANCE
+            if suggestion.mode == "update"
+            else ArchitectProposalType.NEW_INSTANCE
+        )
 
 
 def _collect_alias_variants(

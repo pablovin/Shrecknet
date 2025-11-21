@@ -1156,6 +1156,7 @@ def _chunk_instance_text_with_sources(
         joined = "\n\n".join([t.strip() for t in text_parts if t and t.strip()])
         if not joined:
             continue
+        # Use getattr for safe access in case entity_instance_id is not set
         entity_id = getattr(entity, 'entity_instance_id', None)
         for chunk_text in _chunk_text(joined, chunk_size=chunk_size, overlap=chunk_overlap):
             chunks.append((index, chunk_text))
@@ -1956,7 +1957,7 @@ async def _apply_timeline_events(
             # Use the first chunk index associated with this suggestion to find the source entity
             source_entity_id = None
             if suggestion.chunk_indices:
-                first_chunk_idx = suggestion.chunk_indices[0] if suggestion.chunk_indices else None
+                first_chunk_idx = suggestion.chunk_indices[0]
                 if first_chunk_idx is not None:
                     source_entity_id = chunk_to_source_entity.get(first_chunk_idx)
             

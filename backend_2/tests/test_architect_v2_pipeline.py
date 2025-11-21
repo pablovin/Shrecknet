@@ -12,6 +12,7 @@ from app.jobs.architect.architect_v2 import ArchitectOrchestratorV2
 from app.jobs.architect.schemas import (
     ChunkExtractionResponse,
     ChunkEntityProposal,
+    DedupedEntityProposal,
     ReconciliationResponse,
     ReconciledExistingEntity,
     ReconciledNewEntity,
@@ -21,6 +22,7 @@ from app.schemas.ontology_instance import (
     OntologyInstanceEntityRead,
     OntologyInstanceRead,
 )
+from app.models.architect import ArchitectProposalType
 
 
 class StubLLMV2:
@@ -204,6 +206,48 @@ async def test_architect_v2_deduplication():
 
 
 @pytest.mark.asyncio
+async def test_architect_v2_deduplication_handles_partial_names():
+    """Deduplication should merge aliases like 'Jessie' and 'Jessie Williams'."""
+    orchestrator = ArchitectOrchestratorV2(
+        llm_client=StubLLMV2({}),
+        model_policy=StubPolicy(),
+        graph_retriever=StubRetrieverV2(),
+    )
+
+    chunk_results = [
+        {
+            "chunk_id": "chunk_000",
+            "chunk_index": 0,
+            "entities": [
+                ChunkEntityProposal(
+                    name="Jessie",
+                    ontology="Character",
+                    confidence=0.75,
+                    why="Incomplete name",
+                ),
+            ],
+        },
+        {
+            "chunk_id": "chunk_001",
+            "chunk_index": 1,
+            "entities": [
+                ChunkEntityProposal(
+                    name="Jessie Williams",
+                    ontology="Character",
+                    confidence=0.9,
+                    why="Full reference",
+                ),
+            ],
+        },
+    ]
+
+    deduped = orchestrator._deduplicate_entities(chunk_results)
+
+    assert len(deduped) == 1
+    assert deduped[0].name == "Jessie Williams"
+
+
+@pytest.mark.asyncio
 async def test_architect_v2_reconciliation():
     """Test that reconciliation with existing entities works."""
     reconciliation_response = """
@@ -269,3 +313,53 @@ async def test_architect_v2_canonical_alias():
     # Test that longer names are preferred in dedup
     assert orchestrator._canonical_alias("Jessie") == "jessie"
     assert orchestrator._canonical_alias("Jessie Williams") == "jessie williams"
+
+
+@pytest.mark.asyncio
+async def test_architect_v2_skips_updates_for_disallowed_ontologies():
+    """Update proposals should be removed when ontology is not auto-generatable."""
+    orchestrator = ArchitectOrchestratorV2(
+        llm_client=StubLLMV2({}),
+        model_policy=StubPolicy(),
+        graph_retriever=StubRetrieverV2(),
+    )
+
+    deduped = [
+        DedupedEntityProposal(
+            name="Jessie Williams",
+            ontology="Character",
+            confidence=0.9,
+            justifications=["Seen in story"],
+            chunk_indices=[0],
+        )
+    ]
+    reconciled = {
+        "existing": [
+            {
+                "proposed_name": "Jessie Williams",
+                "matched_node_id": "char_001",
+                "ontology": "Character",
+            }
+        ],
+        "new": [],
+    }
+
+    proposals = orchestrator._create_final_proposals(
+        chunk_results=[],
+        deduped_entities=deduped,
+        reconciled=reconciled,
+        allowed_ontology_names={"organization"},
+    )
+    assert proposals == []
+
+    allowed_proposals = orchestrator._create_final_proposals(
+        chunk_results=[],
+        deduped_entities=deduped,
+        reconciled=reconciled,
+        allowed_ontology_names={"character"},
+    )
+    assert len(allowed_proposals) == 1
+    assert (
+        allowed_proposals[0]["proposal_type"]
+        == ArchitectProposalType.UPDATE_INSTANCE
+    )

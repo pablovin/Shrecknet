@@ -83,3 +83,18 @@ class ArchitectService:
         )
         await self.session.commit()
         return count
+
+    async def delete_run(
+        self,
+        run_id: str,
+        *,
+        agent_id: str | None = None,
+    ) -> int:
+        deleted = await self.repository.delete_run(run_id, agent_id=agent_id)
+        await self.session.commit()
+        return deleted
+
+    async def delete_runs_for_agent(self, agent_id: str) -> int:
+        deleted = await self.repository.delete_runs_for_agent(agent_id)
+        await self.session.commit()
+        return deleted

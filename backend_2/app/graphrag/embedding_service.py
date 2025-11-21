@@ -205,14 +205,14 @@ class EmbeddingService:
             display = source_instance_name or source_instance_id
             if source_instance_name:
                 display = f"{source_instance_name} ({source_instance_id})"
-            lines.append(f"Source Instance: {display}")
+            lines.append(f"Source Entity: {display}")
         related_names = related_instance_names or []
         if related_instance_ids and not related_names:
             related_names = related_instance_ids
         if related_names:
             formatted = ", ".join(str(value) for value in related_names if value)
             if formatted:
-                lines.append(f"Related Instances: {formatted}")
+                lines.append(f"Involved Entities: {formatted}")
         if before_event_id or before_event_title:
             label = before_event_title or before_event_id
             if before_event_title and before_event_id:
@@ -665,12 +665,59 @@ Summary: {summary}"""
                     }
                 END
             ) AS rels
-            OPTIONAL MATCH (source_inst:OntologyInstance {instance_id: n.source_instance_id})
-            WITH n, rels, source_inst
-            OPTIONAL MATCH (related_inst:OntologyInstance)
+            OPTIONAL MATCH (n)-[source_rel]->(source_entity:EntityInstance)
+            WITH
+                n,
+                rels,
+                CASE
+                    WHEN source_rel IS NOT NULL AND type(source_rel) = 'SOURCE_ENTITY'
+                    THEN source_entity
+                    ELSE NULL
+                END AS source_entity
+            OPTIONAL MATCH (n)-[related_rel]->(related_entity:EntityInstance)
+            WITH
+                n,
+                rels,
+                source_entity,
+                CASE
+                    WHEN related_rel IS NOT NULL AND type(related_rel) = 'INVOLVES_ENTITY'
+                    THEN related_entity
+                    ELSE NULL
+                END AS related_entity
+            WITH
+                n,
+                rels,
+                source_entity,
+                [alias IN collect(DISTINCT related_entity.alias) WHERE alias IS NOT NULL] AS related_aliases
+            OPTIONAL MATCH (fallback_source:EntityInstance)
+            WHERE fallback_source.entity_instance_id = n.source_instance_id
+            WITH
+                n,
+                rels,
+                related_aliases,
+                coalesce(
+                    source_entity.alias,
+                    source_entity.name,
+                    fallback_source.alias,
+                    fallback_source.name
+                ) AS source_entity_name
+            OPTIONAL MATCH (fallback_related:EntityInstance)
             WHERE n.related_instance_ids IS NOT NULL
-              AND related_inst.instance_id IN n.related_instance_ids
-            WITH n, rels, source_inst, collect(DISTINCT related_inst.name) AS related_instance_names
+              AND fallback_related.entity_instance_id IN n.related_instance_ids
+            WITH
+                n,
+                rels,
+                source_entity_name,
+                related_aliases,
+                [alias IN collect(DISTINCT fallback_related.alias) WHERE alias IS NOT NULL] AS fallback_related_aliases
+            WITH
+                n,
+                rels,
+                source_entity_name,
+                CASE
+                    WHEN size(related_aliases) > 0 THEN related_aliases
+                    ELSE fallback_related_aliases
+                END AS related_instance_names
             OPTIONAL MATCH (before_event:TimelineEvent {timeline_event_id: n.before_event_id})
             OPTIONAL MATCH (after_event:TimelineEvent {timeline_event_id: n.after_event_id})
             RETURN n.entity_instance_id AS entity_id,
@@ -685,7 +732,7 @@ Summary: {summary}"""
                    n.related_instance_ids AS related_instance_ids,
                    n.before_event_id AS before_event_id,
                    n.after_event_id AS after_event_id,
-                   source_inst.name AS source_instance_name,
+                   source_entity_name AS source_instance_name,
                    related_instance_names AS related_instance_names,
                    before_event.title AS before_event_title,
                    after_event.title AS after_event_title

@@ -107,7 +107,9 @@ class TimelineEventBase(BaseModel):
     title: str
     description: str
     source_instance_id: str | None = None
+    source_entity_id: str | None = None
     related_instance_ids: list[str] = Field(default_factory=list)
+    related_entity_ids: list[str] = Field(default_factory=list)
     before_event_id: str | None = None
     after_event_id: str | None = None
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
-from sqlalchemy import Select, select, update
+from sqlalchemy import Select, delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -118,6 +118,23 @@ class ArchitectRepository:
             .values(status=status, input_chunk_count=input_chunk_count)
         )
         await self.session.execute(stmt)
+
+    async def delete_run(
+        self,
+        run_id: str,
+        *,
+        agent_id: str | None = None,
+    ) -> int:
+        stmt = delete(ArchitectAnalysisRun).where(ArchitectAnalysisRun.id == run_id)
+        if agent_id is not None:
+            stmt = stmt.where(ArchitectAnalysisRun.agent_id == agent_id)
+        result = await self.session.execute(stmt)
+        return result.rowcount or 0
+
+    async def delete_runs_for_agent(self, agent_id: str) -> int:
+        stmt = delete(ArchitectAnalysisRun).where(ArchitectAnalysisRun.agent_id == agent_id)
+        result = await self.session.execute(stmt)
+        return result.rowcount or 0
 
     async def attach_background_job(self, run_id: str, job_id: int) -> None:
         stmt = (

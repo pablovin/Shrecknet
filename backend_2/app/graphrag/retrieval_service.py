@@ -230,11 +230,15 @@ class RetrievalService:
         query = """
         MATCH (n {entity_instance_id: $node_id})
         WHERE n:EntityInstance OR n:TimelineEvent
-        MATCH (n)-[r]->(m:EntityInstance)
+        MATCH (n)-[r]->(m)
+        WHERE m:EntityInstance OR m:TimelineEvent
         RETURN type(r) AS rel_type, 
                m.entity_instance_id AS node_id,
-               m.name AS name,
-               head(labels(m)) AS label
+               coalesce(m.name, m.title, m.alias, m.entity_instance_id) AS name,
+               CASE
+                   WHEN m:TimelineEvent THEN 'TimelineEvent'
+                   ELSE head(labels(m))
+               END AS label
         LIMIT $limit
         """
 

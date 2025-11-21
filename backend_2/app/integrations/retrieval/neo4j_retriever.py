@@ -59,6 +59,16 @@ class GraphRetriever(Protocol):
         """Summaries of ontology instances (name + top aliases) for given ontology IDs."""
         ...
 
+    async def list_entities_by_ontology(
+        self,
+        ontology_id: int,
+        *,
+        skip: int = 0,
+        limit: int = 500,
+    ) -> list[dict[str, Any]]:
+        """Return lightweight entity records for the provided ontology."""
+        ...
+
 
 class Neo4jGraphRetriever:
     """Neo4j-based graph retriever using existing GraphRAG service."""
@@ -345,3 +355,53 @@ class Neo4jGraphRetriever:
         except Exception as e:
             logger.error(f"Error fetching instance summaries: {e}")
         return summaries
+
+    async def list_entities_by_ontology(
+        self,
+        ontology_id: int,
+        *,
+        skip: int = 0,
+        limit: int = 500,
+    ) -> list[dict[str, Any]]:
+        """Stream entity aliases for a single ontology in deterministic batches."""
+        query = """
+        MATCH (inst:OntologyInstance)-[:HAS_ENTITY]->(entity:EntityInstance)
+        WHERE inst.ontology_id = $ontology_id OR entity.ontology_id = $ontology_id
+        RETURN entity.entity_instance_id AS node_id,
+               coalesce(entity.alias, entity.name, entity.entity_instance_id) AS alias,
+               head(labels(entity)) AS ontology
+        ORDER BY alias, node_id
+        SKIP $skip
+        LIMIT $limit
+        """
+        try:
+            async with self._search_lock:
+                result = await self.retrieval_service.graph_session.run(
+                    query,
+                    ontology_id=ontology_id,
+                    skip=skip,
+                    limit=limit,
+                )
+                records = await result.data()
+        except Exception as e:
+            msg = f"ontology {ontology_id}: {e}"
+            logger.error("Error fetching entities for ontology %s: %s", ontology_id, e)
+            self.last_errors.append(msg)
+            return []
+
+        entities: list[dict[str, Any]] = []
+        for record in records:
+            node_id = record.get("node_id")
+            alias = record.get("alias")
+            ontology_label = record.get("ontology") or f"ontology_{ontology_id}"
+            if not node_id or not alias:
+                continue
+            entities.append(
+                {
+                    "node_id": node_id,
+                    "alias": alias,
+                    "ontology": ontology_label,
+                }
+            )
+
+        return entities

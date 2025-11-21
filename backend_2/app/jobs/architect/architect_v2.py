@@ -97,6 +97,7 @@ class ArchitectOrchestratorV2:
         logger.info("Step 0: Preloading node catalogue and ontology definitions")
         node_catalogue = await self._load_node_catalogue(agent_ontology_ids)
         ontology_definitions = self._format_ontology_definitions(entity_definitions)
+        allowed_ontology_names = self._build_allowed_ontology_names(entity_definitions)
 
     
 
@@ -142,7 +143,10 @@ class ArchitectOrchestratorV2:
         # Step 4: Map back to final JSON
         logger.info("Step 4: Creating final proposals")
         proposals = self._create_final_proposals(
-            chunk_results, deduped_entities, reconciled
+            chunk_results,
+            deduped_entities,
+            reconciled,
+            allowed_ontology_names=allowed_ontology_names,
         )
         # logger.info(f"[ARCHITECT] Proposals: {proposals}")
 
@@ -175,27 +179,85 @@ class ArchitectOrchestratorV2:
         # Use the graph retriever to get all nodes for the given ontologies
         # For now, we'll do a broad search to get existing nodes
         # In production, this could be optimized with a dedicated query
-        nodes = []
+        if not ontology_ids:
+            return []
 
-        # Search with empty query to get all nodes (or top nodes)
-        try:
-            results = await self.graph_retriever.search_aliases(
-                query="",
-                ontology_ids=ontology_ids,
-                top_k=500,  # Get a large number of existing nodes
-            )
+        nodes: list[ExistingNodeInfo] = []
+        seen_ids: set[str] = set()
+        batch_size = 500
 
-            for result in results:
-                if result.node_id and result.node_alias:
-                    nodes.append(
-                        ExistingNodeInfo(
-                            node_id=result.node_id,
-                            alias=result.node_alias,
-                            ontology=result.source or "Unknown",
-                        )
+        fetch_method = getattr(self.graph_retriever, "list_entities_by_ontology", None)
+
+        def _add_nodes_from_batch(batch: list[dict[str, Any] | ExistingNodeInfo]):
+            for entry in batch:
+                if isinstance(entry, ExistingNodeInfo):
+                    node_id = entry.node_id
+                    alias = entry.alias
+                    ontology = entry.ontology
+                else:
+                    node_id = entry.get("node_id")  # type: ignore[arg-type]
+                    alias = entry.get("alias")  # type: ignore[arg-type]
+                    ontology = entry.get("ontology")  # type: ignore[arg-type]
+
+                if not node_id or not alias or node_id in seen_ids:
+                    continue
+
+                nodes.append(
+                    ExistingNodeInfo(
+                        node_id=node_id,
+                        alias=alias,
+                        ontology=ontology or "Unknown",
                     )
-        except Exception as exc:
-            logger.warning("Failed to load node catalogue: %s", exc)
+                )
+                seen_ids.add(node_id)
+
+        if callable(fetch_method):
+            for ontology_id in ontology_ids:
+                skip = 0
+                while True:
+                    try:
+                        batch = await fetch_method(  # type: ignore[misc]
+                            ontology_id=ontology_id,
+                            skip=skip,
+                            limit=batch_size,
+                        )
+                    except Exception as exc:
+                        logger.warning(
+                            "Failed to load node catalogue batch: ontology=%s skip=%s error=%s",
+                            ontology_id,
+                            skip,
+                            exc,
+                        )
+                        break
+
+                    if not batch:
+                        break
+
+                    _add_nodes_from_batch(batch)
+
+                    if len(batch) < batch_size:
+                        break
+                    skip += batch_size
+        else:
+            # Fallback to semantic search when list_entities_by_ontology is unavailable
+            try:
+                results = await self.graph_retriever.search_aliases(
+                    query="",
+                    ontology_ids=ontology_ids,
+                    top_k=batch_size,
+                )
+                _add_nodes_from_batch(
+                    [
+                        {
+                            "node_id": result.node_id,
+                            "alias": result.node_alias,
+                            "ontology": result.source,
+                        }
+                        for result in results
+                    ]
+                )
+            except Exception as exc:
+                logger.warning("Failed to load node catalogue: %s", exc)
 
         logger.info("Loaded %d existing nodes", len(nodes))
         return nodes
@@ -271,9 +333,14 @@ class ArchitectOrchestratorV2:
                 if not canonical_name:
                     continue
 
+                existing_key = self._find_matching_canonical_key(
+                    canonical_name, entity_map
+                )
+
                 # Use canonical name as key
-                if canonical_name not in entity_map:
-                    entity_map[canonical_name] = {
+                key = existing_key or canonical_name
+                if key not in entity_map:
+                    entity_map[key] = {
                         "name": name,  # Keep the first/longest variant
                         "ontology": entity.ontology,
                         "confidences": [],
@@ -282,7 +349,7 @@ class ArchitectOrchestratorV2:
                         "name_variants": set(),
                     }
 
-                entry = entity_map[canonical_name]
+                entry = entity_map[key]
                 entry["confidences"].append(entity.confidence)
                 entry["justifications"].append(entity.why)
                 entry["chunk_indices"].append(result["chunk_index"])
@@ -307,6 +374,47 @@ class ArchitectOrchestratorV2:
             )
 
         return deduped
+
+    def _find_matching_canonical_key(
+        self, canonical_name: str, entity_map: dict[str, dict[str, Any]]
+    ) -> str | None:
+        """Return existing canonical key if the alias closely matches."""
+        if canonical_name in entity_map:
+            return canonical_name
+        for existing_key in entity_map.keys():
+            if self._aliases_equivalent(existing_key, canonical_name):
+                return existing_key
+        return None
+
+    @staticmethod
+    def _aliases_equivalent(alias_a: str | None, alias_b: str | None) -> bool:
+        """Soft matching used to collapse aliases like 'Jessie' and 'Jessie Williams'."""
+        if not alias_a or not alias_b:
+            return False
+        if alias_a == alias_b:
+            return True
+
+        tokens_a = alias_a.split()
+        tokens_b = alias_b.split()
+        if not tokens_a or not tokens_b:
+            return False
+
+        # Helper closures keep comparisons symmetric
+        def _one_token_matches_first_or_last(
+            single_tokens: list[str], multi_tokens: list[str]
+        ) -> bool:
+            token = single_tokens[0]
+            if token == multi_tokens[-1]:
+                return True
+            if len(multi_tokens) <= 2 and token == multi_tokens[0]:
+                return True
+            return False
+
+        if len(tokens_a) == 1 and len(tokens_b) > 1:
+            return _one_token_matches_first_or_last(tokens_a, tokens_b)
+        if len(tokens_b) == 1 and len(tokens_a) > 1:
+            return _one_token_matches_first_or_last(tokens_b, tokens_a)
+        return False
 
     async def _reconcile_with_existing(
         self,
@@ -384,6 +492,8 @@ class ArchitectOrchestratorV2:
         chunk_results: list[dict[str, Any]],
         deduped_entities: list[DedupedEntityProposal],
         reconciled: dict[str, Any],
+        *,
+        allowed_ontology_names: set[str] | None = None,
     ) -> list[dict[str, Any]]:
         """
         Step 4: Create final proposals with resolved status.
@@ -428,6 +538,16 @@ class ArchitectOrchestratorV2:
 
             # Check if it's existing or new
             if canonical_name in existing_map:
+                if not self._is_allowed_update(
+                    entity.ontology, allowed_ontology_names
+                ):
+                    logger.info(
+                        "architect_v2_skip_update: alias=%s ontology=%s",
+                        entity.name,
+                        entity.ontology,
+                    )
+                    continue
+
                 matched = existing_map[canonical_name]
                 matched_id = matched.get("matched_node_id")
                 # print (f"[ARCHITECT] Matched ID for {canonical_name}: {entity.name}({matched_id})")
@@ -572,6 +692,18 @@ class ArchitectOrchestratorV2:
         return "\n".join(lines) if lines else "(no ontology definitions)"
 
     @staticmethod
+    def _build_allowed_ontology_names(
+        entity_definitions: Iterable[dict[str, Any]]
+    ) -> set[str]:
+        """Collect ontology names that are permitted for automated updates."""
+        allowed: set[str] = set()
+        for definition in entity_definitions:
+            name = (definition.get("name") or "").strip().lower()
+            if name:
+                allowed.add(name)
+        return allowed
+
+    @staticmethod
     def _extract_json_block(raw: str) -> str:
         """Extract JSON object from LLM response."""
         start = raw.find("{")
@@ -706,3 +838,12 @@ class ArchitectOrchestratorV2:
         stripper.feed(text)
         stripped = stripper.get_text()
         return " ".join(unescape(stripped).split())
+    @staticmethod
+    def _is_allowed_update(
+        ontology_name: str | None, allowed_names: set[str] | None
+    ) -> bool:
+        """Return True when updates are allowed for the provided ontology."""
+        if not allowed_names:
+            return True
+        normalized = (ontology_name or "").strip().lower()
+        return normalized in allowed_names

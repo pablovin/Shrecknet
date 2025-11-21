@@ -12,6 +12,7 @@ from app.api.deps import (
     get_current_user,
     get_db_session,
 )
+from app.models.agent import Agent
 from app.models.user import User
 from app.repositories.agent_repository import AgentRepository
 from app.schemas.architect import (
@@ -25,6 +26,24 @@ from app.services.architect_service import ArchitectService
 from app.tasks.architect_analysis import analyze_instance as architect_task
 
 router = APIRouter(prefix="/jobs/architect", tags=["architect"])
+
+
+async def _get_architect_agent_or_404(
+    agent_id: str,
+    session: AsyncSession,
+) -> Agent:
+    agent_repo = AgentRepository(session)
+    agent = await agent_repo.get_by_id(agent_id)
+    if not agent:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found"
+        )
+    if agent.job != "architect":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Agent job type '{agent.job}' is not 'architect'",
+        )
+    return agent
 
 
 @router.post(
@@ -112,17 +131,7 @@ async def list_architect_runs(
     session: AsyncSession = Depends(get_db_session),
     service: ArchitectService = Depends(get_architect_service),
 ) -> list[ArchitectAnalysisRunSummary]:
-    agent_repo = AgentRepository(session)
-    agent = await agent_repo.get_by_id(agent_id)
-    if not agent:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found"
-        )
-    if agent.job != "architect":
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Agent job type '{agent.job}' is not 'architect'",
-        )
+    await _get_architect_agent_or_404(agent_id, session)
 
     runs = await service.list_runs_for_agent(agent_id, limit=limit, offset=offset)
     summaries = []
@@ -142,6 +151,42 @@ async def list_architect_runs(
             )
         )
     return summaries
+
+
+@router.delete(
+    "/{agent_id}/runs/{run_id}",
+    response_model=dict,
+)
+async def delete_architect_run(
+    agent_id: str,
+    run_id: str,
+    _current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db_session),
+    service: ArchitectService = Depends(get_architect_service),
+) -> dict[str, int]:
+    agent = await _get_architect_agent_or_404(agent_id, session)
+    deleted = await service.delete_run(run_id, agent_id=agent.id)
+    if deleted == 0:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Architect run not found",
+        )
+    return {"deleted": deleted}
+
+
+@router.delete(
+    "/{agent_id}/runs",
+    response_model=dict,
+)
+async def delete_architect_runs_for_agent(
+    agent_id: str,
+    _current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db_session),
+    service: ArchitectService = Depends(get_architect_service),
+) -> dict[str, int]:
+    agent = await _get_architect_agent_or_404(agent_id, session)
+    deleted = await service.delete_runs_for_agent(agent.id)
+    return {"deleted": deleted}
 
 
 @router.patch(

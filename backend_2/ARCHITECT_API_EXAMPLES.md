@@ -199,6 +199,38 @@ GET /api/jobs/architect/runs/{run_id}
 }
 ```
 
+## Maintenance: Cleaning Architect Runs
+
+Use these endpoints when the UI needs to remove stale Architect runs for a specific agent.
+
+### Delete a single run
+```
+DELETE /api/jobs/architect/{agent_id}/runs/{run_id}
+```
+
+**Response (204 equivalent)**
+```json
+{
+  "deleted": 1
+}
+```
+
+If the run does not belong to the agent (or has already been removed) the API responds with `404 Architect run not found`.
+
+### Delete all runs for an agent
+```
+DELETE /api/jobs/architect/{agent_id}/runs
+```
+
+**Response Example**
+```json
+{
+  "deleted": 17
+}
+```
+
+The response count indicates how many runs (and their attached proposals) were removed for the specified agent.
+
 ## Step 2: Submit Validated Proposals
 
 ### Endpoint

@@ -415,17 +415,20 @@ class EntityGenerator:
     @staticmethod
     def _strip_markdown_code_blocks(text: str) -> str:
         """
-        Remove markdown code block delimiters (```html and ```) from text.
+        Remove markdown code block delimiters from text.
 
-        This is needed because LLMs sometimes wrap HTML content in markdown code blocks,
+        This is needed because LLMs sometimes wrap HTML/text content in markdown code blocks,
         which makes them unparsable on the frontend.
+
+        Handles code blocks with any language identifier (e.g., ```html, ```javascript, ```css)
+        or no identifier (e.g., ```).
         """
         if not text:
             return ""
-        # Remove markdown code blocks with optional language identifier (e.g., ```html or ```)
+        # Remove markdown code blocks with any optional language identifier
         # Use DOTALL flag to match across newlines
         cleaned = re.sub(
-            r"```(?:html)?\s*\n?(.*?)\n?```",
+            r"```[a-zA-Z]*\s*\n?(.*?)\n?```",
             r"\1",
             text,
             flags=re.DOTALL | re.IGNORECASE,

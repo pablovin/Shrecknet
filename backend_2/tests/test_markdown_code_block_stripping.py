@@ -118,3 +118,19 @@ def test_normalize_timeline_event_handles_plain_text():
     assert result is not None
     assert result["title"] == "Plain Title"
     assert result["description"] == "Plain description without HTML or markdown"
+
+
+def test_strip_markdown_code_blocks_with_javascript():
+    """Test stripping markdown code blocks with javascript language identifier."""
+    input_text = "```javascript\nconst x = 5;\n```"
+    expected = "const x = 5;"
+    result = _strip_markdown_code_blocks(input_text)
+    assert result == expected
+
+
+def test_strip_markdown_code_blocks_with_css():
+    """Test stripping markdown code blocks with css language identifier."""
+    input_text = "```css\n.class { color: red; }\n```"
+    expected = ".class { color: red; }"
+    result = _strip_markdown_code_blocks(input_text)
+    assert result == expected

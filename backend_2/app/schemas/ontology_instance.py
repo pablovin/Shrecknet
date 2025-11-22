@@ -106,8 +106,8 @@ class TimelineEventBase(BaseModel):
     model_config = ConfigDict(extra="ignore")
     title: str
     description: str
-    source_instance_id: str | None = None
-    source_entity_id: str | None = None
+    created_from_instance_id: str | None = None
+    created_from_entity_id: str | None = None
     related_instance_ids: list[str] = Field(default_factory=list)
     related_entity_ids: list[str] = Field(default_factory=list)
     before_event_id: str | None = None
@@ -131,8 +131,10 @@ class TimelineEventUpdate(BaseModel):
     model_config = ConfigDict(extra="ignore")
     title: str | None = None
     description: str | None = None
-    source_instance_id: str | None = None
+    created_from_instance_id: str | None = None
+    created_from_entity_id: str | None = None
     related_instance_ids: list[str] | None = None
+    related_entity_ids: list[str] | None = None
     before_event_id: str | None = None
     after_event_id: str | None = None
 

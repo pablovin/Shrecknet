@@ -2450,6 +2450,10 @@ async def _apply_timeline_events(
     if not timeline_plans:
         logger.info("architect_generation_v2: no timeline events to apply")
         return []
+    
+    if not source_instance_id:
+        logger.error("architect_generation_v2: source_instance_id is required for timeline events")
+        return []
 
     instance_event_cache: dict[str, dict[str, list[dict[str, Any]]]] = {}
     created_event_ids: list[str] = []
@@ -2463,6 +2467,22 @@ async def _apply_timeline_events(
         instance_id = suggestion_instance_map.get(suggestion_id)
         if entity_id and instance_id:
             entity_instance_lookup[entity_id] = instance_id
+
+    # Load existing timeline events from the SOURCE instance (ontology_instance)
+    # Timeline events are always stored on the source instance, not on target instances
+    if source_instance_id not in instance_event_cache:
+        existing_events = await _fetch_instance_timeline_events(
+            graph_session, source_instance_id
+        )
+        instance_event_cache[source_instance_id] = _group_events_by_entity(
+            existing_events
+        )
+        logger.info(
+            "architect_generation_v2: loaded %d existing timeline events for source instance %s",
+            len(existing_events),
+            source_instance_id,
+        )
+    events_by_entity = instance_event_cache[source_instance_id]
 
     for suggestion_id, events in timeline_plans.items():
         suggestion = suggestion_lookup.get(suggestion_id)
@@ -2479,44 +2499,22 @@ async def _apply_timeline_events(
             )
             continue
 
-        target_instance_id = suggestion_instance_map.get(suggestion_id)
-        if not target_instance_id:
-            logger.warning(
-                "architect_generation_v2: timeline events for suggestion %s lack target instance",
-                suggestion_id,
-            )
-            continue
-
-        if target_instance_id not in instance_event_cache:
-            existing_events = await _fetch_instance_timeline_events(
-                graph_session, target_instance_id
-            )
-            instance_event_cache[target_instance_id] = _group_events_by_entity(
-                existing_events
-            )
-            logger.info(
-                "architect_generation_v2: loaded %d existing timeline events for instance %s",
-                len(existing_events),
-                target_instance_id,
-            )
-        events_by_entity = instance_event_cache[target_instance_id]
-
         related_chain = events_by_entity.get(entity_id, [])
         tail_event = _find_tail_event(related_chain)
         previous_event_id = tail_event.get("timeline_event_id") if tail_event else None
         previous_event_title = tail_event.get("title") if tail_event else None
         logger.info(
-            "architect_generation_v2: applying %d timeline events for suggestion %s -> entity %s (instance=%s current_tail=%s)",
+            "architect_generation_v2: applying %d timeline events for suggestion %s -> entity %s (source_instance=%s current_tail=%s)",
             len(events),
             suggestion_id,
             entity_id,
-            target_instance_id,
+            source_instance_id,
             previous_event_id,
         )
 
         for event in events:
-            # Do not resolve source_entity_id from chunk-specific aliases
-            # Timeline events are attached to the target instance and entity via related_entity_ids
+            # Timeline events are always stored on the source instance (ontology_instance)
+            # and reference related entities via related_entity_ids
             source_entity_id = None
             resolved_related = _resolve_aliases_to_ids(
                 event.get("related_aliases") or [],
@@ -2539,7 +2537,7 @@ async def _apply_timeline_events(
                 parent_instance = entity_instance_lookup.get(rid)
                 if (
                     not parent_instance
-                    or parent_instance == target_instance_id
+                    or parent_instance == source_instance_id
                     or parent_instance in seen_pages
                 ):
                     continue
@@ -2584,7 +2582,7 @@ async def _apply_timeline_events(
                 })
                 """,
                 {
-                    "instance_id": target_instance_id,
+                    "instance_id": source_instance_id,
                     "ontology_id": ontology_id,
                     "timeline_event_id": event_id,
                     "title": event["title"],
@@ -2601,7 +2599,7 @@ async def _apply_timeline_events(
             )
             await _attach_timeline_entities(
                 graph_session,
-                instance_id=target_instance_id,
+                instance_id=source_instance_id,
                 timeline_event_id=event_id,
                 source_entity_id=source_entity_id,
                 related_entity_ids=dedup_related,
@@ -2613,7 +2611,7 @@ async def _apply_timeline_events(
             )
             await _link_timeline_order(
                 graph_session,
-                instance_id=target_instance_id,
+                instance_id=source_instance_id,
                 timeline_event_id=event_id,
                 before_event_id=previous_event_id,
                 after_event_id=None,
@@ -2632,7 +2630,7 @@ async def _apply_timeline_events(
                 )
                 await _link_timeline_order(
                     graph_session,
-                    instance_id=target_instance_id,
+                    instance_id=source_instance_id,
                     timeline_event_id=previous_event_id,
                     before_event_id=None,
                     after_event_id=event_id,
@@ -2655,11 +2653,11 @@ async def _apply_timeline_events(
             previous_event_title = event["title"]
             created_event_ids.append(event_id)
             logger.info(
-                "architect_generation_v2: created timeline event %s for entity %s via suggestion %s (instance=%s title=%s)",
+                "architect_generation_v2: created timeline event %s for entity %s via suggestion %s (source_instance=%s title=%s)",
                 event_id,
                 entity_id,
                 suggestion_id,
-                target_instance_id,
+                source_instance_id,
                 event["title"],
             )
 

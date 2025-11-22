@@ -2377,7 +2377,7 @@ async def _apply_timeline_events(
                     "timeline_event_id": event_id,
                     "title": event["title"],
                     "description": event["description"],
-                    "source_instance_id": source_instance_id or source_entity_instance_id,
+                    "source_instance_id": source_instance_id,
                     "source_entity_id": resolved_source,
                     "related_instance_ids": related_instance_ids,
                     "related_entity_ids": dedup_related,
@@ -2397,7 +2397,7 @@ async def _apply_timeline_events(
             await _link_source_generation_instance(
                 graph_session,
                 timeline_event_id=event_id,
-                source_instance_id=source_instance_id or source_entity_instance_id,
+                source_instance_id=source_instance_id,
             )
             await _link_timeline_order(
                 graph_session,

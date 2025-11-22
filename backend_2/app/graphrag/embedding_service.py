@@ -916,6 +916,61 @@ Summary: {summary}"""
             "chunks_deleted": deleted_chunks,
         }
 
+    async def remove_instance_embeddings(self, instance_id: str) -> dict[str, int]:
+        """
+        Remove all embeddings and chunks for a specific ontology instance.
+        
+        This ensures that when an instance is deleted, all associated embeddings
+        are properly cleaned up from the embedding space.
+        
+        Args:
+            instance_id: The ontology instance ID to clean up
+            
+        Returns:
+            Dictionary with counts of deleted chunks and reset nodes
+        """
+        # Delete all chunks associated with this instance
+        delete_chunks_query = """
+        MATCH (chunk:EntityChunk {instance_id: $instance_id})
+        WITH collect(DISTINCT chunk) AS chunks
+        CALL {
+            WITH chunks
+            UNWIND chunks AS chunk
+            DETACH DELETE chunk
+        }
+        RETURN size(chunks) AS deleted_chunks
+        """
+        chunk_result = await self.graph_session.run(
+            delete_chunks_query, instance_id=instance_id
+        )
+        chunk_record = await chunk_result.single()
+        deleted_chunks = chunk_record["deleted_chunks"] if chunk_record else 0
+
+        # Reset embedding flags on any remaining nodes for this instance
+        # (in case they exist outside the normal deletion flow)
+        reset_nodes_query = """
+        MATCH (node {instance_id: $instance_id})
+        WHERE node:EntityInstance OR node:TimelineEvent
+        SET node.is_embedded = false,
+            node.last_embedded_date = null
+        REMOVE node.text_embedding,
+               node.text_embedding_model,
+               node.text_embedding_dim,
+               node.context_text
+        RETURN count(node) AS nodes_reset
+        """
+        node_result = await self.graph_session.run(
+            reset_nodes_query, instance_id=instance_id
+        )
+        node_record = await node_result.single()
+        nodes_reset = node_record["nodes_reset"] if node_record else 0
+
+        return {
+            "instance_id": instance_id,
+            "chunks_deleted": deleted_chunks,
+            "nodes_reset": nodes_reset,
+        }
+
     async def ensure_vector_index(
         self, index_name: str = "entity_text_vec_idx"
     ) -> bool:

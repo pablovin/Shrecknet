@@ -12,6 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.graphrag.embedding_service import EmbeddingService
 from app.models.ontology import OntologyEntity
 from app.repositories.ontology_repository import OntologyRepository
 from app.schemas.ontology_instance import (
@@ -773,8 +774,15 @@ class OntologyInstanceService:
         )
 
     async def delete_instance(self, instance_id: str) -> None:
+        # First, clean up embeddings using the embedding service
+        # This ensures all chunks and embedding metadata are properly removed
+        embedding_service = EmbeddingService(self.graph_session)
+        await embedding_service.remove_instance_embeddings(instance_id)
+        
+        # Now proceed with deleting the instance structure
         tx = await self.graph_session.begin_transaction()
         try:
+            # Delete any remaining entity chunks (cleanup in case embedding service missed any)
             await tx.run(
                 """
                 MATCH (i:OntologyInstance {instance_id: $instance_id})-[:HAS_ENTITY]->(e:EntityInstance)-[:HAS_CHUNK]->(chunk:EntityChunk)
@@ -782,6 +790,7 @@ class OntologyInstanceService:
                 """,
                 instance_id=instance_id,
             )
+            # Delete entities
             await tx.run(
                 """
                 MATCH (i:OntologyInstance {instance_id: $instance_id})-[:HAS_ENTITY]->(e:EntityInstance)
@@ -789,6 +798,7 @@ class OntologyInstanceService:
                 """,
                 instance_id=instance_id,
             )
+            # Delete any remaining timeline event chunks
             await tx.run(
                 """
                 MATCH (i:OntologyInstance {instance_id: $instance_id})-[:HAS_TIMELINE_EVENT]->(event:TimelineEvent)-[:HAS_CHUNK]->(chunk:EntityChunk)
@@ -796,6 +806,7 @@ class OntologyInstanceService:
                 """,
                 instance_id=instance_id,
             )
+            # Delete timeline events
             await tx.run(
                 """
                 MATCH (i:OntologyInstance {instance_id: $instance_id})-[:HAS_TIMELINE_EVENT]->(event:TimelineEvent)
@@ -803,6 +814,7 @@ class OntologyInstanceService:
                 """,
                 instance_id=instance_id,
             )
+            # Finally, delete the instance itself
             await tx.run(
                 """
                 MATCH (i:OntologyInstance {instance_id: $instance_id})

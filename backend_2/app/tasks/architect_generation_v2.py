@@ -2285,7 +2285,7 @@ async def _attach_timeline_entities(
             """
             MATCH (event:TimelineEvent {timeline_event_id: $timeline_event_id})
             MATCH (entity:EntityInstance {entity_instance_id: $source_entity_id})
-            WHERE event.instance_id = $instance_id AND entity.instance_id = $instance_id
+            WHERE event.instance_id = $instance_id
             MERGE (event)-[:SOURCE_ENTITY]->(entity)
             """,
             {
@@ -2303,7 +2303,6 @@ async def _attach_timeline_entities(
             WITH event
             UNWIND $related_ids AS related_id
             MATCH (entity:EntityInstance {entity_instance_id: related_id})
-            WHERE entity.instance_id = $instance_id
             MERGE (event)-[:INVOLVES_ENTITY]->(entity)
             """,
             {

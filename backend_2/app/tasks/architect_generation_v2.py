@@ -2449,7 +2449,7 @@ async def _apply_timeline_events(
     if not timeline_plans:
         logger.info("architect_generation_v2: no timeline events to apply")
         return []
-    
+
     if not source_instance_id:
         logger.error("architect_generation_v2: source_instance_id is required for timeline events")
         return []

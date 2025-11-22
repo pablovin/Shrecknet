@@ -240,16 +240,12 @@ async def _execute_generation(
                 normalized_suggestions, existing_alias_map
             )
 
-            print(f"[GENERATION]: language_context: {language_context}")
-
-            # print (f"[GENERATION]: proposals_by_id: {proposals_by_id}")
-            # print (f"[GENERATION]: suggestions_payload: {suggestions_payload}")
-            # print (f"[GENERATION]: entity_definitions_map: {entity_definitions_map}")
-            # print (f"[GENERATION]: existing_alias_map: {existing_alias_map}")
-            # # print (f"[GENERATION]: existing_entities_map: {existing_entities_map}")
-            # print (f"[GENERATION]: original_text: {original_text[0:240]}")
-            # print (f"[GENERATION]: normalized_suggestions: {normalized_suggestions}")
-            # print (f"[GENERATION]: alias_variants: {alias_variants}")
+            logger.info(
+                "architect_generation_v2: detected language %s (%s) for run %s",
+                language_context["code"],
+                language_context["label"],
+                run_id,
+            )
 
             model_policy = ModelPolicy(
                 decompose_model=settings.model_decompose,
@@ -1417,6 +1413,8 @@ def _looks_portuguese(text: str) -> bool:
 
 
 _LANGUAGE_LABELS = {
+    # Common languages - expand as needed for your use case
+    # For comprehensive support, consider integrating babel or langcodes library
     "en": "English",
     "pt": "Portuguese",
     "es": "Spanish",

@@ -41,6 +41,9 @@ from app.utils.job_tracking import (
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
+# Regex pattern to remove markdown code block delimiters (e.g., ```html, ```javascript, ```)
+MARKDOWN_CODE_BLOCK_PATTERN = r"```[a-zA-Z]*\s*\n?(.*?)\n?```"
+
 
 def _normalize_alias(alias: Optional[str]) -> str:
     return (alias or "").strip().lower()
@@ -2663,7 +2666,7 @@ async def _apply_timeline_events(
     return created_event_ids
 
 
-def _strip_markdown_code_blocks(text: str) -> str:
+def _strip_markdown_code_blocks(text: str | None) -> str:
     """
     Remove markdown code block delimiters from text.
 
@@ -2672,13 +2675,19 @@ def _strip_markdown_code_blocks(text: str) -> str:
 
     Handles code blocks with any language identifier (e.g., ```html, ```javascript, ```css)
     or no identifier (e.g., ```).
+
+    Args:
+        text: The text to clean, may be None
+
+    Returns:
+        Clean text without markdown code block delimiters
     """
     if not text:
         return ""
     # Remove markdown code blocks with any optional language identifier
     # Use DOTALL flag to match across newlines
     cleaned = re.sub(
-        r"```[a-zA-Z]*\s*\n?(.*?)\n?```", r"\1", text, flags=re.DOTALL | re.IGNORECASE
+        MARKDOWN_CODE_BLOCK_PATTERN, r"\1", text, flags=re.DOTALL | re.IGNORECASE
     )
     return cleaned.strip()
 

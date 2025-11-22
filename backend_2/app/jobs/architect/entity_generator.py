@@ -27,6 +27,9 @@ from app.schemas.ontology_instance import (
 
 logger = logging.getLogger(__name__)
 
+# Regex pattern to remove markdown code block delimiters (e.g., ```html, ```javascript, ```)
+MARKDOWN_CODE_BLOCK_PATTERN = r"```[a-zA-Z]*\s*\n?(.*?)\n?```"
+
 
 class EntityGenerator:
     """Generates entities and updates with properties/relationships from text."""
@@ -413,7 +416,7 @@ class EntityGenerator:
             return None
 
     @staticmethod
-    def _strip_markdown_code_blocks(text: str) -> str:
+    def _strip_markdown_code_blocks(text: str | None) -> str:
         """
         Remove markdown code block delimiters from text.
 
@@ -422,13 +425,19 @@ class EntityGenerator:
 
         Handles code blocks with any language identifier (e.g., ```html, ```javascript, ```css)
         or no identifier (e.g., ```).
+
+        Args:
+            text: The text to clean, may be None
+
+        Returns:
+            Clean text without markdown code block delimiters
         """
         if not text:
             return ""
         # Remove markdown code blocks with any optional language identifier
         # Use DOTALL flag to match across newlines
         cleaned = re.sub(
-            r"```[a-zA-Z]*\s*\n?(.*?)\n?```",
+            MARKDOWN_CODE_BLOCK_PATTERN,
             r"\1",
             text,
             flags=re.DOTALL | re.IGNORECASE,

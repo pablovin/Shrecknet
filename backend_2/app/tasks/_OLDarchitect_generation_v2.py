@@ -5,12 +5,11 @@ from __future__ import annotations
 import json
 import logging
 import re
-from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime
-from html import escape
 from typing import Any, Iterable, Optional, Tuple
 from uuid import uuid4
+from collections import defaultdict
 
 from app.celery_app import celery_app
 from app.core.config import get_settings
@@ -223,7 +222,7 @@ async def _execute_generation(
             chunk_size = int((run.settings or {}).get("chunk_size") or 1000)
             chunk_overlap = 100
             max_chunks = (run.settings or {}).get("max_chunks") or None
-            chunk_texts = _chunk_instance_text(
+            chunk_texts, chunk_to_source_entity = _chunk_instance_text_with_sources(
                 ontology_instance, chunk_size=chunk_size, chunk_overlap=chunk_overlap, max_chunks=max_chunks
             )
 
@@ -238,8 +237,7 @@ async def _execute_generation(
 
             alias_variants = _collect_alias_variants(normalized_suggestions, existing_alias_map)
 
-            print (f"[GENERATION]: language_context: {language_context}")            
-
+            # print (f"[GENERATION]: Ontology ID: {ontology_id}")
             # print (f"[GENERATION]: proposals_by_id: {proposals_by_id}")
             # print (f"[GENERATION]: suggestions_payload: {suggestions_payload}")            
             # print (f"[GENERATION]: entity_definitions_map: {entity_definitions_map}")              
@@ -316,11 +314,7 @@ async def _execute_generation(
                 # print (f"[GENERATION]: new_relationships_map: {new_relationships_map}")   
                 # print (f"[GENERATION]: update_results: {update_results}")                   
 
-                creation_result: dict[str, Any] = {
-                    "proposal_to_entity_id": {},
-                    "proposal_to_instance_id": {},
-                    "instance_ids": [],
-                }
+                creation_result: dict[str, Any] = {"proposal_to_entity_id": {}, "instance_ids": []}
 
                 # --- Persist new entities, each in its own sibling ontology instance ---
                 if new_entities_map:
@@ -427,31 +421,18 @@ async def _execute_generation(
                         existing_entities_map=existing_entities_map,
                     )
 
-                suggestion_instance_map: dict[str, str] = {}
-                proposal_to_instance = creation_result.get("proposal_to_instance_id", {})
-                for suggestion in normalized_suggestions:
-                    target_instance_id: str | None = None
-                    if suggestion.mode == "new":
-                        target_instance_id = proposal_to_instance.get(suggestion.suggestion_id)
-                    else:
-                        existing_info = existing_entities_map.get(suggestion.entity_instance_id or "")
-                        if existing_info:
-                            target_instance_id = existing_info.get("instance_id")
-                    if target_instance_id:
-                        suggestion_instance_map[suggestion.suggestion_id] = target_instance_id
-
                 if timeline_plans:
                     await update_job_progress(job_id, 0.88, {"status": "Recording timeline events"})
                     await _apply_timeline_events(
                         graph_session=graph_session,
+                        instance_id=run.ontology_instance_id,
                         ontology_id=ontology_id,
-                        source_instance_id=getattr(ontology_instance, "instance_id", None),
                         timeline_plans=timeline_plans,
                         suggestion_lookup=suggestion_lookup,
-                        suggestion_instance_map=suggestion_instance_map,
                         new_entity_ids=creation_result.get("proposal_to_entity_id", {}),
                         alias_variants=alias_variants,
                         existing_entities_map=existing_entities_map,
+                        chunk_to_source_entity=chunk_to_source_entity,
                     )
 
                 merged_ids: set[str] = set()
@@ -639,18 +620,10 @@ async def _extract_per_chunk(
             summary = entry.get("summary")
             if summary:
                 enrichment[suggestion_id]["summaries"].append(summary)
-            raw_events = entry.get("timeline_events", []) or []
-            per_chunk_events: list[dict[str, Any]] = []
-            for event_index, timeline_event in enumerate(raw_events, start=1):
-                normalized_event = _normalize_timeline_event_entry(
-                    timeline_event,
-                    chunk_index=chunk_idx,
-                    fallback_order=event_index,
-                )
+            for timeline_event in entry.get("timeline_events", []) or []:
+                normalized_event = _normalize_timeline_event_entry(timeline_event)
                 if normalized_event:
-                    per_chunk_events.append(normalized_event)
-            limited_events = _limit_chunk_timeline_events(per_chunk_events)
-            enrichment[suggestion_id]["timeline_events"].extend(limited_events)
+                    enrichment[suggestion_id]["timeline_events"].append(normalized_event)
 
     return enrichment
 
@@ -681,7 +654,7 @@ async def _compose_autogenerated_summaries(
         if not raw_notes:
             continue
         if not existing_summary and len(raw_notes) == 1:
-            entry["summaries"] = [_format_plaintext_as_html(raw_notes[0])]
+            entry["summaries"] = [raw_notes[0]]
             continue
 
         prompt = _build_summary_prompt(
@@ -718,15 +691,9 @@ async def _compose_autogenerated_summaries(
         if not refined:
             refined = " ".join(raw_notes).strip()
         if refined:
-            styled = await _maybe_structure_summary_html(
-                llm_client=llm_client,
-                style_model=style_model,
-                summary=refined,
-                alias=suggestion.alias,
-                entity_name=entity_definitions_map.get(suggestion.entity_definition_id, {}).get("name", ""),
-                language_name=language_name,
-            )
-            entry["summaries"] = [styled]
+            # Store the refined summary without HTML formatting
+            # as per requirement: autogenerated text should have no markdown/HTML
+            entry["summaries"] = [refined]
 
 
 def _build_summary_prompt(
@@ -764,13 +731,8 @@ async def _maybe_structure_summary_html(
     language_name: str,
 ) -> str:
     stripped = summary.strip()
-    if not stripped:
-        return ""
-    cleaned = _strip_markdown_markup(stripped)
-    if _looks_like_html(cleaned):
-        return cleaned
-    if len(cleaned) < 400:
-        return _format_plaintext_as_html(cleaned)
+    if len(stripped) < 400:
+        return stripped
     try:
         response = await llm_client.chat(
             model=style_model,
@@ -796,63 +758,12 @@ async def _maybe_structure_summary_html(
             temperature=0.3,
         )
         candidate = response.strip()
-        if _looks_like_html(candidate):
+        if candidate.lower().startswith("<p") or "<br" in candidate or "<h" in candidate:
             return candidate
-        return _format_plaintext_as_html(cleaned)
+        return stripped
     except Exception as exc:  # pragma: no cover - defensive
         logger.warning("architect_generation_v2 summary styling failed: %s", exc)
-        return _format_plaintext_as_html(cleaned)
-
-
-def _looks_like_html(text: str) -> bool:
-    candidate = text.strip().lower()
-    return bool(candidate) and any(
-        tag in candidate for tag in ("<p", "<h1", "<h2", "<h3", "<ul", "<ol", "<article", "<section")
-    )
-
-
-def _format_plaintext_as_html(text: str) -> str:
-    """Wrap plain text summaries into lightweight semantic HTML."""
-    stripped = _strip_markdown_markup(text)
-    paragraphs: list[str] = []
-    buffer: list[str] = []
-    for line in stripped.splitlines():
-        normalized = line.strip()
-        if not normalized:
-            if buffer:
-                paragraphs.append(" ".join(buffer))
-                buffer = []
-            continue
-        buffer.append(normalized)
-    if buffer:
-        paragraphs.append(" ".join(buffer))
-
-    html_parts: list[str] = ["<article>"]
-    heading_used = False
-    for idx, paragraph in enumerate(paragraphs):
-        if idx == 0 and _looks_like_heading(paragraph):
-            html_parts.append(f"<h2>{escape(paragraph)}</h2>")
-            heading_used = True
-            continue
-        if _looks_like_heading(paragraph) and heading_used:
-            html_parts.append(f"<h3>{escape(paragraph)}</h3>")
-            continue
-        html_parts.append(f"<p>{escape(paragraph)}</p>")
-    if not html_parts[-1].endswith("</article>"):
-        html_parts.append("</article>")
-    return "".join(html_parts)
-
-
-def _looks_like_heading(text: str) -> bool:
-    """Treat short, punctuation-free phrases as headings."""
-    tokens = text.split()
-    if len(tokens) == 0 or len(tokens) > 8:
-        return False
-    if any(ch in text for ch in ".!?"):
-        return False
-    # avoid pronouns/verbs as headings
-    restricted = {"he", "she", "they", "it", "i", "you", "we", "and"}
-    return tokens[0][0].isupper() and tokens[0].lower() not in restricted
+        return stripped
 
 
 def _build_chunk_prompt(chunk_text: str, targets: list[dict[str, Any]], *, language_name: str) -> str:
@@ -929,9 +840,7 @@ def _parse_chunk_response(raw: str) -> list[dict[str, Any]]:
     return []
 
 
-def _normalize_timeline_event_entry(
-    entry: dict[str, Any], *, chunk_index: int | None = None, fallback_order: int | None = None
-) -> dict[str, Any] | None:
+def _normalize_timeline_event_entry(entry: dict[str, Any]) -> dict[str, Any] | None:
     if not isinstance(entry, dict):
         return None
     title = (entry.get("title") or "").strip()
@@ -950,19 +859,15 @@ def _normalize_timeline_event_entry(
                 related_aliases.append(alias_text)
     order = entry.get("order")
     try:
-        order_value = float(order) if order is not None else None
+        order_value = int(order) if order is not None else None
     except (TypeError, ValueError):
         order_value = None
-    chunk_order = fallback_order if fallback_order is not None else order_value
     return {
         "title": title,
         "description": description,
         "source_alias": source_alias,
         "related_aliases": related_aliases,
         "order": order_value,
-        "chunk_index": chunk_index,
-        "chunk_order": chunk_order,
-        "temporal_hint": _detect_temporal_hint(description),
     }
 
 
@@ -1071,131 +976,19 @@ def _dedup_timeline_events(
         normalized = re.sub(r"\s+", " ", title.lower())
         fallback_order += 1
         order_value = event.get("order")
-        if order_value is None or not isinstance(order_value, (int, float)):
-            order_value = float(fallback_order)
-        chunk_index = event.get("chunk_index")
-        chunk_order = event.get("chunk_order")
-        if chunk_order is None:
-            chunk_order = order_value
-        temporal_hint = event.get("temporal_hint") or 0.0
-        candidate_payload = {
+        if order_value is None or not isinstance(order_value, int):
+            order_value = fallback_order
+        existing = deduped.get(normalized)
+        if existing and existing["order"] <= order_value:
+            continue
+        deduped[normalized] = {
             "title": title,
             "description": description,
             "source_alias": event.get("source_alias"),
             "related_aliases": event.get("related_aliases") or [],
             "order": order_value,
-            "chunk_index": chunk_index,
-            "chunk_order": chunk_order,
-            "temporal_hint": temporal_hint,
         }
-        existing = deduped.get(normalized)
-        if existing and _timeline_event_sort_key(existing) <= _timeline_event_sort_key(candidate_payload):
-            continue
-        deduped[normalized] = candidate_payload
-    return sorted(deduped.values(), key=_timeline_event_sort_key)
-
-
-def _timeline_event_sort_key(event: dict[str, Any]) -> tuple[float, float, float, str]:
-    chunk_rank = (
-        float(event.get("chunk_index"))
-        if isinstance(event.get("chunk_index"), (int, float))
-        else float("inf")
-    )
-    primary_order_source = event.get("chunk_order")
-    if not isinstance(primary_order_source, (int, float)):
-        primary_order_source = event.get("order") or 0
-    adjustment = event.get("temporal_hint") or 0.0
-    order_value = float(event.get("order") or 0)
-    return (
-        chunk_rank,
-        float(primary_order_source) + adjustment,
-        order_value,
-        event.get("title", "").lower(),
-    )
-
-
-def _limit_chunk_timeline_events(events: list[dict[str, Any]], max_events: int = 3) -> list[dict[str, Any]]:
-    if not events:
-        return []
-    if len(events) <= max_events:
-        return events
-    clustered = _cluster_timeline_events(events, max_events=max_events)
-    return clustered or events[:max_events]
-
-
-def _cluster_timeline_events(
-    events: list[dict[str, Any]], *, max_events: int = 3
-) -> list[dict[str, Any]]:
-    buckets: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for event in events:
-        key = _event_theme_key(event)
-        buckets[key].append(event)
-    ordered_buckets = sorted(
-        buckets.items(),
-        key=lambda item: _timeline_event_sort_key(sorted(item[1], key=_timeline_event_sort_key)[0]),
-    )
-    clustered: list[dict[str, Any]] = []
-    for key, bucket in ordered_buckets:
-        merged = _combine_event_group(key, bucket)
-        clustered.append(merged)
-        if len(clustered) >= max_events:
-            break
-    return clustered
-
-
-def _event_theme_key(event: dict[str, Any]) -> str:
-    basis = f"{event.get('title', '')} {event.get('description', '')}".lower()
-    tokens = re.findall(r"[a-z0-9']+", basis)
-    keywords = [
-        token
-        for token in tokens
-        if len(token) > 3 and token not in _TIMELINE_STOPWORDS
-    ]
-    if not keywords:
-        return "general"
-    return " ".join(keywords[:2])
-
-
-def _combine_event_group(theme_key: str, events: list[dict[str, Any]]) -> dict[str, Any]:
-    ordered_events = sorted(events, key=_timeline_event_sort_key)
-    if len(ordered_events) == 1:
-        return ordered_events[0]
-    representative = ordered_events[0]
-    title = _build_cluster_title(theme_key)
-    description_parts = [f"{event['title']}: {event['description']}" for event in ordered_events]
-    merged_aliases = []
-    seen: set[str] = set()
-    for event in ordered_events:
-        for alias in event.get("related_aliases") or []:
-            if alias not in seen:
-                seen.add(alias)
-                merged_aliases.append(alias)
-    return {
-        "title": title,
-        "description": " ".join(description_parts),
-        "source_alias": representative.get("source_alias"),
-        "related_aliases": merged_aliases,
-        "order": representative.get("order"),
-        "chunk_index": representative.get("chunk_index"),
-        "chunk_order": representative.get("chunk_order"),
-        "temporal_hint": representative.get("temporal_hint"),
-    }
-
-
-def _build_cluster_title(theme_key: str) -> str:
-    if theme_key == "general":
-        return "Key Developments"
-    words = [word.capitalize() for word in theme_key.split()]
-    return f"{' '.join(words)} Event"
-
-
-def _detect_temporal_hint(description: str) -> float:
-    lowered = description.lower()
-    if any(token in lowered for token in _BEFORE_HINTS):
-        return -0.5
-    if any(token in lowered for token in _AFTER_HINTS):
-        return 0.5
-    return 0.0
+    return sorted(deduped.values(), key=lambda e: (e["order"], e["title"].lower()))
 
 
 def _build_entity_definitions_map(entity_defs: Iterable[Any]) -> dict[int, dict[str, Any]]:
@@ -1320,34 +1113,6 @@ _PORTUGUESE_HINT_WORDS = {
     "ainda",
 }
 
-_TIMELINE_STOPWORDS = {
-    "the",
-    "and",
-    "with",
-    "into",
-    "from",
-    "that",
-    "this",
-    "have",
-    "has",
-    "had",
-    "were",
-    "been",
-    "after",
-    "before",
-    "onto",
-    "over",
-    "under",
-    "upon",
-    "amid",
-    "amidst",
-    "about",
-    "event",
-}
-
-_BEFORE_HINTS = {"before", "earlier", "prior to", "previously", "ahead of", "leading up"}
-_AFTER_HINTS = {"after", "later", "subsequently", "eventually", "afterward", "following"}
-
 
 def _chunk_instance_text(
     ontology_instance: Any, *, chunk_size: int, chunk_overlap: int, max_chunks: Optional[int]
@@ -1370,6 +1135,37 @@ def _chunk_instance_text(
             if max_chunks and len(chunks) >= max_chunks:
                 return chunks
     return chunks
+
+
+def _chunk_instance_text_with_sources(
+    ontology_instance: Any, *, chunk_size: int, chunk_overlap: int, max_chunks: Optional[int]
+) -> tuple[list[tuple[int, str]], dict[int, str]]:
+    """
+    Chunk the source instance and track which entity each chunk came from.
+    Returns (chunks, chunk_to_entity_map) where chunk_to_entity_map[chunk_index] = entity_instance_id
+    """
+    chunks: list[tuple[int, str]] = []
+    chunk_to_entity: dict[int, str] = {}
+    index = 0
+    for entity in ontology_instance.entities:
+        text_parts: list[str] = []
+        if entity.text:
+            text_parts.append(entity.text)
+        if entity.autogenerated_text:
+            text_parts.append(entity.autogenerated_text)
+        joined = "\n\n".join([t.strip() for t in text_parts if t and t.strip()])
+        if not joined:
+            continue
+        # Use getattr for safe access in case entity_instance_id is not set
+        entity_id = getattr(entity, 'entity_instance_id', None)
+        for chunk_text in _chunk_text(joined, chunk_size=chunk_size, overlap=chunk_overlap):
+            chunks.append((index, chunk_text))
+            if entity_id:
+                chunk_to_entity[index] = entity_id
+            index += 1
+            if max_chunks and len(chunks) >= max_chunks:
+                return chunks, chunk_to_entity
+    return chunks, chunk_to_entity
 
 
 def _normalize_suggestions(
@@ -1642,7 +1438,6 @@ async def _create_entities_per_instance(
     definition_map: dict[str, int] = {}
     proposal_to_entity_id: dict[str, str] = {}
     instance_ids: list[str] = []
-    proposal_to_instance_id: dict[str, str] = {}
 
     for proposal_id, entity_payload in entities_by_proposal.items():
         new_instance_id = str(uuid4())
@@ -1678,7 +1473,6 @@ async def _create_entities_per_instance(
         created_entity_ids.extend(res["created_entity_ids"])
         definition_map.update(res["definition_map"])
         proposal_to_entity_id.update(res["proposal_to_entity_id"])
-        proposal_to_instance_id[proposal_id] = new_instance_id
 
         # Update instance updated_at
         await graph_session.run(
@@ -1693,7 +1487,6 @@ async def _create_entities_per_instance(
         "created_entity_ids": created_entity_ids,
         "definition_map": definition_map,
         "proposal_to_entity_id": proposal_to_entity_id,
-        "proposal_to_instance_id": proposal_to_instance_id,
         "instance_ids": instance_ids,
     }
 
@@ -1951,7 +1744,6 @@ async def _load_existing_entity_catalog(
                e.text AS text,
                e.autogenerated_text AS autogenerated_text,
                e.properties AS properties,
-               inst.instance_id AS instance_id,
                collect(
                    CASE
                        WHEN r IS NULL THEN NULL
@@ -2007,7 +1799,6 @@ async def _load_existing_entity_catalog(
             "relationships": relationships,
             "text": record.get("text") or "",
             "autogenerated_text": record.get("autogenerated_text") or "",
-            "instance_id": record.get("instance_id"),
         }
 
     return alias_map, entities_map
@@ -2030,18 +1821,14 @@ async def _fetch_instance_timeline_events(
         if not event_node:
             continue
         props = dict(event_node)
-        related_page_ids_raw = props.get("related_instance_ids") or []
-        if isinstance(related_page_ids_raw, str):
-            related_page_ids_raw = [related_page_ids_raw]
-        related_entity_ids_raw = props.get("related_entity_ids") or []
-        if isinstance(related_entity_ids_raw, str):
-            related_entity_ids_raw = [related_entity_ids_raw]
+        related_ids = props.get("related_instance_ids") or []
+        if isinstance(related_ids, str):
+            related_ids = [related_ids]
         events.append(
             {
                 "timeline_event_id": props.get("timeline_event_id"),
                 "title": props.get("title"),
-                "related_instance_ids": [str(rid) for rid in related_page_ids_raw if rid],
-                "related_entity_ids": [str(rid) for rid in related_entity_ids_raw if rid],
+                "related_instance_ids": [str(rid) for rid in related_ids if rid],
                 "before_event_id": props.get("before_event_id"),
                 "after_event_id": props.get("after_event_id"),
             }
@@ -2052,115 +1839,16 @@ async def _fetch_instance_timeline_events(
 def _group_events_by_entity(events: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
     grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for event in events:
-        related_entities = event.get("related_entity_ids") or event.get("related_instance_ids") or []
-        for entity_id in related_entities:
+        for entity_id in event.get("related_instance_ids") or []:
             grouped[entity_id].append(event.copy())
     return grouped
-
-
-async def _attach_timeline_entities(
-    graph_session: Any,
-    *,
-    instance_id: str,
-    timeline_event_id: str,
-    source_entity_id: str | None,
-    related_entity_ids: list[str],
-) -> None:
-    """Create SOURCE/INVOLVES relationships for a timeline event."""
-    if source_entity_id:
-        await graph_session.run(
-            """
-            MATCH (event:TimelineEvent {timeline_event_id: $timeline_event_id})
-            MATCH (entity:EntityInstance {entity_instance_id: $source_entity_id})
-            WHERE event.instance_id = $instance_id AND entity.instance_id = $instance_id
-            MERGE (event)-[:SOURCE_ENTITY]->(entity)
-            """,
-            {
-                "timeline_event_id": timeline_event_id,
-                "source_entity_id": source_entity_id,
-                "instance_id": instance_id,
-            },
-        )
-    valid_related = [rid for rid in related_entity_ids if rid]
-    if valid_related:
-        await graph_session.run(
-            """
-            MATCH (event:TimelineEvent {timeline_event_id: $timeline_event_id})
-            WHERE event.instance_id = $instance_id
-            WITH event
-            UNWIND $related_ids AS related_id
-            MATCH (entity:EntityInstance {entity_instance_id: related_id})
-            WHERE entity.instance_id = $instance_id
-            MERGE (event)-[:INVOLVES_ENTITY]->(entity)
-            """,
-            {
-                "timeline_event_id": timeline_event_id,
-                "instance_id": instance_id,
-                "related_ids": valid_related,
-            },
-        )
-
-
-async def _link_source_generation_instance(
-    graph_session: Any, *, timeline_event_id: str, source_instance_id: str | None
-) -> None:
-    """Link timeline events to the ontology instance that supplied their evidence."""
-    if not source_instance_id:
-        return
-    await graph_session.run(
-        """
-        MATCH (event:TimelineEvent {timeline_event_id: $timeline_event_id})
-        MATCH (source:OntologyInstance {instance_id: $source_instance_id})
-        MERGE (event)-[:REFERENCES_SOURCE_INSTANCE]->(source)
-        """,
-        {"timeline_event_id": timeline_event_id, "source_instance_id": source_instance_id},
-    )
-
-
-async def _link_timeline_order(
-    graph_session: Any,
-    *,
-    instance_id: str,
-    timeline_event_id: str,
-    before_event_id: str | None,
-    after_event_id: str | None,
-) -> None:
-    """Create temporal FOLLOWS/PRECEDES edges so retrieval honors chronology."""
-    if before_event_id:
-        await graph_session.run(
-            """
-            MATCH (current:TimelineEvent {timeline_event_id: $timeline_event_id})
-            MATCH (previous:TimelineEvent {timeline_event_id: $before_event_id})
-            WHERE current.instance_id = $instance_id AND previous.instance_id = $instance_id
-            MERGE (current)-[:FOLLOWS]->(previous)
-            """,
-            {
-                "timeline_event_id": timeline_event_id,
-                "before_event_id": before_event_id,
-                "instance_id": instance_id,
-            },
-        )
-    if after_event_id:
-        await graph_session.run(
-            """
-            MATCH (current:TimelineEvent {timeline_event_id: $timeline_event_id})
-            MATCH (next:TimelineEvent {timeline_event_id: $after_event_id})
-            WHERE current.instance_id = $instance_id AND next.instance_id = $instance_id
-            MERGE (current)-[:PRECEDES]->(next)
-            """,
-            {
-                "timeline_event_id": timeline_event_id,
-                "after_event_id": after_event_id,
-                "instance_id": instance_id,
-            },
-        )
 
 
 def _find_tail_event(events: list[dict[str, Any]]) -> dict[str, Any] | None:
     if not events:
         return None
     for event in events:
-        if not event.get("after_event_id"):
+        if not event.get("before_event_id"):
             return event
     return events[-1]
 
@@ -2220,31 +1908,22 @@ def _resolve_aliases_to_ids(
 async def _apply_timeline_events(
     *,
     graph_session: Any,
+    instance_id: str,
     ontology_id: int,
-    source_instance_id: str | None,
     timeline_plans: dict[str, list[dict[str, Any]]],
     suggestion_lookup: dict[str, NormalizedSuggestion],
-    suggestion_instance_map: dict[str, str],
     new_entity_ids: dict[str, str],
     alias_variants: dict[str, dict[str, Any]],
     existing_entities_map: dict[str, dict[str, Any]],
+    chunk_to_source_entity: dict[int, str],
 ) -> list[str]:
     if not timeline_plans:
-        logger.info("architect_generation_v2: no timeline events to apply")
+        logger.info("architect_generation_v2: no timeline events to apply for instance %s", instance_id)
         return []
 
-    instance_event_cache: dict[str, dict[str, list[dict[str, Any]]]] = {}
+    existing_events = await _fetch_instance_timeline_events(graph_session, instance_id)
+    events_by_entity = _group_events_by_entity(existing_events)
     created_event_ids: list[str] = []
-
-    entity_instance_lookup: dict[str, str] = {}
-    for entity_id, payload in existing_entities_map.items():
-        instance_id = payload.get("instance_id")
-        if entity_id and instance_id:
-            entity_instance_lookup[entity_id] = instance_id
-    for suggestion_id, entity_id in new_entity_ids.items():
-        instance_id = suggestion_instance_map.get(suggestion_id)
-        if entity_id and instance_id:
-            entity_instance_lookup[entity_id] = instance_id
 
     for suggestion_id, events in timeline_plans.items():
         suggestion = suggestion_lookup.get(suggestion_id)
@@ -2261,50 +1940,33 @@ async def _apply_timeline_events(
             )
             continue
 
-        target_instance_id = suggestion_instance_map.get(suggestion_id)
-        if not target_instance_id:
-            logger.warning(
-                "architect_generation_v2: timeline events for suggestion %s lack target instance",
-                suggestion_id,
-            )
-            continue
-
-        if target_instance_id not in instance_event_cache:
-            existing_events = await _fetch_instance_timeline_events(
-                graph_session, target_instance_id
-            )
-            instance_event_cache[target_instance_id] = _group_events_by_entity(
-                existing_events
-            )
-            logger.info(
-                "architect_generation_v2: loaded %d existing timeline events for instance %s",
-                len(existing_events),
-                target_instance_id,
-            )
-        events_by_entity = instance_event_cache[target_instance_id]
-
         related_chain = events_by_entity.get(entity_id, [])
         tail_event = _find_tail_event(related_chain)
         previous_event_id = tail_event.get("timeline_event_id") if tail_event else None
         previous_event_title = tail_event.get("title") if tail_event else None
         logger.info(
-            "architect_generation_v2: applying %d timeline events for suggestion %s -> entity %s (instance=%s current_tail=%s)",
+            "architect_generation_v2: applying %d timeline events for suggestion %s -> entity %s (current_tail=%s)",
             len(events),
             suggestion_id,
             entity_id,
-            target_instance_id,
             previous_event_id,
         )
 
         for event in events:
-            resolved_source = _resolve_alias_to_entity_id(
-                event.get("source_alias"), alias_variants, existing_entities_map
-            )
-            source_entity_instance_id = (
-                entity_instance_lookup.get(resolved_source) if resolved_source else None
-            )
-            if source_entity_instance_id == target_instance_id:
-                source_entity_instance_id = None
+            # Determine source entity ID from chunk indices
+            # Use the first chunk index associated with this suggestion to find the source entity
+            source_entity_id = None
+            if suggestion.chunk_indices:
+                first_chunk_idx = suggestion.chunk_indices[0]
+                if first_chunk_idx is not None:
+                    source_entity_id = chunk_to_source_entity.get(first_chunk_idx)
+            
+            # Fall back to resolving source_alias if chunk mapping doesn't provide source
+            if not source_entity_id:
+                source_entity_id = _resolve_alias_to_entity_id(
+                    event.get("source_alias"), alias_variants, existing_entities_map
+                )
+            
             resolved_related = _resolve_aliases_to_ids(
                 event.get("related_aliases") or [],
                 alias_variants,
@@ -2318,21 +1980,6 @@ async def _apply_timeline_events(
                 if rid and rid not in seen_related:
                     seen_related.add(rid)
                     dedup_related.append(rid)
-            related_instance_ids: list[str] = []
-            seen_pages: set[str] = set()
-            if source_entity_instance_id:
-                seen_pages.add(source_entity_instance_id)
-                related_instance_ids.append(source_entity_instance_id)
-            for rid in dedup_related:
-                parent_instance = entity_instance_lookup.get(rid)
-                if (
-                    not parent_instance
-                    or parent_instance == target_instance_id
-                    or parent_instance in seen_pages
-                ):
-                    continue
-                seen_pages.add(parent_instance)
-                related_instance_ids.append(parent_instance)
 
             event_id = str(uuid4())
             timestamp = datetime.utcnow().isoformat() + "Z"
@@ -2357,9 +2004,7 @@ async def _apply_timeline_events(
                     title: $title,
                     description: $description,
                     source_instance_id: $source_instance_id,
-                    source_entity_id: $source_entity_id,
                     related_instance_ids: $related_instance_ids,
-                    related_entity_ids: $related_entity_ids,
                     before_event_id: $before_event_id,
                     after_event_id: $after_event_id,
                     created_at: $timestamp,
@@ -2372,69 +2017,41 @@ async def _apply_timeline_events(
                 })
                 """,
                 {
-                    "instance_id": target_instance_id,
+                    "instance_id": instance_id,
                     "ontology_id": ontology_id,
                     "timeline_event_id": event_id,
                     "title": event["title"],
                     "description": event["description"],
-                    "source_instance_id": source_instance_id or source_entity_instance_id,
-                    "source_entity_id": resolved_source,
-                    "related_instance_ids": related_instance_ids,
-                    "related_entity_ids": dedup_related,
-                    "before_event_id": previous_event_id,
-                    "after_event_id": None,
+                    "source_instance_id": source_entity_id,
+                    "related_instance_ids": dedup_related,
+                    "before_event_id": None,
+                    "after_event_id": previous_event_id,
                     "timestamp": timestamp,
                     "text": text,
                 },
-            )
-            await _attach_timeline_entities(
-                graph_session,
-                instance_id=target_instance_id,
-                timeline_event_id=event_id,
-                source_entity_id=resolved_source,
-                related_entity_ids=dedup_related,
-            )
-            await _link_source_generation_instance(
-                graph_session,
-                timeline_event_id=event_id,
-                source_instance_id=source_instance_id or source_entity_instance_id,
-            )
-            await _link_timeline_order(
-                graph_session,
-                instance_id=target_instance_id,
-                timeline_event_id=event_id,
-                before_event_id=previous_event_id,
-                after_event_id=None,
             )
 
             if previous_event_id:
                 await graph_session.run(
                     """
                     MATCH (event:TimelineEvent {timeline_event_id: $event_id})
-                    SET event.after_event_id = $after_event_id,
+                    SET event.before_event_id = $before_event_id,
                         event.updated_at = datetime(),
                         event.last_updated_date = datetime(),
                         event.is_embedded = false
                     """,
-                    {"event_id": previous_event_id, "after_event_id": event_id},
-                )
-                await _link_timeline_order(
-                    graph_session,
-                    instance_id=target_instance_id,
-                    timeline_event_id=previous_event_id,
-                    before_event_id=None,
-                    after_event_id=event_id,
+                    {"event_id": previous_event_id, "before_event_id": event_id},
                 )
                 for existing in related_chain:
                     if existing.get("timeline_event_id") == previous_event_id:
-                        existing["after_event_id"] = event_id
+                        existing["before_event_id"] = event_id
                         break
 
             new_event_payload = {
                 "timeline_event_id": event_id,
                 "title": event["title"],
-                "before_event_id": previous_event_id,
-                "after_event_id": None,
+                "before_event_id": None,
+                "after_event_id": previous_event_id,
                 "related_instance_ids": dedup_related,
             }
             related_chain.append(new_event_payload)
@@ -2443,28 +2060,11 @@ async def _apply_timeline_events(
             previous_event_title = event["title"]
             created_event_ids.append(event_id)
             logger.info(
-                "architect_generation_v2: created timeline event %s for entity %s via suggestion %s (instance=%s title=%s)",
+                "architect_generation_v2: created timeline event %s for entity %s via suggestion %s (title=%s)",
                 event_id,
                 entity_id,
                 suggestion_id,
-                target_instance_id,
                 event["title"],
             )
 
     return created_event_ids
-def _strip_markdown_markup(text: str) -> str:
-    """Remove simple Markdown markers so downstream HTML is clean."""
-    if not text:
-        return ""
-    cleaned = text
-    heading_pattern = re.compile(r"^\s{0,3}#{1,6}\s+", re.MULTILINE)
-    cleaned = heading_pattern.sub("", cleaned)
-    cleaned = re.sub(r"\*\*(.*?)\*\*", r"\1", cleaned)
-    cleaned = re.sub(r"__(.*?)__", r"\1", cleaned)
-    cleaned = re.sub(r"\*(.*?)\*", r"\1", cleaned)
-    cleaned = re.sub(r"_(.*?)_", r"\1", cleaned)
-    cleaned = re.sub(r"`([^`]*)`", r"\1", cleaned)
-    cleaned = re.sub(r"^\s*[-*]\s+", "", cleaned, flags=re.MULTILINE)
-    cleaned = re.sub(r"\[(.*?)\]\((.*?)\)", r"\1", cleaned)
-    cleaned = re.sub(r"[ \t]+", " ", cleaned)
-    return cleaned.strip()

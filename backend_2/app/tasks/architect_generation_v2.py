@@ -2281,7 +2281,7 @@ async def _attach_timeline_entities(
 ) -> None:
     """
     Create SOURCE/INVOLVES relationships for a timeline event.
-    
+
     Timeline events are stored on the source instance (ontology_instance) but can
     reference entities from any instance, allowing cross-instance entity relationships.
     This enables timeline events to track entities that were created on different instances
@@ -2560,6 +2560,7 @@ async def _apply_timeline_events(
                 if (
                     not parent_instance
                     or parent_instance == owning_instance_id
+                    or parent_instance == source_instance_id
                     or parent_instance in seen_pages
                 ):
                     continue

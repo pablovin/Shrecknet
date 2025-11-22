@@ -6,11 +6,12 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_admin_user, get_current_user
 from app.db.jobs_session import get_jobs_session
-from app.models.background_job import AuthorType, JobStatus, JobType
+from app.models.background_job import AuthorType, BackgroundJob, JobStatus, JobType
 from app.models.user import User
 from app.schemas.background_job import (
     BackgroundJobCreate,
@@ -180,9 +181,6 @@ async def clear_all_background_jobs(
 
     Requires admin role.
     """
-    from sqlalchemy import delete, select
-    from app.models.background_job import BackgroundJob
-
     # Build the query to find jobs to delete
     query = select(BackgroundJob)
 
@@ -237,9 +235,6 @@ async def delete_agent_embedding_job(
 
     Requires authentication.
     """
-    from sqlalchemy import select
-    from app.models.background_job import BackgroundJob
-
     # Verify the job exists and belongs to the agent
     result = await jobs_session.execute(
         select(BackgroundJob).where(
@@ -301,9 +296,6 @@ async def delete_agent_embedding_jobs(
 
     Requires authentication.
     """
-    from sqlalchemy import delete, select
-    from app.models.background_job import BackgroundJob
-
     # Build the query to find jobs to delete
     query = select(BackgroundJob).where(
         BackgroundJob.author_type == AuthorType.AGENT,

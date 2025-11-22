@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
 from app.db.base import Base
 from app.db.jobs_session import JobsSessionMaker
-from app.models.background_job import AuthorType, JobStatus, JobType, BackgroundJob
+from app.models.background_job import AuthorType, BackgroundJob, JobStatus, JobType
 from app.repositories.background_job_repository import BackgroundJobRepository
 
 
@@ -390,9 +391,6 @@ async def test_delete_agent_embedding_job(jobs_session):
     )
 
     # Delete the embedding job
-    from sqlalchemy import delete, select
-    from app.models.background_job import BackgroundJob
-
     result = await jobs_session.execute(
         select(BackgroundJob).where(
             BackgroundJob.id == job.id,
@@ -472,9 +470,6 @@ async def test_delete_agent_embedding_jobs_bulk(jobs_session):
     )
 
     # Test 1: Delete all embedding jobs for the agent
-    from sqlalchemy import delete, select
-    from app.models.background_job import BackgroundJob
-
     query = select(BackgroundJob).where(
         BackgroundJob.author_type == AuthorType.AGENT,
         BackgroundJob.author_id == agent_id,
@@ -557,9 +552,6 @@ async def test_delete_agent_embedding_jobs_by_ontology(jobs_session):
     )
 
     # Delete only ontology 1 jobs
-    from sqlalchemy import delete, select
-    from app.models.background_job import BackgroundJob
-
     query = select(BackgroundJob).where(
         BackgroundJob.author_type == AuthorType.AGENT,
         BackgroundJob.author_id == agent_id,

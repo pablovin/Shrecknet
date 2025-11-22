@@ -564,6 +564,55 @@ The Librarian job automatically:
 
 See AGENTIC_JOBS.md for full Librarian documentation.
 
+## Cleaning Up Embedding Jobs
+
+### Managing Stuck Jobs
+
+Sometimes embedding jobs can get stuck in QUEUED or RUNNING state without progressing. New endpoints are available to clean up these stuck jobs:
+
+#### Delete a Single Stuck Job
+
+```bash
+DELETE /jobs/agents/{agent_id}/embedding-jobs/{job_id}
+```
+
+This deletes a specific embedding job for an agent. Useful when you know the exact job ID that's stuck.
+
+#### Delete Multiple Stuck Jobs
+
+```bash
+DELETE /jobs/agents/{agent_id}/embedding-jobs?include_stuck_only=true
+```
+
+This deletes all stuck embedding jobs (QUEUED or RUNNING) for a specific agent. You can also filter by:
+- `status`: Delete jobs with a specific status
+- `ontology_id`: Delete jobs for a specific ontology
+
+**Examples**:
+
+Delete all stuck embedding jobs for an agent:
+```bash
+curl -X DELETE \
+  "http://localhost:8000/jobs/agents/agent-abc-123/embedding-jobs?include_stuck_only=true" \
+  -H "Authorization: Bearer <token>"
+```
+
+Delete all embedding jobs for an agent in a specific ontology:
+```bash
+curl -X DELETE \
+  "http://localhost:8000/jobs/agents/agent-abc-123/embedding-jobs?ontology_id=1" \
+  -H "Authorization: Bearer <token>"
+```
+
+Delete only failed embedding jobs:
+```bash
+curl -X DELETE \
+  "http://localhost:8000/jobs/agents/agent-abc-123/embedding-jobs?status=failed" \
+  -H "Authorization: Bearer <token>"
+```
+
+See ADMIN_CLEAR_ENDPOINTS.md for complete documentation on all cleanup endpoints.
+
 ## Future Enhancements
 
 Potential improvements to the embedding system:

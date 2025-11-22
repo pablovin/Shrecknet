@@ -290,57 +290,61 @@ async def test_delete_ontology_instance_cleans_embeddings(client):
     # Import neo4j session to verify embeddings directly
     from app.graph.neo4j import get_neo4j_session
     
+    # Helper function to get a Neo4j session for testing
+    async def get_test_graph_session():
+        async for session in get_neo4j_session():
+            return session
+    
     # Get Neo4j session
-    async for graph_session in get_neo4j_session():
-        # Verify that chunks can be created (simulate embedding)
-        # Check that the instance and its entities exist
-        check_result = await graph_session.run(
-            """
-            MATCH (i:OntologyInstance {instance_id: $instance_id})
-            OPTIONAL MATCH (i)-[:HAS_ENTITY]->(e:EntityInstance)
-            OPTIONAL MATCH (i)-[:HAS_TIMELINE_EVENT]->(t:TimelineEvent)
-            RETURN i, count(DISTINCT e) as entity_count, count(DISTINCT t) as event_count
-            """,
-            instance_id=instance_id,
-        )
-        check_data = await check_result.single()
-        assert check_data is not None
-        assert check_data["entity_count"] > 0
-        assert check_data["event_count"] > 0
-        
-        # Create some test chunks to simulate embeddings
-        await graph_session.run(
-            """
-            MATCH (i:OntologyInstance {instance_id: $instance_id})-[:HAS_ENTITY]->(e:EntityInstance)
-            CREATE (e)-[:HAS_CHUNK]->(c:EntityChunk {
-                chunk_id: randomUUID(),
-                parent_entity_instance_id: e.entity_instance_id,
-                instance_id: $instance_id,
-                ontology_id: $ontology_id,
-                chunk_index: 0,
-                chunk_type: "text",
-                text_chunk: "Test chunk",
-                text_embedding: [0.1, 0.2, 0.3],
-                is_embedded: true
-            })
-            SET e.is_embedded = true
-            """,
-            instance_id=instance_id,
-            ontology_id=ontology_id,
-        )
-        
-        # Verify chunks were created
-        chunks_before = await graph_session.run(
-            """
-            MATCH (c:EntityChunk {instance_id: $instance_id})
-            RETURN count(c) as chunk_count
-            """,
-            instance_id=instance_id,
-        )
-        chunks_before_data = await chunks_before.single()
-        assert chunks_before_data["chunk_count"] > 0, "Chunks should exist before deletion"
-        
-        break  # Exit the async generator
+    graph_session = await get_test_graph_session()
+    
+    # Verify that chunks can be created (simulate embedding)
+    # Check that the instance and its entities exist
+    check_result = await graph_session.run(
+        """
+        MATCH (i:OntologyInstance {instance_id: $instance_id})
+        OPTIONAL MATCH (i)-[:HAS_ENTITY]->(e:EntityInstance)
+        OPTIONAL MATCH (i)-[:HAS_TIMELINE_EVENT]->(t:TimelineEvent)
+        RETURN i, count(DISTINCT e) as entity_count, count(DISTINCT t) as event_count
+        """,
+        instance_id=instance_id,
+    )
+    check_data = await check_result.single()
+    assert check_data is not None
+    assert check_data["entity_count"] > 0
+    assert check_data["event_count"] > 0
+    
+    # Create some test chunks to simulate embeddings
+    await graph_session.run(
+        """
+        MATCH (i:OntologyInstance {instance_id: $instance_id})-[:HAS_ENTITY]->(e:EntityInstance)
+        CREATE (e)-[:HAS_CHUNK]->(c:EntityChunk {
+            chunk_id: randomUUID(),
+            parent_entity_instance_id: e.entity_instance_id,
+            instance_id: $instance_id,
+            ontology_id: $ontology_id,
+            chunk_index: 0,
+            chunk_type: "text",
+            text_chunk: "Test chunk",
+            text_embedding: [0.1, 0.2, 0.3],
+            is_embedded: true
+        })
+        SET e.is_embedded = true
+        """,
+        instance_id=instance_id,
+        ontology_id=ontology_id,
+    )
+    
+    # Verify chunks were created
+    chunks_before = await graph_session.run(
+        """
+        MATCH (c:EntityChunk {instance_id: $instance_id})
+        RETURN count(c) as chunk_count
+        """,
+        instance_id=instance_id,
+    )
+    chunks_before_data = await chunks_before.single()
+    assert chunks_before_data["chunk_count"] > 0, "Chunks should exist before deletion"
 
     # Now delete the instance
     delete_response = await client.delete(
@@ -349,37 +353,37 @@ async def test_delete_ontology_instance_cleans_embeddings(client):
     assert delete_response.status_code == 204, "Instance deletion should succeed"
 
     # Verify that all chunks were deleted
-    async for graph_session in get_neo4j_session():
-        chunks_after = await graph_session.run(
-            """
-            MATCH (c:EntityChunk {instance_id: $instance_id})
-            RETURN count(c) as chunk_count
-            """,
-            instance_id=instance_id,
-        )
-        chunks_after_data = await chunks_after.single()
-        assert chunks_after_data["chunk_count"] == 0, "All chunks should be deleted"
-        
-        # Verify instance and entities are also deleted
-        instance_check = await graph_session.run(
-            """
-            MATCH (i:OntologyInstance {instance_id: $instance_id})
-            RETURN count(i) as instance_count
-            """,
-            instance_id=instance_id,
-        )
-        instance_data = await instance_check.single()
-        assert instance_data["instance_count"] == 0, "Instance should be deleted"
-        
-        entities_check = await graph_session.run(
-            """
-            MATCH (e:EntityInstance {instance_id: $instance_id})
-            RETURN count(e) as entity_count
-            """,
-            instance_id=instance_id,
-        )
-        entities_data = await entities_check.single()
-        assert entities_data["entity_count"] == 0, "All entities should be deleted"
-        
-        break  # Exit the async generator
+    graph_session = await get_test_graph_session()
+    
+    chunks_after = await graph_session.run(
+        """
+        MATCH (c:EntityChunk {instance_id: $instance_id})
+        RETURN count(c) as chunk_count
+        """,
+        instance_id=instance_id,
+    )
+    chunks_after_data = await chunks_after.single()
+    assert chunks_after_data["chunk_count"] == 0, "All chunks should be deleted"
+    
+    # Verify instance and entities are also deleted
+    instance_check = await graph_session.run(
+        """
+        MATCH (i:OntologyInstance {instance_id: $instance_id})
+        RETURN count(i) as instance_count
+        """,
+        instance_id=instance_id,
+    )
+    instance_data = await instance_check.single()
+    assert instance_data["instance_count"] == 0, "Instance should be deleted"
+    
+    entities_check = await graph_session.run(
+        """
+        MATCH (e:EntityInstance {instance_id: $instance_id})
+        RETURN count(e) as entity_count
+        """,
+        instance_id=instance_id,
+    )
+    entities_data = await entities_check.single()
+    assert entities_data["entity_count"] == 0, "All entities should be deleted"
+
 

@@ -776,6 +776,8 @@ class OntologyInstanceService:
     async def delete_instance(self, instance_id: str) -> None:
         # First, clean up embeddings using the embedding service
         # This ensures all chunks and embedding metadata are properly removed
+        # Note: We create a new EmbeddingService instance here since it's lightweight
+        # and only requires the graph session we already have
         embedding_service = EmbeddingService(self.graph_session)
         await embedding_service.remove_instance_embeddings(instance_id)
         

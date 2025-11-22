@@ -932,13 +932,8 @@ Summary: {summary}"""
         # Delete all chunks associated with this instance
         delete_chunks_query = """
         MATCH (chunk:EntityChunk {instance_id: $instance_id})
-        WITH collect(DISTINCT chunk) AS chunks
-        CALL {
-            WITH chunks
-            UNWIND chunks AS chunk
-            DETACH DELETE chunk
-        }
-        RETURN size(chunks) AS deleted_chunks
+        DETACH DELETE chunk
+        RETURN count(*) AS deleted_chunks
         """
         chunk_result = await self.graph_session.run(
             delete_chunks_query, instance_id=instance_id

@@ -649,8 +649,8 @@ async def _extract_per_chunk(
                 )
                 if normalized_event:
                     per_chunk_events.append(normalized_event)
-            limited_events = _limit_chunk_timeline_events(per_chunk_events)
-            enrichment[suggestion_id]["timeline_events"].extend(limited_events)
+            # Do not limit per chunk; limit after merging all chunks
+            enrichment[suggestion_id]["timeline_events"].extend(per_chunk_events)
 
     return enrichment
 
@@ -1092,7 +1092,13 @@ def _dedup_timeline_events(
         if existing and _timeline_event_sort_key(existing) <= _timeline_event_sort_key(candidate_payload):
             continue
         deduped[normalized] = candidate_payload
-    return sorted(deduped.values(), key=_timeline_event_sort_key)
+    sorted_events = sorted(deduped.values(), key=_timeline_event_sort_key)
+    # Enforce min 1, max 3 timeline events per node after merging all chunks
+    if len(sorted_events) > 3:
+        # Use clustering to select the most representative 3 events
+        clustered = _cluster_timeline_events(sorted_events, max_events=3)
+        return clustered if clustered else sorted_events[:3]
+    return sorted_events
 
 
 def _timeline_event_sort_key(event: dict[str, Any]) -> tuple[float, float, float, str]:
@@ -2297,14 +2303,9 @@ async def _apply_timeline_events(
         )
 
         for event in events:
-            resolved_source = _resolve_alias_to_entity_id(
-                event.get("source_alias"), alias_variants, existing_entities_map
-            )
-            source_entity_instance_id = (
-                entity_instance_lookup.get(resolved_source) if resolved_source else None
-            )
-            if source_entity_instance_id == target_instance_id:
-                source_entity_instance_id = None
+            # Do not resolve source_entity_id from chunk-specific aliases
+            # Timeline events are attached to the target instance and entity via related_entity_ids
+            source_entity_id = None
             resolved_related = _resolve_aliases_to_ids(
                 event.get("related_aliases") or [],
                 alias_variants,
@@ -2320,9 +2321,6 @@ async def _apply_timeline_events(
                     dedup_related.append(rid)
             related_instance_ids: list[str] = []
             seen_pages: set[str] = set()
-            if source_entity_instance_id:
-                seen_pages.add(source_entity_instance_id)
-                related_instance_ids.append(source_entity_instance_id)
             for rid in dedup_related:
                 parent_instance = entity_instance_lookup.get(rid)
                 if (
@@ -2378,7 +2376,7 @@ async def _apply_timeline_events(
                     "title": event["title"],
                     "description": event["description"],
                     "source_instance_id": source_instance_id,
-                    "source_entity_id": resolved_source,
+                    "source_entity_id": source_entity_id,
                     "related_instance_ids": related_instance_ids,
                     "related_entity_ids": dedup_related,
                     "before_event_id": previous_event_id,
@@ -2391,7 +2389,7 @@ async def _apply_timeline_events(
                 graph_session,
                 instance_id=target_instance_id,
                 timeline_event_id=event_id,
-                source_entity_id=resolved_source,
+                source_entity_id=source_entity_id,
                 related_entity_ids=dedup_related,
             )
             await _link_source_generation_instance(

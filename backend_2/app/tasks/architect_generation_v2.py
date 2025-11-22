@@ -314,11 +314,6 @@ async def _execute_generation(
                     len(normalized_suggestions),
                 )
 
-                # print (f"[GENERATION]: suggestion_enrichment: {suggestion_enrichment}")
-                # print (f"[GENERATION]: new_entities_map: {new_entities_map}")
-                # print (f"[GENERATION]: new_relationships_map: {new_relationships_map}")
-                # print (f"[GENERATION]: update_results: {update_results}")
-
                 creation_result: dict[str, Any] = {
                     "proposal_to_entity_id": {},
                     "proposal_to_instance_id": {},

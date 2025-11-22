@@ -2279,7 +2279,14 @@ async def _attach_timeline_entities(
     source_entity_id: str | None,
     related_entity_ids: list[str],
 ) -> None:
-    """Create SOURCE/INVOLVES relationships for a timeline event."""
+    """
+    Create SOURCE/INVOLVES relationships for a timeline event.
+    
+    Timeline events are stored on the source instance (ontology_instance) but can
+    reference entities from any instance, allowing cross-instance entity relationships.
+    This enables timeline events to track entities that were created on different instances
+    during the generation process.
+    """
     if source_entity_id:
         await graph_session.run(
             """
@@ -2296,6 +2303,8 @@ async def _attach_timeline_entities(
         )
     valid_related = [rid for rid in related_entity_ids if rid]
     if valid_related:
+        # Note: No instance constraint on entities - allows cross-instance entity involvement
+        # Timeline events are stored on source instance but can reference entities anywhere
         await graph_session.run(
             """
             MATCH (event:TimelineEvent {timeline_event_id: $timeline_event_id})
@@ -2451,7 +2460,10 @@ async def _apply_timeline_events(
         return []
 
     if not source_instance_id:
-        logger.error("architect_generation_v2: source_instance_id is required for timeline events")
+        logger.error(
+            "architect_generation_v2: source_instance_id is required for timeline events - "
+            "no timeline events will be created without a valid source instance"
+        )
         return []
 
     instance_event_cache: dict[str, dict[str, list[dict[str, Any]]]] = {}

@@ -347,7 +347,11 @@ async def test_jobs_api_delete_endpoint(client: AsyncClient, admin_token: str):
     delete_response = await client.request(
         "DELETE",
         "/jobs/",
-        json={"jobs": [{"kind": "graph_link_update", "job_id": str(jid)} for jid in job_ids]},
+        json={
+            "jobs": [
+                {"kind": "graph_link_update", "job_id": str(jid)} for jid in job_ids
+            ]
+        },
         headers=headers,
     )
     assert delete_response.status_code == 200
@@ -361,3 +365,227 @@ async def test_jobs_api_requires_auth(client: AsyncClient):
     # Try to list jobs without auth
     response = await client.get("/jobs/")
     assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_delete_agent_embedding_job(jobs_session):
+    """Test deleting a specific embedding job for an agent."""
+    repo = BackgroundJobRepository(jobs_session)
+
+    # Create an embedding job for an agent
+    job = await repo.create(
+        author_type=AuthorType.AGENT,
+        author_id="agent-123",
+        job_type=JobType.NEO4J_EMBEDDING,
+        description="Test embedding job",
+        ontology_id=1,
+    )
+
+    # Create a non-embedding job for the same agent (should not be deletable)
+    other_job = await repo.create(
+        author_type=AuthorType.AGENT,
+        author_id="agent-123",
+        job_type=JobType.GRAPH_LINK_UPDATE,
+        description="Non-embedding job",
+    )
+
+    # Delete the embedding job
+    from sqlalchemy import delete, select
+    from app.models.background_job import BackgroundJob
+
+    result = await jobs_session.execute(
+        select(BackgroundJob).where(
+            BackgroundJob.id == job.id,
+            BackgroundJob.author_type == AuthorType.AGENT,
+            BackgroundJob.author_id == "agent-123",
+            BackgroundJob.job_type.in_(
+                [JobType.NEO4J_EMBEDDING, JobType.PDF_BOOK_EMBEDDING]
+            ),
+        )
+    )
+    job_to_delete = result.scalar_one_or_none()
+    assert job_to_delete is not None
+
+    await jobs_session.delete(job_to_delete)
+    await jobs_session.commit()
+
+    # Verify the embedding job was deleted
+    deleted_job = await repo.get_by_id(job.id)
+    assert deleted_job is None
+
+    # Verify the non-embedding job still exists
+    remaining_job = await repo.get_by_id(other_job.id)
+    assert remaining_job is not None
+
+
+@pytest.mark.asyncio
+async def test_delete_agent_embedding_jobs_bulk(jobs_session):
+    """Test bulk deletion of embedding jobs for an agent."""
+    repo = BackgroundJobRepository(jobs_session)
+
+    # Create multiple embedding jobs for an agent
+    agent_id = "agent-456"
+
+    # Stuck jobs (queued/running)
+    stuck_job1 = await repo.create(
+        author_type=AuthorType.AGENT,
+        author_id=agent_id,
+        job_type=JobType.NEO4J_EMBEDDING,
+        description="Stuck embedding job 1",
+        ontology_id=1,
+    )
+
+    stuck_job2 = await repo.create(
+        author_type=AuthorType.AGENT,
+        author_id=agent_id,
+        job_type=JobType.PDF_BOOK_EMBEDDING,
+        description="Stuck PDF job",
+        ontology_id=1,
+    )
+    await repo.mark_as_running(stuck_job2.id)
+
+    # Completed jobs
+    done_job = await repo.create(
+        author_type=AuthorType.AGENT,
+        author_id=agent_id,
+        job_type=JobType.NEO4J_EMBEDDING,
+        description="Completed embedding job",
+        ontology_id=1,
+    )
+    await repo.mark_as_done(done_job.id)
+
+    # Job for different ontology
+    other_ontology_job = await repo.create(
+        author_type=AuthorType.AGENT,
+        author_id=agent_id,
+        job_type=JobType.NEO4J_EMBEDDING,
+        description="Different ontology job",
+        ontology_id=2,
+    )
+
+    # Non-embedding job (should not be deleted)
+    non_embedding_job = await repo.create(
+        author_type=AuthorType.AGENT,
+        author_id=agent_id,
+        job_type=JobType.GRAPH_LINK_UPDATE,
+        description="Non-embedding job",
+    )
+
+    # Test 1: Delete all embedding jobs for the agent
+    from sqlalchemy import delete, select
+    from app.models.background_job import BackgroundJob
+
+    query = select(BackgroundJob).where(
+        BackgroundJob.author_type == AuthorType.AGENT,
+        BackgroundJob.author_id == agent_id,
+        BackgroundJob.job_type.in_(
+            [JobType.NEO4J_EMBEDDING, JobType.PDF_BOOK_EMBEDDING]
+        ),
+    )
+    result = await jobs_session.execute(query)
+    all_embedding_jobs = list(result.scalars().all())
+    assert len(all_embedding_jobs) == 4  # All embedding jobs
+
+    # Test 2: Delete only stuck jobs (queued/running) for ontology 1
+    stuck_query = select(BackgroundJob).where(
+        BackgroundJob.author_type == AuthorType.AGENT,
+        BackgroundJob.author_id == agent_id,
+        BackgroundJob.job_type.in_(
+            [JobType.NEO4J_EMBEDDING, JobType.PDF_BOOK_EMBEDDING]
+        ),
+        BackgroundJob.status.in_([JobStatus.QUEUED, JobStatus.RUNNING]),
+        BackgroundJob.ontology_id == 1,
+    )
+    result = await jobs_session.execute(stuck_query)
+    stuck_jobs = list(result.scalars().all())
+    assert len(stuck_jobs) == 2  # Only the stuck jobs for ontology 1
+
+    # Delete stuck jobs
+    if stuck_jobs:
+        delete_query = delete(BackgroundJob).where(
+            BackgroundJob.id.in_([job.id for job in stuck_jobs])
+        )
+        await jobs_session.execute(delete_query)
+        await jobs_session.commit()
+
+    # Verify stuck jobs were deleted
+    deleted_stuck1 = await repo.get_by_id(stuck_job1.id)
+    assert deleted_stuck1 is None
+    deleted_stuck2 = await repo.get_by_id(stuck_job2.id)
+    assert deleted_stuck2 is None
+
+    # Verify other jobs still exist
+    remaining_done = await repo.get_by_id(done_job.id)
+    assert remaining_done is not None
+    remaining_other_ont = await repo.get_by_id(other_ontology_job.id)
+    assert remaining_other_ont is not None
+    remaining_non_embedding = await repo.get_by_id(non_embedding_job.id)
+    assert remaining_non_embedding is not None
+
+
+@pytest.mark.asyncio
+async def test_delete_agent_embedding_jobs_by_ontology(jobs_session):
+    """Test bulk deletion of embedding jobs filtered by ontology."""
+    repo = BackgroundJobRepository(jobs_session)
+
+    agent_id = "agent-789"
+
+    # Create jobs for ontology 1
+    ont1_job1 = await repo.create(
+        author_type=AuthorType.AGENT,
+        author_id=agent_id,
+        job_type=JobType.NEO4J_EMBEDDING,
+        description="Ontology 1 job 1",
+        ontology_id=1,
+    )
+
+    ont1_job2 = await repo.create(
+        author_type=AuthorType.AGENT,
+        author_id=agent_id,
+        job_type=JobType.PDF_BOOK_EMBEDDING,
+        description="Ontology 1 job 2",
+        ontology_id=1,
+    )
+
+    # Create jobs for ontology 2
+    ont2_job = await repo.create(
+        author_type=AuthorType.AGENT,
+        author_id=agent_id,
+        job_type=JobType.NEO4J_EMBEDDING,
+        description="Ontology 2 job",
+        ontology_id=2,
+    )
+
+    # Delete only ontology 1 jobs
+    from sqlalchemy import delete, select
+    from app.models.background_job import BackgroundJob
+
+    query = select(BackgroundJob).where(
+        BackgroundJob.author_type == AuthorType.AGENT,
+        BackgroundJob.author_id == agent_id,
+        BackgroundJob.job_type.in_(
+            [JobType.NEO4J_EMBEDDING, JobType.PDF_BOOK_EMBEDDING]
+        ),
+        BackgroundJob.ontology_id == 1,
+    )
+    result = await jobs_session.execute(query)
+    ont1_jobs = list(result.scalars().all())
+    assert len(ont1_jobs) == 2
+
+    # Delete ontology 1 jobs
+    if ont1_jobs:
+        delete_query = delete(BackgroundJob).where(
+            BackgroundJob.id.in_([job.id for job in ont1_jobs])
+        )
+        await jobs_session.execute(delete_query)
+        await jobs_session.commit()
+
+    # Verify ontology 1 jobs were deleted
+    deleted1 = await repo.get_by_id(ont1_job1.id)
+    assert deleted1 is None
+    deleted2 = await repo.get_by_id(ont1_job2.id)
+    assert deleted2 is None
+
+    # Verify ontology 2 job still exists
+    remaining = await repo.get_by_id(ont2_job.id)
+    assert remaining is not None

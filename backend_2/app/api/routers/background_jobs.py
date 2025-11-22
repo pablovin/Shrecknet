@@ -217,3 +217,130 @@ async def clear_all_background_jobs(
         "status": status_filter,
         "ontology_id": ontology_id,
     }
+
+
+@router.delete(
+    "/agents/{agent_id}/embedding-jobs/{job_id}", status_code=status.HTTP_200_OK
+)
+async def delete_agent_embedding_job(
+    agent_id: str,
+    job_id: int,
+    jobs_session: Annotated[AsyncSession, Depends(get_jobs_session)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> dict[str, Any]:
+    """
+    Delete a specific embedding job for an agent.
+
+    This endpoint allows deleting stuck or completed embedding jobs (NEO4J_EMBEDDING or
+    PDF_BOOK_EMBEDDING) for a specific agent. Useful for cleaning up jobs that are stuck
+    in QUEUED or RUNNING state.
+
+    Requires authentication.
+    """
+    from sqlalchemy import select
+    from app.models.background_job import BackgroundJob
+
+    # Verify the job exists and belongs to the agent
+    result = await jobs_session.execute(
+        select(BackgroundJob).where(
+            BackgroundJob.id == job_id,
+            BackgroundJob.author_type == AuthorType.AGENT,
+            BackgroundJob.author_id == agent_id,
+            BackgroundJob.job_type.in_(
+                [JobType.NEO4J_EMBEDDING, JobType.PDF_BOOK_EMBEDDING]
+            ),
+        )
+    )
+    job = result.scalar_one_or_none()
+
+    if not job:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Embedding job {job_id} not found for agent {agent_id}",
+        )
+
+    # Delete the job
+    await jobs_session.delete(job)
+    await jobs_session.commit()
+
+    return {
+        "message": f"Deleted embedding job {job_id} for agent {agent_id}",
+        "job_id": job_id,
+        "agent_id": agent_id,
+        "job_type": job.job_type,
+        "status": job.status,
+    }
+
+
+@router.delete("/agents/{agent_id}/embedding-jobs", status_code=status.HTTP_200_OK)
+async def delete_agent_embedding_jobs(
+    agent_id: str,
+    jobs_session: Annotated[AsyncSession, Depends(get_jobs_session)],
+    current_user: Annotated[User, Depends(get_current_user)],
+    status_filter: JobStatus | None = Query(
+        None,
+        description="Filter by status (queued, running, done, failed)",
+        alias="status",
+    ),
+    ontology_id: int | None = Query(None, description="Filter by ontology_id"),
+    include_stuck_only: bool = Query(
+        False, description="Only delete stuck jobs (queued or running)"
+    ),
+) -> dict[str, Any]:
+    """
+    Delete all embedding jobs for a specific agent.
+
+    This endpoint allows bulk deletion of embedding jobs (NEO4J_EMBEDDING or
+    PDF_BOOK_EMBEDDING) for a specific agent. Useful for cleaning up multiple stuck
+    jobs at once.
+
+    By default, deletes all embedding jobs for the agent. Use filters to narrow down:
+    - status: Filter by specific status (queued, running, done, failed)
+    - ontology_id: Filter by specific ontology
+    - include_stuck_only: Only delete jobs in queued or running state
+
+    Requires authentication.
+    """
+    from sqlalchemy import delete, select
+    from app.models.background_job import BackgroundJob
+
+    # Build the query to find jobs to delete
+    query = select(BackgroundJob).where(
+        BackgroundJob.author_type == AuthorType.AGENT,
+        BackgroundJob.author_id == agent_id,
+        BackgroundJob.job_type.in_(
+            [JobType.NEO4J_EMBEDDING, JobType.PDF_BOOK_EMBEDDING]
+        ),
+    )
+
+    if status_filter:
+        query = query.where(BackgroundJob.status == status_filter)
+    elif include_stuck_only:
+        # Only delete stuck jobs (queued or running)
+        query = query.where(
+            BackgroundJob.status.in_([JobStatus.QUEUED, JobStatus.RUNNING])
+        )
+
+    if ontology_id is not None:
+        query = query.where(BackgroundJob.ontology_id == ontology_id)
+
+    # Get the jobs to delete
+    result = await jobs_session.execute(query)
+    jobs_to_delete = list(result.scalars().all())
+
+    # Delete the jobs
+    if jobs_to_delete:
+        delete_query = delete(BackgroundJob).where(
+            BackgroundJob.id.in_([job.id for job in jobs_to_delete])
+        )
+        await jobs_session.execute(delete_query)
+        await jobs_session.commit()
+
+    return {
+        "message": f"Deleted {len(jobs_to_delete)} embedding job(s) for agent {agent_id}",
+        "deleted_count": len(jobs_to_delete),
+        "agent_id": agent_id,
+        "status": status_filter,
+        "ontology_id": ontology_id,
+        "include_stuck_only": include_stuck_only,
+    }

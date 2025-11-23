@@ -107,3 +107,11 @@ class IndexStatusResponse(BaseModel):
     exists: bool
     embedding_model: str
     embedding_dim: int
+
+
+class ClearGraphResponse(BaseModel):
+    """Response after clearing the Neo4j graph."""
+
+    message: str
+    nodes_deleted: int
+    relationships_deleted: int

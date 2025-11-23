@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from app.api.deps import get_current_active_admin_or_world_builder
+from app.api.deps import (
+    get_current_active_admin_or_world_builder,
+    get_current_admin_user,
+)
 from app.graph.neo4j import get_neo4j_session
 from app.graphrag.embedding_service import EMBED_DIM, EMBED_MODEL_ID, EmbeddingService
 from app.graphrag.retrieval_service import RetrievalService
@@ -21,8 +24,11 @@ from app.schemas.graphrag import (
     ResetOntologyEmbeddingsResponse,
     SemanticSearchRequest,
     SemanticSearchResponse,
+    ClearGraphResponse,
 )
 from neo4j import AsyncSession as AsyncNeo4jSession
+
+from app.services.graph_service import GraphMaintenanceService
 
 router = APIRouter(prefix="/graphrag", tags=["graphrag"])
 
@@ -151,6 +157,30 @@ async def ensure_index(
             embedding_model=EMBED_MODEL_ID,
             embedding_dim=EMBED_DIM,
         )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
+        )
+
+
+@router.delete(
+    "/admin/clear-graph",
+    response_model=ClearGraphResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def clear_neo4j_graph(
+    graph_session: AsyncNeo4jSession = Depends(get_neo4j_session),
+    current_user: User = Depends(get_current_admin_user),
+) -> ClearGraphResponse:
+    """
+    Delete every node and relationship from Neo4j.
+
+    Requires admin role due to the destructive nature of this operation.
+    """
+    service = GraphMaintenanceService(graph_session)
+    try:
+        result = await service.clear_graph()
+        return ClearGraphResponse(message="Neo4j graph cleared", **result)
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)

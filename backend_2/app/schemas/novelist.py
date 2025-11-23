@@ -52,10 +52,6 @@ class NovelistRunCreate(BaseModel):
     critic_prompt: Optional[str] = Field(
         None, description="Custom prompt override for critic pass"
     )
-    ontology_id: Optional[int] = Field(None, description="Optional ontology scope")
-    ontology_instance_id: Optional[str] = Field(
-        None, description="Optional ontology instance scope"
-    )
 
 
 class NovelistChunkResult(BaseModel):

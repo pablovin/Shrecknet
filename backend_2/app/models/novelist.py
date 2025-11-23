@@ -27,6 +27,7 @@ class NovelistStage(str, Enum):
 
     INGEST = "ingest"
     QUESTIONS = "questions"
+    ANSWERS = "answers"
     DRAFTING = "drafting"
     MERGING = "merging"
     CRITIC = "critic"

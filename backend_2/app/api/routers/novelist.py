@@ -61,8 +61,8 @@ async def start_novelist_run(
 
     run = await service.create_run(
         agent_id=agent_id,
-        ontology_id=payload.ontology_id,
-        ontology_instance_id=payload.ontology_instance_id,
+        ontology_id=None,
+        ontology_instance_id=None,
         settings={
             "requested_by": current_user.id,
             "language": payload.language,

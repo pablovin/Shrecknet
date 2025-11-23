@@ -11,6 +11,55 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 logger = logging.getLogger(__name__)
 
+async def migrate_novelist_runs(engine: AsyncEngine) -> None:
+    """Ensure novelist_runs table exists when upgrading."""
+    async with engine.begin() as conn:
+        inspector = await conn.run_sync(lambda sync_conn: inspect(sync_conn))
+        tables = await conn.run_sync(lambda sync_conn: inspector.get_table_names())
+        if "novelist_runs" in tables:
+            return
+        logger.info("Creating novelist_runs table")
+        # Minimal DDL to create table with sqlite compatibility
+        await conn.execute(
+            text(
+                """
+                CREATE TABLE novelist_runs (
+                    id VARCHAR(36) PRIMARY KEY,
+                    agent_id VARCHAR(36) NOT NULL,
+                    background_job_id INTEGER,
+                    ontology_id INTEGER,
+                    ontology_instance_id VARCHAR(64),
+                    status VARCHAR(20) NOT NULL,
+                    stage VARCHAR(20) NOT NULL,
+                    settings JSON,
+                    request_payload JSON,
+                    chunks JSON,
+                    draft_text TEXT,
+                    critic_notes TEXT,
+                    error_message TEXT,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL
+                )
+                """
+            )
+        )
+        await conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_novelist_runs_agent_id ON novelist_runs (agent_id)"
+            )
+        )
+        await conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_novelist_runs_status ON novelist_runs (status)"
+            )
+        )
+        await conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_novelist_runs_stage ON novelist_runs (stage)"
+            )
+        )
+        logger.info("novelist_runs table created")
+
 
 async def migrate_jobs_database(engine: AsyncEngine) -> None:
     """

@@ -5,6 +5,7 @@ from app.db.base import Base
 from app.db.migrations import (
     migrate_architect_proposals,
     migrate_game_datetimes_to_brussels_timezone,
+    migrate_novelist_runs,
 )
 
 
@@ -40,6 +41,9 @@ async def init_db(engine: AsyncEngine) -> None:
 
     # Run architect proposals migration
     await migrate_architect_proposals(engine)
+
+    # Ensure novelist_runs exists
+    await migrate_novelist_runs(engine)
 
     # Run game datetime timezone migration
     await migrate_game_datetimes_to_brussels_timezone(engine)

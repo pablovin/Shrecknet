@@ -2543,10 +2543,7 @@ async def _apply_timeline_events(
                 alias_variants,
                 existing_entities_map,
             )
-            related_ids = [entity_id] + [
-                rid for rid in resolved_related if rid != entity_id
-            ]
-            # always include the entity itself to enable filtering
+            related_ids = [rid for rid in resolved_related if rid and rid != entity_id]
             dedup_related = []
             seen_related: set[str] = set()
             for rid in related_ids:

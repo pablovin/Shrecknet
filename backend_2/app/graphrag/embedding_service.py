@@ -862,8 +862,7 @@ Summary: {summary}"""
         MATCH (parent {ontology_id: $ontology_id})-[:HAS_CHUNK]->(chunk:EntityChunk)
         WHERE parent:EntityInstance OR parent:TimelineEvent
         WITH collect(DISTINCT chunk) AS chunks
-        CALL {
-            WITH chunks
+        CALL (chunks) {
             UNWIND chunks AS chunk
             DETACH DELETE chunk
         }
@@ -879,8 +878,7 @@ Summary: {summary}"""
         MATCH (e:EntityInstance {ontology_id: $ontology_id})
         WHERE NOT ( (:OntologyInstance {ontology_id: $ontology_id})-[:HAS_ENTITY]->(e) )
         WITH collect(DISTINCT e) AS orphans
-        CALL {
-            WITH orphans
+        CALL (orphans) {
             UNWIND orphans AS orphan
             DETACH DELETE orphan
         }

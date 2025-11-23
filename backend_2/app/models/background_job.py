@@ -41,6 +41,7 @@ class JobType(str, Enum):
     ARCHITECT_GENERATION = "architect_generation"
     BACKUP = "backup"
     RESTORE = "restore"
+    NOVELIST_DRAFT = "novelist_draft"
 
 
 class BackgroundJob(Base):

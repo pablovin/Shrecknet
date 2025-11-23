@@ -3,6 +3,7 @@ from fastapi import APIRouter
 from app.api.routers import (
     admin_notes,
     agents,
+    novelist,
     architect,
     audit_logs,
     auth,
@@ -41,6 +42,7 @@ def get_api_router() -> APIRouter:
     router.include_router(audit_logs.router)
     router.include_router(ontologies.router)
     router.include_router(agents.router)
+    router.include_router(novelist.router)
     router.include_router(elder.router)
     router.include_router(elder_chats.router)
     router.include_router(librarian.router)

@@ -91,6 +91,21 @@ def _normalize_id_list(values: list[str] | None) -> list[str]:
     return normalized
 
 
+def _strip_links_to_instances(
+    text: str | None, instance_ids: Sequence[str]
+) -> str | None:
+    """Remove anchor tags that point to any of the provided instance ids."""
+    if not text or not instance_ids:
+        return text
+    pattern = re.compile(
+        r'<a\b[^>]*data-ontology-instance="('
+        + "|".join(re.escape(inst_id) for inst_id in instance_ids)
+        + r')"[^>]*>(.*?)</a>',
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    return pattern.sub(r"\2", text)
+
+
 def _build_timeline_text(
     title: str,
     description: str,
@@ -791,43 +806,285 @@ class OntologyInstanceService:
             timeline_events=timeline_events,
         )
 
-    async def delete_instance(self, instance_id: str) -> None:
+    async def _entity_ids_for_instances(
+        self, tx: AsyncTransaction, instance_ids: Sequence[str]
+    ) -> set[str]:
+        result = await tx.run(
+            """
+            MATCH (i:OntologyInstance)-[:HAS_ENTITY]->(e:EntityInstance)
+            WHERE i.instance_id IN $instance_ids
+            RETURN e.entity_instance_id AS entity_id
+            """,
+            instance_ids=instance_ids,
+        )
+        rows = await result.data()
+        return {row["entity_id"] for row in rows if row.get("entity_id")}
+
+    async def _timeline_event_ids_for_instances(
+        self, tx: AsyncTransaction, instance_ids: Sequence[str]
+    ) -> set[str]:
+        result = await tx.run(
+            """
+            MATCH (i:OntologyInstance)-[:HAS_TIMELINE_EVENT]->(event:TimelineEvent)
+            WHERE i.instance_id IN $instance_ids
+            RETURN event.timeline_event_id AS event_id
+            """,
+            instance_ids=instance_ids,
+        )
+        rows = await result.data()
+        return {row["event_id"] for row in rows if row.get("event_id")}
+
+    async def _delete_entity_relationships(
+        self, tx: AsyncTransaction, *, entity_ids: set[str]
+    ) -> None:
+        if not entity_ids:
+            return
+        await tx.run(
+            """
+            MATCH (source:EntityInstance)-[rel:RELATES_TO]->(target:EntityInstance)
+            WHERE source.entity_instance_id IN $entity_ids
+               OR target.entity_instance_id IN $entity_ids
+            DELETE rel
+            """,
+            entity_ids=list(entity_ids),
+        )
+
+    async def _prune_timeline_references(
+        self,
+        tx: AsyncTransaction,
+        *,
+        instance_ids: list[str],
+        entity_ids: set[str],
+        timeline_event_ids: set[str],
+    ) -> None:
+        instance_set = set(instance_ids)
+        entity_set = set(entity_ids)
+        timeline_set = set(timeline_event_ids)
+        result = await tx.run(
+            """
+            MATCH (event:TimelineEvent)
+            WHERE NOT event.instance_id IN $instance_ids AND (
+                event.created_from_instance_id IN $instance_ids
+                OR any(instId IN $instance_ids WHERE instId IN coalesce(event.related_instance_ids, []))
+                OR any(entityId IN $entity_ids WHERE entityId IN coalesce(event.related_entity_ids, []))
+                OR event.before_event_id IN $timeline_event_ids
+                OR event.after_event_id IN $timeline_event_ids
+            )
+            RETURN event.timeline_event_id AS timeline_event_id,
+                   event.created_from_instance_id AS created_from_instance_id,
+                   coalesce(event.created_from_entity_id, event.source_entity_id) AS created_from_entity_id,
+                   event.related_instance_ids AS related_instance_ids,
+                   event.related_entity_ids AS related_entity_ids,
+                   event.before_event_id AS before_event_id,
+                   event.after_event_id AS after_event_id
+            """,
+            instance_ids=instance_ids,
+            entity_ids=list(entity_ids),
+            timeline_event_ids=list(timeline_event_ids),
+        )
+        rows = await result.data()
+        payload: list[dict[str, Any]] = []
+        for row in rows:
+            event_id = row.get("timeline_event_id")
+            if not event_id:
+                continue
+            created_from_instance = (
+                None
+                if row.get("created_from_instance_id") in instance_set
+                else row.get("created_from_instance_id")
+            )
+            created_from_entity = (
+                None
+                if row.get("created_from_entity_id") in entity_set
+                or created_from_instance is None
+                else row.get("created_from_entity_id")
+            )
+            related_instances = [
+                value
+                for value in (row.get("related_instance_ids") or [])
+                if value not in instance_set
+            ]
+            related_entities = [
+                value
+                for value in (row.get("related_entity_ids") or [])
+                if value not in entity_set
+            ]
+            before_event = (
+                None
+                if row.get("before_event_id") in timeline_set
+                else row.get("before_event_id")
+            )
+            after_event = (
+                None
+                if row.get("after_event_id") in timeline_set
+                else row.get("after_event_id")
+            )
+            if (
+                created_from_instance != row.get("created_from_instance_id")
+                or created_from_entity != row.get("created_from_entity_id")
+                or related_instances != (row.get("related_instance_ids") or [])
+                or related_entities != (row.get("related_entity_ids") or [])
+                or before_event != row.get("before_event_id")
+                or after_event != row.get("after_event_id")
+            ):
+                payload.append(
+                    {
+                        "timeline_event_id": event_id,
+                        "created_from_instance_id": created_from_instance,
+                        "created_from_entity_id": created_from_entity,
+                        "related_instance_ids": related_instances,
+                        "related_entity_ids": related_entities,
+                        "before_event_id": before_event,
+                        "after_event_id": after_event,
+                    }
+                )
+        if payload:
+            await tx.run(
+                """
+                UNWIND $payload AS item
+                MATCH (event:TimelineEvent {timeline_event_id: item.timeline_event_id})
+                SET event.created_from_instance_id = item.created_from_instance_id,
+                    event.created_from_entity_id = item.created_from_entity_id,
+                    event.source_instance_id = item.created_from_instance_id,
+                    event.source_entity_id = item.created_from_entity_id,
+                    event.related_instance_ids = item.related_instance_ids,
+                    event.related_entity_ids = item.related_entity_ids,
+                    event.before_event_id = item.before_event_id,
+                    event.after_event_id = item.after_event_id
+                """,
+                payload=payload,
+            )
+
+    async def _remove_cross_instance_links(
+        self, tx: AsyncTransaction, *, instance_ids: list[str]
+    ) -> None:
+        result = await tx.run(
+            """
+            MATCH (e:EntityInstance)
+            WHERE NOT e.instance_id IN $instance_ids AND (
+                any(instId IN $instance_ids WHERE coalesce(e.text, "") CONTAINS instId)
+                OR any(instId IN $instance_ids WHERE coalesce(e.autogenerated_text, "") CONTAINS instId)
+                OR any(instId IN $instance_ids WHERE coalesce(e.text_linked, "") CONTAINS instId)
+                OR any(instId IN $instance_ids WHERE coalesce(e.autogenerated_text_linked, "") CONTAINS instId)
+            )
+            RETURN e.entity_instance_id AS entity_id,
+                   e.text AS text,
+                   e.autogenerated_text AS autogenerated_text,
+                   e.text_linked AS text_linked,
+                   e.autogenerated_text_linked AS autogenerated_text_linked
+            """,
+            instance_ids=instance_ids,
+        )
+        rows = await result.data()
+        payload: list[dict[str, Any]] = []
+        for row in rows:
+            entity_id = row.get("entity_id")
+            if not entity_id:
+                continue
+            cleaned_text = _strip_links_to_instances(row.get("text"), instance_ids)
+            cleaned_auto = _strip_links_to_instances(
+                row.get("autogenerated_text"), instance_ids
+            )
+            cleaned_text_linked = _strip_links_to_instances(
+                row.get("text_linked"), instance_ids
+            )
+            cleaned_auto_linked = _strip_links_to_instances(
+                row.get("autogenerated_text_linked"), instance_ids
+            )
+            if (
+                cleaned_text != row.get("text")
+                or cleaned_auto != row.get("autogenerated_text")
+                or cleaned_text_linked != row.get("text_linked")
+                or cleaned_auto_linked != row.get("autogenerated_text_linked")
+            ):
+                payload.append(
+                    {
+                        "entity_id": entity_id,
+                        "text": cleaned_text,
+                        "autogenerated_text": cleaned_auto,
+                        "text_linked": cleaned_text_linked,
+                        "autogenerated_text_linked": cleaned_auto_linked,
+                    }
+                )
+        if payload:
+            await tx.run(
+                """
+                UNWIND $payload AS item
+                MATCH (e:EntityInstance {entity_instance_id: item.entity_id})
+                SET e.text = item.text,
+                    e.text_linked = item.text_linked,
+                    e.autogenerated_text = item.autogenerated_text,
+                    e.autogenerated_text_linked = item.autogenerated_text_linked
+                """,
+                payload=payload,
+            )
+
+    async def delete_instances(self, instance_ids: Sequence[str]) -> None:
+        normalized_ids: list[str] = []
+        for inst in instance_ids:
+            cleaned = _normalize_optional_str(inst)
+            if cleaned and cleaned not in normalized_ids:
+                normalized_ids.append(cleaned)
+        instance_list = normalized_ids
+        if not instance_list:
+            return
         tx = await self.graph_session.begin_transaction()
         try:
+            entity_ids = await self._entity_ids_for_instances(tx, instance_list)
+            timeline_event_ids = await self._timeline_event_ids_for_instances(
+                tx, instance_list
+            )
+
+            await self._delete_entity_relationships(tx, entity_ids=entity_ids)
+            await self._prune_timeline_references(
+                tx,
+                instance_ids=instance_list,
+                entity_ids=entity_ids,
+                timeline_event_ids=timeline_event_ids,
+            )
+            await self._remove_cross_instance_links(
+                tx, instance_ids=list(instance_list)
+            )
+
             await tx.run(
                 """
-                MATCH (i:OntologyInstance {instance_id: $instance_id})-[:HAS_ENTITY]->(e:EntityInstance)-[:HAS_CHUNK]->(chunk:EntityChunk)
+                MATCH (i:OntologyInstance)-[:HAS_ENTITY]->(e:EntityInstance)-[:HAS_CHUNK]->(chunk:EntityChunk)
+                WHERE i.instance_id IN $instance_ids
                 DETACH DELETE chunk
                 """,
-                instance_id=instance_id,
+                instance_ids=instance_list,
             )
             await tx.run(
                 """
-                MATCH (i:OntologyInstance {instance_id: $instance_id})-[:HAS_ENTITY]->(e:EntityInstance)
+                MATCH (i:OntologyInstance)-[:HAS_ENTITY]->(e:EntityInstance)
+                WHERE i.instance_id IN $instance_ids
                 DETACH DELETE e
                 """,
-                instance_id=instance_id,
+                instance_ids=instance_list,
             )
             await tx.run(
                 """
-                MATCH (i:OntologyInstance {instance_id: $instance_id})-[:HAS_TIMELINE_EVENT]->(event:TimelineEvent)-[:HAS_CHUNK]->(chunk:EntityChunk)
+                MATCH (i:OntologyInstance)-[:HAS_TIMELINE_EVENT]->(event:TimelineEvent)-[:HAS_CHUNK]->(chunk:EntityChunk)
+                WHERE i.instance_id IN $instance_ids
                 DETACH DELETE chunk
                 """,
-                instance_id=instance_id,
+                instance_ids=instance_list,
             )
             await tx.run(
                 """
-                MATCH (i:OntologyInstance {instance_id: $instance_id})-[:HAS_TIMELINE_EVENT]->(event:TimelineEvent)
+                MATCH (i:OntologyInstance)-[:HAS_TIMELINE_EVENT]->(event:TimelineEvent)
+                WHERE i.instance_id IN $instance_ids
                 DETACH DELETE event
                 """,
-                instance_id=instance_id,
+                instance_ids=instance_list,
             )
             await tx.run(
                 """
-                MATCH (i:OntologyInstance {instance_id: $instance_id})
+                MATCH (i:OntologyInstance)
+                WHERE i.instance_id IN $instance_ids
                 DETACH DELETE i
                 """,
-                instance_id=instance_id,
+                instance_ids=instance_list,
             )
         except Exception:
             await tx.rollback()
@@ -836,6 +1093,9 @@ class OntologyInstanceService:
         else:
             await tx.commit()
             await tx.close()
+
+    async def delete_instance(self, instance_id: str) -> None:
+        await self.delete_instances([instance_id])
 
     async def update_instance(
         self, instance_id: str, payload: OntologyInstanceUpdate

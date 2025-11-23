@@ -9,6 +9,7 @@ from . import (
     architect_analysis,
     architect_generation_v2,
     backup_tasks,
+    novelist,
 )
 
 __all__ = [
@@ -19,4 +20,5 @@ __all__ = [
     "architect_analysis",
     "architect_generation_v2",
     "backup_tasks",
+    "novelist",
 ]

@@ -864,15 +864,15 @@ class OntologyInstanceService:
             """
             MATCH (event:TimelineEvent)
             WHERE NOT event.instance_id IN $instance_ids AND (
-                event.created_from_instance_id IN $instance_ids
+                event.source_instance_id IN $instance_ids
                 OR any(instId IN $instance_ids WHERE instId IN coalesce(event.related_instance_ids, []))
                 OR any(entityId IN $entity_ids WHERE entityId IN coalesce(event.related_entity_ids, []))
                 OR event.before_event_id IN $timeline_event_ids
                 OR event.after_event_id IN $timeline_event_ids
             )
             RETURN event.timeline_event_id AS timeline_event_id,
-                   event.created_from_instance_id AS created_from_instance_id,
-                   coalesce(event.created_from_entity_id, event.source_entity_id) AS created_from_entity_id,
+                   event.source_instance_id AS source_instance_id,
+                   event.source_entity_id AS source_entity_id,
                    event.related_instance_ids AS related_instance_ids,
                    event.related_entity_ids AS related_entity_ids,
                    event.before_event_id AS before_event_id,
@@ -888,16 +888,18 @@ class OntologyInstanceService:
             event_id = row.get("timeline_event_id")
             if not event_id:
                 continue
+            source_instance = row.get("source_instance_id")
             created_from_instance = (
                 None
-                if row.get("created_from_instance_id") in instance_set
-                else row.get("created_from_instance_id")
+                if source_instance in instance_set
+                else source_instance
             )
+            source_entity = row.get("source_entity_id")
             created_from_entity = (
                 None
-                if row.get("created_from_entity_id") in entity_set
+                if source_entity in entity_set
                 or created_from_instance is None
-                else row.get("created_from_entity_id")
+                else source_entity
             )
             related_instances = [
                 value
@@ -920,8 +922,8 @@ class OntologyInstanceService:
                 else row.get("after_event_id")
             )
             if (
-                created_from_instance != row.get("created_from_instance_id")
-                or created_from_entity != row.get("created_from_entity_id")
+                created_from_instance != source_instance
+                or created_from_entity != source_entity
                 or related_instances != (row.get("related_instance_ids") or [])
                 or related_entities != (row.get("related_entity_ids") or [])
                 or before_event != row.get("before_event_id")

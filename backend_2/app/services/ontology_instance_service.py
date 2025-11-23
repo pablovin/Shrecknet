@@ -160,6 +160,13 @@ class OntologyInstanceService:
         )
         await tx.run(
             """
+            MATCH (event:TimelineEvent {timeline_event_id: $timeline_event_id})-[rel:REFERENCES_SOURCE_INSTANCE]->()
+            DELETE rel
+            """,
+            timeline_event_id=timeline_event_id,
+        )
+        await tx.run(
+            """
             MATCH (event:TimelineEvent {timeline_event_id: $timeline_event_id})-[rel:INVOLVES_ENTITY]->()
             DELETE rel
             """,
@@ -186,23 +193,32 @@ class OntologyInstanceService:
         *,
         timeline_event_id: str,
         instance_id: str,
+        source_instance_id: str | None,
         source_entity_id: str | None,
         related_entity_ids: list[str] | None,
         before_event_id: str | None,
         after_event_id: str | None,
     ) -> None:
         """Create relationships that mirror timeline metadata for traversal/retrieval."""
+        if source_instance_id:
+            await tx.run(
+                """
+                MATCH (event:TimelineEvent {timeline_event_id: $timeline_event_id})
+                MATCH (source:OntologyInstance {instance_id: $source_instance_id})
+                MERGE (event)-[:REFERENCES_SOURCE_INSTANCE]->(source)
+                """,
+                timeline_event_id=timeline_event_id,
+                source_instance_id=source_instance_id,
+            )
         if source_entity_id:
             await tx.run(
                 """
                 MATCH (event:TimelineEvent {timeline_event_id: $timeline_event_id})
                 MATCH (entity:EntityInstance {entity_instance_id: $source_entity_id})
-                WHERE entity.instance_id = $instance_id
                 MERGE (event)-[:SOURCE_ENTITY]->(entity)
                 """,
                 timeline_event_id=timeline_event_id,
                 source_entity_id=source_entity_id,
-                instance_id=instance_id,
             )
         related_ids = [rid for rid in (related_entity_ids or []) if rid]
         if related_ids:
@@ -212,7 +228,6 @@ class OntologyInstanceService:
                 WITH event
                 UNWIND $related_entity_ids AS related_id
                 MATCH (entity:EntityInstance {entity_instance_id: related_id})
-                WHERE entity.instance_id = event.instance_id
                 MERGE (event)-[:INVOLVES_ENTITY]->(entity)
                 """,
                 timeline_event_id=timeline_event_id,
@@ -412,11 +427,12 @@ class OntologyInstanceService:
                 tx,
                 timeline_event_id=row["timeline_event_id"],
                 instance_id=instance_id,
-                source_entity_id=row.get("created_from_entity_id")
-                or row.get("source_entity_id")
-                or row.get("created_from_instance_id")
+                source_instance_id=row.get("created_from_instance_id")
                 or row.get("source_instance_id"),
-                related_entity_ids=row.get("related_entity_ids") or row.get("related_instance_ids"),
+                source_entity_id=row.get("created_from_entity_id")
+                or row.get("source_entity_id"),
+                related_entity_ids=row.get("related_entity_ids")
+                or row.get("related_instance_ids"),
                 before_event_id=row.get("before_event_id"),
                 after_event_id=row.get("after_event_id"),
             )
@@ -1430,6 +1446,7 @@ class OntologyInstanceService:
                 tx,
                 timeline_event_id=event_id,
                 instance_id=instance_id,
+                source_instance_id=created_from_instance,
                 source_entity_id=created_from_entity,
                 related_entity_ids=related_ids,
                 before_event_id=before_id,
@@ -1555,6 +1572,7 @@ class OntologyInstanceService:
                 tx,
                 timeline_event_id=timeline_event_id,
                 instance_id=instance_id,
+                source_instance_id=final_created_from_instance,
                 source_entity_id=final_created_from_entity,
                 related_entity_ids=final_related_entities,
                 before_event_id=final_before,
@@ -1650,10 +1668,10 @@ class OntologyInstanceService:
                     tx,
                     timeline_event_id=row["timeline_event_id"],
                     instance_id=row["instance_id"],
-                    source_entity_id=row.get("created_from_entity_id")
-                    or row.get("source_entity_id")
-                    or row.get("created_from_instance_id")
+                    source_instance_id=row.get("created_from_instance_id")
                     or row.get("source_instance_id"),
+                    source_entity_id=row.get("created_from_entity_id")
+                    or row.get("source_entity_id"),
                     related_entity_ids=[str(rid) for rid in related_ids if rid],
                     before_event_id=row.get("before_event_id"),
                     after_event_id=row.get("after_event_id"),

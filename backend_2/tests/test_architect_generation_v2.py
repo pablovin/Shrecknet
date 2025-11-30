@@ -11,8 +11,9 @@ from app.models.architect import (
 from app.tasks.architect_generation_v2 import (
     _convert_validated_to_revised,
     _dedup_timeline_events,
-    _group_events_by_entity,
+    _find_tail_event,
     _normalize_timeline_event_entry,
+    _order_timeline_events,
 )
 
 
@@ -215,38 +216,37 @@ def test_normalize_timeline_event_entry_rejects_invalid():
     assert _normalize_timeline_event_entry(event3) is None
 
 
-def test_group_events_by_entity_tracks_source_entity_id():
-    """Timeline grouping should use the source entity identifier when present."""
-    events = [
-        {
-            "timeline_event_id": "evt-1",
-            "source_entity_id": "entity-a",
-            "created_from_entity_id": None,
-            "related_entity_ids": [],
-            "related_instance_ids": [],
-        }
+def test_order_timeline_events_follows_after_links():
+    """Events should be ordered by their linked chain regardless of input order."""
+    unordered = [
+        {"timeline_event_id": "evt-2", "after_event_id": "evt-3", "created_at": "2024-01-02"},
+        {"timeline_event_id": "evt-1", "after_event_id": "evt-2", "created_at": "2024-01-01"},
+        {"timeline_event_id": "evt-3", "after_event_id": None, "created_at": "2024-01-03"},
+        {"timeline_event_id": "evt-x", "after_event_id": None, "created_at": "2023-12-31"},
     ]
 
-    grouped = _group_events_by_entity(events)
+    ordered = _order_timeline_events(unordered)
 
-    assert "entity-a" in grouped
-    assert grouped["entity-a"][0]["timeline_event_id"] == "evt-1"
-
-
-def test_group_events_by_entity_deduplicates_identifiers():
-    """Ensure grouping only records an event once per entity even if repeated."""
-    events = [
-        {
-            "timeline_event_id": "evt-9",
-            "source_entity_id": "entity-b",
-            "created_from_entity_id": "entity-b",
-            "related_entity_ids": ["entity-b", "entity-c"],
-            "related_instance_ids": ["entity-b"],
-        }
+    assert [event["timeline_event_id"] for event in ordered[:3]] == [
+        "evt-1",
+        "evt-2",
+        "evt-3",
     ]
+    # Unlinked nodes should be appended afterwards
+    assert ordered[-1]["timeline_event_id"] == "evt-x"
 
-    grouped = _group_events_by_entity(events)
 
-    assert len(grouped["entity-b"]) == 1
-    assert grouped["entity-b"][0]["timeline_event_id"] == "evt-9"
-    assert grouped["entity-c"][0]["timeline_event_id"] == "evt-9"
+def test_find_tail_event_returns_last_linked_event():
+    """Tail detection should return the final event in the ordered chain."""
+    ordered = _order_timeline_events(
+        [
+            {"timeline_event_id": "evt-a", "after_event_id": "evt-b", "created_at": "2024-01-01"},
+            {"timeline_event_id": "evt-c", "after_event_id": None, "created_at": "2024-01-03"},
+            {"timeline_event_id": "evt-b", "after_event_id": "evt-c", "created_at": "2024-01-02"},
+        ]
+    )
+
+    tail = _find_tail_event(ordered)
+
+    assert tail is not None
+    assert tail["timeline_event_id"] == "evt-c"

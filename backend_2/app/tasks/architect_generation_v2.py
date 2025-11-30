@@ -2224,11 +2224,7 @@ async def _fetch_instance_timeline_events(
     result = await graph_session.run(
         """
         MATCH (:OntologyInstance {instance_id: $instance_id})-[:HAS_TIMELINE_EVENT]->(event:TimelineEvent)
-        OPTIONAL MATCH (event)-[:SOURCE_ENTITY]->(source:EntityInstance)
-        OPTIONAL MATCH (event)-[:INVOLVES_ENTITY]->(related:EntityInstance)
-        RETURN event,
-               collect(DISTINCT source.entity_instance_id) AS source_entity_ids,
-               collect(DISTINCT related.entity_instance_id) AS linked_entity_ids
+        RETURN event
         """,
         {"instance_id": instance_id},
     )
@@ -2239,67 +2235,66 @@ async def _fetch_instance_timeline_events(
         if not event_node:
             continue
         props = dict(event_node)
-        related_page_ids_raw = props.get("related_instance_ids") or []
-        if isinstance(related_page_ids_raw, str):
-            related_page_ids_raw = [related_page_ids_raw]
-        related_entity_ids_raw = props.get("related_entity_ids") or []
-        if isinstance(related_entity_ids_raw, str):
-            related_entity_ids_raw = [related_entity_ids_raw]
-        linked_entity_ids = record.get("linked_entity_ids") or []
-        source_entity_ids = record.get("source_entity_ids") or []
-        aggregated_related_ids: list[str] = []
-        seen_related: set[str] = set()
-        for candidate in list(related_entity_ids_raw) + list(linked_entity_ids):
-            value = str(candidate)
-            if value and value not in seen_related:
-                seen_related.add(value)
-                aggregated_related_ids.append(value)
-        source_entity_id = props.get("source_entity_id")
-        if not source_entity_id:
-            for candidate in source_entity_ids:
-                if candidate:
-                    source_entity_id = str(candidate)
-                    break
+        created_at = props.get("created_at")
+        if created_at is not None:
+            try:
+                created_at_value = created_at.isoformat()  # type: ignore[union-attr]
+            except AttributeError:
+                created_at_value = str(created_at)
+        else:
+            created_at_value = None
         events.append(
             {
                 "timeline_event_id": props.get("timeline_event_id"),
                 "title": props.get("title"),
-                "source_entity_id": source_entity_id,
-                "created_from_entity_id": props.get("created_from_entity_id"),
-                "related_instance_ids": [
-                    str(rid) for rid in related_page_ids_raw if rid
-                ],
-                "related_entity_ids": [
-                    str(rid)
-                    for rid in aggregated_related_ids
-                ],
                 "before_event_id": props.get("before_event_id"),
                 "after_event_id": props.get("after_event_id"),
+                "created_at": created_at_value,
             }
         )
     return events
 
 
-def _group_events_by_entity(
-    events: list[dict[str, Any]],
-) -> dict[str, list[dict[str, Any]]]:
-    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+def _order_timeline_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    events_by_id: dict[str, dict[str, Any]] = {}
     for event in events:
-        bucket_ids: list[str] = []
-        for key in ("source_entity_id", "created_from_entity_id"):
-            candidate = event.get(key)
-            if candidate:
-                bucket_ids.append(str(candidate))
-        bucket_ids.extend(event.get("related_entity_ids") or [])
-        # Fallback for legacy data that only tracked instance ids
-        bucket_ids.extend(event.get("related_instance_ids") or [])
-        seen_ids: set[str] = set()
-        for entity_id in bucket_ids:
-            if not entity_id or entity_id in seen_ids:
-                continue
-            seen_ids.add(entity_id)
-            grouped[entity_id].append(event.copy())
-    return grouped
+        event_id = event.get("timeline_event_id")
+        if event_id:
+            events_by_id[event_id] = event
+    if not events_by_id:
+        return []
+    next_links: dict[str, str] = {}
+    has_previous: set[str] = set()
+    for event_id, event in events_by_id.items():
+        after_id = event.get("after_event_id")
+        if after_id and after_id in events_by_id:
+            next_links[event_id] = after_id
+            has_previous.add(after_id)
+    heads = [event_id for event_id in events_by_id if event_id not in has_previous]
+    ordered: list[dict[str, Any]] = []
+    visited: set[str] = set()
+    for head in heads:
+        current = head
+        while current and current not in visited:
+            visited.add(current)
+            ordered.append(events_by_id[current])
+            current = next_links.get(current)
+    if len(visited) != len(events_by_id):
+        remaining = [
+            events_by_id[event_id]
+            for event_id in events_by_id
+            if event_id not in visited
+        ]
+        ordered.extend(
+            sorted(
+                remaining,
+                key=lambda payload: (
+                    payload.get("created_at") or "",
+                    payload.get("timeline_event_id") or "",
+                ),
+            )
+        )
+    return ordered
 
 
 async def _attach_timeline_entities(
@@ -2497,7 +2492,7 @@ async def _apply_timeline_events(
         )
         return []
 
-    instance_event_cache: dict[str, dict[str, list[dict[str, Any]]]] = {}
+    instance_event_cache: dict[str, dict[str, Any]] = {}
     created_event_ids: list[str] = []
 
     entity_instance_lookup: dict[str, str] = {}
@@ -2541,20 +2536,31 @@ async def _apply_timeline_events(
             existing_events = await _fetch_instance_timeline_events(
                 graph_session, owning_instance_id
             )
-            instance_event_cache[owning_instance_id] = _group_events_by_entity(
-                existing_events
-            )
+            ordered_events = _order_timeline_events(existing_events)
+            chain_state = {
+                "events": ordered_events,
+                "by_id": {
+                    event.get("timeline_event_id"): event
+                    for event in ordered_events
+                    if event.get("timeline_event_id")
+                },
+            }
+            tail_event = _find_tail_event(ordered_events)
+            if tail_event:
+                chain_state["tail_event_id"] = tail_event.get("timeline_event_id")
+                chain_state["tail_event_title"] = tail_event.get("title")
+            else:
+                chain_state["tail_event_id"] = None
+                chain_state["tail_event_title"] = None
+            instance_event_cache[owning_instance_id] = chain_state
             logger.info(
                 "architect_generation_v2: loaded %d existing timeline events for target instance %s",
                 len(existing_events),
                 owning_instance_id,
             )
-        events_by_entity = instance_event_cache[owning_instance_id]
-
-        related_chain = events_by_entity.get(entity_id, [])
-        tail_event = _find_tail_event(related_chain)
-        previous_event_id = tail_event.get("timeline_event_id") if tail_event else None
-        previous_event_title = tail_event.get("title") if tail_event else None
+        chain_state = instance_event_cache[owning_instance_id]
+        previous_event_id = chain_state.get("tail_event_id")
+        previous_event_title = chain_state.get("tail_event_title")
         logger.info(
             "architect_generation_v2: applying %d timeline events for suggestion %s -> entity %s (instance=%s current_tail=%s provenance_instance=%s)",
             len(limited_events),
@@ -2568,18 +2574,15 @@ async def _apply_timeline_events(
         for event in limited_events:
             # Timeline events are always stored on the source instance (ontology_instance)
             # and reference related entities via related_entity_ids
-            source_entity_id = entity_id
+            source_entity_id = None
             resolved_related = _resolve_aliases_to_ids(
                 event.get("related_aliases") or [],
                 alias_variants,
                 existing_entities_map,
             )
-            related_ids = [rid for rid in resolved_related if rid and rid != entity_id]
+            related_ids = [rid for rid in resolved_related if rid]
             dedup_related = []
             seen_related: set[str] = set()
-            if entity_id:
-                seen_related.add(entity_id)
-                dedup_related.append(entity_id)
             for rid in related_ids:
                 if rid and rid not in seen_related:
                     seen_related.add(rid)
@@ -2691,22 +2694,23 @@ async def _apply_timeline_events(
                     before_event_id=None,
                     after_event_id=event_id,
                 )
-                for existing in related_chain:
-                    if existing.get("timeline_event_id") == previous_event_id:
-                        existing["after_event_id"] = event_id
-                        break
+                prev_payload = chain_state["by_id"].get(previous_event_id)
+                if prev_payload:
+                    prev_payload["after_event_id"] = event_id
 
             new_event_payload = {
                 "timeline_event_id": event_id,
                 "title": event["title"],
                 "before_event_id": previous_event_id,
                 "after_event_id": None,
-                "related_instance_ids": dedup_related,
+                "created_at": timestamp,
             }
-            related_chain.append(new_event_payload)
-            events_by_entity[entity_id] = related_chain
+            chain_state["events"].append(new_event_payload)
+            chain_state["by_id"][event_id] = new_event_payload
             previous_event_id = event_id
             previous_event_title = event["title"]
+            chain_state["tail_event_id"] = event_id
+            chain_state["tail_event_title"] = event["title"]
             created_event_ids.append(event_id)
             logger.info(
                 "architect_generation_v2: created timeline event %s for entity %s via suggestion %s (instance=%s provenance_instance=%s title=%s)",

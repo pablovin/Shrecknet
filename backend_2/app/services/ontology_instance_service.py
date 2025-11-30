@@ -307,19 +307,22 @@ class OntologyInstanceService:
         timestamp = _format_dt(datetime.utcnow())
         rows: list[dict[str, Any]] = []
         ids: set[str] = set()
-        for event in events:
-            event_id = _normalize_optional_str(event.timeline_event_id) or str(uuid4())
-            if event_id in ids:
-                raise ValueError(f"Duplicate timeline event id '{event_id}' in payload")
-            title = event.title.strip()
-            description = event.description.strip()
-            related_entity_ids = _normalize_id_list(event.related_entity_ids)
-            related_instance_ids = _normalize_id_list(event.related_instance_ids)
-            before_id = _normalize_optional_str(event.before_event_id)
-            after_id = _normalize_optional_str(event.after_event_id)
-            created_from_instance = _normalize_optional_str(
-                event.created_from_instance_id
-            )
+    for event in events:
+        event_id = _normalize_optional_str(event.timeline_event_id) or str(uuid4())
+        if event_id in ids:
+            raise ValueError(f"Duplicate timeline event id '{event_id}' in payload")
+        title = event.title.strip()
+        description = event.description.strip()
+        related_entity_ids = _normalize_id_list(event.related_entity_ids)
+        related_instance_ids = _normalize_id_list(event.related_instance_ids)
+        if not related_entity_ids and related_instance_ids:
+            # Backwards compatibility: legacy payloads send entity ids in related_instance_ids
+            related_entity_ids = list(related_instance_ids)
+        before_id = _normalize_optional_str(event.before_event_id)
+        after_id = _normalize_optional_str(event.after_event_id)
+        created_from_instance = _normalize_optional_str(
+            event.created_from_instance_id
+        )
             created_from_entity = _normalize_optional_str(
                 getattr(event, "created_from_entity_id", None)
             )
@@ -1396,6 +1399,8 @@ class OntologyInstanceService:
         description = payload.description.strip()
         related_entities = _normalize_id_list(payload.related_entity_ids)
         related_instances = _normalize_id_list(payload.related_instance_ids)
+        if not related_entities and related_instances:
+            related_entities = list(related_instances)
         created_from_instance = _normalize_optional_str(payload.created_from_instance_id)
         created_from_entity = _normalize_optional_str(payload.created_from_entity_id)
         created_at = _format_dt(datetime.utcnow())
@@ -1509,9 +1514,11 @@ class OntologyInstanceService:
                 payload.related_entity_ids
             )
         if payload.related_instance_ids is not None:
-            updates["related_instance_ids"] = _normalize_id_list(
-                payload.related_instance_ids
-            )
+            normalized_instances = _normalize_id_list(payload.related_instance_ids)
+            updates["related_instance_ids"] = normalized_instances
+            # Legacy payloads may supply entity ids via related_instance_ids only
+            if payload.related_entity_ids is None and "related_entity_ids" not in updates:
+                updates["related_entity_ids"] = list(normalized_instances)
         if payload.before_event_id is not None:
             before_id = _normalize_optional_str(payload.before_event_id)
             if before_id == timeline_event_id:

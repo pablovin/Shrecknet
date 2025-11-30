@@ -307,22 +307,22 @@ class OntologyInstanceService:
         timestamp = _format_dt(datetime.utcnow())
         rows: list[dict[str, Any]] = []
         ids: set[str] = set()
-    for event in events:
-        event_id = _normalize_optional_str(event.timeline_event_id) or str(uuid4())
-        if event_id in ids:
-            raise ValueError(f"Duplicate timeline event id '{event_id}' in payload")
-        title = event.title.strip()
-        description = event.description.strip()
-        related_entity_ids = _normalize_id_list(event.related_entity_ids)
-        related_instance_ids = _normalize_id_list(event.related_instance_ids)
-        if not related_entity_ids and related_instance_ids:
-            # Backwards compatibility: legacy payloads send entity ids in related_instance_ids
-            related_entity_ids = list(related_instance_ids)
-        before_id = _normalize_optional_str(event.before_event_id)
-        after_id = _normalize_optional_str(event.after_event_id)
-        created_from_instance = _normalize_optional_str(
-            event.created_from_instance_id
-        )
+        for event in events:
+            event_id = _normalize_optional_str(event.timeline_event_id) or str(uuid4())
+            if event_id in ids:
+                raise ValueError(f"Duplicate timeline event id '{event_id}' in payload")
+            title = event.title.strip()
+            description = event.description.strip()
+            related_entity_ids = _normalize_id_list(event.related_entity_ids)
+            related_instance_ids = _normalize_id_list(event.related_instance_ids)
+            if not related_entity_ids and related_instance_ids:
+                # Backwards compatibility: legacy payloads send entity ids in related_instance_ids
+                related_entity_ids = list(related_instance_ids)
+            before_id = _normalize_optional_str(event.before_event_id)
+            after_id = _normalize_optional_str(event.after_event_id)
+            created_from_instance = _normalize_optional_str(
+                event.created_from_instance_id
+            )
             created_from_entity = _normalize_optional_str(
                 getattr(event, "created_from_entity_id", None)
             )

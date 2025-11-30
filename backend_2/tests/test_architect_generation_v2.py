@@ -11,6 +11,7 @@ from app.models.architect import (
 from app.tasks.architect_generation_v2 import (
     _convert_validated_to_revised,
     _dedup_timeline_events,
+    _group_events_by_entity,
     _normalize_timeline_event_entry,
 )
 
@@ -212,3 +213,40 @@ def test_normalize_timeline_event_entry_rejects_invalid():
     # Empty strings
     event3 = {"title": "", "description": ""}
     assert _normalize_timeline_event_entry(event3) is None
+
+
+def test_group_events_by_entity_tracks_source_entity_id():
+    """Timeline grouping should use the source entity identifier when present."""
+    events = [
+        {
+            "timeline_event_id": "evt-1",
+            "source_entity_id": "entity-a",
+            "created_from_entity_id": None,
+            "related_entity_ids": [],
+            "related_instance_ids": [],
+        }
+    ]
+
+    grouped = _group_events_by_entity(events)
+
+    assert "entity-a" in grouped
+    assert grouped["entity-a"][0]["timeline_event_id"] == "evt-1"
+
+
+def test_group_events_by_entity_deduplicates_identifiers():
+    """Ensure grouping only records an event once per entity even if repeated."""
+    events = [
+        {
+            "timeline_event_id": "evt-9",
+            "source_entity_id": "entity-b",
+            "created_from_entity_id": "entity-b",
+            "related_entity_ids": ["entity-b", "entity-c"],
+            "related_instance_ids": ["entity-b"],
+        }
+    ]
+
+    grouped = _group_events_by_entity(events)
+
+    assert len(grouped["entity-b"]) == 1
+    assert grouped["entity-b"][0]["timeline_event_id"] == "evt-9"
+    assert grouped["entity-c"][0]["timeline_event_id"] == "evt-9"

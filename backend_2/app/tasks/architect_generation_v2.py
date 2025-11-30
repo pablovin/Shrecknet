@@ -2224,7 +2224,11 @@ async def _fetch_instance_timeline_events(
     result = await graph_session.run(
         """
         MATCH (:OntologyInstance {instance_id: $instance_id})-[:HAS_TIMELINE_EVENT]->(event:TimelineEvent)
-        RETURN event
+        OPTIONAL MATCH (event)-[:SOURCE_ENTITY]->(source:EntityInstance)
+        OPTIONAL MATCH (event)-[:INVOLVES_ENTITY]->(related:EntityInstance)
+        RETURN event,
+               collect(DISTINCT source.entity_instance_id) AS source_entity_ids,
+               collect(DISTINCT related.entity_instance_id) AS linked_entity_ids
         """,
         {"instance_id": instance_id},
     )
@@ -2241,15 +2245,33 @@ async def _fetch_instance_timeline_events(
         related_entity_ids_raw = props.get("related_entity_ids") or []
         if isinstance(related_entity_ids_raw, str):
             related_entity_ids_raw = [related_entity_ids_raw]
+        linked_entity_ids = record.get("linked_entity_ids") or []
+        source_entity_ids = record.get("source_entity_ids") or []
+        aggregated_related_ids: list[str] = []
+        seen_related: set[str] = set()
+        for candidate in list(related_entity_ids_raw) + list(linked_entity_ids):
+            value = str(candidate)
+            if value and value not in seen_related:
+                seen_related.add(value)
+                aggregated_related_ids.append(value)
+        source_entity_id = props.get("source_entity_id")
+        if not source_entity_id:
+            for candidate in source_entity_ids:
+                if candidate:
+                    source_entity_id = str(candidate)
+                    break
         events.append(
             {
                 "timeline_event_id": props.get("timeline_event_id"),
                 "title": props.get("title"),
+                "source_entity_id": source_entity_id,
+                "created_from_entity_id": props.get("created_from_entity_id"),
                 "related_instance_ids": [
                     str(rid) for rid in related_page_ids_raw if rid
                 ],
                 "related_entity_ids": [
-                    str(rid) for rid in related_entity_ids_raw if rid
+                    str(rid)
+                    for rid in aggregated_related_ids
                 ],
                 "before_event_id": props.get("before_event_id"),
                 "after_event_id": props.get("after_event_id"),
@@ -2263,10 +2285,19 @@ def _group_events_by_entity(
 ) -> dict[str, list[dict[str, Any]]]:
     grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for event in events:
-        related_entities = (
-            event.get("related_entity_ids") or event.get("related_instance_ids") or []
-        )
-        for entity_id in related_entities:
+        bucket_ids: list[str] = []
+        for key in ("source_entity_id", "created_from_entity_id"):
+            candidate = event.get(key)
+            if candidate:
+                bucket_ids.append(str(candidate))
+        bucket_ids.extend(event.get("related_entity_ids") or [])
+        # Fallback for legacy data that only tracked instance ids
+        bucket_ids.extend(event.get("related_instance_ids") or [])
+        seen_ids: set[str] = set()
+        for entity_id in bucket_ids:
+            if not entity_id or entity_id in seen_ids:
+                continue
+            seen_ids.add(entity_id)
             grouped[entity_id].append(event.copy())
     return grouped
 
@@ -2537,7 +2568,7 @@ async def _apply_timeline_events(
         for event in limited_events:
             # Timeline events are always stored on the source instance (ontology_instance)
             # and reference related entities via related_entity_ids
-            source_entity_id = None
+            source_entity_id = entity_id
             resolved_related = _resolve_aliases_to_ids(
                 event.get("related_aliases") or [],
                 alias_variants,
@@ -2546,6 +2577,9 @@ async def _apply_timeline_events(
             related_ids = [rid for rid in resolved_related if rid and rid != entity_id]
             dedup_related = []
             seen_related: set[str] = set()
+            if entity_id:
+                seen_related.add(entity_id)
+                dedup_related.append(entity_id)
             for rid in related_ids:
                 if rid and rid not in seen_related:
                     seen_related.add(rid)

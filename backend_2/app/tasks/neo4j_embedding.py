@@ -203,3 +203,190 @@ def embed_instance(
     except Exception as e:
         run_async(mark_job_failed(job_id, str(e)))
         raise
+
+
+@celery_app.task(name="ontology.embed_nodes")
+def embed_nodes(
+    ontology_id: int,
+    node_ids: list[str],
+    author_type: str = "user",
+    author_id: str = "system",
+) -> dict[str, Any]:
+    """
+    Embed specific nodes within an ontology.
+
+    Args:
+        ontology_id: The ontology that owns the nodes
+        node_ids: EntityInstance identifiers to embed
+        author_type: Who initiated the embedding
+        author_id: Identifier of the author
+
+    Returns:
+        Dictionary with embedding results
+    """
+    job_id = run_async(
+        create_background_job(
+            author_type=AuthorType(author_type),
+            author_id=author_id,
+            job_type=JobType.NEO4J_EMBEDDING,
+            description=f"Embedding {len(node_ids)} nodes for ontology {ontology_id}",
+            celery_task_id=embed_nodes.request.id,
+            details={"ontology_id": ontology_id, "node_ids": node_ids},
+            ontology_id=ontology_id,
+        )
+    )
+
+    try:
+        run_async(mark_job_running(job_id))
+        result = run_async(_embed_nodes_impl(job_id, ontology_id, node_ids))
+        run_async(mark_job_done(job_id, result))
+        return {"job_id": job_id, "ontology_id": ontology_id, **result}
+    except Exception as e:
+        run_async(mark_job_failed(job_id, str(e)))
+        raise
+
+
+async def _embed_nodes_impl(
+    job_id: int, ontology_id: int, node_ids: list[str]
+) -> dict[str, Any]:
+    """
+    Embed only the provided node identifiers.
+
+    Args:
+        job_id: Background job identifier
+        ontology_id: Ontology identifier for filtering
+        node_ids: Requested EntityInstance ids
+
+    Returns:
+        Summary of the embedding run
+    """
+    from app.graph.neo4j import get_driver
+    from app.core.config import get_settings
+
+    # Normalize identifiers and drop duplicates/empty values
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for node_id in node_ids or []:
+        if not node_id:
+            continue
+        cleaned = node_id.strip()
+        if not cleaned or cleaned in seen:
+            continue
+        normalized.append(cleaned)
+        seen.add(cleaned)
+
+    if not normalized:
+        await update_job_progress(
+            job_id, 1.0, {"status": "no nodes to embed", "nodes_embedded": 0}
+        )
+        return {
+            "ontology_id": ontology_id,
+            "nodes_requested": 0,
+            "nodes_embedded": 0,
+            "nodes_failed": 0,
+            "nodes_skipped": 0,
+            "missing_nodes": [],
+        }
+
+    driver = get_driver()
+    settings = get_settings()
+    async with driver.session(database=settings.neo4j_database) as session:
+        embedding_service = EmbeddingService(session)
+
+        await update_job_progress(
+            job_id,
+            0.1,
+            {
+                "status": "validating nodes",
+                "nodes_requested": len(normalized),
+            },
+        )
+
+        validation_query = """
+        UNWIND $ids AS node_id
+        MATCH (node {entity_instance_id: node_id})
+        WHERE (node:EntityInstance OR node:TimelineEvent)
+          AND node.ontology_id = $ontology_id
+        RETURN node.entity_instance_id AS entity_id
+        """
+        result = await session.run(
+            validation_query, ids=normalized, ontology_id=ontology_id
+        )
+        rows = await result.data()
+        valid_ids = [row["entity_id"] for row in rows if row.get("entity_id")]
+        valid_set = set(valid_ids)
+        missing = sorted(set(normalized) - valid_set)
+
+        if not valid_ids:
+            await update_job_progress(
+                job_id,
+                1.0,
+                {
+                    "status": "no matching nodes",
+                    "nodes_requested": len(normalized),
+                    "nodes_skipped": len(missing),
+                },
+            )
+            return {
+                "ontology_id": ontology_id,
+                "nodes_requested": len(normalized),
+                "nodes_embedded": 0,
+                "nodes_failed": 0,
+                "nodes_skipped": len(missing),
+                "missing_nodes": missing,
+            }
+
+        processed = 0
+        failed = 0
+        total = len(valid_ids)
+
+        for idx, node_id in enumerate(valid_ids, start=1):
+            progress = 0.2 + 0.75 * (idx / total)
+            try:
+                await embedding_service.embed_node(node_id, ontology_id)
+                processed += 1
+            except Exception as exc:  # pragma: no cover - just tracking failures
+                failed += 1
+                await update_job_progress(
+                    job_id,
+                    progress,
+                    {
+                        "status": "embedding nodes",
+                        "nodes_completed": processed,
+                        "nodes_failed": failed,
+                        "current_node": node_id,
+                        "error": str(exc),
+                    },
+                )
+                continue
+
+            await update_job_progress(
+                job_id,
+                progress,
+                {
+                    "status": "embedding nodes",
+                    "nodes_completed": processed,
+                    "nodes_failed": failed,
+                    "current_node": node_id,
+                },
+            )
+
+        await update_job_progress(
+            job_id,
+            1.0,
+            {
+                "status": "complete",
+                "nodes_completed": processed,
+                "nodes_failed": failed,
+                "nodes_skipped": len(missing),
+            },
+        )
+
+        return {
+            "ontology_id": ontology_id,
+            "nodes_requested": len(normalized),
+            "nodes_embedded": processed,
+            "nodes_failed": failed,
+            "nodes_skipped": len(missing),
+            "missing_nodes": missing,
+        }

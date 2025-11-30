@@ -495,6 +495,7 @@ class OntologyInstanceService:
 
         alias_to_ids: dict[str, str] = {}
         nodes_payload: list[dict[str, Any]] = []
+        impacted_entity_ids: set[str] = set()
         for entity_payload in payload.entities:
             entity_node_id = str(uuid4())
             alias_to_ids[entity_payload.alias] = entity_node_id
@@ -517,6 +518,7 @@ class OntologyInstanceService:
                     "last_updated_date": _format_dt(updated_dt),
                 }
             )
+            impacted_entity_ids.add(entity_node_id)
 
         tx = await self.graph_session.begin_transaction()
         try:
@@ -672,6 +674,8 @@ class OntologyInstanceService:
                             created_at=timestamp,
                             updated_at=timestamp,
                         )
+                        impacted_entity_ids.add(target_id)
+                        impacted_entity_ids.add(entity_node_id)
             await self._replace_timeline_events_in_tx(
                 tx,
                 instance_id=instance_id,
@@ -687,8 +691,13 @@ class OntologyInstanceService:
             await tx.close()
             instance = await self.get_instance(instance_id)
             from app.tasks.ontology_links import link_instance as link_instance_task
+            from app.tasks.neo4j_embedding import embed_nodes as embed_nodes_task
 
             link_instance_task.delay(instance.instance_id)
+            if impacted_entity_ids:
+                embed_nodes_task.delay(
+                    payload.ontology_id, sorted(impacted_entity_ids)
+                )
             return instance
 
     async def list_instances(
@@ -1168,6 +1177,7 @@ class OntologyInstanceService:
         self._validate_entities_payload(payload.entities, definitions)
 
         tx = await self.graph_session.begin_transaction()
+        impacted_entity_ids: set[str] = set()
         try:
             await tx.run(
                 """
@@ -1203,6 +1213,7 @@ class OntologyInstanceService:
                         _format_dt(updated_dt),
                     )
                 )
+                impacted_entity_ids.add(entity_node_id)
 
             for (
                 entity_node_id,
@@ -1340,6 +1351,8 @@ class OntologyInstanceService:
                             created_at=timestamp,
                             updated_at=timestamp,
                         )
+                        impacted_entity_ids.add(target_id)
+                        impacted_entity_ids.add(entity_node_id)
             if payload.timeline_events is not None:
                 await self._replace_timeline_events_in_tx(
                     tx,
@@ -1356,8 +1369,13 @@ class OntologyInstanceService:
             await tx.close()
             instance = await self.get_instance(instance_id)
             from app.tasks.ontology_links import link_instance as link_instance_task
+            from app.tasks.neo4j_embedding import embed_nodes as embed_nodes_task
 
             link_instance_task.delay(instance.instance_id)
+            if impacted_entity_ids:
+                embed_nodes_task.delay(
+                    current.ontology_id, sorted(impacted_entity_ids)
+                )
             return instance
 
     async def list_timeline_events(self, instance_id: str) -> list[TimelineEventRead]:

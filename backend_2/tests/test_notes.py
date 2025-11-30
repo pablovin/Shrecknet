@@ -272,3 +272,93 @@ async def test_share_unshare_note_endpoints(client):
         headers=owner_headers,
     )
     assert share_response.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_shared_users_can_edit_content_but_not_share_targets(client):
+    """Shared collaborators can edit note content but cannot change share lists."""
+    owner_payload = {
+        "username": "shareable-owner",
+        "password": "ShareableOwner123",
+        "full_name": "Shareable Owner",
+        "email": "shareable-owner@example.com",
+        "timezone": "UTC",
+        "role": UserRole.ADMIN.value,
+    }
+    collaborator_payload = {
+        "username": "shareable-collab",
+        "password": "ShareableCollab123",
+        "full_name": "Shareable Collaborator",
+        "email": "shareable-collab@example.com",
+        "timezone": "UTC",
+        "role": UserRole.PLAYER.value,
+    }
+
+    owner_register = await client.post("/users/", json=owner_payload)
+    collaborator_register = await client.post("/users/", json=collaborator_payload)
+    assert owner_register.status_code == 201, owner_register.text
+    assert collaborator_register.status_code == 201, collaborator_register.text
+    collaborator_id = collaborator_register.json()["id"]
+
+    owner_token = await client.post(
+        "/auth/token",
+        data={
+            "username": owner_payload["username"],
+            "password": owner_payload["password"],
+        },
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    collaborator_token = await client.post(
+        "/auth/token",
+        data={
+            "username": collaborator_payload["username"],
+            "password": collaborator_payload["password"],
+        },
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    assert owner_token.status_code == 200, owner_token.text
+    assert collaborator_token.status_code == 200, collaborator_token.text
+
+    owner_headers = {"Authorization": f"Bearer {owner_token.json()['access_token']}"}
+    collaborator_headers = {
+        "Authorization": f"Bearer {collaborator_token.json()['access_token']}"
+    }
+
+    create_response = await client.post(
+        "/notes/",
+        json={
+            "title": "Shared Editing Note",
+            "content": "<p>Initial</p>",
+            "ontology_id": None,
+            "share_user_ids": [collaborator_id],
+        },
+        headers=owner_headers,
+    )
+    assert create_response.status_code == 201, create_response.text
+    note_id = create_response.json()["id"]
+
+    collaborator_update = await client.put(
+        f"/notes/{note_id}",
+        json={"content": "<p>Collaborator edit</p>"},
+        headers=collaborator_headers,
+    )
+    assert collaborator_update.status_code == 200, collaborator_update.text
+    assert collaborator_update.json()["content"] == "<p>Collaborator edit</p>"
+    assert collaborator_id in collaborator_update.json()["shared_with"]
+
+    # Collaborator should not be able to modify share targets.
+    collaborator_share_attempt = await client.put(
+        f"/notes/{note_id}",
+        json={"share_user_ids": []},
+        headers=collaborator_headers,
+    )
+    assert collaborator_share_attempt.status_code == 403
+
+    # Owner can still adjust share targets.
+    owner_update = await client.put(
+        f"/notes/{note_id}",
+        json={"share_user_ids": []},
+        headers=owner_headers,
+    )
+    assert owner_update.status_code == 200, owner_update.text
+    assert owner_update.json()["shared_with"] == []

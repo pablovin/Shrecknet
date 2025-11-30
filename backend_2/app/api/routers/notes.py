@@ -101,12 +101,17 @@ async def update_note(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Note not found"
         )
-    if note.owner_id != current_user.id and current_user.role not in {
-        UserRole.ADMIN,
-        UserRole.WORLD_BUILDER,
-    }:
+    is_owner = note.owner_id == current_user.id
+    is_admin = current_user.role in {UserRole.ADMIN, UserRole.WORLD_BUILDER}
+    is_shared_user = any(user.id == current_user.id for user in note.shared_with)
+    if not (is_owner or is_admin or is_shared_user):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized"
+        )
+    if payload.share_user_ids is not None and not (is_owner or is_admin):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the owner or admins can update share targets",
         )
     updated = await service.update_note(
         note,

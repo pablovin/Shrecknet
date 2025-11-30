@@ -110,7 +110,7 @@ def _build_timeline_text(
     title: str,
     description: str,
     created_from_instance_id: str | None,
-    related_instance_ids: list[str],
+    related_entity_ids: list[str],
     before_event_id: str | None,
     after_event_id: str | None,
 ) -> str:
@@ -119,8 +119,8 @@ def _build_timeline_text(
         lines.append(description.strip())
     if created_from_instance_id:
         lines.append(f"Created From Instance: {created_from_instance_id}")
-    if related_instance_ids:
-        lines.append(f"Involved Entities: {', '.join(related_instance_ids)}")
+    if related_entity_ids:
+        lines.append(f"Involved Entities: {', '.join(related_entity_ids)}")
     if before_event_id:
         lines.append(f"Occurs After Event: {before_event_id}")
     if after_event_id:
@@ -313,7 +313,8 @@ class OntologyInstanceService:
                 raise ValueError(f"Duplicate timeline event id '{event_id}' in payload")
             title = event.title.strip()
             description = event.description.strip()
-            related_ids = _normalize_id_list(event.related_instance_ids)
+            related_entity_ids = _normalize_id_list(event.related_entity_ids)
+            related_instance_ids = _normalize_id_list(event.related_instance_ids)
             before_id = _normalize_optional_str(event.before_event_id)
             after_id = _normalize_optional_str(event.after_event_id)
             created_from_instance = _normalize_optional_str(
@@ -323,7 +324,12 @@ class OntologyInstanceService:
                 getattr(event, "created_from_entity_id", None)
             )
             text_payload = _build_timeline_text(
-                title, description, created_from_instance, related_ids, before_id, after_id
+                title,
+                description,
+                created_from_instance,
+                related_entity_ids,
+                before_id,
+                after_id,
             )
             row = {
                 "timeline_event_id": event_id,
@@ -339,8 +345,8 @@ class OntologyInstanceService:
                 # legacy fields for backward compatibility in the graph (will be removed later)
                 "source_instance_id": created_from_instance,
                 "source_entity_id": created_from_entity,
-                "related_instance_ids": [instance_id for _ in related_ids] if related_ids else [],
-                "related_entity_ids": related_ids,
+                "related_instance_ids": related_instance_ids,
+                "related_entity_ids": related_entity_ids,
                 "before_event_id": before_id,
                 "after_event_id": after_id,
                 "created_at": timestamp,
@@ -1388,14 +1394,19 @@ class OntologyInstanceService:
                 raise ValueError(f"{pointer.replace('_', ' ').title()} '{ref}' does not exist for this instance")
         title = payload.title.strip()
         description = payload.description.strip()
-        related_ids = _normalize_id_list(payload.related_instance_ids)
+        related_entities = _normalize_id_list(payload.related_entity_ids)
+        related_instances = _normalize_id_list(payload.related_instance_ids)
         created_from_instance = _normalize_optional_str(payload.created_from_instance_id)
         created_from_entity = _normalize_optional_str(payload.created_from_entity_id)
         created_at = _format_dt(datetime.utcnow())
         text_payload = _build_timeline_text(
-            title, description, created_from_instance, related_ids, before_id, after_id
+            title,
+            description,
+            created_from_instance,
+            related_entities,
+            before_id,
+            after_id,
         )
-        related_instance_refs = [instance_id for _ in related_ids] if related_ids else []
 
         tx = await self.graph_session.begin_transaction()
         try:
@@ -1435,8 +1446,8 @@ class OntologyInstanceService:
                 description=description,
                 created_from_instance_id=created_from_instance,
                 created_from_entity_id=created_from_entity,
-                related_instance_ids=related_instance_refs,
-                related_entity_ids=related_ids,
+                related_instance_ids=related_instances,
+                related_entity_ids=related_entities,
                 before_event_id=before_id,
                 after_event_id=after_id,
                 created_at=created_at,
@@ -1448,7 +1459,7 @@ class OntologyInstanceService:
                 instance_id=instance_id,
                 source_instance_id=created_from_instance,
                 source_entity_id=created_from_entity,
-                related_entity_ids=related_ids,
+                related_entity_ids=related_entities,
                 before_event_id=before_id,
                 after_event_id=after_id,
             )
@@ -1493,11 +1504,13 @@ class OntologyInstanceService:
                 payload.created_from_entity_id
             )
             updates["source_entity_id"] = updates["created_from_entity_id"]
+        if payload.related_entity_ids is not None:
+            updates["related_entity_ids"] = _normalize_id_list(
+                payload.related_entity_ids
+            )
         if payload.related_instance_ids is not None:
-            related_entities = _normalize_id_list(payload.related_instance_ids)
-            updates["related_entity_ids"] = related_entities
-            updates["related_instance_ids"] = (
-                [instance_id for _ in related_entities] if related_entities else []
+            updates["related_instance_ids"] = _normalize_id_list(
+                payload.related_instance_ids
             )
         if payload.before_event_id is not None:
             before_id = _normalize_optional_str(payload.before_event_id)

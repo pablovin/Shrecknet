@@ -448,7 +448,7 @@ class ArchitectOrchestratorV2:
         # Track matches per entity for detailed logging
         entity_matches: dict[str, list[str]] = (
             {}
-        )  # entity name -> list of matched node aliases
+        )  # entity name -> list of matched aliases
 
         for entity in deduped_entities:
             canonical_proposed = self._canonical_alias(entity.name)

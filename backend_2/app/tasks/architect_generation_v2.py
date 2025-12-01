@@ -554,26 +554,37 @@ def _convert_validated_to_revised(
         if corrected_type and not isinstance(corrected_type, ArchitectProposalType):
             corrected_type = ArchitectProposalType(corrected_type)
         base_corrected_type = getattr(base, "corrected_proposal_type", None)
-        effective_type = (
-            corrected_type
-            or base_corrected_type
-            or getattr(base, "proposal_type", None)
-        )
+        base_proposal_type = getattr(base, "proposal_type", None)
+        effective_type = corrected_type or base_corrected_type or base_proposal_type
 
-        corrected_instance_id = item.get("corrected_entity_instance_id")
+        incoming_corrected_instance_id = item.get("corrected_entity_instance_id")
+        stored_corrected_instance_id = getattr(
+            base, "corrected_entity_instance_id", None
+        )
+        corrected_instance_id = incoming_corrected_instance_id
         if corrected_instance_id is None:
-            corrected_instance_id = getattr(base, "corrected_entity_instance_id", None)
+            corrected_instance_id = stored_corrected_instance_id
         base_instance_id = getattr(base, "entity_instance_id", None)
-        effective_instance_id = corrected_instance_id or base_instance_id
 
         action = "new"
+        effective_instance_id: str | None = None
         if status == ArchitectProposalStatus.MERGED:
             action = "merged"
-        elif (
-            effective_type == ArchitectProposalType.UPDATE_INSTANCE
-            or effective_instance_id
-        ):
-            action = "updated"
+        else:
+            should_update = False
+            if effective_type == ArchitectProposalType.UPDATE_INSTANCE:
+                should_update = True
+            elif incoming_corrected_instance_id is not None:
+                should_update = True
+            elif (
+                stored_corrected_instance_id is not None
+                and base_corrected_type == ArchitectProposalType.UPDATE_INSTANCE
+            ):
+                should_update = True
+
+            if should_update:
+                action = "updated"
+                effective_instance_id = corrected_instance_id or base_instance_id
 
         translated.append(
             {

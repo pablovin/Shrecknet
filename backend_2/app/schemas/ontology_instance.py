@@ -174,3 +174,24 @@ class OntologyInstanceRead(OntologyInstanceBase):
     updated_at: datetime
     entities: list[OntologyInstanceEntityRead]
     timeline_events: list[TimelineEventRead] = Field(default_factory=list)
+
+
+class OntologyInstanceSearchHit(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    instance: OntologyInstanceRead
+    ontology_name: str | None = None
+    match_reason: str | None = None
+    matched_aliases: list[str] = Field(default_factory=list)
+    snippet: str | None = None
+    score: float | None = None
+    source_node_id: str | None = None
+    source_labels: list[str] = Field(default_factory=list)
+
+
+class OntologyInstanceSearchResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    query: str
+    ontology_id: int | None = None
+    ontology_name: str | None = None
+    direct_results: list[OntologyInstanceSearchHit] = Field(default_factory=list)
+    deep_results: list[OntologyInstanceSearchHit] = Field(default_factory=list)

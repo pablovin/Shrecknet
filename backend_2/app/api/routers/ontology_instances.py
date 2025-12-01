@@ -11,6 +11,7 @@ from app.models.user import User, UserRole
 from app.schemas.ontology_instance import (
     OntologyInstanceCreate,
     OntologyInstanceRead,
+    OntologyInstanceSearchResponse,
     OntologyInstanceUpdate,
     TimelineEventCreate,
     TimelineEventRead,
@@ -19,6 +20,28 @@ from app.schemas.ontology_instance import (
 from app.services.ontology_instance_service import OntologyInstanceService
 
 router = APIRouter(prefix="/ontology-instances", tags=["ontology-instances"])
+
+
+@router.get("/search", response_model=OntologyInstanceSearchResponse)
+async def search_ontology_instances(
+    query: str = Query(..., min_length=1, description="Search text to match"),
+    ontology_id: int = Query(
+        ..., ge=1, description="Ontology identifier to limit the search scope"
+    ),
+    limit: int = Query(
+        20, ge=1, le=20, description="Maximum results to return per category",
+    ),
+    service: OntologyInstanceService = Depends(get_ontology_instance_service),
+    _: User = Depends(get_current_user),
+) -> OntologyInstanceSearchResponse:
+    try:
+        return await service.search_instances(
+            query=query, ontology_id=ontology_id, per_section_limit=limit
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
 
 
 @router.post(
@@ -52,6 +75,20 @@ async def list_ontology_instances(
     return list(instances)
 
 
+@router.get("/by-alias/{slug_alias}", response_model=OntologyInstanceRead)
+async def get_ontology_instance_by_slug_alias(
+    slug_alias: str,
+    service: OntologyInstanceService = Depends(get_ontology_instance_service),
+    _: User = Depends(get_current_user),
+) -> OntologyInstanceRead:
+    try:
+        return await service.get_instance_by_slug_alias(slug_alias)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
+        ) from exc
+
+
 @router.get("/{instance_id}", response_model=OntologyInstanceRead)
 async def get_ontology_instance(
     instance_id: str,
@@ -82,9 +119,7 @@ async def update_ontology_instance(
 
 
 @router.delete(
-    "/{instance_id}",
-    status_code=status.HTTP_204_NO_CONTENT,
-    response_class=Response,
+    "/{instance_id}", status_code=status.HTTP_204_NO_CONTENT, response_class=Response,
 )
 async def delete_ontology_instance(
     instance_id: str,
@@ -95,16 +130,16 @@ async def delete_ontology_instance(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-def _resolve_status(exc: ValueError, *, default: int = status.HTTP_400_BAD_REQUEST) -> int:
+def _resolve_status(
+    exc: ValueError, *, default: int = status.HTTP_400_BAD_REQUEST
+) -> int:
     message = str(exc).lower()
     if "not found" in message:
         return status.HTTP_404_NOT_FOUND
     return default
 
 
-@router.get(
-    "/{instance_id}/timeline-events", response_model=list[TimelineEventRead]
-)
+@router.get("/{instance_id}/timeline-events", response_model=list[TimelineEventRead])
 async def list_timeline_events(
     instance_id: str,
     service: OntologyInstanceService = Depends(get_ontology_instance_service),
@@ -133,10 +168,7 @@ async def create_timeline_event(
     try:
         return await service.create_timeline_event(instance_id, payload)
     except ValueError as exc:
-        raise HTTPException(
-            status_code=_resolve_status(exc),
-            detail=str(exc),
-        ) from exc
+        raise HTTPException(status_code=_resolve_status(exc), detail=str(exc),) from exc
 
 
 @router.get(
@@ -174,10 +206,7 @@ async def update_timeline_event(
             instance_id, timeline_event_id, payload
         )
     except ValueError as exc:
-        raise HTTPException(
-            status_code=_resolve_status(exc),
-            detail=str(exc),
-        ) from exc
+        raise HTTPException(status_code=_resolve_status(exc), detail=str(exc),) from exc
 
 
 @router.delete(

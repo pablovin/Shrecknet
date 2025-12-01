@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from collections.abc import Sequence
@@ -12,13 +13,16 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models.ontology import OntologyEntity
+from app.graphrag.retrieval_service import RetrievalService
+from app.models.ontology import Ontology, OntologyEntity
 from app.repositories.ontology_repository import OntologyRepository
 from app.schemas.ontology_instance import (
     OntologyInstanceCreate,
     OntologyInstanceEntityCreate,
     OntologyInstanceRead,
     OntologyInstanceUpdate,
+    OntologyInstanceSearchHit,
+    OntologyInstanceSearchResponse,
     TimelineEventCreate,
     TimelineEventRead,
     TimelineEventUpdate,
@@ -80,6 +84,25 @@ def _normalize_optional_str(raw: str | None) -> str | None:
     return cleaned or None
 
 
+def _normalize_slug_alias(raw: str | None) -> str:
+    if raw is None:
+        return ""
+    cleaned = raw.strip().lower()
+    slug = re.sub(r"[^a-z0-9]+", "-", cleaned)
+    return slug.strip("-")
+
+
+def _slug_alias_pattern(slug: str) -> str:
+    tokens = [re.escape(part) for part in re.split(r"[-_]+", slug) if part]
+    if not tokens:
+        return r"(?!)"
+    pattern = "^" + tokens[0]
+    for token in tokens[1:]:
+        pattern += r"[^A-Za-z0-9]+" + token
+    pattern += "$"
+    return "(?i)" + pattern
+
+
 def _normalize_id_list(values: list[str] | None) -> list[str]:
     normalized: list[str] = []
     if not values:
@@ -135,6 +158,21 @@ class OntologyInstanceService:
         self.sql_session = sql_session
         self.graph_session = graph_session
         self.repository = OntologyRepository(sql_session)
+
+    async def _load_instances_map(
+        self, instance_ids: set[str]
+    ) -> dict[str, OntologyInstanceRead]:
+        if not instance_ids:
+            return {}
+        ordered_ids = list(instance_ids)
+        tasks = [self.get_instance(instance_id) for instance_id in ordered_ids]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        resolved: dict[str, OntologyInstanceRead] = {}
+        for idx, result in enumerate(results):
+            if isinstance(result, Exception):
+                continue
+            resolved[ordered_ids[idx]] = result
+        return resolved
 
     async def _timeline_event_ids(self, instance_id: str) -> set[str]:
         result = await self.graph_session.run(
@@ -296,11 +334,7 @@ class OntologyInstanceService:
         )
 
     def _prepare_timeline_event_rows(
-        self,
-        events: list[TimelineEventCreate],
-        *,
-        instance_id: str,
-        ontology_id: int,
+        self, events: list[TimelineEventCreate], *, instance_id: str, ontology_id: int,
     ) -> list[dict[str, Any]]:
         if not events:
             return []
@@ -600,9 +634,7 @@ class OntologyInstanceService:
                         target_id = alias_to_ids.get(target_alias)
                         if target_id is None:
                             normalized_alias = re.sub(
-                                r"[^a-z0-9_]+",
-                                "_",
-                                target_alias.strip().lower(),
+                                r"[^a-z0-9_]+", "_", target_alias.strip().lower(),
                             )
                             target_id = alias_to_ids.get(normalized_alias)
                         if target_id is None:
@@ -695,9 +727,7 @@ class OntologyInstanceService:
 
             link_instance_task.delay(instance.instance_id)
             if impacted_entity_ids:
-                embed_nodes_task.delay(
-                    payload.ontology_id, sorted(impacted_entity_ids)
-                )
+                embed_nodes_task.delay(payload.ontology_id, sorted(impacted_entity_ids))
             return instance
 
     async def list_instances(
@@ -715,9 +745,7 @@ class OntologyInstanceService:
             filters.append("i.ontology_id = $ontology_id")
             params["ontology_id"] = ontology_id
         if search:
-            filters.append(
-                "toLower(i.name) CONTAINS toLower($search)"
-            )
+            filters.append("toLower(i.name) CONTAINS toLower($search)")
             params["search"] = search
         if filters:
             clauses.append("WHERE " + " AND ".join(filters))
@@ -727,6 +755,150 @@ class OntologyInstanceService:
         records = await result.data()
         instance_ids = [record["i"]["instance_id"] for record in records]
         return [await self.get_instance(instance_id) for instance_id in instance_ids]
+
+    async def search_instances(
+        self, query: str, *, ontology_id: int | None, per_section_limit: int = 20,
+    ) -> OntologyInstanceSearchResponse:
+        cleaned_query = (query or "").strip()
+        if not cleaned_query:
+            raise ValueError("Search query cannot be empty")
+        if per_section_limit <= 0:
+            raise ValueError("Result limit must be positive")
+
+        if ontology_id is None:
+            raise ValueError("ontology_id is required")
+
+        ontology = await self.repository.get(ontology_id)
+        if ontology is None:
+            raise ValueError(f"Ontology '{ontology_id}' not found")
+
+        ontology_filter_id = ontology.id
+        applied_ontology_name = ontology.name
+
+        direct_raw = await self._perform_direct_search(
+            cleaned_query, ontology_id=ontology_filter_id, limit=per_section_limit
+        )
+        deep_raw = await self._perform_embedding_search(
+            cleaned_query, ontology_id=ontology_filter_id, limit=per_section_limit
+        )
+
+        instance_ids: set[str] = {
+            entry["instance_id"] for entry in direct_raw if entry.get("instance_id")
+        }
+        instance_ids.update(
+            entry["instance_id"] for entry in deep_raw if entry.get("instance_id")
+        )
+
+        instance_map = await self._load_instances_map(instance_ids)
+
+        direct_hits: list[OntologyInstanceSearchHit] = []
+        for entry in direct_raw:
+            instance_id = entry.get("instance_id")
+            instance = instance_map.get(instance_id)
+            if not instance:
+                continue
+            matched_aliases = [
+                alias for alias in (entry.get("matched_aliases") or []) if alias
+            ]
+            reason = "Matched name" if entry.get("name_match") else "Matched alias"
+            if not entry.get("name_match") and len(matched_aliases) > 1:
+                reason = "Matched aliases"
+            direct_hits.append(
+                OntologyInstanceSearchHit(
+                    instance=instance,
+                    ontology_name=applied_ontology_name,
+                    match_reason=reason,
+                    matched_aliases=matched_aliases,
+                )
+            )
+
+        deep_hits: list[OntologyInstanceSearchHit] = []
+        for entry in deep_raw:
+            instance_id = entry.get("instance_id")
+            instance = instance_map.get(instance_id)
+            if not instance:
+                continue
+            reason = entry.get("match_reason") or "Embedding match"
+            deep_hits.append(
+                OntologyInstanceSearchHit(
+                    instance=instance,
+                    ontology_name=applied_ontology_name,
+                    match_reason=reason,
+                    snippet=entry.get("snippet"),
+                    score=entry.get("score"),
+                    source_node_id=entry.get("source_node_id"),
+                    source_labels=entry.get("source_labels") or [],
+                )
+            )
+
+        return OntologyInstanceSearchResponse(
+            query=cleaned_query,
+            ontology_id=ontology_filter_id,
+            ontology_name=applied_ontology_name,
+            direct_results=direct_hits,
+            deep_results=deep_hits,
+        )
+
+    async def _perform_direct_search(
+        self, query: str, *, ontology_id: int | None, limit: int,
+    ) -> list[dict[str, Any]]:
+        query_lower = query.lower()
+        result = await self.graph_session.run(
+            """
+            MATCH (i:OntologyInstance)
+            WHERE ($ontology_id IS NULL OR i.ontology_id = $ontology_id)
+            OPTIONAL MATCH (i)-[:HAS_ENTITY]->(e:EntityInstance)
+            WITH i, collect(DISTINCT e.alias) AS aliases
+            WITH i,
+                 [alias IN aliases WHERE alias IS NOT NULL AND toLower(alias) CONTAINS $query_lower] AS matched_aliases,
+                 toLower(i.name) CONTAINS $query_lower AS name_match
+            WHERE name_match OR size(matched_aliases) > 0
+            RETURN i.instance_id AS instance_id,
+                   name_match,
+                   matched_aliases[0..5] AS matched_aliases
+            ORDER BY CASE WHEN name_match THEN 0 ELSE 1 END, i.updated_at DESC
+            LIMIT $limit
+            """,
+            ontology_id=ontology_id,
+            query_lower=query_lower,
+            limit=limit,
+        )
+        records = await result.data()
+        return records
+
+    async def _perform_embedding_search(
+        self, query: str, *, ontology_id: int | None, limit: int,
+    ) -> list[dict[str, Any]]:
+        retrieval_service = RetrievalService(self.graph_session)
+        semantic_result = await retrieval_service.semantic_search(
+            query=query,
+            ontology_id=ontology_id,
+            k=max(limit * 2, limit),
+            score_threshold=0.0,
+            include_neighbors=False,
+            neighbor_limit=0,
+        )
+        records = semantic_result.get("results", [])
+        hits: list[dict[str, Any]] = []
+        seen_instances: set[str] = set()
+        for record in records:
+            instance_id = record.get("instance_id")
+            if not instance_id or instance_id in seen_instances:
+                continue
+            hits.append(
+                {
+                    "instance_id": instance_id,
+                    "score": record.get("score"),
+                    "snippet": record.get("context_text"),
+                    "source_node_id": record.get("node_id"),
+                    "source_labels": record.get("labels") or [],
+                    "match_reason": record.get("chunk_type") or "Embedding match",
+                }
+            )
+            seen_instances.add(instance_id)
+            if len(hits) >= limit:
+                break
+        return hits
 
     async def get_instance(self, instance_id: str) -> OntologyInstanceRead:
         record = await self.graph_session.run(
@@ -827,10 +999,7 @@ class OntologyInstanceService:
                     "author_type": entity_data["author_type"],
                     "author_id": entity_data["author_id"],
                     "properties": [
-                        {
-                            "definition_id": int(prop_id),
-                            "value": value,
-                        }
+                        {"definition_id": int(prop_id), "value": value,}
                         for prop_id, value in entity_data["properties"].items()
                     ],
                     "relationships": entity_data["relationships"],
@@ -839,6 +1008,36 @@ class OntologyInstanceService:
             ],
             timeline_events=timeline_events,
         )
+
+    async def get_instance_by_slug_alias(self, slug_alias: str) -> OntologyInstanceRead:
+        normalized_slug = _normalize_slug_alias(slug_alias)
+        if not normalized_slug:
+            raise ValueError("Slug alias cannot be empty")
+        alias_pattern = _slug_alias_pattern(normalized_slug)
+        raw_alias = slug_alias.strip().lower()
+        spaced_alias = normalized_slug.replace("-", " ").strip()
+        result = await self.graph_session.run(
+            """
+            MATCH (i:OntologyInstance)-[:HAS_ENTITY]->(e:EntityInstance)
+            WHERE e.alias IS NOT NULL AND (
+                toLower(e.alias) = $raw_alias
+                OR toLower(replace(replace(e.alias, " ", "-"), "_", "-")) = $slug_alias
+                OR toLower(e.alias) = $spaced_alias
+                OR e.alias =~ $alias_pattern
+            )
+            RETURN i.instance_id AS instance_id
+            ORDER BY i.updated_at DESC
+            LIMIT 1
+            """,
+            raw_alias=raw_alias,
+            slug_alias=normalized_slug,
+            spaced_alias=spaced_alias,
+            alias_pattern=alias_pattern,
+        )
+        record = await result.single()
+        if not record or not record.get("instance_id"):
+            raise ValueError("Ontology instance not found for slug alias")
+        return await self.get_instance(record["instance_id"])
 
     async def _entity_ids_for_instances(
         self, tx: AsyncTransaction, instance_ids: Sequence[str]
@@ -924,15 +1123,12 @@ class OntologyInstanceService:
                 continue
             source_instance = row.get("source_instance_id")
             created_from_instance = (
-                None
-                if source_instance in instance_set
-                else source_instance
+                None if source_instance in instance_set else source_instance
             )
             source_entity = row.get("source_entity_id")
             created_from_entity = (
                 None
-                if source_entity in entity_set
-                or created_from_instance is None
+                if source_entity in entity_set or created_from_instance is None
                 else source_entity
             )
             related_instances = [
@@ -1277,9 +1473,7 @@ class OntologyInstanceService:
                         target_id = alias_to_ids.get(target_alias)
                         if target_id is None:
                             normalized_alias = re.sub(
-                                r"[^a-z0-9_]+",
-                                "_",
-                                target_alias.strip().lower(),
+                                r"[^a-z0-9_]+", "_", target_alias.strip().lower(),
                             )
                             target_id = alias_to_ids.get(normalized_alias)
                         if target_id is None:
@@ -1373,9 +1567,7 @@ class OntologyInstanceService:
 
             link_instance_task.delay(instance.instance_id)
             if impacted_entity_ids:
-                embed_nodes_task.delay(
-                    current.ontology_id, sorted(impacted_entity_ids)
-                )
+                embed_nodes_task.delay(current.ontology_id, sorted(impacted_entity_ids))
             return instance
 
     async def list_timeline_events(self, instance_id: str) -> list[TimelineEventRead]:
@@ -1408,18 +1600,27 @@ class OntologyInstanceService:
         event_id = _normalize_optional_str(payload.timeline_event_id) or str(uuid4())
         if event_id in existing_ids:
             raise ValueError(f"Timeline event id '{event_id}' already exists")
-        for pointer, ref in (("before_event_id", before_id), ("after_event_id", after_id)):
+        for pointer, ref in (
+            ("before_event_id", before_id),
+            ("after_event_id", after_id),
+        ):
             if ref == event_id:
-                raise ValueError(f"{pointer.replace('_', ' ').title()} cannot reference the same timeline event")
+                raise ValueError(
+                    f"{pointer.replace('_', ' ').title()} cannot reference the same timeline event"
+                )
             if ref and ref not in existing_ids:
-                raise ValueError(f"{pointer.replace('_', ' ').title()} '{ref}' does not exist for this instance")
+                raise ValueError(
+                    f"{pointer.replace('_', ' ').title()} '{ref}' does not exist for this instance"
+                )
         title = payload.title.strip()
         description = payload.description.strip()
         related_entities = _normalize_id_list(payload.related_entity_ids)
         related_instances = _normalize_id_list(payload.related_instance_ids)
         if not related_entities and related_instances:
             related_entities = list(related_instances)
-        created_from_instance = _normalize_optional_str(payload.created_from_instance_id)
+        created_from_instance = _normalize_optional_str(
+            payload.created_from_instance_id
+        )
         created_from_entity = _normalize_optional_str(payload.created_from_entity_id)
         created_at = _format_dt(datetime.utcnow())
         text_payload = _build_timeline_text(
@@ -1496,10 +1697,7 @@ class OntologyInstanceService:
         return await self.get_timeline_event(instance_id, event_id)
 
     async def update_timeline_event(
-        self,
-        instance_id: str,
-        timeline_event_id: str,
-        payload: TimelineEventUpdate,
+        self, instance_id: str, timeline_event_id: str, payload: TimelineEventUpdate,
     ) -> TimelineEventRead:
         current_event = await self.get_timeline_event(instance_id, timeline_event_id)
         existing_ids = await self._timeline_event_ids(instance_id)
@@ -1535,7 +1733,10 @@ class OntologyInstanceService:
             normalized_instances = _normalize_id_list(payload.related_instance_ids)
             updates["related_instance_ids"] = normalized_instances
             # Legacy payloads may supply entity ids via related_instance_ids only
-            if payload.related_entity_ids is None and "related_entity_ids" not in updates:
+            if (
+                payload.related_entity_ids is None
+                and "related_entity_ids" not in updates
+            ):
                 updates["related_entity_ids"] = list(normalized_instances)
         if payload.before_event_id is not None:
             before_id = _normalize_optional_str(payload.before_event_id)
@@ -1694,7 +1895,9 @@ class OntologyInstanceService:
         processed = 0
         failed = 0
         for row in rows:
-            related_ids = row.get("related_entity_ids") or row.get("related_instance_ids") or []
+            related_ids = (
+                row.get("related_entity_ids") or row.get("related_instance_ids") or []
+            )
             if isinstance(related_ids, str):
                 related_ids = [related_ids]
             tx = await self.graph_session.begin_transaction()

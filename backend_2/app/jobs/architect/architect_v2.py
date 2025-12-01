@@ -99,8 +99,6 @@ class ArchitectOrchestratorV2:
         ontology_definitions = self._format_ontology_definitions(entity_definitions)
         allowed_ontology_names = self._build_allowed_ontology_names(entity_definitions)
 
-    
-
         # Build chunks
         chunks = self._build_chunks(
             ontology_instance,
@@ -121,12 +119,9 @@ class ArchitectOrchestratorV2:
                 "pipeline_version": "v2",
             }
 
-        
-
         # Step 1: Chunk-level entity extraction
         logger.info("Step 1: Extracting entities from %d chunks", len(chunks))
         chunk_results = await self._extract_chunk_entities(chunks, ontology_definitions)
-
 
         # Step 2: Global deduplication
         logger.info("Step 2: Deduplicating entities across chunks")
@@ -150,13 +145,12 @@ class ArchitectOrchestratorV2:
         )
         # logger.info(f"[ARCHITECT] Proposals: {proposals}")
 
-
         # print(f" [ANALYSE] - Note Catalogue: {node_catalogue}")
         # print(f" [ANALYSE] - Ontology Definition: {ontology_definitions}")
         # print(f" [ANALYSE] - chunk_results: {chunk_results}")
         # print(f" [ANALYSE] - deduped_entities: {deduped_entities}")
         # print(f" [ANALYSE] - reconciled: {reconciled}")
-        # print(f" [ANALYSE] - proposals: {proposals}")        
+        # print(f" [ANALYSE] - proposals: {proposals}")
 
         return {
             "proposals": proposals,
@@ -416,6 +410,82 @@ class ArchitectOrchestratorV2:
             return _one_token_matches_first_or_last(tokens_b, tokens_a)
         return False
 
+    def _prefilter_node_catalogue(
+        self,
+        deduped_entities: list[DedupedEntityProposal],
+        node_catalogue: list[ExistingNodeInfo],
+    ) -> tuple[list[ExistingNodeInfo], dict[str, ExistingNodeInfo]]:
+        """
+        Pre-filter the node catalogue to only include candidates likely to match.
+
+        Uses programmatic name matching to reduce the catalogue size before
+        sending to the LLM. This prevents performance issues when the catalogue
+        contains thousands of nodes.
+
+        Returns:
+            A tuple of (filtered_catalogue, exact_matches) where:
+            - filtered_catalogue: nodes that might match any proposed entity
+            - exact_matches: dict mapping canonical name -> node for exact matches
+        """
+        if not deduped_entities or not node_catalogue:
+            return [], {}
+
+        # Build a lookup of canonical names for existing nodes
+        existing_by_canonical: dict[str, list[ExistingNodeInfo]] = defaultdict(list)
+        for node in node_catalogue:
+            canonical = self._canonical_alias(node.alias)
+            if canonical:
+                existing_by_canonical[canonical].append(node)
+
+        # For each proposed entity, find potentially matching existing nodes
+        filtered_nodes: dict[str, ExistingNodeInfo] = {}  # node_id -> node
+        exact_matches: dict[str, ExistingNodeInfo] = {}  # canonical_name -> node
+
+        for entity in deduped_entities:
+            canonical_proposed = self._canonical_alias(entity.name)
+            if not canonical_proposed:
+                continue
+
+            # Check for exact canonical match
+            if canonical_proposed in existing_by_canonical:
+                for node in existing_by_canonical[canonical_proposed]:
+                    filtered_nodes[node.node_id] = node
+                    # Record the first exact match for this proposed entity
+                    if canonical_proposed not in exact_matches:
+                        exact_matches[canonical_proposed] = node
+                continue
+
+            # Check for partial/fuzzy matches using token-based similarity
+            proposed_tokens = set(canonical_proposed.split())
+            for existing_canonical, nodes in existing_by_canonical.items():
+                existing_tokens = set(existing_canonical.split())
+
+                # Check if aliases are equivalent (handles "Jessie" vs "Jessie Williams")
+                if self._aliases_equivalent(canonical_proposed, existing_canonical):
+                    for node in nodes:
+                        filtered_nodes[node.node_id] = node
+                    continue
+
+                # Check for significant token overlap (at least one shared token,
+                # and at least 50% of the smaller set's tokens match)
+                shared_tokens = proposed_tokens & existing_tokens
+                if shared_tokens:
+                    min_tokens = min(len(proposed_tokens), len(existing_tokens))
+                    overlap_ratio = len(shared_tokens) / min_tokens
+                    if overlap_ratio >= 0.5:
+                        for node in nodes:
+                            filtered_nodes[node.node_id] = node
+
+        logger.info(
+            "architect_v2_prefilter: proposed=%d catalogue=%d filtered=%d exact=%d",
+            len(deduped_entities),
+            len(node_catalogue),
+            len(filtered_nodes),
+            len(exact_matches),
+        )
+
+        return list(filtered_nodes.values()), exact_matches
+
     async def _reconcile_with_existing(
         self,
         deduped_entities: list[DedupedEntityProposal],
@@ -425,21 +495,80 @@ class ArchitectOrchestratorV2:
         """
         Step 3: Use LLM to reconcile proposed entities with existing ones.
 
+        First applies programmatic pre-filtering to reduce the catalogue size,
+        then uses LLM for final reconciliation on ambiguous cases.
+
         Returns a dictionary with 'existing' and 'new' lists.
         """
         if not deduped_entities:
             return {"existing": [], "new": []}
 
-        # Format proposed entities for LLM
+        # Pre-filter the catalogue to only include likely matches
+        filtered_catalogue, exact_matches = self._prefilter_node_catalogue(
+            deduped_entities, node_catalogue
+        )
+
+        # Build result lists - start with programmatic exact matches
+        existing_results: list[dict[str, Any]] = []
+        entities_needing_llm: list[DedupedEntityProposal] = []
+
+        for entity in deduped_entities:
+            canonical = self._canonical_alias(entity.name)
+            if canonical in exact_matches:
+                # Exact match found - no need for LLM
+                matched_node = exact_matches[canonical]
+                existing_results.append(
+                    {
+                        "proposed_name": entity.name,
+                        "matched_node_id": matched_node.node_id,
+                        "ontology": entity.ontology,
+                    }
+                )
+            else:
+                # Need LLM to decide
+                entities_needing_llm.append(entity)
+
+        # If all entities were matched exactly, return early
+        if not entities_needing_llm:
+            logger.info(
+                "architect_v2_reconcile: all %d entities matched exactly, skipping LLM",
+                len(deduped_entities),
+            )
+            return {
+                "existing": existing_results,
+                "new": [],
+            }
+
+        # If there's no filtered catalogue, all remaining entities are new
+        if not filtered_catalogue:
+            logger.info(
+                "architect_v2_reconcile: no candidates for %d entities, marking as new",
+                len(entities_needing_llm),
+            )
+            return {
+                "existing": existing_results,
+                "new": [
+                    {"name": e.name, "ontology": e.ontology}
+                    for e in entities_needing_llm
+                ],
+            }
+
+        # Format entities for LLM - only those needing reconciliation
         proposed_list = [
-            {"name": e.name, "ontology": e.ontology} for e in deduped_entities
+            {"name": e.name, "ontology": e.ontology} for e in entities_needing_llm
         ]
 
-        # Format existing entities for LLM
+        # Format filtered existing entities for LLM
         existing_list = [
             {"node_id": n.node_id, "alias": n.alias, "ontology": n.ontology}
-            for n in node_catalogue
+            for n in filtered_catalogue
         ]
+
+        logger.info(
+            "architect_v2_reconcile_llm: sending %d proposed, %d candidates to LLM",
+            len(proposed_list),
+            len(existing_list),
+        )
 
         # Prepare prompt
         prompt = ARCHITECT_RECONCILIATION_PROMPT.format(
@@ -461,11 +590,10 @@ class ArchitectOrchestratorV2:
             parsed = self._parse_reconciliation(response_text)
 
             # Only keep matches that point to ids we actually know about.
-            valid_ids = {n.node_id for n in node_catalogue}
-            filtered_existing = []
+            valid_ids = {n.node_id for n in filtered_catalogue}
             for entry in parsed.existing:
                 if entry.matched_node_id in valid_ids:
-                    filtered_existing.append(entry)
+                    existing_results.append(entry.model_dump())
                 else:
                     logger.warning(
                         "architect_v2_invalid_match_id: proposed=%s matched_id=%s",
@@ -474,16 +602,17 @@ class ArchitectOrchestratorV2:
                     )
 
             return {
-                "existing": [e.model_dump() for e in filtered_existing],
+                "existing": existing_results,
                 "new": [n.model_dump() for n in parsed.new],
             }
         except Exception as exc:
             logger.error("Reconciliation failed: %s", exc, exc_info=True)
-            # Fallback: treat all as new
+            # Fallback: treat remaining as new, keep exact matches
             return {
-                "existing": [],
+                "existing": existing_results,
                 "new": [
-                    {"name": e.name, "ontology": e.ontology} for e in deduped_entities
+                    {"name": e.name, "ontology": e.ontology}
+                    for e in entities_needing_llm
                 ],
             }
 
@@ -538,9 +667,7 @@ class ArchitectOrchestratorV2:
 
             # Check if it's existing or new
             if canonical_name in existing_map:
-                if not self._is_allowed_update(
-                    entity.ontology, allowed_ontology_names
-                ):
+                if not self._is_allowed_update(entity.ontology, allowed_ontology_names):
                     logger.info(
                         "architect_v2_skip_update: alias=%s ontology=%s",
                         entity.name,
@@ -570,7 +697,7 @@ class ArchitectOrchestratorV2:
                     )
                     continue
                 metadata["resolved_status"] = "existing"
-                
+
                 proposals.append(
                     {
                         "proposal_type": ArchitectProposalType.UPDATE_INSTANCE,
@@ -693,7 +820,7 @@ class ArchitectOrchestratorV2:
 
     @staticmethod
     def _build_allowed_ontology_names(
-        entity_definitions: Iterable[dict[str, Any]]
+        entity_definitions: Iterable[dict[str, Any]],
     ) -> set[str]:
         """Collect ontology names that are permitted for automated updates."""
         allowed: set[str] = set()
@@ -838,6 +965,7 @@ class ArchitectOrchestratorV2:
         stripper.feed(text)
         stripped = stripper.get_text()
         return " ".join(unescape(stripped).split())
+
     @staticmethod
     def _is_allowed_update(
         ontology_name: str | None, allowed_names: set[str] | None

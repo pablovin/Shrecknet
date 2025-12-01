@@ -1777,7 +1777,7 @@ async def _create_entities_on_instance(
         prop_json = json.dumps(
             {str(prop.definition_id): prop.value for prop in entity_payload.properties}
         )
-        await graph_session.run(
+        create_result = await graph_session.run(
             """
             MATCH (i:OntologyInstance {instance_id: $instance_id})
             CREATE (i)-[:HAS_ENTITY]->(e:EntityInstance {
@@ -1820,6 +1820,8 @@ async def _create_entities_on_instance(
             updated_at=timestamp,
             alias=entity_payload.alias,
         )
+        # Consume the result to ensure the write is fully committed
+        await create_result.consume()
         created_ids.append(node_id)
         definition_map[node_id] = entity_payload.definition_id
 
@@ -1856,7 +1858,7 @@ async def _create_entities_per_instance(
         new_instance_id = str(uuid4())
         now = datetime.utcnow().isoformat() + "Z"
         name = entity_payload.alias or base_instance.name or "Generated Instance"
-        await graph_session.run(
+        create_result = await graph_session.run(
             """
             CREATE (i:OntologyInstance {
                 instance_id: $instance_id,
@@ -1872,6 +1874,9 @@ async def _create_entities_per_instance(
             created_at=now,
             updated_at=now,
         )
+        # Consume the result to ensure the OntologyInstance is fully committed
+        # before creating entities that reference it
+        await create_result.consume()
         instance_ids.append(new_instance_id)
 
         # Create the entity under this new instance
@@ -1889,13 +1894,14 @@ async def _create_entities_per_instance(
         proposal_to_instance_id[proposal_id] = new_instance_id
 
         # Update instance updated_at
-        await graph_session.run(
+        update_result = await graph_session.run(
             """
             MATCH (i:OntologyInstance {instance_id: $instance_id})
             SET i.updated_at = datetime()
             """,
             instance_id=new_instance_id,
         )
+        await update_result.consume()
 
     return {
         "created_entity_ids": created_entity_ids,

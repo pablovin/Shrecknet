@@ -13,6 +13,7 @@ from app.jobs.architect.schemas import (
     ChunkExtractionResponse,
     ChunkEntityProposal,
     DedupedEntityProposal,
+    ExistingNodeInfo,
     ReconciliationResponse,
     ReconciledExistingEntity,
     ReconciledNewEntity,
@@ -360,6 +361,224 @@ async def test_architect_v2_skips_updates_for_disallowed_ontologies():
     )
     assert len(allowed_proposals) == 1
     assert (
-        allowed_proposals[0]["proposal_type"]
-        == ArchitectProposalType.UPDATE_INSTANCE
+        allowed_proposals[0]["proposal_type"] == ArchitectProposalType.UPDATE_INSTANCE
     )
+
+
+@pytest.mark.asyncio
+async def test_architect_v2_prefilter_exact_match():
+    """Pre-filter should identify exact canonical name matches."""
+    orchestrator = ArchitectOrchestratorV2(
+        llm_client=StubLLMV2({}),
+        model_policy=StubPolicy(),
+        graph_retriever=StubRetrieverV2(),
+    )
+
+    deduped = [
+        DedupedEntityProposal(
+            name="Jessie Williams",
+            ontology="Character",
+            confidence=0.9,
+            justifications=["Seen in story"],
+            chunk_indices=[0],
+        ),
+        DedupedEntityProposal(
+            name="Baron Jackie",
+            ontology="Character",
+            confidence=0.85,
+            justifications=["New character"],
+            chunk_indices=[1],
+        ),
+    ]
+
+    # Create a large catalogue with 1000+ nodes
+    node_catalogue = [
+        ExistingNodeInfo(
+            node_id=f"node_{i:04d}",
+            alias=f"Random Character {i}",
+            ontology="Character",
+        )
+        for i in range(1200)
+    ]
+    # Add our target match
+    node_catalogue.append(
+        ExistingNodeInfo(
+            node_id="char_001",
+            alias="Jessie Williams",
+            ontology="Character",
+        )
+    )
+
+    filtered, exact_matches = orchestrator._prefilter_node_catalogue(
+        deduped, node_catalogue
+    )
+
+    # Should find exact match for "Jessie Williams"
+    assert "jessie williams" in exact_matches
+    assert exact_matches["jessie williams"].node_id == "char_001"
+
+    # Filtered list should be much smaller than the catalogue
+    assert len(filtered) < len(node_catalogue)
+    # Should contain the matched node
+    matched_ids = {n.node_id for n in filtered}
+    assert "char_001" in matched_ids
+
+
+@pytest.mark.asyncio
+async def test_architect_v2_prefilter_partial_name_match():
+    """Pre-filter should find candidates for partial name matches."""
+    orchestrator = ArchitectOrchestratorV2(
+        llm_client=StubLLMV2({}),
+        model_policy=StubPolicy(),
+        graph_retriever=StubRetrieverV2(),
+    )
+
+    deduped = [
+        DedupedEntityProposal(
+            name="Jessie",  # Partial name
+            ontology="Character",
+            confidence=0.9,
+            justifications=["Seen in story"],
+            chunk_indices=[0],
+        ),
+    ]
+
+    node_catalogue = [
+        ExistingNodeInfo(
+            node_id="char_001",
+            alias="Jessie Williams",  # Full name
+            ontology="Character",
+        ),
+        ExistingNodeInfo(
+            node_id="char_002",
+            alias="Bob Smith",
+            ontology="Character",
+        ),
+    ]
+
+    filtered, exact_matches = orchestrator._prefilter_node_catalogue(
+        deduped, node_catalogue
+    )
+
+    # Should find "Jessie Williams" as a candidate for "Jessie"
+    matched_ids = {n.node_id for n in filtered}
+    assert "char_001" in matched_ids
+    # Should NOT include unrelated entries
+    assert "char_002" not in matched_ids
+
+
+@pytest.mark.asyncio
+async def test_architect_v2_prefilter_token_overlap():
+    """Pre-filter should find candidates with significant token overlap."""
+    orchestrator = ArchitectOrchestratorV2(
+        llm_client=StubLLMV2({}),
+        model_policy=StubPolicy(),
+        graph_retriever=StubRetrieverV2(),
+    )
+
+    deduped = [
+        DedupedEntityProposal(
+            name="Dark Court",
+            ontology="Organization",
+            confidence=0.9,
+            justifications=["Mentioned"],
+            chunk_indices=[0],
+        ),
+    ]
+
+    node_catalogue = [
+        ExistingNodeInfo(
+            node_id="org_001",
+            alias="The Dark Court of Nightmares",
+            ontology="Organization",
+        ),
+        ExistingNodeInfo(
+            node_id="org_002",
+            alias="Camarilla",
+            ontology="Organization",
+        ),
+    ]
+
+    filtered, _ = orchestrator._prefilter_node_catalogue(deduped, node_catalogue)
+
+    # Should find "The Dark Court of Nightmares" as a candidate for "Dark Court"
+    matched_ids = {n.node_id for n in filtered}
+    assert "org_001" in matched_ids
+    # Should NOT include unrelated entries
+    assert "org_002" not in matched_ids
+
+
+@pytest.mark.asyncio
+async def test_architect_v2_reconcile_with_large_catalogue():
+    """Reconciliation should work correctly with large catalogues via prefiltering."""
+    orchestrator = ArchitectOrchestratorV2(
+        llm_client=StubLLMV2({}),
+        model_policy=StubPolicy(),
+        graph_retriever=StubRetrieverV2(),
+    )
+
+    deduped = [
+        DedupedEntityProposal(
+            name="Jessie Williams",
+            ontology="Character",
+            confidence=0.9,
+            justifications=["Seen in story"],
+            chunk_indices=[0],
+        ),
+    ]
+
+    # Create a large catalogue - exact match should be found without LLM
+    node_catalogue = [
+        ExistingNodeInfo(
+            node_id=f"node_{i:04d}",
+            alias=f"Random Character {i}",
+            ontology="Character",
+        )
+        for i in range(1500)
+    ]
+    node_catalogue.append(
+        ExistingNodeInfo(
+            node_id="char_001",
+            alias="Jessie Williams",
+            ontology="Character",
+        )
+    )
+
+    result = await orchestrator._reconcile_with_existing(
+        deduped, node_catalogue, "(ontology definitions)"
+    )
+
+    # Should find exact match programmatically without needing LLM
+    assert len(result["existing"]) == 1
+    assert result["existing"][0]["proposed_name"] == "Jessie Williams"
+    assert result["existing"][0]["matched_node_id"] == "char_001"
+    assert len(result["new"]) == 0
+
+
+@pytest.mark.asyncio
+async def test_architect_v2_prefilter_empty_inputs():
+    """Pre-filter should handle empty inputs gracefully."""
+    orchestrator = ArchitectOrchestratorV2(
+        llm_client=StubLLMV2({}),
+        model_policy=StubPolicy(),
+        graph_retriever=StubRetrieverV2(),
+    )
+
+    # Empty entities
+    filtered, exact = orchestrator._prefilter_node_catalogue([], [])
+    assert filtered == []
+    assert exact == {}
+
+    # Empty catalogue
+    deduped = [
+        DedupedEntityProposal(
+            name="Test",
+            ontology="Character",
+            confidence=0.9,
+            justifications=["Test"],
+            chunk_indices=[0],
+        )
+    ]
+    filtered, exact = orchestrator._prefilter_node_catalogue(deduped, [])
+    assert filtered == []
+    assert exact == {}

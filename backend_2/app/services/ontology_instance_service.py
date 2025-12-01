@@ -864,7 +864,7 @@ class OntologyInstanceService:
         query_lower = query.lower()
         query_compact = re.sub(r"[^a-z0-9]+", "", query_lower)
         # Create a shorter prefix for wide fuzzy matching
-        # Use roughly 50-60% of the query length, minimum 2 characters
+        # Use 50% of the query length (integer division), minimum 2 characters
         prefix_len = max(2, len(query_compact) // 2)
         query_prefix = query_compact[:prefix_len]
         logger.debug(
@@ -899,7 +899,8 @@ class OntologyInstanceService:
         # 1. Alias/name CONTAINS the full query
         # 2. Alias/name STARTS WITH the full query
         # 3. Alias/name STARTS WITH a shorter prefix (for fuzzy matching like "Nevada" -> "Nevadinha")
-        # The prefix is about 50% of the query length to allow for variations
+        # The prefix is 50% of query length (integer division) to allow for variations
+        # Collection limit (10) is larger than final display limit (5) to allow for deduplication
         result = await self.graph_session.run(
             """
             MATCH (i:OntologyInstance)

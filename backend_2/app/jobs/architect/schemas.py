@@ -87,7 +87,7 @@ class ReconciledExistingEntity(BaseModel):
     """An entity matched to an existing node."""
 
     proposed_name: str
-    matched_node_id: str
+    matched_node_id: str | None = None
     ontology: str
 
 

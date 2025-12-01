@@ -286,6 +286,63 @@ async def test_architect_v2_reconciliation():
 
 
 @pytest.mark.asyncio
+async def test_architect_v2_reconciliation_null_matched_node_id():
+    """Test that null matched_node_id in existing entries is handled gracefully.
+
+    LLM may return null for matched_node_id when it cannot find a match. These
+    entries should be moved to the 'new' list instead of causing validation errors.
+    """
+    reconciliation_response = """
+    {
+      "existing": [
+        {
+          "proposed_name": "Jessie Williams",
+          "matched_node_id": "char_001",
+          "ontology": "Character"
+        },
+        {
+          "proposed_name": "Unknown Entity",
+          "matched_node_id": null,
+          "ontology": "Character"
+        },
+        {
+          "proposed_name": "Another Unknown",
+          "matched_node_id": null,
+          "ontology": "Location"
+        }
+      ],
+      "new": [
+        {
+          "name": "Baron Jackie",
+          "ontology": "Character"
+        }
+      ]
+    }
+    """
+
+    llm = StubLLMV2({"reconciliation": reconciliation_response})
+    orchestrator = ArchitectOrchestratorV2(
+        llm_client=llm,
+        model_policy=StubPolicy(),
+        graph_retriever=StubRetrieverV2(),
+    )
+
+    parsed = orchestrator._parse_reconciliation(reconciliation_response)
+
+    # Only one entry with valid matched_node_id should remain in existing
+    assert len(parsed.existing) == 1
+    assert parsed.existing[0].proposed_name == "Jessie Williams"
+    assert parsed.existing[0].matched_node_id == "char_001"
+
+    # Original new + 2 entries moved from existing with null matched_node_id
+    assert len(parsed.new) == 3
+    new_names = {e.name for e in parsed.new}
+    assert "Baron Jackie" in new_names
+    assert "Unknown Entity" in new_names
+    assert "Another Unknown" in new_names
+
+
+@pytest.mark.asyncio
 async def test_architect_v2_canonical_alias():
     """Test the canonical alias normalization."""
     orchestrator = ArchitectOrchestratorV2(

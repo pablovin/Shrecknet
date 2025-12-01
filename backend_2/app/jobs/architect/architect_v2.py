@@ -32,6 +32,7 @@ from app.jobs.architect.schemas import (
     DedupedEntityProposal,
     ExistingNodeInfo,
     FinalEntityProposal,
+    ReconciledNewEntity,
     ReconciliationResponse,
 )
 from app.models.architect import ArchitectProposalType
@@ -444,19 +445,27 @@ class ArchitectOrchestratorV2:
         # For each proposed entity, find potentially matching existing nodes
         filtered_nodes: dict[str, ExistingNodeInfo] = {}  # node_id -> node
         exact_matches: dict[str, ExistingNodeInfo] = {}  # canonical_name -> node
+        # Track matches per entity for detailed logging
+        entity_matches: dict[str, list[str]] = (
+            {}
+        )  # entity name -> list of matched aliases
 
         for entity in deduped_entities:
             canonical_proposed = self._canonical_alias(entity.name)
             if not canonical_proposed:
                 continue
 
+            matched_nodes_for_entity: list[str] = []
+
             # Check for exact canonical match
             if canonical_proposed in existing_by_canonical:
                 for node in existing_by_canonical[canonical_proposed]:
                     filtered_nodes[node.node_id] = node
+                    matched_nodes_for_entity.append(node.alias)
                     # Record the first exact match for this proposed entity
                     if canonical_proposed not in exact_matches:
                         exact_matches[canonical_proposed] = node
+                entity_matches[entity.name] = matched_nodes_for_entity
                 continue
 
             # Check for partial/fuzzy matches using token-based similarity
@@ -468,6 +477,7 @@ class ArchitectOrchestratorV2:
                 if self._aliases_equivalent(canonical_proposed, existing_canonical):
                     for node in nodes:
                         filtered_nodes[node.node_id] = node
+                        matched_nodes_for_entity.append(node.alias)
                     continue
 
                 # Check for significant token overlap (at least one shared token,
@@ -479,6 +489,9 @@ class ArchitectOrchestratorV2:
                     if overlap_ratio >= MIN_TOKEN_OVERLAP_RATIO:
                         for node in nodes:
                             filtered_nodes[node.node_id] = node
+                            matched_nodes_for_entity.append(node.alias)
+
+            entity_matches[entity.name] = matched_nodes_for_entity
 
         logger.info(
             "architect_v2_prefilter: proposed=%d catalogue=%d filtered=%d exact=%d",
@@ -487,6 +500,20 @@ class ArchitectOrchestratorV2:
             len(filtered_nodes),
             len(exact_matches),
         )
+
+        # Log detailed per-entity matches for debugging
+        for entity_name, matches in entity_matches.items():
+            if matches:
+                logger.info(
+                    "architect_v2_prefilter_entity_match: proposed='%s' -> candidates=%s",
+                    entity_name,
+                    matches[:5],  # Limit to 5 to avoid excessive logging
+                )
+            else:
+                logger.info(
+                    "architect_v2_prefilter_entity_match: proposed='%s' -> no candidates found",
+                    entity_name,
+                )
 
         return list(filtered_nodes.values()), exact_matches
 
@@ -866,6 +893,31 @@ class ArchitectOrchestratorV2:
             json_block = self._extract_json_block(response_text)
             payload = json.loads(json_block)
             parsed = ReconciliationResponse.model_validate(payload)
+
+            # Filter out entries with null matched_node_id (LLM sometimes returns
+            # null for existing entries it couldn't match) and treat them as new
+            valid_existing = []
+            invalid_existing = []
+            for entry in parsed.existing:
+                if entry.matched_node_id:
+                    valid_existing.append(entry)
+                else:
+                    invalid_existing.append(entry)
+
+            if invalid_existing:
+                logger.warning(
+                    "architect_v2_reconciliation_filtered: %d entries with null "
+                    "matched_node_id moved to new: %s",
+                    len(invalid_existing),
+                    [e.proposed_name for e in invalid_existing],
+                )
+                # Add invalid entries to new list (they couldn't be matched)
+                parsed.new.extend(
+                    ReconciledNewEntity(name=e.proposed_name, ontology=e.ontology)
+                    for e in invalid_existing
+                )
+
+            parsed.existing = valid_existing
             return parsed
         except Exception as exc:
             logger.warning("architect_v2_reconciliation_parse_error: %s", exc)

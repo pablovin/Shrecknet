@@ -180,6 +180,7 @@ class OntologyInstanceSearchHit(BaseModel):
     model_config = ConfigDict(extra="ignore")
     instance: OntologyInstanceRead
     ontology_name: str | None = None
+    world_name: str | None = None
     match_reason: str | None = None
     matched_aliases: list[str] = Field(default_factory=list)
     snippet: str | None = None
@@ -193,5 +194,6 @@ class OntologyInstanceSearchResponse(BaseModel):
     query: str
     ontology_id: int | None = None
     ontology_name: str | None = None
+    world_name: str | None = None
     direct_results: list[OntologyInstanceSearchHit] = Field(default_factory=list)
     deep_results: list[OntologyInstanceSearchHit] = Field(default_factory=list)

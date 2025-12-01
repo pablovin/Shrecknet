@@ -807,6 +807,7 @@ class OntologyInstanceService:
                 OntologyInstanceSearchHit(
                     instance=instance,
                     ontology_name=applied_ontology_name,
+                    world_name=applied_ontology_name,
                     match_reason=reason,
                     matched_aliases=matched_aliases,
                 )
@@ -823,6 +824,7 @@ class OntologyInstanceService:
                 OntologyInstanceSearchHit(
                     instance=instance,
                     ontology_name=applied_ontology_name,
+                    world_name=applied_ontology_name,
                     match_reason=reason,
                     snippet=entry.get("snippet"),
                     score=entry.get("score"),
@@ -835,6 +837,7 @@ class OntologyInstanceService:
             query=cleaned_query,
             ontology_id=ontology_filter_id,
             ontology_name=applied_ontology_name,
+            world_name=applied_ontology_name,
             direct_results=direct_hits,
             deep_results=deep_hits,
         )
@@ -843,24 +846,36 @@ class OntologyInstanceService:
         self, query: str, *, ontology_id: int | None, limit: int,
     ) -> list[dict[str, Any]]:
         query_lower = query.lower()
+        query_compact = re.sub(r"[^a-z0-9]+", "", query_lower)
         result = await self.graph_session.run(
             """
             MATCH (i:OntologyInstance)
             WHERE ($ontology_id IS NULL OR i.ontology_id = $ontology_id)
             OPTIONAL MATCH (i)-[:HAS_ENTITY]->(e:EntityInstance)
             WITH i, collect(DISTINCT e.alias) AS aliases
-            WITH i,
-                 [alias IN aliases WHERE alias IS NOT NULL AND toLower(alias) CONTAINS $query_lower] AS matched_aliases,
-                 toLower(i.name) CONTAINS $query_lower AS name_match
+            WITH
+                i,
+                [alias IN aliases
+                    WHERE alias IS NOT NULL AND (
+                        toLower(alias) CONTAINS $query_lower
+                        OR replace(replace(replace(toLower(alias), ' ', ''), '-', ''), '_', '') CONTAINS $query_compact
+                    )
+                    | alias][0..5] AS matched_aliases,
+                (
+                    toLower(i.name) CONTAINS $query_lower
+                    OR replace(replace(replace(toLower(i.name), ' ', ''), '-', ''), '_', '') CONTAINS $query_compact
+                ) AS name_match
             WHERE name_match OR size(matched_aliases) > 0
-            RETURN i.instance_id AS instance_id,
-                   name_match,
-                   matched_aliases[0..5] AS matched_aliases
+            RETURN
+                i.instance_id AS instance_id,
+                name_match,
+                matched_aliases
             ORDER BY CASE WHEN name_match THEN 0 ELSE 1 END, i.updated_at DESC
             LIMIT $limit
             """,
             ontology_id=ontology_id,
             query_lower=query_lower,
+            query_compact=query_compact,
             limit=limit,
         )
         records = await result.data()

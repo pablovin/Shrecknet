@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
 from app.api.deps import (
@@ -19,6 +22,8 @@ from app.schemas.ontology_instance import (
 )
 from app.services.ontology_instance_service import OntologyInstanceService
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/ontology-instances", tags=["ontology-instances"])
 
 
@@ -35,9 +40,17 @@ async def search_ontology_instances(
     _: User = Depends(get_current_user),
 ) -> OntologyInstanceSearchResponse:
     try:
-        return await service.search_instances(
+        response = await service.search_instances(
             query=query, ontology_id=ontology_id, per_section_limit=limit
         )
+        try:
+            logger.info(
+                "ontology_search response=%s",
+                json.dumps(response.model_dump(), default=str),
+            )
+        except Exception:
+            logger.exception("Failed to serialize ontology search response")
+        return response
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)

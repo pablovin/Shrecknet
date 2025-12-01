@@ -873,22 +873,23 @@ class OntologyInstanceService:
             limit,
         )
 
-        # Debug: count total instances for this ontology
-        count_result = await self.graph_session.run(
-            """
-            MATCH (i:OntologyInstance)
-            WHERE ($ontology_id IS NULL OR toInteger(i.ontology_id) = toInteger($ontology_id))
-            RETURN count(i) AS total
-            """,
-            ontology_id=ontology_id,
-        )
-        count_data = await count_result.single()
-        total_instances = count_data["total"] if count_data else 0
-        logger.debug(
-            "direct_search: found %d total instances for ontology_id=%r",
-            total_instances,
-            ontology_id,
-        )
+        # Debug: count total instances for this ontology (only when debug logging is enabled)
+        if logger.isEnabledFor(logging.DEBUG):
+            count_result = await self.graph_session.run(
+                """
+                MATCH (i:OntologyInstance)
+                WHERE ($ontology_id IS NULL OR toInteger(i.ontology_id) = toInteger($ontology_id))
+                RETURN count(i) AS total
+                """,
+                ontology_id=ontology_id,
+            )
+            count_data = await count_result.single()
+            total_instances = count_data["total"] if count_data else 0
+            logger.debug(
+                "direct_search: found %d total instances for ontology_id=%r",
+                total_instances,
+                ontology_id,
+            )
 
         result = await self.graph_session.run(
             """

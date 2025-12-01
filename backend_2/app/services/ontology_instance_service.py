@@ -14,8 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.graphrag.retrieval_service import RetrievalService
-from app.models.ontology import Ontology, OntologyEntity
+from app.models.ontology import OntologyEntity
 from app.repositories.ontology_repository import OntologyRepository
 from app.schemas.ontology_instance import (
     OntologyInstanceCreate,
@@ -891,29 +890,45 @@ class OntologyInstanceService:
                 ontology_id,
             )
 
+        # Fuzzy search: match if query is a prefix or is contained in the alias/name
+        # Also search both the alias and name fields of EntityInstance
         result = await self.graph_session.run(
             """
             MATCH (i:OntologyInstance)
             WHERE ($ontology_id IS NULL OR toInteger(i.ontology_id) = toInteger($ontology_id))
             OPTIONAL MATCH (i)-[:HAS_ENTITY]->(e:EntityInstance)
-            WITH i, collect(DISTINCT e.alias) AS aliases
+            WITH i, collect(DISTINCT {alias: e.alias, name: e.name}) AS entity_data
             WITH
                 i,
-                [alias IN aliases
-                    WHERE alias IS NOT NULL AND (
-                        toLower(alias) CONTAINS $query_lower
-                        OR replace(replace(replace(toLower(alias), ' ', ''), '-', ''), '_', '') CONTAINS $query_compact
+                [item IN entity_data
+                    WHERE item.alias IS NOT NULL AND (
+                        toLower(item.alias) CONTAINS $query_lower
+                        OR toLower(item.alias) STARTS WITH $query_lower
+                        OR replace(replace(replace(toLower(item.alias), ' ', ''), '-', ''), '_', '') CONTAINS $query_compact
+                        OR replace(replace(replace(toLower(item.alias), ' ', ''), '-', ''), '_', '') STARTS WITH $query_compact
                     )
-                    | alias][0..5] AS matched_aliases,
+                    | item.alias][0..10] AS matched_aliases,
+                [item IN entity_data
+                    WHERE item.name IS NOT NULL AND (
+                        toLower(item.name) CONTAINS $query_lower
+                        OR toLower(item.name) STARTS WITH $query_lower
+                        OR replace(replace(replace(toLower(item.name), ' ', ''), '-', ''), '_', '') CONTAINS $query_compact
+                        OR replace(replace(replace(toLower(item.name), ' ', ''), '-', ''), '_', '') STARTS WITH $query_compact
+                    )
+                    | item.name][0..10] AS matched_names,
                 (
                     toLower(i.name) CONTAINS $query_lower
+                    OR toLower(i.name) STARTS WITH $query_lower
                     OR replace(replace(replace(toLower(i.name), ' ', ''), '-', ''), '_', '') CONTAINS $query_compact
+                    OR replace(replace(replace(toLower(i.name), ' ', ''), '-', ''), '_', '') STARTS WITH $query_compact
                 ) AS name_match
-            WHERE name_match OR size(matched_aliases) > 0
+            WHERE name_match OR size(matched_aliases) > 0 OR size(matched_names) > 0
+            WITH i, name_match, matched_aliases, matched_names,
+                 matched_aliases + [n IN matched_names WHERE NOT n IN matched_aliases] AS all_matched
             RETURN
                 i.instance_id AS instance_id,
                 name_match,
-                matched_aliases
+                all_matched[0..5] AS matched_aliases
             ORDER BY CASE WHEN name_match THEN 0 ELSE 1 END, i.updated_at DESC
             LIMIT $limit
             """,
@@ -933,36 +948,9 @@ class OntologyInstanceService:
         ontology_id: int | None,
         limit: int,
     ) -> list[dict[str, Any]]:
-        retrieval_service = RetrievalService(self.graph_session)
-        semantic_result = await retrieval_service.semantic_search(
-            query=query,
-            ontology_id=ontology_id,
-            k=max(limit * 2, limit),
-            score_threshold=0.0,
-            include_neighbors=False,
-            neighbor_limit=0,
-        )
-        records = semantic_result.get("results", [])
-        hits: list[dict[str, Any]] = []
-        seen_instances: set[str] = set()
-        for record in records:
-            instance_id = record.get("instance_id")
-            if not instance_id or instance_id in seen_instances:
-                continue
-            hits.append(
-                {
-                    "instance_id": instance_id,
-                    "score": record.get("score"),
-                    "snippet": record.get("context_text"),
-                    "source_node_id": record.get("node_id"),
-                    "source_labels": record.get("labels") or [],
-                    "match_reason": record.get("chunk_type") or "Embedding match",
-                }
-            )
-            seen_instances.add(instance_id)
-            if len(hits) >= limit:
-                break
-        return hits
+        # Deep search is disabled - always return empty results
+        # This will be implemented in a future update
+        return []
 
     async def get_instance(self, instance_id: str) -> OntologyInstanceRead:
         record = await self.graph_session.run(

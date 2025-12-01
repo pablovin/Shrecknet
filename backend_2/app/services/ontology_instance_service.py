@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import re
 from collections.abc import Sequence
 from datetime import datetime
@@ -29,6 +30,8 @@ from app.schemas.ontology_instance import (
 )
 
 from neo4j.time import DateTime as Neo4jDateTime
+
+logger = logging.getLogger(__name__)
 
 ISO_FORMAT = "%Y-%m-%dT%H:%M:%S.%fZ"
 
@@ -334,7 +337,11 @@ class OntologyInstanceService:
         )
 
     def _prepare_timeline_event_rows(
-        self, events: list[TimelineEventCreate], *, instance_id: str, ontology_id: int,
+        self,
+        events: list[TimelineEventCreate],
+        *,
+        instance_id: str,
+        ontology_id: int,
     ) -> list[dict[str, Any]]:
         if not events:
             return []
@@ -634,7 +641,9 @@ class OntologyInstanceService:
                         target_id = alias_to_ids.get(target_alias)
                         if target_id is None:
                             normalized_alias = re.sub(
-                                r"[^a-z0-9_]+", "_", target_alias.strip().lower(),
+                                r"[^a-z0-9_]+",
+                                "_",
+                                target_alias.strip().lower(),
                             )
                             target_id = alias_to_ids.get(normalized_alias)
                         if target_id is None:
@@ -742,7 +751,7 @@ class OntologyInstanceService:
         filters: list[str] = []
         params: dict[str, Any] = {"skip": skip, "limit": limit}
         if ontology_id is not None:
-            filters.append("i.ontology_id = $ontology_id")
+            filters.append("toInteger(i.ontology_id) = toInteger($ontology_id)")
             params["ontology_id"] = ontology_id
         if search:
             filters.append("toLower(i.name) CONTAINS toLower($search)")
@@ -757,7 +766,11 @@ class OntologyInstanceService:
         return [await self.get_instance(instance_id) for instance_id in instance_ids]
 
     async def search_instances(
-        self, query: str, *, ontology_id: int | None, per_section_limit: int = 20,
+        self,
+        query: str,
+        *,
+        ontology_id: int | None,
+        per_section_limit: int = 20,
     ) -> OntologyInstanceSearchResponse:
         cleaned_query = (query or "").strip()
         if not cleaned_query:
@@ -843,14 +856,45 @@ class OntologyInstanceService:
         )
 
     async def _perform_direct_search(
-        self, query: str, *, ontology_id: int | None, limit: int,
+        self,
+        query: str,
+        *,
+        ontology_id: int | None,
+        limit: int,
     ) -> list[dict[str, Any]]:
         query_lower = query.lower()
         query_compact = re.sub(r"[^a-z0-9]+", "", query_lower)
+        logger.debug(
+            "direct_search params: query=%r, query_lower=%r, query_compact=%r, ontology_id=%r, limit=%r",
+            query,
+            query_lower,
+            query_compact,
+            ontology_id,
+            limit,
+        )
+
+        # Debug: count total instances for this ontology (only when debug logging is enabled)
+        if logger.isEnabledFor(logging.DEBUG):
+            count_result = await self.graph_session.run(
+                """
+                MATCH (i:OntologyInstance)
+                WHERE ($ontology_id IS NULL OR toInteger(i.ontology_id) = toInteger($ontology_id))
+                RETURN count(i) AS total
+                """,
+                ontology_id=ontology_id,
+            )
+            count_data = await count_result.single()
+            total_instances = count_data["total"] if count_data else 0
+            logger.debug(
+                "direct_search: found %d total instances for ontology_id=%r",
+                total_instances,
+                ontology_id,
+            )
+
         result = await self.graph_session.run(
             """
             MATCH (i:OntologyInstance)
-            WHERE ($ontology_id IS NULL OR i.ontology_id = $ontology_id)
+            WHERE ($ontology_id IS NULL OR toInteger(i.ontology_id) = toInteger($ontology_id))
             OPTIONAL MATCH (i)-[:HAS_ENTITY]->(e:EntityInstance)
             WITH i, collect(DISTINCT e.alias) AS aliases
             WITH
@@ -879,10 +923,15 @@ class OntologyInstanceService:
             limit=limit,
         )
         records = await result.data()
+        logger.debug("direct_search results: %d records", len(records))
         return records
 
     async def _perform_embedding_search(
-        self, query: str, *, ontology_id: int | None, limit: int,
+        self,
+        query: str,
+        *,
+        ontology_id: int | None,
+        limit: int,
     ) -> list[dict[str, Any]]:
         retrieval_service = RetrievalService(self.graph_session)
         semantic_result = await retrieval_service.semantic_search(
@@ -1014,7 +1063,10 @@ class OntologyInstanceService:
                     "author_type": entity_data["author_type"],
                     "author_id": entity_data["author_id"],
                     "properties": [
-                        {"definition_id": int(prop_id), "value": value,}
+                        {
+                            "definition_id": int(prop_id),
+                            "value": value,
+                        }
                         for prop_id, value in entity_data["properties"].items()
                     ],
                     "relationships": entity_data["relationships"],
@@ -1488,7 +1540,9 @@ class OntologyInstanceService:
                         target_id = alias_to_ids.get(target_alias)
                         if target_id is None:
                             normalized_alias = re.sub(
-                                r"[^a-z0-9_]+", "_", target_alias.strip().lower(),
+                                r"[^a-z0-9_]+",
+                                "_",
+                                target_alias.strip().lower(),
                             )
                             target_id = alias_to_ids.get(normalized_alias)
                         if target_id is None:
@@ -1712,7 +1766,10 @@ class OntologyInstanceService:
         return await self.get_timeline_event(instance_id, event_id)
 
     async def update_timeline_event(
-        self, instance_id: str, timeline_event_id: str, payload: TimelineEventUpdate,
+        self,
+        instance_id: str,
+        timeline_event_id: str,
+        payload: TimelineEventUpdate,
     ) -> TimelineEventRead:
         current_event = await self.get_timeline_event(instance_id, timeline_event_id)
         existing_ids = await self._timeline_event_ids(instance_id)

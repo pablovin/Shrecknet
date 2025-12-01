@@ -65,7 +65,7 @@ class RetrievalService:
         MATCH (node)<-[:HAS_CHUNK]-(parent)
         WHERE (parent:EntityInstance OR parent:TimelineEvent)
           AND score >= $score_threshold
-          AND ($ontology_id IS NULL OR node.ontology_id = $ontology_id)
+          AND ($ontology_id IS NULL OR toInteger(node.ontology_id) = toInteger($ontology_id))
         RETURN node AS chunk, parent AS parent, score
         ORDER BY score DESC
         LIMIT $k
@@ -212,7 +212,6 @@ class RetrievalService:
             pass
 
         return out
-
 
     async def _fetch_neighbors(
         self, node_id: str, limit: int = 10

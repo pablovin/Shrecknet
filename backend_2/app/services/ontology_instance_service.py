@@ -863,11 +863,16 @@ class OntologyInstanceService:
     ) -> list[dict[str, Any]]:
         query_lower = query.lower()
         query_compact = re.sub(r"[^a-z0-9]+", "", query_lower)
+        # Create a shorter prefix for wide fuzzy matching
+        # Use roughly 50-60% of the query length, minimum 2 characters
+        prefix_len = max(2, len(query_compact) // 2)
+        query_prefix = query_compact[:prefix_len]
         logger.debug(
-            "direct_search params: query=%r, query_lower=%r, query_compact=%r, ontology_id=%r, limit=%r",
+            "direct_search params: query=%r, query_lower=%r, query_compact=%r, query_prefix=%r, ontology_id=%r, limit=%r",
             query,
             query_lower,
             query_compact,
+            query_prefix,
             ontology_id,
             limit,
         )
@@ -890,8 +895,11 @@ class OntologyInstanceService:
                 ontology_id,
             )
 
-        # Fuzzy search: match if query is a prefix or is contained in the alias/name
-        # Also search both the alias and name fields of EntityInstance
+        # Fuzzy search with wide matching:
+        # 1. Alias/name CONTAINS the full query
+        # 2. Alias/name STARTS WITH the full query
+        # 3. Alias/name STARTS WITH a shorter prefix (for fuzzy matching like "Nevada" -> "Nevadinha")
+        # The prefix is about 50% of the query length to allow for variations
         result = await self.graph_session.run(
             """
             MATCH (i:OntologyInstance)
@@ -906,6 +914,7 @@ class OntologyInstanceService:
                         OR toLower(item.alias) STARTS WITH $query_lower
                         OR replace(replace(replace(toLower(item.alias), ' ', ''), '-', ''), '_', '') CONTAINS $query_compact
                         OR replace(replace(replace(toLower(item.alias), ' ', ''), '-', ''), '_', '') STARTS WITH $query_compact
+                        OR replace(replace(replace(toLower(item.alias), ' ', ''), '-', ''), '_', '') STARTS WITH $query_prefix
                     )
                     | item.alias][0..10] AS matched_aliases,
                 [item IN entity_data
@@ -914,6 +923,7 @@ class OntologyInstanceService:
                         OR toLower(item.name) STARTS WITH $query_lower
                         OR replace(replace(replace(toLower(item.name), ' ', ''), '-', ''), '_', '') CONTAINS $query_compact
                         OR replace(replace(replace(toLower(item.name), ' ', ''), '-', ''), '_', '') STARTS WITH $query_compact
+                        OR replace(replace(replace(toLower(item.name), ' ', ''), '-', ''), '_', '') STARTS WITH $query_prefix
                     )
                     | item.name][0..10] AS matched_names,
                 (
@@ -921,6 +931,7 @@ class OntologyInstanceService:
                     OR toLower(i.name) STARTS WITH $query_lower
                     OR replace(replace(replace(toLower(i.name), ' ', ''), '-', ''), '_', '') CONTAINS $query_compact
                     OR replace(replace(replace(toLower(i.name), ' ', ''), '-', ''), '_', '') STARTS WITH $query_compact
+                    OR replace(replace(replace(toLower(i.name), ' ', ''), '-', ''), '_', '') STARTS WITH $query_prefix
                 ) AS name_match
             WHERE name_match OR size(matched_aliases) > 0 OR size(matched_names) > 0
             WITH i, name_match, matched_aliases, matched_names,
@@ -935,6 +946,7 @@ class OntologyInstanceService:
             ontology_id=ontology_id,
             query_lower=query_lower,
             query_compact=query_compact,
+            query_prefix=query_prefix,
             limit=limit,
         )
         records = await result.data()

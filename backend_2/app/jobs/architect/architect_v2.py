@@ -39,6 +39,10 @@ from app.schemas.ontology_instance import OntologyInstanceRead
 
 logger = logging.getLogger(__name__)
 
+# Threshold for token overlap ratio when matching entity names
+# At least this fraction of the smaller set's tokens must match
+MIN_TOKEN_OVERLAP_RATIO = 0.5
+
 
 @dataclass
 class ChunkInput:
@@ -472,7 +476,7 @@ class ArchitectOrchestratorV2:
                 if shared_tokens:
                     min_tokens = min(len(proposed_tokens), len(existing_tokens))
                     overlap_ratio = len(shared_tokens) / min_tokens
-                    if overlap_ratio >= 0.5:
+                    if overlap_ratio >= MIN_TOKEN_OVERLAP_RATIO:
                         for node in nodes:
                             filtered_nodes[node.node_id] = node
 

@@ -23,6 +23,8 @@ from app.schemas.ontology_instance import (
     OntologyInstanceUpdate,
     OntologyInstanceSearchHit,
     OntologyInstanceSearchResponse,
+    OntologyInstanceSummary,
+    OntologyInstanceSummaryPage,
     TimelineEventCreate,
     TimelineEventRead,
     TimelineEventUpdate,
@@ -33,6 +35,25 @@ from neo4j.time import DateTime as Neo4jDateTime
 logger = logging.getLogger(__name__)
 
 ISO_FORMAT = "%Y-%m-%dT%H:%M:%S.%fZ"
+INSTANCE_FILTER_CLAUSE = """
+WHERE
+    ($ontology_id IS NULL OR toInteger(i.ontology_id) = toInteger($ontology_id))
+    AND (
+        $entity_definition_id IS NULL OR EXISTS {
+            MATCH (i)-[:HAS_ENTITY]->(definition_entity:EntityInstance)
+            WHERE toInteger(definition_entity.entity_definition_id) = toInteger($entity_definition_id)
+        }
+    )
+    AND (
+        $search_lower IS NULL
+        OR toLower(coalesce(i.name, '')) CONTAINS $search_lower
+        OR EXISTS {
+            MATCH (i)-[:HAS_ENTITY]->(search_entity:EntityInstance)
+            WHERE search_entity.alias IS NOT NULL
+              AND toLower(search_entity.alias) CONTAINS $search_lower
+        }
+    )
+"""
 
 
 def _format_dt(dt: datetime) -> str:
@@ -763,6 +784,111 @@ class OntologyInstanceService:
         records = await result.data()
         instance_ids = [record["i"]["instance_id"] for record in records]
         return [await self.get_instance(instance_id) for instance_id in instance_ids]
+
+    async def count_instances(
+        self,
+        *,
+        ontology_id: int | None = None,
+        entity_definition_id: int | None = None,
+        search: str | None = None,
+    ) -> int:
+        normalized_search = (search or "").strip()
+        params = {
+            "ontology_id": ontology_id,
+            "entity_definition_id": entity_definition_id,
+            "search_lower": normalized_search.lower() or None,
+        }
+        result = await self.graph_session.run(
+            "\n".join(
+                [
+                    "MATCH (i:OntologyInstance)",
+                    INSTANCE_FILTER_CLAUSE,
+                    "RETURN count(DISTINCT i) AS total",
+                ]
+            ),
+            params,
+        )
+        record = await result.single()
+        return int(record["total"]) if record and record.get("total") is not None else 0
+
+    async def list_instance_summaries(
+        self,
+        *,
+        skip: int = 0,
+        limit: int = 50,
+        ontology_id: int | None = None,
+        entity_definition_id: int | None = None,
+        search: str | None = None,
+    ) -> OntologyInstanceSummaryPage:
+        total = await self.count_instances(
+            ontology_id=ontology_id,
+            entity_definition_id=entity_definition_id,
+            search=search,
+        )
+        if total == 0:
+            return OntologyInstanceSummaryPage(
+                total=0,
+                skip=skip,
+                limit=limit,
+                results=[],
+            )
+
+        normalized_search = (search or "").strip()
+        params = {
+            "ontology_id": ontology_id,
+            "entity_definition_id": entity_definition_id,
+            "search_lower": normalized_search.lower() or None,
+            "skip": skip,
+            "limit": limit,
+        }
+        query = "\n".join(
+            [
+                "MATCH (i:OntologyInstance)",
+                INSTANCE_FILTER_CLAUSE,
+                "OPTIONAL MATCH (i)-[:HAS_ENTITY]->(e:EntityInstance)",
+                "WITH i, collect(e.alias) AS alias_values, collect(e.node_avatar_url) AS avatar_values, count(e) AS entity_count",
+                "RETURN i, alias_values, avatar_values, entity_count",
+                "ORDER BY i.updated_at DESC",
+                "SKIP $skip",
+                "LIMIT $limit",
+            ]
+        )
+        result = await self.graph_session.run(query, params)
+        rows = await result.data()
+        summaries: list[OntologyInstanceSummary] = []
+        for row in rows:
+            node = row.get("i")
+            if not node:
+                continue
+            alias_values = [
+                alias.strip()
+                for alias in (row.get("alias_values") or [])
+                if isinstance(alias, str) and alias.strip()
+            ]
+            avatar_url = next(
+                (avatar for avatar in (row.get("avatar_values") or []) if avatar),
+                None,
+            )
+            summaries.append(
+                OntologyInstanceSummary(
+                    instance_id=node["instance_id"],
+                    ontology_id=int(node["ontology_id"]),
+                    name=node.get("name"),
+                    created_at=_parse_dt(node.get("created_at")),
+                    updated_at=_parse_dt(node.get("updated_at")),
+                    primary_alias=alias_values[0] if alias_values else None,
+                    aliases=alias_values,
+                    avatar_url=avatar_url,
+                    entity_count=int(row.get("entity_count") or 0),
+                )
+            )
+
+        return OntologyInstanceSummaryPage(
+            total=total,
+            skip=skip,
+            limit=limit,
+            results=summaries,
+        )
 
     async def search_instances(
         self,

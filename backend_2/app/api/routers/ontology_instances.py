@@ -15,6 +15,8 @@ from app.schemas.ontology_instance import (
     OntologyInstanceCreate,
     OntologyInstanceRead,
     OntologyInstanceSearchResponse,
+    OntologyInstanceSummaryPage,
+    OntologyInstanceCountResponse,
     OntologyInstanceUpdate,
     TimelineEventCreate,
     TimelineEventRead,
@@ -88,6 +90,51 @@ async def list_ontology_instances(
     return list(instances)
 
 
+@router.get("/count", response_model=OntologyInstanceCountResponse)
+async def count_ontology_instances(
+    ontology_id: int | None = Query(None, ge=1),
+    entity_definition_id: int | None = Query(
+        None, ge=1, description="Filter instances that include this entity definition",
+    ),
+    search: str | None = Query(
+        None,
+        description="Optional text to match against instance names or entity aliases",
+    ),
+    service: OntologyInstanceService = Depends(get_ontology_instance_service),
+    _: User = Depends(get_current_user),
+) -> OntologyInstanceCountResponse:
+    total = await service.count_instances(
+        ontology_id=ontology_id,
+        entity_definition_id=entity_definition_id,
+        search=search,
+    )
+    return OntologyInstanceCountResponse(total=total)
+
+
+@router.get("/basic", response_model=OntologyInstanceSummaryPage)
+async def list_ontology_instance_summaries(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, gt=0, le=200),
+    ontology_id: int | None = Query(None, ge=1),
+    entity_definition_id: int | None = Query(
+        None, ge=1, description="Filter instances that include this entity definition",
+    ),
+    search: str | None = Query(
+        None,
+        description="Optional text to match against instance names or entity aliases",
+    ),
+    service: OntologyInstanceService = Depends(get_ontology_instance_service),
+    _: User = Depends(get_current_user),
+) -> OntologyInstanceSummaryPage:
+    return await service.list_instance_summaries(
+        skip=skip,
+        limit=limit,
+        ontology_id=ontology_id,
+        entity_definition_id=entity_definition_id,
+        search=search,
+    )
+
+
 @router.get("/by-alias/{slug_alias}", response_model=OntologyInstanceRead)
 async def get_ontology_instance_by_slug_alias(
     slug_alias: str,
@@ -104,6 +151,20 @@ async def get_ontology_instance_by_slug_alias(
 
 @router.get("/{instance_id}", response_model=OntologyInstanceRead)
 async def get_ontology_instance(
+    instance_id: str,
+    service: OntologyInstanceService = Depends(get_ontology_instance_service),
+    _: User = Depends(get_current_user),
+) -> OntologyInstanceRead:
+    try:
+        return await service.get_instance(instance_id)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
+        ) from exc
+
+
+@router.get("/{instance_id}/full", response_model=OntologyInstanceRead)
+async def get_ontology_instance_full(
     instance_id: str,
     service: OntologyInstanceService = Depends(get_ontology_instance_service),
     _: User = Depends(get_current_user),

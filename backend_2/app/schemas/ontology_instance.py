@@ -176,6 +176,32 @@ class OntologyInstanceRead(OntologyInstanceBase):
     timeline_events: list[TimelineEventRead] = Field(default_factory=list)
 
 
+class OntologyInstanceSummary(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    instance_id: str
+    ontology_id: int
+    name: str
+    created_at: datetime
+    updated_at: datetime
+    primary_alias: str | None = None
+    aliases: list[str] = Field(default_factory=list)
+    avatar_url: str | None = None
+    entity_count: int = 0
+
+
+class OntologyInstanceSummaryPage(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    total: int
+    skip: int
+    limit: int
+    results: list[OntologyInstanceSummary] = Field(default_factory=list)
+
+
+class OntologyInstanceCountResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    total: int
+
+
 class OntologyInstanceSearchHit(BaseModel):
     model_config = ConfigDict(extra="ignore")
     instance: OntologyInstanceRead

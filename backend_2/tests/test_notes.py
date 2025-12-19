@@ -239,7 +239,8 @@ async def test_share_unshare_note_endpoints(client):
     assert get_response.status_code == 200
 
     # Unshare from user1 using the dedicated endpoint
-    unshare_response = await client.delete(
+    unshare_response = await client.request(
+        "DELETE",
         f"/notes/{note_id}/share",
         json={"user_ids": [user1_id]},
         headers=owner_headers,
@@ -275,8 +276,8 @@ async def test_share_unshare_note_endpoints(client):
 
 
 @pytest.mark.asyncio
-async def test_shared_users_can_edit_content_but_not_share_targets(client):
-    """Shared collaborators can edit note content but cannot change share lists."""
+async def test_shared_users_cannot_edit_note_only_respond(client):
+    """Shared users cannot edit note content, only the owner can."""
     owner_payload = {
         "username": "shareable-owner",
         "password": "ShareableOwner123",
@@ -327,7 +328,7 @@ async def test_shared_users_can_edit_content_but_not_share_targets(client):
     create_response = await client.post(
         "/notes/",
         json={
-            "title": "Shared Editing Note",
+            "title": "Shared Note",
             "content": "<p>Initial</p>",
             "ontology_id": None,
             "share_user_ids": [collaborator_id],
@@ -337,28 +338,315 @@ async def test_shared_users_can_edit_content_but_not_share_targets(client):
     assert create_response.status_code == 201, create_response.text
     note_id = create_response.json()["id"]
 
+    # Collaborator should NOT be able to edit note content
     collaborator_update = await client.put(
         f"/notes/{note_id}",
         json={"content": "<p>Collaborator edit</p>"},
         headers=collaborator_headers,
     )
-    assert collaborator_update.status_code == 200, collaborator_update.text
-    assert collaborator_update.json()["content"] == "<p>Collaborator edit</p>"
-    assert collaborator_id in collaborator_update.json()["shared_with"]
+    assert collaborator_update.status_code == 403
 
-    # Collaborator should not be able to modify share targets.
-    collaborator_share_attempt = await client.put(
-        f"/notes/{note_id}",
-        json={"share_user_ids": []},
-        headers=collaborator_headers,
-    )
-    assert collaborator_share_attempt.status_code == 403
-
-    # Owner can still adjust share targets.
+    # Owner can still edit the note
     owner_update = await client.put(
         f"/notes/{note_id}",
-        json={"share_user_ids": []},
+        json={"content": "<p>Owner edit</p>", "share_user_ids": []},
         headers=owner_headers,
     )
     assert owner_update.status_code == 200, owner_update.text
+    assert owner_update.json()["content"] == "<p>Owner edit</p>"
     assert owner_update.json()["shared_with"] == []
+
+
+@pytest.mark.asyncio
+async def test_note_responses_crud(client):
+    """Test creating, reading, updating, and deleting responses to notes."""
+    # Create owner and collaborator
+    owner_payload = {
+        "username": "response-owner",
+        "password": "ResponseOwner123",
+        "full_name": "Response Owner",
+        "email": "response-owner@example.com",
+        "timezone": "UTC",
+        "role": UserRole.ADMIN.value,
+    }
+    collaborator_payload = {
+        "username": "response-collab",
+        "password": "ResponseCollab123",
+        "full_name": "Response Collaborator",
+        "email": "response-collab@example.com",
+        "timezone": "UTC",
+        "role": UserRole.PLAYER.value,
+    }
+
+    owner_register = await client.post("/users/", json=owner_payload)
+    collaborator_register = await client.post("/users/", json=collaborator_payload)
+    assert owner_register.status_code == 201
+    assert collaborator_register.status_code == 201
+    collaborator_id = collaborator_register.json()["id"]
+
+    owner_token = await client.post(
+        "/auth/token",
+        data={
+            "username": owner_payload["username"],
+            "password": owner_payload["password"],
+        },
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    collaborator_token = await client.post(
+        "/auth/token",
+        data={
+            "username": collaborator_payload["username"],
+            "password": collaborator_payload["password"],
+        },
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    assert owner_token.status_code == 200
+    assert collaborator_token.status_code == 200
+
+    owner_headers = {"Authorization": f"Bearer {owner_token.json()['access_token']}"}
+    collaborator_headers = {
+        "Authorization": f"Bearer {collaborator_token.json()['access_token']}"
+    }
+
+    # Create a note and share it
+    note_response = await client.post(
+        "/notes/",
+        json={
+            "title": "Discussion Topic",
+            "content": "<p>Let's discuss this</p>",
+            "ontology_id": None,
+            "share_user_ids": [collaborator_id],
+        },
+        headers=owner_headers,
+    )
+    assert note_response.status_code == 201
+    note_id = note_response.json()["id"]
+
+    # Collaborator creates a response
+    response_create = await client.post(
+        f"/notes/{note_id}/responses",
+        json={"content": "<p>Great idea!</p>"},
+        headers=collaborator_headers,
+    )
+    assert response_create.status_code == 201
+    response_data = response_create.json()
+    response_id = response_data["id"]
+    assert response_data["content"] == "<p>Great idea!</p>"
+    assert response_data["author"]["full_name"] == "Response Collaborator"
+    assert response_data["note_id"] == note_id
+
+    # List responses
+    responses_list = await client.get(
+        f"/notes/{note_id}/responses", headers=owner_headers
+    )
+    assert responses_list.status_code == 200
+    responses = responses_list.json()
+    assert len(responses) == 1
+    assert responses[0]["id"] == response_id
+
+    # Owner also responds
+    owner_response = await client.post(
+        f"/notes/{note_id}/responses",
+        json={"content": "<p>Thanks for your input!</p>"},
+        headers=owner_headers,
+    )
+    assert owner_response.status_code == 201
+
+    # List should now have 2 responses
+    responses_list = await client.get(
+        f"/notes/{note_id}/responses", headers=collaborator_headers
+    )
+    assert responses_list.status_code == 200
+    assert len(responses_list.json()) == 2
+
+    # Collaborator updates their response
+    update_response = await client.put(
+        f"/notes/{note_id}/responses/{response_id}",
+        json={"content": "<p>Even better idea!</p>"},
+        headers=collaborator_headers,
+    )
+    assert update_response.status_code == 200
+    assert update_response.json()["content"] == "<p>Even better idea!</p>"
+
+    # Owner cannot update collaborator's response
+    owner_update_attempt = await client.put(
+        f"/notes/{note_id}/responses/{response_id}",
+        json={"content": "<p>Trying to edit</p>"},
+        headers=owner_headers,
+    )
+    assert owner_update_attempt.status_code == 403
+
+    # Collaborator can delete their own response
+    delete_response = await client.delete(
+        f"/notes/{note_id}/responses/{response_id}", headers=collaborator_headers
+    )
+    assert delete_response.status_code == 204
+
+    # Response should be gone
+    responses_list = await client.get(
+        f"/notes/{note_id}/responses", headers=owner_headers
+    )
+    assert responses_list.status_code == 200
+    assert len(responses_list.json()) == 1
+
+
+@pytest.mark.asyncio
+async def test_response_access_control(client):
+    """Test that only users with note access can respond."""
+    # Create users
+    owner_payload = {
+        "username": "access-owner",
+        "password": "AccessOwner123",
+        "full_name": "Access Owner",
+        "email": "access-owner@example.com",
+        "timezone": "UTC",
+        "role": UserRole.ADMIN.value,
+    }
+    unauthorized_payload = {
+        "username": "unauthorized-user",
+        "password": "Unauthorized123",
+        "full_name": "Unauthorized User",
+        "email": "unauthorized@example.com",
+        "timezone": "UTC",
+        "role": UserRole.PLAYER.value,
+    }
+
+    owner_register = await client.post("/users/", json=owner_payload)
+    unauthorized_register = await client.post("/users/", json=unauthorized_payload)
+    assert owner_register.status_code == 201
+    assert unauthorized_register.status_code == 201
+
+    owner_token = await client.post(
+        "/auth/token",
+        data={
+            "username": owner_payload["username"],
+            "password": owner_payload["password"],
+        },
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    unauthorized_token = await client.post(
+        "/auth/token",
+        data={
+            "username": unauthorized_payload["username"],
+            "password": unauthorized_payload["password"],
+        },
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+
+    owner_headers = {"Authorization": f"Bearer {owner_token.json()['access_token']}"}
+    unauthorized_headers = {
+        "Authorization": f"Bearer {unauthorized_token.json()['access_token']}"
+    }
+
+    # Create a private note
+    note_response = await client.post(
+        "/notes/",
+        json={
+            "title": "Private Note",
+            "content": "<p>Private content</p>",
+            "ontology_id": None,
+            "share_user_ids": [],
+        },
+        headers=owner_headers,
+    )
+    assert note_response.status_code == 201
+    note_id = note_response.json()["id"]
+
+    # Unauthorized user cannot respond
+    unauthorized_response = await client.post(
+        f"/notes/{note_id}/responses",
+        json={"content": "<p>Trying to respond</p>"},
+        headers=unauthorized_headers,
+    )
+    assert unauthorized_response.status_code == 403
+
+    # Unauthorized user cannot list responses
+    list_attempt = await client.get(
+        f"/notes/{note_id}/responses", headers=unauthorized_headers
+    )
+    assert list_attempt.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_note_owner_can_delete_any_response(client):
+    """Test that note owner can delete any response on their note."""
+    owner_payload = {
+        "username": "delete-owner",
+        "password": "DeleteOwner123",
+        "full_name": "Delete Owner",
+        "email": "delete-owner@example.com",
+        "timezone": "UTC",
+        "role": UserRole.ADMIN.value,
+    }
+    collaborator_payload = {
+        "username": "delete-collab",
+        "password": "DeleteCollab123",
+        "full_name": "Delete Collaborator",
+        "email": "delete-collab@example.com",
+        "timezone": "UTC",
+        "role": UserRole.PLAYER.value,
+    }
+
+    owner_register = await client.post("/users/", json=owner_payload)
+    collaborator_register = await client.post("/users/", json=collaborator_payload)
+    assert owner_register.status_code == 201
+    assert collaborator_register.status_code == 201
+    collaborator_id = collaborator_register.json()["id"]
+
+    owner_token = await client.post(
+        "/auth/token",
+        data={
+            "username": owner_payload["username"],
+            "password": owner_payload["password"],
+        },
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    collaborator_token = await client.post(
+        "/auth/token",
+        data={
+            "username": collaborator_payload["username"],
+            "password": collaborator_payload["password"],
+        },
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+
+    owner_headers = {"Authorization": f"Bearer {owner_token.json()['access_token']}"}
+    collaborator_headers = {
+        "Authorization": f"Bearer {collaborator_token.json()['access_token']}"
+    }
+
+    # Create a note and share it
+    note_response = await client.post(
+        "/notes/",
+        json={
+            "title": "Moderated Discussion",
+            "content": "<p>Discussion content</p>",
+            "ontology_id": None,
+            "share_user_ids": [collaborator_id],
+        },
+        headers=owner_headers,
+    )
+    assert note_response.status_code == 201
+    note_id = note_response.json()["id"]
+
+    # Collaborator creates a response
+    response_create = await client.post(
+        f"/notes/{note_id}/responses",
+        json={"content": "<p>Collaborator response</p>"},
+        headers=collaborator_headers,
+    )
+    assert response_create.status_code == 201
+    response_id = response_create.json()["id"]
+
+    # Note owner can delete the collaborator's response
+    delete_response = await client.delete(
+        f"/notes/{note_id}/responses/{response_id}", headers=owner_headers
+    )
+    assert delete_response.status_code == 204
+
+    # Verify response is deleted
+    responses_list = await client.get(
+        f"/notes/{note_id}/responses", headers=owner_headers
+    )
+    assert responses_list.status_code == 200
+    assert len(responses_list.json()) == 0

@@ -9,7 +9,7 @@ from app.models.library import (
     LibraryItem,
     library_bookmark_shares,
 )
-from app.models.note import Note, note_shares
+from app.models.note import Note, Response, note_shares
 from app.models.game import (
     Game,
     GameSession,
@@ -48,6 +48,7 @@ __all__ = [
     "LibraryBookmark",
     "library_bookmark_shares",
     "Note",
+    "Response",
     "note_shares",
     "Game",
     "GameSession",

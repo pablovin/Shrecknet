@@ -395,3 +395,54 @@ async def migrate_game_datetimes_to_brussels_timezone(engine: AsyncEngine) -> No
                 )
 
         logger.info("Game datetime timezone migration completed")
+
+
+async def migrate_note_responses(engine: AsyncEngine) -> None:
+    """
+    Create responses table for note responses/comments.
+    
+    This migration adds support for forum-style responses to notes,
+    where users can respond to shared notes but only the author
+    can edit their own response.
+    """
+    async with engine.begin() as conn:
+        inspector = await conn.run_sync(lambda sync_conn: inspect(sync_conn))
+        tables = await conn.run_sync(lambda sync_conn: inspector.get_table_names())
+
+        if "responses" in tables:
+            logger.debug("responses table already exists, skipping migration")
+            return
+
+        logger.info("Creating responses table")
+        
+        # Create responses table
+        await conn.execute(
+            text(
+                """
+                CREATE TABLE responses (
+                    id INTEGER PRIMARY KEY,
+                    note_id INTEGER NOT NULL,
+                    author_id INTEGER NOT NULL,
+                    content TEXT NOT NULL,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+                    FOREIGN KEY (note_id) REFERENCES notes (id) ON DELETE CASCADE,
+                    FOREIGN KEY (author_id) REFERENCES users (id) ON DELETE CASCADE
+                )
+                """
+            )
+        )
+        
+        # Create indexes for efficient querying
+        await conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_responses_note_id ON responses (note_id)"
+            )
+        )
+        await conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_responses_author_id ON responses (author_id)"
+            )
+        )
+        
+        logger.info("responses table created successfully")

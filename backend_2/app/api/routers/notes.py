@@ -13,6 +13,10 @@ from app.schemas.note import (
     NoteRead,
     NoteShareRequest,
     NoteUpdate,
+    NoteWithResponsesRead,
+    ResponseCreate,
+    ResponseRead,
+    ResponseUpdate,
 )
 from app.services.note_service import NoteService
 
@@ -96,6 +100,7 @@ async def update_note(
     service: NoteService = Depends(get_note_service),
     current_user: User = Depends(get_current_user),
 ) -> NoteRead:
+    """Update a note. Only the owner or admins can edit the note content or share list."""
     note = await service.get(note_id)
     if not note:
         raise HTTPException(
@@ -103,16 +108,14 @@ async def update_note(
         )
     is_owner = note.owner_id == current_user.id
     is_admin = current_user.role in {UserRole.ADMIN, UserRole.WORLD_BUILDER}
-    is_shared_user = any(user.id == current_user.id for user in note.shared_with)
-    if not (is_owner or is_admin or is_shared_user):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized"
-        )
-    if payload.share_user_ids is not None and not (is_owner or is_admin):
+    
+    # Only owner or admin can update the note
+    if not (is_owner or is_admin):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only the owner or admins can update share targets",
+            detail="Only the note owner or admins can update the note",
         )
+    
     updated = await service.update_note(
         note,
         title=payload.title,
@@ -191,3 +194,156 @@ async def remove_shared_users(
         )
     updated = await service.remove_shared_users(note, payload.user_ids)
     return _serialize_note(service, updated)
+
+
+@router.get("/{note_id}/responses", response_model=list[ResponseRead])
+async def list_responses(
+    note_id: int,
+    service: NoteService = Depends(get_note_service),
+    current_user: User = Depends(get_current_user),
+) -> list[ResponseRead]:
+    """List all responses for a note. User must have access to the note."""
+    note = await service.get(note_id)
+    if not note:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Note not found"
+        )
+    _ensure_access(note, current_user)
+    
+    responses = await service.list_responses(note_id)
+    return [
+        ResponseRead(
+            id=resp.id,
+            note_id=resp.note_id,
+            author_id=resp.author_id,
+            author={
+                "id": resp.author.id,
+                "full_name": resp.author.full_name,
+                "email": resp.author.email,
+            },
+            content=resp.content,
+            created_at=resp.created_at,
+            updated_at=resp.updated_at,
+        )
+        for resp in responses
+    ]
+
+
+@router.post("/{note_id}/responses", response_model=ResponseRead, status_code=status.HTTP_201_CREATED)
+async def create_response(
+    note_id: int,
+    payload: ResponseCreate,
+    service: NoteService = Depends(get_note_service),
+    current_user: User = Depends(get_current_user),
+) -> ResponseRead:
+    """Create a response to a note. User must have access to the note."""
+    note = await service.get(note_id)
+    if not note:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Note not found"
+        )
+    _ensure_access(note, current_user)
+    
+    response = await service.create_response(note, current_user, payload.content)
+    return ResponseRead(
+        id=response.id,
+        note_id=response.note_id,
+        author_id=response.author_id,
+        author={
+            "id": response.author.id,
+            "full_name": response.author.full_name,
+            "email": response.author.email,
+        },
+        content=response.content,
+        created_at=response.created_at,
+        updated_at=response.updated_at,
+    )
+
+
+@router.put("/{note_id}/responses/{response_id}", response_model=ResponseRead)
+async def update_response(
+    note_id: int,
+    response_id: int,
+    payload: ResponseUpdate,
+    service: NoteService = Depends(get_note_service),
+    current_user: User = Depends(get_current_user),
+) -> ResponseRead:
+    """Update a response. Only the response author can update."""
+    note = await service.get(note_id)
+    if not note:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Note not found"
+        )
+    _ensure_access(note, current_user)
+    
+    response = await service.get_response(response_id)
+    if not response:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Response not found"
+        )
+    if response.note_id != note_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Response does not belong to this note",
+        )
+    if response.author_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the response author can update it",
+        )
+    
+    updated = await service.update_response(response, payload.content)
+    return ResponseRead(
+        id=updated.id,
+        note_id=updated.note_id,
+        author_id=updated.author_id,
+        author={
+            "id": updated.author.id,
+            "full_name": updated.author.full_name,
+            "email": updated.author.email,
+        },
+        content=updated.content,
+        created_at=updated.created_at,
+        updated_at=updated.updated_at,
+    )
+
+
+@router.delete("/{note_id}/responses/{response_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_response(
+    note_id: int,
+    response_id: int,
+    service: NoteService = Depends(get_note_service),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    """Delete a response. Only the response author or note owner can delete."""
+    note = await service.get(note_id)
+    if not note:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Note not found"
+        )
+    _ensure_access(note, current_user)
+    
+    response = await service.get_response(response_id)
+    if not response:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Response not found"
+        )
+    if response.note_id != note_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Response does not belong to this note",
+        )
+    
+    # Allow response author or note owner to delete
+    is_author = response.author_id == current_user.id
+    is_note_owner = note.owner_id == current_user.id
+    is_admin = current_user.role in {UserRole.ADMIN, UserRole.WORLD_BUILDER}
+    
+    if not (is_author or is_note_owner or is_admin):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the response author, note owner, or admins can delete the response",
+        )
+    
+    await service.delete_response(response)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

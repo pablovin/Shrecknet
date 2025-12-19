@@ -58,3 +58,39 @@ class NoteAdminSummary(BaseModel):
 
 class NoteAdminDetail(NoteAdminSummary):
     content: str
+
+
+# Response schemas
+class ResponseBase(BaseModel):
+    content: str
+
+
+class ResponseCreate(ResponseBase):
+    pass
+
+
+class ResponseUpdate(BaseModel):
+    content: str
+
+
+class ResponseAuthor(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    full_name: str
+    email: str
+
+
+class ResponseRead(ResponseBase):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    note_id: int
+    author_id: int
+    author: ResponseAuthor
+    created_at: datetime
+    updated_at: datetime
+
+
+class NoteWithResponsesRead(NoteRead):
+    responses: list[ResponseRead] = Field(default_factory=list)

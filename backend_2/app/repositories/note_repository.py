@@ -5,7 +5,7 @@ from typing import Any, Sequence
 from sqlalchemy import Select, and_, select
 from sqlalchemy.orm import selectinload
 
-from app.models.note import Note, note_shares
+from app.models.note import Note, Response, note_shares
 from app.models.user import User
 from app.repositories.base import BaseRepository
 
@@ -28,6 +28,7 @@ class NoteRepository(BaseRepository):
                 selectinload(Note.shared_with),
                 selectinload(Note.owner),
                 selectinload(Note.ontology),
+                selectinload(Note.responses).selectinload(Response.author),
             )
             .where(Note.id == note_id)
         )
@@ -110,3 +111,46 @@ class NoteRepository(BaseRepository):
             .order_by(Note.updated_at.desc())
         )
         return result.scalars().unique().all()
+
+    async def create_response(self, data: dict[str, Any]) -> Response:
+        """Create a response to a note."""
+        response = Response(**data)
+        await self.save(response)
+        await self.session.flush()
+        # Re-fetch with eager loading to avoid lazy load issues
+        return await self.get_response(response.id)  # type: ignore[return-value]
+
+    async def get_response(self, response_id: int) -> Response | None:
+        """Get a response by ID with author eager loaded."""
+        result = await self.session.execute(
+            select(Response)
+            .options(selectinload(Response.author))
+            .where(Response.id == response_id)
+        )
+        return result.scalar_one_or_none()
+
+    async def update_response(
+        self, response: Response, data: dict[str, Any]
+    ) -> Response:
+        """Update a response."""
+        for key, value in data.items():
+            setattr(response, key, value)
+        await self.save(response)
+        await self.session.flush()
+        # Re-fetch with eager loading to avoid lazy load issues
+        return await self.get_response(response.id)  # type: ignore[return-value]
+
+    async def delete_response(self, response: Response) -> None:
+        """Delete a response."""
+        await self.session.delete(response)
+        await self.session.flush()
+
+    async def list_responses_for_note(self, note_id: int) -> Sequence[Response]:
+        """List all responses for a note."""
+        result = await self.session.execute(
+            select(Response)
+            .options(selectinload(Response.author))
+            .where(Response.note_id == note_id)
+            .order_by(Response.created_at.asc())
+        )
+        return result.scalars().all()

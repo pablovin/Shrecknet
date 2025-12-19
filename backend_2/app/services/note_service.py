@@ -4,7 +4,7 @@ from typing import Sequence
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.note import Note
+from app.models.note import Note, Response
 from app.models.notification import NotificationAuthorType, NotificationType
 from app.models.user import User
 from app.repositories.note_repository import NoteRepository
@@ -12,7 +12,7 @@ from app.services.notification_service import NotificationService
 
 
 class NoteService:
-    """Business logic for personal and shared notes."""
+    """Business logic for personal and shared notes (posts) and responses."""
 
     def __init__(
         self, session: AsyncSession, notification_service: NotificationService
@@ -154,3 +154,68 @@ class NoteService:
                     "send_email": False,
                 }
             )
+
+    async def create_response(
+        self, note: Note, author: User, content: str
+    ) -> Response:
+        """Create a response to a note. Only users with access can respond."""
+        response = await self.repository.create_response(
+            {
+                "note_id": note.id,
+                "author_id": author.id,
+                "content": content,
+            }
+        )
+        await self.session.commit()
+
+        # Notify the post owner about the new response (unless they are the author)
+        if note.owner_id != author.id:
+            await self.notification_service.create_notification(
+                {
+                    "user_id": note.owner_id,
+                    "notification_type": NotificationType.NOTE_UPDATES.value,
+                    "title": f"New response on: {note.title}",
+                    "description": f"{author.full_name} responded to your post.",
+                    "author_type": NotificationAuthorType.USER.value,
+                    "author_id": str(author.id),
+                    "send_email": False,
+                }
+            )
+
+        # Notify all shared users (except the author and owner)
+        for user in note.shared_with:
+            if user.id != author.id and user.id != note.owner_id:
+                await self.notification_service.create_notification(
+                    {
+                        "user_id": user.id,
+                        "notification_type": NotificationType.NOTE_UPDATES.value,
+                        "title": f"New response on: {note.title}",
+                        "description": f"{author.full_name} responded to a shared post.",
+                        "author_type": NotificationAuthorType.USER.value,
+                        "author_id": str(author.id),
+                        "send_email": False,
+                    }
+                )
+
+        return response
+
+    async def get_response(self, response_id: int) -> Response | None:
+        """Get a response by ID."""
+        return await self.repository.get_response(response_id)
+
+    async def update_response(
+        self, response: Response, content: str
+    ) -> Response:
+        """Update a response. Only the author can update."""
+        updated = await self.repository.update_response(response, {"content": content})
+        await self.session.commit()
+        return updated
+
+    async def delete_response(self, response: Response) -> None:
+        """Delete a response."""
+        await self.repository.delete_response(response)
+        await self.session.commit()
+
+    async def list_responses(self, note_id: int) -> list[Response]:
+        """List all responses for a note."""
+        return list(await self.repository.list_responses_for_note(note_id))

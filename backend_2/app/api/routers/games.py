@@ -167,8 +167,12 @@ def _ensure_member(game: Game, user: User) -> None:
 
 def _serialize_session(session: GameSession) -> GameSessionRead:
     scheduled_at_utc = None
-    if session.scheduled_date is not None and session.scheduled_date.tzinfo is not None:
-        scheduled_at_utc = session.scheduled_date.astimezone(ZoneInfo("UTC"))
+    scheduled_date = session.scheduled_date
+    if scheduled_date is not None:
+        if scheduled_date.tzinfo is None:
+            scheduled_at_utc = scheduled_date.replace(tzinfo=ZoneInfo("UTC"))
+        else:
+            scheduled_at_utc = scheduled_date.astimezone(ZoneInfo("UTC"))
     scheduled_timezone = getattr(session, "scheduled_timezone", None)
     scheduled_local = None
     if scheduled_at_utc is not None and scheduled_timezone:
@@ -207,7 +211,7 @@ def _serialize_session(session: GameSession) -> GameSessionRead:
         "id": session.id,
         "game_id": session.game_id,
         "title": session.title,
-        "scheduled_date": session.scheduled_date,
+        "scheduled_date": scheduled_at_utc or session.scheduled_date,
         "scheduled_at_utc": scheduled_at_utc,
         "scheduled_local": scheduled_local,
         "scheduled_timezone": scheduled_timezone,

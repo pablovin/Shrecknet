@@ -397,6 +397,39 @@ async def migrate_game_datetimes_to_brussels_timezone(engine: AsyncEngine) -> No
         logger.info("Game datetime timezone migration completed")
 
 
+async def migrate_game_session_timezones(engine: AsyncEngine) -> None:
+    """Ensure game_sessions has scheduled_timezone column and backfill defaults."""
+    async with engine.begin() as conn:
+        inspector = await conn.run_sync(lambda sync_conn: inspect(sync_conn))
+        tables = await conn.run_sync(lambda sync_conn: inspector.get_table_names())
+
+        if "game_sessions" not in tables:
+            logger.debug("game_sessions table does not exist, skipping migration")
+            return
+
+        columns = await conn.run_sync(
+            lambda sync_conn: [col["name"] for col in inspector.get_columns("game_sessions")]
+        )
+        if "scheduled_timezone" in columns:
+            logger.debug("game_sessions.scheduled_timezone already exists, skipping")
+            return
+
+        logger.info("Adding scheduled_timezone column to game_sessions")
+        await conn.execute(
+            text("ALTER TABLE game_sessions ADD COLUMN scheduled_timezone VARCHAR(100)")
+        )
+        await conn.execute(
+            text(
+                """
+                UPDATE game_sessions
+                SET scheduled_timezone = 'Europe/Brussels'
+                WHERE scheduled_date IS NOT NULL
+                """
+            )
+        )
+        logger.info("Scheduled timezone migration completed")
+
+
 async def migrate_note_responses(engine: AsyncEngine) -> None:
     """
     Create responses table for note responses/comments.

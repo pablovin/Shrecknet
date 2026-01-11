@@ -101,6 +101,7 @@ class GameService:
         *,
         title_prefix: str,
         dates: Sequence[datetime],
+        scheduled_timezone: str | None = None,
         location: str | None = None,
         summary: str | None = None,
         start_index: int = 1,
@@ -111,6 +112,7 @@ class GameService:
                 {
                     "title": f"{title_prefix} {offset}",
                     "scheduled_date": scheduled_date,
+                    "scheduled_timezone": scheduled_timezone,
                     "location": location,
                     "summary": summary,
                 }

@@ -53,6 +53,31 @@ def _apply_timezone(value: datetime, timezone_name: str | None) -> datetime:
     return value
 
 
+def _normalize_scheduled_datetime(
+    value: datetime, timezone_name: str | None
+) -> tuple[datetime, str]:
+    if value.tzinfo is None:
+        if not timezone_name:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="scheduled_timezone is required when scheduled_date has no timezone",
+            )
+        local = value.replace(tzinfo=ZoneInfo(timezone_name))
+        return local.astimezone(ZoneInfo("UTC")), timezone_name
+
+    tz_name = timezone_name
+    if tz_name is None and hasattr(value.tzinfo, "key"):
+        tz_name = value.tzinfo.key
+    if tz_name is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="scheduled_timezone is required when scheduled_date has no IANA timezone",
+        )
+    tz = ZoneInfo(tz_name)
+    local = value.astimezone(tz)
+    return local.astimezone(ZoneInfo("UTC")), tz_name
+
+
 def _add_months_local(value: datetime, months: int) -> datetime:
     year = value.year + (value.month - 1 + months) // 12
     month = (value.month - 1 + months) % 12 + 1
@@ -141,6 +166,14 @@ def _ensure_member(game: Game, user: User) -> None:
 
 
 def _serialize_session(session: GameSession) -> GameSessionRead:
+    scheduled_at_utc = None
+    if session.scheduled_date is not None and session.scheduled_date.tzinfo is not None:
+        scheduled_at_utc = session.scheduled_date.astimezone(ZoneInfo("UTC"))
+    scheduled_timezone = getattr(session, "scheduled_timezone", None)
+    scheduled_local = None
+    if scheduled_at_utc is not None and scheduled_timezone:
+        scheduled_local = scheduled_at_utc.astimezone(ZoneInfo(scheduled_timezone))
+
     attendance_payload = [
         {
             "user_id": entry.user_id,
@@ -175,6 +208,9 @@ def _serialize_session(session: GameSession) -> GameSessionRead:
         "game_id": session.game_id,
         "title": session.title,
         "scheduled_date": session.scheduled_date,
+        "scheduled_at_utc": scheduled_at_utc,
+        "scheduled_local": scheduled_local,
+        "scheduled_timezone": scheduled_timezone,
         "location": session.location,
         "summary": session.summary,
         "created_at": session.created_at,
@@ -407,10 +443,13 @@ async def create_session(
     game = await _get_game_or_404(game_id, service)
     payload_data = payload.model_dump()
     if payload.scheduled_date is not None:
-        payload_data["scheduled_date"] = _apply_timezone(
+        scheduled_at_utc, timezone_name = _normalize_scheduled_datetime(
             payload.scheduled_date, payload.scheduled_timezone
         )
-    payload_data.pop("scheduled_timezone", None)
+        payload_data["scheduled_date"] = scheduled_at_utc
+        payload_data["scheduled_timezone"] = timezone_name
+    elif "scheduled_timezone" in payload_data:
+        payload_data.pop("scheduled_timezone", None)
     session = await service.create_session(game, payload_data)
     await _notify_members(
         notification_service,
@@ -439,20 +478,36 @@ async def create_sessions_bulk(
     timezone_name = payload.scheduled_timezone
 
     if payload.dates:
-        dates = [
-            _apply_timezone(date, timezone_name) for date in list(payload.dates)
-        ]
+        dates = list(payload.dates)
     else:
         assert payload.start_date is not None
         assert payload.periodicity is not None
         assert payload.count is not None
-        start_date = _apply_timezone(payload.start_date, timezone_name)
-        dates = _build_bulk_dates(start_date, payload.periodicity, payload.count)
+        dates = _build_bulk_dates(
+            _apply_timezone(payload.start_date, timezone_name),
+            payload.periodicity,
+            payload.count,
+        )
+
+    if dates:
+        if timezone_name is None and hasattr(dates[0].tzinfo, "key"):
+            timezone_name = dates[0].tzinfo.key
+    if timezone_name is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="scheduled_timezone is required when dates have no IANA timezone",
+        )
+
+    normalized_dates: list[datetime] = []
+    for date in dates:
+        scheduled_at_utc, _ = _normalize_scheduled_datetime(date, timezone_name)
+        normalized_dates.append(scheduled_at_utc)
 
     sessions = await service.bulk_create_sessions(
         game,
         title_prefix=payload.title_prefix,
-        dates=dates,
+        dates=normalized_dates,
+        scheduled_timezone=timezone_name,
         location=payload.location,
         summary=payload.summary,
     )
@@ -511,10 +566,13 @@ async def update_session(
     session = await _get_session_or_404(game_id, session_id, service)
     payload_data = payload.model_dump(exclude_unset=True)
     if payload.scheduled_date is not None:
-        payload_data["scheduled_date"] = _apply_timezone(
+        scheduled_at_utc, timezone_name = _normalize_scheduled_datetime(
             payload.scheduled_date, payload.scheduled_timezone
         )
-    payload_data.pop("scheduled_timezone", None)
+        payload_data["scheduled_date"] = scheduled_at_utc
+        payload_data["scheduled_timezone"] = timezone_name
+    elif "scheduled_timezone" in payload_data:
+        payload_data.pop("scheduled_timezone", None)
     updated = await service.update_session(session, payload_data)
     return _serialize_session(updated)
 

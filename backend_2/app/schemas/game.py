@@ -207,6 +207,9 @@ class GameSessionRead(GameSessionBase):
     game_id: int
     created_at: datetime
     updated_at: datetime
+    scheduled_at_utc: datetime | None = None
+    scheduled_local: datetime | None = None
+    scheduled_timezone: str | None = None
     attendance: list[GameSessionAttendanceRead] = Field(default_factory=list)
     polls: list[GameSessionPollRead] = Field(default_factory=list)
 

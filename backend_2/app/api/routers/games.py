@@ -43,7 +43,7 @@ def _sanitize_payload(data: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in data.items() if value is not None}
 
 
-def _add_months(value: datetime, months: int) -> datetime:
+def _add_months_local(value: datetime, months: int) -> datetime:
     year = value.year + (value.month - 1 + months) // 12
     month = (value.month - 1 + months) % 12 + 1
     last_day = calendar.monthrange(year, month)[1]
@@ -54,16 +54,38 @@ def _add_months(value: datetime, months: int) -> datetime:
 def _build_bulk_dates(
     start_date: datetime, periodicity: SessionPeriodicity, count: int
 ) -> list[datetime]:
+    tz = start_date.tzinfo
+    local_start = start_date.astimezone(tz) if tz is not None else start_date
+    hour = local_start.hour
+    minute = local_start.minute
+    second = local_start.second
+    microsecond = local_start.microsecond
+
     if periodicity == SessionPeriodicity.monthly:
-        dates = [start_date]
-        current = start_date
-        for _ in range(1, count):
-            current = _add_months(current, 1)
+        dates = []
+        current = local_start
+        for _ in range(count):
             dates.append(current)
+            current = _add_months_local(current, 1)
         return dates
 
     weeks = 2 if periodicity == SessionPeriodicity.biweekly else 1
-    return [start_date + timedelta(weeks=weeks * offset) for offset in range(count)]
+    dates = []
+    for offset in range(count):
+        target_date = local_start.date() + timedelta(weeks=weeks * offset)
+        dates.append(
+            datetime(
+                target_date.year,
+                target_date.month,
+                target_date.day,
+                hour,
+                minute,
+                second,
+                microsecond,
+                tzinfo=tz,
+            )
+        )
+    return dates
 
 
 async def _get_game_or_404(game_id: int, service: GameService) -> Game:

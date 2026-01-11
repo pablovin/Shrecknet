@@ -81,12 +81,17 @@ class GameSessionBulkCreate(BaseModel):
                 )
             if self.count is not None and self.count != len(self.dates):
                 raise ValueError("count must match the number of dates provided")
+            for date in self.dates:
+                if date.tzinfo is None:
+                    raise ValueError("All dates must include a timezone")
             return self
 
         if self.start_date is None or self.periodicity is None:
             raise ValueError(
                 "start_date and periodicity are required when dates are not provided"
             )
+        if self.start_date.tzinfo is None:
+            raise ValueError("start_date must include a timezone")
         if self.count is None:
             raise ValueError("count is required when using periodicity")
         return self

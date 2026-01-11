@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import calendar
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
@@ -41,6 +42,15 @@ router = APIRouter(prefix="/games", tags=["games"])
 
 def _sanitize_payload(data: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in data.items() if value is not None}
+
+
+def _apply_timezone(value: datetime, timezone_name: str | None) -> datetime:
+    if timezone_name:
+        tz = ZoneInfo(timezone_name)
+        if value.tzinfo is None:
+            return value.replace(tzinfo=tz)
+        return value.astimezone(tz)
+    return value
 
 
 def _add_months_local(value: datetime, months: int) -> datetime:
@@ -395,7 +405,13 @@ async def create_session(
     current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.WORLD_BUILDER)),
 ) -> GameSessionRead:
     game = await _get_game_or_404(game_id, service)
-    session = await service.create_session(game, payload.model_dump())
+    payload_data = payload.model_dump()
+    if payload.scheduled_date is not None:
+        payload_data["scheduled_date"] = _apply_timezone(
+            payload.scheduled_date, payload.scheduled_timezone
+        )
+    payload_data.pop("scheduled_timezone", None)
+    session = await service.create_session(game, payload_data)
     await _notify_members(
         notification_service,
         game=game,
@@ -420,16 +436,18 @@ async def create_sessions_bulk(
     current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.WORLD_BUILDER)),
 ) -> list[GameSessionRead]:
     game = await _get_game_or_404(game_id, service)
+    timezone_name = payload.scheduled_timezone
 
     if payload.dates:
-        dates = list(payload.dates)
+        dates = [
+            _apply_timezone(date, timezone_name) for date in list(payload.dates)
+        ]
     else:
         assert payload.start_date is not None
         assert payload.periodicity is not None
         assert payload.count is not None
-        dates = _build_bulk_dates(
-            payload.start_date, payload.periodicity, payload.count
-        )
+        start_date = _apply_timezone(payload.start_date, timezone_name)
+        dates = _build_bulk_dates(start_date, payload.periodicity, payload.count)
 
     sessions = await service.bulk_create_sessions(
         game,
@@ -491,9 +509,13 @@ async def update_session(
     current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.WORLD_BUILDER)),
 ) -> GameSessionRead:
     session = await _get_session_or_404(game_id, session_id, service)
-    updated = await service.update_session(
-        session, payload.model_dump(exclude_unset=True)
-    )
+    payload_data = payload.model_dump(exclude_unset=True)
+    if payload.scheduled_date is not None:
+        payload_data["scheduled_date"] = _apply_timezone(
+            payload.scheduled_date, payload.scheduled_timezone
+        )
+    payload_data.pop("scheduled_timezone", None)
+    updated = await service.update_session(session, payload_data)
     return _serialize_session(updated)
 
 

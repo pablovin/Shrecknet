@@ -4,7 +4,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Sequence
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class GameMemberSummary(BaseModel):
@@ -45,16 +45,51 @@ class GameSessionBase(BaseModel):
     location: str | None = Field(None, max_length=255)
     summary: str | None = None
 
+    @field_validator("scheduled_date")
+    @classmethod
+    def validate_scheduled_date_timezone(
+        cls, value: datetime | None
+    ) -> datetime | None:
+        return value
+
 
 class GameSessionCreate(GameSessionBase):
-    pass
+    scheduled_timezone: str | None = Field(None, max_length=100)
+
+    @model_validator(mode="after")
+    def validate_timezone(self) -> "GameSessionCreate":
+        if self.scheduled_date is not None and self.scheduled_date.tzinfo is None:
+            if not self.scheduled_timezone:
+                raise ValueError(
+                    "scheduled_timezone is required when scheduled_date has no timezone"
+                )
+        return self
 
 
 class GameSessionUpdate(BaseModel):
     title: str | None = Field(None, max_length=255)
     scheduled_date: datetime | None = None
+    scheduled_timezone: str | None = Field(None, max_length=100)
     location: str | None = Field(None, max_length=255)
     summary: str | None = None
+
+    @field_validator("scheduled_date")
+    @classmethod
+    def validate_scheduled_date_timezone(
+        cls, value: datetime | None
+    ) -> datetime | None:
+        if value is not None and value.tzinfo is None:
+            return value
+        return value
+
+    @model_validator(mode="after")
+    def validate_timezone(self) -> "GameSessionUpdate":
+        if self.scheduled_date is not None and self.scheduled_date.tzinfo is None:
+            if not self.scheduled_timezone:
+                raise ValueError(
+                    "scheduled_timezone is required when scheduled_date has no timezone"
+                )
+        return self
 
 
 class SessionPeriodicity(str, Enum):
@@ -69,6 +104,7 @@ class GameSessionBulkCreate(BaseModel):
     start_date: datetime | None = None
     periodicity: SessionPeriodicity | None = None
     dates: list[datetime] | None = None
+    scheduled_timezone: str | None = Field(None, max_length=100)
     location: str | None = Field(None, max_length=255)
     summary: str | None = None
 
@@ -83,7 +119,10 @@ class GameSessionBulkCreate(BaseModel):
                 raise ValueError("count must match the number of dates provided")
             for date in self.dates:
                 if date.tzinfo is None:
-                    raise ValueError("All dates must include a timezone")
+                    if not self.scheduled_timezone:
+                        raise ValueError(
+                            "scheduled_timezone is required when dates have no timezone"
+                        )
             return self
 
         if self.start_date is None or self.periodicity is None:
@@ -91,7 +130,10 @@ class GameSessionBulkCreate(BaseModel):
                 "start_date and periodicity are required when dates are not provided"
             )
         if self.start_date.tzinfo is None:
-            raise ValueError("start_date must include a timezone")
+            if not self.scheduled_timezone:
+                raise ValueError(
+                    "scheduled_timezone is required when start_date has no timezone"
+                )
         if self.count is None:
             raise ValueError("count is required when using periodicity")
         return self

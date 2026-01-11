@@ -148,6 +148,42 @@ class GameRepository(BaseRepository):
         await self.session.refresh(session)
         return session
 
+    async def create_sessions(
+        self, game_id: int, payloads: Sequence[dict[str, Any]]
+    ) -> list[GameSession]:
+        sessions = [GameSession(game_id=game_id, **data) for data in payloads]
+        self.session.add_all(sessions)
+        await self.session.flush()
+        for session in sessions:
+            await self.session.refresh(session)
+        return sessions
+
+    async def get_sessions_by_ids(
+        self, game_id: int, session_ids: Sequence[int]
+    ) -> Sequence[GameSession]:
+        if not session_ids:
+            return []
+        result = await self.session.execute(
+            select(GameSession)
+            .options(
+                selectinload(GameSession.attendance).selectinload(
+                    GameSessionAttendance.user
+                ),
+                selectinload(GameSession.polls)
+                .selectinload(GameSessionPoll.options)
+                .selectinload(GameSessionPollOption.votes),
+                selectinload(GameSession.polls).selectinload(
+                    GameSessionPoll.finalized_option
+                ),
+            )
+            .where(
+                GameSession.game_id == game_id,
+                GameSession.id.in_(session_ids),
+            )
+            .order_by(GameSession.created_at.asc())
+        )
+        return result.scalars().unique().all()
+
     async def update_session(
         self, session: GameSession, data: dict[str, Any]
     ) -> GameSession:

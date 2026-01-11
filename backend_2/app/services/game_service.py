@@ -95,6 +95,32 @@ class GameService:
         reloaded = await self.repository.get_session(game.id, session_obj.id)
         return reloaded or session_obj
 
+    async def bulk_create_sessions(
+        self,
+        game: Game,
+        *,
+        title_prefix: str,
+        dates: Sequence[datetime],
+        location: str | None = None,
+        summary: str | None = None,
+        start_index: int = 1,
+    ) -> Sequence[GameSession]:
+        payloads: list[dict] = []
+        for offset, scheduled_date in enumerate(dates, start=start_index):
+            payloads.append(
+                {
+                    "title": f"{title_prefix} {offset}",
+                    "scheduled_date": scheduled_date,
+                    "location": location,
+                    "summary": summary,
+                }
+            )
+        sessions = await self.repository.create_sessions(game.id, payloads)
+        await self.session.commit()
+        return await self.repository.get_sessions_by_ids(
+            game.id, [session.id for session in sessions]
+        )
+
     async def get_session(self, game_id: int, session_id: int) -> GameSession | None:
         return await self.repository.get_session(game_id, session_id)
 

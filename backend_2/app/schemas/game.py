@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from datetime import datetime
+from enum import Enum
 from typing import Sequence
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class GameMemberSummary(BaseModel):
@@ -54,6 +55,41 @@ class GameSessionUpdate(BaseModel):
     scheduled_date: datetime | None = None
     location: str | None = Field(None, max_length=255)
     summary: str | None = None
+
+
+class SessionPeriodicity(str, Enum):
+    weekly = "weekly"
+    biweekly = "biweekly"
+    monthly = "monthly"
+
+
+class GameSessionBulkCreate(BaseModel):
+    title_prefix: str = Field(..., max_length=255)
+    count: int | None = Field(None, ge=1)
+    start_date: datetime | None = None
+    periodicity: SessionPeriodicity | None = None
+    dates: list[datetime] | None = None
+    location: str | None = Field(None, max_length=255)
+    summary: str | None = None
+
+    @model_validator(mode="after")
+    def validate_schedule(self) -> "GameSessionBulkCreate":
+        if self.dates:
+            if self.start_date is not None or self.periodicity is not None:
+                raise ValueError(
+                    "Provide either dates or start_date/periodicity, not both"
+                )
+            if self.count is not None and self.count != len(self.dates):
+                raise ValueError("count must match the number of dates provided")
+            return self
+
+        if self.start_date is None or self.periodicity is None:
+            raise ValueError(
+                "start_date and periodicity are required when dates are not provided"
+            )
+        if self.count is None:
+            raise ValueError("count is required when using periodicity")
+        return self
 
 
 class GameSessionAttendanceRead(BaseModel):

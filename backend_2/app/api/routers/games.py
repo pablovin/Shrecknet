@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import calendar
+from datetime import datetime, timedelta
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
@@ -19,6 +21,7 @@ from app.schemas.game import (
     GameMemberSummary,
     GameRead,
     GameSessionCreate,
+    GameSessionBulkCreate,
     GameSessionPollCreate,
     GameSessionPollDetailRead,
     GameSessionPollRead,
@@ -28,6 +31,7 @@ from app.schemas.game import (
     GameUpdate,
     PollFinalizeRequest,
     PollVoteRequest,
+    SessionPeriodicity,
 )
 from app.services.game_service import GameService
 from app.services.notification_service import NotificationService
@@ -37,6 +41,29 @@ router = APIRouter(prefix="/games", tags=["games"])
 
 def _sanitize_payload(data: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in data.items() if value is not None}
+
+
+def _add_months(value: datetime, months: int) -> datetime:
+    year = value.year + (value.month - 1 + months) // 12
+    month = (value.month - 1 + months) % 12 + 1
+    last_day = calendar.monthrange(year, month)[1]
+    day = min(value.day, last_day)
+    return value.replace(year=year, month=month, day=day)
+
+
+def _build_bulk_dates(
+    start_date: datetime, periodicity: SessionPeriodicity, count: int
+) -> list[datetime]:
+    if periodicity == SessionPeriodicity.monthly:
+        dates = [start_date]
+        current = start_date
+        for _ in range(1, count):
+            current = _add_months(current, 1)
+            dates.append(current)
+        return dates
+
+    weeks = 2 if periodicity == SessionPeriodicity.biweekly else 1
+    return [start_date + timedelta(weeks=weeks * offset) for offset in range(count)]
 
 
 async def _get_game_or_404(game_id: int, service: GameService) -> Game:
@@ -356,6 +383,47 @@ async def create_session(
     )
     session = await service.get_session(game.id, session.id) or session
     return _serialize_session(session)
+
+
+@router.post(
+    "/{game_id}/sessions/bulk",
+    response_model=list[GameSessionRead],
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_sessions_bulk(
+    game_id: int,
+    payload: GameSessionBulkCreate,
+    service: GameService = Depends(get_game_service),
+    notification_service: NotificationService = Depends(get_notification_service),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.WORLD_BUILDER)),
+) -> list[GameSessionRead]:
+    game = await _get_game_or_404(game_id, service)
+
+    if payload.dates:
+        dates = list(payload.dates)
+    else:
+        assert payload.start_date is not None
+        assert payload.periodicity is not None
+        assert payload.count is not None
+        dates = _build_bulk_dates(
+            payload.start_date, payload.periodicity, payload.count
+        )
+
+    sessions = await service.bulk_create_sessions(
+        game,
+        title_prefix=payload.title_prefix,
+        dates=dates,
+        location=payload.location,
+        summary=payload.summary,
+    )
+    await _notify_members(
+        notification_service,
+        game=game,
+        author=current_user,
+        title=f"{len(sessions)} sessions scheduled for {game.name}",
+        description=f"Sessions '{payload.title_prefix} 1..{len(sessions)}' created.",
+    )
+    return [_serialize_session(session) for session in sessions]
 
 
 @router.get(

@@ -84,3 +84,20 @@ class PageVisitService:
         return await self.repository.list_user_page_summaries(
             user_id=user_id, skip=skip, limit=limit
         )
+
+    async def search_page_keys(
+        self,
+        *,
+        page_key: str | None = None,
+        page_alias: str | None = None,
+        ontology_instance_id: str | None = None,
+    ) -> list[str]:
+        """
+        Search for page_keys that match the given criteria.
+        Returns a list of matching page_key values.
+        """
+        return await self.repository.search_page_keys(
+            page_key=page_key,
+            page_alias=page_alias,
+            ontology_instance_id=ontology_instance_id,
+        )

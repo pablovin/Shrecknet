@@ -136,3 +136,37 @@ class PageVisitRepository(BaseRepository):
             select(func.count(PageVisit.id)).where(PageVisit.page_key == page_key)
         )
         return int(result.scalar_one() or 0)
+
+    async def search_page_keys(
+        self,
+        *,
+        page_key: str | None = None,
+        page_alias: str | None = None,
+        ontology_instance_id: str | None = None,
+    ) -> list[str]:
+        """
+        Search for page_keys in the database that match the given criteria.
+        Performs case-insensitive pattern matching.
+        """
+        from sqlalchemy import or_
+
+        conditions = []
+
+        if page_key:
+            # Match page_key using case-insensitive LIKE
+            conditions.append(PageVisit.page_key.ilike(f"%{page_key}%"))
+
+        if page_alias:
+            # Match page_key against the alias pattern
+            conditions.append(PageVisit.page_key.ilike(f"%{page_alias}%"))
+
+        if ontology_instance_id:
+            # Match page_key against the ontology_instance_id
+            conditions.append(PageVisit.page_key.ilike(f"%{ontology_instance_id}%"))
+
+        if not conditions:
+            return []
+
+        query = select(PageVisit.page_key).distinct().where(or_(*conditions))
+        result = await self.session.execute(query)
+        return [row[0] for row in result.all()]

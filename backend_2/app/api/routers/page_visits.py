@@ -35,6 +35,56 @@ async def record_page_visit(
 
 
 @router.get(
+    "/pages/search",
+    response_model=list[PageVisitStatsRead],
+    dependencies=[Depends(require_roles(UserRole.WORLD_BUILDER, UserRole.ADMIN))],
+)
+async def search_page_stats(
+    page_key: str | None = Query(None, description="Search by page_key pattern"),
+    page_alias: str | None = Query(None, description="Search by page_alias pattern"),
+    ontology_instance_id: str | None = Query(
+        None, description="Search by ontology instance ID"
+    ),
+    limit: int = Query(100, gt=0, le=MAX_RECENT_VISITS),
+    service: PageVisitService = Depends(get_page_visit_service),
+) -> list[PageVisitStatsRead]:
+    """
+    Search for page visit stats by page_key, page_alias, or ontology_instance_id.
+    At least one search parameter must be provided.
+    """
+    if not any([page_key, page_alias, ontology_instance_id]):
+        return []
+
+    matching_page_keys = await service.search_page_keys(
+        page_key=page_key,
+        page_alias=page_alias,
+        ontology_instance_id=ontology_instance_id,
+    )
+
+    results = []
+    for pk in matching_page_keys:
+        stats = await service.get_page_stats(pk)
+        recent_visits = await service.list_recent_visits(page_key=pk, limit=limit)
+        if stats is None:
+            continue
+        results.append(
+            PageVisitStatsRead(
+                page_key=stats.page_key,
+                total_visits=stats.total_visits,
+                unique_users=stats.unique_users,
+                last_visited_at=stats.last_visited_at,
+                recent_visits=[
+                    PageVisitUserRead(
+                        user_id=user_id, username=username, visited_at=visited_at
+                    )
+                    for user_id, username, visited_at in recent_visits
+                ],
+            )
+        )
+    return results
+
+
+@router.get(
     "/pages/{page_key}/stats",
     response_model=PageVisitStatsRead,
     dependencies=[Depends(require_roles(UserRole.WORLD_BUILDER, UserRole.ADMIN))],

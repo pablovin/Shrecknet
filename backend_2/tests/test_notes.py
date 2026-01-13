@@ -382,6 +382,7 @@ async def test_note_responses_crud(client):
     collaborator_register = await client.post("/users/", json=collaborator_payload)
     assert owner_register.status_code == 201
     assert collaborator_register.status_code == 201
+    owner_id = owner_register.json()["id"]
     collaborator_id = collaborator_register.json()["id"]
 
     owner_token = await client.post(
@@ -434,6 +435,15 @@ async def test_note_responses_crud(client):
     assert response_data["content"] == "<p>Great idea!</p>"
     assert response_data["author"]["full_name"] == "Response Collaborator"
     assert response_data["note_id"] == note_id
+
+    notifications_response = await client.get(
+        f"/notifications/?user_id={owner_id}", headers=owner_headers
+    )
+    assert notifications_response.status_code == 200
+    assert any(
+        item["notification_type"] == NotificationType.NOTE_RESPONSE.value
+        for item in notifications_response.json()
+    )
 
     # List responses
     responses_list = await client.get(

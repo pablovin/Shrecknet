@@ -35,6 +35,7 @@ from app.models.architect import (
     ArchitectProposalType,
     ArchitectRunStatus,
 )
+from app.models.page_visit import PageUserVisit, PageVisit, PageVisitStats
 
 __all__ = [
     "AuditAction",
@@ -72,4 +73,7 @@ __all__ = [
     "ArchitectProposalStatus",
     "ArchitectProposalType",
     "ArchitectRunStatus",
+    "PageVisit",
+    "PageUserVisit",
+    "PageVisitStats",
 ]

@@ -45,6 +45,9 @@ from app.models import (
     OntologyEntity,
     OntologyProperty,
     OntologyRelationship,
+    PageUserVisit,
+    PageVisit,
+    PageVisitStats,
     User,
 )
 from app.models.background_job import BackgroundJob

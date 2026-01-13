@@ -58,6 +58,34 @@ def test_convert_validated_respects_corrected_proposal_type():
     ]
 
 
+def test_convert_validated_respects_update_to_new_conversion():
+    """Ensure we honour the client's conversion from UPDATE -> NEW."""
+    base = _make_base_proposal(
+        proposal_type=ArchitectProposalType.UPDATE_INSTANCE,
+        entity_instance_id="entity-original",
+    )
+    validated = [
+        {
+            "proposal_id": "prop-1",
+            "status": ArchitectProposalStatus.APPROVED,
+            "corrected_proposal_type": ArchitectProposalType.NEW_INSTANCE,
+        }
+    ]
+
+    result = _convert_validated_to_revised(validated, {"prop-1": base})
+
+    assert result == [
+        {
+            "suggestion_id": "prop-1",
+            "action": "new",
+            "alias": "Original Alias",
+            "entity_definition_id": 1,
+            "entity_instance_id": None,
+            "merged_suggestion_ids": None,
+        }
+    ]
+
+
 def test_convert_validated_uses_stored_corrections_when_missing():
     """Ensure stored corrections (DB) are applied even if payload omits them."""
     base = _make_base_proposal(

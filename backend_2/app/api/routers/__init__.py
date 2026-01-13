@@ -22,6 +22,7 @@ from app.api.routers import (
     notifications,
     ontologies,
     ontology_instances,
+    page_visits,
     users,
 )
 
@@ -41,6 +42,7 @@ def get_api_router() -> APIRouter:
     router.include_router(ontology_instances.router)
     router.include_router(audit_logs.router)
     router.include_router(ontologies.router)
+    router.include_router(page_visits.router)
     router.include_router(agents.router)
     router.include_router(novelist.router)
     router.include_router(elder.router)

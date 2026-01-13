@@ -28,6 +28,7 @@ class NotificationType(str, Enum):
     NEW_FEATURES = "new_features"
     SESSION_UPDATES = "session_updates"
     NOTE_UPDATES = "note_updates"
+    NOTE_RESPONSE = "note_response"
 
 
 class NotificationAuthorType(str, Enum):

@@ -4,6 +4,7 @@
 from . import (
     neo4j_embedding,
     ontology_links,
+    note_links,
     pdf_embedding,
     library_metadata,
     architect_analysis,
@@ -14,6 +15,7 @@ from . import (
 
 __all__ = [
     "ontology_links",
+    "note_links",
     "neo4j_embedding",
     "pdf_embedding",
     "library_metadata",

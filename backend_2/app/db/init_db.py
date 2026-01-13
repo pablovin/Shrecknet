@@ -8,6 +8,7 @@ from app.db.migrations import (
     migrate_game_session_timezones,
     migrate_note_responses,
     migrate_novelist_runs,
+    migrate_page_visits,
 )
 
 
@@ -55,3 +56,6 @@ async def init_db(engine: AsyncEngine) -> None:
 
     # Create responses table for forum functionality
     await migrate_note_responses(engine)
+
+    # Create page visit tracking tables
+    await migrate_page_visits(engine)

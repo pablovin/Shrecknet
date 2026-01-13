@@ -18,6 +18,7 @@ from app.services.game_service import GameService
 from app.services.library_service import LibraryService
 from app.services.note_service import NoteService
 from app.services.notification_service import NotificationService
+from app.services.page_visit_service import PageVisitService
 from app.services.media_service import MediaService
 from app.services.ontology_instance_service import OntologyInstanceService
 from app.services.ontology_service import OntologyService
@@ -53,6 +54,11 @@ async def get_notification_service(
 ) -> NotificationService:
     return NotificationService(session)
 
+
+async def get_page_visit_service(
+    session: AsyncSession = Depends(get_db_session),
+) -> PageVisitService:
+    return PageVisitService(session)
 
 def get_media_service() -> MediaService:
     return MediaService()

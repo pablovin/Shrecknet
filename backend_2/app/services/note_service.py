@@ -44,6 +44,7 @@ class NoteService:
         await self.session.commit()
         # Note is already eagerly loaded by repository.create
         await self._notify_share(note, owner, share_users)
+        self._enqueue_note_linking(note.id)
         return note
 
     async def list_owned(self, owner: User) -> list[Note]:
@@ -94,6 +95,9 @@ class NoteService:
 
         if new_recipients:
             await self._notify_share(updated, actor, new_recipients)
+
+        if content is not None or ontology_id is not None:
+            self._enqueue_note_linking(updated.id)
 
         return updated
 
@@ -173,7 +177,7 @@ class NoteService:
             await self.notification_service.create_notification(
                 {
                     "user_id": note.owner_id,
-                    "notification_type": NotificationType.NOTE_UPDATES.value,
+                    "notification_type": NotificationType.NOTE_RESPONSE.value,
                     "title": f"New response on: {note.title}",
                     "description": f"{author.full_name} responded to your post.",
                     "author_type": NotificationAuthorType.USER.value,
@@ -197,6 +201,7 @@ class NoteService:
                     }
                 )
 
+        self._enqueue_response_linking(response.id)
         return response
 
     async def get_response(self, response_id: int) -> Response | None:
@@ -209,7 +214,20 @@ class NoteService:
         """Update a response. Only the author can update."""
         updated = await self.repository.update_response(response, {"content": content})
         await self.session.commit()
+        self._enqueue_response_linking(updated.id)
         return updated
+
+    @staticmethod
+    def _enqueue_note_linking(note_id: int) -> None:
+        from app.tasks.note_links import link_note as link_note_task
+
+        link_note_task.delay(note_id)
+
+    @staticmethod
+    def _enqueue_response_linking(response_id: int) -> None:
+        from app.tasks.note_links import link_response as link_response_task
+
+        link_response_task.delay(response_id)
 
     async def delete_response(self, response: Response) -> None:
         """Delete a response."""

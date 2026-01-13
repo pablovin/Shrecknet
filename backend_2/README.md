@@ -200,8 +200,8 @@ curl -X POST "http://localhost:8000/media-admin/images" \
 
 - Admins and world builders can curate player-facing updates via `/notifications/`. CRUD routes let
   operators target a specific user, choose a type (`content_update`, `new_features`,
-  `session_updates`, or `note_updates`), supply rich-text descriptions, and decide whether the entry
-  starts marked as read.
+  `session_updates`, `note_updates`, or `note_response`), supply rich-text descriptions, and decide
+  whether the entry starts marked as read.
 - Each notification tracks author attribution (`user` or `agent`), the delivery timestamp, whether
   it should also email the recipient, and the read state; when an email is dispatched the
   `sent_date` is recorded for auditability.
@@ -232,6 +232,7 @@ curl -X POST "http://localhost:8000/media-admin/images" \
   alerted immediately.
 - Updates allow changing the share roster (including clearing it) and re-issuing notifications only
   to newly added collaborators.
+- Responses from collaborators trigger `note_response` notifications to the note owner.
 
 ## Games & sessions
 

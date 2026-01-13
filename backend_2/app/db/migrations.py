@@ -479,3 +479,88 @@ async def migrate_note_responses(engine: AsyncEngine) -> None:
         )
         
         logger.info("responses table created successfully")
+
+
+async def migrate_page_visits(engine: AsyncEngine) -> None:
+    """Create page visit tracking tables if needed."""
+    async with engine.begin() as conn:
+        inspector = await conn.run_sync(lambda sync_conn: inspect(sync_conn))
+        tables = await conn.run_sync(lambda sync_conn: inspector.get_table_names())
+
+        if "page_visits" not in tables:
+            logger.info("Creating page_visits table")
+            await conn.execute(
+                text(
+                    """
+                    CREATE TABLE page_visits (
+                        id INTEGER PRIMARY KEY,
+                        page_key VARCHAR(255) NOT NULL,
+                        user_id INTEGER NOT NULL,
+                        visited_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+                        FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+                    )
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_page_visits_page_key ON page_visits (page_key)"
+                )
+            )
+            await conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_page_visits_page_key_visited_at ON page_visits (page_key, visited_at)"
+                )
+            )
+            await conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_page_visits_user_id_visited_at ON page_visits (user_id, visited_at)"
+                )
+            )
+            logger.info("page_visits table created")
+
+        if "page_user_visits" not in tables:
+            logger.info("Creating page_user_visits table")
+            await conn.execute(
+                text(
+                    """
+                    CREATE TABLE page_user_visits (
+                        id INTEGER PRIMARY KEY,
+                        page_key VARCHAR(255) NOT NULL,
+                        user_id INTEGER NOT NULL,
+                        first_visited_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+                        last_visited_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+                        visit_count INTEGER NOT NULL DEFAULT 1,
+                        UNIQUE (page_key, user_id),
+                        FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+                    )
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_page_user_visits_page_key ON page_user_visits (page_key)"
+                )
+            )
+            await conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_page_user_visits_user_id_page_key ON page_user_visits (user_id, page_key)"
+                )
+            )
+            logger.info("page_user_visits table created")
+
+        if "page_visit_stats" not in tables:
+            logger.info("Creating page_visit_stats table")
+            await conn.execute(
+                text(
+                    """
+                    CREATE TABLE page_visit_stats (
+                        page_key VARCHAR(255) PRIMARY KEY,
+                        total_visits INTEGER NOT NULL DEFAULT 0,
+                        unique_users INTEGER NOT NULL DEFAULT 0,
+                        last_visited_at DATETIME
+                    )
+                    """
+                )
+            )
+            logger.info("page_visit_stats table created")

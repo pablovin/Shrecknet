@@ -50,7 +50,7 @@ async def search_page_stats(
 ) -> list[PageVisitStatsRead]:
     """
     Search for page visit stats by page_key, page_alias, or ontology_instance_id.
-    At least one search parameter must be provided.
+    Returns an empty list if no search parameters are provided.
     """
     if not any([page_key, page_alias, ontology_instance_id]):
         return []

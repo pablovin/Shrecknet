@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Sequence
 
-from sqlalchemy import Select, func, select
+from sqlalchemy import Select, func, or_, select
 
 from app.models.page_visit import PageUserVisit, PageVisit, PageVisitStats
 from app.models.user import User
@@ -148,8 +148,6 @@ class PageVisitRepository(BaseRepository):
         Search for page_keys in the database that match the given criteria.
         Performs case-insensitive pattern matching.
         """
-        from sqlalchemy import or_
-
         conditions = []
 
         if page_key:

@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from app.api.deps import (
     get_current_user,
     get_ontology_instance_service,
+    get_favorite_ontology_instance_service,
     require_roles,
 )
 from app.models.user import User, UserRole
@@ -22,7 +23,15 @@ from app.schemas.ontology_instance import (
     TimelineEventRead,
     TimelineEventUpdate,
 )
+from app.schemas.favorite_ontology_instance import (
+    FavoriteOntologyInstanceCreate,
+    FavoriteOntologyInstanceRead,
+    FavoriteStatusRead,
+)
 from app.services.ontology_instance_service import OntologyInstanceService
+from app.services.favorite_ontology_instance_service import (
+    FavoriteOntologyInstanceService,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -302,3 +311,84 @@ async def delete_timeline_event(
             detail=str(exc),
         ) from exc
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# Favorite endpoints
+@router.post(
+    "/{instance_id}/favorite",
+    response_model=FavoriteOntologyInstanceRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def add_favorite(
+    instance_id: str,
+    payload: FavoriteOntologyInstanceCreate,
+    favorite_service: FavoriteOntologyInstanceService = Depends(
+        get_favorite_ontology_instance_service
+    ),
+    instance_service: OntologyInstanceService = Depends(get_ontology_instance_service),
+    current_user: User = Depends(get_current_user),
+) -> FavoriteOntologyInstanceRead:
+    """Mark an ontology instance as favorite for the current user."""
+    # Verify instance exists
+    try:
+        await instance_service.get_instance(instance_id)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
+        ) from exc
+
+    favorite = await favorite_service.add_favorite(
+        current_user.id, instance_id, payload.ontology_id
+    )
+    return FavoriteOntologyInstanceRead(**favorite)
+
+
+@router.delete(
+    "/{instance_id}/favorite",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+)
+async def remove_favorite(
+    instance_id: str,
+    favorite_service: FavoriteOntologyInstanceService = Depends(
+        get_favorite_ontology_instance_service
+    ),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    """Remove an ontology instance from current user's favorites."""
+    removed = await favorite_service.remove_favorite(current_user.id, instance_id)
+    if not removed:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Favorite not found",
+        )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/{instance_id}/is-favorite", response_model=FavoriteStatusRead)
+async def check_favorite_status(
+    instance_id: str,
+    favorite_service: FavoriteOntologyInstanceService = Depends(
+        get_favorite_ontology_instance_service
+    ),
+    current_user: User = Depends(get_current_user),
+) -> FavoriteStatusRead:
+    """Check if an ontology instance is favorited by the current user."""
+    is_favorite = await favorite_service.is_favorite(current_user.id, instance_id)
+    return FavoriteStatusRead(is_favorite=is_favorite)
+
+
+@router.get("/favorites/list", response_model=list[FavoriteOntologyInstanceRead])
+async def list_favorites(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, gt=0, le=100),
+    favorite_service: FavoriteOntologyInstanceService = Depends(
+        get_favorite_ontology_instance_service
+    ),
+    current_user: User = Depends(get_current_user),
+) -> list[FavoriteOntologyInstanceRead]:
+    """List all favorite ontology instances for the current user."""
+    favorites = await favorite_service.list_favorites(
+        current_user.id, skip=skip, limit=limit
+    )
+    return [FavoriteOntologyInstanceRead(**fav) for fav in favorites]

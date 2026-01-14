@@ -1760,10 +1760,38 @@ class OntologyInstanceService:
             instance = await self.get_instance(instance_id)
             from app.tasks.ontology_links import link_instance as link_instance_task
             from app.tasks.neo4j_embedding import embed_nodes as embed_nodes_task
+            from app.utils.notification_helpers import notify_favorite_instance_update
 
             link_instance_task.delay(instance.instance_id)
             if impacted_entity_ids:
                 embed_nodes_task.delay(current.ontology_id, sorted(impacted_entity_ids))
+            
+            # Send notifications to users who favorited this instance
+            try:
+                update_details = "Instance updated"
+                if payload.name and payload.name != current.name:
+                    update_details = f"Name changed to '{payload.name}'"
+                elif payload.entities:
+                    update_details = "Entities, properties, or relationships updated"
+                elif payload.timeline_events is not None:
+                    update_details = "Timeline events updated"
+                
+                await notify_favorite_instance_update(
+                    session=self.sql_session,
+                    instance_id=instance_id,
+                    instance_name=instance.name or instance_id,
+                    ontology_id=current.ontology_id,
+                    update_type="Content Update",
+                    update_details=update_details,
+                    author_id="system",
+                )
+                await self.sql_session.commit()
+            except Exception as e:
+                logger.error(
+                    f"Failed to send favorite notifications for instance {instance_id}: {e}",
+                    exc_info=True,
+                )
+            
             return instance
 
     async def list_timeline_events(self, instance_id: str) -> list[TimelineEventRead]:
@@ -1890,6 +1918,28 @@ class OntologyInstanceService:
         else:
             await tx.commit()
             await tx.close()
+        
+        # Send notifications to users who favorited this instance
+        try:
+            from app.utils.notification_helpers import notify_favorite_instance_update
+            
+            instance = await self.get_instance(instance_id)
+            await notify_favorite_instance_update(
+                session=self.sql_session,
+                instance_id=instance_id,
+                instance_name=instance.name or instance_id,
+                ontology_id=ontology_id,
+                update_type="Timeline Event",
+                update_details=f"New timeline event added: {title}",
+                author_id="system",
+            )
+            await self.sql_session.commit()
+        except Exception as e:
+            logger.error(
+                f"Failed to send favorite notifications for timeline event: {e}",
+                exc_info=True,
+            )
+        
         return await self.get_timeline_event(instance_id, event_id)
 
     async def update_timeline_event(
@@ -2023,6 +2073,29 @@ class OntologyInstanceService:
         else:
             await tx.commit()
             await tx.close()
+        
+        # Send notifications to users who favorited this instance
+        try:
+            from app.utils.notification_helpers import notify_favorite_instance_update
+            
+            ontology_id = await self._get_instance_ontology_id(instance_id)
+            instance = await self.get_instance(instance_id)
+            await notify_favorite_instance_update(
+                session=self.sql_session,
+                instance_id=instance_id,
+                instance_name=instance.name or instance_id,
+                ontology_id=ontology_id,
+                update_type="Timeline Event",
+                update_details=f"Timeline event updated: {final_title}",
+                author_id="system",
+            )
+            await self.sql_session.commit()
+        except Exception as e:
+            logger.error(
+                f"Failed to send favorite notifications for timeline event update: {e}",
+                exc_info=True,
+            )
+        
         return await self.get_timeline_event(instance_id, timeline_event_id)
 
     async def delete_timeline_event(

@@ -24,6 +24,9 @@ from app.services.ontology_instance_service import OntologyInstanceService
 from app.services.ontology_service import OntologyService
 from app.services.architect_service import ArchitectService
 from app.services.user_service import UserService
+from app.services.favorite_ontology_instance_service import (
+    FavoriteOntologyInstanceService,
+)
 
 
 async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
@@ -94,6 +97,12 @@ async def get_architect_service(
     session: AsyncSession = Depends(get_db_session),
 ) -> ArchitectService:
     return ArchitectService(session)
+
+
+async def get_favorite_ontology_instance_service(
+    session: AsyncSession = Depends(get_db_session),
+) -> FavoriteOntologyInstanceService:
+    return FavoriteOntologyInstanceService(session)
 
 
 async def get_optional_ontology_instance_service(

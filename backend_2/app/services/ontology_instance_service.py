@@ -1558,6 +1558,40 @@ class OntologyInstanceService:
                     await tx.commit()
                     await tx.close()
             instance = await self.get_instance(instance_id)
+
+            # Send notifications to users who favorited this instance
+            # We do this after Neo4j commit but before returning the instance
+            # If notification fails, it won't affect the main update
+            if payload.timeline_events is not None or payload.name is not None:
+                try:
+                    from app.utils.notification_helpers import (
+                        notify_favorite_instance_update,
+                    )
+
+                    update_details = "Instance updated"
+                    if payload.name and payload.name != current.name:
+                        update_details = f"Name changed to '{payload.name}'"
+                    elif payload.timeline_events is not None:
+                        update_details = "Timeline events updated"
+
+                    await notify_favorite_instance_update(
+                        session=self.sql_session,
+                        instance_id=instance_id,
+                        instance_name=instance.name or instance_id,
+                        ontology_id=current.ontology_id,
+                        update_type="Content Update",
+                        update_details=update_details,
+                        author_id=None,
+                    )
+                    await self.sql_session.commit()
+                except Exception as e:
+                    # Log error but don't fail the update
+                    logger.error(
+                        f"Failed to send favorite notifications for instance {instance_id}: {e}",
+                        exc_info=True,
+                    )
+                    # Rollback notification-related changes only
+                    await self.sql_session.rollback()
             from app.tasks.ontology_links import link_instance as link_instance_task
 
             link_instance_task.delay(instance.instance_id)
@@ -1757,7 +1791,9 @@ class OntologyInstanceService:
         else:
             await tx.commit()
             await tx.close()
-            
+
+            instance = await self.get_instance(instance_id)
+
             # Send notifications to users who favorited this instance
             # We do this after Neo4j commit but before returning the instance
             # If notification fails, it won't affect the main update
@@ -1790,8 +1826,7 @@ class OntologyInstanceService:
                 )
                 # Rollback notification-related changes only
                 await self.sql_session.rollback()
-            
-            instance = await self.get_instance(instance_id)
+
             from app.tasks.ontology_links import link_instance as link_instance_task
             from app.tasks.neo4j_embedding import embed_nodes as embed_nodes_task
 

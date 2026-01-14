@@ -4,6 +4,7 @@ from app.models.notification import (
     NotificationAuthorType,
     NotificationType,
 )
+from app.models.notification_preference import NotificationPreference
 from app.models.library import (
     LibraryBookmark,
     LibraryItem,
@@ -46,6 +47,7 @@ __all__ = [
     "Notification",
     "NotificationType",
     "NotificationAuthorType",
+    "NotificationPreference",
     "LibraryItem",
     "LibraryBookmark",
     "library_bookmark_shares",

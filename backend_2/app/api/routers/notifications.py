@@ -20,6 +20,10 @@ from app.schemas.notification import (
     NotificationUnreadCount,
     NotificationUpdate,
 )
+from app.schemas.notification_preference import (
+    NotificationPreferenceRead,
+    NotificationPreferenceUpdate,
+)
 from app.services.audit_service import AuditService
 from app.services.notification_service import NotificationService
 
@@ -43,6 +47,11 @@ async def create_notification(
 ) -> NotificationRead:
     create_data = payload.model_dump(exclude_none=True)
     notification = await service.create_notification(create_data)
+    if notification is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="User has disabled this notification type",
+        )
     await _log_notification_action(
         audit_service,
         actor=current_user,
@@ -100,6 +109,39 @@ async def unread_count(
 ) -> NotificationUnreadCount:
     count = await service.unread_count(current_user.id)
     return NotificationUnreadCount(unread_count=count)
+
+
+@router.get(
+    "/me/preferences",
+    response_model=list[NotificationPreferenceRead],
+)
+async def list_my_preferences(
+    service: NotificationService = Depends(get_notification_service),
+    current_user: User = Depends(get_current_user),
+) -> list[NotificationPreferenceRead]:
+    preferences = await service.list_preferences(current_user.id)
+    return [
+        NotificationPreferenceRead(
+            notification_type=notification_type, enabled=enabled
+        )
+        for notification_type, enabled in preferences.items()
+    ]
+
+
+@router.put(
+    "/me/preferences/{notification_type}",
+    response_model=NotificationPreferenceRead,
+)
+async def update_my_preference(
+    notification_type: NotificationType,
+    payload: NotificationPreferenceUpdate,
+    service: NotificationService = Depends(get_notification_service),
+    current_user: User = Depends(get_current_user),
+) -> NotificationPreferenceRead:
+    preference = await service.set_preference(
+        current_user.id, notification_type, payload.enabled
+    )
+    return NotificationPreferenceRead.model_validate(preference)
 
 
 async def _get_notification_or_404(

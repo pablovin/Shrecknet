@@ -6,6 +6,7 @@ from app.db.migrations import (
     migrate_architect_proposals,
     migrate_game_datetimes_to_brussels_timezone,
     migrate_game_session_timezones,
+    migrate_notification_preferences,
     migrate_note_responses,
     migrate_novelist_runs,
     migrate_page_visits,
@@ -59,3 +60,6 @@ async def init_db(engine: AsyncEngine) -> None:
 
     # Create page visit tracking tables
     await migrate_page_visits(engine)
+
+    # Create notification preferences table
+    await migrate_notification_preferences(engine)

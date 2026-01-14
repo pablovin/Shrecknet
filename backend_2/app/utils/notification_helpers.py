@@ -9,6 +9,9 @@ from app.models.notification import NotificationAuthorType, NotificationType
 from app.repositories.favorite_ontology_instance_repository import (
     FavoriteOntologyInstanceRepository,
 )
+from app.repositories.notification_preference_repository import (
+    NotificationPreferenceRepository,
+)
 from app.repositories.notification_repository import NotificationRepository
 
 if TYPE_CHECKING:
@@ -40,6 +43,7 @@ async def notify_favorite_instance_update(
     """
     favorite_repo = FavoriteOntologyInstanceRepository(session)
     notification_repo = NotificationRepository(session)
+    preference_repo = NotificationPreferenceRepository(session)
 
     # Get all users who favorited this instance
     user_ids = await favorite_repo.get_users_who_favorited(instance_id)
@@ -55,6 +59,12 @@ async def notify_favorite_instance_update(
     # Create notifications for each user
     for user_id in user_ids:
         try:
+            preference = await preference_repo.get_for_user_type(
+                user_id, NotificationType.FAVORITE_INSTANCE_UPDATE
+            )
+            if preference is not None and not preference.enabled:
+                continue
+
             notification_data = {
                 "user_id": user_id,
                 "notification_type": NotificationType.FAVORITE_INSTANCE_UPDATE,

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Sequence
+from typing import Any, Iterable, Sequence
 
 from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
@@ -17,6 +17,17 @@ class UserRepository(BaseRepository):
     async def list(self) -> Sequence[User]:
         result = await self.session.execute(
             select(User).options(selectinload(User.entities))
+        )
+        return result.scalars().all()
+
+    async def list_by_ids(self, user_ids: Iterable[int]) -> Sequence[User]:
+        ids = list(user_ids)
+        if not ids:
+            return []
+        result = await self.session.execute(
+            select(User)
+            .options(selectinload(User.entities))
+            .where(User.id.in_(ids))
         )
         return result.scalars().all()
 

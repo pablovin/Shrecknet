@@ -113,6 +113,45 @@ async def migrate_jobs_database(engine: AsyncEngine) -> None:
             logger.debug("duration_seconds column already exists, skipping migration")
 
 
+async def migrate_notification_preferences(engine: AsyncEngine) -> None:
+    """Ensure notification_preferences table exists when upgrading."""
+    async with engine.begin() as conn:
+        inspector = await conn.run_sync(lambda sync_conn: inspect(sync_conn))
+        tables = await conn.run_sync(lambda sync_conn: inspector.get_table_names())
+        if "notification_preferences" in tables:
+            return
+        logger.info("Creating notification_preferences table")
+        await conn.execute(
+            text(
+                """
+                CREATE TABLE notification_preferences (
+                    id INTEGER PRIMARY KEY,
+                    user_id INTEGER NOT NULL,
+                    notification_type VARCHAR(50) NOT NULL,
+                    enabled BOOLEAN NOT NULL DEFAULT 1,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+                    FOREIGN KEY(user_id) REFERENCES users (id) ON DELETE CASCADE
+                )
+                """
+            )
+        )
+        await conn.execute(
+            text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS "
+                "uq_notification_preferences_user_type "
+                "ON notification_preferences (user_id, notification_type)"
+            )
+        )
+        await conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS "
+                "ix_notification_preferences_user_id "
+                "ON notification_preferences (user_id)"
+            )
+        )
+        logger.info("notification_preferences table created")
+
+
 async def migrate_architect_proposals(engine: AsyncEngine) -> None:
     """
     Apply migrations to the architect_proposals table for step 2 support.

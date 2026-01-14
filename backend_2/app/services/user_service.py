@@ -67,6 +67,10 @@ class UserService:
         users = await self.repository.list()
         return list(users)
 
+    async def list_users_by_ids(self, user_ids: Iterable[int]) -> list[User]:
+        users = await self.repository.list_by_ids(user_ids)
+        return list(users)
+
     async def get_user(self, user_id: int) -> User | None:
         return await self.repository.get(user_id)
 

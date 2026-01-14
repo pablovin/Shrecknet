@@ -9,6 +9,10 @@ from app.models.notification import (
     NotificationAuthorType,
     NotificationType,
 )
+from app.models.notification_preference import NotificationPreference
+from app.repositories.notification_preference_repository import (
+    NotificationPreferenceRepository,
+)
 from app.repositories.notification_repository import NotificationRepository
 
 
@@ -18,9 +22,14 @@ class NotificationService:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
         self.repository = NotificationRepository(session)
+        self.preference_repository = NotificationPreferenceRepository(session)
 
-    async def create_notification(self, data: dict) -> Notification:
+    async def create_notification(self, data: dict) -> Notification | None:
         data = self._normalize_payload(data)
+        if not await self.is_notification_enabled(
+            data["user_id"], data["notification_type"]
+        ):
+            return None
         notification = await self.repository.create(data)
         await self.session.commit()
         return notification
@@ -78,6 +87,45 @@ class NotificationService:
 
     async def unread_count(self, user_id: int) -> int:
         return await self.repository.count_unread(user_id)
+
+    async def is_notification_enabled(
+        self, user_id: int, notification_type: NotificationType
+    ) -> bool:
+        preference = await self.preference_repository.get_for_user_type(
+            user_id, notification_type
+        )
+        if preference is None:
+            return True
+        return preference.enabled
+
+    async def list_preferences(self, user_id: int) -> dict[NotificationType, bool]:
+        stored = await self.preference_repository.list_for_user(user_id)
+        stored_map = {pref.notification_type: pref.enabled for pref in stored}
+        return {
+            notification_type: stored_map.get(notification_type, True)
+            for notification_type in NotificationType
+        }
+
+    async def set_preference(
+        self, user_id: int, notification_type: NotificationType, enabled: bool
+    ) -> NotificationPreference:
+        preference = await self.preference_repository.get_for_user_type(
+            user_id, notification_type
+        )
+        if preference is None:
+            preference = await self.preference_repository.create(
+                {
+                    "user_id": user_id,
+                    "notification_type": notification_type,
+                    "enabled": enabled,
+                }
+            )
+        else:
+            preference.enabled = enabled
+            await self.preference_repository.save(preference)
+            await self.session.refresh(preference)
+        await self.session.commit()
+        return preference
 
     def _normalize_payload(self, data: dict) -> dict:
         data = data.copy()

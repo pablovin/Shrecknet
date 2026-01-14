@@ -29,6 +29,7 @@ class NotificationType(str, Enum):
     SESSION_UPDATES = "session_updates"
     NOTE_UPDATES = "note_updates"
     NOTE_RESPONSE = "note_response"
+    FAVORITE_INSTANCE_UPDATE = "favorite_instance_update"
 
 
 class NotificationAuthorType(str, Enum):

@@ -36,6 +36,7 @@ from app.models.architect import (
     ArchitectRunStatus,
 )
 from app.models.page_visit import PageUserVisit, PageVisit, PageVisitStats
+from app.models.favorite_ontology_instance import favorite_ontology_instances
 
 __all__ = [
     "AuditAction",
@@ -76,4 +77,5 @@ __all__ = [
     "PageVisit",
     "PageUserVisit",
     "PageVisitStats",
+    "favorite_ontology_instances",
 ]

@@ -378,7 +378,7 @@ async def check_favorite_status(
     return FavoriteStatusRead(is_favorite=is_favorite)
 
 
-@router.get("/favorites/list", response_model=list[FavoriteOntologyInstanceRead])
+@router.get("/favorites", response_model=list[FavoriteOntologyInstanceRead])
 async def list_favorites(
     skip: int = Query(0, ge=0),
     limit: int = Query(50, gt=0, le=100),

@@ -24,7 +24,7 @@ async def notify_favorite_instance_update(
     ontology_id: int,
     update_type: str,
     update_details: str,
-    author_id: str = "system",
+    author_id: str | None = None,
 ) -> None:
     """
     Notify all users who favorited an instance about an update.
@@ -36,7 +36,7 @@ async def notify_favorite_instance_update(
         ontology_id: ID of the ontology
         update_type: Type of update (e.g., "content", "timeline", "properties")
         update_details: Details about what changed
-        author_id: ID of the author who made the change
+        author_id: ID of the author who made the change (optional, defaults to None for system)
     """
     favorite_repo = FavoriteOntologyInstanceRepository(session)
     notification_repo = NotificationRepository(session)
@@ -61,7 +61,7 @@ async def notify_favorite_instance_update(
                 "title": f"Update to favorited item: {instance_name}",
                 "description": f"{update_type}: {update_details}",
                 "author_type": NotificationAuthorType.USER,
-                "author_id": author_id,
+                "author_id": author_id or "system",
                 "read": False,
                 "send_email": False,
             }

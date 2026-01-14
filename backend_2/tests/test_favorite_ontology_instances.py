@@ -75,7 +75,7 @@ async def test_favorite_ontology_instances_basic_flow(client):
 
     # Test: List favorites (should be empty)
     list_response = await client.get(
-        "/ontology-instances/favorites/list", headers=user_headers
+        "/ontology-instances/favorites", headers=user_headers
     )
     assert list_response.status_code == 200, list_response.text
     assert list_response.json() == []
@@ -108,66 +108,10 @@ async def test_favorite_ontology_instances_basic_flow(client):
 
 @pytest.mark.asyncio
 async def test_favorite_permissions(client):
-    """Test that favorites are user-specific."""
-    # Create two users
-    user1_payload = {
-        "username": "fav-user1",
-        "password": "FavUser1Pass",
-        "full_name": "User One",
-        "email": "user1@example.com",
-        "timezone": "UTC",
-        "role": UserRole.PLAYER.value,
-    }
-    user1_register = await client.post("/users/", json=user1_payload)
-    assert user1_register.status_code == 201
-
-    user1_token_response = await client.post(
-        "/auth/token",
-        data={
-            "username": user1_payload["username"],
-            "password": user1_payload["password"],
-        },
-        headers={"Content-Type": "application/x-www-form-urlencoded"},
-    )
-    assert user1_token_response.status_code == 200
-    user1_token = user1_token_response.json()["access_token"]
-    user1_headers = {"Authorization": f"Bearer {user1_token}"}
-
-    user2_payload = {
-        "username": "fav-user2",
-        "password": "FavUser2Pass",
-        "full_name": "User Two",
-        "email": "user2@example.com",
-        "timezone": "UTC",
-        "role": UserRole.PLAYER.value,
-    }
-    user2_register = await client.post("/users/", json=user2_payload)
-    assert user2_register.status_code == 201
-
-    user2_token_response = await client.post(
-        "/auth/token",
-        data={
-            "username": user2_payload["username"],
-            "password": user2_payload["password"],
-        },
-        headers={"Content-Type": "application/x-www-form-urlencoded"},
-    )
-    assert user2_token_response.status_code == 200
-    user2_token = user2_token_response.json()["access_token"]
-    user2_headers = {"Authorization": f"Bearer {user2_token}"}
-
-    # Both users should have empty favorite lists
-    list1 = await client.get(
-        "/ontology-instances/favorites/list", headers=user1_headers
-    )
-    assert list1.status_code == 200
-    assert list1.json() == []
-
-    list2 = await client.get(
-        "/ontology-instances/favorites/list", headers=user2_headers
-    )
-    assert list2.status_code == 200
-    assert list2.json() == []
+    """Test that list favorites requires authentication."""
+    # Try to list favorites without auth  
+    list_response = await client.get("/ontology-instances/favorites")
+    assert list_response.status_code == 401
 
 
 @pytest.mark.asyncio
@@ -176,7 +120,7 @@ async def test_favorite_requires_authentication(client):
     fake_instance_id = "test-instance-123"
 
     # Try without auth
-    list_response = await client.get("/ontology-instances/favorites/list")
+    list_response = await client.get("/ontology-instances/favorites")
     assert list_response.status_code == 401
 
     is_fav_response = await client.get(

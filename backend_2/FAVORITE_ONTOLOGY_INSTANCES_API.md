@@ -155,7 +155,7 @@ console.log('Is favorite:', data.is_favorite);
 
 Get a list of all ontology instances favorited by the current user.
 
-**Endpoint:** `GET /ontology-instances/favorites/list`
+**Endpoint:** `GET /ontology-instances/favorites`
 
 **Authentication:** Required
 
@@ -188,13 +188,13 @@ Get a list of all ontology instances favorited by the current user.
 
 **Example (curl):**
 ```bash
-curl "http://localhost:8000/ontology-instances/favorites/list?skip=0&limit=20" \
+curl "http://localhost:8000/ontology-instances/favorites?skip=0&limit=20" \
   -H "Authorization: Bearer YOUR_TOKEN"
 ```
 
 **Example (JavaScript/fetch):**
 ```javascript
-const response = await fetch('/ontology-instances/favorites/list?skip=0&limit=20', {
+const response = await fetch('/ontology-instances/favorites?skip=0&limit=20', {
   headers: {
     'Authorization': `Bearer ${token}`,
   },
@@ -335,7 +335,7 @@ function UserFavorites({ token }) {
 
   const loadFavorites = async () => {
     try {
-      const response = await fetch('/ontology-instances/favorites/list', {
+      const response = await fetch('/ontology-instances/favorites', {
         headers: { 'Authorization': `Bearer ${token}` },
       });
       const data = await response.json();

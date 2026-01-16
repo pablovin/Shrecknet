@@ -27,6 +27,9 @@ from app.graph.neo4j import get_neo4j_session
 async def lifespan(app: FastAPI):
     await init_db(engine)
     await init_jobs_db(jobs_engine)
+    logging.getLogger("backend_2.startup").info(
+        "Calendar sync service is active"
+    )
     # Run Neo4j migrations
     async for session in get_neo4j_session():
         try:

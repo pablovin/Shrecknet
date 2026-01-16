@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import asyncio
+import logging
 from collections.abc import Sequence
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
-from sqlalchemy import and_, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_settings
+from app.integrations.google_calendar import get_google_calendar_client
 from app.models.game import (
     Game,
     GameSession,
@@ -16,6 +21,8 @@ from app.models.game import (
 from app.models.ontology import Ontology
 from app.models.user import User
 from app.repositories.game_repository import GameRepository
+
+logger = logging.getLogger(__name__)
 
 
 class GameService:
@@ -93,7 +100,9 @@ class GameService:
         session_obj = await self.repository.create_session(game.id, data)
         await self.session.commit()
         reloaded = await self.repository.get_session(game.id, session_obj.id)
-        return reloaded or session_obj
+        session = reloaded or session_obj
+        await self._sync_calendar_for_session(game, session)
+        return session
 
     async def bulk_create_sessions(
         self,
@@ -119,9 +128,12 @@ class GameService:
             )
         sessions = await self.repository.create_sessions(game.id, payloads)
         await self.session.commit()
-        return await self.repository.get_sessions_by_ids(
+        reloaded = await self.repository.get_sessions_by_ids(
             game.id, [session.id for session in sessions]
         )
+        for session in reloaded:
+            await self._sync_calendar_for_session(game, session)
+        return reloaded
 
     async def get_session(self, game_id: int, session_id: int) -> GameSession | None:
         return await self.repository.get_session(game_id, session_id)
@@ -132,6 +144,9 @@ class GameService:
     async def update_session(self, session: GameSession, data: dict) -> GameSession:
         updated = await self.repository.update_session(session, data)
         await self.session.commit()
+        game = await self.repository.get_game(updated.game_id)
+        if game:
+            await self._sync_calendar_for_session(game, updated)
         return updated
 
     async def set_attendance(
@@ -148,6 +163,9 @@ class GameService:
         await self.session.commit()
 
     async def delete_session(self, session: GameSession) -> None:
+        game = await self.repository.get_game(session.game_id)
+        if game:
+            await self._delete_calendar_event(game, session)
         await self.repository.delete_session(session)
         await self.session.commit()
 
@@ -199,6 +217,9 @@ class GameService:
         await self.session.commit()
         await self.session.refresh(poll)
         await self.session.refresh(session)
+        game = await self.repository.get_game(session.game_id)
+        if game:
+            await self._sync_calendar_for_session(game, session)
         return poll, attendee_ids
 
     async def get_poll(self, session_id: int, poll_id: int) -> GameSessionPoll | None:
@@ -225,3 +246,85 @@ class GameService:
         if missing:
             raise ValueError(f"Users not found: {sorted(missing)}")
         return list(users)
+
+    async def sync_upcoming_sessions_calendar(self, game: Game) -> dict[str, int]:
+        sessions = await self.repository.list_sessions_for_game(game.id)
+        now = datetime.now(ZoneInfo("UTC"))
+        created = 0
+        skipped = 0
+        failed = 0
+        for session in sessions:
+            if session.scheduled_date is None:
+                continue
+            scheduled = session.scheduled_date
+            if scheduled.tzinfo is None:
+                scheduled = scheduled.replace(tzinfo=ZoneInfo("UTC"))
+            if scheduled < now:
+                continue
+            if session.google_event_id:
+                skipped += 1
+                continue
+            await self._sync_calendar_for_session(game, session)
+            if session.google_event_id:
+                created += 1
+            else:
+                failed += 1
+        return {
+            "created_count": created,
+            "skipped_count": skipped,
+            "failed_count": failed,
+        }
+
+    async def _sync_calendar_for_session(self, game: Game, session: GameSession) -> None:
+        if not game.google_calendar_id:
+            return
+        if session.scheduled_date is None:
+            if session.google_event_id:
+                await self._delete_calendar_event(game, session)
+            return
+
+        client = get_google_calendar_client()
+        if client is None:
+            return
+
+        settings = get_settings()
+        try:
+            result = await asyncio.to_thread(
+                client.upsert_event,
+                calendar_id=game.google_calendar_id,
+                session=session,
+                timezone_name=session.scheduled_timezone,
+                event_id=session.google_event_id,
+                default_duration_minutes=settings.google_calendar_default_duration_minutes,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to sync Google Calendar event for session %s", session.id
+            )
+            return
+        session.google_event_id = result.event_id
+        session.google_meet_link = result.meet_link
+        await self.repository.save(session)
+        await self.session.commit()
+
+    async def _delete_calendar_event(self, game: Game, session: GameSession) -> None:
+        if not (game.google_calendar_id and session.google_event_id):
+            return
+        client = get_google_calendar_client()
+        if client is None:
+            return
+        try:
+            await asyncio.to_thread(
+                client.delete_event,
+                calendar_id=game.google_calendar_id,
+                event_id=session.google_event_id,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to delete Google Calendar event for session %s", session.id
+            )
+            return
+        session.google_event_id = None
+        session.google_meet_link = None
+        await self.repository.save(session)
+        await self.session.commit()

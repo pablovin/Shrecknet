@@ -18,6 +18,7 @@ class GameMemberSummary(BaseModel):
 class GameBase(BaseModel):
     name: str = Field(..., max_length=255)
     ontology_id: int
+    google_calendar_id: str | None = Field(None, max_length=255)
 
 
 class GameCreate(GameBase):
@@ -27,6 +28,7 @@ class GameCreate(GameBase):
 class GameUpdate(BaseModel):
     name: str | None = Field(None, max_length=255)
     ontology_id: int | None = None
+    google_calendar_id: str | None = Field(None, max_length=255)
     member_ids: list[int] | None = None
 
 
@@ -210,6 +212,8 @@ class GameSessionRead(GameSessionBase):
     scheduled_at_utc: datetime | None = None
     scheduled_local: datetime | None = None
     scheduled_timezone: str | None = None
+    google_event_id: str | None = None
+    google_meet_link: str | None = None
     attendance: list[GameSessionAttendanceRead] = Field(default_factory=list)
     polls: list[GameSessionPollRead] = Field(default_factory=list)
 

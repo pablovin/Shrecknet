@@ -469,6 +469,42 @@ async def migrate_game_session_timezones(engine: AsyncEngine) -> None:
         logger.info("Scheduled timezone migration completed")
 
 
+async def migrate_game_calendar_fields(engine: AsyncEngine) -> None:
+    """Ensure calendar sync columns exist for games and game sessions."""
+    async with engine.begin() as conn:
+        inspector = await conn.run_sync(lambda sync_conn: inspect(sync_conn))
+        tables = await conn.run_sync(lambda sync_conn: inspector.get_table_names())
+
+        if "games" in tables:
+            game_columns = await conn.run_sync(
+                lambda sync_conn: [col["name"] for col in inspector.get_columns("games")]
+            )
+            if "google_calendar_id" not in game_columns:
+                logger.info("Adding google_calendar_id column to games")
+                await conn.execute(
+                    text("ALTER TABLE games ADD COLUMN google_calendar_id VARCHAR(255)")
+                )
+
+        if "game_sessions" in tables:
+            session_columns = await conn.run_sync(
+                lambda sync_conn: [
+                    col["name"] for col in inspector.get_columns("game_sessions")
+                ]
+            )
+            if "google_event_id" not in session_columns:
+                logger.info("Adding google_event_id column to game_sessions")
+                await conn.execute(
+                    text("ALTER TABLE game_sessions ADD COLUMN google_event_id VARCHAR(255)")
+                )
+            if "google_meet_link" not in session_columns:
+                logger.info("Adding google_meet_link column to game_sessions")
+                await conn.execute(
+                    text(
+                        "ALTER TABLE game_sessions ADD COLUMN google_meet_link VARCHAR(1024)"
+                    )
+                )
+
+
 async def migrate_note_responses(engine: AsyncEngine) -> None:
     """
     Create responses table for note responses/comments.

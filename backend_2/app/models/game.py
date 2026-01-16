@@ -42,6 +42,9 @@ class Game(Base):
     ontology_id: Mapped[int] = mapped_column(
         ForeignKey("ontologies.id", ondelete="RESTRICT"), nullable=False, index=True
     )
+    google_calendar_id: Mapped[str | None] = mapped_column(
+        String(255), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -75,6 +78,8 @@ class GameSession(Base):
         DateTime(timezone=True), nullable=True
     )
     scheduled_timezone: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    google_event_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    google_meet_link: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     location: Mapped[str | None] = mapped_column(String(255), nullable=True)
     summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(

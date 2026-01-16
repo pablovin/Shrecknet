@@ -12,6 +12,7 @@ import {
   updateSession,
   deleteSession,
   removeSessionPollVote,
+  syncCalendarSessions,
 } from "@/app/lib/sessionAPI";
 import { useAuth } from "@/app/components/auth/AuthProvider";
 import { M3FloatingInput } from "@/app/components/template/M3FloatingInput";
@@ -298,6 +299,8 @@ export default function TableSessionsPage() {
 
   const [polls, setPolls] = useState<Record<number, any>>({});
   const [showPast, setShowPast] = useState(false);
+  const [syncingCalendar, setSyncingCalendar] = useState(false);
+  const [syncResult, setSyncResult] = useState<string | null>(null);
 
   useEffect(() => {
     if (token) {
@@ -384,6 +387,25 @@ export default function TableSessionsPage() {
     setDeleting(false);
     setDeleteId(null);
     mutate();
+  }
+
+  async function handleSyncCalendar() {
+    if (!token) return;
+    setSyncingCalendar(true);
+    setSyncResult(null);
+    try {
+      const result = await syncCalendarSessions(tableId, token);
+      setSyncResult(
+        `Created ${result.created_count}, skipped ${result.skipped_count}, failed ${result.failed_count}`,
+      );
+      mutate();
+    } catch (error: any) {
+      const message =
+        error?.detail || error?.message || "Failed to sync calendar";
+      setSyncResult(String(message));
+    } finally {
+      setSyncingCalendar(false);
+    }
   }
 
   function startEdit(s: any) {
@@ -647,7 +669,19 @@ export default function TableSessionsPage() {
             <Plus className="w-5 h-5" />
             New Session
           </button>
+          <button
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl border-2 border-[var(--primary)] text-[var(--primary)] font-semibold hover:bg-[var(--primary)]/10 transition"
+            onClick={handleSyncCalendar}
+            disabled={syncingCalendar}
+          >
+            {syncingCalendar ? "Syncing..." : "Sync Calendar"}
+          </button>
         </div>
+        {syncResult && (
+          <div className="mb-6 text-sm text-[var(--foreground)]/80">
+            {syncResult}
+          </div>
+        )}
 
         {/* --- Upcoming Sessions --- */}
         <div>

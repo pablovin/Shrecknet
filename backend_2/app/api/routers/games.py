@@ -36,6 +36,7 @@ from app.schemas.game import (
 )
 from app.services.game_service import GameService
 from app.services.notification_service import NotificationService
+from app.core.config import get_settings
 
 router = APIRouter(prefix="/games", tags=["games"])
 
@@ -215,6 +216,8 @@ def _serialize_session(session: GameSession) -> GameSessionRead:
         "scheduled_at_utc": scheduled_at_utc,
         "scheduled_local": scheduled_local,
         "scheduled_timezone": scheduled_timezone,
+        "google_event_id": session.google_event_id,
+        "google_meet_link": session.google_meet_link,
         "location": session.location,
         "summary": session.summary,
         "created_at": session.created_at,
@@ -523,6 +526,29 @@ async def create_sessions_bulk(
         description=f"Sessions '{payload.title_prefix} 1..{len(sessions)}' created.",
     )
     return [_serialize_session(session) for session in sessions]
+
+
+@router.post(
+    "/{game_id}/sessions/sync-calendar",
+    status_code=status.HTTP_200_OK,
+)
+async def sync_calendar_sessions(
+    game_id: int,
+    service: GameService = Depends(get_game_service),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.WORLD_BUILDER)),
+) -> dict[str, int]:
+    game = await _get_game_or_404(game_id, service)
+    if not game.google_calendar_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Game has no google_calendar_id configured",
+        )
+    if not get_settings().google_service_account_json:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Google service account is not configured",
+        )
+    return await service.sync_upcoming_sessions_calendar(game)
 
 
 @router.get(

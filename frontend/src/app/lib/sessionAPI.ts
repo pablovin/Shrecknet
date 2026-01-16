@@ -165,3 +165,18 @@ export async function deleteSession(
   if (!res.ok) throw await res.json();
   return await res.json();
 }
+
+export async function syncCalendarSessions(
+  tableId: number,
+  token: string,
+) {
+  const res = await fetch(
+    `${API_URL}/games/${tableId}/sessions/sync-calendar`,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+  if (!res.ok) throw await res.json();
+  return await res.json();
+}

@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from app.db.base import Base
 from app.db.migrations import (
     migrate_architect_proposals,
+    migrate_game_calendar_fields,
     migrate_game_datetimes_to_brussels_timezone,
     migrate_game_session_timezones,
     migrate_notification_preferences,
@@ -54,6 +55,9 @@ async def init_db(engine: AsyncEngine) -> None:
 
     # Ensure game session timezones column exists
     await migrate_game_session_timezones(engine)
+
+    # Ensure calendar sync columns exist
+    await migrate_game_calendar_fields(engine)
 
     # Create responses table for forum functionality
     await migrate_note_responses(engine)

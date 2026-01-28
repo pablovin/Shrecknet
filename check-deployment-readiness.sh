@@ -129,7 +129,7 @@ fi
 
 echo ""
 echo "For more information:"
-echo "  - Quick Start: QUICKSTART.md"
-echo "  - Complete Guide: VENV_DEPLOYMENT.md"
-echo "  - Workflows: DEPLOYMENT_WORKFLOW.md"
+echo "  - Quick Start: Documentation/GettingStarted/QUICKSTART.md"
+echo "  - Complete Guide: Documentation/Deployment/VENV_DEPLOYMENT.md"
+echo "  - Workflows: Documentation/Deployment/DEPLOYMENT_WORKFLOW.md"
 echo ""

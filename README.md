@@ -191,19 +191,6 @@ Shrecknet's AI agents are specialized NPCs who help you build and navigate your 
 - Sentence-Transformers for embeddings
 - PyMuPDF & PyPDF2 for document processing
 
-### Backend (Legacy)
-**Original Flask/FastAPI hybrid** with ChromaDB integration
-
-**Key Services:**
-- Page and concept management
-- Characteristic tracking
-- Specialist agent (independent knowledge base)
-- Session management
-- Vector database operations
-- Import/export utilities
-
-**Status:** Maintained for compatibility; new features go to Backend_2
-
 ## 🚀 Deployment Guide
 
 ### Components to Deploy
@@ -253,45 +240,6 @@ BACKEND_2_MEDIA_ROOT=/app/media
 
 # CORS (Development)
 BACKEND_2_CORS_ALLOW_ORIGINS=http://localhost:3000
-```
-
-#### Backend (Legacy) Environment Variables
-
-Create `backend/.env`:
-
-```bash
-# Database
-DATABASE_URL=sqlite+aiosqlite:///./data/test.db
-
-# Security
-SECRET_KEY=your-very-secret-key
-DEBUG=false
-
-# CORS
-ALLOWED_ORIGINS=http://localhost:3000
-
-# OpenAI
-OPENAI_API_KEY=sk-your-key
-OPEN_AI_MODEL=gpt-4o-mini
-
-# Celery / Redis
-CELERY_BROKER_URL=redis://localhost:6379/0
-CELERY_RESULT_BACKEND=redis://localhost:6379/0
-
-# Vector Database (ChromaDB)
-VECTOR_DB_PATH=./data/vector_db
-VECTOR_DB_URL=localhost
-VECTOR_DB_PORT=8001
-```
-
-#### Frontend Environment Variables
-
-Create `frontend/.env.local`:
-
-```bash
-NEXT_PUBLIC_API_URL=http://localhost:8000
-NODE_ENV=development
-NEXT_PUBLIC_SITE_NAME=Shrecknet
 ```
 
 ### Security Considerations
@@ -735,17 +683,6 @@ docker compose logs backend_2_worker
 - 🔐 Role-based access control
 - 🐳 Optimized Docker deployment
 - ⚡ Lightning-fast build system
-
-## 🗺️ Roadmap
-
-- [ ] Multi-language support (i18n)
-- [ ] Real-time collaboration features
-- [ ] Advanced graph visualization
-- [ ] Plugin system for custom agents
-- [ ] Mobile-responsive design improvements
-- [ ] Export to e-book formats
-- [ ] Integration with VTT platforms
-- [ ] Voice-to-text session recording
 
 ---
 

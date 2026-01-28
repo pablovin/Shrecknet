@@ -38,7 +38,7 @@ docker compose build && docker compose up -d
 open http://localhost:8000/docs
 ```
 
-See [QUICKSTART.md](QUICKSTART.md) for details or [VENV_DEPLOYMENT.md](VENV_DEPLOYMENT.md) for the complete guide.
+See [Quick Start Guide](Documentation/GettingStarted/QUICKSTART.md) for details or [Virtual Environment Deployment](Documentation/Deployment/VENV_DEPLOYMENT.md) for the complete guide.
 
 ## 🎲 Features - Your Arsenal
 
@@ -626,17 +626,25 @@ See [LICENSE](LICENSE) file for full details.
 Contributions are welcome! Please:
 1. Fork the repository
 2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Follow coding standards (see [AGENTS.md](AGENTS.md))
+3. Follow coding standards (see [AGENTS.md](Documentation/AIAgents/AGENTS.md))
 4. Write tests for new features
 5. Submit a Pull Request
 
-## 📚 Additional Documentation
+## 📚 Documentation
 
-- [QUICKSTART.md](QUICKSTART.md) - Fast deployment guide
-- [DOCKER.md](DOCKER.md) - Detailed Docker documentation
-- [VENV_DEPLOYMENT.md](VENV_DEPLOYMENT.md) - Lightning-fast builds
-- [AGENTS.md](AGENTS.md) - Coding standards and philosophy
-- [DEPLOYMENT_WORKFLOW.md](DEPLOYMENT_WORKFLOW.md) - Deployment workflows
+All documentation has been organized in the **[Documentation](Documentation/)** folder:
+
+- **[Getting Started](Documentation/GettingStarted/)** - Quick start guides and tutorials
+- **[Deployment](Documentation/Deployment/)** - Docker, venv, and deployment workflows
+- **[Backend](Documentation/Backend/)** - Backend API and service documentation
+- **[Frontend](Documentation/Frontend/)** - Frontend application guides
+- **[API Reference](Documentation/API/)** - Detailed API endpoint documentation
+- **[AI Agents](Documentation/AIAgents/)** - Agent system documentation
+- **[Architecture](Documentation/Architecture/)** - System architecture and design
+- **[Database](Documentation/Database/)** - Database setup and migrations
+- **[Implementation Notes](Documentation/ImplementationNotes/)** - Historical development notes
+
+See the **[Documentation README](Documentation/README.md)** for a complete index of all available documentation.
 
 ## 🛠️ Troubleshooting
 

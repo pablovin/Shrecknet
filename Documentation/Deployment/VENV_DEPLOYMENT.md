@@ -19,7 +19,7 @@ This is frustrating during development and deployment, especially when you haven
 
 ### Step 1: Build the .venv
 
-In the `backend_2` directory, run:
+In the `backend` directory, run:
 
 ```bash
 # For API-only mode (no ML dependencies)
@@ -109,7 +109,7 @@ You do **NOT** need to rebuild `.venv` when:
 
 ```bash
 # One-time setup
-cd backend_2
+cd backend
 ./build-venv.sh --ml
 
 # Daily development (code changes only)
@@ -130,13 +130,13 @@ steps:
   # Cache the .venv to avoid rebuilding
   - uses: actions/cache@v3
     with:
-      path: backend_2/.venv
-      key: venv-${{ hashFiles('backend_2/pyproject.toml') }}-ml
+      path: backend/.venv
+      key: venv-${{ hashFiles('backend/pyproject.toml') }}-ml
 
   # Build .venv if cache miss
   - name: Build venv
     run: |
-      cd backend_2
+      cd backend
       if [ ! -d ".venv" ]; then
         ./build-venv.sh --ml
       fi
@@ -151,7 +151,7 @@ steps:
 **Option A: Pre-build .venv on deployment server**
 ```bash
 # On your server, one-time setup
-cd /path/to/Shrecknet/backend_2
+cd /path/to/Shrecknet/backend
 ./build-venv.sh --ml
 
 # Deploy (fast builds)
@@ -161,7 +161,7 @@ docker compose up -d
 
 **Option B: Include .venv in your repository** (for smaller projects)
 ```bash
-# In backend_2 directory
+# In backend directory
 ./build-venv.sh --ml
 git add .venv
 git commit -m "Add pre-built .venv for fast deployment"
@@ -218,8 +218,8 @@ Use CI/CD caching to avoid rebuilding `.venv`:
 # Cache based on pyproject.toml hash
 cache:
   paths:
-    - backend_2/.venv
-  key: $CI_COMMIT_REF_SLUG-venv-${{ hashFiles('backend_2/pyproject.toml') }}
+    - backend/.venv
+  key: $CI_COMMIT_REF_SLUG-venv-${{ hashFiles('backend/pyproject.toml') }}
 ```
 
 ### 3. Separate API and ML venvs
@@ -249,9 +249,9 @@ The optimized Dockerfile includes automatic validation:
 **Symptom**: Build still takes 15-30 minutes even with .venv
 
 **Solutions**:
-1. Check `.venv` exists: `ls -la backend_2/.venv`
+1. Check `.venv` exists: `ls -la backend/.venv`
 2. Check `.dockerignore`: Ensure `.venv` is **not** excluded
-3. Rebuild .venv: `cd backend_2 && ./build-venv.sh --ml`
+3. Rebuild .venv: `cd backend && ./build-venv.sh --ml`
 4. Check Docker logs: `docker compose build backend_2 2>&1 | grep -i venv`
 
 ### Build fails with "python: command not found"
@@ -270,10 +270,10 @@ The optimized Dockerfile includes automatic validation:
 **Solutions**:
 ```bash
 # Fix ownership
-sudo chown -R $USER:$USER backend_2/.venv
+sudo chown -R $USER:$USER backend/.venv
 
 # Fix permissions
-chmod -R 755 backend_2/.venv
+chmod -R 755 backend/.venv
 ```
 
 ### Different behavior in .venv vs Docker
@@ -332,7 +332,7 @@ source /path/to/custom-venv/bin/activate
 pip install -e .[ml]
 
 # Copy to backend_2
-cp -r /path/to/custom-venv backend_2/.venv
+cp -r /path/to/custom-venv backend/.venv
 
 # Build Docker
 docker compose build

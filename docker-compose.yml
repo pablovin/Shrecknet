@@ -46,27 +46,18 @@ services:
   # Backend_2 - Main FastAPI application
   backend_2:
     build:
-      context: ./backend_2
+      context: ./backend
       dockerfile: Dockerfile      
       args:
         EXTRAS: "ml"   # <-- pulls sentence-transformers + torch (CPU wheels)
     restart: unless-stopped
-    ports:
-      - "8000:8000"
     environment:
-      - BACKEND_2_NEO4J_URI=bolt://neo4j:7687
-      - BACKEND_2_NEO4J_USER=neo4j
-      - BACKEND_2_NEO4J_PASSWORD=VeryStrongPass123
-      - BACKEND_2_NEO4J_DATABASE=neo4j
-      - BACKEND_2_CELERY_BROKER_URL=redis://redis:6379/0
-      - BACKEND_2_CELERY_RESULT_BACKEND=redis://redis:6379/1
-      - BACKEND_2_CELERY_TASK_ALWAYS_EAGER=false
-      - BACKEND_2_DATABASE_URL=sqlite+aiosqlite:////data/backend_2.db
-      - BACKEND_2_JOBS_DATABASE_URL=sqlite+aiosqlite:////data/backend_2_jobs.db
-      - BACKEND_2_MEDIA_ROOT=/app/media
+      - SHRECKNET_DATA_DIR=/data
+    ports:
+      - "8000:8000"  
     volumes:
-      - backend-media:/app/media
-      - backend-data:/data
+      - ./backend/media:/app/media
+      - ./databases:/data
     depends_on:
       redis:
         condition: service_healthy
@@ -82,26 +73,17 @@ services:
   # Backend_2 Worker - Celery worker for async tasks
   backend_2_worker:
     build:
-      context: ./backend_2
+      context: ./backend
       dockerfile: Dockerfile
       args:
         EXTRAS: "ml"   # <-- pulls sentence-transformers + torch (CPU wheels)
     restart: unless-stopped
-    command: celery -A app.celery_app worker --loglevel=info --concurrency=2
     environment:
-      - BACKEND_2_NEO4J_URI=bolt://neo4j:7687
-      - BACKEND_2_NEO4J_USER=neo4j
-      - BACKEND_2_NEO4J_PASSWORD=VeryStrongPass123
-      - BACKEND_2_NEO4J_DATABASE=neo4j
-      - BACKEND_2_CELERY_BROKER_URL=redis://redis:6379/0
-      - BACKEND_2_CELERY_RESULT_BACKEND=redis://redis:6379/1
-      - BACKEND_2_CELERY_TASK_ALWAYS_EAGER=false
-      - BACKEND_2_DATABASE_URL=sqlite+aiosqlite:////data/backend_2.db
-      - BACKEND_2_JOBS_DATABASE_URL=sqlite+aiosqlite:////data/backend_2_jobs.db
-      - BACKEND_2_MEDIA_ROOT=/app/media
+      - SHRECKNET_DATA_DIR=/data
+    command: celery -A app.celery_app worker --loglevel=info --concurrency=2    
     volumes:
-      - backend-media:/app/media
-      - backend-data:/data
+      - ./backend/media:/app/media
+      - ./databases:/data
     depends_on:
       redis:
         condition: service_healthy
@@ -110,11 +92,26 @@ services:
       backend_2:
         condition: service_started
 
+  # Ready banner - prints once core services are healthy
+  shrecknet_ready:
+    image: alpine:3.20
+    depends_on:
+      redis:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+      backend_2:
+        condition: service_healthy
+    command:
+      - /bin/sh
+      - -c
+      - |
+        echo "🏰 The Shrecknet forge glows anew — all services stand ready. Summon the frontend and begin your saga!"
+    restart: "no"
+
 volumes:
   redis-data:
   neo4j-data:
   neo4j-logs:
   neo4j-import:
   neo4j-plugins:
-  backend-media:
-  backend-data:

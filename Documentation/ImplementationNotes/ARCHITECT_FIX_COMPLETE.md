@@ -38,7 +38,7 @@ This meant relationships to entities created later in the batch would fail.
 
 ### Solution 1: Enhanced LLM Prompt
 
-**Location**: `backend_2/app/jobs/architect/prompts.py`
+**Location**: `backend/app/jobs/architect/prompts.py`
 
 **Changes**:
 ```python
@@ -73,7 +73,7 @@ Rules:
 
 ### Solution 2: Two-Phase Entity Creation
 
-**Location**: `backend_2/app/tasks/architect_generation.py`
+**Location**: `backend/app/tasks/architect_generation.py`
 
 **New Flow**:
 ```python
@@ -108,7 +108,7 @@ for each update proposal:
 
 ### Solution 3: Improved Target Resolution
 
-**Location**: `backend_2/app/tasks/architect_generation.py` (multiple locations)
+**Location**: `backend/app/tasks/architect_generation.py` (multiple locations)
 
 **New Logic**:
 ```python

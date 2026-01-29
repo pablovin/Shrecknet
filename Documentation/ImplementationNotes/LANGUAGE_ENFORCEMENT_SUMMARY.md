@@ -20,7 +20,7 @@ We strengthened language enforcement across all text generation points in the v2
 ## Detailed Changes
 
 ### 1. Language Support Expansion
-**File:** `backend_2/app/tasks/architect_generation_v2.py`
+**File:** `backend/app/tasks/architect_generation_v2.py`
 
 Added 30+ languages to `_LANGUAGE_LABELS`:
 ```python
@@ -202,7 +202,7 @@ All tests pass ✅
 
 ## Files Modified
 
-- `backend_2/app/tasks/architect_generation_v2.py` - All language enforcement improvements
+- `backend/app/tasks/architect_generation_v2.py` - All language enforcement improvements
 
 ## Backward Compatibility
 

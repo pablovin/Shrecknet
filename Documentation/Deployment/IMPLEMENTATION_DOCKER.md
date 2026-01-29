@@ -5,7 +5,7 @@ Successfully created an optimized Docker Compose setup for backend_2 that addres
 
 ## Files Changed
 
-### 1. `backend_2/Dockerfile` (Modified)
+### 1. `backend/Dockerfile` (Modified)
 **Changes:**
 - Fixed SQLAlchemy installation error by removing editable install (`-e`)
 - Added proper layer caching by copying `app/__init__.py` before dependency install
@@ -34,7 +34,7 @@ Successfully created an optimized Docker Compose setup for backend_2 that addres
 - No `network: host` (improves security and portability)
 - Proper service dependencies
 
-### 3. `backend_2/.dockerignore` (Enhanced)
+### 3. `backend/.dockerignore` (Enhanced)
 **Added:**
 - Git files (.git, .gitignore)
 - Documentation files (*.md)

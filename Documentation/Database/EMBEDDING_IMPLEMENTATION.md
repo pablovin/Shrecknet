@@ -157,7 +157,7 @@ Created comprehensive test suite covering:
 
 All tests pass successfully (21 tests total including existing background job tests).
 
-### 8. Documentation (`backend_2/EMBEDDING.md`)
+### 8. Documentation (`backend/EMBEDDING.md`)
 
 Created comprehensive documentation including:
 - System overview and architecture

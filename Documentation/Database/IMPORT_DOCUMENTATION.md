@@ -154,7 +154,7 @@ The old database location can be configured using the `OLD_DATABASE_URL` environ
 export OLD_DATABASE_URL="sqlite+aiosqlite:///path/to/old/database.db"
 ```
 
-Default: `sqlite+aiosqlite:///../backend/data/prod.db` (relative to backend_2 directory)
+Default: `sqlite+aiosqlite:///../backend/data/prod.db` (relative to backend directory)
 
 ## Idempotency
 

@@ -25,14 +25,11 @@ Whether you're a Dungeon Master weaving intricate plots, a novelist crafting epi
 
 ## ⚡ Quick Start - Join the Adventure
 
-**Deploy in 10-30 seconds** (after one-time setup):
+**Deploy in one command**:
 
 ```bash
-# One-time: Build dependencies (15-30 minutes)
-cd backend_2 && ./build-venv.sh --ml && cd ..
-
-# Deploy (10-30 seconds!) ⚡
-docker compose build && docker compose up -d
+# Build and run everything
+docker compose up --build
 
 # Access your realm
 open http://localhost:8000/docs
@@ -212,8 +209,8 @@ Create `.env` in the project root or set these environment variables:
 
 ```bash
 # Database
-BACKEND_2_DATABASE_URL=sqlite+aiosqlite:////data/backend_2.db
-BACKEND_2_JOBS_DATABASE_URL=sqlite+aiosqlite:////data/backend_2_jobs.db
+BACKEND_2_DATABASE_URL=sqlite+aiosqlite:////data/backend.db
+BACKEND_2_JOBS_DATABASE_URL=sqlite+aiosqlite:////data/backend_jobs.db
 
 # Neo4j Graph Database
 BACKEND_2_NEO4J_URI=bolt://neo4j:7687
@@ -267,14 +264,8 @@ BACKEND_2_CORS_ALLOW_ORIGINS=http://localhost:3000
 ### Quick Deploy
 
 ```bash
-# One-time: Build dependencies (15-30 minutes)
-cd backend_2
-./build-venv.sh --ml
-cd ..
-
-# Build and start all services (10-30 seconds after first build!)
-docker compose build
-docker compose up -d
+# Build and start all services
+docker compose up --build
 
 # Verify services are running
 docker compose ps
@@ -291,25 +282,9 @@ docker compose logs -f backend_2
 # Clone the repository
 git clone https://github.com/pablovin/Shrecknet.git
 cd Shrecknet
-
-# Copy and edit configuration (optional - defaults work)
-cp backend/.env.example backend/.env
-# Edit backend/.env with your OpenAI API key if using AI features
 ```
 
-#### Step 2: Build Dependencies (Fast Deploy Method)
-
-```bash
-# Build Python virtual environment with ML dependencies
-cd backend_2
-./build-venv.sh --ml
-
-# This creates a .venv folder with all dependencies pre-installed
-# Future builds will copy this folder instead of reinstalling (10-30s vs 15-30min!)
-cd ..
-```
-
-#### Step 3: Build Docker Images
+#### Step 2: Build Docker Images
 
 ```bash
 # Build all services
@@ -319,7 +294,7 @@ docker compose build
 docker compose build backend_2
 ```
 
-#### Step 4: Start Services
+#### Step 3: Start Services
 
 ```bash
 # Start in detached mode
@@ -332,7 +307,7 @@ docker compose up
 docker compose up -d backend_2 redis neo4j
 ```
 
-#### Step 5: Verify Deployment
+#### Step 4: Verify Deployment
 
 ```bash
 # Check service status
@@ -415,7 +390,7 @@ Perfect for development or when you want full control.
 
 ```bash
 # Backend_2 (Primary)
-cd backend_2
+cd backend
 python -m venv .venv
 source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 pip install -e ".[ml,test]"
@@ -462,14 +437,14 @@ docker run -d --name chromadb \
 
 ```bash
 # Backend_2
-cat > backend_2/.env << EOF
+cat > backend/.env << EOF
 BACKEND_2_NEO4J_URI=bolt://localhost:7687
 BACKEND_2_NEO4J_USER=neo4j
 BACKEND_2_NEO4J_PASSWORD=VeryStrongPass123
 BACKEND_2_CELERY_BROKER_URL=redis://localhost:6379/0
 BACKEND_2_CELERY_RESULT_BACKEND=redis://localhost:6379/1
-BACKEND_2_DATABASE_URL=sqlite+aiosqlite:///./backend_2.db
-BACKEND_2_JOBS_DATABASE_URL=sqlite+aiosqlite:///./backend_2_jobs.db
+BACKEND_2_DATABASE_URL=sqlite+aiosqlite:///./backend.db
+BACKEND_2_JOBS_DATABASE_URL=sqlite+aiosqlite:///./backend_jobs.db
 BACKEND_2_OPENAI_API_KEY=sk-your-key-here
 EOF
 
@@ -488,14 +463,14 @@ Open separate terminal windows/tabs for each service:
 
 **Terminal 1 - Backend_2 API:**
 ```bash
-cd backend_2
+cd backend
 source .venv/bin/activate
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 **Terminal 2 - Backend_2 Worker:**
 ```bash
-cd backend_2
+cd backend
 source .venv/bin/activate
 celery -A app.celery_app worker --loglevel=info --concurrency=2
 ```
@@ -541,7 +516,7 @@ curl http://localhost:3000
 - **API Docs**: Visit `/docs` for interactive Swagger UI
 - **Database Tools**: Use Neo4j Browser at http://localhost:7474 to query the graph
 - **Debugging**: Set `BACKEND_2_DEBUG=true` for verbose logging
-- **Testing**: Run `pytest` in backend_2 directory (with venv activated)
+- **Testing**: Run `pytest` in backend directory (with venv activated)
 
 ## 📋 System Requirements
 
@@ -660,7 +635,7 @@ lsof -ti:8000 | xargs kill -9
 ```bash
 # Verify Neo4j is running
 docker ps | grep neo4j
-# Check credentials match in .env and docker-compose.yml
+# Check credentials match in docker-compose.yml and backend defaults
 ```
 
 **Celery worker not processing jobs:**
@@ -672,9 +647,8 @@ docker compose logs backend_2_worker
 ```
 
 **Build takes too long:**
-- Use the .venv pre-build method: `cd backend_2 && ./build-venv.sh --ml`
 - Ensure good internet connection for package downloads
-- Consider using `--ml` flag only if you need embedding features
+- Re-run with `docker compose build` to use cached layers
 
 **Out of memory:**
 - Reduce Neo4j heap size in docker-compose.yml

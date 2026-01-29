@@ -76,12 +76,12 @@ EntityInstance {
 
 ## Files Changed
 
-1. `backend_2/app/db/migrations.py` - Migration function
-2. `backend_2/app/main.py` - Startup integration
-3. `backend_2/app/api/routers/ontologies.py` - Manual migration endpoint
-4. `backend_2/tests/test_neo4j_migrations.py` - Unit tests
-5. `backend_2/tests/test_migration_scenarios.py` - Documentation scenarios
-6. `backend_2/MIGRATION_EMBEDDING.md` - Comprehensive documentation
+1. `backend/app/db/migrations.py` - Migration function
+2. `backend/app/main.py` - Startup integration
+3. `backend/app/api/routers/ontologies.py` - Manual migration endpoint
+4. `backend/tests/test_neo4j_migrations.py` - Unit tests
+5. `backend/tests/test_migration_scenarios.py` - Documentation scenarios
+6. `backend/MIGRATION_EMBEDDING.md` - Comprehensive documentation
 
 ## Testing Strategy
 

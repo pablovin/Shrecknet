@@ -221,7 +221,7 @@ Prompts instruct the LLM to:
 }
 ```
 
-**For comprehensive examples, see [backend_2/ARCHITECT_API_EXAMPLES.md](backend_2/ARCHITECT_API_EXAMPLES.md)**
+**For comprehensive examples, see [backend/ARCHITECT_API_EXAMPLES.md](backend/ARCHITECT_API_EXAMPLES.md)**
 ```
 
 ## Key Design Decisions
@@ -261,8 +261,8 @@ Prompts instruct the LLM to:
 - `app/db/init_jobs_db.py` - Call migration
 
 **Documentation:**
-- `backend_2/ARCHITECT_API_EXAMPLES.md` - Comprehensive input/output examples for all scenarios
-- `backend_2/ARCHITECT_STEP2_API.md` - Updated with new fields and capabilities
+- `backend/ARCHITECT_API_EXAMPLES.md` - Comprehensive input/output examples for all scenarios
+- `backend/ARCHITECT_STEP2_API.md` - Updated with new fields and capabilities
 - `ARCHITECT_STEP2_IMPLEMENTATION.md` - Updated with new features
 
 ## Client Capabilities Summary
@@ -289,7 +289,7 @@ Basic unit tests are provided in `tests/test_entity_generator.py`:
 
 To run tests:
 ```bash
-cd backend_2
+cd backend
 pytest tests/test_entity_generator.py -v
 ```
 

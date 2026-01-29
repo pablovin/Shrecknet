@@ -81,7 +81,7 @@ All tests pass successfully (3/3).
 ## Files Modified
 
 ```
-backend_2/
+backend/
 ├── LIBRARY_API.md                       (new, 404 lines)
 ├── app/
 │   ├── api/routers/library.py           (updated, +26 lines)

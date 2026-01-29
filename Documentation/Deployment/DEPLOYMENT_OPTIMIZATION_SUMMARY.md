@@ -26,7 +26,7 @@ The original deployment had several critical issues:
 **How it works**:
 ```bash
 # One-time setup (15-30 minutes)
-cd backend_2
+cd backend
 ./build-venv.sh --ml
 
 # Every deploy after (10-30 seconds)
@@ -70,10 +70,10 @@ docker compose up -d
 - [DEPLOYMENT_WORKFLOW.md](DEPLOYMENT_WORKFLOW.md) - Step-by-step workflows for all scenarios
 - Updated [DOCKER.md](DOCKER.md) with fast build option
 - Updated [DOCKER_OPTIMIZATION.md](DOCKER_OPTIMIZATION.md) with .venv details
-- Updated [backend_2/README.md](backend_2/README.md) with Docker section
+- Updated [backend/README.md](backend/README.md) with Docker section
 
 **Tools**:
-- `backend_2/build-venv.sh` - Helper script to build .venv
+- `backend/build-venv.sh` - Helper script to build .venv
 - `validate-docker.sh` - Validates Docker configuration
 
 ### 5. Volume Persistence
@@ -151,7 +151,7 @@ RUN if [ -d "/app/.venv" ] && [ -f "/app/.venv/bin/python" ]; then
 ### .venv Structure
 
 ```
-backend_2/.venv/
+backend/.venv/
 ├── bin/
 │   ├── python          # Python interpreter
 │   ├── pip             # Package installer
@@ -175,7 +175,7 @@ Size: ~2-3 GB with ML, ~500 MB-1 GB without ML
 ```bash
 # On your server
 git clone https://github.com/pablovin/Shrecknet.git
-cd Shrecknet/backend_2
+cd Shrecknet/backend
 
 # Build .venv once (15-30 minutes - have coffee ☕)
 ./build-venv.sh --ml
@@ -206,10 +206,10 @@ docker compose up -d
 
 ```bash
 # Update pyproject.toml with new dependency
-nano backend_2/pyproject.toml
+nano backend/pyproject.toml
 
 # Rebuild .venv (15-30 minutes)
-cd backend_2
+cd backend
 ./build-venv.sh --ml
 
 # Deploy with new dependency (10-30 seconds)
@@ -224,12 +224,12 @@ docker compose up -d
 # Cache .venv to avoid rebuilding
 - uses: actions/cache@v3
   with:
-    path: backend_2/.venv
-    key: venv-${{ hashFiles('backend_2/pyproject.toml') }}-ml
+    path: backend/.venv
+    key: venv-${{ hashFiles('backend/pyproject.toml') }}-ml
 
 # Build .venv if cache miss (rarely happens)
 - name: Build venv
-  run: cd backend_2 && ./build-venv.sh --ml
+  run: cd backend && ./build-venv.sh --ml
   if: steps.cache.outputs.cache-hit != 'true'
 
 # Deploy (always fast with cache!)
@@ -259,7 +259,7 @@ git pull origin main
 
 **Step 4**: Build .venv
 ```bash
-cd backend_2
+cd backend
 ./build-venv.sh --ml
 cd ..
 ```
@@ -308,7 +308,7 @@ docker compose exec backend_2 tar -xzf /tmp/backup.tar.gz -C /
 
 **Check**: Is .venv being detected?
 ```bash
-cd backend_2
+cd backend
 ls -la .venv/bin/python
 
 # Should see: -rwxr-xr-x ... .venv/bin/python

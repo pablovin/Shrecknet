@@ -20,7 +20,7 @@ The issue was intermittent because it depends on:
 - Concurrent access patterns during parallel retrieval
 
 ## Solution
-Updated `backend_2/app/graphrag/embedding_service.py` to handle this error gracefully:
+Updated `backend/app/graphrag/embedding_service.py` to handle this error gracefully:
 
 1. **Added retry logic**: The `embed_texts` method now retries up to 2 times on certain errors
 2. **Expanded error handling**: Now catches both `RuntimeError` (for "meta tensor" errors) and `ValueError`/`BufferError` (for array export errors)
@@ -64,6 +64,6 @@ The fix has been verified with:
 - Verification that the changes align with existing error handling patterns in the codebase
 
 ## Related Files
-- `backend_2/app/graphrag/embedding_service.py` - Contains the fix
-- `backend_2/app/services/pdf_embedding_service.py` - Calls the embedding service
-- `backend_2/app/jobs/librarian/librarian.py` - Orchestrates parallel retrieval and catches exceptions
+- `backend/app/graphrag/embedding_service.py` - Contains the fix
+- `backend/app/services/pdf_embedding_service.py` - Calls the embedding service
+- `backend/app/jobs/librarian/librarian.py` - Orchestrates parallel retrieval and catches exceptions

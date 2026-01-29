@@ -181,7 +181,7 @@ Tests in `tests/test_migrations.py`:
 ### Running Tests
 
 ```bash
-cd backend_2
+cd backend
 pytest tests/test_migrations.py::test_migrate_game_datetimes_to_brussels_timezone -v
 ```
 

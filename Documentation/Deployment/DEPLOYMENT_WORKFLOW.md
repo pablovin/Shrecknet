@@ -24,7 +24,7 @@ git clone https://github.com/pablovin/Shrecknet.git
 cd Shrecknet
 
 # Step 2: Build .venv (ONE-TIME, takes 15-30 minutes)
-cd backend_2
+cd backend
 ./build-venv.sh --ml
 
 # Step 3: Build Docker images (10-30 seconds!)
@@ -74,7 +74,7 @@ Use this when you've updated pyproject.toml or need new packages.
 git pull
 
 # Step 2: Rebuild .venv (15-30 minutes)
-cd backend_2
+cd backend
 ./build-venv.sh --ml
 
 # Step 3: Rebuild Docker images (10-30 seconds)
@@ -127,7 +127,7 @@ git clone https://github.com/pablovin/Shrecknet.git
 cd Shrecknet && git pull
 
 # Step 3: Build .venv for production (ONE-TIME)
-cd backend_2
+cd backend
 ./build-venv.sh --ml
 
 # Step 4: Configure environment (if needed)
@@ -153,7 +153,7 @@ curl http://localhost:8000/docs
 # Enable HTTPS with Let's Encrypt
 
 # Step 9: Set up log rotation
-docker compose logs --since=1h > /var/log/shrecknet/backend_2.log
+docker compose logs --since=1h > /var/log/shrecknet/backend.log
 
 # Step 10: Enable monitoring (optional)
 # Set up Prometheus, Grafana, or your monitoring solution
@@ -188,13 +188,13 @@ jobs:
       - name: Cache .venv
         uses: actions/cache@v3
         with:
-          path: backend_2/.venv
-          key: venv-${{ hashFiles('backend_2/pyproject.toml') }}-ml
+          path: backend/.venv
+          key: venv-${{ hashFiles('backend/pyproject.toml') }}-ml
       
       # Build .venv if cache miss
       - name: Build .venv
         run: |
-          cd backend_2
+          cd backend
           if [ ! -d ".venv" ]; then
             ./build-venv.sh --ml
           fi
@@ -207,7 +207,7 @@ jobs:
       - name: Deploy to server
         run: |
           # Copy .venv and code to server
-          rsync -avz backend_2/.venv server:/path/to/Shrecknet/backend_2/
+          rsync -avz backend/.venv server:/path/to/Shrecknet/backend/
           rsync -avz . server:/path/to/Shrecknet/ --exclude .venv
           
           # Rebuild and restart on server
@@ -333,7 +333,7 @@ docker compose down -v
 docker system prune -a
 
 # Clean up specific .venv
-cd backend_2
+cd backend
 rm -rf .venv
 ```
 
@@ -361,13 +361,13 @@ docker volume inspect shrecknet_backend-data
 **Check**:
 ```bash
 # Verify .venv exists
-ls -la backend_2/.venv
+ls -la backend/.venv
 
 # Check .dockerignore doesn't exclude .venv
-grep -v "^#" backend_2/.dockerignore | grep venv
+grep -v "^#" backend/.dockerignore | grep venv
 
 # Rebuild .venv
-cd backend_2
+cd backend
 rm -rf .venv
 ./build-venv.sh --ml
 ```

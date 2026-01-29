@@ -33,7 +33,7 @@ The issue is **intermittent** because it depends on:
 
 ## Solution Implemented
 
-### Updated `embed_texts()` method in `backend_2/app/graphrag/embedding_service.py`
+### Updated `embed_texts()` method in `backend/app/graphrag/embedding_service.py`
 
 **Key Changes:**
 

@@ -47,7 +47,7 @@ Pre-build a `.venv` folder with all dependencies, then copy it into Docker:
 
 ```bash
 # One-time setup (15-30 minutes)
-cd backend_2
+cd backend
 ./build-venv.sh --ml
 
 # Every build after is super fast (10-30 seconds)

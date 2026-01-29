@@ -78,7 +78,7 @@ Now this node will:
 
 Run the tests:
 ```bash
-cd backend_2
+cd backend
 pytest tests/test_neo4j_migrations.py -v
 ```
 

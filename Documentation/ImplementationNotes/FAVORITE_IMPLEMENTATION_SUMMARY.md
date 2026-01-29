@@ -80,7 +80,7 @@ All endpoints added to `app/api/routers/ontology_instances.py`:
 - **Results**: 2 passed, 1 skipped (requires Neo4j)
 
 ### 7. Documentation
-- **File**: `backend_2/FAVORITE_ONTOLOGY_INSTANCES_API.md`
+- **File**: `backend/FAVORITE_ONTOLOGY_INSTANCES_API.md`
 - Complete API reference with:
   - Endpoint descriptions
   - Request/response examples
@@ -204,20 +204,20 @@ Code formatting validated with `black` - all files pass.
 ## Files Changed/Added
 
 ### New Files (10):
-1. `backend_2/app/models/favorite_ontology_instance.py` - Database model
-2. `backend_2/app/repositories/favorite_ontology_instance_repository.py` - Data access
-3. `backend_2/app/services/favorite_ontology_instance_service.py` - Business logic
-4. `backend_2/app/schemas/favorite_ontology_instance.py` - Pydantic schemas
-5. `backend_2/app/utils/notification_helpers.py` - Notification utilities
-6. `backend_2/tests/test_favorite_ontology_instances.py` - Test suite
-7. `backend_2/FAVORITE_ONTOLOGY_INSTANCES_API.md` - API documentation
+1. `backend/app/models/favorite_ontology_instance.py` - Database model
+2. `backend/app/repositories/favorite_ontology_instance_repository.py` - Data access
+3. `backend/app/services/favorite_ontology_instance_service.py` - Business logic
+4. `backend/app/schemas/favorite_ontology_instance.py` - Pydantic schemas
+5. `backend/app/utils/notification_helpers.py` - Notification utilities
+6. `backend/tests/test_favorite_ontology_instances.py` - Test suite
+7. `backend/FAVORITE_ONTOLOGY_INSTANCES_API.md` - API documentation
 
 ### Modified Files (5):
-1. `backend_2/app/models/__init__.py` - Export new table
-2. `backend_2/app/models/notification.py` - Add new notification type
-3. `backend_2/app/api/deps.py` - Add service dependency
-4. `backend_2/app/api/routers/ontology_instances.py` - Add endpoints
-5. `backend_2/app/services/ontology_instance_service.py` - Add notification triggers
+1. `backend/app/models/__init__.py` - Export new table
+2. `backend/app/models/notification.py` - Add new notification type
+3. `backend/app/api/deps.py` - Add service dependency
+4. `backend/app/api/routers/ontology_instances.py` - Add endpoints
+5. `backend/app/services/ontology_instance_service.py` - Add notification triggers
 
 ## Migration Notes
 

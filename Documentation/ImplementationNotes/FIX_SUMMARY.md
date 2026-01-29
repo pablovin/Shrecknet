@@ -25,7 +25,7 @@ In **Step 2** (architect_generation):
 
 ## Solution
 
-Modified `backend_2/app/tasks/architect_generation.py` to:
+Modified `backend/app/tasks/architect_generation.py` to:
 
 1. Build the initial `existing_entities_map` from the current instance (unchanged)
 2. **NEW**: Check if any proposals reference entities not in the map
@@ -89,7 +89,7 @@ Created `docs/architect_entity_ids.md` with:
 
 ## Testing
 
-Added test case in `backend_2/tests/test_entity_generator.py`:
+Added test case in `backend/tests/test_entity_generator.py`:
 - `test_entity_generator_updates_existing_entity`
 - Verifies that entities can be updated even when not in the current instance
 

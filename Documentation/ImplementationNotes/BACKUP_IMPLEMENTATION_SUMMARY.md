@@ -266,7 +266,7 @@ All functionality has been tested with a comprehensive test suite:
 
 Run tests with:
 ```bash
-cd backend_2
+cd backend
 pytest tests/test_backups.py -v
 ```
 
@@ -295,8 +295,8 @@ The backup/restore system is production-ready. You can now:
 ## Support
 
 For detailed API documentation and examples, see:
-- `backend_2/BACKUP_API.md` - Complete API reference
-- `backend_2/examples/backup_example.py` - Example automation script
-- `backend_2/README.md` - Quick start guide
+- `backend/BACKUP_API.md` - Complete API reference
+- `backend/examples/backup_example.py` - Example automation script
+- `backend/README.md` - Quick start guide
 
 All code is documented with docstrings and type hints for easy maintenance and extension.

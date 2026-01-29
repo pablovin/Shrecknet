@@ -264,13 +264,13 @@ Existing deployments will seamlessly upgrade on next startup.
 - `app/db/migrations.py` - Add migration for new columns
 
 ### Documentation
-- `backend_2/ARCHITECT_API_EXAMPLES.md` - Comprehensive examples (NEW)
-- `backend_2/ARCHITECT_STEP2_API.md` - Updated with new capabilities
+- `backend/ARCHITECT_API_EXAMPLES.md` - Comprehensive examples (NEW)
+- `backend/ARCHITECT_STEP2_API.md` - Updated with new capabilities
 - `ARCHITECT_STEP2_IMPLEMENTATION.md` - Updated summary
 
 ### Tests
-- `backend_2/tests/test_architect_validation.py` - Schema validation tests (NEW)
-- `backend_2/tests/test_architect_proposal_corrections.py` - Integration tests (NEW)
+- `backend/tests/test_architect_validation.py` - Schema validation tests (NEW)
+- `backend/tests/test_architect_proposal_corrections.py` - Integration tests (NEW)
 
 ## Testing
 

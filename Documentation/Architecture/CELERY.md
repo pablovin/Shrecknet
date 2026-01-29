@@ -50,7 +50,7 @@ export BACKEND_2_CELERY_RESULT_BACKEND="redis://localhost:6379/1"
 # export BACKEND_2_CELERY_TASK_ALWAYS_EAGER="true"
 
 # Jobs database (defaults to separate SQLite file)
-export BACKEND_2_JOBS_DATABASE_URL="sqlite+aiosqlite:///./backend_2_jobs.db"
+export BACKEND_2_JOBS_DATABASE_URL="sqlite+aiosqlite:///./backend_jobs.db"
 ```
 
 ### Development vs Production
@@ -95,7 +95,7 @@ export BACKEND_2_JOBS_DATABASE_URL="sqlite+aiosqlite:///./backend_2_jobs.db"
 
 ### Starting the Worker
 
-From the `backend_2` directory:
+From the `backend` directory:
 
 ```bash
 # Basic worker
@@ -544,7 +544,7 @@ After=network.target redis.service
 Type=forking
 User=shrecknet
 Group=shrecknet
-WorkingDirectory=/opt/shrecknet/backend_2
+WorkingDirectory=/opt/shrecknet/backend
 Environment="BACKEND_2_CELERY_BROKER_URL=redis://localhost:6379/0"
 Environment="BACKEND_2_CELERY_RESULT_BACKEND=redis://localhost:6379/1"
 Environment="BACKEND_2_CELERY_TASK_ALWAYS_EAGER=false"
@@ -570,7 +570,7 @@ services:
       - "6379:6379"
 
   backend2-api:
-    build: ./backend_2
+    build: ./backend
     environment:
       - BACKEND_2_CELERY_BROKER_URL=redis://redis:6379/0
       - BACKEND_2_CELERY_RESULT_BACKEND=redis://redis:6379/1
@@ -579,7 +579,7 @@ services:
       - redis
 
   backend2-worker:
-    build: ./backend_2
+    build: ./backend
     command: celery -A app.celery_app worker --loglevel=info
     environment:
       - BACKEND_2_CELERY_BROKER_URL=redis://redis:6379/0

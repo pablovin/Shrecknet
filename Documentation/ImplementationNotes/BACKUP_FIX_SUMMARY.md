@@ -346,13 +346,13 @@ echo -e "\nDone!"
 
 ## Files Modified
 
-1. `backend_2/app/services/backup_service.py` - Fixed SQL column names, added admin user preservation
-2. `backend_2/app/models/background_job.py` - Added BACKUP and RESTORE job types
-3. `backend_2/app/tasks/backup_tasks.py` - New Celery tasks for backup/restore
-4. `backend_2/app/tasks/__init__.py` - Registered new backup tasks
-5. `backend_2/app/api/routers/backups.py` - Updated endpoints to use background jobs
-6. `backend_2/BACKUP_API.md` - Updated documentation with new examples
-7. `backend_2/tests/test_backups.py` - Updated tests for new async behavior
+1. `backend/app/services/backup_service.py` - Fixed SQL column names, added admin user preservation
+2. `backend/app/models/background_job.py` - Added BACKUP and RESTORE job types
+3. `backend/app/tasks/backup_tasks.py` - New Celery tasks for backup/restore
+4. `backend/app/tasks/__init__.py` - Registered new backup tasks
+5. `backend/app/api/routers/backups.py` - Updated endpoints to use background jobs
+6. `backend/BACKUP_API.md` - Updated documentation with new examples
+7. `backend/tests/test_backups.py` - Updated tests for new async behavior
 
 ## Testing
 

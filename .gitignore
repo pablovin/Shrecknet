@@ -36,6 +36,7 @@ pnpm-debug.log*
 test.db
 data/
 .data/
+databases/
 
 # Deployment
 .vercel
@@ -80,8 +81,8 @@ env/
 # Uploaded files and media
 frontend/uploads/
 !frontend/uploads/.gitkeep
-backend_2/media/
-!backend_2/media/.gitkeep
+backend/media/
+!backend/media/.gitkeep
 
 # Docker backup files
 docker-compose.yml.backup

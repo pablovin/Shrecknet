@@ -26,9 +26,9 @@ The migration was running on the jobs database instead of the main database wher
 - Migration now runs on startup before the application serves requests
 
 **Files Changed**:
-- `backend_2/app/db/init_db.py`
-- `backend_2/app/db/init_jobs_db.py`
-- `backend_2/app/db/migrations.py`
+- `backend/app/db/init_db.py`
+- `backend/app/db/init_jobs_db.py`
+- `backend/app/db/migrations.py`
 
 ### 2. Verified Background Job Implementation ✅
 
@@ -56,12 +56,12 @@ Both return immediately with `HTTP 202 Accepted` status, so the main app is neve
 - Added migration to create the column
 
 **Files Changed**:
-- `backend_2/app/models/architect.py`
-- `backend_2/app/repositories/architect_repository.py`
-- `backend_2/app/tasks/architect_generation.py`
-- `backend_2/app/schemas/architect.py`
-- `backend_2/app/api/routers/architect.py`
-- `backend_2/app/db/migrations.py`
+- `backend/app/models/architect.py`
+- `backend/app/repositories/architect_repository.py`
+- `backend/app/tasks/architect_generation.py`
+- `backend/app/schemas/architect.py`
+- `backend/app/api/routers/architect.py`
+- `backend/app/db/migrations.py`
 
 ### 4. Comprehensive Documentation ✅
 
@@ -164,13 +164,13 @@ User → Polls GET /api/jobs/{generation_job_id}
 
 1. **Start the application**:
    ```bash
-   cd backend_2
+   cd backend
    python -m uvicorn app.main:app --reload
    ```
 
 2. **Start Celery worker**:
    ```bash
-   cd backend_2
+   cd backend
    celery -A app.celery_app worker --loglevel=info
    ```
 
@@ -192,7 +192,7 @@ User → Polls GET /api/jobs/{generation_job_id}
 
 Run the existing test suite:
 ```bash
-cd backend_2
+cd backend
 pytest tests/test_architect*.py -v
 ```
 
@@ -227,14 +227,14 @@ Use the examples in `ARCHITECT_MONITORING_QUICKREF.md`:
 ## Files Modified
 
 ### Core Changes
-- `backend_2/app/db/init_db.py` - Fixed migration location
-- `backend_2/app/db/init_jobs_db.py` - Removed incorrect migration
-- `backend_2/app/db/migrations.py` - Added generation_job_id migration
-- `backend_2/app/models/architect.py` - Added generation_job_id field
-- `backend_2/app/repositories/architect_repository.py` - Added attach_generation_job method
-- `backend_2/app/tasks/architect_generation.py` - Job attachment + imports
-- `backend_2/app/schemas/architect.py` - Expose generation_job_id
-- `backend_2/app/api/routers/architect.py` - Return generation_job_id
+- `backend/app/db/init_db.py` - Fixed migration location
+- `backend/app/db/init_jobs_db.py` - Removed incorrect migration
+- `backend/app/db/migrations.py` - Added generation_job_id migration
+- `backend/app/models/architect.py` - Added generation_job_id field
+- `backend/app/repositories/architect_repository.py` - Added attach_generation_job method
+- `backend/app/tasks/architect_generation.py` - Job attachment + imports
+- `backend/app/schemas/architect.py` - Expose generation_job_id
+- `backend/app/api/routers/architect.py` - Return generation_job_id
 
 ### Documentation
 - `ARCHITECT_MONITORING.md` - Complete monitoring guide

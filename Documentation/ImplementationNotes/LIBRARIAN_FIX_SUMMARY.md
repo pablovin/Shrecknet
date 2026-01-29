@@ -22,7 +22,7 @@ result = [row.copy().tolist() for row in embeddings_array]
 
 ## Changes Summary
 
-### 1. Core Fix (`backend_2/app/graphrag/embedding_service.py`)
+### 1. Core Fix (`backend/app/graphrag/embedding_service.py`)
 - Row-by-row conversion with independent memory buffers
 - C-contiguous memory layout for optimal access
 - Increased retry count from 2 to 3 attempts
@@ -66,8 +66,8 @@ Negligible:
 - No code changes needed - fix is complete and ready
 
 ## Files Modified
-1. `backend_2/app/graphrag/embedding_service.py` - Core implementation
-2. `backend_2/LIBRARIAN_BUFFER_FIX_FINAL.md` - Detailed documentation
+1. `backend/app/graphrag/embedding_service.py` - Core implementation
+2. `backend/LIBRARIAN_BUFFER_FIX_FINAL.md` - Detailed documentation
 3. This summary document
 
 ---

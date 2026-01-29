@@ -4,7 +4,7 @@
 When migrating from the old backend to backend_2, users with passwords hashed using bcrypt could not login because the new backend only supported argon2 hashing.
 
 ## Solution
-The password context in `backend_2/app/core/security.py` has been updated to support both argon2 and bcrypt hashing schemes:
+The password context in `backend/app/core/security.py` has been updated to support both argon2 and bcrypt hashing schemes:
 
 ```python
 pwd_context = CryptContext(schemes=["argon2", "bcrypt"], deprecated="auto")
@@ -42,6 +42,6 @@ When a user with a bcrypt password logs in, the system can detect it's using a d
 - Issue: User reported `passlib.exc.UnknownHashError: hash could not be identified` when trying to login
 - Solution PR: [Insert PR link]
 - Related files:
-  - `backend_2/app/core/security.py`
-  - `backend_2/pyproject.toml`
-  - `backend_2/tests/test_bcrypt_compatibility.py`
+  - `backend/app/core/security.py`
+  - `backend/pyproject.toml`
+  - `backend/tests/test_bcrypt_compatibility.py`

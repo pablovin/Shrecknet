@@ -1,18 +1,12 @@
 # Quick Start: Backend_2 Docker Deployment
 
-**TL;DR**: Build dependencies once, deploy in seconds! ⚡
+**TL;DR**: Clone, run `docker compose up --build`, done. ⚡
 
 ## For the Impatient
 
 ```bash
-# ONE-TIME SETUP (15-30 minutes)
-cd backend_2
-./build-venv.sh --ml
-
-# EVERY DEPLOY (10-30 seconds!)
-cd ..
-docker compose build
-docker compose up -d
+# BUILD + RUN
+docker compose up --build
 
 # Access your API
 curl http://localhost:8000/docs
@@ -20,9 +14,9 @@ curl http://localhost:8000/docs
 
 ## What This Does
 
-1. **Builds a .venv folder** with all Python dependencies pre-installed (PyTorch, FastAPI, etc.)
-2. **Copies .venv into Docker** instead of installing from scratch
-3. **Deploys in seconds** instead of hours
+1. **Builds Docker images** for the API, worker, and dependencies
+2. **Starts services** (backend, worker, Neo4j, Redis)
+3. **Exposes the API** on http://localhost:8000
 
 ## Services Running
 
@@ -48,14 +42,7 @@ docker compose down
 docker compose down -v
 ```
 
-## When to Rebuild .venv
-
-❌ Code changes → Just rebuild Docker (10-30 sec)
-✅ Dependency changes → Rebuild .venv first (15-30 min)
-
 ## Need Help?
 
-- Full guide: [VENV_DEPLOYMENT.md](VENV_DEPLOYMENT.md)
 - Workflows: [DEPLOYMENT_WORKFLOW.md](DEPLOYMENT_WORKFLOW.md)
-- Summary: [DEPLOYMENT_OPTIMIZATION_SUMMARY.md](DEPLOYMENT_OPTIMIZATION_SUMMARY.md)
 - Docker info: [DOCKER.md](DOCKER.md)

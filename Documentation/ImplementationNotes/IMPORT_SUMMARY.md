@@ -137,17 +137,17 @@ All endpoints return:
 
 ## Files Changed
 
-- `backend_2/app/api/routers/imports.py` - New router with import endpoints
-- `backend_2/app/api/routers/__init__.py` - Register imports router
-- `backend_2/app/api/deps.py` - Add `get_current_admin_user` dependency
-- `backend_2/IMPORT_DOCUMENTATION.md` - Full API documentation
-- `backend_2/tests/test_imports.py` - Integration tests
+- `backend/app/api/routers/imports.py` - New router with import endpoints
+- `backend/app/api/routers/__init__.py` - Register imports router
+- `backend/app/api/deps.py` - Add `get_current_admin_user` dependency
+- `backend/IMPORT_DOCUMENTATION.md` - Full API documentation
+- `backend/tests/test_imports.py` - Integration tests
 
 ## Testing
 
 Sample data creation script provided at `/tmp/test_imports.py`
 
-Comprehensive test suite at `backend_2/tests/test_imports.py`
+Comprehensive test suite at `backend/tests/test_imports.py`
 
 ## Security Scan Results
 

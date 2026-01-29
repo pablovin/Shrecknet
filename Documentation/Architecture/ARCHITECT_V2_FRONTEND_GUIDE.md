@@ -222,7 +222,7 @@ All new fields are in the `metadata` object, so existing code won't break.
 You can test the new format using the example script:
 
 ```bash
-cd backend_2
+cd backend
 python examples/architect_v2_example.py
 ```
 

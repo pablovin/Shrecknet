@@ -2,7 +2,7 @@
 
 This guide explains how to run the backend_2 application using Docker Compose.
 
-> **⚡ NEW: Lightning-Fast Builds!** For ~10-30 second build times, see [VENV_DEPLOYMENT.md](VENV_DEPLOYMENT.md)
+This guide assumes a fresh clone and a single `docker compose up --build`.
 
 ## Prerequisites
 
@@ -23,51 +23,15 @@ The docker-compose setup includes:
 
 ## Quick Start
 
-### Option 1: Lightning-Fast Build (Recommended)
-
-For **10-30 second builds**, pre-build your dependencies first:
-
 ```bash
-# Build .venv once (takes 15-30 minutes)
-cd backend_2
-./build-venv.sh --ml
-
-# Now Docker builds are super fast!
-cd ..
-docker compose build    # ~10-30 seconds ⚡
-docker compose up -d
+docker compose up --build
 ```
-
-See [VENV_DEPLOYMENT.md](VENV_DEPLOYMENT.md) for complete details.
-
-### Option 2: Standard Build
-
-Build dependencies from scratch (takes 15-30 minutes):
-
-```bash
-docker compose build    # ~15-30 minutes
-docker compose up -d
-```
-
-### Validate Configuration
-
-Before starting, validate the Docker setup:
-
-```bash
-./validate-docker.sh
-```
-
-This script checks:
-- Docker and Docker Compose installation
-- docker-compose.yml syntax
-- Required services are defined
-- Persistent volumes are configured
 
 ### Start Services
 
 ```bash
-# Build and start all services
-docker compose up -d
+# Build and start all services (detached)
+docker compose up --build -d
 
 # View logs
 docker compose logs -f
@@ -88,9 +52,9 @@ All data is stored in Docker volumes and persists across container restarts:
 - **neo4j-data**: Neo4j graph database
 - **redis-data**: Redis persistence
 
-These volumes are NOT deleted when you run `docker-compose down`. To remove them, use:
+These volumes are NOT deleted when you run `docker compose down`. To remove them, use:
 ```bash
-docker-compose down -v
+docker compose down -v
 ```
 
 ## Accessing Services
@@ -127,16 +91,16 @@ If the initial build is slow, this is normal for the first time due to downloadi
 
 To rebuild only a specific service:
 ```bash
-docker-compose build backend_2
+docker compose build backend_2
 ```
 
 ### Service Won't Start
 Check the logs:
 ```bash
-docker-compose logs backend_2
-docker-compose logs backend_2_worker
-docker-compose logs neo4j
-docker-compose logs redis
+docker compose logs backend_2
+docker compose logs backend_2_worker
+docker compose logs neo4j
+docker compose logs redis
 ```
 
 Restart a specific service:
@@ -178,7 +142,7 @@ For development, you can mount the code directory instead of copying:
 ```yaml
 # Add to backend_2 service in docker-compose.yml:
 volumes:
-  - ./backend_2/app:/app/app
+  - ./backend/app:/app/app
 ```
 
 Then restart the service when code changes.

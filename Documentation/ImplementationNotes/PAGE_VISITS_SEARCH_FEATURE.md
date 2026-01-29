@@ -109,7 +109,7 @@ dependencies=[Depends(require_roles(UserRole.WORLD_BUILDER, UserRole.ADMIN))]
 
 ## Testing
 
-Test file created at `backend_2/tests/test_page_visits.py` with coverage for:
+Test file created at `backend/tests/test_page_visits.py` with coverage for:
 - Searching by page_key pattern
 - Searching by page_alias pattern
 - Searching by ontology_instance_id pattern

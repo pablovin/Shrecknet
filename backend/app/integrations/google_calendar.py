@@ -131,7 +131,8 @@ def _build_event_body(
     if timezone_name:
         tz = ZoneInfo(timezone_name)
         if start.tzinfo is None:
-            start = start.replace(tzinfo=tz)
+            # Treat naive stored timestamps as UTC (we store scheduled_date in UTC).
+            start = start.replace(tzinfo=ZoneInfo("UTC"))
         start = start.astimezone(tz)
         time_zone = timezone_name
     else:

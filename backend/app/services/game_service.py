@@ -206,6 +206,14 @@ class GameService:
     ) -> tuple[GameSessionPoll, list[int]]:
         poll = await self.repository.finalize_poll(poll, option)
         session.scheduled_date = option.proposed_start
+        tz_name: str | None = None
+        if option.proposed_start.tzinfo is not None and hasattr(
+            option.proposed_start.tzinfo, "key"
+        ):
+            tz_name = option.proposed_start.tzinfo.key
+        if tz_name is None:
+            tz_name = session.scheduled_timezone or "UTC"
+        session.scheduled_timezone = tz_name
         await self.repository.save(session)
 
         votes = await self.repository.votes_for_option(option.id)

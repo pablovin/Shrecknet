@@ -543,7 +543,13 @@ async def sync_calendar_sessions(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Game has no google_calendar_id configured",
         )
-    if not get_settings().google_service_account_json:
+    settings = get_settings()
+    if not settings.activate_google_calendar:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Google Calendar integration is disabled",
+        )
+    if not settings.google_service_account_json:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Google service account is not configured",

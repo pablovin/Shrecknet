@@ -53,6 +53,7 @@ services:
     restart: unless-stopped
     environment:
       - SHRECKNET_DATA_DIR=/data
+      - SHRECKNET_MEDIA_ROOT=/app/media
     ports:
       - "8000:8000"  
     volumes:
@@ -80,6 +81,7 @@ services:
     restart: unless-stopped
     environment:
       - SHRECKNET_DATA_DIR=/data
+      - SHRECKNET_MEDIA_ROOT=/app/media
     command: celery -A app.celery_app worker --loglevel=info --concurrency=2    
     volumes:
       - ./backend/media:/app/media

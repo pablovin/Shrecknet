@@ -39,6 +39,18 @@ def _sqlite_url(filename: str) -> str:
 def _env_or_default(name: str, default: str) -> str:
     return os.getenv(name, default)
 
+def _default_media_root() -> str:
+    env_value = os.getenv("SHRECKNET_MEDIA_ROOT")
+    if env_value:
+        return env_value
+    if Path("/app/media").exists():
+        return "/app/media"
+    if Path("backend/media").exists():
+        return "backend/media"
+    if Path("media").exists():
+        return "media"
+    return "./media"
+
 
 class Settings(BaseModel):
     model_config = ConfigDict(protected_namespaces=())
@@ -68,7 +80,7 @@ class Settings(BaseModel):
     cors_allow_methods: list[str] = Field(default_factory=lambda: ["*"])
     cors_allow_headers: list[str] = Field(default_factory=lambda: ["*"])
     cors_max_age: int = 3600
-    media_root: str = "./media"
+    media_root: str = Field(default_factory=_default_media_root)
     media_base_url: str = "/media"
     media_public_url: str | None = None
     max_image_upload_bytes: int = 10 * 1024 * 1024
@@ -106,6 +118,7 @@ class Settings(BaseModel):
     enable_tracing: bool = True
     rate_limit_rpm: int | None = None
     google_service_account_json: str | None = "/app/app/core/shrecknet.json"
+    activate_google_calendar: bool = False
     google_calendar_default_duration_minutes: int = 180
     google_delegated_user_email: str | None = "pablovin@shrecknet.club"
     embedding_device: str = "cpu"
@@ -186,6 +199,9 @@ def load_settings() -> Settings:
         merged = _seed_defaults_if_needed(conn)
     finally:
         conn.close()
+    env_media_root = os.getenv("SHRECKNET_MEDIA_ROOT")
+    if env_media_root:
+        merged["media_root"] = env_media_root
     return Settings(**merged)
 
 

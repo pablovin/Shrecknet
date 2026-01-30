@@ -24,13 +24,13 @@ class PdfValidationError(ValueError):
 
 class MediaService:
     def __init__(self, *, base_path: Path | None = None) -> None:
-        settings = get_settings()
-        self.base_path = base_path or Path(settings.media_root)
+        self.settings = get_settings()
+        self.base_path = base_path or Path(self.settings.media_root)
         self.base_path.mkdir(parents=True, exist_ok=True)
-        self.max_size = settings.max_image_upload_bytes
-        self.max_width = settings.image_max_width
-        self.max_height = settings.image_max_height
-        self.max_pdf_bytes = settings.max_pdf_upload_bytes
+        self.max_size = self.settings.max_image_upload_bytes
+        self.max_width = self.settings.image_max_width
+        self.max_height = self.settings.image_max_height
+        self.max_pdf_bytes = self.settings.max_pdf_upload_bytes
 
     async def save_image(
         self,
@@ -143,11 +143,11 @@ class MediaService:
 
     def _build_url(self, relative_path: Path) -> str:
         relative_str = relative_path.as_posix()
-        public_base = getattr(settings, "media_public_url", None)
+        public_base = getattr(self.settings, "media_public_url", None)
         if public_base:
             public_base = public_base.rstrip("/")
             return f"{public_base}/{relative_str}"
-        base_url = settings.media_base_url.rstrip("/")
+        base_url = self.settings.media_base_url.rstrip("/")
         return f"{base_url}/{relative_str}"
 
     async def save_content_image(

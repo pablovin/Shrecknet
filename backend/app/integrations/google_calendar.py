@@ -83,6 +83,8 @@ class GoogleCalendarClient:
 
 def get_google_calendar_client(settings: Settings | None = None) -> GoogleCalendarClient | None:
     settings = settings or get_settings()
+    if not settings.activate_google_calendar:
+        return None
     if not settings.google_service_account_json:
         return None
     return GoogleCalendarClient(settings)

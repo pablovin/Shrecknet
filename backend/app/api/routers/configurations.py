@@ -1,17 +1,20 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
+from fastapi.responses import FileResponse
 
 from app.api.deps import get_current_admin_user
 from app.celery_app import configure_celery_app
 from app.core.config_store import Settings, get_settings, reload_settings, update_settings
 
 router = APIRouter(prefix="/config", tags=["config"])
+logger = logging.getLogger(__name__)
 
 MAX_GOOGLE_SERVICE_ACCOUNT_BYTES = 1024 * 1024
 GOOGLE_SERVICE_DIR = Path("secrets") / "google"
@@ -41,12 +44,17 @@ async def _save_google_service_account(
     settings: Settings,
 ) -> Path:
     if not upload.filename:
+        logger.warning("Google Calendar service account upload missing filename")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Missing filename for uploaded service account JSON",
         )
     contents = await upload.read()
     if len(contents) > MAX_GOOGLE_SERVICE_ACCOUNT_BYTES:
+        logger.warning(
+            "Google Calendar service account upload too large: %d bytes",
+            len(contents),
+        )
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             detail="Service account JSON exceeds size limit",
@@ -54,6 +62,10 @@ async def _save_google_service_account(
     try:
         json.loads(contents)
     except json.JSONDecodeError as exc:
+        logger.warning(
+            "Google Calendar service account upload invalid JSON: %s",
+            exc,
+        )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid JSON payload for service account",
@@ -166,9 +178,24 @@ def update_google_calendar_config(payload: dict[str, Any]) -> dict[str, Any]:
 )
 async def upload_google_calendar_service_account(
     file: UploadFile = File(...),
+    request: Request = None,
 ) -> dict[str, Any]:
     settings = get_settings()
-    stored_path = await _save_google_service_account(file, settings)
+    if request is not None:
+        logger.info(
+            "Google Calendar service account upload headers: %s",
+            dict(request.headers),
+        )
+    try:
+        stored_path = await _save_google_service_account(file, settings)
+    except HTTPException as exc:
+        logger.warning(
+            "Google Calendar service account upload failed: %s (filename=%s, content_type=%s)",
+            exc.detail,
+            file.filename,
+            file.content_type,
+        )
+        raise
     settings = update_settings({"google_service_account_json": str(stored_path)})
     configure_celery_app()
     return {
@@ -177,3 +204,29 @@ async def upload_google_calendar_service_account(
         "activate_google_calendar": settings.activate_google_calendar,
         "effective_enabled": settings.activate_google_calendar,
     }
+
+
+@router.get(
+    "/google-calendar/service-account",
+    dependencies=[Depends(get_current_admin_user)],
+    status_code=status.HTTP_200_OK,
+)
+def download_google_calendar_service_account() -> FileResponse:
+    settings = get_settings()
+    service_account_path = settings.google_service_account_json
+    if not service_account_path:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Google Calendar service account is not configured",
+        )
+    path = Path(service_account_path)
+    if not path.exists() or not path.is_file():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Google Calendar service account file not found",
+        )
+    return FileResponse(
+        path,
+        media_type="application/json",
+        filename=path.name,
+    )

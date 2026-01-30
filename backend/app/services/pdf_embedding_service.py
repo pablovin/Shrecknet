@@ -8,6 +8,7 @@ from typing import Any
 
 from neo4j import AsyncSession as AsyncNeo4jSession
 
+from app.core.config_store import get_settings
 from app.graphrag.embedding_service import EmbeddingService
 
 logger = logging.getLogger(__name__)
@@ -34,6 +35,7 @@ class PdfEmbeddingService:
             embedding_service: Optional embedding service (creates if None)
         """
         self.graph_session = graph_session
+        self.settings = get_settings()
         self.embedding_service = embedding_service or EmbeddingService(graph_session)
 
     async def ensure_vector_index(self) -> dict[str, Any]:
@@ -407,9 +409,9 @@ class PdfEmbeddingService:
         chunks = []
         # Build base URL for media
         base_url = (
-            settings.media_public_url.rstrip("/")
-            if settings.media_public_url
-            else settings.media_base_url.rstrip("/")
+            self.settings.media_public_url.rstrip("/")
+            if self.settings.media_public_url
+            else self.settings.media_base_url.rstrip("/")
         )
         async for record in result:
             print (f"[DEBUG] record keys: {record.keys()}\n"+

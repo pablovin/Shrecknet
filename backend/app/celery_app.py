@@ -3,8 +3,9 @@ from __future__ import annotations
 import logging
 
 from celery import Celery
+from celery.signals import task_prerun
 
-from app.core.config_store import get_settings
+from app.core.config_store import get_settings, reload_settings
 
 celery_app = Celery("backend_2")
 
@@ -35,3 +36,10 @@ def _log_celery_configuration(sender, **_kwargs):  # pragma: no cover - startup 
         sender.conf.result_backend,
         sender.conf.task_always_eager,
     )
+
+
+@task_prerun.connect
+def _reload_settings_for_task(*_args, **_kwargs) -> None:  # pragma: no cover - startup log
+    # Ensure workers pick up config changes made via the API/UI.
+    reload_settings()
+    configure_celery_app()

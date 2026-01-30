@@ -50,5 +50,5 @@ def JobsSessionMaker() -> AsyncSession:
 
 async def get_jobs_session() -> AsyncGenerator[AsyncSession, None]:
     """Dependency for getting a jobs database session."""
-    async with _get_jobs_session_maker() as session:
+    async with _get_jobs_session_maker()() as session:
         yield session

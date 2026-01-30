@@ -54,11 +54,13 @@ services:
     environment:
       - SHRECKNET_DATA_DIR=/data
       - SHRECKNET_MEDIA_ROOT=/app/media
+      - SHRECKNET_DEFAULT_IMAGES_ROOT=/app/default/images/world
     ports:
       - "8000:8000"  
     volumes:
       - ./backend/media:/app/media
       - ./databases:/data
+      - ./default/images/world:/app/default/images/world:ro
     depends_on:
       redis:
         condition: service_healthy
@@ -82,10 +84,12 @@ services:
     environment:
       - SHRECKNET_DATA_DIR=/data
       - SHRECKNET_MEDIA_ROOT=/app/media
+      - SHRECKNET_DEFAULT_IMAGES_ROOT=/app/default/images/world
     command: celery -A app.celery_app worker --loglevel=info --concurrency=2    
     volumes:
       - ./backend/media:/app/media
       - ./databases:/data
+      - ./default/images/world:/app/default/images/world:ro
     depends_on:
       redis:
         condition: service_healthy

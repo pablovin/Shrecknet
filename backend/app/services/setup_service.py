@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from pathlib import Path
 
 from app.core.config_store import get_settings
@@ -27,8 +28,10 @@ class _WorldEntitySpec:
 @dataclass(frozen=True)
 class _WorldRelationshipSpec:
     name: str
+    description: str
     source_entity: str
     destiny_entity: str
+    bi_directional: bool = False
 
 
 class SetupService:
@@ -41,9 +44,7 @@ class SetupService:
     ) -> None:
         self.ontology_service = ontology_service
         self.media_service = media_service
-        self.default_images_root = default_images_root or (
-            Path(__file__).resolve().parents[3] / "default" / "images" / "world"
-        )
+        self.default_images_root = default_images_root or self._resolve_default_images_root()
 
     async def create_default_worlds(self, worlds: list[str]) -> DefaultWorldsResponse:
         response = DefaultWorldsResponse()
@@ -71,6 +72,11 @@ class SetupService:
                 "description": self._world_description(world),
             }
         )
+        ontology_image_url = await self._copy_ontology_image(ontology.id)
+        if ontology_image_url:
+            ontology = await self.ontology_service.update_ontology(
+                ontology, {"image_url": ontology_image_url}
+            )
 
         entities_spec = self._entity_specs()
         entity_results: list[DefaultWorldEntityResult] = []
@@ -115,9 +121,9 @@ class SetupService:
                 source_id,
                 {
                     "name": spec.name,
-                    "description": spec.name,
+                    "description": spec.description,
                     "destiny_entity_id": destiny_id,
-                    "bi_directional": False,
+                    "bi_directional": spec.bi_directional,
                     "auto_generatable": False,
                     "author_type": AuthorType.AGENT,
                     "agent_id": "system",
@@ -146,6 +152,18 @@ class SetupService:
             return "A world of dread, mysteries, and unsettling truths."
         return "A world of advanced technology, distant stars, and bold exploration."
 
+    def _resolve_default_images_root(self) -> Path:
+        env_root = os.getenv("SHRECKNET_DEFAULT_IMAGES_ROOT")
+        if env_root:
+            return Path(env_root)
+        docker_root = Path("/app/default/images/world")
+        if docker_root.exists():
+            return docker_root
+        repo_root = Path(__file__).resolve().parents[3] / "default" / "images" / "world"
+        if repo_root.exists():
+            return repo_root
+        return Path("default/images/world")
+
     def _entity_specs(self) -> list[_WorldEntitySpec]:
         return [
             _WorldEntitySpec(
@@ -156,8 +174,8 @@ class SetupService:
                 image_filename="Adventure.png",
             ),
             _WorldEntitySpec(
-                name="Stories",
-                description="Narrative stories that unfold within each adventure.",
+                name="Story",
+                description="Narrative story arcs that unfold within each adventure.",
                 auto_generatable=False,
                 display_on_world=False,
                 image_filename="Story.png",
@@ -188,14 +206,11 @@ class SetupService:
     def _relationship_specs(self) -> list[_WorldRelationshipSpec]:
         return [
             _WorldRelationshipSpec(
-                name="has stories",
+                name="has story",
+                description="Stories that belong to this adventure.",
                 source_entity="Adventures",
-                destiny_entity="Stories",
-            ),
-            _WorldRelationshipSpec(
-                name="has adventures",
-                source_entity="Stories",
-                destiny_entity="Adventures",
+                destiny_entity="Story",
+                bi_directional=True,
             ),
         ]
 
@@ -216,3 +231,21 @@ class SetupService:
             else settings.media_base_url.rstrip("/")
         )
         return f"{base_url}/entity/{entity_id}/file.png"
+
+    async def _copy_ontology_image(self, ontology_id: int) -> str | None:
+        source_path = self.default_images_root / "World.png"
+        if not source_path.exists():
+            return None
+
+        settings = get_settings()
+        dest_root = Path(settings.media_root) / "ontology" / str(ontology_id)
+        dest_root.mkdir(parents=True, exist_ok=True)
+        dest_path = dest_root / "file.png"
+
+        dest_path.write_bytes(source_path.read_bytes())
+        base_url = (
+            settings.media_public_url.rstrip("/")
+            if settings.media_public_url
+            else settings.media_base_url.rstrip("/")
+        )
+        return f"{base_url}/ontology/{ontology_id}/file.png"

@@ -24,6 +24,8 @@ from app.api.routers import (
     ontologies,
     ontology_instances,
     page_visits,
+    llm_status,
+    setup,
     users,
 )
 
@@ -54,4 +56,6 @@ def get_api_router() -> APIRouter:
     router.include_router(legacy_export.router)
     router.include_router(background_jobs.router)
     router.include_router(backups.router)
+    router.include_router(llm_status.router)
+    router.include_router(setup.router)
     return router

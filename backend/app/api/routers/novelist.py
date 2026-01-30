@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db_session
+from app.core.config_store import get_settings, is_openai_configured
 from app.models.agent import Agent
 from app.models.user import User
 from app.repositories.agent_repository import AgentRepository
@@ -57,6 +58,12 @@ async def start_novelist_run(
     session: AsyncSession = Depends(get_db_session),
     service: NovelistService = Depends(get_novelist_service),
 ) -> NovelistRunRead:
+    settings = get_settings()
+    if not is_openai_configured(settings):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="OpenAI API key not configured",
+        )
     await _get_novelist_agent_or_404(agent_id, session)
 
     run = await service.create_run(

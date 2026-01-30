@@ -93,7 +93,7 @@ class Settings(BaseModel):
         )
     )
     celery_task_always_eager: bool = False
-    openai_api_key: str = "openAIKey"
+    openai_api_key: str = ""
     model_decompose: str = "gpt-4o-mini"
     model_subanswer: str = "gpt-4o-mini"
     model_synthesis: str = "gpt-4o-mini"
@@ -195,6 +195,15 @@ def get_settings() -> Settings:
         if _settings_cache is None:
             _settings_cache = load_settings()
         return _settings_cache
+
+
+def is_openai_configured(settings: Settings | None = None) -> bool:
+    settings = settings or get_settings()
+    raw_key = settings.openai_api_key or ""
+    key = raw_key.strip()
+    if not key:
+        return False
+    return key.lower() != "openaikey"
 
 
 def reload_settings() -> Settings:

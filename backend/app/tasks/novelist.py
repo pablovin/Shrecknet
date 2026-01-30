@@ -6,7 +6,7 @@ import logging
 from typing import Any
 
 from app.celery_app import celery_app
-from app.core.config_store import get_settings
+from app.core.config_store import get_settings, is_openai_configured
 from app.db.session import AsyncSessionMaker
 from app.graph.neo4j import get_driver
 from app.integrations.llm.model_policy import ModelPolicy
@@ -38,6 +38,8 @@ async def _execute_run(
     job_id: int,
 ) -> dict[str, Any]:
     settings = get_settings()
+    if not is_openai_configured(settings):
+        raise RuntimeError("OpenAI API key not configured")
     async with AsyncSessionMaker() as session:
         repo = NovelistRepository(session)
         agent_repo = AgentRepository(session)

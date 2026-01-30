@@ -12,7 +12,7 @@ from uuid import uuid4
 from collections import defaultdict
 
 from app.celery_app import celery_app
-from app.core.config_store import get_settings
+from app.core.config_store import get_settings, is_openai_configured
 from app.db.session import AsyncSessionMaker
 from app.graph.neo4j import get_driver
 from app.integrations.llm.model_policy import LLMTask, ModelPolicy
@@ -153,6 +153,8 @@ async def _execute_generation(
     author_id: str,
 ) -> dict[str, Any]:
     settings = get_settings()
+    if not is_openai_configured(settings):
+        raise RuntimeError("OpenAI API key not configured")
     async with AsyncSessionMaker() as session:
         repo = ArchitectRepository(session)
         run = await repo.get_run(run_id, with_proposals=False)

@@ -196,6 +196,12 @@ curl -X POST "http://localhost:8000/media-admin/images" \
 - File size limit is 10 MB by default (configurable via `BACKEND_2_MAX_IMAGE_UPLOAD_BYTES`)
 - Main images always overwrite the previous main image for that content
 - Non-main images use incremental numbering starting from 1
+
+## Setup wizard defaults
+
+- Create the default worlds with `POST /setup/default-worlds`. This seeds the `fantasy`, `horror`,
+  and `scifi` ontologies with Adventures, Stories, NPCs, Players, and Places, and copies default
+  images from `default/images/world` into `media/entity/{entity_id}/file.png`.
 ## Notifications
 
 - Admins and world builders can curate player-facing updates via `/notifications/`. CRUD routes let

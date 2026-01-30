@@ -117,7 +117,7 @@ class Settings(BaseModel):
     default_top_k: int = 8
     enable_tracing: bool = True
     rate_limit_rpm: int | None = None
-    google_service_account_json: str | None = "/app/app/core/shrecknet.json"
+    google_service_account_json: str | None = None
     activate_google_calendar: bool = False
     google_calendar_default_duration_minutes: int = 180
     google_delegated_user_email: str | None = "pablovin@shrecknet.club"

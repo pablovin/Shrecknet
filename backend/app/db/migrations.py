@@ -505,6 +505,27 @@ async def migrate_game_calendar_fields(engine: AsyncEngine) -> None:
                 )
 
 
+async def migrate_game_vtt_fields(engine: AsyncEngine) -> None:
+    """Ensure VTT column exists for games."""
+    async with engine.begin() as conn:
+        inspector = await conn.run_sync(lambda sync_conn: inspect(sync_conn))
+        tables = await conn.run_sync(lambda sync_conn: inspector.get_table_names())
+
+        if "games" not in tables:
+            logger.debug("games table does not exist, skipping migration")
+            return
+
+        game_columns = await conn.run_sync(
+            lambda sync_conn: [col["name"] for col in inspector.get_columns("games")]
+        )
+        if "vtt" in game_columns:
+            logger.debug("games.vtt already exists, skipping")
+            return
+
+        logger.info("Adding vtt column to games")
+        await conn.execute(text("ALTER TABLE games ADD COLUMN vtt VARCHAR(255)"))
+
+
 async def migrate_note_responses(engine: AsyncEngine) -> None:
     """
     Create responses table for note responses/comments.

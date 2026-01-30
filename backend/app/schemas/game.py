@@ -19,6 +19,7 @@ class GameBase(BaseModel):
     name: str = Field(..., max_length=255)
     ontology_id: int
     google_calendar_id: str | None = Field(None, max_length=255)
+    vtt: str | None = Field(None, max_length=255)
 
 
 class GameCreate(GameBase):
@@ -29,6 +30,7 @@ class GameUpdate(BaseModel):
     name: str | None = Field(None, max_length=255)
     ontology_id: int | None = None
     google_calendar_id: str | None = Field(None, max_length=255)
+    vtt: str | None = Field(None, max_length=255)
     member_ids: list[int] | None = None
 
 

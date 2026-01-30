@@ -7,6 +7,7 @@ from app.db.migrations import (
     migrate_game_calendar_fields,
     migrate_game_datetimes_to_brussels_timezone,
     migrate_game_session_timezones,
+    migrate_game_vtt_fields,
     migrate_notification_preferences,
     migrate_note_responses,
     migrate_novelist_runs,
@@ -58,6 +59,9 @@ async def init_db(engine: AsyncEngine) -> None:
 
     # Ensure calendar sync columns exist
     await migrate_game_calendar_fields(engine)
+
+    # Ensure VTT column exists for games
+    await migrate_game_vtt_fields(engine)
 
     # Create responses table for forum functionality
     await migrate_note_responses(engine)

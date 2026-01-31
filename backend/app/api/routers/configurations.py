@@ -83,21 +83,30 @@ async def _save_google_service_account(
     return target_path
 
 
+def _get_config_payload() -> dict[str, Any]:
+    return get_settings().model_dump()
+
+
+@router.get(
+    "",
+    dependencies=[Depends(get_current_admin_user)],
+    status_code=status.HTTP_200_OK,
+    include_in_schema=False,
+)
+def get_config_no_slash() -> dict[str, Any]:
+    return _get_config_payload()
+
+
 @router.get(
     "/",
     dependencies=[Depends(get_current_admin_user)],
     status_code=status.HTTP_200_OK,
 )
 def get_config() -> dict[str, Any]:
-    return get_settings().model_dump()
+    return _get_config_payload()
 
 
-@router.put(
-    "/",
-    dependencies=[Depends(get_current_admin_user)],
-    status_code=status.HTTP_200_OK,
-)
-def put_config(payload: dict[str, Any]) -> dict[str, Any]:
+def _put_config_payload(payload: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -107,6 +116,25 @@ def put_config(payload: dict[str, Any]) -> dict[str, Any]:
     settings = update_settings(updates)
     configure_celery_app()
     return settings.model_dump()
+
+
+@router.put(
+    "",
+    dependencies=[Depends(get_current_admin_user)],
+    status_code=status.HTTP_200_OK,
+    include_in_schema=False,
+)
+def put_config_no_slash(payload: dict[str, Any]) -> dict[str, Any]:
+    return _put_config_payload(payload)
+
+
+@router.put(
+    "/",
+    dependencies=[Depends(get_current_admin_user)],
+    status_code=status.HTTP_200_OK,
+)
+def put_config(payload: dict[str, Any]) -> dict[str, Any]:
+    return _put_config_payload(payload)
 
 
 @router.post(

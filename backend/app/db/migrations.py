@@ -16,49 +16,60 @@ async def migrate_novelist_runs(engine: AsyncEngine) -> None:
     async with engine.begin() as conn:
         inspector = await conn.run_sync(lambda sync_conn: inspect(sync_conn))
         tables = await conn.run_sync(lambda sync_conn: inspector.get_table_names())
-        if "novelist_runs" in tables:
-            return
-        logger.info("Creating novelist_runs table")
-        # Minimal DDL to create table with sqlite compatibility
-        await conn.execute(
-            text(
-                """
-                CREATE TABLE novelist_runs (
-                    id VARCHAR(36) PRIMARY KEY,
-                    agent_id VARCHAR(36) NOT NULL,
-                    background_job_id INTEGER,
-                    ontology_id INTEGER,
-                    ontology_instance_id VARCHAR(64),
-                    status VARCHAR(20) NOT NULL,
-                    stage VARCHAR(20) NOT NULL,
-                    settings JSON,
-                    request_payload JSON,
-                    chunks JSON,
-                    draft_text TEXT,
-                    critic_notes TEXT,
-                    error_message TEXT,
-                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
-                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL
+        if "novelist_runs" not in tables:
+            logger.info("Creating novelist_runs table")
+            # Minimal DDL to create table with sqlite compatibility
+            await conn.execute(
+                text(
+                    """
+                    CREATE TABLE novelist_runs (
+                        id VARCHAR(36) PRIMARY KEY,
+                        agent_id VARCHAR(36) NOT NULL,
+                        background_job_id INTEGER,
+                        ontology_id INTEGER,
+                        ontology_instance_id VARCHAR(64),
+                        status VARCHAR(20) NOT NULL,
+                        stage VARCHAR(20) NOT NULL,
+                        settings JSON,
+                        request_payload JSON,
+                        artifacts JSON,
+                        draft_text TEXT,
+                        critic_notes TEXT,
+                        error_message TEXT,
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+                        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL
+                    )
+                    """
                 )
-                """
             )
-        )
-        await conn.execute(
-            text(
-                "CREATE INDEX IF NOT EXISTS ix_novelist_runs_agent_id ON novelist_runs (agent_id)"
+            await conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_novelist_runs_agent_id ON novelist_runs (agent_id)"
+                )
             )
-        )
-        await conn.execute(
-            text(
-                "CREATE INDEX IF NOT EXISTS ix_novelist_runs_status ON novelist_runs (status)"
+            await conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_novelist_runs_status ON novelist_runs (status)"
+                )
             )
-        )
-        await conn.execute(
-            text(
-                "CREATE INDEX IF NOT EXISTS ix_novelist_runs_stage ON novelist_runs (stage)"
+            await conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_novelist_runs_stage ON novelist_runs (stage)"
+                )
             )
+            logger.info("novelist_runs table created")
+            return
+
+        columns = await conn.run_sync(
+            lambda sync_conn: inspector.get_columns("novelist_runs")
         )
-        logger.info("novelist_runs table created")
+        column_names = [col["name"] for col in columns]
+        if "artifacts" not in column_names:
+            logger.info("Adding artifacts column to novelist_runs table")
+            await conn.execute(
+                text("ALTER TABLE novelist_runs ADD COLUMN artifacts JSON")
+            )
+            logger.info("artifacts column added")
 
 
 async def migrate_jobs_database(engine: AsyncEngine) -> None:

@@ -14,12 +14,13 @@ from app.jobs.elder.elder import ElderOrchestrator
 from app.jobs.elder.schemas import ElderQueryRequest
 from app.jobs.novelist.prompts import (
     CRITIC_PROMPT,
-    NOVELIST_CHUNK_PROMPT,
-    QUESTION_PROMPT,
+    ELDER_QUESTION_PROMPT,
+    PART_PROMPT,
+    PLAN_PROMPT,
 )
 from app.models.agent import Agent
 from app.models.novelist import NovelistStage
-from app.schemas.novelist import NovelistRunCreate
+from app.schemas.novelist import NovelistRunCreate, NovelistSource
 
 logger = logging.getLogger(__name__)
 
@@ -36,9 +37,6 @@ class NovelistOrchestrator:
         model_policy: ModelPolicy,
         graph_retriever: GraphRetriever,
         elder_orchestrator: ElderOrchestrator | None,
-        default_chunk_size: int = 2000,
-        default_max_chunks: int = 4,
-        default_questions_per_chunk: int = 10,
         max_concurrency: int = 4,
     ) -> None:
         self.llm_client = llm_client
@@ -48,9 +46,6 @@ class NovelistOrchestrator:
         # novelist-specific model preferences
         self.draft_model = getattr(model_policy, "model_novelist_draft", None)
         self.critic_model = getattr(model_policy, "model_novelist_critic", None)
-        self.default_chunk_size = default_chunk_size
-        self.default_max_chunks = default_max_chunks
-        self.default_questions_per_chunk = default_questions_per_chunk
         self.max_concurrency = max_concurrency
 
     async def execute(
@@ -59,70 +54,68 @@ class NovelistOrchestrator:
         agent: Agent,
         payload: NovelistRunCreate,
         elder_agent: Agent | None,
+        relevant_context_override: str | None = None,
         stage_callback: StageCallback | None = None,
     ) -> dict[str, Any]:
         language = payload.language
         instructions = payload.instructions
-        chunk_size = payload.chunk_size or self.default_chunk_size
-        max_chunks = payload.max_chunks or self.default_max_chunks
-        q_per_chunk = payload.questions_per_chunk or self.default_questions_per_chunk
-
-        chunks = self._build_chunks(payload.sources, chunk_size=chunk_size, max_chunks=max_chunks)
-        if not chunks:
+        # New pipeline: treat all sources as one combined input (no chunking).
+        logger.info("Novelist: building combined input")
+        chunk = self._build_combined_input(payload.sources)
+        if not chunk:
             raise ValueError("No content to process")
 
-        # Stage 1: questions
-        semaphore = asyncio.Semaphore(self.max_concurrency)
-        await asyncio.gather(
-            *[
-                self._generate_questions_for_chunk(
-                    chunk=chunk,
-                    instructions=instructions,
-                    questions_per_chunk=q_per_chunk,
-                    semaphore=semaphore,
-                )
-                for chunk in chunks
-            ]
-        )
+        # Stage 1: relevant context
+        logger.info("Novelist: stage=RELEVANT")
+        relevant_context = (relevant_context_override or "").strip()
+        chunk["relevant_context"] = relevant_context
         if stage_callback:
-            await stage_callback(NovelistStage.QUESTIONS, {"chunks": chunks})
-
-        # Stage 2: answers via elder agent (if provided)
-        if elder_agent and self.elder_orchestrator:
-            await asyncio.gather(
-                *[
-                    self._answer_questions_for_chunk(
-                        chunk=chunk,
-                        elder_agent=elder_agent,
-                        semaphore=semaphore,
-                    )
-                    for chunk in chunks
-                ]
+            await stage_callback(
+                NovelistStage.RELEVANT,
+                {"relevant_context": relevant_context},
             )
-        if stage_callback:
-            await stage_callback(NovelistStage.ANSWERS, {"chunks": chunks})
 
-        # Stage 3: draft per chunk
-        await asyncio.gather(
-            *[
-                self._draft_chunk(
-                    chunk=chunk,
-                    instructions=instructions,
-                    language=language,
-                    novelist_prompt=payload.novelist_prompt,
-                    agent=agent,
-                    semaphore=semaphore,
-                )
-                    for chunk in chunks
-                ]
+        # Stage 2: plan per chunk
+        logger.info("Novelist: stage=PLANNING")
+        semaphore = asyncio.Semaphore(self.max_concurrency)
+        await self._plan_chunk(
+            chunk=chunk,
+            instructions=instructions,
+            language=language,
+            relevant_context=relevant_context,
+            semaphore=semaphore,
         )
         if stage_callback:
-            await stage_callback(NovelistStage.DRAFTING, {"chunks": chunks})
+            await stage_callback(NovelistStage.PLANNING, None)
 
-        # Stage 4: merge
+        # Stage 2.5: enrich plan with elder context per part (optional)
+        if elder_agent and self.elder_orchestrator:
+            logger.info("Novelist: stage=ELDER_ENRICH")
+            await self._enrich_plan_with_elder(
+                chunk=chunk,
+                elder_agent=elder_agent,
+                semaphore=semaphore,
+            )
+
+        # Stage 3: write parts per chunk (parallel)
+        logger.info("Novelist: stage=WRITING")
+        await self._write_chunk_parts(
+            chunk=chunk,
+            instructions=instructions,
+            language=language,
+            relevant_context=relevant_context,
+            novelist_prompt=payload.novelist_prompt,
+            agent=agent,
+            semaphore=semaphore,
+        )
         if stage_callback:
-            await stage_callback(NovelistStage.MERGING, {"chunks": chunks})
-        drafts = [c["draft"] for c in chunks if c.get("draft")]
+            await stage_callback(NovelistStage.WRITING, None)
+
+        # Stage 4: merge parts into chunk drafts, then merge chunks
+        logger.info("Novelist: stage=MERGING")
+        if stage_callback:
+            await stage_callback(NovelistStage.MERGING, None)
+        drafts = [chunk["draft"]] if chunk.get("draft") else []
         merged = await self._merge_chunks(
             drafts=drafts,
             instructions=instructions,
@@ -130,7 +123,8 @@ class NovelistOrchestrator:
             agent=agent,
         )
 
-        # Stage 5: critic + apply
+        # Stage 5: critic + apply to parts in parallel, then re-merge
+        logger.info("Novelist: stage=CRITIC")
         critic_notes = await self._critic_pass(
             draft=merged,
             critic_prompt=payload.critic_prompt,
@@ -138,52 +132,73 @@ class NovelistOrchestrator:
         if stage_callback:
             await stage_callback(
                 NovelistStage.CRITIC,
-                {"chunks": chunks, "draft_text": merged, "critic_notes": critic_notes},
+                {"draft_text": merged, "critic_notes": critic_notes},
             )
-        improved = await self._apply_critic(
-            draft=merged,
+        logger.info("Novelist: stage=APPLY_CRITIC")
+        await self._apply_critic_to_chunk_parts(
+            chunk=chunk,
             critic_notes=critic_notes,
+            instructions=instructions,
+            language=language,
+            agent=agent,
+            semaphore=semaphore,
+        )
+        if stage_callback:
+            await stage_callback(
+                NovelistStage.APPLY_CRITIC,
+                {"critic_notes": critic_notes},
+            )
+
+        improved_drafts = [chunk["draft"]] if chunk.get("draft") else []
+        improved = await self._merge_chunks(
+            drafts=improved_drafts,
             instructions=instructions,
             language=language,
             agent=agent,
         )
 
+        artifacts = self._build_artifacts(
+            payload=payload,
+            chunk=chunk,
+            relevant_context=relevant_context,
+            critic_notes=critic_notes,
+            final_text=improved,
+        )
+
         return {
-            "chunks": chunks,
+            "artifacts": artifacts,
             "draft_text": improved,
             "critic_notes": critic_notes,
         }
 
-    def _build_chunks(
-        self, sources: Sequence[dict[str, Any]], *, chunk_size: int, max_chunks: int
-    ) -> list[dict[str, Any]]:
-        entries: list[dict[str, Any]] = []
+    def _build_combined_input(
+        self, sources: Sequence[NovelistSource | dict[str, Any]]
+    ) -> dict[str, Any] | None:
+        combined_parts: list[str] = []
+        labels: list[str] = []
         for src in sources:
             text = self._load_source(src)
-            label = src.get("label")
-            words = text.split()
-            for start in range(0, len(words), chunk_size):
-                if len(entries) >= max_chunks:
-                    break
-                part = " ".join(words[start : start + chunk_size])
-                entries.append(
-                    {
-                        "index": len(entries),
-                        "source_label": label,
-                        "raw_preview": part,
-                        "questions": [],
-                        "answers": [],
-                        "draft": None,
-                        "status": "pending",
-                    }
-                )
-        return entries
+            label = self._get_source_value(src, "label")
+            if label:
+                labels.append(label)
+            if text:
+                combined_parts.append(text)
+        combined_text = "\n\n".join(combined_parts).strip()
+        if not combined_text:
+            return None
+        return {
+            "index": 0,
+            "source_label": ", ".join(labels) if labels else None,
+            "raw_preview": combined_text,
+            "draft": None,
+            "status": "pending",
+        }
 
-    def _load_source(self, source: dict[str, Any]) -> str:
-        kind = source.get("kind") or "text"
+    def _load_source(self, source: NovelistSource | dict[str, Any]) -> str:
+        kind = self._get_source_value(source, "kind") or "text"
         if kind == "text":
-            return source.get("content") or ""
-        path_raw = source.get("path")
+            return self._get_source_value(source, "content") or ""
+        path_raw = self._get_source_value(source, "path")
         if not path_raw:
             return ""
         path = Path(path_raw)
@@ -206,103 +221,453 @@ class NovelistOrchestrator:
             return "\n".join(pages)
         return path.read_text(encoding="utf-8", errors="ignore")
 
-    async def _generate_questions_for_chunk(
+    @staticmethod
+    def _get_source_value(source: NovelistSource | dict[str, Any], key: str) -> Any:
+        if isinstance(source, dict):
+            return source.get(key)
+        return getattr(source, key, None)
+
+    async def _plan_chunk(
         self,
         *,
         chunk: dict[str, Any],
         instructions: str | None,
-        questions_per_chunk: int,
+        language: str | None,
+        relevant_context: str,
         semaphore: asyncio.Semaphore,
     ) -> None:
         async with semaphore:
-            system_prompt = QUESTION_PROMPT
-            user_prompt = (
-                f"Text:\n{chunk['raw_preview'][:4000]}\n\n"
-                f"Instructions:\n{instructions or 'None'}\n\n"
-                f"Create up to {questions_per_chunk} short questions that would clarify context and characters."
+            prompt = PLAN_PROMPT
+            context_block = self._build_context_block(
+                instructions=instructions,
+                language=language,
+                relevant_context=relevant_context,
             )
+            user_prompt = (
+                f"{context_block}\n\nPrevious Event (previous chapter):\n"
+                f"{chunk['raw_preview']}\n\n"
+                "Create the plan now."
+            )
+            chunk["plan_prompt"] = {"system": prompt, "user": user_prompt}
             model = self.model_policy.get_model(LLMTask.VALIDATION)
             raw = await self.llm_client.chat(
                 model=model,
                 messages=[
-                    {"role": "system", "content": system_prompt},
+                    {"role": "system", "content": prompt},
                     {"role": "user", "content": user_prompt},
                 ],
-                temperature=0.3,
+                temperature=0.4,
             )
-            questions: list[str] = []
-            for line in raw.splitlines():
-                line = line.strip(" -*\t")
-                if line:
-                    questions.append(line)
-            chunk["questions"] = questions[:questions_per_chunk]
-            chunk["status"] = "questions"
+            plan, previous_summary = self._parse_three_part_plan(raw)
+            chunk["plan"] = plan
+            chunk["previous_session_summary"] = previous_summary
+            chunk["status"] = "planned"
 
-    async def _answer_questions_for_chunk(
+    async def _write_chunk_parts(
+        self,
+        *,
+        chunk: dict[str, Any],
+        instructions: str | None,
+        language: str | None,
+        relevant_context: str,
+        novelist_prompt: str | None,
+        agent: Agent,
+        semaphore: asyncio.Semaphore,
+    ) -> None:
+        plan = chunk.get("plan") or {}
+        plan_context = chunk.get("plan_context") or {}
+        parts = {
+            "beginning": plan.get("beginning", ""),
+            "climax": plan.get("climax", ""),
+            "conclusion": plan.get("conclusion", ""),
+        }
+        previous_summary = (chunk.get("previous_session_summary") or "").strip()
+
+        async def _write_part(part_name: str, plan_text: str) -> str:
+            async with semaphore:
+                context_block = self._build_context_block(
+                    instructions=instructions,
+                    language=language,
+                    relevant_context=relevant_context,
+                    agent=agent,
+                )
+                elder_context = (plan_context.get(part_name) or "").strip()
+                elder_block = (
+                    f"\nElder context for this part:\n{elder_context}"
+                    if elder_context
+                    else ""
+                )
+                previous_block = (
+                    f"\nPrevious Session Summary:\n{previous_summary}"
+                    if previous_summary
+                    else ""
+                )
+                user_prompt = (
+                    f"{context_block}{previous_block}{elder_block}\n\n"
+                    f"Previous Event (previous chapter):\n{chunk['raw_preview']}\n\n"
+                    f"Part to write: {part_name}\nPlan: {plan_text}\n\n"
+                    "Write the part now."
+                )
+                chunk.setdefault("part_prompts", {})[part_name] = {
+                    "system": novelist_prompt or PART_PROMPT,
+                    "user": user_prompt,
+                }
+                model = self.draft_model or self.model_policy.get_model(LLMTask.SYNTHESIS)
+                return await self.llm_client.chat(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": novelist_prompt or PART_PROMPT},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    temperature=0.9,
+                )
+
+        tasks = [
+            _write_part("beginning", parts["beginning"]),
+            _write_part("climax", parts["climax"]),
+            _write_part("conclusion", parts["conclusion"]),
+        ]
+        written = await asyncio.gather(*tasks)
+        part_drafts = {
+            "beginning": written[0],
+            "climax": written[1],
+            "conclusion": written[2],
+        }
+        chunk["parts"] = part_drafts
+        chunk["draft"] = self._merge_parts(
+            parts=part_drafts,
+            previous_summary=previous_summary,
+        )
+        chunk["status"] = "drafted"
+
+    async def _enrich_plan_with_elder(
         self,
         *,
         chunk: dict[str, Any],
         elder_agent: Agent,
         semaphore: asyncio.Semaphore,
     ) -> None:
-        if not chunk.get("questions"):
-            return
+        plan = chunk.get("plan") or {}
+        parts = {
+            "beginning": plan.get("beginning", ""),
+            "climax": plan.get("climax", ""),
+            "conclusion": plan.get("conclusion", ""),
+        }
+        chunk.setdefault("elder_questions", {})
 
-        async with semaphore:
-            answers: list[str] = []
-            for question in chunk["questions"]:
+        async def _enrich(part_name: str, plan_text: str) -> tuple[str, list[Any]]:
+            if not plan_text:
+                return "", []
+            async with semaphore:
+                questions = await self._generate_elder_questions(
+                    part_name=part_name,
+                    plan_text=plan_text,
+                )
+                chunk["elder_questions"][part_name] = questions
+                plan_summary = self._summarize_plan_text(plan_text, limit=800)
+                query = (
+                    "Provide relevant world and character context for this story plan. "
+                    "Return concise context only.\n"
+                    f"Part: {part_name}\n"
+                    f"Plan summary: {plan_summary}"
+                )
+                if questions:
+                    question_block = "\n".join(
+                        f"{idx}. {q}" for idx, q in enumerate(questions, start=1)
+                    )
+                    query = f"{query}\n\nQuestions:\n{question_block}"
+                query = self._truncate_query(query, limit=2000)
+                logger.info(
+                    "Novelist: elder query part=%s length=%d",
+                    part_name,
+                    len(query),
+                )
                 req = ElderQueryRequest(
-                    query=question,
-                    mode="nl",
+                    query=query,
+                    mode="context",
                     fast=True,
                     include_trace=False,
                 )
                 resp = await self.elder_orchestrator.execute(
-                    elder_agent,
-                    req,
-                    chat_history=None,
+                    elder_agent, req, chat_history=None
                 )
-                answers.append(resp.answer or "")
-            chunk["answers"] = answers
-            chunk["status"] = "answered"
+                return self._format_elder_context(resp.context), list(resp.context)
 
-    async def _draft_chunk(
+        tasks = [
+            _enrich("beginning", parts["beginning"]),
+            _enrich("climax", parts["climax"]),
+            _enrich("conclusion", parts["conclusion"]),
+        ]
+        enriched = await asyncio.gather(*tasks)
+        raw_context = {
+            "beginning": enriched[0][1],
+            "climax": enriched[1][1],
+            "conclusion": enriched[2][1],
+        }
+        chunk["plan_context"] = {
+            "beginning": enriched[0][0],
+            "climax": enriched[1][0],
+            "conclusion": enriched[2][0],
+        }
+        chunk["plan_context_raw"] = raw_context
+
+    @staticmethod
+    def _truncate_query(text: str, *, limit: int) -> str:
+        if len(text) <= limit:
+            return text
+        suffix = "\n[TRUNCATED]"
+        keep = max(0, limit - len(suffix))
+        return text[:keep] + suffix
+
+    @staticmethod
+    def _summarize_plan_text(text: str, *, limit: int) -> str:
+        cleaned = (text or "").strip()
+        if len(cleaned) <= limit:
+            return cleaned
+        lines = [line.strip() for line in cleaned.splitlines() if line.strip()]
+        summary_lines: list[str] = []
+        total = 0
+        for line in lines:
+            if total + len(line) + 1 > limit:
+                break
+            summary_lines.append(line)
+            total += len(line) + 1
+        if summary_lines:
+            return "\n".join(summary_lines)
+        return cleaned[:limit]
+
+    def _format_elder_context(self, context: Sequence[Any]) -> str:
+        if not context:
+            return ""
+        lines = ["Elder retrieved context:"]
+        for idx, item in enumerate(context, start=1):
+            name = getattr(item, "node_name", None) or "Unknown"
+            label = getattr(item, "node_label", None) or "Entity"
+            alias = getattr(item, "node_alias", None)
+            props = getattr(item, "properties", None) or {}
+            props_text = ", ".join(
+                f"{k}={v}" for k, v in list(props.items())[:6] if v is not None
+            )
+            alias_text = f" (alias: {alias})" if alias else ""
+            props_text = f" | properties: {props_text}" if props_text else ""
+            text = (getattr(item, "text", "") or "").strip()
+            if len(text) > 600:
+                text = text[:600] + "..."
+            lines.append(f"{idx}. {label}: {name}{alias_text}{props_text}\n{text}")
+        return "\n".join(lines)
+
+    async def _apply_critic_to_chunk_parts(
         self,
         *,
         chunk: dict[str, Any],
+        critic_notes: str,
         instructions: str | None,
         language: str | None,
-        novelist_prompt: str | None,
         agent: Agent,
         semaphore: asyncio.Semaphore,
     ) -> None:
-        async with semaphore:
-            prompt = novelist_prompt or NOVELIST_CHUNK_PROMPT
-            context_lines = []
-            if instructions:
-                context_lines.append(f"Instructions: {instructions}")
-            if language:
-                context_lines.append(f"Target language: {language}")
-            if chunk.get("answers"):
-                context_lines.append("Clarifications:")
-                context_lines.extend(f"- {a}" for a in chunk["answers"])
-            if agent.writing_style:
-                context_lines.append(f"Writer style: {agent.writing_style}")
-            context_block = "\n".join(context_lines)
-            user_prompt = (
-                f"{context_block}\n\nSource block:\n{chunk['raw_preview']}\n\nWrite the novelized text now."
-            )
-            model = self.draft_model or self.model_policy.get_model(LLMTask.SYNTHESIS)
-            draft = await self.llm_client.chat(
-                model=model,
-                messages=[
-                    {"role": "system", "content": prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                temperature=0.9,
-            )
-            chunk["draft"] = draft
-            chunk["status"] = "drafted"
+        parts = chunk.get("parts") or {}
+        if not parts:
+            return
+
+        async def _apply(part_name: str, part_text: str) -> str:
+            async with semaphore:
+                return await self._apply_critic_to_part(
+                    part_name=part_name,
+                    part_text=part_text,
+                    critic_notes=critic_notes,
+                    instructions=instructions,
+                    language=language,
+                    agent=agent,
+                )
+
+        tasks = [
+            _apply("beginning", parts.get("beginning", "")),
+            _apply("climax", parts.get("climax", "")),
+            _apply("conclusion", parts.get("conclusion", "")),
+        ]
+        improved = await asyncio.gather(*tasks)
+        improved_parts = {
+            "beginning": improved[0],
+            "climax": improved[1],
+            "conclusion": improved[2],
+        }
+        chunk["parts_improved"] = improved_parts
+        chunk["draft"] = self._merge_parts(
+            parts=improved_parts,
+            previous_summary=(chunk.get("previous_session_summary") or "").strip(),
+        )
+        chunk["status"] = "revised"
+
+    async def _apply_critic_to_part(
+        self,
+        *,
+        part_name: str,
+        part_text: str,
+        critic_notes: str,
+        instructions: str | None,
+        language: str | None,
+        agent: Agent,
+    ) -> str:
+        system_prompt = "Apply the critic notes to this part while keeping style consistent."
+        style_hint = f"\nWriter style: {agent.writing_style}" if agent.writing_style else ""
+        user_prompt = (
+            f"Part: {part_name}\nLanguage: {language or 'match input'}\n"
+            f"Instructions: {instructions or 'None'}{style_hint}\n\n"
+            f"Part text:\n{part_text}\n\nCritic notes:\n{critic_notes}\n\n"
+            "Return the revised part."
+        )
+        model = self.draft_model or self.model_policy.get_model(LLMTask.SYNTHESIS)
+        return await self.llm_client.chat(
+            model=model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0.6,
+        )
+
+    def _merge_parts(self, parts: dict[str, str], previous_summary: str) -> str:
+        previous_section = ""
+        if previous_summary:
+            previous_section = f"<h2>Previous Session</h2>\n{previous_summary.strip()}\n\n"
+        part_sections = [
+            f"<h2>Part 1: Beginning</h2>\n{parts.get('beginning', '').strip()}",
+            f"<h2>Part 2: Climax</h2>\n{parts.get('climax', '').strip()}",
+            f"<h2>Part 3: Conclusion</h2>\n{parts.get('conclusion', '').strip()}",
+        ]
+        return (previous_section + "\n\n".join(part_sections)).strip()
+
+    def _build_context_block(
+        self,
+        *,
+        instructions: str | None,
+        language: str | None,
+        relevant_context: str,
+        agent: Agent | None = None,
+    ) -> str:
+        context_lines = []
+        if instructions:
+            context_lines.append(f"Instructions: {instructions}")
+        if language:
+            context_lines.append(f"Target language: {language}")
+        if relevant_context:
+            context_lines.append(relevant_context)
+        if agent and agent.writing_style:
+            context_lines.append(f"Writer style: {agent.writing_style}")
+        return "\n".join(context_lines)
+
+    def _parse_three_part_plan(self, raw: str) -> tuple[dict[str, str], str]:
+        parts = {"beginning": "", "climax": "", "conclusion": ""}
+        previous_summary = ""
+        for line in raw.splitlines():
+            stripped = line.strip()
+            lower = stripped.lower()
+            if lower.startswith("previous session summary:") or lower.startswith(
+                "previous summary:"
+            ):
+                previous_summary = stripped.split(":", 1)[1].strip()
+            elif lower.startswith("beginning:"):
+                parts["beginning"] = stripped.split(":", 1)[1].strip()
+            elif lower.startswith("climax:"):
+                parts["climax"] = stripped.split(":", 1)[1].strip()
+            elif lower.startswith("conclusion:"):
+                parts["conclusion"] = stripped.split(":", 1)[1].strip()
+            elif lower.startswith("solution:") and not parts["conclusion"]:
+                parts["conclusion"] = stripped.split(":", 1)[1].strip()
+            elif lower.startswith("resolution:") and not parts["conclusion"]:
+                parts["conclusion"] = stripped.split(":", 1)[1].strip()
+        if not any(parts.values()):
+            parts["beginning"] = raw.strip()
+        return parts, previous_summary
+
+    def _build_artifacts(
+        self,
+        *,
+        payload: NovelistRunCreate,
+        chunk: dict[str, Any],
+        relevant_context: str,
+        critic_notes: str,
+        final_text: str,
+    ) -> dict[str, Any]:
+        return {
+            "inputs": {
+                "language": payload.language,
+                "instructions": payload.instructions,
+                "sources": self._serialize_sources(payload.sources),
+                "relevant_instance_ids": payload.relevant_instance_ids,
+            },
+            "relevant_context": relevant_context,
+            "plan_prompt": chunk.get("plan_prompt"),
+            "plan_response": chunk.get("plan"),
+            "previous_session_summary": chunk.get("previous_session_summary"),
+            "elder_questions": chunk.get("elder_questions"),
+            "elder_context_text": chunk.get("plan_context"),
+            "elder_context_nodes": self._serialize_context_nodes(
+                chunk.get("plan_context_raw")
+            ),
+            "part_prompts": chunk.get("part_prompts"),
+            "part_responses": chunk.get("parts"),
+            "critic_notes": critic_notes,
+            "final_text": final_text,
+        }
+
+    async def _generate_elder_questions(
+        self,
+        *,
+        part_name: str,
+        plan_text: str,
+    ) -> list[str]:
+        if not plan_text:
+            return []
+        model = self.model_policy.get_model(LLMTask.VALIDATION)
+        user_prompt = (
+            f"Part: {part_name}\nPlan:\n{plan_text}\n\nCreate the questions now."
+        )
+        raw = await self.llm_client.chat(
+            model=model,
+            messages=[
+                {"role": "system", "content": ELDER_QUESTION_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0.3,
+        )
+        questions: list[str] = []
+        for line in raw.splitlines():
+            stripped = line.strip()
+            if not stripped:
+                continue
+            if stripped[0].isdigit():
+                stripped = stripped.lstrip("0123456789. )-").strip()
+            if stripped:
+                questions.append(stripped)
+        return questions[:5]
+
+    @staticmethod
+    def _serialize_sources(
+        sources: Sequence[NovelistSource | dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        serialized: list[dict[str, Any]] = []
+        for source in sources:
+            if isinstance(source, dict):
+                serialized.append(source)
+            else:
+                serialized.append(source.model_dump())
+        return serialized
+
+    def _serialize_context_nodes(self, raw_context: Any) -> Any:
+        if not raw_context:
+            return raw_context
+        if isinstance(raw_context, dict):
+            return {
+                key: [item.model_dump() for item in value]
+                if isinstance(value, list)
+                else value
+                for key, value in raw_context.items()
+            }
+        if isinstance(raw_context, list):
+            return [item.model_dump() for item in raw_context]
+        return raw_context
 
     async def _merge_chunks(
         self,
@@ -312,6 +677,8 @@ class NovelistOrchestrator:
         language: str | None,
         agent: Agent,
     ) -> str:
+        if len(drafts) == 1:
+            return drafts[0]
         system_prompt = (
             "You merge multiple scene fragments into one coherent narrative while keeping voice consistent."
         )

@@ -20,7 +20,9 @@ class NovelistSource(BaseModel):
     path: Optional[str] = Field(
         None, description="Server-side absolute/relative file path when kind=file_path"
     )
-    label: Optional[str] = Field(None, description="Friendly name for UI")
+    label: Optional[str] = Field(
+        "Previous Event", description="Friendly name for UI"
+    )
 
     @field_validator("content", mode="after")
     def _require_content(cls, v, info):  # pragma: no cover - simple validation
@@ -33,18 +35,18 @@ class NovelistSource(BaseModel):
 class NovelistRunCreate(BaseModel):
     """Payload to start a novelist draft job (step 1)."""
 
-    sources: list[NovelistSource] = Field(..., min_length=1)
+    sources: list[NovelistSource] = Field(..., min_length=1, max_length=1)
     language: Optional[str] = Field(None, description="Target language override")
     instructions: Optional[str] = Field(
         None, description="User-supplied instructions (characters, style, etc.)"
     )
-    chunk_size: int = Field(
-        2000, description="Words per chunk before novelizing", ge=200, le=6000
-    )
-    max_chunks: int = Field(4, ge=1, le=20)
-    questions_per_chunk: int = Field(10, ge=1, le=20)
     elder_agent_id: Optional[str] = Field(
         None, description="Helper elder agent used to answer context questions"
+    )
+    relevant_instance_ids: list[str] = Field(
+        default_factory=list,
+        max_length=5,
+        description="Up to 5 ontology instance IDs to include as relevant context",
     )
     novelist_prompt: Optional[str] = Field(
         None, description="Custom prompt override for chunk novelization"
@@ -80,7 +82,7 @@ class NovelistRunRead(BaseModel):
     stage: str
     settings: dict[str, Any] | None = None
     request_payload: dict[str, Any] | None = None
-    chunks: list[dict[str, Any]] | None = None
+    artifacts: dict[str, Any] | None = None
     draft_text: Optional[str] = None
     critic_notes: Optional[str] = None
     error_message: Optional[str] = None

@@ -73,9 +73,7 @@ async def start_novelist_run(
         settings={
             "requested_by": current_user.id,
             "language": payload.language,
-            "chunk_size": payload.chunk_size,
-            "max_chunks": payload.max_chunks,
-            "questions_per_chunk": payload.questions_per_chunk,
+            "relevant_instance_ids": payload.relevant_instance_ids,
         },
         request_payload=payload.model_dump(),
     )

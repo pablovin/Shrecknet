@@ -26,11 +26,12 @@ class NovelistStage(str, Enum):
     """Progress markers for the multi-step pipeline."""
 
     INGEST = "ingest"
-    QUESTIONS = "questions"
-    ANSWERS = "answers"
-    DRAFTING = "drafting"
+    RELEVANT = "relevant"
+    PLANNING = "planning"
+    WRITING = "writing"
     MERGING = "merging"
     CRITIC = "critic"
+    APPLY_CRITIC = "apply_critic"
     DONE = "done"
 
 
@@ -60,7 +61,7 @@ class NovelistRun(Base):
     )
     settings: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     request_payload: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
-    chunks: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
+    artifacts: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     draft_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     critic_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)

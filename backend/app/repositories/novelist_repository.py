@@ -78,7 +78,7 @@ class NovelistRepository:
         *,
         status: NovelistRunStatus | None = None,
         stage: NovelistStage | None = None,
-        chunks: list[dict[str, Any]] | None = None,
+        artifacts: dict[str, Any] | None = None,
         draft_text: str | None = None,
         critic_notes: str | None = None,
         error_message: str | None = None,
@@ -90,8 +90,8 @@ class NovelistRepository:
             run.status = status
         if stage:
             run.stage = stage
-        if chunks is not None:
-            run.chunks = chunks
+        if artifacts is not None:
+            run.artifacts = artifacts
         if draft_text is not None:
             run.draft_text = draft_text
         if critic_notes is not None:

@@ -35,7 +35,7 @@ class NovelistSource(BaseModel):
 class NovelistRunCreate(BaseModel):
     """Payload to start a novelist draft job (step 1)."""
 
-    sources: list[NovelistSource] = Field(..., min_length=1, max_length=1)
+    sources: list[NovelistSource] = Field(..., min_length=1, max_length=3)
     language: Optional[str] = Field(None, description="Target language override")
     instructions: Optional[str] = Field(
         None, description="User-supplied instructions (characters, style, etc.)"

@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Sequence
+from html import unescape
+from html.parser import HTMLParser
 
 from app.integrations.llm.model_policy import LLMTask, ModelPolicy
 from app.integrations.llm.openai_client import OpenAIClient
@@ -25,6 +28,51 @@ from app.schemas.novelist import NovelistRunCreate, NovelistSource
 logger = logging.getLogger(__name__)
 
 StageCallback = Callable[[NovelistStage, dict[str, Any]], Awaitable[None]]
+
+PART_NAMES = ("beginning", "climax", "conclusion")
+
+
+class _HTMLTextExtractor(HTMLParser):
+    """Extract visible text from HTML while preserving inline text content."""
+
+    _BLOCK_TAGS = {
+        "article",
+        "section",
+        "div",
+        "p",
+        "li",
+        "ul",
+        "ol",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+        "br",
+    }
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self._parts: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag in self._BLOCK_TAGS:
+            self._parts.append("\n")
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in self._BLOCK_TAGS:
+            self._parts.append("\n")
+
+    def handle_data(self, data: str) -> None:
+        if data:
+            self._parts.append(data)
+
+    def text(self) -> str:
+        merged = "".join(self._parts)
+        merged = re.sub(r"\n{3,}", "\n\n", merged)
+        merged = re.sub(r"[ \t]{2,}", " ", merged)
+        return merged.strip()
 
 
 class NovelistOrchestrator:
@@ -64,6 +112,10 @@ class NovelistOrchestrator:
         chunk = self._build_combined_input(payload.sources)
         if not chunk:
             raise ValueError("No content to process")
+        previous_session_summary = await self._extract_previous_session_summary(
+            chunk.get("raw_preview", "")
+        )
+        chunk["previous_session_summary"] = previous_session_summary
 
         # Stage 1: relevant context
         logger.info("Novelist: stage=RELEVANT")
@@ -72,7 +124,10 @@ class NovelistOrchestrator:
         if stage_callback:
             await stage_callback(
                 NovelistStage.RELEVANT,
-                {"relevant_context": relevant_context},
+                {
+                    "relevant_context": relevant_context,
+                    "previous_session_summary": previous_session_summary,
+                },
             )
 
         # Stage 2: plan per chunk
@@ -190,6 +245,7 @@ class NovelistOrchestrator:
             "index": 0,
             "source_label": ", ".join(labels) if labels else None,
             "raw_preview": combined_text,
+            "source_clean_text": combined_text,
             "draft": None,
             "status": "pending",
         }
@@ -197,7 +253,7 @@ class NovelistOrchestrator:
     def _load_source(self, source: NovelistSource | dict[str, Any]) -> str:
         kind = self._get_source_value(source, "kind") or "text"
         if kind == "text":
-            return self._get_source_value(source, "content") or ""
+            return self._normalize_source_text(self._get_source_value(source, "content") or "")
         path_raw = self._get_source_value(source, "path")
         if not path_raw:
             return ""
@@ -205,7 +261,7 @@ class NovelistOrchestrator:
         if not path.exists():
             raise FileNotFoundError(f"Source file not found: {path}")
         if path.suffix.lower() == ".txt":
-            return path.read_text(encoding="utf-8", errors="ignore")
+            return self._normalize_source_text(path.read_text(encoding="utf-8", errors="ignore"))
         if path.suffix.lower() == ".pdf":
             try:
                 from PyPDF2 import PdfReader
@@ -218,14 +274,49 @@ class NovelistOrchestrator:
                     pages.append(page.extract_text() or "")
                 except Exception:
                     continue
-            return "\n".join(pages)
-        return path.read_text(encoding="utf-8", errors="ignore")
+            return self._normalize_source_text("\n".join(pages))
+        return self._normalize_source_text(path.read_text(encoding="utf-8", errors="ignore"))
+
+    def _normalize_source_text(self, text: str) -> str:
+        if not text:
+            return ""
+        stripped = text.strip()
+        if "<" in stripped and ">" in stripped:
+            parser = _HTMLTextExtractor()
+            try:
+                parser.feed(stripped)
+                parser.close()
+                cleaned = parser.text()
+                if cleaned:
+                    return cleaned
+            except Exception:
+                logger.warning("Novelist: HTML text normalization failed; falling back")
+        return unescape(stripped)
 
     @staticmethod
     def _get_source_value(source: NovelistSource | dict[str, Any], key: str) -> Any:
         if isinstance(source, dict):
             return source.get(key)
         return getattr(source, key, None)
+
+    async def _extract_previous_session_summary(self, previous_event_text: str) -> str:
+        cleaned = (previous_event_text or "").strip()
+        if not cleaned:
+            return ""
+        prompt = (
+            "Summarize the previous session in 4-7 concise sentences. "
+            "Keep only concrete events and character/location facts useful for continuity."
+        )
+        model = self.model_policy.get_model(LLMTask.VALIDATION)
+        summary = await self.llm_client.chat(
+            model=model,
+            messages=[
+                {"role": "system", "content": prompt},
+                {"role": "user", "content": cleaned},
+            ],
+            temperature=0.2,
+        )
+        return (summary or "").strip()
 
     async def _plan_chunk(
         self,
@@ -244,8 +335,8 @@ class NovelistOrchestrator:
                 relevant_context=relevant_context,
             )
             user_prompt = (
-                f"{context_block}\n\nPrevious Event (previous chapter):\n"
-                f"{chunk['raw_preview']}\n\n"
+                f"{context_block}\n\n"
+                f"Previous Session Summary:\n{chunk.get('previous_session_summary', '')}\n\n"
                 "Create the plan now."
             )
             chunk["plan_prompt"] = {"system": prompt, "user": user_prompt}
@@ -258,9 +349,9 @@ class NovelistOrchestrator:
                 ],
                 temperature=0.4,
             )
-            plan, previous_summary = self._parse_three_part_plan(raw)
+            plan, _unused_previous_summary = self._parse_three_part_plan(raw)
             chunk["plan"] = plan
-            chunk["previous_session_summary"] = previous_summary
+            chunk["plan_steps"] = self._build_plan_steps(plan)
             chunk["status"] = "planned"
 
     async def _write_chunk_parts(
@@ -304,7 +395,6 @@ class NovelistOrchestrator:
                 )
                 user_prompt = (
                     f"{context_block}{previous_block}{elder_block}\n\n"
-                    f"Previous Event (previous chapter):\n{chunk['raw_preview']}\n\n"
                     f"Part to write: {part_name}\nPlan: {plan_text}\n\n"
                     "Write the part now."
                 )
@@ -355,19 +445,21 @@ class NovelistOrchestrator:
         }
         chunk.setdefault("elder_questions", {})
 
-        async def _enrich(part_name: str, plan_text: str) -> tuple[str, list[Any]]:
+        async def _enrich(part_name: str, plan_text: str) -> tuple[str, str, list[str]]:
             if not plan_text:
-                return "", []
+                return "", "", []
             async with semaphore:
                 questions = await self._generate_elder_questions(
                     part_name=part_name,
                     plan_text=plan_text,
+                    source_text=chunk.get("raw_preview", ""),
+                    previous_session_summary=chunk.get("previous_session_summary", ""),
                 )
                 chunk["elder_questions"][part_name] = questions
                 plan_summary = self._summarize_plan_text(plan_text, limit=800)
                 query = (
-                    "Provide relevant world and character context for this story plan. "
-                    "Return concise context only.\n"
+                    "Provide concise lore context to support writing this part. "
+                    "If facts are unknown, say what is unknown.\n"
                     f"Part: {part_name}\n"
                     f"Plan summary: {plan_summary}"
                 )
@@ -384,14 +476,16 @@ class NovelistOrchestrator:
                 )
                 req = ElderQueryRequest(
                     query=query,
-                    mode="context",
+                    mode="both",
                     fast=True,
                     include_trace=False,
                 )
                 resp = await self.elder_orchestrator.execute(
                     elder_agent, req, chat_history=None
                 )
-                return self._format_elder_context(resp.context), list(resp.context)
+                elder_answer = (resp.answer or "").strip()
+                elder_context_text = elder_answer or self._format_elder_context(resp.context)
+                return elder_context_text, elder_answer, questions
 
         tasks = [
             _enrich("beginning", parts["beginning"]),
@@ -399,17 +493,16 @@ class NovelistOrchestrator:
             _enrich("conclusion", parts["conclusion"]),
         ]
         enriched = await asyncio.gather(*tasks)
-        raw_context = {
-            "beginning": enriched[0][1],
-            "climax": enriched[1][1],
-            "conclusion": enriched[2][1],
-        }
         chunk["plan_context"] = {
             "beginning": enriched[0][0],
             "climax": enriched[1][0],
             "conclusion": enriched[2][0],
         }
-        chunk["plan_context_raw"] = raw_context
+        chunk["elder_responses"] = {
+            "beginning": enriched[0][1],
+            "climax": enriched[1][1],
+            "conclusion": enriched[2][1],
+        }
 
     @staticmethod
     def _truncate_query(text: str, *, limit: int) -> str:
@@ -444,16 +537,11 @@ class NovelistOrchestrator:
             name = getattr(item, "node_name", None) or "Unknown"
             label = getattr(item, "node_label", None) or "Entity"
             alias = getattr(item, "node_alias", None)
-            props = getattr(item, "properties", None) or {}
-            props_text = ", ".join(
-                f"{k}={v}" for k, v in list(props.items())[:6] if v is not None
-            )
             alias_text = f" (alias: {alias})" if alias else ""
-            props_text = f" | properties: {props_text}" if props_text else ""
             text = (getattr(item, "text", "") or "").strip()
             if len(text) > 600:
                 text = text[:600] + "..."
-            lines.append(f"{idx}. {label}: {name}{alias_text}{props_text}\n{text}")
+            lines.append(f"{idx}. {label}: {name}{alias_text}\n{text}")
         return "\n".join(lines)
 
     async def _apply_critic_to_chunk_parts(
@@ -581,6 +669,20 @@ class NovelistOrchestrator:
             parts["beginning"] = raw.strip()
         return parts, previous_summary
 
+    def _build_plan_steps(self, plan: dict[str, str]) -> dict[str, list[str]]:
+        steps: dict[str, list[str]] = {}
+        for part_name in PART_NAMES:
+            text = (plan.get(part_name) or "").strip()
+            if not text:
+                steps[part_name] = []
+                continue
+            lines = [line.strip(" -\t") for line in text.splitlines() if line.strip()]
+            if len(lines) <= 1:
+                segments = [seg.strip() for seg in re.split(r"(?<=[.!?])\s+", text) if seg.strip()]
+                lines = segments if segments else [text]
+            steps[part_name] = lines[:8]
+        return steps
+
     def _build_artifacts(
         self,
         *,
@@ -600,12 +702,11 @@ class NovelistOrchestrator:
             "relevant_context": relevant_context,
             "plan_prompt": chunk.get("plan_prompt"),
             "plan_response": chunk.get("plan"),
+            "plan_steps": chunk.get("plan_steps"),
             "previous_session_summary": chunk.get("previous_session_summary"),
             "elder_questions": chunk.get("elder_questions"),
             "elder_context_text": chunk.get("plan_context"),
-            "elder_context_nodes": self._serialize_context_nodes(
-                chunk.get("plan_context_raw")
-            ),
+            "elder_responses": chunk.get("elder_responses"),
             "part_prompts": chunk.get("part_prompts"),
             "part_responses": chunk.get("parts"),
             "critic_notes": critic_notes,
@@ -617,12 +718,17 @@ class NovelistOrchestrator:
         *,
         part_name: str,
         plan_text: str,
+        source_text: str,
+        previous_session_summary: str,
     ) -> list[str]:
         if not plan_text:
             return []
         model = self.model_policy.get_model(LLMTask.VALIDATION)
         user_prompt = (
-            f"Part: {part_name}\nPlan:\n{plan_text}\n\nCreate the questions now."
+            f"Part: {part_name}\n"
+            f"Previous Session Summary:\n{previous_session_summary}\n\n"
+            f"Source text already known:\n{source_text}\n\n"
+            f"Plan:\n{plan_text}\n\nCreate the questions now."
         )
         raw = await self.llm_client.chat(
             model=model,
@@ -654,20 +760,6 @@ class NovelistOrchestrator:
             else:
                 serialized.append(source.model_dump())
         return serialized
-
-    def _serialize_context_nodes(self, raw_context: Any) -> Any:
-        if not raw_context:
-            return raw_context
-        if isinstance(raw_context, dict):
-            return {
-                key: [item.model_dump() for item in value]
-                if isinstance(value, list)
-                else value
-                for key, value in raw_context.items()
-            }
-        if isinstance(raw_context, list):
-            return [item.model_dump() for item in raw_context]
-        return raw_context
 
     async def _merge_chunks(
         self,

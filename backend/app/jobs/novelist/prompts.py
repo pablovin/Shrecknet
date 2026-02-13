@@ -5,15 +5,14 @@ Create a concise plan with three parts:
 1) Beginning
 2) Climax
 3) Conclusion
-Also provide a brief summary of the previous session (the previous chapter).
 
 Rules:
-- The provided context is authoritative. The source text is the previous chapter (Previous Event) and is unstructured material to be transformed into the next chapter.
+- The provided context is authoritative.
+- The "Previous Session Summary" already condenses the previous chapter and should be used as context.
 - Keep the story continuous across all three parts.
 - Include major beats, stakes, and key character actions in each part.
 - Keep each part to 3-6 sentences.
 Return in this exact format:
-Previous Session Summary: ...
 Beginning: ...
 Climax: ...
 Conclusion: ..."""
@@ -38,6 +37,17 @@ CRITIC_PROMPT = """You are a professional book critic. Review the story for:
 Return a concise bullet list of problems and fixes."""
 
 ELDER_QUESTION_PROMPT = """You are preparing questions for a lore assistant (the Elder).
-Given a story plan for a chapter part, list 3-5 concise questions about background facts that would help write this part well.
-The questions should focus on past events, character relationships, locations, and important objects relevant to the plan.
+Given:
+- a story plan for one chapter part
+- a previous session summary
+- source text already available to the writer
+
+List 3-5 concise questions about missing background facts that would help write this part well.
+
+Rules:
+- Ask only about facts that are NOT already answered by the provided source text.
+- Focus on unresolved entities, cities/locations, groups, objects, or relationships implied by the plan.
+- Questions must be specific (e.g., "Who is Manuel?" "Why does Manuel fight armed robbers?").
+- Do not ask to restate information that is already explicit in source text.
+
 Return the questions as a numbered list."""

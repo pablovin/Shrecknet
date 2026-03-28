@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from collections.abc import Sequence
 from datetime import datetime
@@ -25,6 +26,8 @@ from app.schemas.ontology_instance import (
 )
 
 from neo4j.time import DateTime as Neo4jDateTime
+
+logger = logging.getLogger(__name__)
 
 ISO_FORMAT = "%Y-%m-%dT%H:%M:%S.%fZ"
 
@@ -878,7 +881,10 @@ class OntologyInstanceService:
             return instance
 
         definitions = await self._load_entity_definitions(current.ontology_id)
-        self._validate_entities_payload(payload.entities, definitions)
+        entities_payload = self._sanitize_entities_payload_for_update(
+            payload.entities, definitions
+        )
+        self._validate_entities_payload(entities_payload, definitions)
 
         tx = await self.graph_session.begin_transaction()
         try:
@@ -894,7 +900,7 @@ class OntologyInstanceService:
             nodes_payload: list[
                 tuple[str, OntologyInstanceEntityCreate, dict[str, Any], str, str]
             ] = []
-            for entity_payload in payload.entities:
+            for entity_payload in entities_payload:
                 entity_node_id = str(uuid4())
                 alias_to_ids[entity_payload.alias] = entity_node_id
                 normalized_alias = re.sub(
@@ -1072,6 +1078,72 @@ class OntologyInstanceService:
 
             link_instance_task.delay(instance.instance_id)
             return instance
+
+    def _sanitize_entities_payload_for_update(
+        self,
+        entities: Sequence[OntologyInstanceEntityCreate],
+        definitions: dict[int, dict[str, Any]],
+    ) -> list[OntologyInstanceEntityCreate]:
+        """Drop stale property/relationship ids before strict validation."""
+        sanitized_entities: list[OntologyInstanceEntityCreate] = []
+        for entity in entities:
+            definition = definitions.get(entity.definition_id)
+            if definition is None:
+                sanitized_entities.append(entity)
+                continue
+
+            valid_property_ids = set(definition["properties"].keys())
+            valid_relationship_ids = set(definition["relationships"].keys())
+            filtered_properties = [
+                prop
+                for prop in entity.properties
+                if prop.definition_id in valid_property_ids
+            ]
+            filtered_relationships = [
+                rel
+                for rel in entity.relationships
+                if rel.definition_id in valid_relationship_ids
+            ]
+
+            dropped_property_ids = sorted(
+                {
+                    prop.definition_id
+                    for prop in entity.properties
+                    if prop.definition_id not in valid_property_ids
+                }
+            )
+            dropped_relationship_ids = sorted(
+                {
+                    rel.definition_id
+                    for rel in entity.relationships
+                    if rel.definition_id not in valid_relationship_ids
+                }
+            )
+
+            if dropped_property_ids:
+                logger.warning(
+                    "Dropping invalid property definitions during instance update "
+                    "for alias '%s': %s",
+                    entity.alias,
+                    dropped_property_ids,
+                )
+            if dropped_relationship_ids:
+                logger.warning(
+                    "Dropping invalid relationship definitions during instance update "
+                    "for alias '%s': %s",
+                    entity.alias,
+                    dropped_relationship_ids,
+                )
+
+            sanitized_entities.append(
+                entity.model_copy(
+                    update={
+                        "properties": filtered_properties,
+                        "relationships": filtered_relationships,
+                    }
+                )
+            )
+        return sanitized_entities
 
     async def list_timeline_events(self, instance_id: str) -> list[TimelineEventRead]:
         await self._get_instance_ontology_id(instance_id)

@@ -147,7 +147,8 @@ class GameService:
         game = await self.repository.get_game(updated.game_id)
         if game:
             await self._sync_calendar_for_session(game, updated)
-        return updated
+        reloaded = await self.repository.get_session(updated.game_id, updated.id)
+        return reloaded or updated
 
     async def set_attendance(
         self, session: GameSession, user_id: int, attending: bool

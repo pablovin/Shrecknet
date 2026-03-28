@@ -148,6 +148,7 @@ async def start_novelist_run_from_upload(
     file: UploadFile = File(...),
     language: str | None = Form(None),
     instructions: str | None = Form(None),
+    previous_session_id: str | None = Form(None),
     current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_db_session),
     service: NovelistService = Depends(get_novelist_service),
@@ -170,6 +171,7 @@ async def start_novelist_run_from_upload(
         unstructured_text=extracted_text,
         language=language,
         instructions=instructions,
+        previous_session_id=previous_session_id,
     )
     return await _create_and_queue_run(
         agent_id=agent_id,

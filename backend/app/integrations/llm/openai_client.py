@@ -3,7 +3,7 @@
 import asyncio
 import logging
 import random
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from openai import (
     APIConnectionError,
@@ -13,6 +13,8 @@ from openai import (
     InternalServerError,
     RateLimitError,
 )
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
+from langchain_openai import ChatOpenAI
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +39,9 @@ class OpenAIClient:
             timeout=timeout,
             max_retries=max_retries,
         )
+        # LangChain model cache and in-memory conversation buffers.
+        self._lc_models: dict[Tuple[str, float], ChatOpenAI] = {}
+        self._conversations: dict[str, list[BaseMessage]] = {}
         # Extra guard retries for transient network/provider failures.
         # SDK retries remain enabled; these retries run at the wrapper level.
         self.transient_retries = 2
@@ -65,6 +70,7 @@ class OpenAIClient:
         messages: List[Dict[str, str]],
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
+        conversation_id: Optional[str] = None,
     ) -> str:
         """
         Send a request using the Responses API.
@@ -88,25 +94,32 @@ class OpenAIClient:
             )
             temperature = 1.0
 
-        req: Dict[str, Any] = {
-            "model": model,
-            "input": messages,
-            "temperature": temperature,
-        }
-        if max_tokens is not None:
-            req["max_output_tokens"] = max_tokens
+        lc_messages = self._to_langchain_messages(messages)
+        if conversation_id:
+            history = self._conversations.setdefault(conversation_id, [])
+            input_messages = [*history, *lc_messages]
+        else:
+            input_messages = lc_messages
 
         attempts = self.transient_retries + 1
         for attempt in range(1, attempts + 1):
             try:
-                resp = await self._client.responses.create(**req)
-                try:
-                    return resp.output[0].content[0].text  # type: ignore[attr-defined]
-                except Exception:
-                    return getattr(resp, "output_text", "") or ""
+                llm = self._get_langchain_model(
+                    model=model,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                )
+                resp = await llm.ainvoke(input_messages)
+                text = self._extract_text_from_langchain_response(resp)
+                if conversation_id:
+                    # Persist only compact role-structured messages for this run thread.
+                    self._conversations.setdefault(conversation_id, []).extend(
+                        [*lc_messages, AIMessage(content=text)]
+                    )
+                return text
             except Exception as e:
                 if not self._is_retryable_exception(e) or attempt >= attempts:
-                    logger.error("OpenAI Responses API error for model %s: %s", model, e)
+                    logger.error("OpenAI/LangChain chat error for model %s: %s", model, e)
                     raise
                 sleep_seconds = min(12.0, (2 ** (attempt - 1)) + random.uniform(0.1, 0.7))
                 logger.warning(
@@ -120,6 +133,59 @@ class OpenAIClient:
                 await asyncio.sleep(sleep_seconds)
 
         raise RuntimeError("Unreachable retry loop state in OpenAIClient.chat")
+
+    @staticmethod
+    def _to_langchain_messages(messages: List[Dict[str, str]]) -> list[BaseMessage]:
+        out: list[BaseMessage] = []
+        for msg in messages:
+            role = (msg.get("role") or "").strip().lower()
+            content = str(msg.get("content", ""))
+            if role == "system":
+                out.append(SystemMessage(content=content))
+            elif role == "assistant":
+                out.append(AIMessage(content=content))
+            else:
+                out.append(HumanMessage(content=content))
+        return out
+
+    @staticmethod
+    def _extract_text_from_langchain_response(resp: Any) -> str:
+        content = getattr(resp, "content", "")
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            parts: list[str] = []
+            for item in content:
+                if isinstance(item, str):
+                    parts.append(item)
+                elif isinstance(item, dict):
+                    text_value = item.get("text")
+                    if isinstance(text_value, str):
+                        parts.append(text_value)
+            return "\n".join([p for p in parts if p]).strip()
+        return str(content or "")
+
+    def _get_langchain_model(
+        self,
+        *,
+        model: str,
+        temperature: float,
+        max_tokens: Optional[int],
+    ) -> ChatOpenAI:
+        key = (model, temperature)
+        cached = self._lc_models.get(key)
+        if cached is not None:
+            return cached
+        llm = ChatOpenAI(
+            api_key=self.api_key,
+            model=model,
+            temperature=temperature,
+            timeout=self.timeout,
+            max_retries=self.max_retries,
+            max_tokens=max_tokens,
+        )
+        self._lc_models[key] = llm
+        return llm
 
     @staticmethod
     def _is_retryable_exception(exc: Exception) -> bool:

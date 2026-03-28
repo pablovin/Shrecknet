@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -36,6 +36,19 @@ class NovelistRunCreate(BaseModel):
         None,
         description="Resolved continuity summary used as non-authoritative context.",
     )
+
+
+class NovelistTimelineGenerationRequest(BaseModel):
+    entity_instance_id: str = Field(..., min_length=1)
+    max_events: int = Field(default=3, ge=1, le=5)
+    force: bool = Field(default=False)
+
+
+class NovelistTimelineGenerationAccepted(BaseModel):
+    status: Literal["accepted"]
+    task_id: str
+    message: str
+    entity_instance_id: str
 
 class NovelistRunRead(BaseModel):
     """Response representing a Novelist run."""

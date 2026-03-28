@@ -43,6 +43,7 @@ def _job_to_frontend_format(job: BackgroundJobResponse) -> dict[str, Any]:
     }
 
 
+@router.get("", response_model=list[dict[str, Any]], include_in_schema=False)
 @router.get("/", response_model=list[dict[str, Any]])
 async def list_jobs(
     jobs_session: Annotated[AsyncSession, Depends(get_jobs_session)],

@@ -11,6 +11,7 @@ from . import (
     architect_generation_v2,
     backup_tasks,
     novelist,
+    novelist_timeline_generation,
 )
 
 __all__ = [
@@ -23,4 +24,5 @@ __all__ = [
     "architect_generation_v2",
     "backup_tasks",
     "novelist",
+    "novelist_timeline_generation",
 ]

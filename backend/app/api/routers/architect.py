@@ -269,3 +269,4 @@ async def generate_entities_from_validated_proposals(
         "run_id": run_id,
         "message": "Entity generation task started",
     }
+

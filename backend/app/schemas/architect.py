@@ -167,7 +167,6 @@ class RevisedSuggestion(BaseModel):
         description="Frontend approval status; only approved/merged should be generated",
     )
 
-
 class ArchitectValidationRequest(BaseModel):
     """Payload for step 2: processing validated proposals."""
 

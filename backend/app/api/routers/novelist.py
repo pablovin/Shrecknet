@@ -10,14 +10,36 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db_session
 from app.core.config_store import get_settings, is_openai_configured
+from app.graph.neo4j import get_driver
 from app.models.agent import Agent
 from app.models.user import User
 from app.repositories.agent_repository import AgentRepository
-from app.schemas.novelist import NovelistRunCreate, NovelistRunRead
+from app.schemas.novelist import (
+    NovelistRunCreate,
+    NovelistRunRead,
+    NovelistTimelineGenerationAccepted,
+    NovelistTimelineGenerationRequest,
+)
 from app.services.novelist_service import NovelistService
 from app.tasks.novelist import generate_draft
 
 router = APIRouter(prefix="/jobs/novelist", tags=["novelist"])
+
+
+async def _entity_exists(entity_instance_id: str) -> bool:
+    settings = get_settings()
+    driver = get_driver()
+    async with driver.session(database=settings.neo4j_database) as graph_session:
+        record = await graph_session.run(
+            """
+            MATCH (:EntityInstance {entity_instance_id: $entity_instance_id})
+            RETURN 1 AS found
+            LIMIT 1
+            """,
+            {"entity_instance_id": entity_instance_id},
+        )
+        row = await record.single()
+        return bool(row and row.get("found") == 1)
 
 
 async def _get_novelist_agent_or_404(
@@ -230,3 +252,48 @@ async def delete_novelist_run(
             status_code=status.HTTP_404_NOT_FOUND, detail="Novelist run not found"
         )
     return {"deleted": deleted}
+
+
+@router.post(
+    "/{agent_id}/timeline/generate",
+    response_model=NovelistTimelineGenerationAccepted,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def generate_timeline_for_existing_entity(
+    agent_id: str,
+    payload: NovelistTimelineGenerationRequest,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db_session),
+) -> NovelistTimelineGenerationAccepted:
+    settings = get_settings()
+    if not is_openai_configured(settings):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="OpenAI API key not configured",
+        )
+
+    agent = await _get_novelist_agent_or_404(agent_id, session)
+    if not await _entity_exists(payload.entity_instance_id):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Entity not found",
+        )
+
+    from app.tasks.novelist_timeline_generation import (
+        generate_timeline_for_entity as timeline_task,
+    )
+
+    result = timeline_task.delay(
+        agent_id=agent.id,
+        entity_instance_id=payload.entity_instance_id,
+        max_events=payload.max_events,
+        force=payload.force,
+        author_type="agent",
+        author_id=str(current_user.id),
+    )
+    return NovelistTimelineGenerationAccepted(
+        status="accepted",
+        task_id=result.id,
+        message="Timeline generation task started",
+        entity_instance_id=payload.entity_instance_id,
+    )

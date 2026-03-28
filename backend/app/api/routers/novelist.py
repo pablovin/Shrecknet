@@ -1,10 +1,11 @@
-"""API router for Novelist job (step 1 draft)."""
+"""API router for Novelist job."""
 
 from __future__ import annotations
 
 from typing import Any
+from io import BytesIO
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db_session
@@ -46,6 +47,69 @@ async def get_novelist_service(
     return NovelistService(session)
 
 
+def _extract_text_from_upload(file: UploadFile) -> str:
+    filename = (file.filename or "").lower()
+    suffix = filename.rsplit(".", 1)[-1] if "." in filename else ""
+    raw = file.file.read()
+    if not raw:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Uploaded file is empty",
+        )
+    if suffix == "txt":
+        return raw.decode("utf-8", errors="ignore").strip()
+    if suffix == "pdf":
+        try:
+            from PyPDF2 import PdfReader
+        except ImportError as exc:  # pragma: no cover - dependency guard
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="PyPDF2 is required to process PDF files",
+            ) from exc
+        reader = PdfReader(BytesIO(raw))
+        pages: list[str] = []
+        for page in reader.pages:
+            try:
+                pages.append(page.extract_text() or "")
+            except Exception:
+                continue
+        return "\n".join(pages).strip()
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="Unsupported file type. Use .txt or .pdf",
+    )
+
+
+async def _create_and_queue_run(
+    *,
+    agent_id: str,
+    payload: NovelistRunCreate,
+    current_user: User,
+    session: AsyncSession,
+    service: NovelistService,
+) -> NovelistRunRead:
+    run = await service.create_run(
+        agent_id=agent_id,
+        ontology_id=None,
+        ontology_instance_id=None,
+        settings={
+            "requested_by": current_user.id,
+            "language": payload.language,
+        },
+        request_payload=payload.model_dump(),
+    )
+
+    generate_draft.delay(
+        run_id=run.id,
+        request_payload=payload.model_dump(),
+        author_type="user",
+        author_id=str(current_user.id),
+    )
+
+    refreshed = await service.get_run(run.id)
+    return NovelistRunRead.model_validate(refreshed)
+
+
 @router.post(
     "/{agent_id}/runs",
     response_model=NovelistRunRead,
@@ -65,29 +129,55 @@ async def start_novelist_run(
             detail="OpenAI API key not configured",
         )
     await _get_novelist_agent_or_404(agent_id, session)
-
-    run = await service.create_run(
+    return await _create_and_queue_run(
         agent_id=agent_id,
-        ontology_id=None,
-        ontology_instance_id=None,
-        settings={
-            "requested_by": current_user.id,
-            "language": payload.language,
-            "relevant_instance_ids": payload.relevant_instance_ids,
-        },
-        request_payload=payload.model_dump(),
+        payload=payload,
+        current_user=current_user,
+        session=session,
+        service=service,
     )
 
-    # Fire background task
-    generate_draft.delay(
-        run_id=run.id,
-        request_payload=payload.model_dump(),
-        author_type="user",
-        author_id=str(current_user.id),
-    )
 
-    refreshed = await service.get_run(run.id)
-    return NovelistRunRead.model_validate(refreshed)
+@router.post(
+    "/{agent_id}/runs/upload",
+    response_model=NovelistRunRead,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def start_novelist_run_from_upload(
+    agent_id: str,
+    file: UploadFile = File(...),
+    language: str | None = Form(None),
+    instructions: str | None = Form(None),
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db_session),
+    service: NovelistService = Depends(get_novelist_service),
+) -> NovelistRunRead:
+    settings = get_settings()
+    if not is_openai_configured(settings):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="OpenAI API key not configured",
+        )
+    await _get_novelist_agent_or_404(agent_id, session)
+
+    extracted_text = _extract_text_from_upload(file)
+    if not extracted_text:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Could not extract text from uploaded file",
+        )
+    payload = NovelistRunCreate(
+        unstructured_text=extracted_text,
+        language=language,
+        instructions=instructions,
+    )
+    return await _create_and_queue_run(
+        agent_id=agent_id,
+        payload=payload,
+        current_user=current_user,
+        session=session,
+        service=service,
+    )
 
 
 @router.get(

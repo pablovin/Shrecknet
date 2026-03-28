@@ -2,16 +2,17 @@
 
 import asyncio
 import logging
-from typing import Any, Optional
+import random
+from typing import Any, Dict, List, Optional
 
-from openai import AsyncOpenAI
-
-logger = logging.getLogger(__name__)
-
-
-from typing import Any, Optional, List, Dict
-from openai import AsyncOpenAI
-import logging
+from openai import (
+    APIConnectionError,
+    APITimeoutError,
+    APIStatusError,
+    AsyncOpenAI,
+    InternalServerError,
+    RateLimitError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +37,9 @@ class OpenAIClient:
             timeout=timeout,
             max_retries=max_retries,
         )
+        # Extra guard retries for transient network/provider failures.
+        # SDK retries remain enabled; these retries run at the wrapper level.
+        self.transient_retries = 2
 
     async def aclose(self) -> None:
         """Close the underlying HTTP client to avoid loop shutdown errors."""
@@ -74,42 +78,58 @@ class OpenAIClient:
         Returns:
             str: model text
         """
-        try:
-            # some GPT-5-family models pin temp to 1.0
-            restricted_models = {"gpt-5", "gpt-5-mini", "gpt-5-nano"}
-            if model in restricted_models and temperature != 1.0:
-                logger.warning(
-                    "Temperature %.2f is not supported for model %s; using 1.0 instead",
-                    temperature,
-                    model,
-                )
-                temperature = 1.0
+        # some GPT-5-family models pin temp to 1.0
+        restricted_models = {"gpt-5", "gpt-5-mini", "gpt-5-nano", "gpt-5.1", "gpt-5.2"}
+        if model in restricted_models and temperature != 1.0:
+            logger.warning(
+                "Temperature %.2f is not supported for model %s; using 1.0 instead",
+                temperature,
+                model,
+            )
+            temperature = 1.0
 
-            # Responses API uses `input=...` for everything chat-like
-            # we can just pass our messages array directly
-            req: Dict[str, Any] = {
-                "model": model,
-                "input": messages,  # chat-style input
-                "temperature": temperature,
-            }
-            if max_tokens is not None:
-                # in Responses API this is called max_output_tokens
-                req["max_output_tokens"] = max_tokens
+        req: Dict[str, Any] = {
+            "model": model,
+            "input": messages,
+            "temperature": temperature,
+        }
+        if max_tokens is not None:
+            req["max_output_tokens"] = max_tokens
 
-            resp = await self._client.responses.create(**req)
-
-            # Responses API nests output a bit differently.
-            # Try to extract the main text safely.
-            text = ""
+        attempts = self.transient_retries + 1
+        for attempt in range(1, attempts + 1):
             try:
-                # usual shape: resp.output[0].content[0].text
-                text = resp.output[0].content[0].text  # type: ignore[attr-defined]
-            except Exception:
-                # fallback: sometimes SDK gives a convenience property
-                text = getattr(resp, "output_text", "") or ""
-            return text
+                resp = await self._client.responses.create(**req)
+                try:
+                    return resp.output[0].content[0].text  # type: ignore[attr-defined]
+                except Exception:
+                    return getattr(resp, "output_text", "") or ""
+            except Exception as e:
+                if not self._is_retryable_exception(e) or attempt >= attempts:
+                    logger.error("OpenAI Responses API error for model %s: %s", model, e)
+                    raise
+                sleep_seconds = min(12.0, (2 ** (attempt - 1)) + random.uniform(0.1, 0.7))
+                logger.warning(
+                    "Transient OpenAI error for model %s (attempt %d/%d): %s. Retrying in %.2fs",
+                    model,
+                    attempt,
+                    attempts,
+                    e,
+                    sleep_seconds,
+                )
+                await asyncio.sleep(sleep_seconds)
 
-        except Exception as e:
-            logger.error(f"OpenAI Responses API error for model {model}: {e}")
-            raise
+        raise RuntimeError("Unreachable retry loop state in OpenAIClient.chat")
+
+    @staticmethod
+    def _is_retryable_exception(exc: Exception) -> bool:
+        if isinstance(
+            exc,
+            (APITimeoutError, APIConnectionError, RateLimitError, InternalServerError),
+        ):
+            return True
+        if isinstance(exc, APIStatusError):
+            status = getattr(exc, "status_code", None)
+            return status in {408, 409, 429, 500, 502, 503, 504}
+        return False
 

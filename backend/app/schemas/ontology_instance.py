@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 from pydantic import ConfigDict
@@ -81,8 +81,6 @@ class OntologyInstanceEntityCreate(BaseModel):
             raise ValueError(f"{info.field_name} cannot be empty")
         return value
 
-    # text is optional and may be empty
-
 
 class OntologyInstanceEntityRead(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -102,16 +100,38 @@ class OntologyInstanceEntityRead(BaseModel):
     relationships: list[OntologyInstanceRelationshipRead] = Field(default_factory=list)
 
 
+EventRelationType = Literal["BEFORE", "AFTER", "DERIVED_FROM", "RELATED_TO"]
+
+
+class EventRelation(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    relation_type: EventRelationType
+    target_event_id: str
+
+    @field_validator("target_event_id", mode="before")
+    def validate_target_event_id(cls, value: str) -> str:
+        if value is None:
+            raise ValueError("target_event_id cannot be empty")
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("target_event_id cannot be empty")
+        return cleaned
+
+
 class TimelineEventBase(BaseModel):
     model_config = ConfigDict(extra="ignore")
     title: str
     description: str
-    created_from_instance_id: str | None = None
-    created_from_entity_id: str | None = None
-    related_instance_ids: list[str] = Field(default_factory=list)
-    related_entity_ids: list[str] = Field(default_factory=list)
-    before_event_id: str | None = None
-    after_event_id: str | None = None
+    source_entity_id: str | None = None
+    involves_entity_ids: list[str] = Field(default_factory=list)
+    relations: list[EventRelation] = Field(default_factory=list)
+    # Internal transitional fields (excluded from API serialization)
+    created_from_instance_id: str | None = Field(default=None, exclude=True)
+    created_from_entity_id: str | None = Field(default=None, exclude=True)
+    related_instance_ids: list[str] = Field(default_factory=list, exclude=True)
+    related_entity_ids: list[str] = Field(default_factory=list, exclude=True)
+    before_event_id: str | None = Field(default=None, exclude=True)
+    after_event_id: str | None = Field(default=None, exclude=True)
 
     @field_validator("title", "description", mode="before")
     def validate_text(cls, value: str, info):
@@ -124,23 +144,28 @@ class TimelineEventBase(BaseModel):
 
 
 class TimelineEventCreate(TimelineEventBase):
-    timeline_event_id: str | None = None
+    event_id: str | None = None
+    timeline_event_id: str | None = Field(default=None, exclude=True)
 
 
 class TimelineEventUpdate(BaseModel):
     model_config = ConfigDict(extra="ignore")
     title: str | None = None
     description: str | None = None
-    created_from_instance_id: str | None = None
-    created_from_entity_id: str | None = None
-    related_instance_ids: list[str] | None = None
-    related_entity_ids: list[str] | None = None
-    before_event_id: str | None = None
-    after_event_id: str | None = None
+    source_entity_id: str | None = None
+    involves_entity_ids: list[str] | None = None
+    relations: list[EventRelation] | None = None
+    created_from_instance_id: str | None = Field(default=None, exclude=True)
+    created_from_entity_id: str | None = Field(default=None, exclude=True)
+    related_instance_ids: list[str] | None = Field(default=None, exclude=True)
+    related_entity_ids: list[str] | None = Field(default=None, exclude=True)
+    before_event_id: str | None = Field(default=None, exclude=True)
+    after_event_id: str | None = Field(default=None, exclude=True)
 
 
 class TimelineEventRead(TimelineEventBase):
-    timeline_event_id: str
+    event_id: str
+    timeline_event_id: str | None = Field(default=None, exclude=True)
     instance_id: str
     ontology_id: int
     created_at: datetime
@@ -156,14 +181,14 @@ class OntologyInstanceCreate(OntologyInstanceBase):
     model_config = ConfigDict(extra="ignore")
     ontology_id: int
     entities: list[OntologyInstanceEntityCreate]
-    timeline_events: list[TimelineEventCreate] = Field(default_factory=list)
+    events: list[TimelineEventCreate] = Field(default_factory=list)
 
 
 class OntologyInstanceUpdate(BaseModel):
     model_config = ConfigDict(extra="ignore")
     name: str | None = None
     entities: list[OntologyInstanceEntityCreate] | None = None
-    timeline_events: list[TimelineEventCreate] | None = None
+    events: list[TimelineEventCreate] | None = None
 
 
 class OntologyInstanceRead(OntologyInstanceBase):
@@ -173,7 +198,7 @@ class OntologyInstanceRead(OntologyInstanceBase):
     created_at: datetime
     updated_at: datetime
     entities: list[OntologyInstanceEntityRead]
-    timeline_events: list[TimelineEventRead] = Field(default_factory=list)
+    events: list[TimelineEventRead] = Field(default_factory=list)
 
 
 class OntologyInstanceSummary(BaseModel):

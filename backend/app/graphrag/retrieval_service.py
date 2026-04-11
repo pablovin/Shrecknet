@@ -63,7 +63,7 @@ class RetrievalService:
         CALL db.index.vector.queryNodes('entity_chunk_vec_idx', $k, $query_embedding)
         YIELD node, score
         MATCH (node)<-[:HAS_CHUNK]-(parent)
-        WHERE (parent:EntityInstance OR parent:TimelineEvent)
+        WHERE (parent:EntityInstance OR parent:Event)
           AND score >= $score_threshold
           AND ($ontology_id IS NULL OR toInteger(node.ontology_id) = toInteger($ontology_id))
         RETURN node AS chunk, parent AS parent, score
@@ -228,14 +228,14 @@ class RetrievalService:
         """
         query = """
         MATCH (n {entity_instance_id: $node_id})
-        WHERE n:EntityInstance OR n:TimelineEvent
+        WHERE n:EntityInstance OR n:Event
         MATCH (n)-[r]->(m)
-        WHERE m:EntityInstance OR m:TimelineEvent
+        WHERE m:EntityInstance OR m:Event
         RETURN type(r) AS rel_type, 
                m.entity_instance_id AS node_id,
                coalesce(m.name, m.title, m.alias, m.entity_instance_id) AS name,
                CASE
-                   WHEN m:TimelineEvent THEN 'TimelineEvent'
+                   WHEN m:Event THEN 'TimelineEvent'
                    ELSE head(labels(m))
                END AS label
         LIMIT $limit

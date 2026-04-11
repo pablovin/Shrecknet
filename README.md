@@ -5,7 +5,7 @@
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.110-009688)
 ![React](https://img.shields.io/badge/React-Next.js-61DAFB)
 ![License](https://img.shields.io/badge/license-GPLv3-blue)
-![Version](https://img.shields.io/badge/version-0.2.0-orange)
+![Version](https://img.shields.io/badge/version-0.3.0-orange)
 
 > *"In the realm of endless imagination, where chronicles are written by both quill and code, Shrecknet emerges as your faithful companion—a mystical forge where worlds take shape, legends are born, and epic tales unfold."*
 

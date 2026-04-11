@@ -262,8 +262,8 @@ def _resolve_status(
     return default
 
 
-@router.get("/{instance_id}/timeline-events", response_model=list[TimelineEventRead])
-async def list_timeline_events(
+@router.get("/{instance_id}/events", response_model=list[TimelineEventRead])
+async def list_events(
     instance_id: str,
     service: OntologyInstanceService = Depends(get_ontology_instance_service),
     _: User = Depends(get_current_user),
@@ -278,11 +278,11 @@ async def list_timeline_events(
 
 
 @router.post(
-    "/{instance_id}/timeline-events",
+    "/{instance_id}/events",
     response_model=TimelineEventRead,
     status_code=status.HTTP_201_CREATED,
 )
-async def create_timeline_event(
+async def create_event(
     instance_id: str,
     payload: TimelineEventCreate,
     service: OntologyInstanceService = Depends(get_ontology_instance_service),
@@ -295,17 +295,17 @@ async def create_timeline_event(
 
 
 @router.get(
-    "/{instance_id}/timeline-events/{timeline_event_id}",
+    "/{instance_id}/events/{event_id}",
     response_model=TimelineEventRead,
 )
-async def get_timeline_event(
+async def get_event(
     instance_id: str,
-    timeline_event_id: str,
+    event_id: str,
     service: OntologyInstanceService = Depends(get_ontology_instance_service),
     _: User = Depends(get_current_user),
 ) -> TimelineEventRead:
     try:
-        return await service.get_timeline_event(instance_id, timeline_event_id)
+        return await service.get_timeline_event(instance_id, event_id)
     except ValueError as exc:
         raise HTTPException(
             status_code=_resolve_status(exc, default=status.HTTP_404_NOT_FOUND),
@@ -314,37 +314,37 @@ async def get_timeline_event(
 
 
 @router.put(
-    "/{instance_id}/timeline-events/{timeline_event_id}",
+    "/{instance_id}/events/{event_id}",
     response_model=TimelineEventRead,
 )
-async def update_timeline_event(
+async def update_event(
     instance_id: str,
-    timeline_event_id: str,
+    event_id: str,
     payload: TimelineEventUpdate,
     service: OntologyInstanceService = Depends(get_ontology_instance_service),
     _: User = Depends(require_roles(UserRole.ADMIN, UserRole.WORLD_BUILDER)),
 ) -> TimelineEventRead:
     try:
         return await service.update_timeline_event(
-            instance_id, timeline_event_id, payload
+            instance_id, event_id, payload
         )
     except ValueError as exc:
         raise HTTPException(status_code=_resolve_status(exc), detail=str(exc),) from exc
 
 
 @router.delete(
-    "/{instance_id}/timeline-events/{timeline_event_id}",
+    "/{instance_id}/events/{event_id}",
     status_code=status.HTTP_204_NO_CONTENT,
     response_class=Response,
 )
-async def delete_timeline_event(
+async def delete_event(
     instance_id: str,
-    timeline_event_id: str,
+    event_id: str,
     service: OntologyInstanceService = Depends(get_ontology_instance_service),
     _: User = Depends(require_roles(UserRole.ADMIN, UserRole.WORLD_BUILDER)),
 ) -> Response:
     try:
-        await service.delete_timeline_event(instance_id, timeline_event_id)
+        await service.delete_timeline_event(instance_id, event_id)
     except ValueError as exc:
         raise HTTPException(
             status_code=_resolve_status(exc, default=status.HTTP_404_NOT_FOUND),

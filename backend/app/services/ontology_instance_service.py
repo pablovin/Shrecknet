@@ -197,11 +197,11 @@ class OntologyInstanceService:
             resolved[ordered_ids[idx]] = result
         return resolved
 
-    async def _timeline_event_ids(self, instance_id: str) -> set[str]:
+    async def _event_ids(self, instance_id: str) -> set[str]:
         result = await self.graph_session.run(
             """
-            MATCH (:OntologyInstance {instance_id: $instance_id})-[:HAS_TIMELINE_EVENT]->(event:TimelineEvent)
-            RETURN event.timeline_event_id AS event_id
+            MATCH (:OntologyInstance {instance_id: $instance_id})-[:HAS_EVENT]->(event:Event)
+            RETURN event.event_id AS event_id
             """,
             instance_id=instance_id,
         )
@@ -209,149 +209,142 @@ class OntologyInstanceService:
         return {row["event_id"] for row in rows if row.get("event_id")}
 
     async def _clear_timeline_event_edges(
-        self, tx: AsyncTransaction, *, timeline_event_id: str
+        self, tx: AsyncTransaction, *, event_id: str
     ) -> None:
-        """Remove derived relationships for a timeline event before reapplying."""
+        """Remove derived relationships for an event before reapplying."""
         await tx.run(
             """
-            MATCH (event:TimelineEvent {timeline_event_id: $timeline_event_id})-[rel:SOURCE_ENTITY]->()
+            MATCH (event:Event {event_id: $event_id})-[rel:SOURCE_ENTITY]->()
             DELETE rel
             """,
-            timeline_event_id=timeline_event_id,
+            event_id=event_id,
         )
         await tx.run(
             """
-            MATCH (event:TimelineEvent {timeline_event_id: $timeline_event_id})-[rel:REFERENCES_SOURCE_INSTANCE]->()
+            MATCH (event:Event {event_id: $event_id})-[rel:INVOLVES_ENTITY]->()
             DELETE rel
             """,
-            timeline_event_id=timeline_event_id,
+            event_id=event_id,
         )
         await tx.run(
             """
-            MATCH (event:TimelineEvent {timeline_event_id: $timeline_event_id})-[rel:INVOLVES_ENTITY]->()
+            MATCH (event:Event {event_id: $event_id})-[rel:BEFORE|AFTER|DERIVED_FROM|RELATED_TO]->()
             DELETE rel
             """,
-            timeline_event_id=timeline_event_id,
-        )
-        await tx.run(
-            """
-            MATCH (event:TimelineEvent {timeline_event_id: $timeline_event_id})-[rel:FOLLOWS]->()
-            DELETE rel
-            """,
-            timeline_event_id=timeline_event_id,
-        )
-        await tx.run(
-            """
-            MATCH (event:TimelineEvent {timeline_event_id: $timeline_event_id})-[rel:PRECEDES]->()
-            DELETE rel
-            """,
-            timeline_event_id=timeline_event_id,
+            event_id=event_id,
         )
 
     async def _apply_timeline_event_edges(
         self,
         tx: AsyncTransaction,
         *,
-        timeline_event_id: str,
+        event_id: str,
         instance_id: str,
-        source_instance_id: str | None,
         source_entity_id: str | None,
-        related_entity_ids: list[str] | None,
-        before_event_id: str | None,
-        after_event_id: str | None,
+        involves_entity_ids: list[str] | None,
+        relations: list[dict[str, Any]] | None,
     ) -> None:
-        """Create relationships that mirror timeline metadata for traversal/retrieval."""
-        if source_instance_id:
-            await tx.run(
-                """
-                MATCH (event:TimelineEvent {timeline_event_id: $timeline_event_id})
-                MATCH (source:OntologyInstance {instance_id: $source_instance_id})
-                MERGE (event)-[:REFERENCES_SOURCE_INSTANCE]->(source)
-                """,
-                timeline_event_id=timeline_event_id,
-                source_instance_id=source_instance_id,
-            )
+        """Create explicit event relations for traversal/retrieval."""
         if source_entity_id:
             await tx.run(
                 """
-                MATCH (event:TimelineEvent {timeline_event_id: $timeline_event_id})
+                MATCH (event:Event {event_id: $event_id})
                 MATCH (entity:EntityInstance {entity_instance_id: $source_entity_id})
                 MERGE (event)-[:SOURCE_ENTITY]->(entity)
                 """,
-                timeline_event_id=timeline_event_id,
+                event_id=event_id,
                 source_entity_id=source_entity_id,
             )
-        related_ids = [rid for rid in (related_entity_ids or []) if rid]
+        related_ids = [rid for rid in (involves_entity_ids or []) if rid]
         if related_ids:
             await tx.run(
                 """
-                MATCH (event:TimelineEvent {timeline_event_id: $timeline_event_id})
+                MATCH (event:Event {event_id: $event_id})
                 WITH event
-                UNWIND $related_entity_ids AS related_id
+                UNWIND $involves_entity_ids AS related_id
                 MATCH (entity:EntityInstance {entity_instance_id: related_id})
                 MERGE (event)-[:INVOLVES_ENTITY]->(entity)
                 """,
-                timeline_event_id=timeline_event_id,
-                related_entity_ids=related_ids,
+                event_id=event_id,
+                involves_entity_ids=related_ids,
             )
-        if before_event_id:
-            await tx.run(
-                """
-                MATCH (event:TimelineEvent {timeline_event_id: $timeline_event_id})
-                MATCH (previous:TimelineEvent {timeline_event_id: $before_event_id})
-                WHERE previous.instance_id = event.instance_id
-                MERGE (event)-[:FOLLOWS]->(previous)
-                """,
-                timeline_event_id=timeline_event_id,
-                before_event_id=before_event_id,
-            )
-        if after_event_id:
-            await tx.run(
-                """
-                MATCH (event:TimelineEvent {timeline_event_id: $timeline_event_id})
-                MATCH (next:TimelineEvent {timeline_event_id: $after_event_id})
-                WHERE next.instance_id = event.instance_id
-                MERGE (event)-[:PRECEDES]->(next)
-                """,
-                timeline_event_id=timeline_event_id,
-                after_event_id=after_event_id,
-            )
+
+        for rel in relations or []:
+            relation_type = rel.get("relation_type")
+            target_id = rel.get("target_event_id")
+            if relation_type not in {"BEFORE", "AFTER", "DERIVED_FROM", "RELATED_TO"}:
+                continue
+            if not target_id:
+                continue
+            if relation_type == "BEFORE":
+                await tx.run(
+                    """
+                    MATCH (event:Event {event_id: $event_id})
+                    MATCH (target:Event {event_id: $target_event_id})
+                    WHERE target.instance_id = $instance_id
+                    MERGE (event)-[:BEFORE]->(target)
+                    MERGE (target)-[:AFTER]->(event)
+                    """,
+                    event_id=event_id,
+                    target_event_id=target_id,
+                    instance_id=instance_id,
+                )
+            elif relation_type == "AFTER":
+                await tx.run(
+                    """
+                    MATCH (event:Event {event_id: $event_id})
+                    MATCH (target:Event {event_id: $target_event_id})
+                    WHERE target.instance_id = $instance_id
+                    MERGE (event)-[:AFTER]->(target)
+                    MERGE (target)-[:BEFORE]->(event)
+                    """,
+                    event_id=event_id,
+                    target_event_id=target_id,
+                    instance_id=instance_id,
+                )
+            elif relation_type == "DERIVED_FROM":
+                await tx.run(
+                    """
+                    MATCH (event:Event {event_id: $event_id})
+                    MATCH (target:Event {event_id: $target_event_id})
+                    WHERE target.instance_id = $instance_id
+                    MERGE (event)-[:DERIVED_FROM]->(target)
+                    """,
+                    event_id=event_id,
+                    target_event_id=target_id,
+                    instance_id=instance_id,
+                )
+            else:
+                await tx.run(
+                    """
+                    MATCH (event:Event {event_id: $event_id})
+                    MATCH (target:Event {event_id: $target_event_id})
+                    WHERE target.instance_id = $instance_id
+                    MERGE (event)-[:RELATED_TO]->(target)
+                    """,
+                    event_id=event_id,
+                    target_event_id=target_id,
+                    instance_id=instance_id,
+                )
 
     def _timeline_node_to_read(self, node: Any) -> TimelineEventRead:
         props = dict(node)
-        related_ids = props.get("related_instance_ids") or []
-        if not isinstance(related_ids, list):
-            related_ids = [related_ids]
-        related_entity_ids = props.get("related_entity_ids") or []
-        if not isinstance(related_entity_ids, list):
-            related_entity_ids = [related_entity_ids]
-        created_from_entity_id = props.get("created_from_entity_id")
-        created_from_instance_id = props.get("created_from_instance_id")
-
-        # Legacy fallback: older data used source_* and sometimes stored entity ids in source_instance_id.
-        legacy_source_entity = props.get("source_entity_id")
-        legacy_source_instance = props.get("source_instance_id")
-        if not created_from_entity_id and legacy_source_entity:
-            created_from_entity_id = legacy_source_entity
-        if not created_from_instance_id and legacy_source_instance:
-            created_from_instance_id = legacy_source_instance
-        if not created_from_instance_id and legacy_source_entity:
-            created_from_instance_id = props.get("instance_id")
-        if not related_entity_ids and related_ids:
-            # treat legacy related ids as entity ids, but preserve page ids fallback
-            related_entity_ids = list(related_ids)
+        source_entity_id = props.get("source_entity_id") or props.get("created_from_entity_id")
+        involves_entity_ids = props.get("involves_entity_ids") or props.get("related_entity_ids") or []
+        if not isinstance(involves_entity_ids, list):
+            involves_entity_ids = [involves_entity_ids]
+        relations = props.get("relations") or []
+        if not isinstance(relations, list):
+            relations = []
         return TimelineEventRead(
-            timeline_event_id=props["timeline_event_id"],
+            event_id=props.get("event_id") or props.get("event_id"),
             instance_id=props["instance_id"],
             ontology_id=props["ontology_id"],
             title=props.get("title") or "",
             description=props.get("description") or "",
-            created_from_instance_id=created_from_instance_id,
-            created_from_entity_id=created_from_entity_id,
-            related_instance_ids=[str(value) for value in related_ids],
-            related_entity_ids=[str(value) for value in related_entity_ids],
-            before_event_id=props.get("before_event_id"),
-            after_event_id=props.get("after_event_id"),
+            source_entity_id=source_entity_id,
+            involves_entity_ids=[str(value) for value in involves_entity_ids],
+            relations=relations,
             created_at=_parse_dt(props.get("created_at")),
             updated_at=_parse_dt(props.get("updated_at")),
         )
@@ -369,34 +362,24 @@ class OntologyInstanceService:
         rows: list[dict[str, Any]] = []
         ids: set[str] = set()
         for event in events:
-            event_id = _normalize_optional_str(event.timeline_event_id) or str(uuid4())
+            event_id = _normalize_optional_str(event.event_id or event.event_id) or str(uuid4())
             if event_id in ids:
                 raise ValueError(f"Duplicate timeline event id '{event_id}' in payload")
             title = event.title.strip()
             description = event.description.strip()
-            related_entity_ids = _normalize_id_list(event.related_entity_ids)
-            related_instance_ids = _normalize_id_list(event.related_instance_ids)
-            if not related_entity_ids and related_instance_ids:
-                # Backwards compatibility: legacy payloads send entity ids in related_instance_ids
-                related_entity_ids = list(related_instance_ids)
-            before_id = _normalize_optional_str(event.before_event_id)
-            after_id = _normalize_optional_str(event.after_event_id)
-            created_from_instance = _normalize_optional_str(
-                event.created_from_instance_id
-            )
-            created_from_entity = _normalize_optional_str(
-                getattr(event, "created_from_entity_id", None)
-            )
+            relations = [rel.model_dump() for rel in event.relations]
+            source_entity = _normalize_optional_str(event.source_entity_id)
+            involves_entity_ids = _normalize_id_list(event.involves_entity_ids)
             text_payload = _build_timeline_text(
                 title,
                 description,
-                created_from_instance,
-                related_entity_ids,
-                before_id,
-                after_id,
+                None,
+                involves_entity_ids,
+                None,
+                None,
             )
             row = {
-                "timeline_event_id": event_id,
+                "event_id": event_id,
                 "entity_instance_id": event_id,
                 "instance_id": instance_id,
                 "ontology_id": ontology_id,
@@ -404,15 +387,9 @@ class OntologyInstanceService:
                 "alias": title,
                 "title": title,
                 "description": description,
-                "created_from_instance_id": created_from_instance,
-                "created_from_entity_id": created_from_entity,
-                # legacy fields for backward compatibility in the graph (will be removed later)
-                "source_instance_id": created_from_instance,
-                "source_entity_id": created_from_entity,
-                "related_instance_ids": related_instance_ids,
-                "related_entity_ids": related_entity_ids,
-                "before_event_id": before_id,
-                "after_event_id": after_id,
+                "source_entity_id": source_entity,
+                "involves_entity_ids": involves_entity_ids,
+                "relations": relations,
                 "created_at": timestamp,
                 "updated_at": timestamp,
                 "last_updated_date": timestamp,
@@ -425,12 +402,10 @@ class OntologyInstanceService:
             ids.add(event_id)
 
         for row in rows:
-            for pointer in ("before_event_id", "after_event_id"):
-                target_id = row[pointer]
+            for relation in row.get("relations") or []:
+                target_id = relation.get("target_event_id")
                 if target_id and target_id not in ids:
-                    raise ValueError(
-                        f"Unknown timeline event id '{target_id}' referenced in before/after"
-                    )
+                    raise ValueError(f"Unknown event id '{target_id}' referenced in relations")
 
         return rows
 
@@ -444,14 +419,14 @@ class OntologyInstanceService:
     ) -> None:
         await tx.run(
             """
-            MATCH (:OntologyInstance {instance_id: $instance_id})-[:HAS_TIMELINE_EVENT]->(event:TimelineEvent)-[:HAS_CHUNK]->(chunk:EntityChunk)
+            MATCH (:OntologyInstance {instance_id: $instance_id})-[:HAS_EVENT]->(event:Event)-[:HAS_CHUNK]->(chunk:EntityChunk)
             DETACH DELETE chunk
             """,
             instance_id=instance_id,
         )
         await tx.run(
             """
-            MATCH (:OntologyInstance {instance_id: $instance_id})-[:HAS_TIMELINE_EVENT]->(event:TimelineEvent)
+            MATCH (:OntologyInstance {instance_id: $instance_id})-[:HAS_EVENT]->(event:Event)
             DETACH DELETE event
             """,
             instance_id=instance_id,
@@ -465,8 +440,8 @@ class OntologyInstanceService:
             await tx.run(
                 """
                 MATCH (i:OntologyInstance {instance_id: $instance_id})
-                CREATE (i)-[:HAS_TIMELINE_EVENT]->(event:TimelineEvent {
-                    timeline_event_id: $timeline_event_id,
+                CREATE (i)-[:HAS_EVENT]->(event:Event {
+                    event_id: $event_id,
                     entity_instance_id: $entity_instance_id,
                     instance_id: $instance_id,
                     ontology_id: $ontology_id,
@@ -495,16 +470,11 @@ class OntologyInstanceService:
             )
             await self._apply_timeline_event_edges(
                 tx,
-                timeline_event_id=row["timeline_event_id"],
+                event_id=row["event_id"],
                 instance_id=instance_id,
-                source_instance_id=row.get("created_from_instance_id")
-                or row.get("source_instance_id"),
-                source_entity_id=row.get("created_from_entity_id")
-                or row.get("source_entity_id"),
-                related_entity_ids=row.get("related_entity_ids")
-                or row.get("related_instance_ids"),
-                before_event_id=row.get("before_event_id"),
-                after_event_id=row.get("after_event_id"),
+                source_entity_id=row.get("source_entity_id"),
+                involves_entity_ids=row.get("involves_entity_ids"),
+                relations=row.get("relations"),
             )
 
     async def _timeline_events_for_instance(
@@ -512,7 +482,7 @@ class OntologyInstanceService:
     ) -> list[TimelineEventRead]:
         result = await self.graph_session.run(
             """
-            MATCH (:OntologyInstance {instance_id: $instance_id})-[:HAS_TIMELINE_EVENT]->(event:TimelineEvent)
+            MATCH (:OntologyInstance {instance_id: $instance_id})-[:HAS_EVENT]->(event:Event)
             RETURN event
             ORDER BY event.created_at ASC
             """,
@@ -741,7 +711,7 @@ class OntologyInstanceService:
                 tx,
                 instance_id=instance_id,
                 ontology_id=payload.ontology_id,
-                events=payload.timeline_events,
+                events=payload.events,
             )
         except Exception:
             await tx.rollback()
@@ -1200,7 +1170,7 @@ class OntologyInstanceService:
                 }
                 for entity_data in entities_map.values()
             ],
-            timeline_events=timeline_events,
+            events=timeline_events,
         )
 
     async def get_instance_by_slug_alias(self, slug_alias: str) -> OntologyInstanceRead:
@@ -1247,14 +1217,14 @@ class OntologyInstanceService:
         rows = await result.data()
         return {row["entity_id"] for row in rows if row.get("entity_id")}
 
-    async def _timeline_event_ids_for_instances(
+    async def _event_ids_for_instances(
         self, tx: AsyncTransaction, instance_ids: Sequence[str]
     ) -> set[str]:
         result = await tx.run(
             """
-            MATCH (i:OntologyInstance)-[:HAS_TIMELINE_EVENT]->(event:TimelineEvent)
+            MATCH (i:OntologyInstance)-[:HAS_EVENT]->(event:Event)
             WHERE i.instance_id IN $instance_ids
-            RETURN event.timeline_event_id AS event_id
+            RETURN event.event_id AS event_id
             """,
             instance_ids=instance_ids,
         )
@@ -1282,22 +1252,22 @@ class OntologyInstanceService:
         *,
         instance_ids: list[str],
         entity_ids: set[str],
-        timeline_event_ids: set[str],
+        event_ids: set[str],
     ) -> None:
         instance_set = set(instance_ids)
         entity_set = set(entity_ids)
-        timeline_set = set(timeline_event_ids)
+        timeline_set = set(event_ids)
         result = await tx.run(
             """
-            MATCH (event:TimelineEvent)
+            MATCH (event:Event)
             WHERE NOT event.instance_id IN $instance_ids AND (
                 event.source_instance_id IN $instance_ids
                 OR any(instId IN $instance_ids WHERE instId IN coalesce(event.related_instance_ids, []))
                 OR any(entityId IN $entity_ids WHERE entityId IN coalesce(event.related_entity_ids, []))
-                OR event.before_event_id IN $timeline_event_ids
-                OR event.after_event_id IN $timeline_event_ids
+                OR event.before_event_id IN $event_ids
+                OR event.after_event_id IN $event_ids
             )
-            RETURN event.timeline_event_id AS timeline_event_id,
+            RETURN event.event_id AS event_id,
                    event.source_instance_id AS source_instance_id,
                    event.source_entity_id AS source_entity_id,
                    event.related_instance_ids AS related_instance_ids,
@@ -1307,12 +1277,12 @@ class OntologyInstanceService:
             """,
             instance_ids=instance_ids,
             entity_ids=list(entity_ids),
-            timeline_event_ids=list(timeline_event_ids),
+            event_ids=list(event_ids),
         )
         rows = await result.data()
         payload: list[dict[str, Any]] = []
         for row in rows:
-            event_id = row.get("timeline_event_id")
+            event_id = row.get("event_id")
             if not event_id:
                 continue
             source_instance = row.get("source_instance_id")
@@ -1355,7 +1325,7 @@ class OntologyInstanceService:
             ):
                 payload.append(
                     {
-                        "timeline_event_id": event_id,
+                        "event_id": event_id,
                         "created_from_instance_id": created_from_instance,
                         "created_from_entity_id": created_from_entity,
                         "related_instance_ids": related_instances,
@@ -1368,7 +1338,7 @@ class OntologyInstanceService:
             await tx.run(
                 """
                 UNWIND $payload AS item
-                MATCH (event:TimelineEvent {timeline_event_id: item.timeline_event_id})
+                MATCH (event:Event {event_id: item.event_id})
                 SET event.created_from_instance_id = item.created_from_instance_id,
                     event.created_from_entity_id = item.created_from_entity_id,
                     event.source_instance_id = item.created_from_instance_id,
@@ -1457,7 +1427,7 @@ class OntologyInstanceService:
         tx = await self.graph_session.begin_transaction()
         try:
             entity_ids = await self._entity_ids_for_instances(tx, instance_list)
-            timeline_event_ids = await self._timeline_event_ids_for_instances(
+            event_ids = await self._event_ids_for_instances(
                 tx, instance_list
             )
 
@@ -1466,7 +1436,7 @@ class OntologyInstanceService:
                 tx,
                 instance_ids=instance_list,
                 entity_ids=entity_ids,
-                timeline_event_ids=timeline_event_ids,
+                event_ids=event_ids,
             )
             await self._remove_cross_instance_links(
                 tx, instance_ids=list(instance_list)
@@ -1490,7 +1460,7 @@ class OntologyInstanceService:
             )
             await tx.run(
                 """
-                MATCH (i:OntologyInstance)-[:HAS_TIMELINE_EVENT]->(event:TimelineEvent)-[:HAS_CHUNK]->(chunk:EntityChunk)
+                MATCH (i:OntologyInstance)-[:HAS_EVENT]->(event:Event)-[:HAS_CHUNK]->(chunk:EntityChunk)
                 WHERE i.instance_id IN $instance_ids
                 DETACH DELETE chunk
                 """,
@@ -1498,7 +1468,7 @@ class OntologyInstanceService:
             )
             await tx.run(
                 """
-                MATCH (i:OntologyInstance)-[:HAS_TIMELINE_EVENT]->(event:TimelineEvent)
+                MATCH (i:OntologyInstance)-[:HAS_EVENT]->(event:Event)
                 WHERE i.instance_id IN $instance_ids
                 DETACH DELETE event
                 """,
@@ -1541,14 +1511,14 @@ class OntologyInstanceService:
         )
 
         if payload.entities is None:
-            if payload.timeline_events is not None:
+            if payload.events is not None:
                 tx = await self.graph_session.begin_transaction()
                 try:
                     await self._replace_timeline_events_in_tx(
                         tx,
                         instance_id=instance_id,
                         ontology_id=current.ontology_id,
-                        events=payload.timeline_events,
+                        events=payload.events,
                     )
                 except Exception:
                     await tx.rollback()
@@ -1562,7 +1532,7 @@ class OntologyInstanceService:
             # Send notifications to users who favorited this instance
             # We do this after Neo4j commit but before returning the instance
             # If notification fails, it won't affect the main update
-            if payload.timeline_events is not None or payload.name is not None:
+            if payload.events is not None or payload.name is not None:
                 try:
                     from app.utils.notification_helpers import (
                         notify_favorite_instance_update,
@@ -1571,7 +1541,7 @@ class OntologyInstanceService:
                     update_details = "Instance updated"
                     if payload.name and payload.name != current.name:
                         update_details = f"Name changed to '{payload.name}'"
-                    elif payload.timeline_events is not None:
+                    elif payload.events is not None:
                         update_details = "Timeline events updated"
 
                     await notify_favorite_instance_update(
@@ -1780,12 +1750,12 @@ class OntologyInstanceService:
                         )
                         impacted_entity_ids.add(target_id)
                         impacted_entity_ids.add(entity_node_id)
-            if payload.timeline_events is not None:
+            if payload.events is not None:
                 await self._replace_timeline_events_in_tx(
                     tx,
                     instance_id=instance_id,
                     ontology_id=current.ontology_id,
-                    events=payload.timeline_events,
+                    events=payload.events,
                 )
         except Exception:
             await tx.rollback()
@@ -1808,7 +1778,7 @@ class OntologyInstanceService:
                     update_details = f"Name changed to '{payload.name}'"
                 elif payload.entities:
                     update_details = "Entities, properties, or relationships updated"
-                elif payload.timeline_events is not None:
+                elif payload.events is not None:
                     update_details = "Timeline events updated"
                 
                 await notify_favorite_instance_update(
@@ -1910,15 +1880,15 @@ class OntologyInstanceService:
         return await self._timeline_events_for_instance(instance_id)
 
     async def get_timeline_event(
-        self, instance_id: str, timeline_event_id: str
+        self, instance_id: str, event_id: str
     ) -> TimelineEventRead:
         result = await self.graph_session.run(
             """
-            MATCH (:OntologyInstance {instance_id: $instance_id})-[:HAS_TIMELINE_EVENT]->(event:TimelineEvent {timeline_event_id: $timeline_event_id})
+            MATCH (:OntologyInstance {instance_id: $instance_id})-[:HAS_EVENT]->(event:Event {event_id: $event_id})
             RETURN event
             """,
             instance_id=instance_id,
-            timeline_event_id=timeline_event_id,
+            event_id=event_id,
         )
         record = await result.single()
         if not record or not record.get("event"):
@@ -1929,42 +1899,34 @@ class OntologyInstanceService:
         self, instance_id: str, payload: TimelineEventCreate
     ) -> TimelineEventRead:
         ontology_id = await self._get_instance_ontology_id(instance_id)
-        existing_ids = await self._timeline_event_ids(instance_id)
-        before_id = _normalize_optional_str(payload.before_event_id)
-        after_id = _normalize_optional_str(payload.after_event_id)
-        event_id = _normalize_optional_str(payload.timeline_event_id) or str(uuid4())
+        existing_ids = await self._event_ids(instance_id)
+        event_id = _normalize_optional_str(payload.event_id) or str(uuid4())
         if event_id in existing_ids:
-            raise ValueError(f"Timeline event id '{event_id}' already exists")
-        for pointer, ref in (
-            ("before_event_id", before_id),
-            ("after_event_id", after_id),
-        ):
-            if ref == event_id:
-                raise ValueError(
-                    f"{pointer.replace('_', ' ').title()} cannot reference the same timeline event"
-                )
-            if ref and ref not in existing_ids:
-                raise ValueError(
-                    f"{pointer.replace('_', ' ').title()} '{ref}' does not exist for this instance"
-                )
+            raise ValueError(f"Event id '{event_id}' already exists")
+
+        relations = [rel.model_dump() for rel in payload.relations]
+        for relation in relations:
+            target_id = _normalize_optional_str(relation.get("target_event_id"))
+            if not target_id:
+                raise ValueError("Relation target_event_id cannot be empty")
+            if target_id == event_id:
+                raise ValueError("Event cannot reference itself")
+            if target_id not in existing_ids:
+                raise ValueError(f"Related event '{target_id}' does not exist for this instance")
+            relation["target_event_id"] = target_id
+
         title = payload.title.strip()
         description = payload.description.strip()
-        related_entities = _normalize_id_list(payload.related_entity_ids)
-        related_instances = _normalize_id_list(payload.related_instance_ids)
-        if not related_entities and related_instances:
-            related_entities = list(related_instances)
-        created_from_instance = _normalize_optional_str(
-            payload.created_from_instance_id
-        )
-        created_from_entity = _normalize_optional_str(payload.created_from_entity_id)
+        source_entity_id = _normalize_optional_str(payload.source_entity_id)
+        involves_entity_ids = _normalize_id_list(payload.involves_entity_ids)
         created_at = _format_dt(datetime.utcnow())
         text_payload = _build_timeline_text(
             title,
             description,
-            created_from_instance,
-            related_entities,
-            before_id,
-            after_id,
+            None,
+            involves_entity_ids,
+            None,
+            None,
         )
 
         tx = await self.graph_session.begin_transaction()
@@ -1972,23 +1934,18 @@ class OntologyInstanceService:
             await tx.run(
                 """
                 MATCH (i:OntologyInstance {instance_id: $instance_id})
-                CREATE (i)-[:HAS_TIMELINE_EVENT]->(event:TimelineEvent {
-                    timeline_event_id: $timeline_event_id,
-                    entity_instance_id: $timeline_event_id,
+                CREATE (i)-[:HAS_EVENT]->(event:Event {
+                    event_id: $event_id,
+                    entity_instance_id: $event_id,
                     instance_id: $instance_id,
                     ontology_id: $ontology_id,
                     name: $title,
                     alias: $title,
                     title: $title,
                     description: $description,
-                    created_from_instance_id: $created_from_instance_id,
-                    created_from_entity_id: $created_from_entity_id,
-                    source_instance_id: $created_from_instance_id,
-                    source_entity_id: $created_from_entity_id,
-                    related_instance_ids: $related_instance_ids,
-                    related_entity_ids: $related_entity_ids,
-                    before_event_id: $before_event_id,
-                    after_event_id: $after_event_id,
+                    source_entity_id: $source_entity_id,
+                    involves_entity_ids: $involves_entity_ids,
+                    relations: $relations,
                     created_at: $created_at,
                     updated_at: $created_at,
                     last_updated_date: $created_at,
@@ -2000,27 +1957,22 @@ class OntologyInstanceService:
                 """,
                 instance_id=instance_id,
                 ontology_id=ontology_id,
-                timeline_event_id=event_id,
+                event_id=event_id,
                 title=title,
                 description=description,
-                created_from_instance_id=created_from_instance,
-                created_from_entity_id=created_from_entity,
-                related_instance_ids=related_instances,
-                related_entity_ids=related_entities,
-                before_event_id=before_id,
-                after_event_id=after_id,
+                source_entity_id=source_entity_id,
+                involves_entity_ids=involves_entity_ids,
+                relations=relations,
                 created_at=created_at,
                 text=text_payload,
             )
             await self._apply_timeline_event_edges(
                 tx,
-                timeline_event_id=event_id,
+                event_id=event_id,
                 instance_id=instance_id,
-                source_instance_id=created_from_instance,
-                source_entity_id=created_from_entity,
-                related_entity_ids=related_entities,
-                before_event_id=before_id,
-                after_event_id=after_id,
+                source_entity_id=source_entity_id,
+                involves_entity_ids=involves_entity_ids,
+                relations=relations,
             )
         except Exception:
             await tx.rollback()
@@ -2042,8 +1994,8 @@ class OntologyInstanceService:
                 instance_id=instance_id,
                 instance_name=instance.name or instance_id,
                 ontology_id=ontology_id,
-                update_type="Timeline Event",
-                update_details=f"New timeline event added: {title}",
+                update_type="Event",
+                update_details=f"New event added: {title}",
                 author_id=None,
             )
             await self.sql_session.commit()
@@ -2061,11 +2013,11 @@ class OntologyInstanceService:
     async def update_timeline_event(
         self,
         instance_id: str,
-        timeline_event_id: str,
+        event_id: str,
         payload: TimelineEventUpdate,
     ) -> TimelineEventRead:
-        current_event = await self.get_timeline_event(instance_id, timeline_event_id)
-        existing_ids = await self._timeline_event_ids(instance_id)
+        current_event = await self.get_timeline_event(instance_id, event_id)
+        existing_ids = await self._event_ids(instance_id)
         updates: dict[str, Any] = {}
 
         if payload.title is not None:
@@ -2080,69 +2032,37 @@ class OntologyInstanceService:
             if not description:
                 raise ValueError("Timeline event description cannot be empty")
             updates["description"] = description
-        if payload.created_from_instance_id is not None:
-            updates["created_from_instance_id"] = _normalize_optional_str(
-                payload.created_from_instance_id
-            )
-            updates["source_instance_id"] = updates["created_from_instance_id"]
-        if payload.created_from_entity_id is not None:
-            updates["created_from_entity_id"] = _normalize_optional_str(
-                payload.created_from_entity_id
-            )
-            updates["source_entity_id"] = updates["created_from_entity_id"]
-        if payload.related_entity_ids is not None:
-            updates["related_entity_ids"] = _normalize_id_list(
-                payload.related_entity_ids
-            )
-        if payload.related_instance_ids is not None:
-            normalized_instances = _normalize_id_list(payload.related_instance_ids)
-            updates["related_instance_ids"] = normalized_instances
-            # Legacy payloads may supply entity ids via related_instance_ids only
-            if (
-                payload.related_entity_ids is None
-                and "related_entity_ids" not in updates
-            ):
-                updates["related_entity_ids"] = list(normalized_instances)
-        if payload.before_event_id is not None:
-            before_id = _normalize_optional_str(payload.before_event_id)
-            if before_id == timeline_event_id:
-                raise ValueError("Timeline event cannot reference itself in 'before'")
-            if before_id and before_id not in existing_ids:
-                raise ValueError(f"before_event_id '{before_id}' does not exist")
-            updates["before_event_id"] = before_id
-        if payload.after_event_id is not None:
-            after_id = _normalize_optional_str(payload.after_event_id)
-            if after_id == timeline_event_id:
-                raise ValueError("Timeline event cannot reference itself in 'after'")
-            if after_id and after_id not in existing_ids:
-                raise ValueError(f"after_event_id '{after_id}' does not exist")
-            updates["after_event_id"] = after_id
+        if payload.source_entity_id is not None:
+            updates["source_entity_id"] = _normalize_optional_str(payload.source_entity_id)
+        if payload.involves_entity_ids is not None:
+            updates["involves_entity_ids"] = _normalize_id_list(payload.involves_entity_ids)
+        if payload.relations is not None:
+            relations = [rel.model_dump() for rel in payload.relations]
+            for relation in relations:
+                target_id = _normalize_optional_str(relation.get("target_event_id"))
+                if not target_id:
+                    raise ValueError("Relation target_event_id cannot be empty")
+                if target_id == event_id:
+                    raise ValueError("Event cannot reference itself")
+                if target_id not in existing_ids:
+                    raise ValueError(f"Related event '{target_id}' does not exist")
+                relation["target_event_id"] = target_id
+            updates["relations"] = relations
 
         now_str = _format_dt(datetime.utcnow())
         final_title = updates.get("title", current_event.title)
         final_description = updates.get("description", current_event.description or "")
-        final_created_from_instance = updates.get(
-            "created_from_instance_id", current_event.created_from_instance_id
-        )
-        final_created_from_entity = updates.get(
-            "created_from_entity_id", current_event.created_from_entity_id
-        )
-        final_related_entities = updates.get(
-            "related_entity_ids",
-            current_event.related_entity_ids
-            or current_event.related_instance_ids
-            or [],
-        )
-        final_before = updates.get("before_event_id", current_event.before_event_id)
-        final_after = updates.get("after_event_id", current_event.after_event_id)
+        final_source_entity = updates.get("source_entity_id", current_event.source_entity_id)
+        final_involves = updates.get("involves_entity_ids", current_event.involves_entity_ids or [])
+        final_relations = updates.get("relations", [rel.model_dump() for rel in current_event.relations])
 
         text_payload = _build_timeline_text(
             final_title,
             final_description,
-            final_created_from_instance,
-            final_related_entities,
-            final_before,
-            final_after,
+            None,
+            final_involves,
+            None,
+            None,
         )
         updates["text"] = text_payload
         updates["autogenerated_text"] = text_payload
@@ -2151,7 +2071,7 @@ class OntologyInstanceService:
 
         params = {
             "instance_id": instance_id,
-            "timeline_event_id": timeline_event_id,
+            "event_id": event_id,
             "updated_at": now_str,
         }
         set_parts = ["event.updated_at = $updated_at"]
@@ -2164,23 +2084,21 @@ class OntologyInstanceService:
         try:
             await tx.run(
                 f"""
-                MATCH (:OntologyInstance {{instance_id: $instance_id}})-[:HAS_TIMELINE_EVENT]->(event:TimelineEvent {{timeline_event_id: $timeline_event_id}})
+                MATCH (:OntologyInstance {{instance_id: $instance_id}})-[:HAS_EVENT]->(event:Event {{event_id: $event_id}})
                 SET {set_clause}
                 """,
                 **params,
             )
             await self._clear_timeline_event_edges(
-                tx, timeline_event_id=timeline_event_id
+                tx, event_id=event_id
             )
             await self._apply_timeline_event_edges(
                 tx,
-                timeline_event_id=timeline_event_id,
+                event_id=event_id,
                 instance_id=instance_id,
-                source_instance_id=final_created_from_instance,
-                source_entity_id=final_created_from_entity,
-                related_entity_ids=final_related_entities,
-                before_event_id=final_before,
-                after_event_id=final_after,
+                source_entity_id=final_source_entity,
+                involves_entity_ids=final_involves,
+                relations=final_relations,
             )
         except Exception:
             await tx.rollback()
@@ -2203,8 +2121,8 @@ class OntologyInstanceService:
                 instance_id=instance_id,
                 instance_name=instance.name or instance_id,
                 ontology_id=ontology_id,
-                update_type="Timeline Event",
-                update_details=f"Timeline event updated: {final_title}",
+                update_type="Event",
+                update_details=f"Event updated: {final_title}",
                 author_id=None,
             )
             await self.sql_session.commit()
@@ -2217,29 +2135,29 @@ class OntologyInstanceService:
             # Rollback notification-related changes only
             await self.sql_session.rollback()
         
-        return await self.get_timeline_event(instance_id, timeline_event_id)
+        return await self.get_timeline_event(instance_id, event_id)
 
     async def delete_timeline_event(
-        self, instance_id: str, timeline_event_id: str
+        self, instance_id: str, event_id: str
     ) -> None:
-        await self.get_timeline_event(instance_id, timeline_event_id)
+        await self.get_timeline_event(instance_id, event_id)
         tx = await self.graph_session.begin_transaction()
         try:
             await tx.run(
                 """
-                MATCH (:OntologyInstance {instance_id: $instance_id})-[:HAS_TIMELINE_EVENT]->(event:TimelineEvent {timeline_event_id: $timeline_event_id})-[:HAS_CHUNK]->(chunk:EntityChunk)
+                MATCH (:OntologyInstance {instance_id: $instance_id})-[:HAS_EVENT]->(event:Event {event_id: $event_id})-[:HAS_CHUNK]->(chunk:EntityChunk)
                 DETACH DELETE chunk
                 """,
                 instance_id=instance_id,
-                timeline_event_id=timeline_event_id,
+                event_id=event_id,
             )
             await tx.run(
                 """
-                MATCH (:OntologyInstance {instance_id: $instance_id})-[:HAS_TIMELINE_EVENT]->(event:TimelineEvent {timeline_event_id: $timeline_event_id})
+                MATCH (:OntologyInstance {instance_id: $instance_id})-[:HAS_EVENT]->(event:Event {event_id: $event_id})
                 DETACH DELETE event
                 """,
                 instance_id=instance_id,
-                timeline_event_id=timeline_event_id,
+                event_id=event_id,
             )
         except Exception:
             await tx.rollback()
@@ -2262,7 +2180,7 @@ class OntologyInstanceService:
             Dictionary reporting how many events were processed and how many failed.
         """
         clauses = [
-            "MATCH (inst:OntologyInstance)-[:HAS_TIMELINE_EVENT]->(event:TimelineEvent)"
+            "MATCH (inst:OntologyInstance)-[:HAS_EVENT]->(event:Event)"
         ]
         params: dict[str, Any] = {}
         if instance_id:
@@ -2270,7 +2188,7 @@ class OntologyInstanceService:
             params["instance_id"] = instance_id
         clauses.append(
             """
-            RETURN event.timeline_event_id AS timeline_event_id,
+            RETURN event.event_id AS event_id,
                    inst.instance_id AS instance_id,
                    event.created_from_instance_id AS created_from_instance_id,
                    event.created_from_entity_id AS created_from_entity_id,
@@ -2296,11 +2214,11 @@ class OntologyInstanceService:
             tx = await self.graph_session.begin_transaction()
             try:
                 await self._clear_timeline_event_edges(
-                    tx, timeline_event_id=row["timeline_event_id"]
+                    tx, event_id=row["event_id"]
                 )
                 await self._apply_timeline_event_edges(
                     tx,
-                    timeline_event_id=row["timeline_event_id"],
+                    event_id=row["event_id"],
                     instance_id=row["instance_id"],
                     source_instance_id=row.get("created_from_instance_id")
                     or row.get("source_instance_id"),

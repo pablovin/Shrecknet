@@ -56,6 +56,13 @@ System architecture and design documentation
 - [Architect Monitoring](./Architecture/ARCHITECT_MONITORING.md)
 - [Architect Monitoring Quick Reference](./Architecture/ARCHITECT_MONITORING_QUICKREF.md)
 
+### [Graph](./Graph/)
+Event-centric graph model documentation
+- [Event-Centric Intro](./Graph/intro.md)
+- [Ontology in Graph](./Graph/ontology.md)
+- [Event Node](./Graph/event.md)
+- [Entity Node](./Graph/entity.md)
+
 ### [Database](./Database/)
 Database setup, migrations, and management
 - [Embedding](./Database/EMBEDDING.md) - Vector embeddings setup

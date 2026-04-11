@@ -262,7 +262,7 @@ class EmbeddingService:
         create_query = """
         UNWIND $rows AS row
         MATCH (parent {entity_instance_id: row.entity_id})
-        WHERE parent:EntityInstance OR parent:TimelineEvent
+        WHERE parent:EntityInstance OR parent:Event
         CREATE (c:EntityChunk {
             chunk_id: row.chunk_id,
             parent_entity_instance_id: row.entity_id,
@@ -620,7 +620,7 @@ Summary: {summary}"""
         # Fetch node IDs that need embedding
         query = """
         MATCH (n)
-        WHERE (n:EntityInstance OR n:TimelineEvent)
+        WHERE (n:EntityInstance OR n:Event)
           AND toInteger(n.ontology_id) = toInteger($ontology_id)
           AND (n.is_embedded IS NULL OR n.is_embedded = false 
                OR n.last_updated_date > n.last_embedded_date)
@@ -649,7 +649,7 @@ Summary: {summary}"""
             fetch_query = """
             UNWIND $ids AS eid
             MATCH (n {entity_instance_id: eid})
-            WHERE n:EntityInstance OR n:TimelineEvent
+            WHERE n:EntityInstance OR n:Event
             OPTIONAL MATCH (n)-[r]->(target:EntityInstance)
             WITH n, collect(
                 CASE
@@ -719,8 +719,8 @@ Summary: {summary}"""
                     WHEN size(related_aliases) > 0 THEN related_aliases
                     ELSE fallback_related_aliases
                 END AS related_instance_names
-            OPTIONAL MATCH (before_event:TimelineEvent {timeline_event_id: n.before_event_id})
-            OPTIONAL MATCH (after_event:TimelineEvent {timeline_event_id: n.after_event_id})
+            OPTIONAL MATCH (before_event:Event {event_id: n.before_event_id})
+            OPTIONAL MATCH (after_event:Event {event_id: n.after_event_id})
             RETURN n.entity_instance_id AS entity_id,
                    labels(n) AS labels,
                    coalesce(n.text, "") AS text,
@@ -861,7 +861,7 @@ Summary: {summary}"""
         """Remove embeddings, chunk nodes, and orphan entities for an ontology."""
         delete_chunks_query = """
         MATCH (parent)-[:HAS_CHUNK]->(chunk:EntityChunk)
-        WHERE (parent:EntityInstance OR parent:TimelineEvent)
+        WHERE (parent:EntityInstance OR parent:Event)
           AND toInteger(parent.ontology_id) = toInteger($ontology_id)
         WITH collect(DISTINCT chunk) AS chunks
         CALL (chunks) {
@@ -895,7 +895,7 @@ Summary: {summary}"""
 
         reset_nodes_query = """
         MATCH (node)
-        WHERE (node:EntityInstance OR node:TimelineEvent)
+        WHERE (node:EntityInstance OR node:Event)
           AND toInteger(node.ontology_id) = toInteger($ontology_id)
         SET node.is_embedded = false,
             node.last_embedded_date = null
@@ -947,7 +947,7 @@ Summary: {summary}"""
         # (in case they exist outside the normal deletion flow)
         reset_nodes_query = """
         MATCH (node {instance_id: $instance_id})
-        WHERE node:EntityInstance OR node:TimelineEvent
+        WHERE node:EntityInstance OR node:Event
         SET node.is_embedded = false,
             node.last_embedded_date = null
         REMOVE node.text_embedding,

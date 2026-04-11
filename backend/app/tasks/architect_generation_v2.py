@@ -2242,7 +2242,7 @@ async def _fetch_instance_timeline_events(
 ) -> list[dict[str, Any]]:
     result = await graph_session.run(
         """
-        MATCH (:OntologyInstance {instance_id: $instance_id})-[:HAS_TIMELINE_EVENT]->(event:TimelineEvent)
+        MATCH (:OntologyInstance {instance_id: $instance_id})-[:HAS_EVENT]->(event:Event)
         RETURN event
         """,
         {"instance_id": instance_id},
@@ -2264,7 +2264,7 @@ async def _fetch_instance_timeline_events(
             created_at_value = None
         events.append(
             {
-                "timeline_event_id": props.get("timeline_event_id"),
+                "event_id": props.get("event_id"),
                 "title": props.get("title"),
                 "before_event_id": props.get("before_event_id"),
                 "after_event_id": props.get("after_event_id"),
@@ -2277,7 +2277,7 @@ async def _fetch_instance_timeline_events(
 def _order_timeline_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
     events_by_id: dict[str, dict[str, Any]] = {}
     for event in events:
-        event_id = event.get("timeline_event_id")
+        event_id = event.get("event_id")
         if event_id:
             events_by_id[event_id] = event
     if not events_by_id:
@@ -2309,7 +2309,7 @@ def _order_timeline_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]
                 remaining,
                 key=lambda payload: (
                     payload.get("created_at") or "",
-                    payload.get("timeline_event_id") or "",
+                    payload.get("event_id") or "",
                 ),
             )
         )
@@ -2320,7 +2320,7 @@ async def _attach_timeline_entities(
     graph_session: Any,
     *,
     instance_id: str,
-    timeline_event_id: str,
+    event_id: str,
     source_entity_id: str | None,
     related_entity_ids: list[str],
 ) -> None:
@@ -2335,13 +2335,13 @@ async def _attach_timeline_entities(
     if source_entity_id:
         await graph_session.run(
             """
-            MATCH (event:TimelineEvent {timeline_event_id: $timeline_event_id})
+            MATCH (event:Event {event_id: $event_id})
             MATCH (entity:EntityInstance {entity_instance_id: $source_entity_id})
             WHERE event.instance_id = $instance_id
             MERGE (event)-[:SOURCE_ENTITY]->(entity)
             """,
             {
-                "timeline_event_id": timeline_event_id,
+                "event_id": event_id,
                 "source_entity_id": source_entity_id,
                 "instance_id": instance_id,
             },
@@ -2352,7 +2352,7 @@ async def _attach_timeline_entities(
         # Timeline events are stored on source instance but can reference entities anywhere
         await graph_session.run(
             """
-            MATCH (event:TimelineEvent {timeline_event_id: $timeline_event_id})
+            MATCH (event:Event {event_id: $event_id})
             WHERE event.instance_id = $instance_id
             WITH event
             UNWIND $related_ids AS related_id
@@ -2360,7 +2360,7 @@ async def _attach_timeline_entities(
             MERGE (event)-[:INVOLVES_ENTITY]->(entity)
             """,
             {
-                "timeline_event_id": timeline_event_id,
+                "event_id": event_id,
                 "instance_id": instance_id,
                 "related_ids": valid_related,
             },
@@ -2368,19 +2368,19 @@ async def _attach_timeline_entities(
 
 
 async def _link_source_generation_instance(
-    graph_session: Any, *, timeline_event_id: str, source_instance_id: str | None
+    graph_session: Any, *, event_id: str, source_instance_id: str | None
 ) -> None:
     """Link timeline events to the ontology instance that supplied their evidence."""
     if not source_instance_id:
         return
     await graph_session.run(
         """
-        MATCH (event:TimelineEvent {timeline_event_id: $timeline_event_id})
+        MATCH (event:Event {event_id: $event_id})
         MATCH (source:OntologyInstance {instance_id: $source_instance_id})
         MERGE (event)-[:REFERENCES_SOURCE_INSTANCE]->(source)
         """,
         {
-            "timeline_event_id": timeline_event_id,
+            "event_id": event_id,
             "source_instance_id": source_instance_id,
         },
     )
@@ -2390,21 +2390,21 @@ async def _link_timeline_order(
     graph_session: Any,
     *,
     instance_id: str,
-    timeline_event_id: str,
+    event_id: str,
     before_event_id: str | None,
     after_event_id: str | None,
 ) -> None:
-    """Create temporal FOLLOWS/PRECEDES edges so retrieval honors chronology."""
+    """Create temporal AFTER/BEFORE edges so retrieval honors chronology."""
     if before_event_id:
         await graph_session.run(
             """
-            MATCH (current:TimelineEvent {timeline_event_id: $timeline_event_id})
-            MATCH (previous:TimelineEvent {timeline_event_id: $before_event_id})
+            MATCH (current:Event {event_id: $event_id})
+            MATCH (previous:Event {event_id: $before_event_id})
             WHERE current.instance_id = $instance_id AND previous.instance_id = $instance_id
-            MERGE (current)-[:FOLLOWS]->(previous)
+            MERGE (current)-[:AFTER]->(previous)
             """,
             {
-                "timeline_event_id": timeline_event_id,
+                "event_id": event_id,
                 "before_event_id": before_event_id,
                 "instance_id": instance_id,
             },
@@ -2412,13 +2412,13 @@ async def _link_timeline_order(
     if after_event_id:
         await graph_session.run(
             """
-            MATCH (current:TimelineEvent {timeline_event_id: $timeline_event_id})
-            MATCH (next:TimelineEvent {timeline_event_id: $after_event_id})
+            MATCH (current:Event {event_id: $event_id})
+            MATCH (next:Event {event_id: $after_event_id})
             WHERE current.instance_id = $instance_id AND next.instance_id = $instance_id
-            MERGE (current)-[:PRECEDES]->(next)
+            MERGE (current)-[:BEFORE]->(next)
             """,
             {
-                "timeline_event_id": timeline_event_id,
+                "event_id": event_id,
                 "after_event_id": after_event_id,
                 "instance_id": instance_id,
             },
@@ -2559,14 +2559,14 @@ async def _apply_timeline_events(
             chain_state = {
                 "events": ordered_events,
                 "by_id": {
-                    event.get("timeline_event_id"): event
+                    event.get("event_id"): event
                     for event in ordered_events
-                    if event.get("timeline_event_id")
+                    if event.get("event_id")
                 },
             }
             tail_event = _find_tail_event(ordered_events)
             if tail_event:
-                chain_state["tail_event_id"] = tail_event.get("timeline_event_id")
+                chain_state["tail_event_id"] = tail_event.get("event_id")
                 chain_state["tail_event_title"] = tail_event.get("title")
             else:
                 chain_state["tail_event_id"] = None
@@ -2633,9 +2633,9 @@ async def _apply_timeline_events(
             await graph_session.run(
                 """
                 MATCH (inst:OntologyInstance {instance_id: $instance_id})
-                CREATE (inst)-[:HAS_TIMELINE_EVENT]->(event:TimelineEvent {
-                    timeline_event_id: $timeline_event_id,
-                    entity_instance_id: $timeline_event_id,
+                CREATE (inst)-[:HAS_EVENT]->(event:Event {
+                    event_id: $event_id,
+                    entity_instance_id: $event_id,
                     instance_id: $instance_id,
                     ontology_id: $ontology_id,
                     name: $title,
@@ -2662,7 +2662,7 @@ async def _apply_timeline_events(
                 {
                     "instance_id": owning_instance_id,
                     "ontology_id": ontology_id,
-                    "timeline_event_id": event_id,
+                    "event_id": event_id,
                     "title": event["title"],
                     "description": event["description"],
                     "created_from_instance_id": source_instance_id,
@@ -2678,19 +2678,19 @@ async def _apply_timeline_events(
             await _attach_timeline_entities(
                 graph_session,
                 instance_id=owning_instance_id,
-                timeline_event_id=event_id,
+                event_id=event_id,
                 source_entity_id=source_entity_id,
                 related_entity_ids=dedup_related,
             )
             await _link_source_generation_instance(
                 graph_session,
-                timeline_event_id=event_id,
+                event_id=event_id,
                 source_instance_id=source_instance_id,
             )
             await _link_timeline_order(
                 graph_session,
                 instance_id=owning_instance_id,
-                timeline_event_id=event_id,
+                event_id=event_id,
                 before_event_id=previous_event_id,
                 after_event_id=None,
             )
@@ -2698,7 +2698,7 @@ async def _apply_timeline_events(
             if previous_event_id:
                 await graph_session.run(
                     """
-                    MATCH (event:TimelineEvent {timeline_event_id: $event_id})
+                    MATCH (event:Event {event_id: $event_id})
                     SET event.after_event_id = $after_event_id,
                         event.updated_at = datetime(),
                         event.last_updated_date = datetime(),
@@ -2709,7 +2709,7 @@ async def _apply_timeline_events(
                 await _link_timeline_order(
                     graph_session,
                     instance_id=owning_instance_id,
-                    timeline_event_id=previous_event_id,
+                    event_id=previous_event_id,
                     before_event_id=None,
                     after_event_id=event_id,
                 )
@@ -2718,7 +2718,7 @@ async def _apply_timeline_events(
                     prev_payload["after_event_id"] = event_id
 
             new_event_payload = {
-                "timeline_event_id": event_id,
+                "event_id": event_id,
                 "title": event["title"],
                 "before_event_id": previous_event_id,
                 "after_event_id": None,

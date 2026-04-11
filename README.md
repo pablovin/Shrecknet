@@ -5,7 +5,7 @@
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.110-009688)
 ![React](https://img.shields.io/badge/React-Next.js-61DAFB)
 ![License](https://img.shields.io/badge/license-GPLv3-blue)
-![Version](https://img.shields.io/badge/version-0.1.0-orange)
+![Version](https://img.shields.io/badge/version-0.2.0-orange)
 
 > *"In the realm of endless imagination, where chronicles are written by both quill and code, Shrecknet emerges as your faithful companion—a mystical forge where worlds take shape, legends are born, and epic tales unfold."*
 
@@ -657,7 +657,14 @@ docker compose logs backend_2_worker
 
 ## 🎯 Version History
 
-### v0.1.0 (Current)
+### v0.2.0 (Current)
+- 🧰 Full System Backup v2 (SQLite + Neo4j logical dump + media)
+- 🗂️ Backup storage split into `media/backups/download` and `media/backups/upload`
+- 🛡️ Restore hardening with manifest checksum validation and safe extraction
+- 🚧 Maintenance-mode guard during destructive restore
+- 📊 Improved backup/restore job phases in `/jobs`
+
+### v0.1.0
 - ✨ Initial public release
 - 🏗️ Backend_2 with Neo4j graph database
 - 🤖 Elder, Librarian, Novelist, and Architect agents
@@ -665,6 +672,8 @@ docker compose logs backend_2_worker
 - 🔐 Role-based access control
 - 🐳 Optimized Docker deployment
 - ⚡ Lightning-fast build system
+
+See [changelogs/](changelogs/README.md) for detailed release notes.
 
 ---
 

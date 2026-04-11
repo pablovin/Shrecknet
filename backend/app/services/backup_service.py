@@ -1,294 +1,154 @@
 """
 Backup and restore service for backend_2.
 
-This service handles:
-- Exporting/importing all SQLAlchemy tables to/from JSON
-- Exporting/importing Neo4j graph data via Cypher
-- Copying/restoring media files
-- Creating/extracting tar.gz archives
+Full-system backup captures:
+- Local SQLite datasets from configured data directory
+- Neo4j logical export (schema + graph data)
+- Media files (excluding backup folders)
+
+Backups are written to media/backups/download.
+Uploaded archives are stored in media/backups/upload.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import shutil
+import sqlite3
 import tarfile
-from datetime import date, datetime, time
+from collections.abc import Awaitable, Callable
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from neo4j import AsyncSession as Neo4jSession
-from sqlalchemy import inspect, select, text
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config_store import get_settings
-from app.db.base import Base
-from app.models import (
-    Agent,
-    ArchitectAnalysisRun,
-    ArchitectProposal,
-    AuditLog,
-    ElderChat,
-    ElderChatHistory,
-    Game,
-    GameSession,
-    GameSessionAttendance,
-    GameSessionPoll,
-    GameSessionPollOption,
-    GameSessionPollVote,
-    LibraryBookmark,
-    LibraryItem,
-    Note,
-    Notification,
-    NotificationPreference,
-    Ontology,
-    OntologyEntity,
-    OntologyProperty,
-    OntologyRelationship,
-    PageUserVisit,
-    PageVisit,
-    PageVisitStats,
-    User,
-)
-from app.models.background_job import BackgroundJob
+from app.db.jobs_session import get_jobs_engine
+from app.db.session import get_engine
 
 logger = logging.getLogger(__name__)
 
+ProgressCallback = Callable[[str, float, str], Awaitable[None] | None]
+
 
 class BackupService:
-    """Service for creating and restoring backups."""
+    """Service for creating and restoring full-system backups."""
+
+    MANIFEST_VERSION = 2
 
     def __init__(self):
         self.settings = get_settings()
         self.media_root = Path(self.settings.media_root)
         self.backup_dir = self.media_root / "backups"
+        self.download_backup_dir = self.backup_dir / "download"
+        self.uploaded_backup_dir = self.backup_dir / "upload"
+        self._ensure_dirs()
+
+    def _ensure_dirs(self) -> None:
+        self.media_root.mkdir(parents=True, exist_ok=True)
         self.backup_dir.mkdir(parents=True, exist_ok=True)
-        self.uploaded_backup_dir = self.backup_dir / "uploaded_backups"
+        self.download_backup_dir.mkdir(parents=True, exist_ok=True)
         self.uploaded_backup_dir.mkdir(parents=True, exist_ok=True)
 
     async def create_backup(
         self,
-        db_session: AsyncSession,
         neo4j_session: Neo4jSession,
+        progress_callback: ProgressCallback | None = None,
     ) -> dict[str, Any]:
-        """
-        Create a complete backup of all data.
+        """Create a full-system backup archive."""
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        backup_name = f"full_backup_{timestamp}"
+        staging_root = Path("/tmp") / backup_name
 
-        Returns:
-            dict with backup metadata including filename and path
-        """
-        timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-        backup_name = f"backup_{timestamp}"
-        backup_temp_dir = Path("/tmp") / backup_name
-        backup_temp_dir.mkdir(parents=True, exist_ok=True)
+        await self._report(progress_callback, "staging", 0.05, "Preparing backup staging")
+        if staging_root.exists():
+            shutil.rmtree(staging_root)
+        staging_root.mkdir(parents=True, exist_ok=True)
+
+        package_root = staging_root / backup_name
+        package_root.mkdir(parents=True, exist_ok=True)
 
         try:
-            logger.info(f"Creating backup: {backup_name}")
+            # Databases
+            await self._report(
+                progress_callback,
+                "sqlite_copy",
+                0.2,
+                "Copying SQLite datasets",
+            )
+            db_summary = self._snapshot_databases(package_root / "databases")
 
-            # Export SQLAlchemy database
-            logger.info("Exporting database...")
-            db_data = await self._export_database(db_session)
-            db_file = backup_temp_dir / "database.json"
-            with open(db_file, "w") as f:
-                json.dump(db_data, f, indent=2, default=str)
+            # Neo4j logical export
+            await self._report(
+                progress_callback,
+                "neo4j_dump",
+                0.45,
+                "Exporting Neo4j logical dump",
+            )
+            neo4j_summary = await self._export_neo4j_dump(neo4j_session, package_root / "neo4j")
 
-            # Export Neo4j graph
-            logger.info("Exporting Neo4j graph...")
-            neo4j_data = await self._export_neo4j(neo4j_session)
-            neo4j_file = backup_temp_dir / "neo4j.json"
-            with open(neo4j_file, "w") as f:
-                json.dump(neo4j_data, f, indent=2, default=str)
+            # Media copy
+            await self._report(
+                progress_callback,
+                "media_copy",
+                0.65,
+                "Copying media files",
+            )
+            media_summary = self._copy_media(package_root / "media")
 
-            # Copy media files (excluding backups folder itself)
-            logger.info("Copying media files...")
-            media_backup_dir = backup_temp_dir / "media"
-            if self.media_root.exists():
-                shutil.copytree(
-                    self.media_root,
-                    media_backup_dir,
-                    ignore=shutil.ignore_patterns("backups"),
-                )
+            # Manifest + checksums
+            await self._report(
+                progress_callback,
+                "manifest",
+                0.8,
+                "Building manifest and checksums",
+            )
+            manifest = self._build_manifest(package_root, timestamp, db_summary, neo4j_summary, media_summary)
+            manifest_path = package_root / "manifest.json"
+            with open(manifest_path, "w", encoding="utf-8") as f:
+                json.dump(manifest, f, indent=2)
 
-            # Create metadata
-            metadata = {
-                "created_at": timestamp,
-                "database_records": sum(len(v) for v in db_data.values()),
-                "neo4j_nodes": len(neo4j_data.get("nodes", [])),
-                "neo4j_relationships": len(neo4j_data.get("relationships", [])),
-            }
-            metadata_file = backup_temp_dir / "metadata.json"
-            with open(metadata_file, "w") as f:
-                json.dump(metadata, f, indent=2)
+            # Archive creation (atomic move)
+            await self._report(
+                progress_callback,
+                "archive",
+                0.9,
+                "Creating compressed archive",
+            )
+            final_archive = self.download_backup_dir / f"{backup_name}.tar.gz"
+            temp_archive = self.download_backup_dir / f"{backup_name}.tar.gz.tmp"
 
-            # Create tar.gz archive
-            logger.info("Creating archive...")
-            backup_archive = self.backup_dir / f"{backup_name}.tar.gz"
-            with tarfile.open(backup_archive, "w:gz") as tar:
-                tar.add(backup_temp_dir, arcname=backup_name)
+            with tarfile.open(temp_archive, "w:gz") as tar:
+                tar.add(package_root, arcname=backup_name)
 
-            logger.info(f"Backup created successfully: {backup_archive}")
+            temp_archive.replace(final_archive)
 
             return {
-                "filename": backup_archive.name,
-                "path": str(backup_archive),
-                "size_bytes": backup_archive.stat().st_size,
+                "backup_kind": "full_system",
+                "filename": final_archive.name,
+                "path": str(final_archive),
+                "storage_path": str(final_archive),
+                "size_bytes": final_archive.stat().st_size,
                 "created_at": timestamp,
-                **metadata,
+                "database_files": db_summary["files"],
+                "neo4j_nodes": neo4j_summary["nodes"],
+                "neo4j_relationships": neo4j_summary["relationships"],
+                "media_files": media_summary["files"],
             }
-
         finally:
-            # Clean up temporary directory
-            if backup_temp_dir.exists():
-                shutil.rmtree(backup_temp_dir)
-
-    async def _export_database(self, session: AsyncSession) -> dict[str, list[dict]]:
-        """Export all database tables to JSON-serializable format."""
-        data = {}
-
-        # Define table order for import (respecting foreign keys)
-        # Users must come first, then ontologies, games, etc.
-        table_order = [
-            ("users", User),
-            ("ontologies", Ontology),
-            ("ontology_entities", OntologyEntity),
-            ("ontology_properties", OntologyProperty),
-            ("ontology_relationships", OntologyRelationship),
-            ("agents", Agent),
-            ("games", Game),
-            ("game_sessions", GameSession),
-            ("game_session_polls", GameSessionPoll),
-            ("game_session_poll_options", GameSessionPollOption),
-            ("game_session_poll_votes", GameSessionPollVote),
-            ("game_session_attendance", GameSessionAttendance),
-            ("library_items", LibraryItem),
-            ("library_bookmarks", LibraryBookmark),
-            ("notes", Note),
-            ("notifications", Notification),
-            ("notification_preferences", NotificationPreference),
-            ("audit_logs", AuditLog),
-            ("elder_chats", ElderChat),
-            ("elder_chat_history", ElderChatHistory),
-            ("background_jobs", BackgroundJob),
-            ("architect_analysis_runs", ArchitectAnalysisRun),
-            ("architect_proposals", ArchitectProposal),
-        ]
-
-        for table_name, model_class in table_order:
-            result = await session.execute(select(model_class))
-            instances = result.scalars().all()
-
-            table_data = []
-            for instance in instances:
-                # Convert SQLAlchemy model to dict
-                inspector = inspect(instance)
-                item_dict = {}
-                for column in inspector.mapper.column_attrs:
-                    value = getattr(instance, column.key)
-                    # Handle datetime objects
-                    if hasattr(value, "isoformat"):
-                        value = value.isoformat()
-                    item_dict[column.key] = value
-                table_data.append(item_dict)
-
-            data[table_name] = table_data
-            logger.info(f"Exported {len(table_data)} records from {table_name}")
-
-        # Export many-to-many relationship tables
-        # game_members
-        result = await session.execute(
-            text("SELECT game_id, user_id FROM game_members")
-        )
-        data["game_members"] = [
-            {"game_id": row[0], "user_id": row[1]} for row in result.fetchall()
-        ]
-
-        # agent_ontologies
-        result = await session.execute(
-            text("SELECT agent_id, ontology_id FROM agent_ontologies")
-        )
-        data["agent_ontologies"] = [
-            {"agent_id": row[0], "ontology_id": row[1]} for row in result.fetchall()
-        ]
-
-        # note_shares
-        result = await session.execute(text("SELECT note_id, user_id FROM note_shares"))
-        data["note_shares"] = [
-            {"note_id": row[0], "user_id": row[1]} for row in result.fetchall()
-        ]
-
-        # library_bookmark_shares
-        result = await session.execute(
-            text("SELECT bookmark_id, user_id FROM library_bookmark_shares")
-        )
-        data["library_bookmark_shares"] = [
-            {"bookmark_id": row[0], "user_id": row[1]} for row in result.fetchall()
-        ]
-
-        return data
-
-    async def _export_neo4j(self, session: Neo4jSession) -> dict[str, list[dict]]:
-        """Export Neo4j graph data."""
-        data = {"nodes": [], "relationships": []}
-
-        # Export all nodes
-        result = await session.run(
-            """
-            MATCH (n)
-            RETURN 
-                id(n) as id,
-                labels(n) as labels,
-                properties(n) as properties
-            """
-        )
-        nodes = await result.data()
-        data["nodes"] = nodes
-        logger.info(f"Exported {len(nodes)} Neo4j nodes")
-
-        # Export all relationships
-        result = await session.run(
-            """
-            MATCH (a)-[r]->(b)
-            RETURN 
-                id(r) as id,
-                id(a) as start_node_id,
-                id(b) as end_node_id,
-                type(r) as type,
-                properties(r) as properties
-            """
-        )
-        relationships = await result.data()
-        data["relationships"] = relationships
-        logger.info(f"Exported {len(relationships)} Neo4j relationships")
-
-        return data
+            if staging_root.exists():
+                shutil.rmtree(staging_root)
 
     async def restore_backup(
         self,
         backup_path: Path,
-        db_session: AsyncSession,
         neo4j_session: Neo4jSession,
-        admin_user_id: int | None = None,
+        progress_callback: ProgressCallback | None = None,
     ) -> dict[str, Any]:
-        """
-        Restore a backup from a tar.gz archive.
-
-        This will:
-        1. Clear all existing data
-        2. Restore database records
-        3. Restore Neo4j graph
-        4. Restore media files
-        5. Preserve the admin user who invoked the restore
-
-        Args:
-            backup_path: Path to the backup tar.gz file
-            db_session: Database session
-            neo4j_session: Neo4j session
-            admin_user_id: ID of the admin user who invoked the restore (to preserve)
-
-        Returns:
-            dict with restoration metadata
-        """
+        """Destructively restore a full-system backup archive."""
         if not backup_path.exists():
             candidate = self.uploaded_backup_dir / backup_path.name
             if candidate.exists():
@@ -296,387 +156,465 @@ class BackupService:
             else:
                 raise FileNotFoundError(f"Backup file not found: {backup_path}")
 
-        temp_extract_dir = (
-            Path("/tmp") / f"restore_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}"
-        )
+        await self._report(progress_callback, "validating", 0.1, "Validating backup archive")
+
+        temp_extract_dir = Path("/tmp") / f"restore_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
         temp_extract_dir.mkdir(parents=True, exist_ok=True)
 
         try:
-            logger.info(f"Restoring backup from: {backup_path}")
-
-            # Extract archive
-            logger.info("Extracting backup archive...")
             with tarfile.open(backup_path, "r:gz") as tar:
-                tar.extractall(temp_extract_dir)
+                self._safe_extract_tar(tar, temp_extract_dir)
 
-            # Find the backup directory (should be single directory in temp)
-            backup_dirs = [d for d in temp_extract_dir.iterdir() if d.is_dir()]
-            if not backup_dirs:
-                raise ValueError("Invalid backup archive: no data directory found")
-            backup_data_dir = backup_dirs[0]
+            package_dirs = [p for p in temp_extract_dir.iterdir() if p.is_dir()]
+            if len(package_dirs) != 1:
+                raise ValueError("Invalid backup archive structure: expected single root directory")
 
-            # Load metadata
-            metadata_file = backup_data_dir / "metadata.json"
-            if metadata_file.exists():
-                with open(metadata_file, "r") as f:
-                    metadata = json.load(f)
-            else:
-                metadata = {}
+            package_root = package_dirs[0]
+            manifest = self._validate_manifest(package_root)
+            self._validate_manifest_checksums(package_root, manifest)
 
-            # Clear existing data
-            logger.info("Clearing existing data...")
-            await self._clear_all_data(db_session, neo4j_session)
+            await self._prepare_sqlite_restore()
+            await self._report(progress_callback, "sqlite_restore", 0.3, "Restoring SQLite datasets")
+            db_restore_summary = self._restore_databases(package_root / "databases")
 
-            # Restore database
-            logger.info("Restoring database...")
-            db_file = backup_data_dir / "database.json"
-            with open(db_file, "r") as f:
-                db_data = json.load(f)
-            await self._restore_database(db_session, db_data, admin_user_id)
+            await self._report(progress_callback, "media_restore", 0.55, "Restoring media files")
+            media_restore_summary = self._restore_media(package_root / "media")
 
-            # Restore Neo4j
-            logger.info("Restoring Neo4j graph...")
-            neo4j_file = backup_data_dir / "neo4j.json"
-            with open(neo4j_file, "r") as f:
-                neo4j_data = json.load(f)
-            await self._restore_neo4j(neo4j_session, neo4j_data)
+            await self._report(progress_callback, "neo4j_import", 0.75, "Restoring Neo4j logical dump")
+            neo4j_restore_summary = await self._restore_neo4j_dump(
+                neo4j_session,
+                package_root / "neo4j" / "graph.json",
+                package_root / "neo4j" / "schema.json",
+            )
 
-            # Restore media files
-            logger.info("Restoring media files...")
-            media_backup_dir = backup_data_dir / "media"
-            if media_backup_dir.exists():
-                # Clear existing media (except backups)
-                for item in self.media_root.iterdir():
-                    if item.name != "backups":
-                        if item.is_dir():
-                            shutil.rmtree(item)
-                        else:
-                            item.unlink()
-
-                # Copy restored media
-                for item in media_backup_dir.iterdir():
-                    dest = self.media_root / item.name
-                    if item.is_dir():
-                        shutil.copytree(item, dest)
-                    else:
-                        shutil.copy2(item, dest)
-
-            logger.info("Restore completed successfully")
+            await self._report(progress_callback, "finalizing", 0.95, "Finalizing restore")
 
             return {
                 "status": "success",
-                "restored_at": datetime.utcnow().isoformat(),
-                "backup_metadata": metadata,
+                "backup_kind": "full_system",
+                "restored_at": datetime.now(timezone.utc).isoformat(),
+                "restart_required": True,
+                "backup_metadata": {
+                    "manifest_version": manifest.get("version"),
+                    "created_at": manifest.get("created_at"),
+                },
+                "restore_summary": {
+                    "database_files": db_restore_summary,
+                    "media_files": media_restore_summary,
+                    "neo4j": neo4j_restore_summary,
+                },
             }
-
         finally:
-            # Clean up temporary directory
             if temp_extract_dir.exists():
                 shutil.rmtree(temp_extract_dir)
 
+    async def _prepare_sqlite_restore(self) -> None:
+        """Close shared SQLAlchemy engines so SQLite files can be replaced safely."""
+        await get_engine().dispose()
+        await get_jobs_engine().dispose()
+
+    async def _report(
+        self,
+        callback: ProgressCallback | None,
+        phase: str,
+        progress: float,
+        status: str,
+    ) -> None:
+        if not callback:
+            return
+        result = callback(phase, progress, status)
+        if result is not None:
+            await result
+
+    def _snapshot_databases(self, destination_dir: Path) -> dict[str, Any]:
+        destination_dir.mkdir(parents=True, exist_ok=True)
+        data_dir = self._resolve_data_dir()
+        data_dir.mkdir(parents=True, exist_ok=True)
+
+        copied_files: list[str] = []
+        for db_file in sorted(data_dir.glob("*.db")):
+            target = destination_dir / db_file.name
+            self._sqlite_backup_file(db_file, target)
+            copied_files.append(db_file.name)
+
+        logger.info("Copied %d SQLite database files", len(copied_files))
+        return {"files": copied_files, "source": str(data_dir)}
+
+    def _sqlite_backup_file(self, source: Path, target: Path) -> None:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with sqlite3.connect(source.as_posix()) as source_conn:
+            with sqlite3.connect(target.as_posix()) as target_conn:
+                source_conn.backup(target_conn)
+
+    async def _export_neo4j_dump(
+        self,
+        session: Neo4jSession,
+        destination_dir: Path,
+    ) -> dict[str, int]:
+        destination_dir.mkdir(parents=True, exist_ok=True)
+
+        nodes_result = await session.run(
+            """
+            MATCH (n)
+            RETURN id(n) AS id, labels(n) AS labels, properties(n) AS properties
+            """
+        )
+        nodes = await nodes_result.data()
+
+        rels_result = await session.run(
+            """
+            MATCH (a)-[r]->(b)
+            RETURN id(r) AS id,
+                   id(a) AS start_node_id,
+                   id(b) AS end_node_id,
+                   type(r) AS type,
+                   properties(r) AS properties
+            """
+        )
+        relationships = await rels_result.data()
+
+        graph_path = destination_dir / "graph.json"
+        with open(graph_path, "w", encoding="utf-8") as f:
+            json.dump(
+                {"nodes": nodes, "relationships": relationships},
+                f,
+                indent=2,
+                default=self._json_default,
+            )
+
+        schema_dump = await self._export_neo4j_schema(session)
+        schema_path = destination_dir / "schema.json"
+        with open(schema_path, "w", encoding="utf-8") as f:
+            json.dump(schema_dump, f, indent=2, default=self._json_default)
+
+        return {
+            "nodes": len(nodes),
+            "relationships": len(relationships),
+            "constraints": len(schema_dump.get("constraints", [])),
+            "indexes": len(schema_dump.get("indexes", [])),
+        }
+
+    async def _export_neo4j_schema(self, session: Neo4jSession) -> dict[str, list[str]]:
+        constraints: list[str] = []
+        indexes: list[str] = []
+
+        try:
+            constraint_result = await session.run(
+                "SHOW CONSTRAINTS YIELD createStatement RETURN createStatement"
+            )
+            constraints = [
+                row["createStatement"]
+                for row in await constraint_result.data()
+                if row.get("createStatement")
+            ]
+        except Exception as exc:  # pragma: no cover
+            logger.warning("Could not export Neo4j constraints: %s", exc)
+
+        try:
+            index_result = await session.run(
+                "SHOW INDEXES YIELD createStatement RETURN createStatement"
+            )
+            indexes = [
+                row["createStatement"]
+                for row in await index_result.data()
+                if row.get("createStatement")
+            ]
+        except Exception as exc:  # pragma: no cover
+            logger.warning("Could not export Neo4j indexes: %s", exc)
+
+        return {"constraints": constraints, "indexes": indexes}
+
+    def _copy_media(self, destination_dir: Path) -> dict[str, int]:
+        destination_dir.mkdir(parents=True, exist_ok=True)
+        if not self.media_root.exists():
+            return {"files": 0}
+
+        for item in self.media_root.iterdir():
+            if item.name == "backups":
+                continue
+            dest = destination_dir / item.name
+            if item.is_dir():
+                shutil.copytree(item, dest)
+            else:
+                shutil.copy2(item, dest)
+
+        files = sum(1 for p in destination_dir.rglob("*") if p.is_file())
+        return {"files": files}
+
+    def _build_manifest(
+        self,
+        package_root: Path,
+        timestamp: str,
+        db_summary: dict[str, Any],
+        neo4j_summary: dict[str, Any],
+        media_summary: dict[str, Any],
+    ) -> dict[str, Any]:
+        files: list[dict[str, Any]] = []
+        for file_path in sorted(p for p in package_root.rglob("*") if p.is_file()):
+            rel = file_path.relative_to(package_root).as_posix()
+            files.append(
+                {
+                    "path": rel,
+                    "size_bytes": file_path.stat().st_size,
+                    "sha256": self._sha256(file_path),
+                }
+            )
+
+        return {
+            "version": self.MANIFEST_VERSION,
+            "backup_kind": "full_system",
+            "created_at": timestamp,
+            "components": {
+                "databases": db_summary,
+                "neo4j": neo4j_summary,
+                "media": media_summary,
+            },
+            "restore_instructions": {
+                "destructive": True,
+                "restart_required": True,
+            },
+            "files": files,
+        }
+
+    @staticmethod
+    def _sha256(path: Path) -> str:
+        digest = hashlib.sha256()
+        with open(path, "rb") as f:
+            while True:
+                chunk = f.read(1024 * 1024)
+                if not chunk:
+                    break
+                digest.update(chunk)
+        return digest.hexdigest()
+
+    @staticmethod
+    def _json_default(value: Any) -> str:
+        """Serialize non-standard values (e.g. Neo4j temporal types) to strings."""
+        if hasattr(value, "isoformat"):
+            return value.isoformat()  # datetime/date/time
+        if hasattr(value, "iso_format"):
+            return value.iso_format()  # Neo4j temporal values
+        return str(value)
+
+    def _safe_extract_tar(self, tar: tarfile.TarFile, destination: Path) -> None:
+        dest_resolved = destination.resolve()
+        for member in tar.getmembers():
+            member_path = destination / member.name
+            resolved_member = member_path.resolve()
+            if dest_resolved not in resolved_member.parents and resolved_member != dest_resolved:
+                raise ValueError(f"Unsafe archive entry detected: {member.name}")
+        tar.extractall(destination)
+
+    def _validate_manifest(self, package_root: Path) -> dict[str, Any]:
+        manifest_path = package_root / "manifest.json"
+        if not manifest_path.exists():
+            raise ValueError("Invalid backup archive: missing manifest.json")
+
+        with open(manifest_path, "r", encoding="utf-8") as f:
+            manifest = json.load(f)
+
+        required_keys = {"version", "backup_kind", "files", "components"}
+        missing = [key for key in required_keys if key not in manifest]
+        if missing:
+            raise ValueError(f"Invalid backup manifest: missing keys {missing}")
+
+        if manifest.get("backup_kind") != "full_system":
+            raise ValueError("Unsupported backup kind")
+
+        return manifest
+
+    def _validate_manifest_checksums(self, package_root: Path, manifest: dict[str, Any]) -> None:
+        entries = manifest.get("files", [])
+        if not isinstance(entries, list):
+            raise ValueError("Invalid backup manifest: files must be a list")
+
+        for entry in entries:
+            rel_path = entry.get("path")
+            expected = entry.get("sha256")
+            if not rel_path or not expected:
+                raise ValueError("Invalid backup manifest: malformed file entry")
+
+            file_path = package_root / rel_path
+            if not file_path.exists():
+                raise ValueError(f"Invalid backup archive: missing file {rel_path}")
+
+            actual = self._sha256(file_path)
+            if actual != expected:
+                raise ValueError(f"Checksum mismatch for {rel_path}")
+
+    def _resolve_data_dir(self) -> Path:
+        db_path = self._sqlite_url_to_path(self.settings.database_url)
+        jobs_path = self._sqlite_url_to_path(self.settings.jobs_database_url)
+        candidates = [db_path.parent, jobs_path.parent]
+        for candidate in candidates:
+            if candidate.exists():
+                return candidate
+        return candidates[0]
+
+    def _sqlite_url_to_path(self, url: str) -> Path:
+        prefixes = ("sqlite+aiosqlite:///", "sqlite:///")
+        for prefix in prefixes:
+            if url.startswith(prefix):
+                raw = url[len(prefix) :]
+                if raw.startswith("./"):
+                    return Path(raw[2:])
+                if raw.startswith("/"):
+                    return Path(raw)
+                return Path(raw)
+        raise ValueError(f"Unsupported sqlite URL for backup: {url}")
+
+    def _restore_databases(self, source_dir: Path) -> int:
+        if not source_dir.exists():
+            raise ValueError("Invalid backup archive: missing databases directory")
+
+        data_dir = self._resolve_data_dir()
+        data_dir.mkdir(parents=True, exist_ok=True)
+        jobs_db_name = self._sqlite_url_to_path(self.settings.jobs_database_url).name
+
+        for existing in data_dir.glob("*.db"):
+            if existing.name == jobs_db_name:
+                continue
+            existing.unlink()
+
+        restored = 0
+        for db_file in sorted(source_dir.glob("*.db")):
+            if db_file.name == jobs_db_name:
+                logger.info(
+                    "Skipping restore for active jobs database file %s to preserve job visibility",
+                    jobs_db_name,
+                )
+                continue
+            shutil.copy2(db_file, data_dir / db_file.name)
+            restored += 1
+
+        return restored
+
+    def _restore_media(self, source_dir: Path) -> int:
+        if not source_dir.exists():
+            return 0
+
+        self.media_root.mkdir(parents=True, exist_ok=True)
+
+        for item in self.media_root.iterdir():
+            if item.name == "backups":
+                continue
+            if item.is_dir():
+                shutil.rmtree(item)
+            else:
+                item.unlink()
+
+        for item in source_dir.iterdir():
+            dest = self.media_root / item.name
+            if item.is_dir():
+                shutil.copytree(item, dest)
+            else:
+                shutil.copy2(item, dest)
+
+        return sum(1 for p in source_dir.rglob("*") if p.is_file())
+
+    async def _restore_neo4j_dump(
+        self,
+        session: Neo4jSession,
+        graph_path: Path,
+        schema_path: Path,
+    ) -> dict[str, int]:
+        if not graph_path.exists():
+            raise ValueError("Invalid backup archive: missing neo4j/graph.json")
+
+        with open(graph_path, "r", encoding="utf-8") as f:
+            graph_data = json.load(f)
+
+        schema_data: dict[str, list[str]] = {"constraints": [], "indexes": []}
+        if schema_path.exists():
+            with open(schema_path, "r", encoding="utf-8") as f:
+                raw_schema = json.load(f)
+                if isinstance(raw_schema, dict):
+                    schema_data = {
+                        "constraints": list(raw_schema.get("constraints", [])),
+                        "indexes": list(raw_schema.get("indexes", [])),
+                    }
+
+        await session.run("MATCH (n) DETACH DELETE n")
+
+        id_mapping: dict[int, int] = {}
+        for node in graph_data.get("nodes", []):
+            labels = [lbl for lbl in node.get("labels", []) if isinstance(lbl, str)]
+            valid_labels = [lbl for lbl in labels if all(c.isalnum() or c == "_" for c in lbl)]
+            if not valid_labels:
+                continue
+
+            query = f"CREATE (n:{':'.join(valid_labels)}) SET n = $properties RETURN id(n) AS new_id"
+            result = await session.run(query, properties=node.get("properties", {}))
+            rec = await result.single()
+            if rec is None:
+                continue
+            id_mapping[int(node.get("id"))] = int(rec["new_id"])
+
+        restored_rels = 0
+        for rel in graph_data.get("relationships", []):
+            start_id = id_mapping.get(int(rel.get("start_node_id", -1)))
+            end_id = id_mapping.get(int(rel.get("end_node_id", -1)))
+            rel_type = rel.get("type")
+            if start_id is None or end_id is None or not isinstance(rel_type, str):
+                continue
+            if not all(c.isalnum() or c == "_" for c in rel_type):
+                continue
+
+            await session.run(
+                f"""
+                MATCH (a), (b)
+                WHERE id(a) = $start_id AND id(b) = $end_id
+                CREATE (a)-[r:{rel_type}]->(b)
+                SET r = $properties
+                """,
+                start_id=start_id,
+                end_id=end_id,
+                properties=rel.get("properties", {}),
+            )
+            restored_rels += 1
+
+        restored_constraints = 0
+        for statement in schema_data.get("constraints", []):
+            try:
+                await session.run(statement)
+                restored_constraints += 1
+            except Exception:
+                logger.warning("Skipping failing Neo4j constraint statement: %s", statement)
+
+        restored_indexes = 0
+        for statement in schema_data.get("indexes", []):
+            try:
+                await session.run(statement)
+                restored_indexes += 1
+            except Exception:
+                logger.warning("Skipping failing Neo4j index statement: %s", statement)
+
+        return {
+            "nodes": len(id_mapping),
+            "relationships": restored_rels,
+            "constraints": restored_constraints,
+            "indexes": restored_indexes,
+        }
+
     def get_uploaded_backup_path(self, filename: str) -> Path:
-        """Return absolute path for storing an uploaded backup file."""
         safe_name = Path(filename).name
         return self.uploaded_backup_dir / safe_name
 
-    async def _clear_all_data(
-        self, db_session: AsyncSession, neo4j_session: Neo4jSession
-    ) -> None:
-        """Clear all data from database and Neo4j."""
-        # Clear Neo4j first
-        logger.info("Clearing Neo4j graph...")
-        await neo4j_session.run("MATCH (n) DETACH DELETE n")
-
-        # Clear database tables in reverse dependency order
-        logger.info("Clearing database tables...")
-
-        def _get_existing_tables(sync_session) -> set[str]:
-            inspector = inspect(sync_session.bind)
-            return set(inspector.get_table_names())
-
-        existing_tables = await db_session.run_sync(_get_existing_tables)
-
-        # Delete in reverse order to respect foreign keys
-        table_order = [
-            "library_bookmark_shares",
-            "note_shares",
-            "agent_ontologies",
-            "game_members",
-            "architect_proposals",
-            "architect_analysis_runs",
-            "background_jobs",
-            "elder_chat_history",
-            "elder_chats",
-            "audit_logs",
-            "notification_preferences",
-            "notifications",
-            "notes",
-            "library_bookmarks",
-            "library_items",
-            "game_session_poll_votes",
-            "game_session_poll_options",
-            "game_session_polls",
-            "game_session_attendance",
-            "game_sessions",
-            "games",
-            "agents",
-            "entity_relationships",
-            "entity_properties",
-            "ontology_relationships",
-            "ontology_properties",
-            "ontology_entities",
-            "ontologies",
-            "users",
-        ]
-
-        for table in table_order:
-            if table not in existing_tables:
-                logger.info("Skipping delete for missing table %s", table)
-                continue
-            await db_session.execute(text(f'DELETE FROM "{table}"'))
-
-        await db_session.commit()
-
-    @staticmethod
-    def _deserialize_column_value(column, value):
-        """Convert serialized backup values into model-compatible objects."""
-        if value is None:
-            return None
-
-        try:
-            python_type = column.type.python_type
-        except NotImplementedError:
-            return value
-
-        if python_type in (datetime, date, time):
-            if isinstance(value, python_type):
-                return value
-            if isinstance(value, str):
-                normalized = value.replace("Z", "+00:00")
-                if python_type is datetime:
-                    return datetime.fromisoformat(normalized)
-                if python_type is date:
-                    return date.fromisoformat(normalized)
-                if python_type is time:
-                    return time.fromisoformat(normalized)
-        return value
-
-    async def _restore_database(
-        self,
-        session: AsyncSession,
-        data: dict[str, list[dict]],
-        admin_user_id: int | None = None,
-    ) -> None:
-        """
-        Restore database from JSON data.
-
-        Args:
-            session: Database session
-            data: Backup data dictionary
-            admin_user_id: ID of the admin user who invoked the restore (to preserve)
-        """
-        # Get the admin user data before restore (if provided)
-        admin_user_data = None
-        if admin_user_id:
-            result = await session.execute(select(User).where(User.id == admin_user_id))
-            admin_user = result.scalar_one_or_none()
-            if admin_user:
-                # Store admin user data
-                inspector = inspect(admin_user)
-                admin_user_data = {}
-                for column in inspector.mapper.column_attrs:
-                    admin_user_data[column.key] = getattr(admin_user, column.key)
-                logger.info(
-                    f"Preserving admin user: {admin_user.username} (ID: {admin_user_id})"
-                )
-
-        # Restore in the same order as export
-        table_order = [
-            ("users", User),
-            ("ontologies", Ontology),
-            ("ontology_entities", OntologyEntity),
-            ("ontology_properties", OntologyProperty),
-            ("ontology_relationships", OntologyRelationship),
-            ("agents", Agent),
-            ("games", Game),
-            ("game_sessions", GameSession),
-            ("game_session_polls", GameSessionPoll),
-            ("game_session_poll_options", GameSessionPollOption),
-            ("game_session_poll_votes", GameSessionPollVote),
-            ("game_session_attendance", GameSessionAttendance),
-            ("library_items", LibraryItem),
-            ("library_bookmarks", LibraryBookmark),
-            ("notes", Note),
-            ("notifications", Notification),
-            ("notification_preferences", NotificationPreference),
-            ("audit_logs", AuditLog),
-            ("elder_chats", ElderChat),
-            ("elder_chat_history", ElderChatHistory),
-            ("background_jobs", BackgroundJob),
-            ("architect_analysis_runs", ArchitectAnalysisRun),
-            ("architect_proposals", ArchitectProposal),
-        ]
-
-        for table_name, model_class in table_order:
-            if table_name in data:
-                records = data[table_name]
-                for record in records:
-                    # Special handling for users table
-                    if table_name == "users" and admin_user_data:
-                        # Check if this user conflicts with the admin user
-                        if (
-                            record.get("username") == admin_user_data["username"]
-                            or record.get("email") == admin_user_data["email"]
-                        ):
-                            # Skip this user from backup, we'll keep the admin user
-                            logger.info(
-                                f"Skipping backup user {record.get('username')} - conflicts with admin user"
-                            )
-                            continue
-
-                    deserialized_record = {}
-                    for column in model_class.__table__.columns:
-                        key = column.name
-                        if key in record:
-                            deserialized_record[key] = self._deserialize_column_value(
-                                column, record[key]
-                            )
-                    instance = model_class(**deserialized_record)
-                    session.add(instance)
-                logger.info(f"Restored {len(records)} records to {table_name}")
-
-        # Restore many-to-many tables
-        if "game_members" in data:
-            for record in data["game_members"]:
-                await session.execute(
-                    text(
-                        "INSERT INTO game_members (game_id, user_id) VALUES (:game_id, :user_id)"
-                    ),
-                    record,
-                )
-
-        if "agent_ontologies" in data:
-            for record in data["agent_ontologies"]:
-                await session.execute(
-                    text(
-                        "INSERT INTO agent_ontologies (agent_id, ontology_id) VALUES (:agent_id, :ontology_id)"
-                    ),
-                    record,
-                )
-
-        if "note_shares" in data:
-            for record in data["note_shares"]:
-                await session.execute(
-                    text(
-                        "INSERT INTO note_shares (note_id, user_id) VALUES (:note_id, :user_id)"
-                    ),
-                    record,
-                )
-
-        if "library_bookmark_shares" in data:
-            for record in data["library_bookmark_shares"]:
-                await session.execute(
-                    text(
-                        "INSERT INTO library_bookmark_shares (bookmark_id, user_id) VALUES (:bookmark_id, :user_id)"
-                    ),
-                    record,
-                )
-
-        await session.commit()
-
-    async def _restore_neo4j(
-        self, session: Neo4jSession, data: dict[str, list[dict]]
-    ) -> None:
-        """Restore Neo4j graph from JSON data."""
-        # Create a mapping from old node IDs to new node IDs
-        id_mapping = {}
-
-        # Restore nodes
-        for node in data.get("nodes", []):
-            old_id = node["id"]
-            labels = node["labels"]
-            properties = node["properties"]
-
-            # Validate labels to prevent Cypher injection
-            # Labels should only contain alphanumeric characters and underscores
-            validated_labels = []
-            for label in labels:
-                if not isinstance(label, str) or not all(
-                    c.isalnum() or c == "_" for c in label
-                ):
-                    logger.warning(
-                        f"Skipping invalid label: {label}. Labels must be alphanumeric with underscores only."
-                    )
-                    continue
-                validated_labels.append(label)
-
-            if not validated_labels:
-                logger.warning(f"Skipping node with no valid labels")
-                continue
-
-            labels_str = ":".join(validated_labels)
-
-            # Create node with properties
-            query = (
-                f"CREATE (n:{labels_str}) SET n = $properties RETURN id(n) as new_id"
-            )
-            result = await session.run(query, properties=properties)
-            record = await result.single()
-            new_id = record["new_id"]
-            id_mapping[old_id] = new_id
-
-        logger.info(f"Restored {len(id_mapping)} Neo4j nodes")
-
-        # Restore relationships
-        for rel in data.get("relationships", []):
-            start_id = id_mapping.get(rel["start_node_id"])
-            end_id = id_mapping.get(rel["end_node_id"])
-            if start_id is None or end_id is None:
-                logger.warning(f"Skipping relationship with missing node references")
-                continue
-
-            rel_type = rel["type"]
-            properties = rel["properties"]
-
-            # Validate relationship type to prevent Cypher injection
-            # Relationship types should only contain alphanumeric characters and underscores
-            if not isinstance(rel_type, str) or not all(
-                c.isalnum() or c == "_" for c in rel_type
-            ):
-                logger.warning(
-                    f"Skipping invalid relationship type: {rel_type}. Types must be alphanumeric with underscores only."
-                )
-                continue
-
-            query = f"""
-            MATCH (a), (b)
-            WHERE id(a) = $start_id AND id(b) = $end_id
-            CREATE (a)-[r:{rel_type}]->(b)
-            SET r = $properties
-            """
-            await session.run(
-                query, start_id=start_id, end_id=end_id, properties=properties
-            )
-
-        logger.info(
-            f"Restored {len(data.get('relationships', []))} Neo4j relationships"
-        )
-
     def list_backups(self) -> list[dict[str, Any]]:
-        """List all available backups."""
-        backups = []
-
-        if not self.backup_dir.exists():
+        backups: list[dict[str, Any]] = []
+        if not self.download_backup_dir.exists():
             return backups
 
-        for backup_file in sorted(self.backup_dir.glob("backup_*.tar.gz")):
+        for backup_file in sorted(self.download_backup_dir.glob("*.tar.gz"), reverse=True):
             backups.append(
                 {
+                    "backup_kind": "full_system",
                     "filename": backup_file.name,
                     "path": str(backup_file),
+                    "storage_path": str(backup_file),
                     "size_bytes": backup_file.stat().st_size,
                     "created_at": datetime.fromtimestamp(
-                        backup_file.stat().st_mtime
+                        backup_file.stat().st_mtime, tz=timezone.utc
                     ).isoformat(),
                 }
             )
@@ -684,8 +622,7 @@ class BackupService:
         return backups
 
     def get_backup_path(self, filename: str) -> Path:
-        """Get the full path for a backup file."""
-        backup_path = self.backup_dir / filename
+        backup_path = self.download_backup_dir / Path(filename).name
         if not backup_path.exists():
             raise FileNotFoundError(f"Backup not found: {filename}")
         return backup_path

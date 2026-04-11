@@ -14,6 +14,7 @@ from starlette import status
 from app.api.routers import get_api_router
 from app.core.config_store import get_app_config, get_settings
 from app.core.logging_config import configure_logging
+from app.core.version import APP_VERSION
 from app.db.init_db import init_db
 from app.db.init_jobs_db import init_jobs_db
 from app.db.jobs_session import get_jobs_engine
@@ -21,6 +22,7 @@ from app.db.migrations import migrate_neo4j_embedding_properties
 from app.db.session import get_engine
 from app.graph.neo4j import close_driver as close_neo4j_driver
 from app.graph.neo4j import get_neo4j_session
+from app.services.maintenance_mode_service import MaintenanceModeService
 
 
 @asynccontextmanager
@@ -71,9 +73,28 @@ def create_app() -> FastAPI:
     )
 
     request_logger = logging.getLogger("backend_2.requests")
+    maintenance_service = MaintenanceModeService()
 
     @app.middleware("http")
     async def log_requests(request: Request, call_next):  # type: ignore[override]
+        allowed_prefixes = (
+            "/health",
+            "/jobs",
+            "/backups",
+            settings.media_base_url,
+        )
+        if (
+            maintenance_service.is_active()
+            and request.method not in {"GET", "HEAD", "OPTIONS"}
+            and not request.url.path.startswith(allowed_prefixes)
+        ):
+            return JSONResponse(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                content={
+                    "detail": "System is in maintenance mode during restore. Please retry shortly."
+                },
+            )
+
         start_time = time.perf_counter()
         try:
             response = await call_next(request)
@@ -153,7 +174,7 @@ def create_app() -> FastAPI:
 
     @app.get("/health", tags=["health"])
     async def health_check() -> dict[str, str]:
-        return {"status": "ok", "service": config.app_name}
+        return {"status": "ok", "service": config.app_name, "version": APP_VERSION}
 
     return app
 

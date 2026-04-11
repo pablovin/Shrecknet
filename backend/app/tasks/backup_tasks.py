@@ -7,10 +7,10 @@ from pathlib import Path
 from typing import Any
 
 from app.celery_app import celery_app
-from app.db.session import AsyncSessionMaker
 from app.graph.neo4j import get_driver
 from app.models.background_job import AuthorType, JobType
 from app.services.backup_service import BackupService
+from app.services.maintenance_mode_service import MaintenanceModeService
 from app.utils.async_helpers import run_async
 from app.utils.job_tracking import (
     create_background_job,
@@ -60,37 +60,37 @@ def create_backup_task(
         )
     )
 
+    current_phase = "queued"
     try:
         # Mark as running
         run_async(mark_job_running(job_id))
+        current_phase = "initializing"
 
-        # Update progress: Starting backup
-        run_async(
-            update_job_progress(job_id, 0.1, {"status": "Initializing backup process"})
-        )
+        async def report_progress(phase: str, progress: float, status_text: str) -> None:
+            nonlocal current_phase
+            current_phase = phase
+            await update_job_progress(
+                job_id,
+                progress,
+                {
+                    "phase": phase,
+                    "status": status_text,
+                },
+            )
+
+        run_async(report_progress("initializing", 0.05, "Initializing backup process"))
 
         # Create backup using BackupService
         async def perform_backup():
-            async with AsyncSessionMaker() as db_session:
-                driver = get_driver()
-                async with driver.session() as neo4j_session:
-                    backup_service = BackupService()
-
-                    # Update progress: Exporting database
-                    await update_job_progress(
-                        job_id, 0.2, {"status": "Exporting database"}
-                    )
-
-                    result = await backup_service.create_backup(
-                        db_session, neo4j_session
-                    )
-
-                    # Update progress: Backup complete
-                    await update_job_progress(
-                        job_id, 0.9, {"status": "Backup archive created"}
-                    )
-
-                    return result
+            driver = get_driver()
+            async with driver.session() as neo4j_session:
+                backup_service = BackupService()
+                result = await backup_service.create_backup(
+                    neo4j_session=neo4j_session,
+                    progress_callback=report_progress,
+                )
+                await report_progress("finalizing", 0.98, "Backup archive created")
+                return result
 
         result = run_async(perform_backup())
 
@@ -102,9 +102,12 @@ def create_backup_task(
                     "admin_user_id": admin_user_id,
                     "backup_filename": result.get("filename"),
                     "backup_size": result.get("size_bytes"),
-                    "database_records": result.get("database_records"),
+                    "backup_kind": result.get("backup_kind"),
+                    "storage_path": result.get("storage_path"),
+                    "database_files": result.get("database_files"),
                     "neo4j_nodes": result.get("neo4j_nodes"),
                     "neo4j_relationships": result.get("neo4j_relationships"),
+                    "media_files": result.get("media_files"),
                 },
             )
         )
@@ -120,8 +123,8 @@ def create_backup_task(
         }
 
     except Exception as e:
-        logger.error(f"Failed to create backup: {str(e)}", exc_info=True)
-        run_async(mark_job_failed(job_id, str(e)))
+        logger.error("Failed to create backup: %s", str(e), exc_info=True)
+        run_async(mark_job_failed(job_id, f"[{current_phase}] {str(e)}"))
         raise
 
 
@@ -166,37 +169,43 @@ def restore_backup_task(
         )
     )
 
+    current_phase = "queued"
     try:
         # Mark as running
         run_async(mark_job_running(job_id))
+        current_phase = "initializing"
+        maintenance_service = MaintenanceModeService()
 
-        # Update progress: Starting restore
-        run_async(
-            update_job_progress(job_id, 0.1, {"status": "Initializing restore process"})
-        )
+        async def report_progress(phase: str, progress: float, status_text: str) -> None:
+            nonlocal current_phase
+            current_phase = phase
+            await update_job_progress(
+                job_id,
+                progress,
+                {
+                    "phase": phase,
+                    "status": status_text,
+                },
+            )
+
+        run_async(report_progress("initializing", 0.05, "Initializing restore process"))
 
         # Restore backup using BackupService
         async def perform_restore():
-            async with AsyncSessionMaker() as db_session:
+            backup_service = BackupService()
+            maintenance_service.enable("destructive_restore")
+            try:
                 driver = get_driver()
                 async with driver.session() as neo4j_session:
-                    backup_service = BackupService()
-
-                    # Update progress: Extracting backup
-                    await update_job_progress(
-                        job_id, 0.2, {"status": "Extracting backup archive"}
-                    )
-
                     result = await backup_service.restore_backup(
-                        Path(backup_path), db_session, neo4j_session, admin_user_id
+                        Path(backup_path),
+                        neo4j_session=neo4j_session,
+                        progress_callback=report_progress,
                     )
-
-                    # Update progress: Restore complete
-                    await update_job_progress(
-                        job_id, 0.9, {"status": "Restore completed"}
-                    )
-
+                    await report_progress("finalizing", 0.98, "Restore completed")
                     return result
+            finally:
+                maintenance_service.disable()
 
         result = run_async(perform_restore())
 
@@ -208,6 +217,7 @@ def restore_backup_task(
                     "admin_user_id": admin_user_id,
                     "backup_path": backup_path,
                     "restored_at": result.get("restored_at"),
+                    "restart_required": result.get("restart_required", False),
                 },
             )
         )
@@ -223,6 +233,6 @@ def restore_backup_task(
         }
 
     except Exception as e:
-        logger.error(f"Failed to restore backup: {str(e)}", exc_info=True)
-        run_async(mark_job_failed(job_id, str(e)))
+        logger.error("Failed to restore backup: %s", str(e), exc_info=True)
+        run_async(mark_job_failed(job_id, f"[{current_phase}] {str(e)}"))
         raise

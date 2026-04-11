@@ -14,11 +14,9 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_admin_user, get_db_session
+from app.api.deps import get_current_admin_user
 from app.models.user import User
-from app.repositories.background_job_repository import BackgroundJobRepository
 from app.services.backup_service import BackupService
 from app.tasks.backup_tasks import create_backup_task, restore_backup_task
 
@@ -29,7 +27,6 @@ router = APIRouter(prefix="/backups", tags=["backups"])
 
 @router.post("/create", status_code=status.HTTP_202_ACCEPTED)
 async def create_backup(
-    db_session: AsyncSession = Depends(get_db_session),
     current_user: User = Depends(get_current_admin_user),
 ) -> dict[str, Any]:
     """
@@ -147,7 +144,6 @@ async def download_backup(
 @router.post("/restore", status_code=status.HTTP_202_ACCEPTED)
 async def restore_backup(
     file: UploadFile = File(...),
-    db_session: AsyncSession = Depends(get_db_session),
     current_user: User = Depends(get_current_admin_user),
 ) -> dict[str, Any]:
     """

@@ -10,7 +10,7 @@
 Shrecknet is an event-driven memory engine for storytelling. It incrementally builds longitudinal episodic memory through an agentic architecture where events are first-class citizens and structure can evolve over time.
 
 ## Introducing Shrecknet
-
+  
 Shrecknet is an agentic architecture for incremental construction of longitudinal episodic memory under controlled ontology evolution. Its core principle is explicit separation and coordinated co-evolution of three representational layers: Ontology, Graph, and Knowledge.
 
 Instead of treating memory as plain text or a frozen knowledge base, Shrecknet models memory as a dynamic system: every new observation can update entity state, append new timeline events, and, when needed, evolve the schema itself.

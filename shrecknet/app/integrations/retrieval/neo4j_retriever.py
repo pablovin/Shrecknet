@@ -20,6 +20,9 @@ class GraphRetriever(Protocol):
         query: str,
         ontology_ids: list[int],
         top_k: int = 10,
+        node_scope: str = "everything",
+        candidate_limit: int | None = None,
+        rerank_limit: int | None = None,
     ) -> list[RetrievedChunk]:
         """
         Search for relevant context in the graph.
@@ -28,6 +31,9 @@ class GraphRetriever(Protocol):
             query: Search query text
             ontology_ids: List of ontology IDs to scope the search
             top_k: Number of results to return
+            node_scope: Node type scope (everything, entity, scene)
+            candidate_limit: Max chunk candidates before node-level reranking
+            rerank_limit: Max node candidates after reranking
 
         Returns:
             List of retrieved chunks
@@ -90,6 +96,9 @@ class Neo4jGraphRetriever:
         query: str,
         ontology_ids: list[int],
         top_k: int = 10,
+        node_scope: str = "everything",
+        candidate_limit: int | None = None,
+        rerank_limit: int | None = None,
     ) -> list[RetrievedChunk]:
         """
         Search for relevant context in Neo4j graph.
@@ -101,6 +110,9 @@ class Neo4jGraphRetriever:
             query: Search query text
             ontology_ids: List of ontology IDs to filter results
             top_k: Number of results to return
+            node_scope: Node type scope (everything, entity, scene)
+            candidate_limit: Max chunk candidates before node-level reranking
+            rerank_limit: Max node candidates after reranking
 
         Returns:
             List of retrieved chunks with scores
@@ -130,6 +142,9 @@ class Neo4jGraphRetriever:
                         k=top_k,
                         score_threshold=0.1,
                         include_neighbors=False,
+                        node_scope=node_scope,
+                        candidate_limit=candidate_limit,
+                        rerank_limit=rerank_limit,
                     )
                     nodes = results.get("results", [])
                     for rank, node in enumerate(nodes, start=1):
@@ -164,6 +179,13 @@ class Neo4jGraphRetriever:
                             confidence_pct=round(node.get("score", 0.0) * 100, 2),
                             source=f"ontology_{oid}" if oid else None,
                             properties=node.get("properties") or {},
+                            chunk_score=node.get("chunk_score"),
+                            node_score=node.get("node_score"),
+                            importance_index=node.get("importance_index"),
+                            matched_chunk_count=node.get("matched_chunk_count"),
+                            score_breakdown=node.get("score_breakdown"),
+                            graph_boost=node.get("graph_boost"),
+                            evidence_bundle=node.get("evidence_bundle"),
                         )
                         chunks.append(chunk)
 

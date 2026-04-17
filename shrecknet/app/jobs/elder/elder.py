@@ -89,7 +89,12 @@ class ElderOrchestrator:
             model = self.model_policy.get_model(LLMTask.SYNTHESIS)
             t_retr_start = time.monotonic()
             chunks = await self.graph_retriever.search(
-                query=request.query, ontology_ids=ontology_ids, top_k=top_k
+                query=request.query,
+                ontology_ids=ontology_ids,
+                top_k=top_k,
+                node_scope=request.node_scope,
+                candidate_limit=request.candidate_limit,
+                rerank_limit=request.rerank_limit,
             )
             timings["retrieve"] = time.monotonic() - t_retr_start
             self.last_retrieval_debug = [
@@ -214,7 +219,13 @@ class ElderOrchestrator:
         all_queries = subqueries + [request.query]
         t_retrieve = time.monotonic()
         retrieval_results = await self._retrieve(
-            all_queries, ontology_ids, top_k, trace
+            all_queries,
+            ontology_ids,
+            top_k,
+            trace,
+            request.node_scope,
+            request.candidate_limit,
+            request.rerank_limit,
         )
         timings["retrieve"] = time.monotonic() - t_retrieve
 
@@ -448,6 +459,9 @@ class ElderOrchestrator:
         ontology_ids: list[int],
         top_k: int,
         trace: list[TraceStep],
+        node_scope: str,
+        candidate_limit: int | None,
+        rerank_limit: int | None,
     ) -> list[tuple[str, list[RetrievedChunk], float]]:
         """Retrieve context for each sub-query in parallel."""
 
@@ -492,6 +506,9 @@ class ElderOrchestrator:
                         query=subquery,
                         ontology_ids=ontology_ids,
                         top_k=top_k,
+                        node_scope=node_scope,
+                        candidate_limit=candidate_limit,
+                        rerank_limit=rerank_limit,
                     )
                     # Deduplicate chunks by (source, instance_id)
                     chunks = _deduplicate_chunks(chunks)

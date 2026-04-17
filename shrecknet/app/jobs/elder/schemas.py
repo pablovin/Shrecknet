@@ -1,5 +1,6 @@
 """Pydantic schemas for Elder job requests and responses."""
 
+from typing import Literal
 from typing import Any, Optional
 
 from pydantic import BaseModel, Field
@@ -24,6 +25,27 @@ class RetrievedChunk(BaseModel):
     source: Optional[str] = Field(None, description="Source identifier")
     properties: dict[str, Any] = Field(
         default_factory=dict, description="Node properties snapshot"
+    )
+    chunk_score: Optional[float] = Field(
+        None, description="Best chunk-level score for this node"
+    )
+    node_score: Optional[float] = Field(
+        None, description="Deterministic node-level reranked score"
+    )
+    importance_index: Optional[float] = Field(
+        None, description="Final importance score used for ordering"
+    )
+    matched_chunk_count: Optional[int] = Field(
+        None, description="How many chunk candidates matched this node"
+    )
+    score_breakdown: Optional[dict[str, float]] = Field(
+        None, description="Deterministic scoring signal breakdown"
+    )
+    graph_boost: Optional[float] = Field(
+        None, description="Bounded graph-aware additive boost"
+    )
+    evidence_bundle: Optional[dict[str, Any]] = Field(
+        None, description="Structured additive evidence bundle for this node"
     )
 
 
@@ -67,6 +89,22 @@ class ElderQueryRequest(BaseModel):
     entities_hint: Optional[str] = Field(
         None,
         description="Optional pre-built list of ontology entities (name + description) to guide decomposition",
+    )
+    node_scope: Literal["everything", "entity", "scene"] = Field(
+        "everything",
+        description="Limit retrieval to entity nodes, scene nodes, or both",
+    )
+    candidate_limit: Optional[int] = Field(
+        40,
+        ge=5,
+        le=200,
+        description="Max chunk candidates before node-level reranking",
+    )
+    rerank_limit: Optional[int] = Field(
+        20,
+        ge=1,
+        le=100,
+        description="Max node candidates after reranking before final top-k",
     )
 
 

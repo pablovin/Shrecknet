@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
+import re
 import time
 from datetime import date, datetime
 from typing import Any
@@ -36,6 +38,128 @@ class RetrievalService:
         self.graph_session = graph_session
         self.embedding_service = EmbeddingService(graph_session)
 
+    @staticmethod
+    def _is_temporal_query(query_terms: set[str]) -> bool:
+        temporal_tokens = {
+            "before",
+            "after",
+            "during",
+            "when",
+            "earlier",
+            "later",
+            "changed",
+            "change",
+            "timeline",
+            "previous",
+            "next",
+        }
+        return any(token in temporal_tokens for token in query_terms)
+
+    @staticmethod
+    def _tokenize_relation(rel_type: str) -> set[str]:
+        if not rel_type:
+            return set()
+        return {
+            token
+            for token in re.findall(r"[a-z0-9]+", rel_type.replace("_", " ").lower())
+            if token
+        }
+
+    def _compute_graph_boosts(
+        self,
+        *,
+        label: str,
+        node_id: str | None,
+        neighbors: list[dict[str, Any]],
+        query_terms: set[str],
+        temporal_query: bool,
+        scene_occurrence_count: int,
+    ) -> dict[str, float]:
+        if not neighbors:
+            return {
+                "scene_alignment_boost": 0.0,
+                "entity_recurrence_boost": 0.0,
+                "relation_label_boost": 0.0,
+                "temporal_neighbor_boost": 0.0,
+                "graph_total_boost": 0.0,
+            }
+
+        neighbor_names = " ".join(str(n.get("name") or "") for n in neighbors).lower()
+        aligned_terms = sum(1 for term in query_terms if term in neighbor_names)
+        scene_alignment_boost = 0.0
+        if label == "Scene" and query_terms:
+            scene_alignment_boost = min(0.06, 0.06 * (aligned_terms / max(1, len(query_terms))))
+
+        entity_recurrence_boost = 0.0
+        if label == "EntityInstance" and node_id and scene_occurrence_count > 0:
+            entity_recurrence_boost = min(0.05, 0.02 + (scene_occurrence_count * 0.015))
+
+        relation_label_hits = 0
+        for neighbor in neighbors:
+            relation_tokens = self._tokenize_relation(str(neighbor.get("rel_type") or ""))
+            if relation_tokens & query_terms:
+                relation_label_hits += 1
+        relation_label_boost = min(0.04, relation_label_hits * 0.01)
+
+        temporal_neighbor_boost = 0.0
+        if temporal_query:
+            temporal_rel_tokens = {"before", "after", "during", "next", "previous"}
+            temporal_hits = 0
+            for neighbor in neighbors:
+                relation_tokens = self._tokenize_relation(str(neighbor.get("rel_type") or ""))
+                if relation_tokens & temporal_rel_tokens:
+                    temporal_hits += 1
+            temporal_neighbor_boost = min(0.04, temporal_hits * 0.01)
+
+        graph_total_boost = min(
+            0.15,
+            scene_alignment_boost
+            + entity_recurrence_boost
+            + relation_label_boost
+            + temporal_neighbor_boost,
+        )
+
+        return {
+            "scene_alignment_boost": scene_alignment_boost,
+            "entity_recurrence_boost": entity_recurrence_boost,
+            "relation_label_boost": relation_label_boost,
+            "temporal_neighbor_boost": temporal_neighbor_boost,
+            "graph_total_boost": graph_total_boost,
+        }
+
+    @staticmethod
+    def _build_evidence_bundle(
+        node_info: dict[str, Any], neighbors: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        primary_label = (
+            node_info.get("labels", ["EntityInstance"])[0]
+            if node_info.get("labels")
+            else "EntityInstance"
+        )
+        related_entities = [
+            n for n in neighbors if str(n.get("label") or "") == "EntityInstance"
+        ][:5]
+        related_scenes = [n for n in neighbors if str(n.get("label") or "") == "Scene"][:5]
+        related_milestones = [
+            n for n in neighbors if str(n.get("label") or "") == "Milestone"
+        ][:5]
+
+        return {
+            "parent_type": primary_label,
+            "parent_id": node_info.get("node_id"),
+            "parent_name": node_info.get("name") or node_info.get("alias") or node_info.get("node_id"),
+            "top_chunk": {
+                "chunk_id": node_info.get("chunk_id"),
+                "chunk_type": node_info.get("chunk_type"),
+                "chunk_index": node_info.get("chunk_index"),
+                "text": node_info.get("context_text") or "",
+            },
+            "related_entities": related_entities,
+            "related_scenes": related_scenes,
+            "related_milestones": related_milestones,
+            "bundle_importance": float(node_info.get("importance_index") or 0.0),
+        }
+
     async def semantic_search(
         self,
         query: str,
@@ -44,12 +168,26 @@ class RetrievalService:
         score_threshold: float = 0.0,
         include_neighbors: bool = True,
         neighbor_limit: int = 10,
+        node_scope: str = "everything",
+        candidate_limit: int | None = None,
+        rerank_limit: int | None = None,
     ) -> dict[str, Any]:
+        t_total_start = time.monotonic()
+        print(
+            f"[RETRIEVAL] step=start query='{query[:120]}' ontology_id={ontology_id} "
+            f"k={k} node_scope={node_scope} candidate_limit={candidate_limit} rerank_limit={rerank_limit}"
+        )
+
         # Ensure chunk index exists (best-effort)
+        t_index_start = time.monotonic()
         try:
             await self.embedding_service.ensure_chunk_vector_index()
         except Exception:
             pass
+        t_index = time.monotonic() - t_index_start
+        print(
+            f"[RETRIEVAL] step=ensure_chunk_index duration_s={t_index:.3f}"
+        )
 
         # Embed the query
         t_embed_start = time.monotonic()
@@ -58,12 +196,26 @@ class RetrievalService:
             None, self.embedding_service.embed_text, query
         )
         t_embed = time.monotonic() - t_embed_start
+        print(
+            f"[RETRIEVAL] step=embed_query duration_s={t_embed:.3f}"
+        )
+
+        node_scope = (node_scope or "everything").strip().lower()
+        allowed_labels = ["EntityInstance", "Scene", "Milestone"]
+        if node_scope == "entity":
+            allowed_labels = ["EntityInstance"]
+        elif node_scope == "scene":
+            allowed_labels = ["Scene"]
+
+        candidate_k = max(k * 4, k)
+        if candidate_limit is not None:
+            candidate_k = max(k, candidate_limit)
 
         search_query = """
         CALL db.index.vector.queryNodes('entity_chunk_vec_idx', $k, $query_embedding)
         YIELD node, score
         MATCH (node)<-[:HAS_CHUNK]-(parent)
-            WHERE any(label IN labels(parent) WHERE label IN ['EntityInstance', 'Scene', 'Milestone'])
+            WHERE any(label IN labels(parent) WHERE label IN $allowed_labels)
           AND score >= $score_threshold
           AND ($ontology_id IS NULL OR toInteger(node['ontology_id']) = toInteger($ontology_id))
         RETURN node AS chunk, parent AS parent, score
@@ -74,26 +226,65 @@ class RetrievalService:
         t_query_start = time.monotonic()
         result = await self.graph_session.run(
             search_query,
-            k=k * 2,  # still fetch extra
+            k=candidate_k,
             query_embedding=query_embedding,
             score_threshold=score_threshold,
             ontology_id=ontology_id,
+            allowed_labels=allowed_labels,
         )
         records = await result.data()
         t_query = time.monotonic() - t_query_start
+        print(
+            f"[RETRIEVAL] step=vector_search chunk_candidates={len(records)} duration_s={t_query:.3f}"
+        )
 
         if not records:
+            t_total = time.monotonic() - t_total_start
+            print(
+                "[RETRIEVAL] step=final results=0 chunks=0 context_chars=0 "
+                f"total_duration_s={t_total:.3f}"
+            )
             return {
                 "query": query,
                 "results": [],
                 "total": 0,
                 "ontology_id": ontology_id,
+                "node_scope": node_scope,
             }
 
-        nodes_data: list[dict[str, Any]] = []
+        grouped: dict[str, dict[str, Any]] = {}
 
-        # NEW: keep track of which entity/instance we already added
-        seen_ids: set[str] = set()
+        query_terms = set(re.findall(r"\w+", query.lower()))
+        t_group_start = time.monotonic()
+
+        def _score_node(
+            *,
+            best_score: float,
+            matched_chunk_count: int,
+            avg_top_score: float,
+            overlap_ratio: float,
+            exact_or_fuzzy: float,
+            label: str,
+        ) -> tuple[float, dict[str, float]]:
+            count_norm = min(matched_chunk_count / 5.0, 1.0)
+            type_prior = 0.03 if label == "Scene" else 0.01
+            breakdown = {
+                "vector_best": max(0.0, min(best_score, 1.0)),
+                "chunk_coverage": count_norm,
+                "top_avg": max(0.0, min(avg_top_score, 1.0)),
+                "keyword_overlap": max(0.0, min(overlap_ratio, 1.0)),
+                "exact_or_fuzzy": max(0.0, min(exact_or_fuzzy, 1.0)),
+                "node_type_prior": type_prior,
+            }
+            node_score = (
+                0.54 * breakdown["vector_best"]
+                + 0.15 * breakdown["chunk_coverage"]
+                + 0.14 * breakdown["top_avg"]
+                + 0.10 * breakdown["keyword_overlap"]
+                + 0.05 * breakdown["exact_or_fuzzy"]
+                + 0.02 * breakdown["node_type_prior"]
+            )
+            return max(0.0, min(node_score, 1.0)), breakdown
 
         for record in records:  # iterate over all (already sorted by score desc)
             chunk = record.get("chunk") or record.get("node")
@@ -153,53 +344,220 @@ class RetrievalService:
                 or _get(parent, "id")
                 or _get(parent, "instance_id")
             )
-            dedup_key = f"{(labels_list[0] if labels_list else 'node')}::{node_id}"
+            primary_label = labels_list[0] if labels_list else "node"
+            dedup_key = f"{primary_label}::{node_id or _get(parent, 'name') or 'unknown'}"
 
-            # if we already added this entity, skip
-            if node_id and dedup_key in seen_ids:
-                continue
-
-            node_info = {
-                "node_id": node_id,
-                "name": _get(parent, "name"),
-                "alias": alias,
-                "instance_id": _get(parent, "instance_id"),
-                "labels": labels_list,
-                "score": score,
-                "context_text": chunk_text,
-                "chunk_id": chunk_props.get("chunk_id"),
-                "chunk_type": chunk_props.get("chunk_type"),
-                "chunk_index": chunk_props.get("chunk_index"),
-                "text": _get(parent, "text"),
-                "autogenerated_text": _get(parent, "autogenerated_text"),
-                "ontology_id": _get(parent, "ontology_id"),
-                "properties": {
-                    **{k: v for k, v in parent_props.items() if k != "properties"},
+            entry = grouped.get(dedup_key)
+            if entry is None:
+                entry = {
+                    "node_id": node_id,
+                    "name": _get(parent, "name"),
+                    "alias": alias,
+                    "instance_id": _get(parent, "instance_id"),
+                    "labels": labels_list,
+                    "score": score,
+                    "context_text": chunk_text,
+                    "chunk_id": chunk_props.get("chunk_id"),
+                    "chunk_type": chunk_props.get("chunk_type"),
+                    "chunk_index": chunk_props.get("chunk_index"),
+                    "text": _get(parent, "text"),
+                    "autogenerated_text": _get(parent, "autogenerated_text"),
+                    "ontology_id": _get(parent, "ontology_id"),
                     "properties": {
-                        k: _normalize_value(v) for k, v in parsed_properties.items()
+                        **{k: v for k, v in parent_props.items() if k != "properties"},
+                        "properties": {
+                            k: _normalize_value(v) for k, v in parsed_properties.items()
+                        },
                     },
-                },
-            }
+                    "_chunk_scores": [float(score)],
+                    "_overlap_hits": 0,
+                    "_exact_or_fuzzy": 0.0,
+                }
+                grouped[dedup_key] = entry
+            else:
+                entry["_chunk_scores"].append(float(score))
+                if score > entry["score"]:
+                    entry["score"] = score
+                    entry["context_text"] = chunk_text
+                    entry["chunk_id"] = chunk_props.get("chunk_id")
+                    entry["chunk_type"] = chunk_props.get("chunk_type")
+                    entry["chunk_index"] = chunk_props.get("chunk_index")
 
-            if include_neighbors and node_id:
-                neighbors = await self._fetch_neighbors(node_id, neighbor_limit)
-                node_info["neighbors"] = neighbors
+            searchable = " ".join(
+                [
+                    str(entry.get("name") or ""),
+                    str(entry.get("alias") or ""),
+                    chunk_text,
+                ]
+            ).lower()
+            if query_terms:
+                overlap_count = len([term for term in query_terms if term in searchable])
+                entry["_overlap_hits"] = max(entry["_overlap_hits"], overlap_count)
+                exact = 1.0 if query.lower() in searchable else 0.0
+                fuzzy = 1.0 if overlap_count >= max(1, math.ceil(len(query_terms) * 0.7)) else 0.0
+                entry["_exact_or_fuzzy"] = max(entry["_exact_or_fuzzy"], max(exact, fuzzy))
 
-            nodes_data.append(node_info)
+        t_group = time.monotonic() - t_group_start
+        print(
+            f"[RETRIEVAL] step=group_candidates unique_nodes={len(grouped)} duration_s={t_group:.3f}"
+        )
 
-            # mark as seen
+        nodes_data: list[dict[str, Any]] = []
+        grouped_nodes = list(grouped.values())
+        t_score_start = time.monotonic()
+        for entry in grouped_nodes:
+            chunk_scores = sorted(entry.pop("_chunk_scores"), reverse=True)
+            matched_chunk_count = len(chunk_scores)
+            avg_top = sum(chunk_scores[: min(3, matched_chunk_count)]) / max(
+                1, min(3, matched_chunk_count)
+            )
+            overlap_ratio = 0.0
+            if query_terms:
+                overlap_ratio = entry.pop("_overlap_hits") / len(query_terms)
+            else:
+                entry.pop("_overlap_hits")
+            exact_or_fuzzy = entry.pop("_exact_or_fuzzy")
+            label = (
+                entry.get("labels", ["EntityInstance"])[0]
+                if entry.get("labels")
+                else "EntityInstance"
+            )
+            node_score, breakdown = _score_node(
+                best_score=float(entry.get("score") or 0.0),
+                matched_chunk_count=matched_chunk_count,
+                avg_top_score=float(avg_top),
+                overlap_ratio=float(overlap_ratio),
+                exact_or_fuzzy=float(exact_or_fuzzy),
+                label=label,
+            )
+            entry["chunk_score"] = float(entry.get("score") or 0.0)
+            entry["node_score"] = node_score
+            entry["importance_index"] = node_score
+            entry["matched_chunk_count"] = matched_chunk_count
+            entry["score_breakdown"] = breakdown
+            nodes_data.append(entry)
+
+        t_score = time.monotonic() - t_score_start
+        print(
+            f"[RETRIEVAL] step=score_nodes scored_nodes={len(nodes_data)} duration_s={t_score:.3f}"
+        )
+
+        nodes_data.sort(
+            key=lambda item: float(item.get("node_score") or item.get("score") or 0.0),
+            reverse=True,
+        )
+
+        rerank_window = max(k, rerank_limit) if rerank_limit is not None else max(k, 20)
+        nodes_data = nodes_data[:rerank_window]
+        print(
+            f"[RETRIEVAL] step=apply_rerank_window rerank_window={rerank_window} "
+            f"nodes_in_window={len(nodes_data)}"
+        )
+
+        temporal_query = self._is_temporal_query(query_terms)
+        scene_neighbor_sets: list[set[str]] = []
+        t_neighbors_start = time.monotonic()
+        total_neighbors_retrieved = 0
+        for node_info in nodes_data:
+            node_id = node_info.get("node_id")
+            if not node_id:
+                node_info["_neighbors"] = []
+                continue
+            neighbors = await self._fetch_neighbors(node_id, neighbor_limit)
+            total_neighbors_retrieved += len(neighbors)
+            node_info["_neighbors"] = neighbors
+            label = (
+                node_info.get("labels", ["EntityInstance"])[0]
+                if node_info.get("labels")
+                else "EntityInstance"
+            )
+            if label == "Scene":
+                scene_neighbor_sets.append(
+                    {
+                        str(n.get("node_id"))
+                        for n in neighbors
+                        if n.get("node_id")
+                    }
+                )
+
+        t_neighbors = time.monotonic() - t_neighbors_start
+        print(
+            f"[RETRIEVAL] step=fetch_neighbors nodes_checked={len(nodes_data)} "
+            f"neighbors_retrieved={total_neighbors_retrieved} duration_s={t_neighbors:.3f}"
+        )
+
+        t_boost_start = time.monotonic()
+        for node_info in nodes_data:
+            label = (
+                node_info.get("labels", ["EntityInstance"])[0]
+                if node_info.get("labels")
+                else "EntityInstance"
+            )
+            node_id = node_info.get("node_id")
+            neighbors = node_info.get("_neighbors", [])
+            scene_occurrence_count = 0
             if node_id:
-                seen_ids.add(dedup_key)
+                scene_occurrence_count = sum(
+                    1 for neighbor_set in scene_neighbor_sets if str(node_id) in neighbor_set
+                )
+            graph_boosts = self._compute_graph_boosts(
+                label=label,
+                node_id=str(node_id) if node_id is not None else None,
+                neighbors=neighbors,
+                query_terms=query_terms,
+                temporal_query=temporal_query,
+                scene_occurrence_count=scene_occurrence_count,
+            )
+            base_node_score = float(node_info.get("node_score") or node_info.get("score") or 0.0)
+            boosted_score = max(
+                0.0,
+                min(1.0, base_node_score + graph_boosts["graph_total_boost"]),
+            )
+            score_breakdown = dict(node_info.get("score_breakdown") or {})
+            score_breakdown.update(graph_boosts)
+            node_info["score_breakdown"] = score_breakdown
+            node_info["graph_boost"] = graph_boosts["graph_total_boost"]
+            node_info["importance_index"] = boosted_score
+            if include_neighbors:
+                node_info["neighbors"] = neighbors
+            node_info["evidence_bundle"] = self._build_evidence_bundle(node_info, neighbors)
+            node_info.pop("_neighbors", None)
 
-            # stop when we reached k uniques
-            if len(nodes_data) >= k:
-                break
+        t_boost = time.monotonic() - t_boost_start
+        print(
+            f"[RETRIEVAL] step=graph_boost_and_evidence nodes_enriched={len(nodes_data)} duration_s={t_boost:.3f}"
+        )
+
+        nodes_data.sort(
+            key=lambda item: float(item.get("importance_index") or item.get("node_score") or item.get("score") or 0.0),
+            reverse=True,
+        )
+
+        nodes_data = nodes_data[:k]
+
+        evidence_bundles = [
+            node_info.get("evidence_bundle")
+            for node_info in nodes_data
+            if node_info.get("evidence_bundle") is not None
+        ]
+        total_context_chars = sum(
+            len(str(node_info.get("context_text") or "")) for node_info in nodes_data
+        )
+        t_total = time.monotonic() - t_total_start
+        print(
+            "[RETRIEVAL] step=final "
+            f"results={len(nodes_data)} chunks={len(nodes_data)} "
+            f"evidence_bundles={len(evidence_bundles)} context_chars={total_context_chars} "
+            f"total_duration_s={t_total:.3f}"
+        )
 
         out = {
             "query": query,
             "results": nodes_data,
             "total": len(nodes_data),
             "ontology_id": ontology_id,
+            "node_scope": node_scope,
+            "evidence_bundles": evidence_bundles,
         }
 
         try:
@@ -273,6 +631,7 @@ class RetrievalService:
         ontology_id: int | None = None,
         k: int = 5,
         score_threshold: float = 0.5,
+        node_scope: str = "everything",
     ) -> str:
         """
         Get formatted context text for LLM from semantic search.
@@ -286,17 +645,34 @@ class RetrievalService:
         Returns:
             Formatted context string
         """
+        t_context_total_start = time.monotonic()
+        print(
+            f"[RETRIEVAL_CONTEXT] step=start query='{query[:120]}' ontology_id={ontology_id} k={k} node_scope={node_scope}"
+        )
+
+        t_context_retrieve_start = time.monotonic()
         results = await self.semantic_search(
             query=query,
             ontology_id=ontology_id,
             k=k,
             score_threshold=score_threshold,
             include_neighbors=True,
+            node_scope=node_scope,
+        )
+        t_context_retrieve = time.monotonic() - t_context_retrieve_start
+        print(
+            f"[RETRIEVAL_CONTEXT] step=semantic_search_complete nodes={len(results['results'])} duration_s={t_context_retrieve:.3f}"
         )
 
         if not results["results"]:
+            t_context_total = time.monotonic() - t_context_total_start
+            print(
+                "[RETRIEVAL_CONTEXT] step=final context_items=0 context_chars=0 "
+                f"total_duration_s={t_context_total:.3f}"
+            )
             return "No relevant information found."
 
+        t_format_start = time.monotonic()
         context_parts = [f"Query: {query}\n", "Relevant Information:\n"]
 
         for i, node in enumerate(results["results"], 1):
@@ -312,4 +688,16 @@ class RetrievalService:
 
             context_parts.append("\n" + "-" * 40)
 
-        return "\n".join(context_parts)
+        context_text = "\n".join(context_parts)
+        t_format = time.monotonic() - t_format_start
+        t_context_total = time.monotonic() - t_context_total_start
+        print(
+            f"[RETRIEVAL_CONTEXT] step=format_context context_items={len(results['results'])} "
+            f"context_chars={len(context_text)} duration_s={t_format:.3f}"
+        )
+        print(
+            f"[RETRIEVAL_CONTEXT] step=final context_items={len(results['results'])} "
+            f"context_chars={len(context_text)} total_duration_s={t_context_total:.3f}"
+        )
+
+        return context_text

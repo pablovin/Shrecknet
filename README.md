@@ -5,7 +5,7 @@
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.110-009688)
 ![React](https://img.shields.io/badge/React-Next.js-61DAFB)
 ![License](https://img.shields.io/badge/license-GPLv3-blue)
-![Version](https://img.shields.io/badge/version-0.3.0-orange)
+![Version](https://img.shields.io/badge/version-0.5.0-orange)
 
 > *"In the realm of endless imagination, where chronicles are written by both quill and code, Shrecknet emerges as your faithful companion—a mystical forge where worlds take shape, legends are born, and epic tales unfold."*
 
@@ -657,12 +657,18 @@ docker compose logs backend_2_worker
 
 ## 🎯 Version History
 
-### v0.2.0 (Current)
-- 🧰 Full System Backup v2 (SQLite + Neo4j logical dump + media)
-- 🗂️ Backup storage split into `media/backups/download` and `media/backups/upload`
-- 🛡️ Restore hardening with manifest checksum validation and safe extraction
-- 🚧 Maintenance-mode guard during destructive restore
-- 📊 Improved backup/restore job phases in `/jobs`
+### v0.5.0 (Current)
+- ✂️ RPG domain decoupling: major game/session/note/notification flows moved into dedicated `shreckrpg` service boundaries
+- 🔄 Legacy import upgrade: old monolith DB import now preserves richer RPG metadata and handles schema variants safely
+- 🛡️ Import reliability hardening: improved file-permission handling, transient job polling retries, and DB/session refresh resilience after imports
+- 🧠 Agent pipeline improvements across Elder/Librarian/Architect/Novelist for retrieval quality, extraction flow, and timeline generation safeguards
+- 🧱 Split-stack operational improvements for compose/deployment stability in standalone Shrecknet + ShreckRPG runs
+
+### v0.3.0
+- 🗺️ Event-centric graph architecture rollout and migration tooling
+
+### v0.2.0
+- 🧰 Full System Backup v2 and restore hardening
 
 ### v0.1.0
 - ✨ Initial public release

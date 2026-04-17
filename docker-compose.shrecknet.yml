@@ -1,0 +1,158 @@
+name: Shrecknet
+
+x-shrecknet-env: &shrecknet-env
+  PYTHONUNBUFFERED: "1"
+  SHRECKNET_DATA_DIR: /data
+  SHRECKNET_MEDIA_ROOT: /app/media
+  SHRECKNET_MEDIA_PUBLIC_URL: "${SHRECKNET_MEDIA_PUBLIC_URL:-http://localhost:8100/media}"
+  SHRECKNET_CORS_ALLOW_ORIGINS: '${SHRECKNET_CORS_ALLOW_ORIGINS:-["http://localhost:3000","http://127.0.0.1:3000","http://localhost:5173","http://127.0.0.1:5173","http://localhost:8100","http://127.0.0.1:8100"]}'
+  SHRECKNET_NEO4J_PASSWORD: "${SHRECKNET_NEO4J_PASSWORD:-VeryStrongPass123}"
+  SHRECKNET_JWT_PRIVATE_KEY_PEM: "${SHRECKNET_JWT_PRIVATE_KEY_PEM:-}"
+  SHRECKNET_JWT_PUBLIC_KEY_PEM: "${SHRECKNET_JWT_PUBLIC_KEY_PEM:-}"
+
+services:
+  shrecknet_permissions:
+    image: alpine:3.20
+    user: "0:0"
+    volumes:
+      - ./shrecknet/databases:/data
+      - ./shrecknet/media:/media
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        TARGET_UID="${SHRECKNET_CONTAINER_UID:-1000}"
+        TARGET_GID="${SHRECKNET_CONTAINER_GID:-1000}"
+        mkdir -p /data /media
+        chown -R "$$TARGET_UID:$$TARGET_GID" /data /media
+        find /data /media -type d -exec chmod 2775 {} +
+        find /data /media -type f -exec chmod 664 {} +
+    restart: "no"
+
+  # Redis broker/backend for Celery jobs
+  redis:
+    image: redis:7.2-alpine
+    restart: unless-stopped
+    ports:
+      - "6380:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --save 60 1 --loglevel warning
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # Neo4j graph store used by GraphRAG and ontology features
+  neo4j:
+    image: neo4j:5-community
+    restart: unless-stopped
+    ports:
+      - "7475:7474" # Browser / HTTP (avoids clashing with the main compose stack)
+      - "7688:7687" # Bolt
+    volumes:
+      - neo4j-data:/data
+      - neo4j-logs:/logs
+      - neo4j-import:/var/lib/neo4j/import
+      - neo4j-plugins:/plugins
+    environment:
+      NEO4J_AUTH: "neo4j/${SHRECKNET_NEO4J_PASSWORD:-VeryStrongPass123}"
+      NEO4J_PLUGINS: '["apoc"]'
+      NEO4J_dbms_memory_pagecache_size: ${SHRECKNET_NEO4J_PAGECACHE_SIZE:-1G}
+      NEO4J_dbms_memory_heap_initial__size: ${SHRECKNET_NEO4J_HEAP_INITIAL_SIZE:-1G}
+      NEO4J_dbms_memory_heap_max__size: ${SHRECKNET_NEO4J_HEAP_MAX_SIZE:-6G}
+      NEO4J_dbms_memory_transaction_total_max: ${SHRECKNET_NEO4J_TX_TOTAL_MAX:-4G}
+      NEO4J_dbms_jvm_additional: -XX:+UseG1GC
+    healthcheck:
+      test: ["CMD", "cypher-shell", "-u", "neo4j", "-p", "${SHRECKNET_NEO4J_PASSWORD:-VeryStrongPass123}", "RETURN 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+
+  # Main FastAPI service
+  shrecknet_api:
+    build:
+      context: ./shrecknet
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    init: true
+    user: "${SHRECKNET_CONTAINER_UID:-1000}:${SHRECKNET_CONTAINER_GID:-1000}"
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8100
+    environment: *shrecknet-env
+    ports:
+      - "8100:8100" # API, /docs, /openapi.json, /health
+    volumes:
+      - ./shrecknet/databases:/data
+      - ./shrecknet/media:/app/media
+    depends_on:
+      shrecknet_permissions:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8100/health', timeout=5).read()"
+          || exit 1
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  # Celery worker for background jobs (architect, novelist, librarian, embeddings, backups)
+  shrecknet_worker:
+    build:
+      context: ./shrecknet
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    init: true
+    user: "${SHRECKNET_CONTAINER_UID:-1000}:${SHRECKNET_CONTAINER_GID:-1000}"
+    command: sh -c "celery -A app.celery_app:celery_app worker --loglevel=info --concurrency=${SHRECKNET_CELERY_CONCURRENCY:-2}"
+    environment: *shrecknet-env
+    volumes:
+      - ./shrecknet/databases:/data
+      - ./shrecknet/media:/app/media
+    depends_on:
+      shrecknet_permissions:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+      shrecknet_api:
+        condition: service_started
+
+  shrecknet_ready:
+    image: alpine:3.20
+    depends_on:
+      redis:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+      shrecknet_api:
+        condition: service_healthy
+    command:
+      - /bin/sh
+      - -c
+      - |
+        echo "🏰 Shrecknet is ready at http://localhost:8100"
+        echo "   • API health:    http://localhost:8100/health"
+        echo "   • Swagger docs:  http://localhost:8100/docs"
+        echo "   • OpenAPI JSON:  http://localhost:8100/openapi.json"
+        echo "   • Shared Redis:  redis://host.docker.internal:6380/0"
+        echo "   • Neo4j browser: http://localhost:7475"
+        echo "   • Neo4j bolt:    bolt://localhost:7688"
+        echo "✅ Shrecknet is running on port: 8100"
+    restart: "no"
+
+volumes:
+  redis-data:
+  neo4j-data:
+  neo4j-logs:
+  neo4j-import:
+  neo4j-plugins:

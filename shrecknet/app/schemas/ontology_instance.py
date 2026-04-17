@@ -229,6 +229,36 @@ class OntologyInstanceCountResponse(BaseModel):
     total: int
 
 
+class OntologyInstanceEntityTypeClearRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    ontology_id: int
+    entity_definition_ids: list[int] = Field(default_factory=list)
+    entity_type_names: list[str] = Field(default_factory=list)
+
+
+class OntologyInstanceEntityTypeClearJobResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    message: str
+    kind: str
+    job_id: int
+    status: str
+    monitor_url: str
+
+
+class OntologyTimelineEventsClearRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    ontology_id: int
+
+
+class OntologyTimelineEventsClearJobResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    message: str
+    kind: str
+    job_id: int
+    status: str
+    monitor_url: str
+
+
 class OntologyInstanceSearchHit(BaseModel):
     model_config = ConfigDict(extra="ignore")
     instance: OntologyInstanceRead

@@ -11,6 +11,7 @@ from . import (
     backup_tasks,
     novelist,
     novelist_timeline_generation,
+    ontology_instance_clear,
 )
 
 __all__ = [
@@ -23,4 +24,5 @@ __all__ = [
     "backup_tasks",
     "novelist",
     "novelist_timeline_generation",
+    "ontology_instance_clear",
 ]

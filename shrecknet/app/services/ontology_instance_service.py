@@ -10,10 +10,11 @@ from typing import Any
 from uuid import uuid4
 
 from neo4j import AsyncSession as AsyncNeo4jSession, AsyncTransaction
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.models.ontology_instance import OntologyInstance as SqlOntologyInstance
 from app.models.ontology import OntologyEntity
 from app.repositories.ontology_repository import OntologyRepository
 from app.schemas.ontology_instance import (
@@ -1296,18 +1297,140 @@ class OntologyInstanceService:
 
     async def _delete_entity_relationships(
         self, tx: AsyncTransaction, *, entity_ids: set[str]
-    ) -> None:
+    ) -> int:
         if not entity_ids:
-            return
-        await tx.run(
+            return 0
+        result = await tx.run(
             """
             MATCH (source:EntityInstance)-[rel:RELATES_TO]->(target:EntityInstance)
             WHERE source.entity_instance_id IN $entity_ids
                OR target.entity_instance_id IN $entity_ids
-            DELETE rel
+            WITH count(rel) AS rel_count, collect(rel) AS rels
+            FOREACH (r IN rels | DELETE r)
+            RETURN rel_count AS rel_count
             """,
             entity_ids=list(entity_ids),
         )
+        record = await result.single()
+        return int(record["rel_count"]) if record and record.get("rel_count") else 0
+
+    async def _prune_timeline_entity_references(
+        self, tx: AsyncTransaction, *, entity_ids: set[str]
+    ) -> int:
+        if not entity_ids:
+            return 0
+        result = await tx.run(
+            """
+            MATCH (event:Event)
+            WHERE event.source_entity_id IN $entity_ids
+               OR any(entityId IN $entity_ids WHERE entityId IN coalesce(event.related_entity_ids, []))
+            RETURN event.event_id AS event_id,
+                   event.source_entity_id AS source_entity_id,
+                   event.related_entity_ids AS related_entity_ids
+            """,
+            entity_ids=list(entity_ids),
+        )
+        rows = await result.data()
+        payload: list[dict[str, Any]] = []
+        for row in rows:
+            event_id = row.get("event_id")
+            if not event_id:
+                continue
+            source_entity = row.get("source_entity_id")
+            related_entities = [
+                value
+                for value in (row.get("related_entity_ids") or [])
+                if value not in entity_ids
+            ]
+            updated_source = None if source_entity in entity_ids else source_entity
+            if (
+                updated_source != source_entity
+                or related_entities != (row.get("related_entity_ids") or [])
+            ):
+                payload.append(
+                    {
+                        "event_id": event_id,
+                        "source_entity_id": updated_source,
+                        "related_entity_ids": related_entities,
+                    }
+                )
+        if payload:
+            await tx.run(
+                """
+                UNWIND $payload AS item
+                MATCH (event:Event {event_id: item.event_id})
+                SET event.created_from_entity_id = item.source_entity_id,
+                    event.source_entity_id = item.source_entity_id,
+                    event.related_entity_ids = item.related_entity_ids
+                """,
+                payload=payload,
+            )
+        return len(payload)
+
+    async def _delete_timeline_events_for_entities(
+        self, tx: AsyncTransaction, *, entity_ids: set[str]
+    ) -> dict[str, int]:
+        if not entity_ids:
+            return {"events_deleted": 0, "event_chunks_deleted": 0}
+
+        event_result = await tx.run(
+            """
+            MATCH (event:Event)
+            WHERE event.source_entity_id IN $entity_ids
+               OR event.created_from_entity_id IN $entity_ids
+               OR any(entityId IN $entity_ids WHERE entityId IN coalesce(event.related_entity_ids, []))
+            RETURN event.event_id AS event_id
+            """,
+            entity_ids=list(entity_ids),
+        )
+        event_rows = await event_result.data()
+        event_ids = {row["event_id"] for row in event_rows if row.get("event_id")}
+        if not event_ids:
+            return {"events_deleted": 0, "event_chunks_deleted": 0}
+
+        chunk_count_result = await tx.run(
+            """
+            MATCH (event:Event)-[:HAS_CHUNK]->(chunk:EntityChunk)
+            WHERE event.event_id IN $event_ids
+            RETURN count(chunk) AS chunk_count
+            """,
+            event_ids=list(event_ids),
+        )
+        chunk_count_record = await chunk_count_result.single()
+        event_chunk_count = (
+            int(chunk_count_record["chunk_count"])
+            if chunk_count_record and chunk_count_record.get("chunk_count")
+            else 0
+        )
+
+        await self._prune_timeline_references(
+            tx,
+            instance_ids=[],
+            entity_ids=entity_ids,
+            event_ids=event_ids,
+        )
+
+        await tx.run(
+            """
+            MATCH (event:Event)-[:HAS_CHUNK]->(chunk:EntityChunk)
+            WHERE event.event_id IN $event_ids
+            DETACH DELETE chunk
+            """,
+            event_ids=list(event_ids),
+        )
+        await tx.run(
+            """
+            MATCH (event:Event)
+            WHERE event.event_id IN $event_ids
+            DETACH DELETE event
+            """,
+            event_ids=list(event_ids),
+        )
+
+        return {
+            "events_deleted": len(event_ids),
+            "event_chunks_deleted": event_chunk_count,
+        }
 
     async def _prune_timeline_references(
         self,
@@ -1555,6 +1678,291 @@ class OntologyInstanceService:
 
     async def delete_instance(self, instance_id: str) -> None:
         await self.delete_instances([instance_id])
+
+    async def clear_instance_content_by_entity_types(
+        self,
+        *,
+        ontology_id: int,
+        entity_definition_ids: Sequence[int] | None = None,
+        entity_type_names: Sequence[str] | None = None,
+    ) -> dict[str, Any]:
+        ontology = await self.repository.get(ontology_id)
+        if ontology is None:
+            raise ValueError("Ontology not found")
+
+        definitions = await self._load_entity_definitions(ontology_id)
+        valid_definition_ids = set(definitions.keys())
+        names_to_ids = {
+            definition_data["entity"].name.strip().lower(): definition_id
+            for definition_id, definition_data in definitions.items()
+            if definition_data.get("entity") and definition_data["entity"].name
+        }
+
+        normalized_ids: list[int] = []
+        for definition_id in entity_definition_ids or []:
+            if definition_id <= 0:
+                continue
+            if definition_id not in normalized_ids:
+                normalized_ids.append(definition_id)
+
+        missing_names: list[str] = []
+        for raw_name in entity_type_names or []:
+            cleaned = (raw_name or "").strip()
+            if not cleaned:
+                continue
+            matched_id = names_to_ids.get(cleaned.lower())
+            if matched_id is None:
+                missing_names.append(cleaned)
+                continue
+            if matched_id not in normalized_ids:
+                normalized_ids.append(matched_id)
+
+        if not normalized_ids:
+            raise ValueError(
+                "Provide at least one valid entity definition id or entity type name"
+            )
+
+        missing_ids = [
+            definition_id
+            for definition_id in normalized_ids
+            if definition_id not in valid_definition_ids
+        ]
+        if missing_ids:
+            raise ValueError(
+                "Entity definition(s) not found in ontology: "
+                + ", ".join(str(definition_id) for definition_id in sorted(missing_ids))
+            )
+        if missing_names:
+            raise ValueError(
+                "Entity type name(s) not found in ontology: "
+                + ", ".join(sorted(missing_names))
+            )
+
+        chunk_count = 0
+        relationships_deleted = 0
+        timeline_delete_summary = {
+            "events_deleted": 0,
+            "event_chunks_deleted": 0,
+        }
+        empty_instance_ids: list[str] = []
+
+        tx = await self.graph_session.begin_transaction()
+        try:
+            target_result = await tx.run(
+                """
+                MATCH (i:OntologyInstance)-[:HAS_ENTITY]->(e:EntityInstance)
+                WHERE toInteger(i.ontology_id) = toInteger($ontology_id)
+                  AND toInteger(e.entity_definition_id) IN $definition_ids
+                RETURN e.entity_instance_id AS entity_id,
+                       i.instance_id AS instance_id
+                """,
+                ontology_id=ontology_id,
+                definition_ids=normalized_ids,
+            )
+            target_rows = await target_result.data()
+            target_entity_ids = {
+                row["entity_id"] for row in target_rows if row.get("entity_id")
+            }
+            affected_instance_ids = {
+                row["instance_id"] for row in target_rows if row.get("instance_id")
+            }
+
+            if target_entity_ids:
+                chunk_count_result = await tx.run(
+                    """
+                    MATCH (e:EntityInstance)-[:HAS_CHUNK]->(chunk:EntityChunk)
+                    WHERE e.entity_instance_id IN $entity_ids
+                    RETURN count(chunk) AS chunk_count
+                    """,
+                    entity_ids=list(target_entity_ids),
+                )
+                chunk_record = await chunk_count_result.single()
+                chunk_count = (
+                    int(chunk_record["chunk_count"])
+                    if chunk_record and chunk_record.get("chunk_count")
+                    else 0
+                )
+
+                relationships_deleted = await self._delete_entity_relationships(
+                    tx, entity_ids=target_entity_ids
+                )
+                timeline_delete_summary = (
+                    await self._delete_timeline_events_for_entities(
+                        tx, entity_ids=target_entity_ids
+                    )
+                )
+
+                await tx.run(
+                    """
+                    MATCH (e:EntityInstance)-[:HAS_CHUNK]->(chunk:EntityChunk)
+                    WHERE e.entity_instance_id IN $entity_ids
+                    DETACH DELETE chunk
+                    """,
+                    entity_ids=list(target_entity_ids),
+                )
+                await tx.run(
+                    """
+                    MATCH (e:EntityInstance)
+                    WHERE e.entity_instance_id IN $entity_ids
+                    DETACH DELETE e
+                    """,
+                    entity_ids=list(target_entity_ids),
+                )
+
+            empty_instance_result = await tx.run(
+                """
+                MATCH (i:OntologyInstance)
+                WHERE toInteger(i.ontology_id) = toInteger($ontology_id)
+                OPTIONAL MATCH (i)-[:HAS_ENTITY]->(entity:EntityInstance)
+                WITH i, count(entity) AS remaining_entities
+                OPTIONAL MATCH (i)-[:HAS_EVENT]->(event:Event)
+                WITH i, remaining_entities, count(event) AS remaining_events
+                WHERE remaining_entities = 0 AND remaining_events = 0
+                RETURN i.instance_id AS instance_id
+                """,
+                ontology_id=ontology_id,
+            )
+            empty_rows = await empty_instance_result.data()
+            empty_instance_ids = [
+                row["instance_id"] for row in empty_rows if row.get("instance_id")
+            ]
+
+            if empty_instance_ids:
+                await tx.run(
+                    """
+                    MATCH (i:OntologyInstance)
+                    WHERE i.instance_id IN $instance_ids
+                    DETACH DELETE i
+                    """,
+                    instance_ids=empty_instance_ids,
+                )
+        except Exception:
+            await tx.rollback()
+            await tx.close()
+            raise
+        else:
+            await tx.commit()
+            await tx.close()
+
+        sql_instances_deleted = 0
+        if empty_instance_ids:
+            delete_result = await self.sql_session.execute(
+                delete(SqlOntologyInstance).where(
+                    SqlOntologyInstance.instance_id.in_(empty_instance_ids)
+                )
+            )
+            await self.sql_session.commit()
+            sql_instances_deleted = int(delete_result.rowcount or 0)
+
+        return {
+            "ontology_id": ontology_id,
+            "entity_definition_ids": sorted(normalized_ids),
+            "entity_type_names": [
+                definitions[definition_id]["entity"].name
+                for definition_id in sorted(normalized_ids)
+            ],
+            "instances_affected": len(affected_instance_ids),
+            "entities_deleted": len(target_entity_ids),
+            "chunks_deleted": chunk_count,
+            "relationships_deleted": relationships_deleted,
+            "instances_deleted": len(empty_instance_ids),
+            "sql_instances_deleted": sql_instances_deleted,
+            # Kept for backward compatibility; event references are no longer pruned.
+            "timeline_events_updated": 0,
+            "timeline_events_deleted": timeline_delete_summary["events_deleted"],
+            "timeline_event_chunks_deleted": timeline_delete_summary[
+                "event_chunks_deleted"
+            ],
+        }
+
+    async def clear_timeline_events_by_ontology(
+        self,
+        *,
+        ontology_id: int,
+    ) -> dict[str, Any]:
+        ontology = await self.repository.get(ontology_id)
+        if ontology is None:
+            raise ValueError("Ontology not found")
+
+        tx = await self.graph_session.begin_transaction()
+        try:
+            event_result = await tx.run(
+                """
+                MATCH (i:OntologyInstance)-[:HAS_EVENT]->(event:Event)
+                WHERE toInteger(i.ontology_id) = toInteger($ontology_id)
+                RETURN i.instance_id AS instance_id,
+                       event.event_id AS event_id
+                """,
+                ontology_id=ontology_id,
+            )
+            event_rows = await event_result.data()
+            target_event_ids = {
+                row["event_id"] for row in event_rows if row.get("event_id")
+            }
+            affected_instance_ids = {
+                row["instance_id"] for row in event_rows if row.get("instance_id")
+            }
+
+            if not target_event_ids:
+                return {
+                    "ontology_id": ontology_id,
+                    "instances_affected": 0,
+                    "timeline_events_deleted": 0,
+                    "timeline_event_chunks_deleted": 0,
+                }
+
+            chunk_count_result = await tx.run(
+                """
+                MATCH (event:Event)-[:HAS_CHUNK]->(chunk:EntityChunk)
+                WHERE event.event_id IN $event_ids
+                RETURN count(chunk) AS chunk_count
+                """,
+                event_ids=list(target_event_ids),
+            )
+            chunk_count_record = await chunk_count_result.single()
+            chunk_count = (
+                int(chunk_count_record["chunk_count"])
+                if chunk_count_record and chunk_count_record.get("chunk_count")
+                else 0
+            )
+
+            await self._prune_timeline_references(
+                tx,
+                instance_ids=[],
+                entity_ids=set(),
+                event_ids=target_event_ids,
+            )
+
+            await tx.run(
+                """
+                MATCH (event:Event)-[:HAS_CHUNK]->(chunk:EntityChunk)
+                WHERE event.event_id IN $event_ids
+                DETACH DELETE chunk
+                """,
+                event_ids=list(target_event_ids),
+            )
+            await tx.run(
+                """
+                MATCH (event:Event)
+                WHERE event.event_id IN $event_ids
+                DETACH DELETE event
+                """,
+                event_ids=list(target_event_ids),
+            )
+        except Exception:
+            await tx.rollback()
+            await tx.close()
+            raise
+        else:
+            await tx.commit()
+            await tx.close()
+
+        return {
+            "ontology_id": ontology_id,
+            "instances_affected": len(affected_instance_ids),
+            "timeline_events_deleted": len(target_event_ids),
+            "timeline_event_chunks_deleted": chunk_count,
+        }
 
     async def update_instance(
         self, instance_id: str, payload: OntologyInstanceUpdate

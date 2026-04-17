@@ -2,16 +2,22 @@ from __future__ import annotations
 
 import json
 import logging
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import (
+    get_current_admin_user,
     get_current_user,
     get_favorite_ontology_instance_service,
     get_ontology_instance_service,
     get_user_service,
     require_roles,
 )
+from app.db.jobs_session import get_jobs_session
+from app.models.background_job import BackgroundJob, JobStatus, JobType
 from app.models.user import User, UserRole
 from app.schemas.favorite_ontology_instance import (
     FavoriteOntologyInstanceCreate,
@@ -19,6 +25,10 @@ from app.schemas.favorite_ontology_instance import (
     FavoriteStatusRead,
 )
 from app.schemas.ontology_instance import (
+    OntologyInstanceEntityTypeClearJobResponse,
+    OntologyInstanceEntityTypeClearRequest,
+    OntologyTimelineEventsClearJobResponse,
+    OntologyTimelineEventsClearRequest,
     OntologyInstanceCountResponse,
     OntologyInstanceCreate,
     OntologyInstanceRead,
@@ -39,6 +49,36 @@ from app.services.user_service import UserService
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/ontology-instances", tags=["ontology-instances"])
+
+
+def _parse_json_details(details: str | None) -> dict[str, Any] | None:
+    if not details:
+        return None
+    try:
+        parsed = json.loads(details)
+        return parsed if isinstance(parsed, dict) else {"raw": details}
+    except json.JSONDecodeError:
+        return {"raw": details}
+
+
+def _to_frontend_job(job: BackgroundJob) -> dict[str, Any]:
+    return {
+        "kind": job.job_type,
+        "job_id": str(job.id),
+        "status": job.status,
+        "progress": job.progress,
+        "description": job.description,
+        "author_type": job.author_type,
+        "author_id": job.author_id,
+        "ontology_id": job.ontology_id,
+        "celery_task_id": job.celery_task_id,
+        "details": _parse_json_details(job.details),
+        "error_message": job.error_message,
+        "start_time": job.started_at.isoformat(),
+        "completed_at": job.completed_at.isoformat() if job.completed_at else None,
+        "duration_seconds": job.duration_seconds,
+        "updated_at": job.updated_at.isoformat(),
+    }
 
 
 @router.get("/search", response_model=OntologyInstanceSearchResponse)
@@ -249,6 +289,212 @@ async def delete_ontology_instance(
 ) -> Response:
     await service.delete_instance(instance_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post(
+    "/admin/clear-entity-types-content/trigger",
+    status_code=status.HTTP_202_ACCEPTED,
+    response_model=OntologyInstanceEntityTypeClearJobResponse,
+)
+async def trigger_clear_ontology_instance_content_by_entity_types(
+    payload: OntologyInstanceEntityTypeClearRequest,
+    _: User = Depends(get_current_admin_user),
+) -> OntologyInstanceEntityTypeClearJobResponse:
+    from app.tasks.ontology_instance_clear import clear_instance_content_by_entity_types
+    from app.utils.async_helpers import run_async
+    from app.utils.job_tracking import create_background_job
+    from app.models.background_job import AuthorType
+
+    definition_ids = [int(value) for value in payload.entity_definition_ids or []]
+    type_names = [
+        value.strip()
+        for value in (payload.entity_type_names or [])
+        if value and value.strip()
+    ]
+    if not definition_ids and not type_names:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Provide at least one entity_definition_id or entity_type_name",
+        )
+
+    job_id = run_async(
+        create_background_job(
+            author_type=AuthorType.USER,
+            author_id="admin",
+            job_type=JobType.ONTOLOGY_INSTANCE_ENTITY_TYPE_CLEAR,
+            description=(
+                f"Clearing ontology {payload.ontology_id} content for selected entity types"
+            ),
+            details={
+                "ontology_id": payload.ontology_id,
+                "entity_definition_ids": definition_ids,
+                "entity_type_names": type_names,
+                "status": "queued",
+            },
+            ontology_id=payload.ontology_id,
+        )
+    )
+
+    clear_instance_content_by_entity_types.delay(
+        ontology_id=payload.ontology_id,
+        entity_definition_ids=definition_ids,
+        entity_type_names=type_names,
+        author_type="user",
+        author_id="admin",
+        job_id=job_id,
+    )
+
+    return OntologyInstanceEntityTypeClearJobResponse(
+        message="Background clear job queued",
+        kind=JobType.ONTOLOGY_INSTANCE_ENTITY_TYPE_CLEAR.value,
+        job_id=job_id,
+        status=JobStatus.QUEUED.value,
+        monitor_url=f"/ontology-instances/admin/clear-entity-types-content/jobs/{job_id}",
+    )
+
+
+@router.get(
+    "/admin/clear-entity-types-content/jobs/{job_id}",
+    status_code=status.HTTP_200_OK,
+)
+async def get_entity_type_clear_job_status(
+    job_id: int,
+    jobs_session: AsyncSession = Depends(get_jobs_session),
+    _: User = Depends(get_current_admin_user),
+) -> dict[str, Any]:
+    result = await jobs_session.execute(
+        select(BackgroundJob).where(
+            BackgroundJob.id == job_id,
+            BackgroundJob.job_type == JobType.ONTOLOGY_INSTANCE_ENTITY_TYPE_CLEAR,
+        )
+    )
+    job = result.scalar_one_or_none()
+    if not job:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Clear job {job_id} not found",
+        )
+    return _to_frontend_job(job)
+
+
+@router.get(
+    "/admin/clear-entity-types-content/jobs",
+    status_code=status.HTTP_200_OK,
+)
+async def list_entity_type_clear_jobs(
+    jobs_session: AsyncSession = Depends(get_jobs_session),
+    _: User = Depends(get_current_admin_user),
+    ontology_id: int | None = Query(None, ge=1),
+    status_filter: JobStatus | None = Query(None, alias="status"),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+) -> list[dict[str, Any]]:
+    query = select(BackgroundJob).where(
+        BackgroundJob.job_type == JobType.ONTOLOGY_INSTANCE_ENTITY_TYPE_CLEAR
+    )
+    if ontology_id is not None:
+        query = query.where(BackgroundJob.ontology_id == ontology_id)
+    if status_filter is not None:
+        query = query.where(BackgroundJob.status == status_filter)
+    query = query.order_by(BackgroundJob.started_at.desc()).limit(limit).offset(offset)
+    result = await jobs_session.execute(query)
+    jobs = result.scalars().all()
+    return [_to_frontend_job(job) for job in jobs]
+
+
+@router.post(
+    "/admin/clear-timeline-events/trigger",
+    status_code=status.HTTP_202_ACCEPTED,
+    response_model=OntologyTimelineEventsClearJobResponse,
+)
+async def trigger_clear_timeline_events_by_ontology(
+    payload: OntologyTimelineEventsClearRequest,
+    _: User = Depends(get_current_admin_user),
+) -> OntologyTimelineEventsClearJobResponse:
+    from app.tasks.ontology_instance_clear import clear_timeline_events_for_ontology
+    from app.utils.async_helpers import run_async
+    from app.utils.job_tracking import create_background_job
+    from app.models.background_job import AuthorType
+
+    job_id = run_async(
+        create_background_job(
+            author_type=AuthorType.USER,
+            author_id="admin",
+            job_type=JobType.ONTOLOGY_TIMELINE_EVENTS_CLEAR,
+            description=(
+                f"Clearing all timeline events for ontology {payload.ontology_id}"
+            ),
+            details={
+                "ontology_id": payload.ontology_id,
+                "status": "queued",
+            },
+            ontology_id=payload.ontology_id,
+        )
+    )
+
+    clear_timeline_events_for_ontology.delay(
+        ontology_id=payload.ontology_id,
+        author_type="user",
+        author_id="admin",
+        job_id=job_id,
+    )
+
+    return OntologyTimelineEventsClearJobResponse(
+        message="Background timeline clear job queued",
+        kind=JobType.ONTOLOGY_TIMELINE_EVENTS_CLEAR.value,
+        job_id=job_id,
+        status=JobStatus.QUEUED.value,
+        monitor_url=f"/ontology-instances/admin/clear-timeline-events/jobs/{job_id}",
+    )
+
+
+@router.get(
+    "/admin/clear-timeline-events/jobs/{job_id}",
+    status_code=status.HTTP_200_OK,
+)
+async def get_timeline_clear_job_status(
+    job_id: int,
+    jobs_session: AsyncSession = Depends(get_jobs_session),
+    _: User = Depends(get_current_admin_user),
+) -> dict[str, Any]:
+    result = await jobs_session.execute(
+        select(BackgroundJob).where(
+            BackgroundJob.id == job_id,
+            BackgroundJob.job_type == JobType.ONTOLOGY_TIMELINE_EVENTS_CLEAR,
+        )
+    )
+    job = result.scalar_one_or_none()
+    if not job:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Timeline clear job {job_id} not found",
+        )
+    return _to_frontend_job(job)
+
+
+@router.get(
+    "/admin/clear-timeline-events/jobs",
+    status_code=status.HTTP_200_OK,
+)
+async def list_timeline_clear_jobs(
+    jobs_session: AsyncSession = Depends(get_jobs_session),
+    _: User = Depends(get_current_admin_user),
+    ontology_id: int | None = Query(None, ge=1),
+    status_filter: JobStatus | None = Query(None, alias="status"),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+) -> list[dict[str, Any]]:
+    query = select(BackgroundJob).where(
+        BackgroundJob.job_type == JobType.ONTOLOGY_TIMELINE_EVENTS_CLEAR
+    )
+    if ontology_id is not None:
+        query = query.where(BackgroundJob.ontology_id == ontology_id)
+    if status_filter is not None:
+        query = query.where(BackgroundJob.status == status_filter)
+    query = query.order_by(BackgroundJob.started_at.desc()).limit(limit).offset(offset)
+    result = await jobs_session.execute(query)
+    jobs = result.scalars().all()
+    return [_to_frontend_job(job) for job in jobs]
 
 
 def _resolve_status(

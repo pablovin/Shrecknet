@@ -79,11 +79,19 @@ class ArchitectRepository:
     ) -> list[ArchitectProposal]:
         db_objects: list[ArchitectProposal] = []
         for payload in proposals:
+            proposal_type = payload["proposal_type"]
+            if isinstance(proposal_type, str):
+                proposal_type = ArchitectProposalType(proposal_type)
+
+            status = payload.get("status", ArchitectProposalStatus.PENDING)
+            if isinstance(status, str):
+                status = ArchitectProposalStatus(status)
+
             db_objects.append(
                 ArchitectProposal(
                     run_id=run_id,
-                    proposal_type=payload["proposal_type"],
-                    status=payload.get("status", ArchitectProposalStatus.PENDING),
+                    proposal_type=proposal_type,
+                    status=status,
                     entity_definition_id=payload.get("entity_definition_id"),
                     entity_instance_id=payload.get("entity_instance_id"),
                     alias=payload.get("alias"),

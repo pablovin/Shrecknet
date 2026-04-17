@@ -294,12 +294,43 @@ async def migrate_notification_preferences(engine: AsyncEngine) -> None:
 
 
 async def migrate_architect_proposals(engine: AsyncEngine) -> None:
-    """
-    Apply migrations to the architect_proposals table for step 2 support.
-
-    Adds columns needed for tracking validated proposals and generated entities.
-    """
+    # Apply migrations to the architect_proposals table for step 2 support.
+    # Adds columns needed for tracking validated proposals and generated entities.
     async with engine.begin() as conn:
+        # Ensure enum values for proposal_type and corrected_proposal_type include new types.
+        # This is needed for Postgres, not SQLite, but safe to run.
+        for _col in ("proposal_type", "corrected_proposal_type"):
+            try:
+                await conn.execute(
+                    text(
+                        """
+                        DO $$
+                        BEGIN
+                            IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'architectproposaltype') THEN
+                                CREATE TYPE architectproposaltype AS ENUM (
+                                    'new_instance', 'update_instance', 'propose_scene', 'propose_milestone', 'propose_relates_to'
+                                );
+                            ELSE
+                                -- Add new values if missing
+                                BEGIN
+                                    IF NOT EXISTS (SELECT 1 FROM pg_enum WHERE enumlabel = 'propose_scene' AND enumtypid = (SELECT oid FROM pg_type WHERE typname = 'architectproposaltype')) THEN
+                                        ALTER TYPE architectproposaltype ADD VALUE 'propose_scene';
+                                    END IF;
+                                    IF NOT EXISTS (SELECT 1 FROM pg_enum WHERE enumlabel = 'propose_milestone' AND enumtypid = (SELECT oid FROM pg_type WHERE typname = 'architectproposaltype')) THEN
+                                        ALTER TYPE architectproposaltype ADD VALUE 'propose_milestone';
+                                    END IF;
+                                    IF NOT EXISTS (SELECT 1 FROM pg_enum WHERE enumlabel = 'propose_relates_to' AND enumtypid = (SELECT oid FROM pg_type WHERE typname = 'architectproposaltype')) THEN
+                                        ALTER TYPE architectproposaltype ADD VALUE 'propose_relates_to';
+                                    END IF;
+                                END;
+                            END IF;
+                        END$$;
+                        """
+                    )
+                )
+            except Exception as e:
+                logger.warning(f"Enum migration for architectproposaltype failed: {e}")
+
         inspector = await conn.run_sync(lambda sync_conn: inspect(sync_conn))
         tables = await conn.run_sync(lambda sync_conn: inspector.get_table_names())
 

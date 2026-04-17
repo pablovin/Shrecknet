@@ -48,6 +48,9 @@ class ArchitectProposalType(str, Enum):
 
     NEW_INSTANCE = "new_instance"
     UPDATE_INSTANCE = "update_instance"
+    PROPOSE_SCENE = "propose_scene"
+    PROPOSE_MILESTONE = "propose_milestone"
+    PROPOSE_RELATES_TO = "propose_relates_to"
 
 
 class ArchitectAnalysisRun(Base):

@@ -16,24 +16,30 @@ import logging
 import re
 from collections import defaultdict
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from html import unescape
 from html.parser import HTMLParser
 from typing import Any, Iterable
+from uuid import uuid4
 
 from app.integrations.llm.model_policy import LLMTask, ModelPolicy
 from app.integrations.llm.openai_client import OpenAIClient
 from app.integrations.retrieval.neo4j_retriever import GraphRetriever
 from app.jobs.architect.prompts import (
     ARCHITECT_CHUNK_EXTRACTION_PROMPT,
+    ARCHITECT_RELATES_TO_PROPOSAL_PROMPT,
     ARCHITECT_RECONCILIATION_PROMPT,
+    ARCHITECT_SCENE_MILESTONE_PROPOSAL_PROMPT,
 )
 from app.jobs.architect.schemas import (
     ChunkExtractionResponse,
     DedupedEntityProposal,
     ExistingNodeInfo,
     FinalEntityProposal,
+    RelatesToProposalResponse,
     ReconciledNewEntity,
     ReconciliationResponse,
+    SceneMilestoneProposalResponse,
 )
 from app.models.architect import ArchitectProposalType
 from app.schemas.ontology_instance import OntologyInstanceRead
@@ -89,6 +95,7 @@ class ArchitectOrchestratorV2:
         agent_ontology_ids: list[int],
         ontology_instance: OntologyInstanceRead,
         entity_definitions: list[dict[str, Any]],
+        author_agent_id: str | None = None,
         override_chunk_size: int | None = None,
         override_max_chunks: int | None = None,
     ) -> dict[str, Any]:
@@ -124,48 +131,316 @@ class ArchitectOrchestratorV2:
                 "pipeline_version": "v2",
             }
 
-        # Step 1: Chunk-level entity extraction
-        logger.info("Step 1: Extracting entities from %d chunks", len(chunks))
+        primary_source_entity = self._select_primary_source_entity(ontology_instance)
+
+        # Step 1 + 2 run in parallel:
+        # A) Existing entity proposal workflow (behavior preserved)
+        # B) Scene/Milestone proposal workflow
+        entity_task = self._propose_entities(
+            chunks=chunks,
+            ontology_definitions=ontology_definitions,
+            node_catalogue=node_catalogue,
+            allowed_ontology_names=allowed_ontology_names,
+        )
+        scene_task = self._propose_scenes_milestones(
+            chunks=chunks,
+            known_entities=node_catalogue,
+            source_entity_instance_id=primary_source_entity,
+            author_id=author_agent_id or "architect-agent",
+        )
+        entity_result, scene_result = await asyncio.gather(entity_task, scene_task)
+
+        # Step 3: resolve scene/milestone mentions against existing entities and
+        # new entity proposals and emit final RELATES_TO proposal objects.
+        relates_to_proposals = await self._propose_relates_to_links(
+            scene_and_milestone_proposals=scene_result["proposals"],
+            entity_proposals=entity_result["proposals"],
+            known_entities=node_catalogue,
+        )
+
+        proposals = (
+            entity_result["proposals"]
+            + scene_result["proposals"]
+            + relates_to_proposals
+        )
+
+        return {
+            "proposals": proposals,
+            "chunks": entity_result["chunks"],
+            "chunk_count": len(chunks),
+            "pipeline_version": "v2",
+            "deduped_count": entity_result["deduped_count"],
+            "existing_count": entity_result["existing_count"],
+            "new_count": entity_result["new_count"],
+            "scene_count": scene_result["scene_count"],
+            "milestone_count": scene_result["milestone_count"],
+            "relates_to_count": len(relates_to_proposals),
+        }
+
+    async def _propose_entities(
+        self,
+        *,
+        chunks: list[ChunkInput],
+        ontology_definitions: str,
+        node_catalogue: list[ExistingNodeInfo],
+        allowed_ontology_names: set[str],
+    ) -> dict[str, Any]:
+        """Keep the existing entity proposal flow as an atomic stage."""
+        logger.info("Step 1A: Extracting entities from %d chunks", len(chunks))
         chunk_results = await self._extract_chunk_entities(chunks, ontology_definitions)
 
-        # Step 2: Global deduplication
-        logger.info("Step 2: Deduplicating entities across chunks")
+        logger.info("Step 2A: Deduplicating entities across chunks")
         deduped_entities = self._deduplicate_entities(chunk_results)
         logger.info("Deduplication: %d unique entities found", len(deduped_entities))
 
-        # Step 3: Reconciliation with existing entities
-        logger.info("Step 3: Reconciling with existing entities")
-        # logger.info(f"[ARCHITECT] Node Catalogue: {node_catalogue}")
+        logger.info("Step 3A: Reconciling with existing entities")
         reconciled = await self._reconcile_with_existing(
-            deduped_entities, node_catalogue, ontology_definitions
+            deduped_entities,
+            node_catalogue,
+            ontology_definitions,
         )
 
-        # Step 4: Map back to final JSON
-        logger.info("Step 4: Creating final proposals")
+        logger.info("Step 4A: Creating final entity proposals")
         proposals = self._create_final_proposals(
             chunk_results,
             deduped_entities,
             reconciled,
             allowed_ontology_names=allowed_ontology_names,
         )
-        # logger.info(f"[ARCHITECT] Proposals: {proposals}")
-
-        # print(f" [ANALYSE] - Note Catalogue: {node_catalogue}")
-        # print(f" [ANALYSE] - Ontology Definition: {ontology_definitions}")
-        # print(f" [ANALYSE] - chunk_results: {chunk_results}")
-        # print(f" [ANALYSE] - deduped_entities: {deduped_entities}")
-        # print(f" [ANALYSE] - reconciled: {reconciled}")
-        # print(f" [ANALYSE] - proposals: {proposals}")
-
         return {
             "proposals": proposals,
             "chunks": chunk_results,
-            "chunk_count": len(chunks),
-            "pipeline_version": "v2",
             "deduped_count": len(deduped_entities),
             "existing_count": len(reconciled.get("existing", [])),
             "new_count": len(reconciled.get("new", [])),
         }
+
+    @staticmethod
+    def _select_primary_source_entity(ontology_instance: OntologyInstanceRead) -> str | None:
+        """Use one canonical provenance anchor for Scene/Milestone proposals."""
+        for entity in ontology_instance.entities:
+            if getattr(entity, "entity_instance_id", None):
+                return entity.entity_instance_id
+        return None
+
+    async def _propose_scenes_milestones(
+        self,
+        *,
+        chunks: list[ChunkInput],
+        known_entities: list[ExistingNodeInfo],
+        source_entity_instance_id: str | None,
+        author_id: str,
+    ) -> dict[str, Any]:
+        """Generate scene and milestone proposals from the same analysis chunks."""
+        chunk_dump = self._format_chunk_dump(chunks)
+        known_aliases = ", ".join(sorted({node.alias for node in known_entities}))
+        prompt = ARCHITECT_SCENE_MILESTONE_PROPOSAL_PROMPT.format(
+            author_id=author_id,
+            source_entity_instance_id=source_entity_instance_id or "",
+            known_aliases=known_aliases or "(none)",
+            chunk_dump=chunk_dump,
+        )
+
+        model = self.model_policy.get_model(LLMTask.ARCHITECT_EXTRACT)
+        response = await self.llm_client.chat(
+            model=model,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.1,
+        )
+        parsed = self._parse_scene_milestone_response(response)
+
+        now_iso = self._utc_now_iso()
+        proposals: list[dict[str, Any]] = []
+        milestone_count = 0
+        for scene_order, scene in enumerate(parsed.scenes, start=1):
+            scene_ref = f"scene-{uuid4()}"
+            scene_mentions = self._normalize_mentions(scene.mentions)
+            proposals.append(
+                {
+                    "proposal_type": ArchitectProposalType.PROPOSE_SCENE,
+                    "entity_definition_id": None,
+                    "entity_instance_id": None,
+                    "alias": scene.name,
+                    "confidence": 0.8,
+                    "justification": scene.description,
+                    "proposal_metadata": {
+                        "proposal_kind": "scene",
+                        "scene_ref": scene_ref,
+                        "name": scene.name,
+                        "description": scene.description,
+                        "created_at": now_iso,
+                        "author": {
+                            "created_by_type": "agent",
+                            "created_by_author": author_id,
+                        },
+                        "derived_from": {
+                            "entity_instance_id": source_entity_instance_id,
+                        },
+                        "mentions": scene_mentions,
+                        "scene_order": scene_order,
+                    },
+                    "chunks": [],
+                }
+            )
+
+            milestones = self._coerce_scene_milestones(scene.milestones)
+            for milestone_order, milestone in enumerate(milestones, start=1):
+                milestone_count += 1
+                milestone_ref = f"milestone-{uuid4()}"
+                proposals.append(
+                    {
+                        "proposal_type": ArchitectProposalType.PROPOSE_MILESTONE,
+                        "entity_definition_id": None,
+                        "entity_instance_id": None,
+                        "alias": milestone.label,
+                        "confidence": 0.75,
+                        "justification": milestone.description,
+                        "proposal_metadata": {
+                            "proposal_kind": "milestone",
+                            "milestone_ref": milestone_ref,
+                            "scene_ref": scene_ref,
+                            "label": milestone.label,
+                            "description": milestone.description,
+                            "boundary_type": milestone.boundary_type,
+                            "created_at": now_iso,
+                            "author": {
+                                "created_by_type": "agent",
+                                "created_by_author": author_id,
+                            },
+                            "derived_from": {
+                                "entity_instance_id": source_entity_instance_id,
+                            },
+                            "mentions": self._normalize_mentions(milestone.mentions),
+                            "milestone_order": milestone_order,
+                        },
+                        "chunks": [],
+                    }
+                )
+
+        return {
+            "proposals": proposals,
+            "scene_count": len(parsed.scenes),
+            "milestone_count": milestone_count,
+        }
+
+    async def _propose_relates_to_links(
+        self,
+        *,
+        scene_and_milestone_proposals: list[dict[str, Any]],
+        entity_proposals: list[dict[str, Any]],
+        known_entities: list[ExistingNodeInfo],
+    ) -> list[dict[str, Any]]:
+        """
+        Resolve mentions from Scene/Milestone proposals against existing graph
+        entities and newly proposed entities, then emit RELATES_TO proposals.
+        """
+        existing_alias_map: dict[str, str] = {}
+        for node in known_entities:
+            key = self._canonical_alias(node.alias)
+            if key and key not in existing_alias_map:
+                existing_alias_map[key] = node.node_id
+
+        new_alias_map: dict[str, str] = {}
+        for proposal in entity_proposals:
+            alias = proposal.get("alias")
+            if not alias:
+                continue
+            canonical = self._canonical_alias(alias)
+            if not canonical:
+                continue
+            if proposal.get("proposal_type") == ArchitectProposalType.NEW_INSTANCE:
+                new_alias_map[canonical] = alias
+
+        source_nodes = []
+        for proposal in scene_and_milestone_proposals:
+            proposal_type = proposal.get("proposal_type")
+            if proposal_type not in {
+                ArchitectProposalType.PROPOSE_SCENE,
+                ArchitectProposalType.PROPOSE_MILESTONE,
+            }:
+                continue
+            metadata = proposal.get("proposal_metadata") or {}
+            source_nodes.append(
+                {
+                    "source_ref": metadata.get("scene_ref")
+                    or metadata.get("milestone_ref"),
+                    "source_kind": metadata.get("proposal_kind"),
+                    "name": proposal.get("alias") or "",
+                    "description": metadata.get("description")
+                    or proposal.get("justification")
+                    or "",
+                    "mentions": metadata.get("mentions") or [],
+                }
+            )
+
+        if not source_nodes:
+            return []
+
+        prompt = ARCHITECT_RELATES_TO_PROPOSAL_PROMPT.format(
+            source_nodes=json.dumps(source_nodes, ensure_ascii=False),
+            candidate_aliases=json.dumps(
+                sorted({node.alias for node in known_entities} | set(new_alias_map.values())),
+                ensure_ascii=False,
+            ),
+        )
+        model = self.model_policy.get_model(LLMTask.ARCHITECT_EXTRACT)
+        response = await self.llm_client.chat(
+            model=model,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.0,
+        )
+        parsed = self._parse_relates_to_response(response)
+
+        proposals: list[dict[str, Any]] = []
+        for item in parsed.relationships:
+            canonical = self._canonical_alias(item.target_alias)
+            if not canonical:
+                continue
+
+            existing_target = existing_alias_map.get(canonical)
+            new_target = new_alias_map.get(canonical)
+
+            # Ambiguous links are explicitly dropped by product requirement.
+            if existing_target and new_target:
+                continue
+            if not existing_target and not new_target:
+                continue
+
+            target_payload: dict[str, Any]
+            if existing_target:
+                target_payload = {
+                    "kind": "existing_entity",
+                    "entity_instance_id": existing_target,
+                    "alias": item.target_alias,
+                }
+            else:
+                target_payload = {
+                    "kind": "new_entity_proposal",
+                    "alias": new_target,
+                }
+
+            proposals.append(
+                {
+                    "proposal_type": ArchitectProposalType.PROPOSE_RELATES_TO,
+                    "entity_definition_id": None,
+                    "entity_instance_id": None,
+                    "alias": f"{item.source_kind}:{item.source_ref} -> {item.target_alias}",
+                    "confidence": item.confidence,
+                    "justification": item.evidence,
+                    "proposal_metadata": {
+                        "proposal_kind": "relates_to",
+                        "source_ref": item.source_ref,
+                        "source_kind": item.source_kind,
+                        "target": target_payload,
+                        "relationship": "RELATES_TO",
+                        "confidence": item.confidence,
+                        "evidence": item.evidence,
+                    },
+                    "chunks": [],
+                }
+            )
+
+        return proposals
 
     async def _load_node_catalogue(
         self, ontology_ids: list[int]
@@ -860,6 +1135,121 @@ class ArchitectOrchestratorV2:
             if name:
                 allowed.add(name)
         return allowed
+
+    @staticmethod
+    def _utc_now_iso() -> str:
+        return datetime.now(timezone.utc).isoformat()
+
+    @staticmethod
+    def _normalize_mentions(mentions: list[str] | None) -> list[str]:
+        unique: list[str] = []
+        seen: set[str] = set()
+        for mention in mentions or []:
+            cleaned = (mention or "").strip()
+            if not cleaned:
+                continue
+            key = cleaned.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            unique.append(cleaned)
+        return unique
+
+    def _coerce_scene_milestones(self, milestones: list[Any]) -> list[Any]:
+        """
+        Ensure each scene has exactly one begin and one end milestone.
+        If missing, synthetic boundary milestones are added.
+        """
+        if not milestones:
+            return [
+                type("Milestone", (), {
+                    "label": "Scene begins",
+                    "description": "The scene begins",
+                    "boundary_type": "begin",
+                    "mentions": [],
+                })(),
+                type("Milestone", (), {
+                    "label": "Scene ends",
+                    "description": "The scene ends",
+                    "boundary_type": "end",
+                    "mentions": [],
+                })(),
+            ]
+
+        normalized = list(milestones)
+        begin_indices = [
+            idx
+            for idx, item in enumerate(normalized)
+            if str(getattr(item, "boundary_type", "none")).lower() == "begin"
+        ]
+        end_indices = [
+            idx
+            for idx, item in enumerate(normalized)
+            if str(getattr(item, "boundary_type", "none")).lower() == "end"
+        ]
+
+        if not begin_indices:
+            normalized.insert(
+                0,
+                type("Milestone", (), {
+                    "label": "Scene begins",
+                    "description": "The scene begins",
+                    "boundary_type": "begin",
+                    "mentions": [],
+                })(),
+            )
+        elif len(begin_indices) > 1:
+            for idx in begin_indices[1:]:
+                setattr(normalized[idx], "boundary_type", "none")
+
+        if not end_indices:
+            normalized.append(
+                type("Milestone", (), {
+                    "label": "Scene ends",
+                    "description": "The scene ends",
+                    "boundary_type": "end",
+                    "mentions": [],
+                })(),
+            )
+        elif len(end_indices) > 1:
+            for idx in end_indices[:-1]:
+                setattr(normalized[idx], "boundary_type", "none")
+
+        return normalized
+
+    def _format_chunk_dump(self, chunks: list[ChunkInput], max_chars: int = 16000) -> str:
+        lines: list[str] = []
+        consumed = 0
+        for chunk in chunks:
+            block = (
+                f"[chunk {chunk.index}] source_alias={chunk.entity_alias or ''}\n"
+                f"{chunk.text.strip()}\n"
+            )
+            if consumed + len(block) > max_chars:
+                break
+            lines.append(block)
+            consumed += len(block)
+        return "\n".join(lines)
+
+    def _parse_scene_milestone_response(
+        self, response_text: str
+    ) -> SceneMilestoneProposalResponse:
+        try:
+            json_block = self._extract_json_block(response_text)
+            payload = json.loads(json_block)
+            return SceneMilestoneProposalResponse.model_validate(payload)
+        except Exception as exc:
+            logger.warning("architect_v2_scene_parse_error: %s", exc)
+            return SceneMilestoneProposalResponse(scenes=[])
+
+    def _parse_relates_to_response(self, response_text: str) -> RelatesToProposalResponse:
+        try:
+            json_block = self._extract_json_block(response_text)
+            payload = json.loads(json_block)
+            return RelatesToProposalResponse.model_validate(payload)
+        except Exception as exc:
+            logger.warning("architect_v2_relates_to_parse_error: %s", exc)
+            return RelatesToProposalResponse(relationships=[])
 
     @staticmethod
     def _extract_json_block(raw: str) -> str:

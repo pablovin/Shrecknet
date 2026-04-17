@@ -189,6 +189,7 @@ async def _execute_architect_pipeline(
                     agent_ontology_ids=[ont.id for ont in agent.ontologies],
                     ontology_instance=ontology_instance,
                     entity_definitions=entity_catalog,
+                    author_agent_id=agent_id,
                     override_chunk_size=chunk_size,
                     override_max_chunks=max_chunks,
                 )

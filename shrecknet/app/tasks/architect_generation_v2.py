@@ -552,6 +552,13 @@ def _convert_validated_to_revised(
         if not base:
             continue
 
+        base_type = getattr(base, "proposal_type", None)
+        if base_type not in {
+            ArchitectProposalType.NEW_INSTANCE,
+            ArchitectProposalType.UPDATE_INSTANCE,
+        }:
+            continue
+
         corrected_type = item.get("corrected_proposal_type")
         if corrected_type and not isinstance(corrected_type, ArchitectProposalType):
             corrected_type = ArchitectProposalType(corrected_type)

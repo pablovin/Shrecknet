@@ -73,6 +73,99 @@ Return JSON in this exact format:
 }}
 """
 
+
+ARCHITECT_SCENE_MILESTONE_PROPOSAL_PROMPT = """You are the Architect Agent.
+Create a scene-centric proposal for the provided narrative text.
+
+Scene definition:
+- A continuous segment of time where setting and situation remain stable.
+- Starts when a situation begins and ends when it clearly changes (location, participants, or objective).
+
+Milestone definition:
+- A single, concrete action or state change at a specific moment in a scene.
+
+Hard constraints:
+Scenes:
+- No time jumps inside a scene.
+- Do not mix separate moments in one scene.
+- Each scene must feel like one episode of action.
+
+Milestones:
+- Must be short and direct.
+- Must describe only one action/event.
+- Must be in present tense.
+- Must be observable (no vague interpretation).
+
+Rules:
+- Each scene MUST include at least one begin milestone and one end milestone.
+- Prefer more milestones rather than fewer.
+- Split scenes when location changes, time jumps occur, participants change significantly, or the situation/goal changes.
+- Bad milestone: "They argue intensely"
+- Good milestones:
+  - "John accuses Mary of betrayal"
+  - "Mary denies the accusation"
+  - "John leaves the tavern"
+
+Author context:
+- created_by_type = "agent"
+- created_by_author = "{author_id}"
+- derived_from.entity_instance_id = "{source_entity_instance_id}"
+
+Known entity aliases (for mentions/RELATES_TO candidates):
+{known_aliases}
+
+Narrative text chunks:
+{chunk_dump}
+
+Return STRICT JSON only in this format:
+{{
+  "scenes": [
+    {{
+      "name": "short scene name",
+      "description": "what is happening in this scene",
+      "mentions": ["entity alias"],
+      "milestones": [
+        {{
+          "label": "short verb-like label",
+          "description": "single concrete action in present tense",
+          "boundary_type": "begin|end|none",
+          "mentions": ["entity alias"]
+        }}
+      ]
+    }}
+  ]
+}}
+"""
+
+
+ARCHITECT_RELATES_TO_PROPOSAL_PROMPT = """You are the Architect Agent.
+Resolve RELATES_TO candidates for scene/milestone proposals.
+
+Source proposals:
+{source_nodes}
+
+Candidate entity aliases:
+{candidate_aliases}
+
+Rules:
+- Only output links that are explicitly mentioned or strongly implied.
+- Do not output ambiguous links.
+- If a source has no reliable link, output no relation for it.
+
+Return STRICT JSON only:
+{{
+  "relationships": [
+    {{
+      "source_ref": "scene_or_milestone_ref",
+      "source_kind": "scene|milestone",
+      "target_alias": "known alias",
+      "confidence": 0.0,
+      "evidence": "short evidence text"
+    }}
+  ]
+}}
+"""
+
 # Original extraction prompt (kept for backward compatibility)
 ARCHITECT_EXTRACTION_PROMPT = """You are the Architect Agent. Your task is to analyse a story excerpt
 and suggest ontology instance updates using the provided schema.

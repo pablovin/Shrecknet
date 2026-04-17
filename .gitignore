@@ -86,3 +86,7 @@ backend/media/
 
 # Docker backup files
 docker-compose.yml.backup
+
+# Entire directories excluded from git tracking
+backend/
+shreckrpg/

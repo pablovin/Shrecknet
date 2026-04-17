@@ -1,2 +1,0 @@
-"""Novelist job package."""
-

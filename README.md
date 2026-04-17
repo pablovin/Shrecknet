@@ -1,686 +1,366 @@
-# 🏰 Shrecknet
+# Shrecknet
 
 ![Python](https://img.shields.io/badge/python-3.11%2B-blue)
-![Node](https://img.shields.io/badge/node-20%2B-green)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.110-009688)
-![React](https://img.shields.io/badge/React-Next.js-61DAFB)
+![Neo4j](https://img.shields.io/badge/Neo4j-5.x-018BFF)
+![Redis](https://img.shields.io/badge/Redis-7.x-DC382D)
 ![License](https://img.shields.io/badge/license-GPLv3-blue)
 ![Version](https://img.shields.io/badge/version-0.5.0-orange)
 
-> *"In the realm of endless imagination, where chronicles are written by both quill and code, Shrecknet emerges as your faithful companion—a mystical forge where worlds take shape, legends are born, and epic tales unfold."*
+Shrecknet is an event-driven memory engine for storytelling. It incrementally builds longitudinal episodic memory through an agentic architecture where events are first-class citizens and structure can evolve over time.
 
-## 🎭 Project Summary - The Legend Begins
+## Introducing Shrecknet
 
-Welcome, brave adventurer, to **Shrecknet**—a collaborative world-building and storytelling platform forged in the fires of modern AI and the ancient art of tabletop role-playing games.
+Shrecknet is an agentic architecture for incremental construction of longitudinal episodic memory under controlled ontology evolution. Its core principle is explicit separation and coordinated co-evolution of three representational layers: Ontology, Graph, and Knowledge.
 
-### The Quest
+Instead of treating memory as plain text or a frozen knowledge base, Shrecknet models memory as a dynamic system: every new observation can update entity state, append new timeline events, and, when needed, evolve the schema itself.
 
-Every great campaign needs a living, breathing world. Shrecknet is your **digital grimoire**, combining:
-- 📚 **Wiki-style CMS** for organizing your realm's lore
-- 🤖 **AI Sages** (agents) who help populate worlds and craft narratives
-- 🔗 **Graph-powered knowledge** linking every concept, character, and chronicle
-- ⚔️ **Session-to-Story Alchemy** transforming raw RPG sessions into polished novels
+Architecture diagram:
 
-Whether you're a Dungeon Master weaving intricate plots, a novelist crafting epic sagas, or a worldbuilder documenting vast universes, Shrecknet serves as your **intelligent scribe and co-creator**.
+![Shrecknet Architecture](Documentation/Architecture/assets/shrecknet-architecture.png)
 
-## ⚡ Quick Start - Join the Adventure
+Detailed architecture note: [Documentation/Architecture/SHRECKNET_ARCHITECTURE.md](Documentation/Architecture/SHRECKNET_ARCHITECTURE.md)
 
-**Deploy in one command**:
+## Event-Centric Mental Model
+
+Shrecknet is built around event-centric memory. The core question is not only what exists, but what happened, when, and how one event relates to another.
+
+### The Triad: Ontology, Graph, Knowledge
+
+1. Ontology layer
+   Defines the world grammar: entity types, properties, and relationships.
+   Example: Character, Location, Faction, Session, CombatEncounter.
+
+2. Graph layer
+   Stores world state and event topology in connected form.
+   Event nodes and entity nodes are linked, enabling causal and temporal traversals.
+
+3. Knowledge layer
+   Contains narrative text, chunks, summaries, and embeddings used by retrieval and generation agents.
+
+### Ontologies and Event Types
+
+In Shrecknet, an ontology is the schema for a world. It includes:
+
+- Entity definitions: what kinds of things can exist.
+- Property definitions: what attributes those entities can carry.
+- Relationship definitions: how entities can connect.
+
+Event types are represented through ontology definitions and timeline events, so they can evolve with the world. As campaigns change, new event categories or relation patterns can be introduced without destroying historical memory.
+
+### Why This Matters for Storytelling
+
+- You preserve chronology, not just snippets.
+- You can recover causes, consequences, and continuity.
+- Agents can reason over both structure and narrative evidence.
+
+## Agents
+
+### Elder
+
+Conversational memory agent. Elder answers questions by retrieving context from graph and embedded knowledge, then synthesizing grounded responses with optional trace/context modes.
+
+### Librarian
+
+Document intelligence agent. Librarian searches embedded PDF/library content and returns contextual answers with chunk-level source metadata for rulebooks and canon material.
+
+### Architect
+
+Ontology and structure evolution agent. Architect analyzes existing instances/events and proposes additions, updates, and merges to keep ontology and world state coherent as memory grows.
+
+### Novelist
+
+Narrative generation agent. Novelist turns unstructured notes or session text into polished prose and can generate event timelines for existing entities.
+
+## Functionalities by Group
+
+### Core memory and world modeling
+
+- Ontology CRUD with entities, properties, and relationships
+- Ontology instances with entity-level state
+- Timeline event creation, update, retrieval, and relation linking
+- Event emission endpoint for event-driven integration flows
+
+### Retrieval and reasoning
+
+- GraphRAG semantic retrieval over Neo4j
+- Embedding workflows for ontology and library assets
+- Context-first query modes for explainable responses
+
+### Agentic workflows
+
+- Elder query orchestration with chat continuity
+- Librarian retrieval over embedded library items
+- Architect async analysis and proposal validation loops
+- Novelist async draft generation and timeline generation
+
+### Platform and operations
+
+- JWT-based authentication
+- Role-based permissions (admin, world_builder, writer, player)
+- Background jobs with Celery + Redis
+- Backup/export/import endpoints
+- Media serving and upload validation
+
+## Run Shrecknet Step by Step
+
+### 1. Prerequisites
+
+- Docker Engine with Docker Compose v2
+- Optional: OpenAI API key for LLM-powered agent features
+
+### 2. Configure environment variables
+
+Create a .env file in the repository root.
+
+```env
+# Required in practice for stable local runs
+SHRECKNET_NEO4J_PASSWORD=ChangeMeStrong123
+
+# Required for Elder/Librarian/Architect/Novelist LLM workflows
+SHRECKNET_OPENAI_API_KEY=sk-...
+
+# Strongly recommended for production-like auth
+SHRECKNET_JWT_PRIVATE_KEY_PEM=
+SHRECKNET_JWT_PUBLIC_KEY_PEM=
+
+# Optional overrides (defaults exist, shown for clarity)
+SHRECKNET_MEDIA_PUBLIC_URL=http://localhost:8100/media
+SHRECKNET_CORS_ALLOW_ORIGINS=["http://localhost:3000","http://127.0.0.1:3000","http://localhost:5173","http://127.0.0.1:5173","http://localhost:8100","http://127.0.0.1:8100"]
+SHRECKNET_CONTAINER_UID=1000
+SHRECKNET_CONTAINER_GID=1000
+```
+
+Parameter explanation:
+
+- SHRECKNET_NEO4J_PASSWORD: password used by Neo4j and API graph connectivity.
+- SHRECKNET_OPENAI_API_KEY: enables agent jobs that call LLMs.
+- SHRECKNET_JWT_PRIVATE_KEY_PEM / SHRECKNET_JWT_PUBLIC_KEY_PEM: optional in dev, recommended for controlled signing and verification.
+- SHRECKNET_MEDIA_PUBLIC_URL: absolute URL returned in media payloads.
+- SHRECKNET_CORS_ALLOW_ORIGINS: JSON array of allowed browser origins.
+- SHRECKNET_CONTAINER_UID / SHRECKNET_CONTAINER_GID: keeps mounted file permissions aligned with host user.
+
+### 3. Build and start
 
 ```bash
-# Build and run everything
 docker compose up --build
-
-# Access your realm
-open http://localhost:8000/docs
 ```
 
-See [Quick Start Guide](Documentation/GettingStarted/QUICKSTART.md) for details or [Virtual Environment Deployment](Documentation/Deployment/VENV_DEPLOYMENT.md) for the complete guide.
-
-## 🎲 Features - Your Arsenal
-
-### Core Powers
-- 🗺️ **Ontology-Based World Building**: Organize worlds through interconnected Ontologies, Instances, and rich Properties
-- 🧠 **Semantic Knowledge Graph**: Neo4j-powered relationships between all your world's elements
-- 🔍 **Intelligent Cross-Linking**: Automatic discovery and linking of related concepts
-- 📊 **Multi-Modal Content**: Support for text, images, PDFs, and rich markdown
-- 🔐 **Role-Based Access Control**: Admin, Editor, and Viewer roles with fine-grained permissions
-- 📱 **Modern React Frontend**: Built with Next.js, TypeScript, and Tailwind CSS
-- 🔄 **Background Job Processing**: Celery workers handle intensive AI and embedding tasks
-- 💾 **Flexible Data Persistence**: SQLite for metadata, Neo4j for graphs, Redis for caching
-
-### Legendary Abilities
-- 🌌 **Embedding-Powered Search**: Vector similarity across all your content
-- 📝 **Persistent Chat Sessions**: Conversational context preserved across interactions
-- 📖 **PDF Library System**: Upload and query rulebooks with citation tracking
-- 🎨 **Rich Text Editing**: Full markdown support with custom formatting
-- 🔄 **Import/Export**: Backup and share your worlds effortlessly
-- 🌐 **GraphRAG Integration**: Retrieval-augmented generation over your knowledge graph
-- 📈 **Audit Logging**: Track all changes to your world's content
-
-## 🤖 AI Agents - The Council of Sages
-
-Shrecknet's AI agents are specialized NPCs who help you build and navigate your world:
-
-### 👴 **Elder Agent** (Conversational AI)
-*The wise sage who knows your world inside and out*
-
-**Powers:**
-- Answers questions about your world using semantic search
-- Maintains persistent chat sessions with named conversations
-- Provides source citations for all responses
-- Supports custom personality and writing styles
-
-**Pipeline:**
-1. Receives your query
-2. Searches the knowledge graph and vector embeddings
-3. Generates contextual responses with OpenAI
-4. Returns answers with source links and citations
-
-**Use Cases:** Lore Q&A, character backstory exploration, world fact-checking
-
----
-
-### 📚 **Librarian Agent** (Document Intelligence)
-*The keeper of ancient tomes who extracts wisdom from your rulebooks*
-
-**Powers:**
-- Semantic search across embedded PDF documents
-- Page-level chunking with precise citations
-- Multi-book cross-referencing
-- Configurable response styles
-
-**Pipeline:**
-1. User uploads PDF rulebooks to the library
-2. Background jobs extract and embed content
-3. Queries search across all embedded chunks
-4. Returns comprehensive answers with page numbers
-
-**Use Cases:** Rules lookups, mechanics explanations, sourcebook research
-
----
-
-### ✍️ **Novelist Agent** (Story Transformer)
-*The bard who transforms raw session notes into epic prose*
-
-**Powers:**
-- Converts RPG transcripts into novel-style chapters
-- Applies narrative structure and pacing
-- Incorporates world lore and character details
-- Supports critic feedback loops
-
-**Pipeline:**
-1. Ingests raw session transcripts
-2. Chunks and analyzes narrative flow
-3. Rewrites in chosen literary style
-4. Optionally applies editor notes and world context
-
-**Use Cases:** Session recaps, campaign novelization, story polishing
-
----
-
-### 🏗️ **Architect Agent** (World Builder)
-*The master planner who structures and expands your realm*
-
-**Powers:**
-- Analyzes ontology structure and suggests improvements
-- Generates new instances and relationships
-- Proposes property expansions
-- Maintains ontological consistency
-
-**Pipeline:**
-1. Scans existing world structure
-2. Identifies gaps and opportunities
-3. Generates structured suggestions
-4. Stores proposals for review and approval
-
-**Use Cases:** World expansion, consistency checking, structural analysis
-
----
-
-### 📖 **Writer Agent** (Legacy - Backend 1)
-*Analyzes and generates wiki pages*
-
-**Pipeline:**
-1. Reviews existing pages for completeness
-2. Suggests new content and improvements
-3. Generates draft pages as background jobs
-4. Stores results for manual review
-
-**Use Cases:** Content generation, page suggestions
-
-## 🏗️ Backend Services - The Infrastructure
-
-### Backend_2 (Primary - Recommended)
-**Modern FastAPI service** with clean architecture and Neo4j integration
-
-**API Endpoints:**
-- `/auth` - Authentication and JWT token management
-- `/users` - User management and profiles
-- `/ontologies` - Ontology CRUD and queries
-- `/ontology-instances` - Instance management with relationships
-- `/notes` - Rich text note-taking with markdown
-- `/admin-notes` - Admin-specific notes with special permissions
-- `/games` - Game session management
-- `/agents` - AI agent configuration and execution
-- `/elder` - Elder agent queries and responses
-- `/elder-chats` - Persistent chat session management
-- `/librarian` - Librarian agent and library queries
-- `/library` - PDF upload and document management
-- `/novelist` - Novel generation from transcripts
-- `/architect` - World structure analysis and suggestions
-- `/graphrag` - Graph-based retrieval augmented generation
-- `/background-jobs` - Job status and management
-- `/backups` - World backup and restore
-- `/imports` - Data import from various formats
-- `/media` - Media file upload and serving
-- `/notifications` - User notifications
-- `/audit-logs` - Change tracking and audit trail
-- `/page-visits` - Analytics and page tracking
-
-**Technologies:**
-- FastAPI 0.110 with async/await
-- SQLAlchemy 2.0 with asyncio support
-- Neo4j 5 graph database
-- Celery for background jobs
-- Redis for caching and job queue
-- Langchain & OpenAI for AI features
-- Sentence-Transformers for embeddings
-- PyMuPDF & PyPDF2 for document processing
-
-## 🚀 Deployment Guide
-
-### Components to Deploy
-
-A full Shrecknet deployment consists of:
-
-1. **Backend_2 API** (Required) - Main FastAPI application
-2. **Backend_2 Worker** (Required) - Celery worker for AI/embedding jobs
-3. **Neo4j** (Required) - Graph database for ontologies
-4. **Redis** (Required) - Message broker and cache
-5. **Frontend** (Optional) - Next.js React application
-6. **Backend** (Optional) - Legacy API for compatibility
-
-### Configuration Files
-
-#### Backend_2 Environment Variables
-
-Create `.env` in the project root or set these environment variables:
+### 4. Verify health and docs
 
 ```bash
-# Database
-BACKEND_2_DATABASE_URL=sqlite+aiosqlite:////data/backend.db
-BACKEND_2_JOBS_DATABASE_URL=sqlite+aiosqlite:////data/backend_jobs.db
-
-# Neo4j Graph Database
-BACKEND_2_NEO4J_URI=bolt://neo4j:7687
-BACKEND_2_NEO4J_USER=neo4j
-BACKEND_2_NEO4J_PASSWORD=VeryStrongPass123
-BACKEND_2_NEO4J_DATABASE=neo4j
-
-# Celery / Redis
-BACKEND_2_CELERY_BROKER_URL=redis://redis:6379/0
-BACKEND_2_CELERY_RESULT_BACKEND=redis://redis:6379/1
-BACKEND_2_CELERY_TASK_ALWAYS_EAGER=false
-
-# Security
-BACKEND_2_SECRET_KEY=your-secret-key-min-32-chars
-BACKEND_2_ALGORITHM=HS256
-BACKEND_2_ACCESS_TOKEN_EXPIRE_MINUTES=30
-
-# AI Services (Optional)
-BACKEND_2_OPENAI_API_KEY=sk-your-openai-key
-BACKEND_2_OPENAI_MODEL=gpt-4o-mini
-
-# Media Storage
-BACKEND_2_MEDIA_ROOT=/app/media
-
-# CORS (Development)
-BACKEND_2_CORS_ALLOW_ORIGINS=http://localhost:3000
+curl -s http://localhost:8100/health
+curl -s http://localhost:8100/openapi.json | head
 ```
 
-### Security Considerations
+Expected:
 
-⚠️ **Before deploying to production:**
+- Health returns status ok
+- OpenAPI document is reachable
+- Swagger UI loads at http://localhost:8100/docs
+- Neo4j browser is reachable at http://localhost:7475
 
-1. **Change default passwords**: Update Neo4j password in `docker-compose.yml`
-2. **Generate strong secret keys**: Use `openssl rand -hex 32` for SECRET_KEY
-3. **Configure CORS properly**: Set specific origins, not wildcards
-4. **Use environment secrets**: Never commit API keys to git
-5. **Enable HTTPS**: Use reverse proxy (nginx/traefik) with SSL certificates
-6. **Restrict media access**: Configure proper permissions for `/media` endpoint
-7. **Set up backups**: Regularly backup Neo4j, SQLite, and media volumes
+## Service Lifecycle: From Zero to Event-Driven Story Memory
 
-## 🐳 Running with Docker (Recommended)
+Below is a practical sequence to initialize and use Shrecknet through the API.
 
-### Prerequisites
+### 1. Set up users
 
-- Docker Engine 20.10+
-- Docker Compose v2.0+
-- 3+ CPU cores
-- 16GB RAM minimum (32GB recommended)
-- 20GB disk space
+First registered user becomes admin automatically.
 
-### Quick Deploy
+```python
+import requests
 
-```bash
-# Build and start all services
-docker compose up --build
+BASE = "http://localhost:8100"
 
-# Verify services are running
-docker compose ps
+# Register first user (auto-admin if database is empty)
+admin = requests.post(
+    f"{BASE}/users/",
+    json={
+        "username": "keeper",
+        "full_name": "World Keeper",
+        "email": "keeper@example.com",
+        "timezone": "UTC",
+        "role": "admin",
+        "password": "change-me-strong",
+        "entity_ids": [],
+    },
+)
+admin.raise_for_status()
 
-# View logs
-docker compose logs -f backend_2
+# Login and get bearer token
+token_resp = requests.post(
+    f"{BASE}/auth/token",
+    json={"username": "keeper", "password": "change-me-strong"},
+)
+token_resp.raise_for_status()
+token = token_resp.json()["access_token"]
+headers = {"Authorization": f"Bearer {token}"}
 ```
 
-### Step-by-Step Docker Deployment
+### 2. Set up ontologies
 
-#### Step 1: Prepare Environment
+Create ontology, then evolve it with entities/properties/relationships as your event model matures.
 
-```bash
-# Clone the repository
-git clone https://github.com/pablovin/Shrecknet.git
-cd Shrecknet
+```python
+# Create ontology
+ontology = requests.post(
+    f"{BASE}/ontologies/",
+    headers=headers,
+    json={
+        "name": "Chronicles of Marshfall",
+        "description": "Event-centric ontology for campaign memory",
+        "image_url": None,
+    },
+)
+ontology.raise_for_status()
+ontology_id = ontology.json()["id"]
+
+# Optional: bootstrap default worlds
+default_worlds = requests.post(
+    f"{BASE}/setup/default-worlds",
+    headers=headers,
+    json={"worlds": ["fantasy"]},
+)
+default_worlds.raise_for_status()
 ```
 
-#### Step 2: Build Docker Images
+### 3. Set up agents
 
-```bash
-# Build all services
-docker compose build
+Create one agent per job and attach ontologies they should reason over.
 
-# Or build specific service
-docker compose build backend_2
+```python
+def create_agent(name, job, ontology_ids):
+    resp = requests.post(
+        f"{BASE}/agents/",
+        headers=headers,
+        json={
+            "name": name,
+            "avatar_url": None,
+            "description": f"{job} specialist",
+            "writing_style": "Clear, grounded, and lore-consistent",
+            "job": job,
+            "active": True,
+            "ontology_ids": ontology_ids,
+        },
+    )
+    resp.raise_for_status()
+    return resp.json()["id"]
+
+elder_id = create_agent("Elder One", "elder", [ontology_id])
+librarian_id = create_agent("Librarian One", "librarian", [ontology_id])
+architect_id = create_agent("Architect One", "architect", [ontology_id])
+novelist_id = create_agent("Novelist One", "novelist", [ontology_id])
 ```
 
-#### Step 3: Start Services
+### 4. Build event-centric memory with ontology instances and events
 
-```bash
-# Start in detached mode
-docker compose up -d
+```python
+# Create ontology instance with initial entities
+instance_resp = requests.post(
+    f"{BASE}/ontology-instances/",
+    headers=headers,
+    json={
+        "name": "Session 01 - The Broken Oath",
+        "ontology_id": ontology_id,
+        "entities": [
+            {
+                "definition_id": 1,
+                "alias": "Arin",
+                "text": "A ranger tracking marsh anomalies.",
+                "author_type": "human",
+                "author_id": "1",
+                "properties": [],
+                "relationships": [],
+            }
+        ],
+        "events": [],
+    },
+)
+instance_resp.raise_for_status()
+instance_id = instance_resp.json()["instance_id"]
 
-# Start with logs visible (good for first run)
-docker compose up
+# Add timeline event
+event_resp = requests.post(
+    f"{BASE}/ontology-instances/{instance_id}/events",
+    headers=headers,
+    json={
+        "title": "Ambush at Reed Bridge",
+        "description": "Arin discovers a staged ambush tied to the Black Lantern guild.",
+        "source": "session_notes",
+        "source_entity_id": "Arin",
+        "involves_entity_ids": ["Arin"],
+        "relations": [],
+    },
+)
+event_resp.raise_for_status()
+event_id = event_resp.json()["event_id"]
 
-# Start specific services only
-docker compose up -d backend_2 redis neo4j
+# Emit integration event for external consumers/webhooks
+emit = requests.post(
+    f"{BASE}/events/emit",
+    headers=headers,
+    json={
+        "event_type": "story.event.created",
+        "payload": {"instance_id": instance_id, "event_id": event_id},
+    },
+)
+emit.raise_for_status()
 ```
 
-#### Step 4: Verify Deployment
+### 5. Use each agent
 
-```bash
-# Check service status
-docker compose ps
+```python
+# Elder: memory-grounded Q&A
+elder = requests.post(
+    f"{BASE}/jobs/elder/{elder_id}/query",
+    headers=headers,
+    json={"query": "What changed after the Reed Bridge ambush?", "mode": "both"},
+)
+elder.raise_for_status()
 
-# View logs
-docker compose logs -f backend_2
-docker compose logs -f backend_2_worker
+# Librarian: PDF/library grounded Q&A
+librarian = requests.post(
+    f"{BASE}/jobs/librarian/{librarian_id}/query",
+    headers=headers,
+    json={"query": "Summarize stealth rules for marsh terrain.", "mode": "both"},
+)
+librarian.raise_for_status()
 
-# Test API
-curl http://localhost:8000/health
+# Architect: propose ontology/entity evolution from an instance
+architect = requests.post(
+    f"{BASE}/jobs/architect/{architect_id}/analyze",
+    headers=headers,
+    json={"ontology_instance_id": instance_id, "max_chunks": 40},
+)
+architect.raise_for_status()
+architect_run_id = architect.json()["id"]
+
+# Novelist: generate prose from raw notes
+novelist = requests.post(
+    f"{BASE}/jobs/novelist/{novelist_id}/runs",
+    headers=headers,
+    json={
+        "unstructured_text": "Arin reached Reed Bridge at dusk. An ambush unfolded...",
+        "language": "en",
+        "instructions": "Write in close third person with tense pacing.",
+    },
+)
+novelist.raise_for_status()
+novelist_run_id = novelist.json()["id"]
 ```
 
-#### Step 6: Access Services
+Tip: use http://localhost:8100/docs to inspect exact payloads and all endpoint variants in your running version.
 
-- **API Documentation**: http://localhost:8000/docs
-- **Neo4j Browser**: http://localhost:7474 (neo4j / VeryStrongPass123)
-- **Media Files**: http://localhost:8000/media/
+## Project Scope as a Single Product
 
-### Docker Management Commands
+Shrecknet is presented and operated as one product: one API surface, one memory model, one event-centric architecture, and one set of agents orchestrated through shared ontology and graph state.
 
-```bash
-# View logs for all services
-docker compose logs -f
+## Documentation
 
-# View logs for specific service
-docker compose logs -f backend_2
+- Main docs index: [Documentation/README.md](Documentation/README.md)
+- Architecture diagram page: [Documentation/Architecture/SHRECKNET_ARCHITECTURE.md](Documentation/Architecture/SHRECKNET_ARCHITECTURE.md)
 
-# Restart a service
-docker compose restart backend_2
+## License
 
-# Stop all services (keeps data)
-docker compose down
-
-# Stop and remove all data (⚠️ WARNING!)
-docker compose down -v
-
-# Rebuild after code changes
-docker compose build
-docker compose up -d
-
-# Execute commands in running container
-docker compose exec backend_2 bash
-
-# Scale workers (if needed)
-docker compose up -d --scale backend_2_worker=3
-```
-
-### Data Persistence
-
-All data persists across container restarts in Docker volumes:
-
-- `backend-data` - SQLite databases
-- `backend-media` - Uploaded files and images
-- `neo4j-data` - Graph database
-- `neo4j-logs` - Database logs
-- `redis-data` - Cache and job queue
-
-**To backup your data:**
-```bash
-# Backup volumes
-docker run --rm -v shrecknet_backend-data:/data -v $(pwd):/backup ubuntu tar czf /backup/backend-data.tar.gz -C /data .
-docker run --rm -v shrecknet_neo4j-data:/data -v $(pwd):/backup ubuntu tar czf /backup/neo4j-data.tar.gz -C /data .
-
-# Restore volumes
-docker run --rm -v shrecknet_backend-data:/data -v $(pwd):/backup ubuntu tar xzf /backup/backend-data.tar.gz -C /data
-```
-
-## 💻 Running Without Docker
-
-Perfect for development or when you want full control.
-
-### Prerequisites
-
-- Python 3.11 or higher
-- Node.js 20 or higher  
-- Git
-
-### Step 1: Install Dependencies
-
-```bash
-# Backend_2 (Primary)
-cd backend
-python -m venv .venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-pip install -e ".[ml,test]"
-cd ..
-
-# Backend (Legacy - Optional)
-cd backend
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-cd ..
-
-# Frontend (Optional)
-cd frontend
-npm install
-cd ..
-```
-
-### Step 2: Start External Services
-
-You'll need Redis, Neo4j, and optionally ChromaDB:
-
-```bash
-# Redis (Required for Backend_2)
-docker run -d --name redis \
-  -p 6379:6379 \
-  redis:7-alpine
-
-# Neo4j (Required for Backend_2)
-docker run -d --name neo4j \
-  -p 7474:7474 -p 7687:7687 \
-  -v neo4j-data:/data \
-  -e NEO4J_AUTH=neo4j/VeryStrongPass123 \
-  -e NEO4J_PLUGINS='["apoc"]' \
-  neo4j:5-community
-
-# ChromaDB (Optional - for Backend legacy vector search)
-docker run -d --name chromadb \
-  -p 8001:8001 \
-  chromadb/chroma:latest
-```
-
-### Step 3: Configure Environment
-
-```bash
-# Backend_2
-cat > backend/.env << EOF
-BACKEND_2_NEO4J_URI=bolt://localhost:7687
-BACKEND_2_NEO4J_USER=neo4j
-BACKEND_2_NEO4J_PASSWORD=VeryStrongPass123
-BACKEND_2_CELERY_BROKER_URL=redis://localhost:6379/0
-BACKEND_2_CELERY_RESULT_BACKEND=redis://localhost:6379/1
-BACKEND_2_DATABASE_URL=sqlite+aiosqlite:///./backend.db
-BACKEND_2_JOBS_DATABASE_URL=sqlite+aiosqlite:///./backend_jobs.db
-BACKEND_2_OPENAI_API_KEY=sk-your-key-here
-EOF
-
-# Backend (if using)
-cp backend/.env.example backend/.env
-# Edit backend/.env with your settings
-
-# Frontend (if using)
-cp frontend/.env.local.example frontend/.env.local
-# Edit frontend/.env.local - set NEXT_PUBLIC_API_URL if needed
-```
-
-### Step 4: Run Services
-
-Open separate terminal windows/tabs for each service:
-
-**Terminal 1 - Backend_2 API:**
-```bash
-cd backend
-source .venv/bin/activate
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
-```
-
-**Terminal 2 - Backend_2 Worker:**
-```bash
-cd backend
-source .venv/bin/activate
-celery -A app.celery_app worker --loglevel=info --concurrency=2
-```
-
-**Terminal 3 - Backend (Legacy - Optional):**
-```bash
-cd backend
-source .venv/bin/activate
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8001
-```
-
-**Terminal 4 - Backend Worker (Legacy - Optional):**
-```bash
-cd backend
-source .venv/bin/activate
-celery -A app.task_queue.celery_app worker --loglevel=info
-```
-
-**Terminal 5 - Frontend (Optional):**
-```bash
-cd frontend
-npm run dev
-# Access at http://localhost:3000
-```
-
-### Step 5: Verify Everything Works
-
-```bash
-# Test Backend_2
-curl http://localhost:8000/health
-curl http://localhost:8000/docs  # View in browser
-
-# Test Neo4j connection
-curl http://localhost:7474  # Neo4j browser
-
-# Test Frontend (if running)
-curl http://localhost:3000
-```
-
-### Development Tips
-
-- **Auto-reload**: Both FastAPI (with `--reload`) and Next.js (with `dev`) watch for file changes
-- **API Docs**: Visit `/docs` for interactive Swagger UI
-- **Database Tools**: Use Neo4j Browser at http://localhost:7474 to query the graph
-- **Debugging**: Set `BACKEND_2_DEBUG=true` for verbose logging
-- **Testing**: Run `pytest` in backend directory (with venv activated)
-
-## 📋 System Requirements
-
-### Minimum Requirements
-- **OS**: Linux, macOS, or Windows 10+
-- **CPU**: 2 cores
-- **RAM**: 8GB
-- **Disk**: 10GB free space
-- **Python**: 3.11+
-- **Node.js**: 20+ (if running frontend)
-
-### Recommended Requirements
-- **OS**: Ubuntu 22.04 LTS or macOS 13+
-- **CPU**: 4+ cores
-- **RAM**: 16GB+
-- **Disk**: 50GB+ SSD
-- **Python**: 3.11 or 3.12
-- **Node.js**: 20.x LTS
-
-### Production Requirements
-- **CPU**: 8+ cores
-- **RAM**: 32GB+
-- **Disk**: 100GB+ SSD with RAID
-- **Network**: 100+ Mbps
-- **OS**: Ubuntu 22.04 LTS (recommended)
-
-## 🔧 Compatibility
-
-### Python Dependencies
-- **Python**: 3.10, 3.11, 3.12 (3.11 recommended)
-- **FastAPI**: 0.110.x
-- **SQLAlchemy**: 2.0.x
-- **Neo4j Driver**: 5.x
-- **Langchain**: 0.1-0.3
-- **OpenAI**: 1.x
-- **Celery**: 5.4.x
-
-### Node.js Dependencies
-- **Node.js**: 20.x LTS
-- **Next.js**: 15.x
-- **React**: 18.x
-- **TypeScript**: 5.x
-
-### Databases
-- **Neo4j**: 5.x (Community or Enterprise)
-- **Redis**: 7.x
-- **SQLite**: 3.x (built-in)
-- **PostgreSQL**: 14+ (optional, via DATABASE_URL)
-
-### AI Services
-- **OpenAI API**: GPT-4, GPT-4o, GPT-4o-mini
-- **OpenAI Embeddings**: text-embedding-3-small/large
-- **Sentence Transformers**: 2.2+ (local embeddings)
-
-### Browsers
-- Chrome 90+
-- Firefox 88+
-- Safari 14+
-- Edge 90+
-
-## 📄 License
-
-This project is licensed under the **GNU General Public License v3.0** (GPLv3).
-
-- ✅ Freedom to use, study, share, and modify
-- ✅ Source code must remain open
-- ✅ Derivative works must use GPLv3
-- ✅ Commercial use allowed
-
-See [LICENSE](LICENSE) file for full details.
-
-## 👥 Authors & Contributors
-
-**Created by Pablo Vin**
-- 📧 Email: [pablovin@gmail.com](mailto:pablovin@gmail.com)
-- 🔗 GitHub: [@pablovin](https://github.com/pablovin)
-
-**Project**: [Shrecknet](https://github.com/pablovin/Shrecknet)
-
-### Contributing
-
-Contributions are welcome! Please:
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Follow coding standards (see [AGENTS.md](Documentation/AIAgents/AGENTS.md))
-4. Write tests for new features
-5. Submit a Pull Request
-
-## 📚 Documentation
-
-All documentation has been organized in the **[Documentation](Documentation/)** folder:
-
-- **[Getting Started](Documentation/GettingStarted/)** - Quick start guides and tutorials
-- **[Deployment](Documentation/Deployment/)** - Docker, venv, and deployment workflows
-- **[Backend](Documentation/Backend/)** - Backend API and service documentation
-- **[Frontend](Documentation/Frontend/)** - Frontend application guides
-- **[API Reference](Documentation/API/)** - Detailed API endpoint documentation
-- **[AI Agents](Documentation/AIAgents/)** - Agent system documentation
-- **[Architecture](Documentation/Architecture/)** - System architecture and design
-- **[Database](Documentation/Database/)** - Database setup and migrations
-- **[Implementation Notes](Documentation/ImplementationNotes/)** - Historical development notes
-
-See the **[Documentation README](Documentation/README.md)** for a complete index of all available documentation.
-
-## 🛠️ Troubleshooting
-
-### Common Issues
-
-**Port already in use:**
-```bash
-# Find and kill process using port 8000
-lsof -ti:8000 | xargs kill -9
-```
-
-**Neo4j connection failed:**
-```bash
-# Verify Neo4j is running
-docker ps | grep neo4j
-# Check credentials match in docker-compose.yml and backend defaults
-```
-
-**Celery worker not processing jobs:**
-```bash
-# Verify Redis is running
-redis-cli ping  # Should return "PONG"
-# Check worker logs
-docker compose logs backend_2_worker
-```
-
-**Build takes too long:**
-- Ensure good internet connection for package downloads
-- Re-run with `docker compose build` to use cached layers
-
-**Out of memory:**
-- Reduce Neo4j heap size in docker-compose.yml
-- Decrease Celery worker concurrency
-- Close unused services
-
-## 🎯 Version History
-
-### v0.5.0 (Current)
-- ✂️ RPG domain decoupling: major game/session/note/notification flows moved into dedicated `shreckrpg` service boundaries
-- 🔄 Legacy import upgrade: old monolith DB import now preserves richer RPG metadata and handles schema variants safely
-- 🛡️ Import reliability hardening: improved file-permission handling, transient job polling retries, and DB/session refresh resilience after imports
-- 🧠 Agent pipeline improvements across Elder/Librarian/Architect/Novelist for retrieval quality, extraction flow, and timeline generation safeguards
-- 🧱 Split-stack operational improvements for compose/deployment stability in standalone Shrecknet + ShreckRPG runs
-
-### v0.3.0
-- 🗺️ Event-centric graph architecture rollout and migration tooling
-
-### v0.2.0
-- 🧰 Full System Backup v2 and restore hardening
-
-### v0.1.0
-- ✨ Initial public release
-- 🏗️ Backend_2 with Neo4j graph database
-- 🤖 Elder, Librarian, Novelist, and Architect agents
-- 📚 PDF library system with embeddings
-- 🔐 Role-based access control
-- 🐳 Optimized Docker deployment
-- ⚡ Lightning-fast build system
-
-See [changelogs/](changelogs/README.md) for detailed release notes.
-
----
-
-*May your worlds be vast, your stories legendary, and your dice rolls ever in your favor!* 🎲✨
+This project is licensed under GPLv3. See [LICENSE](LICENSE).

@@ -46,6 +46,7 @@ Documentation for AI agent systems
 
 ### [Architecture](./Architecture/)
 System architecture and design documentation
+- [Shrecknet Architecture](./Architecture/SHRECKNET_ARCHITECTURE.md) - High-level architecture diagram and explanation
 - [GraphRAG](./Architecture/GRAPHRAG.md) - Graph-based retrieval augmented generation
 - [Celery](./Architecture/CELERY.md) - Background job processing
 - [Linking](./Architecture/LINKING.md) - Entity linking system

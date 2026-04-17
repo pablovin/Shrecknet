@@ -39,6 +39,7 @@ from app.core.config_store import get_settings
 from app.db.init_db import init_db_async
 from app.db.init_jobs_db import init_jobs_db
 from app.db.jobs_session import get_jobs_engine
+from app.graph.neo4j import ensure_temporal_graph_constraints, get_driver
 
 
 logger = logging.getLogger(__name__)
@@ -140,10 +141,17 @@ async def lifespan(_: FastAPI):
     _log_storage_diagnostics(get_settings())
     await init_db_async()
     init_jobs_db(get_jobs_engine())
+    try:
+        settings = get_settings()
+        driver = get_driver()
+        async with driver.session(database=settings.neo4j_database) as neo4j_session:
+            await ensure_temporal_graph_constraints(neo4j_session)
+    except Exception:
+        logger.exception("Unable to ensure temporal graph constraints during startup")
     yield
 
 
-app = FastAPI(title=get_settings().app_name, version="0.5.0", lifespan=lifespan)
+app = FastAPI(title=get_settings().app_name, version="0.5.2", lifespan=lifespan)
 
 settings = get_settings()
 effective_origins = _effective_cors_origins(settings.cors_allow_origins)

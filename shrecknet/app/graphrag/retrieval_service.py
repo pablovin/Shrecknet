@@ -63,7 +63,7 @@ class RetrievalService:
         CALL db.index.vector.queryNodes('entity_chunk_vec_idx', $k, $query_embedding)
         YIELD node, score
         MATCH (node)<-[:HAS_CHUNK]-(parent)
-        WHERE any(label IN labels(parent) WHERE label IN ['EntityInstance', 'Event'])
+            WHERE any(label IN labels(parent) WHERE label IN ['EntityInstance', 'Scene', 'Milestone'])
           AND score >= $score_threshold
           AND ($ontology_id IS NULL OR toInteger(node['ontology_id']) = toInteger($ontology_id))
         RETURN node AS chunk, parent AS parent, score
@@ -148,10 +148,15 @@ class RetrievalService:
             )
 
             # this is the key we'll dedupe on
-            node_id = _get(parent, "entity_instance_id") or _get(parent, "instance_id")
+            node_id = (
+                _get(parent, "entity_instance_id")
+                or _get(parent, "id")
+                or _get(parent, "instance_id")
+            )
+            dedup_key = f"{(labels_list[0] if labels_list else 'node')}::{node_id}"
 
             # if we already added this entity, skip
-            if node_id and node_id in seen_ids:
+            if node_id and dedup_key in seen_ids:
                 continue
 
             node_info = {
@@ -184,7 +189,7 @@ class RetrievalService:
 
             # mark as seen
             if node_id:
-                seen_ids.add(node_id)
+                seen_ids.add(dedup_key)
 
             # stop when we reached k uniques
             if len(nodes_data) >= k:
@@ -228,15 +233,19 @@ class RetrievalService:
         """
         query = """
         MATCH (n)
-        WHERE n['entity_instance_id'] = $node_id
-          AND any(label IN labels(n) WHERE label IN ['EntityInstance', 'Event'])
+                WHERE (
+                        n['entity_instance_id'] = $node_id
+                        OR n['id'] = $node_id
+                )
+                AND any(label IN labels(n) WHERE label IN ['EntityInstance', 'Scene', 'Milestone'])
         MATCH (n)-[r]->(m)
-        WHERE any(label IN labels(m) WHERE label IN ['EntityInstance', 'Event'])
+            WHERE any(label IN labels(m) WHERE label IN ['EntityInstance', 'Scene', 'Milestone'])
         RETURN type(r) AS rel_type, 
-               m['entity_instance_id'] AS node_id,
-               coalesce(m['name'], m['title'], m['alias'], m['entity_instance_id']) AS name,
+                     coalesce(m['entity_instance_id'], m['id']) AS node_id,
+                     coalesce(m['name'], m['title'], m['alias'], m['entity_instance_id'], m['id']) AS name,
                CASE
-                   WHEN 'Event' IN labels(m) THEN 'TimelineEvent'
+                                     WHEN 'Scene' IN labels(m) THEN 'Scene'
+                                     WHEN 'Milestone' IN labels(m) THEN 'Milestone'
                    ELSE head(labels(m))
                END AS label
         LIMIT $limit

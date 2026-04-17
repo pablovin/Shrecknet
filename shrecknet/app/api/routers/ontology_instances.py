@@ -25,6 +25,9 @@ from app.schemas.favorite_ontology_instance import (
     FavoriteStatusRead,
 )
 from app.schemas.ontology_instance import (
+    MilestoneCreate,
+    MilestoneRead,
+    MilestoneUpdate,
     OntologyInstanceEntityTypeClearJobResponse,
     OntologyInstanceEntityTypeClearRequest,
     OntologyTimelineEventsClearJobResponse,
@@ -35,6 +38,9 @@ from app.schemas.ontology_instance import (
     OntologyInstanceSearchResponse,
     OntologyInstanceSummaryPage,
     OntologyInstanceUpdate,
+    SceneCreate,
+    SceneRead,
+    SceneUpdate,
     TimelineEventCreate,
     TimelineEventRead,
     TimelineEventUpdate,
@@ -521,6 +527,187 @@ async def list_events(
         ) from exc
 
 
+@router.get("/{instance_id}/scenes", response_model=list[SceneRead])
+async def list_scenes(
+    instance_id: str,
+    service: OntologyInstanceService = Depends(get_ontology_instance_service),
+    _: User = Depends(get_current_user),
+) -> list[SceneRead]:
+    try:
+        return await service.list_scenes(instance_id)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=_resolve_status(exc, default=status.HTTP_404_NOT_FOUND),
+            detail=str(exc),
+        ) from exc
+
+
+@router.post(
+    "/{instance_id}/scenes",
+    response_model=SceneRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_scene(
+    instance_id: str,
+    payload: SceneCreate,
+    service: OntologyInstanceService = Depends(get_ontology_instance_service),
+    _: User = Depends(require_roles(UserRole.ADMIN, UserRole.WORLD_BUILDER)),
+) -> SceneRead:
+    try:
+        return await service.create_scene(instance_id, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=_resolve_status(exc), detail=str(exc)) from exc
+
+
+@router.get("/{instance_id}/scenes/{scene_id}", response_model=SceneRead)
+async def get_scene(
+    instance_id: str,
+    scene_id: str,
+    service: OntologyInstanceService = Depends(get_ontology_instance_service),
+    _: User = Depends(get_current_user),
+) -> SceneRead:
+    try:
+        return await service.get_scene(instance_id, scene_id)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=_resolve_status(exc, default=status.HTTP_404_NOT_FOUND),
+            detail=str(exc),
+        ) from exc
+
+
+@router.put("/{instance_id}/scenes/{scene_id}", response_model=SceneRead)
+async def update_scene(
+    instance_id: str,
+    scene_id: str,
+    payload: SceneUpdate,
+    service: OntologyInstanceService = Depends(get_ontology_instance_service),
+    _: User = Depends(require_roles(UserRole.ADMIN, UserRole.WORLD_BUILDER)),
+) -> SceneRead:
+    try:
+        return await service.update_scene(instance_id, scene_id, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=_resolve_status(exc), detail=str(exc)) from exc
+
+
+@router.delete(
+    "/{instance_id}/scenes/{scene_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+)
+async def delete_scene(
+    instance_id: str,
+    scene_id: str,
+    service: OntologyInstanceService = Depends(get_ontology_instance_service),
+    _: User = Depends(require_roles(UserRole.ADMIN, UserRole.WORLD_BUILDER)),
+) -> Response:
+    try:
+        await service.delete_scene(instance_id, scene_id)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=_resolve_status(exc, default=status.HTTP_404_NOT_FOUND),
+            detail=str(exc),
+        ) from exc
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get(
+    "/{instance_id}/scenes/{scene_id}/milestones", response_model=list[MilestoneRead]
+)
+async def list_milestones(
+    instance_id: str,
+    scene_id: str,
+    service: OntologyInstanceService = Depends(get_ontology_instance_service),
+    _: User = Depends(get_current_user),
+) -> list[MilestoneRead]:
+    try:
+        return await service.list_milestones(instance_id, scene_id)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=_resolve_status(exc, default=status.HTTP_404_NOT_FOUND),
+            detail=str(exc),
+        ) from exc
+
+
+@router.post(
+    "/{instance_id}/scenes/{scene_id}/milestones",
+    response_model=MilestoneRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_milestone(
+    instance_id: str,
+    scene_id: str,
+    payload: MilestoneCreate,
+    service: OntologyInstanceService = Depends(get_ontology_instance_service),
+    _: User = Depends(require_roles(UserRole.ADMIN, UserRole.WORLD_BUILDER)),
+) -> MilestoneRead:
+    try:
+        return await service.create_milestone(instance_id, scene_id, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=_resolve_status(exc), detail=str(exc)) from exc
+
+
+@router.get(
+    "/{instance_id}/scenes/{scene_id}/milestones/{milestone_id}",
+    response_model=MilestoneRead,
+)
+async def get_milestone(
+    instance_id: str,
+    scene_id: str,
+    milestone_id: str,
+    service: OntologyInstanceService = Depends(get_ontology_instance_service),
+    _: User = Depends(get_current_user),
+) -> MilestoneRead:
+    try:
+        return await service.get_milestone(instance_id, scene_id, milestone_id)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=_resolve_status(exc, default=status.HTTP_404_NOT_FOUND),
+            detail=str(exc),
+        ) from exc
+
+
+@router.put(
+    "/{instance_id}/scenes/{scene_id}/milestones/{milestone_id}",
+    response_model=MilestoneRead,
+)
+async def update_milestone(
+    instance_id: str,
+    scene_id: str,
+    milestone_id: str,
+    payload: MilestoneUpdate,
+    service: OntologyInstanceService = Depends(get_ontology_instance_service),
+    _: User = Depends(require_roles(UserRole.ADMIN, UserRole.WORLD_BUILDER)),
+) -> MilestoneRead:
+    try:
+        return await service.update_milestone(
+            instance_id, scene_id, milestone_id, payload
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=_resolve_status(exc), detail=str(exc)) from exc
+
+
+@router.delete(
+    "/{instance_id}/scenes/{scene_id}/milestones/{milestone_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+)
+async def delete_milestone(
+    instance_id: str,
+    scene_id: str,
+    milestone_id: str,
+    service: OntologyInstanceService = Depends(get_ontology_instance_service),
+    _: User = Depends(require_roles(UserRole.ADMIN, UserRole.WORLD_BUILDER)),
+) -> Response:
+    try:
+        await service.delete_milestone(instance_id, scene_id, milestone_id)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=_resolve_status(exc, default=status.HTTP_404_NOT_FOUND),
+            detail=str(exc),
+        ) from exc
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 @router.post(
     "/{instance_id}/events",
     response_model=TimelineEventRead,
@@ -532,10 +719,15 @@ async def create_event(
     service: OntologyInstanceService = Depends(get_ontology_instance_service),
     _: User = Depends(require_roles(UserRole.ADMIN, UserRole.WORLD_BUILDER)),
 ) -> TimelineEventRead:
-    try:
-        return await service.create_timeline_event(instance_id, payload)
-    except ValueError as exc:
-        raise HTTPException(status_code=_resolve_status(exc), detail=str(exc)) from exc
+    del payload
+    del service
+    del instance_id
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail=(
+            "Timeline Event writes are deprecated. Use Scene and Milestone endpoints as canonical temporal representation."
+        ),
+    )
 
 
 @router.get(
@@ -568,10 +760,16 @@ async def update_event(
     service: OntologyInstanceService = Depends(get_ontology_instance_service),
     _: User = Depends(require_roles(UserRole.ADMIN, UserRole.WORLD_BUILDER)),
 ) -> TimelineEventRead:
-    try:
-        return await service.update_timeline_event(instance_id, event_id, payload)
-    except ValueError as exc:
-        raise HTTPException(status_code=_resolve_status(exc), detail=str(exc)) from exc
+    del payload
+    del service
+    del instance_id
+    del event_id
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail=(
+            "Timeline Event writes are deprecated. Use Scene and Milestone endpoints as canonical temporal representation."
+        ),
+    )
 
 
 @router.delete(
@@ -585,14 +783,15 @@ async def delete_event(
     service: OntologyInstanceService = Depends(get_ontology_instance_service),
     _: User = Depends(require_roles(UserRole.ADMIN, UserRole.WORLD_BUILDER)),
 ) -> Response:
-    try:
-        await service.delete_timeline_event(instance_id, event_id)
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=_resolve_status(exc, default=status.HTTP_404_NOT_FOUND),
-            detail=str(exc),
-        ) from exc
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
+    del service
+    del instance_id
+    del event_id
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail=(
+            "Timeline Event writes are deprecated. Use Scene and Milestone endpoints as canonical temporal representation."
+        ),
+    )
 
 
 @router.post(

@@ -1,6 +1,6 @@
 [project]
 name = "shrecknet"
-version = "0.5.0"
+version = "0.5.2"
 description = "Shrecknet core platform (world graph, ontology, agents, identity)"
 requires-python = ">=3.10"
 dependencies = [

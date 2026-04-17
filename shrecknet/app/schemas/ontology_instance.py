@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import re
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -102,6 +103,206 @@ class OntologyInstanceEntityRead(BaseModel):
 
 EventRelationType = Literal["BEFORE", "AFTER", "DERIVED_FROM", "RELATED_TO"]
 
+MilestoneTemporalType = Literal["beginning", "ending", "other"]
+MilestoneBoundaryType = Literal["begin", "end", "none"]
+
+
+class SceneDerivedFrom(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    entity_instance_id: str
+
+    @field_validator("entity_instance_id", mode="before")
+    def validate_entity_instance_id(cls, value: str) -> str:
+        if value is None:
+            raise ValueError("entity_instance_id cannot be empty")
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("entity_instance_id cannot be empty")
+        return cleaned
+
+
+class MilestoneDerivedFrom(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    entity_instance_id: str
+
+    @field_validator("entity_instance_id", mode="before")
+    def validate_entity_instance_id(cls, value: str) -> str:
+        if value is None:
+            raise ValueError("entity_instance_id cannot be empty")
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("entity_instance_id cannot be empty")
+        return cleaned
+
+
+class MilestoneEntityRelation(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    entity_instance_id: str
+    label: str
+
+    @field_validator("entity_instance_id", mode="before")
+    def validate_entity_instance_id(cls, value: str) -> str:
+        if value is None:
+            raise ValueError("entity_instance_id cannot be empty")
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("entity_instance_id cannot be empty")
+        return cleaned
+
+    @field_validator("label", mode="before")
+    def validate_label(cls, value: str) -> str:
+        if value is None:
+            raise ValueError("label cannot be empty")
+        cleaned = value.strip().lower()
+        if not cleaned:
+            raise ValueError("label cannot be empty")
+        if not re.fullmatch(r"[a-z0-9_]{2,64}", cleaned):
+            raise ValueError(
+                "label must be a normalized short token using lowercase letters, numbers, or underscores"
+            )
+        return cleaned
+
+
+class MilestoneLocalOrder(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    followed_by_milestone_id: str | None = None
+    preceded_by_milestone_id: str | None = None
+
+    @field_validator(
+        "followed_by_milestone_id", "preceded_by_milestone_id", mode="before"
+    )
+    def validate_optional_ids(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        if not cleaned:
+            return None
+        return cleaned
+
+
+class SceneLocalOrder(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    followed_by_scene_id: str | None = None
+    preceded_by_scene_id: str | None = None
+
+    @field_validator("followed_by_scene_id", "preceded_by_scene_id", mode="before")
+    def validate_optional_ids(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        if not cleaned:
+            return None
+        return cleaned
+
+
+class MilestoneBase(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    name: str
+    description: str
+    created_by_type: Literal["agent", "human"]
+    created_by_author: str
+    temporal_type: MilestoneTemporalType = "other"
+    boundary_type: MilestoneBoundaryType = "none"
+    local_order: MilestoneLocalOrder = Field(default_factory=MilestoneLocalOrder)
+    derived_from: MilestoneDerivedFrom
+    relates_to: list[MilestoneEntityRelation] = Field(default_factory=list)
+
+    @field_validator("name", "description", "created_by_author", mode="before")
+    def validate_non_empty_text(cls, value: str, info):
+        if value is None:
+            raise ValueError(f"{info.field_name} cannot be empty")
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError(f"{info.field_name} cannot be empty")
+        return cleaned
+
+
+class MilestoneCreate(MilestoneBase):
+    id: str | None = None
+
+
+class MilestoneUpdate(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    name: str | None = None
+    description: str | None = None
+    created_by_type: Literal["agent", "human"] | None = None
+    created_by_author: str | None = None
+    temporal_type: MilestoneTemporalType | None = None
+    boundary_type: MilestoneBoundaryType | None = None
+    local_order: MilestoneLocalOrder | None = None
+    derived_from: MilestoneDerivedFrom | None = None
+    relates_to: list[MilestoneEntityRelation] | None = None
+
+    @field_validator("name", "description", "created_by_author", mode="before")
+    def validate_optional_non_empty_text(cls, value: str | None, info):
+        if value is None:
+            return None
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError(f"{info.field_name} cannot be empty")
+        return cleaned
+
+
+class MilestoneRead(MilestoneBase):
+    id: str
+    scene_id: str
+    instance_id: str
+    ontology_id: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class SceneBase(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    name: str
+    description: str
+    created_by_type: Literal["agent", "human"]
+    created_by_author: str
+    local_order: SceneLocalOrder = Field(default_factory=SceneLocalOrder)
+    derived_from: SceneDerivedFrom
+
+    @field_validator("name", "description", "created_by_author", mode="before")
+    def validate_non_empty_text(cls, value: str, info):
+        if value is None:
+            raise ValueError(f"{info.field_name} cannot be empty")
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError(f"{info.field_name} cannot be empty")
+        return cleaned
+
+
+class SceneCreate(SceneBase):
+    id: str | None = None
+    milestones: list[MilestoneCreate] = Field(default_factory=list)
+
+
+class SceneUpdate(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    name: str | None = None
+    description: str | None = None
+    created_by_type: Literal["agent", "human"] | None = None
+    created_by_author: str | None = None
+    local_order: SceneLocalOrder | None = None
+    derived_from: SceneDerivedFrom | None = None
+
+    @field_validator("name", "description", "created_by_author", mode="before")
+    def validate_optional_non_empty_text(cls, value: str | None, info):
+        if value is None:
+            return None
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError(f"{info.field_name} cannot be empty")
+        return cleaned
+
+
+class SceneRead(SceneBase):
+    id: str
+    instance_id: str
+    ontology_id: int
+    created_at: datetime
+    updated_at: datetime
+    milestones: list[MilestoneRead] = Field(default_factory=list)
+
 
 class EventRelation(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -184,6 +385,7 @@ class OntologyInstanceCreate(OntologyInstanceBase):
     ontology_id: int
     entities: list[OntologyInstanceEntityCreate]
     events: list[TimelineEventCreate] = Field(default_factory=list)
+    scenes: list[SceneCreate] = Field(default_factory=list)
 
 
 class OntologyInstanceUpdate(BaseModel):
@@ -191,6 +393,7 @@ class OntologyInstanceUpdate(BaseModel):
     name: str | None = None
     entities: list[OntologyInstanceEntityCreate] | None = None
     events: list[TimelineEventCreate] | None = None
+    scenes: list[SceneCreate] | None = None
 
 
 class OntologyInstanceRead(OntologyInstanceBase):
@@ -201,6 +404,7 @@ class OntologyInstanceRead(OntologyInstanceBase):
     updated_at: datetime
     entities: list[OntologyInstanceEntityRead]
     events: list[TimelineEventRead] = Field(default_factory=list)
+    scenes: list[SceneRead] = Field(default_factory=list)
 
 
 class OntologyInstanceSummary(BaseModel):

@@ -57,6 +57,12 @@ System architecture and design documentation
 - [Architect Monitoring](./Architecture/ARCHITECT_MONITORING.md)
 - [Architect Monitoring Quick Reference](./Architecture/ARCHITECT_MONITORING_QUICKREF.md)
 
+### [Scene-Centric Memory](./SceneCentricMemory/)
+Temporal modeling docs for canonical Scene and Milestone representation
+- [Scene-Centric Memory Overview](./SceneCentricMemory/README.md)
+- [Scene and Milestone Endpoints](./SceneCentricMemory/SCENE_MILESTONE_ENDPOINTS.md)
+- [Scene-Centric Embedding](./SceneCentricMemory/SCENE_EMBEDDING.md)
+
 ### [Graph](./Graph/)
 Event-centric graph model documentation
 - [Event-Centric Intro](./Graph/intro.md)

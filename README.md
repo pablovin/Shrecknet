@@ -5,7 +5,7 @@
 ![Neo4j](https://img.shields.io/badge/Neo4j-5.x-018BFF)
 ![Redis](https://img.shields.io/badge/Redis-7.x-DC382D)
 ![License](https://img.shields.io/badge/license-GPLv3-blue)
-![Version](https://img.shields.io/badge/version-0.5.0-orange)
+![Version](https://img.shields.io/badge/version-0.5.2-orange)
 
 Shrecknet is an event-driven memory engine for storytelling. It incrementally builds longitudinal episodic memory through an agentic architecture where events are first-class citizens and structure can evolve over time.
 
@@ -20,6 +20,20 @@ Architecture diagram:
 ![Shrecknet Architecture](Documentation/Architecture/assets/shrecknet-architecture.png)
 
 Detailed architecture note: [Documentation/Architecture/SHRECKNET_ARCHITECTURE.md](Documentation/Architecture/SHRECKNET_ARCHITECTURE.md)
+
+## Scene-Centric Canonical Temporal Model
+
+Shrecknet now treats Scene and Milestone as the canonical write model for temporal memory.
+
+- Scene captures a bounded narrative unit in one ontology instance.
+- Milestones capture timeline anchors and progression inside the scene.
+- Scene and milestone provenance is anchored to ontology entities through derived_from links.
+
+Scene-centric memory documentation:
+- [Documentation/SceneCentricMemory/README.md](Documentation/SceneCentricMemory/README.md)
+- [Documentation/SceneCentricMemory/SCENE_MILESTONE_ENDPOINTS.md](Documentation/SceneCentricMemory/SCENE_MILESTONE_ENDPOINTS.md)
+
+Legacy Event reads remain available for compatibility, but new write flows should use Scene/Milestone endpoints.
 
 ## Event-Centric Mental Model
 

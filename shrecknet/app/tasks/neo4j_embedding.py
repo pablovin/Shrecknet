@@ -89,7 +89,7 @@ async def _embed_ontology_impl(job_id: int, ontology_id: int) -> dict[str, Any]:
             # Get count of nodes that need embedding
             count_query = """
             MATCH (n)
-            WHERE any(label IN labels(n) WHERE label IN ['EntityInstance', 'Event'])
+                        WHERE any(label IN labels(n) WHERE label IN ['EntityInstance', 'Scene', 'Milestone'])
               AND toInteger(n['ontology_id']) = toInteger($ontology_id)
               AND (
                   n['is_embedded'] IS NULL OR n['is_embedded'] = false
@@ -130,25 +130,16 @@ async def _embed_ontology_impl(job_id: int, ontology_id: int) -> dict[str, Any]:
                 ontology_id, batch_size=50
             )
 
-            # Mark nodes as embedded
             await update_job_progress(
-                job_id, 0.9, {"status": "Marking nodes as embedded"}
+                job_id, 0.9, {"status": "Finalizing embedding results"}
             )
-
-            update_query = """
-            MATCH (n:EntityInstance)
-            WHERE n.ontology_id = $ontology_id
-              AND n.text_embedding IS NOT NULL
-            SET n.is_embedded = true,
-                n.last_embedded_date = datetime()
-            """
-            await session.run(update_query, ontology_id=ontology_id)
 
             return {
                 "ontology_id": ontology_id,
                 "nodes_processed": embed_result["nodes_processed"],
                 "nodes_failed": embed_result["nodes_failed"],
                 "total_found": total_to_embed,
+                "processed_by_type": embed_result.get("processed_by_type", {}),
                 "status": "success",
             }
 
@@ -198,11 +189,13 @@ async def _embed_instance_impl(job_id: int, instance_id: str) -> dict[str, Any]:
         instance_query = """
         MATCH (instance:OntologyInstance {instance_id: $instance_id})
         OPTIONAL MATCH (instance)-[:HAS_ENTITY]->(entity:EntityInstance)
-        OPTIONAL MATCH (instance)-[:HAS_EVENT]->(event:Event)
+        OPTIONAL MATCH (instance)-[:HAS_SCENE]->(scene:Scene)
+        OPTIONAL MATCH (scene)-[:CONTAINS]->(milestone:Milestone)
         RETURN
             instance.ontology_id AS ontology_id,
             collect(DISTINCT entity.entity_instance_id) AS entity_ids,
-            collect(DISTINCT event.event_id) AS event_ids
+            collect(DISTINCT scene.id) AS scene_ids,
+            collect(DISTINCT milestone.id) AS milestone_ids
         LIMIT 1
         """
         result = await session.run(instance_query, instance_id=instance_id)
@@ -212,8 +205,7 @@ async def _embed_instance_impl(job_id: int, instance_id: str) -> dict[str, Any]:
 
         ontology_id = record.get("ontology_id")
         entity_ids = [value for value in (record.get("entity_ids") or []) if value]
-        event_ids = [value for value in (record.get("event_ids") or []) if value]
-        node_ids = list(dict.fromkeys([*entity_ids, *event_ids]))
+        node_ids = list(dict.fromkeys(entity_ids))
 
         await update_job_progress(
             job_id,

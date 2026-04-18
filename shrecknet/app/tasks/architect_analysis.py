@@ -84,6 +84,10 @@ def analyze_instance(
                     "run_id": run_id,
                     "proposal_count": len(result.get("proposals", [])),
                     "chunk_count": result.get("chunk_count", 0),
+                    "scene_count": result.get("scene_count", 0),
+                    "milestone_count": result.get("milestone_count", 0),
+                    "relates_to_count": result.get("relates_to_count", 0),
+                    "pipeline_version": result.get("pipeline_version", "v2"),
                     "status": "completed",
                 },
             )

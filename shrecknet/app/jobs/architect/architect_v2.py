@@ -149,19 +149,37 @@ class ArchitectOrchestratorV2:
             author_id=author_agent_id or "architect-agent",
         )
         entity_result, scene_result = await asyncio.gather(entity_task, scene_task)
+        logger.info(
+            "Step 1B: Scene/Milestone extraction completed (scenes=%d milestones=%d)",
+            scene_result["scene_count"],
+            scene_result["milestone_count"],
+        )
 
         # Step 3: resolve scene/milestone mentions against existing entities and
         # new entity proposals and emit final RELATES_TO proposal objects.
+        logger.info("Step 3B: Resolving scene/milestone mentions into RELATES_TO")
         relates_to_proposals = await self._propose_relates_to_links(
             scene_and_milestone_proposals=scene_result["proposals"],
             entity_proposals=entity_result["proposals"],
             known_entities=node_catalogue,
+        )
+        logger.info(
+            "Step 4B: Created %d RELATES_TO proposals",
+            len(relates_to_proposals),
         )
 
         proposals = (
             entity_result["proposals"]
             + scene_result["proposals"]
             + relates_to_proposals
+        )
+        logger.info(
+            "architect_v2_summary: entities=%d scenes=%d milestones=%d relates_to=%d total=%d",
+            len(entity_result["proposals"]),
+            scene_result["scene_count"],
+            scene_result["milestone_count"],
+            len(relates_to_proposals),
+            len(proposals),
         )
 
         return {
@@ -232,6 +250,7 @@ class ArchitectOrchestratorV2:
         author_id: str,
     ) -> dict[str, Any]:
         """Generate scene and milestone proposals from the same analysis chunks."""
+        logger.info("Step 1B: Proposing scenes and milestones from %d chunks", len(chunks))
         chunk_dump = self._format_chunk_dump(chunks)
         known_aliases = ", ".join(sorted({node.alias for node in known_entities}))
         prompt = ARCHITECT_SCENE_MILESTONE_PROPOSAL_PROMPT.format(
@@ -248,6 +267,10 @@ class ArchitectOrchestratorV2:
             temperature=0.1,
         )
         parsed = self._parse_scene_milestone_response(response)
+        logger.info(
+            "architect_v2_scene_parse: scenes=%d",
+            len(parsed.scenes),
+        )
 
         now_iso = self._utc_now_iso()
         proposals: list[dict[str, Any]] = []
@@ -374,7 +397,17 @@ class ArchitectOrchestratorV2:
             )
 
         if not source_nodes:
+            logger.info(
+                "architect_v2_relates_to: no scene/milestone sources available"
+            )
             return []
+
+        logger.info(
+            "architect_v2_relates_to: resolving %d sources against %d known entities and %d new entities",
+            len(source_nodes),
+            len(known_entities),
+            len(new_alias_map),
+        )
 
         prompt = ARCHITECT_RELATES_TO_PROPOSAL_PROMPT.format(
             source_nodes=json.dumps(source_nodes, ensure_ascii=False),

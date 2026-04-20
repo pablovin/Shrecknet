@@ -26,9 +26,9 @@ from app.integrations.llm.model_policy import LLMTask, ModelPolicy
 from app.integrations.llm.openai_client import OpenAIClient
 from app.integrations.retrieval.neo4j_retriever import GraphRetriever
 from app.jobs.architect.prompts import (
-    ARCHITECT_CHUNK_EXTRACTION_PROMPT,
+    ARCHITECT_ENTITY_PROPOSAL_PROMPT,
+    ARCHITECT_ENTITY_RECONCILATION_PROMPT,
     ARCHITECT_RELATES_TO_PROPOSAL_PROMPT,
-    ARCHITECT_RECONCILIATION_PROMPT,
     ARCHITECT_SCENE_MILESTONE_PROPOSAL_PROMPT,
 )
 from app.jobs.architect.schemas import (
@@ -254,8 +254,6 @@ class ArchitectOrchestratorV2:
         chunk_dump = self._format_chunk_dump(chunks)
         known_aliases = ", ".join(sorted({node.alias for node in known_entities}))
         prompt = ARCHITECT_SCENE_MILESTONE_PROPOSAL_PROMPT.format(
-            author_id=author_id,
-            source_entity_instance_id=source_entity_instance_id or "",
             known_aliases=known_aliases or "(none)",
             chunk_dump=chunk_dump,
         )
@@ -310,19 +308,21 @@ class ArchitectOrchestratorV2:
             for milestone_order, milestone in enumerate(milestones, start=1):
                 milestone_count += 1
                 milestone_ref = f"milestone-{uuid4()}"
+                milestone_title = getattr(milestone, "title", None) or getattr(milestone, "label", "")
                 proposals.append(
                     {
                         "proposal_type": ArchitectProposalType.PROPOSE_MILESTONE,
                         "entity_definition_id": None,
                         "entity_instance_id": None,
-                        "alias": milestone.label,
+                        "alias": milestone_title,
                         "confidence": 0.75,
                         "justification": milestone.description,
                         "proposal_metadata": {
                             "proposal_kind": "milestone",
                             "milestone_ref": milestone_ref,
                             "scene_ref": scene_ref,
-                            "label": milestone.label,
+                            "title": milestone_title,
+                            "label": milestone_title,
                             "description": milestone.description,
                             "boundary_type": milestone.boundary_type,
                             "created_at": now_iso,
@@ -583,7 +583,7 @@ class ArchitectOrchestratorV2:
         async def process_chunk(chunk: ChunkInput) -> dict[str, Any]:
             try:
                 async with semaphore:
-                    prompt = ARCHITECT_CHUNK_EXTRACTION_PROMPT.format(
+                    prompt = ARCHITECT_ENTITY_PROPOSAL_PROMPT.format(
                         ontology_definitions=ontology_definitions,
                         chunk_text=chunk.text.strip(),
                     )
@@ -910,7 +910,7 @@ class ArchitectOrchestratorV2:
         )
 
         # Prepare prompt
-        prompt = ARCHITECT_RECONCILIATION_PROMPT.format(
+        prompt = ARCHITECT_ENTITY_RECONCILATION_PROMPT.format(
             ontology_definitions=ontology_definitions,
             proposed_entities=json.dumps(proposed_list, indent=2),
             existing_entities=json.dumps(existing_list, indent=2),
@@ -1196,12 +1196,14 @@ class ArchitectOrchestratorV2:
         if not milestones:
             return [
                 type("Milestone", (), {
+                    "title": "Scene opening beat",
                     "label": "Scene begins",
                     "description": "The scene begins",
                     "boundary_type": "begin",
                     "mentions": [],
                 })(),
                 type("Milestone", (), {
+                    "title": "Scene closing beat",
                     "label": "Scene ends",
                     "description": "The scene ends",
                     "boundary_type": "end",
@@ -1225,6 +1227,7 @@ class ArchitectOrchestratorV2:
             normalized.insert(
                 0,
                 type("Milestone", (), {
+                    "title": "Scene opening beat",
                     "label": "Scene begins",
                     "description": "The scene begins",
                     "boundary_type": "begin",
@@ -1238,6 +1241,7 @@ class ArchitectOrchestratorV2:
         if not end_indices:
             normalized.append(
                 type("Milestone", (), {
+                    "title": "Scene closing beat",
                     "label": "Scene ends",
                     "description": "The scene ends",
                     "boundary_type": "end",

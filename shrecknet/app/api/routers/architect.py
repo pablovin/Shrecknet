@@ -21,11 +21,11 @@ from app.models.user import User
 from app.repositories.agent_repository import AgentRepository
 from app.schemas.architect import (
     ArchitectAnalysisRequest,
+    ArchitectGenerationRequest,
     ArchitectAnalysisRunRead,
     ArchitectAnalysisRunSummary,
     ArchitectProposalRead,
     ArchitectProposalStatusUpdate,
-    ArchitectValidationRequest,
 )
 from app.services.architect_service import ArchitectService
 from app.tasks.architect_analysis import analyze_instance as architect_task
@@ -347,7 +347,7 @@ async def put_architect_proposal(
 )
 async def generate_entities_from_validated_proposals(
     run_id: str,
-    payload: ArchitectValidationRequest,
+    payload: ArchitectGenerationRequest,
     current_user: User = Depends(get_current_user),
     service: ArchitectService = Depends(get_architect_service),
 ) -> dict[str, Any]:
@@ -362,9 +362,14 @@ async def generate_entities_from_validated_proposals(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Architect run not found"
         )
+    if payload.run_id != run_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Path run_id must match payload.run_id",
+        )
     
     # Import here to avoid circular imports
-    from app.tasks.architect_generation_v2 import (
+    from app.tasks.architect_generation import (
         generate_entities as generation_task,
     )
     
@@ -372,16 +377,7 @@ async def generate_entities_from_validated_proposals(
     agent_author_id = run.agent_id or payload.author_id
     result = generation_task.delay(
         run_id=run_id,
-        revised_suggestions=(
-            [s.model_dump() for s in payload.revised_suggestions]
-            if payload.revised_suggestions
-            else None
-        ),
-        validated_proposals=(
-            [p.model_dump() for p in payload.validated_proposals]
-            if payload.validated_proposals
-            else None
-        ),
+        reviewed_pipeline_output=payload.reviewed_pipeline_output.model_dump(),
         author_type="agent",
         author_id=agent_author_id,
     )

@@ -22,7 +22,7 @@ from app.models.ontology import (
     OntologyRelationship,
     PropertyDataType,
 )
-from app.models.ontology_instance import FavoriteOntologyInstance, OntologyInstance, OntologyInstanceTimelineEvent
+from app.models.ontology_instance import FavoriteOntologyInstance, OntologyInstance
 from app.models.user import User, UserRole, user_entities
 from app.models.world import World
 
@@ -61,7 +61,6 @@ __all__ = [
     "NovelistRunStatus",
     "NovelistStage",
     "OntologyInstance",
-    "OntologyInstanceTimelineEvent",
     "FavoriteOntologyInstance",
     "MigrationRun",
     "IdMapping",

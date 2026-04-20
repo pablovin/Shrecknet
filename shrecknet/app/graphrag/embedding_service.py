@@ -357,47 +357,6 @@ class EmbeddingService:
         lines = [line for line in lines if line]
         return "\n".join(lines) if lines else None
 
-    @staticmethod
-    def _build_timeline_chunk_text(
-        title: str,
-        description: str,
-        source_instance_id: str | None,
-        related_instance_ids: list[str] | None,
-        before_event_id: str | None,
-        after_event_id: str | None,
-        *,
-        source_instance_name: str | None = None,
-        related_instance_names: list[str] | None = None,
-        before_event_title: str | None = None,
-        after_event_title: str | None = None,
-    ) -> str | None:
-        lines = [f"Timeline Event: {title}".strip()]
-        if description:
-            lines.append(description.strip())
-        if source_instance_id:
-            display = source_instance_name or source_instance_id
-            if source_instance_name:
-                display = f"{source_instance_name} ({source_instance_id})"
-            lines.append(f"Source Entity: {display}")
-        related_names = related_instance_names or []
-        if related_instance_ids and not related_names:
-            related_names = related_instance_ids
-        if related_names:
-            formatted = ", ".join(str(value) for value in related_names if value)
-            if formatted:
-                lines.append(f"Involved Entities: {formatted}")
-        if before_event_id or before_event_title:
-            label = before_event_title or before_event_id
-            if before_event_title and before_event_id:
-                label = f"{before_event_title} ({before_event_id})"
-            lines.append(f"Occurs After Event: {label}")
-        if after_event_id or after_event_title:
-            label = after_event_title or after_event_id
-            if after_event_title and after_event_id:
-                label = f"{after_event_title} ({after_event_id})"
-            lines.append(f"Precedes Event: {label}")
-        lines = [line for line in lines if line]
-        return "\n".join(lines) if lines else None
 
     async def _refresh_chunks(
         self, parent_id: str, chunk_plan: list[tuple[str, str]]
@@ -526,37 +485,6 @@ class EmbeddingService:
         if not summary:
             return
         await self._refresh_chunks(milestone_id, [("milestone_main", summary)])
-
-    async def _refresh_timeline_chunks(
-        self,
-        event_id: str,
-        title: str,
-        description: str,
-        source_instance_id: str | None,
-        related_instance_ids: list[str] | None,
-        before_event_id: str | None,
-        after_event_id: str | None,
-        *,
-        source_instance_name: str | None = None,
-        related_instance_names: list[str] | None = None,
-        before_event_title: str | None = None,
-        after_event_title: str | None = None,
-    ) -> None:
-        summary = self._build_timeline_chunk_text(
-            title,
-            description,
-            source_instance_id,
-            related_instance_ids,
-            before_event_id,
-            after_event_id,
-            source_instance_name=source_instance_name,
-            related_instance_names=related_instance_names,
-            before_event_title=before_event_title,
-            after_event_title=after_event_title,
-        )
-        if not summary:
-            return
-        await self._refresh_chunks(event_id, [("timeline_event", summary)])
 
     def embed_texts(self, texts: list[str]) -> list[list[float]]:
         """

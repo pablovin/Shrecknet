@@ -24,13 +24,11 @@ class OntologyInstanceRelationshipCreate(BaseModel):
     data: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
-    def validate_target(
-        cls, values: "OntologyInstanceRelationshipCreate"
-    ) -> "OntologyInstanceRelationshipCreate":
-        alias = values.target_alias.strip() if values.target_alias else None
+    def validate_target(self) -> "OntologyInstanceRelationshipCreate":
+        alias = self.target_alias.strip() if self.target_alias else None
         target_id = (
-            values.target_entity_instance_id.strip()
-            if values.target_entity_instance_id
+            self.target_entity_instance_id.strip()
+            if self.target_entity_instance_id
             else None
         )
         if bool(alias) == bool(target_id):
@@ -38,14 +36,14 @@ class OntologyInstanceRelationshipCreate(BaseModel):
                 "Provide exactly one of target_alias or target_entity_instance_id"
             )
         if alias:
-            values.target_alias = alias
+            self.target_alias = alias
         else:
-            values.target_alias = None
+            self.target_alias = None
         if target_id:
-            values.target_entity_instance_id = target_id
+            self.target_entity_instance_id = target_id
         else:
-            values.target_entity_instance_id = None
-        return values
+            self.target_entity_instance_id = None
+        return self
 
 
 class OntologyInstanceRelationshipRead(BaseModel):
@@ -100,8 +98,6 @@ class OntologyInstanceEntityRead(BaseModel):
     properties: list[OntologyInstancePropertyValue] = Field(default_factory=list)
     relationships: list[OntologyInstanceRelationshipRead] = Field(default_factory=list)
 
-
-EventRelationType = Literal["BEFORE", "AFTER", "DERIVED_FROM", "RELATED_TO"]
 
 MilestoneTemporalType = Literal["beginning", "ending", "other"]
 MilestoneBoundaryType = Literal["begin", "end", "none"]
@@ -304,77 +300,6 @@ class SceneRead(SceneBase):
     milestones: list[MilestoneRead] = Field(default_factory=list)
 
 
-class EventRelation(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-    relation_type: EventRelationType
-    target_event_id: str
-
-    @field_validator("target_event_id", mode="before")
-    def validate_target_event_id(cls, value: str) -> str:
-        if value is None:
-            raise ValueError("target_event_id cannot be empty")
-        cleaned = value.strip()
-        if not cleaned:
-            raise ValueError("target_event_id cannot be empty")
-        return cleaned
-
-
-class TimelineEventBase(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-    title: str
-    description: str
-    source: str | None = None
-    source_entity_id: str | None = None
-    involves_entity_ids: list[str] = Field(default_factory=list)
-    relations: list[EventRelation] = Field(default_factory=list)
-    # Internal transitional fields (excluded from API serialization)
-    created_from_instance_id: str | None = Field(default=None, exclude=True)
-    created_from_entity_id: str | None = Field(default=None, exclude=True)
-    related_instance_ids: list[str] = Field(default_factory=list, exclude=True)
-    related_entity_ids: list[str] = Field(default_factory=list, exclude=True)
-    before_event_id: str | None = Field(default=None, exclude=True)
-    after_event_id: str | None = Field(default=None, exclude=True)
-
-    @field_validator("title", "description", mode="before")
-    def validate_text(cls, value: str, info):
-        if value is None:
-            raise ValueError(f"{info.field_name} cannot be empty")
-        value = value.strip()
-        if not value:
-            raise ValueError(f"{info.field_name} cannot be empty")
-        return value
-
-
-class TimelineEventCreate(TimelineEventBase):
-    event_id: str | None = None
-    timeline_event_id: str | None = Field(default=None, exclude=True)
-
-
-class TimelineEventUpdate(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-    title: str | None = None
-    description: str | None = None
-    source: str | None = None
-    source_entity_id: str | None = None
-    involves_entity_ids: list[str] | None = None
-    relations: list[EventRelation] | None = None
-    created_from_instance_id: str | None = Field(default=None, exclude=True)
-    created_from_entity_id: str | None = Field(default=None, exclude=True)
-    related_instance_ids: list[str] | None = Field(default=None, exclude=True)
-    related_entity_ids: list[str] | None = Field(default=None, exclude=True)
-    before_event_id: str | None = Field(default=None, exclude=True)
-    after_event_id: str | None = Field(default=None, exclude=True)
-
-
-class TimelineEventRead(TimelineEventBase):
-    event_id: str
-    timeline_event_id: str | None = Field(default=None, exclude=True)
-    instance_id: str
-    ontology_id: int
-    created_at: datetime
-    updated_at: datetime
-
-
 class OntologyInstanceBase(BaseModel):
     model_config = ConfigDict(extra="ignore")
     name: str
@@ -384,7 +309,6 @@ class OntologyInstanceCreate(OntologyInstanceBase):
     model_config = ConfigDict(extra="ignore")
     ontology_id: int
     entities: list[OntologyInstanceEntityCreate]
-    events: list[TimelineEventCreate] = Field(default_factory=list)
     scenes: list[SceneCreate] = Field(default_factory=list)
 
 
@@ -392,7 +316,6 @@ class OntologyInstanceUpdate(BaseModel):
     model_config = ConfigDict(extra="ignore")
     name: str | None = None
     entities: list[OntologyInstanceEntityCreate] | None = None
-    events: list[TimelineEventCreate] | None = None
     scenes: list[SceneCreate] | None = None
 
 
@@ -403,7 +326,6 @@ class OntologyInstanceRead(OntologyInstanceBase):
     created_at: datetime
     updated_at: datetime
     entities: list[OntologyInstanceEntityRead]
-    events: list[TimelineEventRead] = Field(default_factory=list)
     scenes: list[SceneRead] = Field(default_factory=list)
 
 
@@ -441,20 +363,6 @@ class OntologyInstanceEntityTypeClearRequest(BaseModel):
 
 
 class OntologyInstanceEntityTypeClearJobResponse(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-    message: str
-    kind: str
-    job_id: int
-    status: str
-    monitor_url: str
-
-
-class OntologyTimelineEventsClearRequest(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-    ontology_id: int
-
-
-class OntologyTimelineEventsClearJobResponse(BaseModel):
     model_config = ConfigDict(extra="ignore")
     message: str
     kind: str

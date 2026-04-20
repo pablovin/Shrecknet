@@ -58,4 +58,4 @@ Legacy Event nodes remain readable for compatibility, but canonical write flows 
 - Better temporal consistency for each narrative segment
 - Explicit begin/end boundaries for robust timeline traversal
 - Cleaner entity anchoring and provenance tracking
-- Safer migration path from event-centric writes to scene-centric persistence
+- Safer migration path from legacy writes to scene-centric persistence

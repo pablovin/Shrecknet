@@ -293,6 +293,15 @@ Returns run status plus full proposals list after analysis.
 - `corrected_*` fields are frontend curation outputs before generation.
 - `generated_entity_instance_id` is populated after generation task (step 2) for applied entity proposals.
 
+### Frontend polling pattern (recommended)
+
+Use standard jobs polling, same as other agents:
+
+1. Start Architect analysis with `POST /jobs/architect/{agent_id}/analyze`.
+2. Get `background_job_id` from the run (`GET /jobs/architect/runs/{run_id}`).
+3. Poll `GET /jobs/{job_id}` until `status = done`.
+4. Parse `details` JSON and read `details.pipeline_output`.
+
 ---
 
 ## 3) List Runs For Agent

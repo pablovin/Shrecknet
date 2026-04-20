@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 
 
 class ExtractedNewInstance(BaseModel):
@@ -151,10 +151,26 @@ class PropertyUpdateResponse(BaseModel):
 class SceneMilestoneProposal(BaseModel):
     """Milestone proposal emitted by the scene-centric architect pass."""
 
-    label: str = Field(..., min_length=1)
+    title: str = Field(
+        ...,
+        min_length=1,
+        validation_alias=AliasChoices("title", "label", "name"),
+    )
     description: str = Field(..., min_length=1)
     boundary_type: str = Field(default="none")
     mentions: list[str] = Field(default_factory=list)
+
+    @field_validator("title", mode="before")
+    def validate_title(cls, value: str) -> str:
+        cleaned = str(value or "").strip()
+        if not cleaned:
+            raise ValueError("title cannot be empty")
+        return cleaned
+
+    @property
+    def label(self) -> str:
+        # Backward-compatible alias for older call sites.
+        return self.title
 
 
 class SceneProposal(BaseModel):

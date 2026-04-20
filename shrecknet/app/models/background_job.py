@@ -35,9 +35,7 @@ class JobType(str, Enum):
     RESTORE = "restore"
     LEGACY_IMPORT = "legacy_import"
     NOVELIST_DRAFT = "novelist_draft"
-    NOVELIST_TIMELINE_GENERATION = "novelist_timeline_generation"
     ONTOLOGY_INSTANCE_ENTITY_TYPE_CLEAR = "ontology_instance_entity_type_clear"
-    ONTOLOGY_TIMELINE_EVENTS_CLEAR = "ontology_timeline_events_clear"
 
 
 class BackgroundJob(Base):

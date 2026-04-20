@@ -24,28 +24,6 @@ class OntologyInstance(Base):
     )
 
 
-class OntologyInstanceTimelineEvent(Base):
-    __tablename__ = "ontology_instance_timeline_events"
-
-    event_id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    instance_id: Mapped[str] = mapped_column(
-        ForeignKey("ontology_instances.instance_id", ondelete="CASCADE"),
-        index=True,
-    )
-    ontology_id: Mapped[int] = mapped_column(ForeignKey("ontologies.id", ondelete="CASCADE"), index=True)
-    title: Mapped[str] = mapped_column(String(255))
-    description: Mapped[str] = mapped_column(Text)
-    source_entity_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    involves_entity_ids_json: Mapped[str] = mapped_column(Text, default="[]")
-    relations_json: Mapped[str] = mapped_column(Text, default="[]")
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        server_default=func.now(),
-        onupdate=func.now(),
-    )
-
-
 class FavoriteOntologyInstance(Base):
     __tablename__ = "favorite_ontology_instances"
 

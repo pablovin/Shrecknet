@@ -30,8 +30,6 @@ from app.schemas.ontology_instance import (
     MilestoneUpdate,
     OntologyInstanceEntityTypeClearJobResponse,
     OntologyInstanceEntityTypeClearRequest,
-    OntologyTimelineEventsClearJobResponse,
-    OntologyTimelineEventsClearRequest,
     OntologyInstanceCountResponse,
     OntologyInstanceCreate,
     OntologyInstanceRead,
@@ -41,9 +39,6 @@ from app.schemas.ontology_instance import (
     SceneCreate,
     SceneRead,
     SceneUpdate,
-    TimelineEventCreate,
-    TimelineEventRead,
-    TimelineEventUpdate,
 )
 from app.schemas.user import UserRead
 from app.services.favorite_ontology_instance_service import (
@@ -408,101 +403,6 @@ async def list_entity_type_clear_jobs(
     return [_to_frontend_job(job) for job in jobs]
 
 
-@router.post(
-    "/admin/clear-timeline-events/trigger",
-    status_code=status.HTTP_202_ACCEPTED,
-    response_model=OntologyTimelineEventsClearJobResponse,
-)
-async def trigger_clear_timeline_events_by_ontology(
-    payload: OntologyTimelineEventsClearRequest,
-    _: User = Depends(get_current_admin_user),
-) -> OntologyTimelineEventsClearJobResponse:
-    from app.tasks.ontology_instance_clear import clear_timeline_events_for_ontology
-    from app.utils.async_helpers import run_async
-    from app.utils.job_tracking import create_background_job
-    from app.models.background_job import AuthorType
-
-    job_id = run_async(
-        create_background_job(
-            author_type=AuthorType.USER,
-            author_id="admin",
-            job_type=JobType.ONTOLOGY_TIMELINE_EVENTS_CLEAR,
-            description=(
-                f"Clearing all timeline events for ontology {payload.ontology_id}"
-            ),
-            details={
-                "ontology_id": payload.ontology_id,
-                "status": "queued",
-            },
-            ontology_id=payload.ontology_id,
-        )
-    )
-
-    clear_timeline_events_for_ontology.delay(
-        ontology_id=payload.ontology_id,
-        author_type="user",
-        author_id="admin",
-        job_id=job_id,
-    )
-
-    return OntologyTimelineEventsClearJobResponse(
-        message="Background timeline clear job queued",
-        kind=JobType.ONTOLOGY_TIMELINE_EVENTS_CLEAR.value,
-        job_id=job_id,
-        status=JobStatus.QUEUED.value,
-        monitor_url=f"/ontology-instances/admin/clear-timeline-events/jobs/{job_id}",
-    )
-
-
-@router.get(
-    "/admin/clear-timeline-events/jobs/{job_id}",
-    status_code=status.HTTP_200_OK,
-)
-async def get_timeline_clear_job_status(
-    job_id: int,
-    jobs_session: AsyncSession = Depends(get_jobs_session),
-    _: User = Depends(get_current_admin_user),
-) -> dict[str, Any]:
-    result = await jobs_session.execute(
-        select(BackgroundJob).where(
-            BackgroundJob.id == job_id,
-            BackgroundJob.job_type == JobType.ONTOLOGY_TIMELINE_EVENTS_CLEAR,
-        )
-    )
-    job = result.scalar_one_or_none()
-    if not job:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Timeline clear job {job_id} not found",
-        )
-    return _to_frontend_job(job)
-
-
-@router.get(
-    "/admin/clear-timeline-events/jobs",
-    status_code=status.HTTP_200_OK,
-)
-async def list_timeline_clear_jobs(
-    jobs_session: AsyncSession = Depends(get_jobs_session),
-    _: User = Depends(get_current_admin_user),
-    ontology_id: int | None = Query(None, ge=1),
-    status_filter: JobStatus | None = Query(None, alias="status"),
-    limit: int = Query(50, ge=1, le=200),
-    offset: int = Query(0, ge=0),
-) -> list[dict[str, Any]]:
-    query = select(BackgroundJob).where(
-        BackgroundJob.job_type == JobType.ONTOLOGY_TIMELINE_EVENTS_CLEAR
-    )
-    if ontology_id is not None:
-        query = query.where(BackgroundJob.ontology_id == ontology_id)
-    if status_filter is not None:
-        query = query.where(BackgroundJob.status == status_filter)
-    query = query.order_by(BackgroundJob.started_at.desc()).limit(limit).offset(offset)
-    result = await jobs_session.execute(query)
-    jobs = result.scalars().all()
-    return [_to_frontend_job(job) for job in jobs]
-
-
 def _resolve_status(
     exc: ValueError, *, default: int = status.HTTP_400_BAD_REQUEST
 ) -> int:
@@ -510,21 +410,6 @@ def _resolve_status(
     if "not found" in message:
         return status.HTTP_404_NOT_FOUND
     return default
-
-
-@router.get("/{instance_id}/events", response_model=list[TimelineEventRead])
-async def list_events(
-    instance_id: str,
-    service: OntologyInstanceService = Depends(get_ontology_instance_service),
-    _: User = Depends(get_current_user),
-) -> list[TimelineEventRead]:
-    try:
-        return await service.list_timeline_events(instance_id)
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=_resolve_status(exc, default=status.HTTP_404_NOT_FOUND),
-            detail=str(exc),
-        ) from exc
 
 
 @router.get("/{instance_id}/scenes", response_model=list[SceneRead])
@@ -706,92 +591,6 @@ async def delete_milestone(
             detail=str(exc),
         ) from exc
     return Response(status_code=status.HTTP_204_NO_CONTENT)
-
-
-@router.post(
-    "/{instance_id}/events",
-    response_model=TimelineEventRead,
-    status_code=status.HTTP_201_CREATED,
-)
-async def create_event(
-    instance_id: str,
-    payload: TimelineEventCreate,
-    service: OntologyInstanceService = Depends(get_ontology_instance_service),
-    _: User = Depends(require_roles(UserRole.ADMIN, UserRole.WORLD_BUILDER)),
-) -> TimelineEventRead:
-    del payload
-    del service
-    del instance_id
-    raise HTTPException(
-        status_code=status.HTTP_409_CONFLICT,
-        detail=(
-            "Timeline Event writes are deprecated. Use Scene and Milestone endpoints as canonical temporal representation."
-        ),
-    )
-
-
-@router.get(
-    "/{instance_id}/events/{event_id}",
-    response_model=TimelineEventRead,
-)
-async def get_event(
-    instance_id: str,
-    event_id: str,
-    service: OntologyInstanceService = Depends(get_ontology_instance_service),
-    _: User = Depends(get_current_user),
-) -> TimelineEventRead:
-    try:
-        return await service.get_timeline_event(instance_id, event_id)
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=_resolve_status(exc, default=status.HTTP_404_NOT_FOUND),
-            detail=str(exc),
-        ) from exc
-
-
-@router.put(
-    "/{instance_id}/events/{event_id}",
-    response_model=TimelineEventRead,
-)
-async def update_event(
-    instance_id: str,
-    event_id: str,
-    payload: TimelineEventUpdate,
-    service: OntologyInstanceService = Depends(get_ontology_instance_service),
-    _: User = Depends(require_roles(UserRole.ADMIN, UserRole.WORLD_BUILDER)),
-) -> TimelineEventRead:
-    del payload
-    del service
-    del instance_id
-    del event_id
-    raise HTTPException(
-        status_code=status.HTTP_409_CONFLICT,
-        detail=(
-            "Timeline Event writes are deprecated. Use Scene and Milestone endpoints as canonical temporal representation."
-        ),
-    )
-
-
-@router.delete(
-    "/{instance_id}/events/{event_id}",
-    status_code=status.HTTP_204_NO_CONTENT,
-    response_class=Response,
-)
-async def delete_event(
-    instance_id: str,
-    event_id: str,
-    service: OntologyInstanceService = Depends(get_ontology_instance_service),
-    _: User = Depends(require_roles(UserRole.ADMIN, UserRole.WORLD_BUILDER)),
-) -> Response:
-    del service
-    del instance_id
-    del event_id
-    raise HTTPException(
-        status_code=status.HTTP_409_CONFLICT,
-        detail=(
-            "Timeline Event writes are deprecated. Use Scene and Milestone endpoints as canonical temporal representation."
-        ),
-    )
 
 
 @router.post(

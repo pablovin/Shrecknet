@@ -49,7 +49,6 @@ class RetrievalService:
             "later",
             "changed",
             "change",
-            "timeline",
             "previous",
             "next",
         }

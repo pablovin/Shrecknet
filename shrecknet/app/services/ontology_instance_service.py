@@ -1256,6 +1256,125 @@ class OntologyInstanceService:
             "sql_instances_deleted": sql_instances_deleted,
         }
 
+    async def clear_timeline_events_and_orphans(
+        self,
+        *,
+        ontology_id: int,
+    ) -> dict[str, Any]:
+        ontology = await self.repository.get(ontology_id)
+        if ontology is None:
+            raise ValueError("Ontology not found")
+
+        tx = await self.graph_session.begin_transaction()
+        try:
+            legacy_counts_result = await tx.run(
+                """
+                MATCH (i:OntologyInstance)
+                WHERE toInteger(i.ontology_id) = toInteger($ontology_id)
+                OPTIONAL MATCH (i)-[:HAS_EVENT]->(event:Event)
+                OPTIONAL MATCH (event)-[:HAS_CHUNK]->(chunk:EntityChunk)
+                RETURN
+                    count(DISTINCT event) AS legacy_event_count,
+                    count(DISTINCT chunk) AS legacy_chunk_count
+                """,
+                ontology_id=ontology_id,
+            )
+            legacy_counts_row = await legacy_counts_result.single()
+            legacy_event_count = int(
+                legacy_counts_row.get("legacy_event_count") if legacy_counts_row else 0
+            )
+            legacy_chunk_count = int(
+                legacy_counts_row.get("legacy_chunk_count") if legacy_counts_row else 0
+            )
+
+            await tx.run(
+                """
+                MATCH (i:OntologyInstance)-[:HAS_EVENT]->(event:Event)-[:HAS_CHUNK]->(chunk:EntityChunk)
+                WHERE toInteger(i.ontology_id) = toInteger($ontology_id)
+                DETACH DELETE chunk
+                """,
+                ontology_id=ontology_id,
+            )
+            await tx.run(
+                """
+                MATCH (i:OntologyInstance)-[:HAS_EVENT]->(event:Event)
+                WHERE toInteger(i.ontology_id) = toInteger($ontology_id)
+                DETACH DELETE event
+                """,
+                ontology_id=ontology_id,
+            )
+
+            milestones_count_result = await tx.run(
+                """
+                                MATCH (i:OntologyInstance)-[scene_rel]->(scene)-[contains_rel]->(milestone)
+                WHERE toInteger(i.ontology_id) = toInteger($ontology_id)
+                                    AND type(scene_rel) = 'HAS_SCENE'
+                                    AND 'Scene' IN labels(scene)
+                                    AND type(contains_rel) = 'CONTAINS'
+                                    AND 'Milestone' IN labels(milestone)
+                RETURN count(DISTINCT milestone) AS milestones_count
+                """,
+                ontology_id=ontology_id,
+            )
+            milestones_count_row = await milestones_count_result.single()
+            milestones_count = int(
+                milestones_count_row.get("milestones_count") if milestones_count_row else 0
+            )
+
+            await tx.run(
+                """
+                                MATCH (i:OntologyInstance)-[scene_rel]->(scene)-[contains_rel]->(milestone)
+                WHERE toInteger(i.ontology_id) = toInteger($ontology_id)
+                                    AND type(scene_rel) = 'HAS_SCENE'
+                                    AND 'Scene' IN labels(scene)
+                                    AND type(contains_rel) = 'CONTAINS'
+                                    AND 'Milestone' IN labels(milestone)
+                DETACH DELETE milestone
+                """,
+                ontology_id=ontology_id,
+            )
+
+            scenes_count_result = await tx.run(
+                """
+                                MATCH (i:OntologyInstance)-[scene_rel]->(scene)
+                WHERE toInteger(i.ontology_id) = toInteger($ontology_id)
+                                    AND type(scene_rel) = 'HAS_SCENE'
+                                    AND 'Scene' IN labels(scene)
+                RETURN count(DISTINCT scene) AS scenes_count
+                """,
+                ontology_id=ontology_id,
+            )
+            scenes_count_row = await scenes_count_result.single()
+            scenes_count = int(
+                scenes_count_row.get("scenes_count") if scenes_count_row else 0
+            )
+
+            await tx.run(
+                """
+                                MATCH (i:OntologyInstance)-[scene_rel]->(scene)
+                WHERE toInteger(i.ontology_id) = toInteger($ontology_id)
+                                    AND type(scene_rel) = 'HAS_SCENE'
+                                    AND 'Scene' IN labels(scene)
+                DETACH DELETE scene
+                """,
+                ontology_id=ontology_id,
+            )
+        except Exception:
+            await tx.rollback()
+            await tx.close()
+            raise
+        else:
+            await tx.commit()
+            await tx.close()
+
+        return {
+            "ontology_id": ontology_id,
+            "legacy_events_deleted": legacy_event_count,
+            "legacy_event_chunks_deleted": legacy_chunk_count,
+            "milestones_deleted": milestones_count,
+            "scenes_deleted": scenes_count,
+        }
+
     async def update_instance(
         self, instance_id: str, payload: OntologyInstanceUpdate
     ) -> OntologyInstanceRead:
@@ -1792,36 +1911,34 @@ class OntologyInstanceService:
 
     async def _validate_scene_milestones_payload(
         self, *, instance_id: str, milestones: list[MilestoneCreate]
-    ) -> None:
-        if len(milestones) < 2:
-            raise ValueError("Scene must contain at least two milestones")
+    ) -> list[MilestoneCreate]:
         milestone_ids: set[str] = set()
-        begin_count = 0
-        end_count = 0
+        normalized_milestones: list[MilestoneCreate] = []
         for milestone in milestones:
             milestone_id = _normalize_optional_str(milestone.id)
             if not milestone_id:
-                raise ValueError("Every milestone in scene payload must include an id")
+                if (
+                    milestone.local_order.followed_by_milestone_id
+                    or milestone.local_order.preceded_by_milestone_id
+                ):
+                    raise ValueError(
+                        "Milestone local_order references require explicit milestone ids"
+                    )
+                milestone_id = str(uuid4())
             if milestone_id in milestone_ids:
                 raise ValueError(f"Duplicate milestone id '{milestone_id}' in scene")
             milestone_ids.add(milestone_id)
-
-            if milestone.boundary_type == "begin":
-                begin_count += 1
-            if milestone.boundary_type == "end":
-                end_count += 1
+            normalized_milestones.append(
+                milestone.model_copy(update={"id": milestone_id})
+            )
 
             await self._validate_milestone_derived_from(
                 instance_id=instance_id,
                 entity_instance_id=milestone.derived_from.entity_instance_id,
             )
 
-        if begin_count != 1 or end_count != 1:
-            raise ValueError(
-                "Scene must include exactly one begin boundary milestone and one end boundary milestone"
-            )
-
-        self._build_local_order_pairs(milestone_ids, milestones)
+        self._build_local_order_pairs(milestone_ids, normalized_milestones)
+        return normalized_milestones
 
     async def _milestone_node_to_read(
         self,
@@ -1855,6 +1972,16 @@ class OntologyInstanceService:
         props = dict(node)
         scene_id = props.get("id") or ""
 
+        ontology_id_raw = props.get("ontology_id")
+        if ontology_id_raw is None:
+            raise ValueError(f"Scene '{scene_id}' is missing ontology_id")
+        try:
+            ontology_id = int(ontology_id_raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"Scene '{scene_id}' has invalid ontology_id") from exc
+        if ontology_id <= 0:
+            raise ValueError(f"Scene '{scene_id}' has invalid ontology_id")
+
         derived_result = await self.graph_session.run(
             """
             MATCH (:Scene {id: $scene_id})-[:DERIVED_FROM]->(entity:EntityInstance)
@@ -1864,9 +1991,15 @@ class OntologyInstanceService:
             scene_id=scene_id,
         )
         derived_row = await derived_result.single()
-        derived_from_entity_id = (
-            str(derived_row["entity_instance_id"]) if derived_row else ""
-        )
+        derived_from_entity_id = None
+        if derived_row:
+            derived_from_entity_id = _normalize_optional_str(
+                str(derived_row.get("entity_instance_id") or "")
+            )
+        if not derived_from_entity_id:
+            raise ValueError(
+                f"Scene '{scene_id}' must have a DERIVED_FROM entity_instance_id"
+            )
 
         local_order_result = await self.graph_session.run(
             """
@@ -1893,7 +2026,7 @@ class OntologyInstanceService:
         return SceneRead(
             id=scene_id,
             instance_id=props.get("instance_id") or "",
-            ontology_id=int(props.get("ontology_id") or 0),
+            ontology_id=ontology_id,
             name=props.get("name") or "",
             description=props.get("description") or "",
             created_by_type=props.get("created_by_type") or "human",
@@ -1904,6 +2037,76 @@ class OntologyInstanceService:
             updated_at=_parse_dt(props.get("updated_at")),
             milestones=milestones,
         )
+
+    async def list_scenes_by_derived_from(
+        self, instance_id: str, entity_instance_id: str
+    ) -> list[SceneRead]:
+        await self._get_instance_ontology_id(instance_id)
+        entity_id = _normalize_optional_str(entity_instance_id)
+        if not entity_id:
+            raise ValueError("derived_from entity_instance_id cannot be empty")
+
+        result = await self.graph_session.run(
+            """
+            MATCH (:OntologyInstance {instance_id: $instance_id})-[rel]->(scene:Scene)
+            WHERE type(rel) = 'HAS_SCENE'
+              AND (
+                EXISTS {
+                    MATCH (scene)-[:DERIVED_FROM]->(:EntityInstance {entity_instance_id: $entity_instance_id})
+                }
+                OR EXISTS {
+                    MATCH (scene)-[:CONTAINS]->(:Milestone)-[:DERIVED_FROM]->(:EntityInstance {entity_instance_id: $entity_instance_id})
+                }
+              )
+            RETURN DISTINCT scene
+            ORDER BY scene.created_at ASC
+            """,
+            instance_id=instance_id,
+            entity_instance_id=entity_id,
+        )
+        rows = await result.data()
+        scenes: list[SceneRead] = []
+        for row in rows:
+            scene_node = row.get("scene")
+            if scene_node is None:
+                continue
+            scenes.append(await self._scene_node_to_read(node=scene_node))
+        return scenes
+
+    async def list_scenes_by_related_to(
+        self, instance_id: str, entity_instance_id: str
+    ) -> list[SceneRead]:
+        await self._get_instance_ontology_id(instance_id)
+        entity_id = _normalize_optional_str(entity_instance_id)
+        if not entity_id:
+            raise ValueError("related_to entity_instance_id cannot be empty")
+
+        result = await self.graph_session.run(
+            """
+            MATCH (:OntologyInstance {instance_id: $instance_id})-[rel]->(scene:Scene)
+            WHERE type(rel) = 'HAS_SCENE'
+              AND (
+                EXISTS {
+                    MATCH (scene)-[:RELATES_TO]->(:EntityInstance {entity_instance_id: $entity_instance_id})
+                }
+                OR EXISTS {
+                    MATCH (scene)-[:CONTAINS]->(:Milestone)-[:RELATES_TO]->(:EntityInstance {entity_instance_id: $entity_instance_id})
+                }
+              )
+            RETURN DISTINCT scene
+            ORDER BY scene.created_at ASC
+            """,
+            instance_id=instance_id,
+            entity_instance_id=entity_id,
+        )
+        rows = await result.data()
+        scenes: list[SceneRead] = []
+        for row in rows:
+            scene_node = row.get("scene")
+            if scene_node is None:
+                continue
+            scenes.append(await self._scene_node_to_read(node=scene_node))
+        return scenes
 
     async def list_scenes(self, instance_id: str) -> list[SceneRead]:
         await self._get_instance_ontology_id(instance_id)
@@ -1969,7 +2172,7 @@ class OntologyInstanceService:
             instance_id=instance_id,
             entity_instance_id=payload.derived_from.entity_instance_id,
         )
-        await self._validate_scene_milestones_payload(
+        normalized_milestones = await self._validate_scene_milestones_payload(
             instance_id=instance_id,
             milestones=payload.milestones,
         )
@@ -2041,7 +2244,7 @@ class OntologyInstanceService:
                 )
 
             milestone_ids: set[str] = set()
-            for milestone in payload.milestones:
+            for milestone in normalized_milestones:
                 milestone_id = _normalize_optional_str(milestone.id) or str(uuid4())
                 milestone_ids.add(milestone_id)
                 await tx.run(
@@ -2102,7 +2305,7 @@ class OntologyInstanceService:
                     )
 
             ordered_payload = []
-            for milestone in payload.milestones:
+            for milestone in normalized_milestones:
                 milestone_id = _normalize_optional_str(milestone.id)
                 if milestone_id:
                     ordered_payload.append(milestone)
@@ -2337,26 +2540,37 @@ class OntologyInstanceService:
             node = row.get("milestone")
             if not node:
                 continue
+            milestone_id = _normalize_optional_str((dict(node)).get("id")) or ""
+            derived_from_entity_id = _normalize_optional_str(
+                row.get("derived_from_entity_id")
+            )
+            if not derived_from_entity_id:
+                raise ValueError(
+                    f"Milestone '{milestone_id}' must have a DERIVED_FROM entity_instance_id"
+                )
             relates = []
             for item in row.get("relates") or []:
                 if not isinstance(item, dict):
                     continue
                 entity_instance_id = _normalize_optional_str(item.get("entity_instance_id"))
                 label = _normalize_optional_str(item.get("label"))
-                if entity_instance_id and label:
-                    relates.append(
-                        {
-                            "entity_instance_id": entity_instance_id,
-                            "label": label,
-                        }
+                if not entity_instance_id and not label:
+                    continue
+                if not entity_instance_id or not label:
+                    raise ValueError(
+                        f"Milestone '{milestone_id}' has malformed RELATES_TO relationship"
                     )
+                relates.append(
+                    {
+                        "entity_instance_id": entity_instance_id,
+                        "label": label,
+                    }
+                )
             milestones.append(
                 await self._milestone_node_to_read(
                     node=node,
                     scene_id=scene_id,
-                    derived_from_entity_id=_normalize_optional_str(
-                        row.get("derived_from_entity_id")
-                    ),
+                    derived_from_entity_id=derived_from_entity_id,
                     relates_to=relates,
                     local_order={
                         "followed_by_milestone_id": row.get("followed_by_milestone_id"),
@@ -2460,14 +2674,7 @@ class OntologyInstanceService:
 
         embed_ontology_task.delay(ontology_id=ontology_id, author_type="agent", author_id="milestone-create")
 
-        milestones = await self.list_milestones(instance_id, scene_id)
-        begin_count = sum(1 for milestone in milestones if milestone.boundary_type == "begin")
-        end_count = sum(1 for milestone in milestones if milestone.boundary_type == "end")
-        if len(milestones) < 2 or begin_count != 1 or end_count != 1:
-            await self.delete_milestone(instance_id, scene_id, milestone_id)
-            raise ValueError(
-                "Scene validity would be violated after milestone creation: need at least two milestones and exactly one begin/end boundary"
-            )
+        # No milestone count or boundary validation enforced
         return await self.get_milestone(instance_id, scene_id, milestone_id)
 
     async def update_milestone(
@@ -2604,13 +2811,7 @@ class OntologyInstanceService:
 
         embed_ontology_task.delay(ontology_id=ontology_id, author_type="agent", author_id="milestone-update")
 
-        milestones = await self.list_milestones(instance_id, scene_id)
-        begin_count = sum(1 for milestone in milestones if milestone.boundary_type == "begin")
-        end_count = sum(1 for milestone in milestones if milestone.boundary_type == "end")
-        if len(milestones) < 2 or begin_count != 1 or end_count != 1:
-            raise ValueError(
-                "Scene validity violated by milestone update: scene must have at least two milestones with one begin and one end"
-            )
+        # No milestone count or boundary validation enforced
         return await self.get_milestone(instance_id, scene_id, milestone_id)
 
     async def delete_milestone(

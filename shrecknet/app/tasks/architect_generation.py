@@ -5,7 +5,9 @@ from __future__ import annotations
 import json
 import logging
 import re
+from collections import defaultdict
 from datetime import datetime
+from time import perf_counter
 from typing import Any
 from uuid import uuid4
 
@@ -16,6 +18,7 @@ from app.graph.neo4j import get_driver
 from app.integrations.llm.model_policy import ModelPolicy
 from app.integrations.llm.openai_client import OpenAIClient
 from app.jobs.architect.entity_generator import EntityGenerator
+from app.models.ontology import AuthorType as OntologyAuthorType
 from app.models.architect import ArchitectProposalStatus, ArchitectProposalType
 from app.models.background_job import AuthorType, JobType
 from app.repositories.architect_repository import ArchitectRepository
@@ -25,6 +28,8 @@ from app.schemas.ontology_instance import (
     MilestoneDerivedFrom,
     MilestoneEntityRelation,
     MilestoneLocalOrder,
+    OntologyInstanceCreate,
+    OntologyInstanceEntityCreate,
     SceneCreate,
     SceneDerivedFrom,
     SceneLocalOrder,
@@ -43,6 +48,10 @@ from app.utils.job_tracking import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _elapsed_seconds(started_at: float) -> float:
+    return round(perf_counter() - started_at, 3)
 
 
 @celery_app.task(name="architect.generate_entities")
@@ -102,14 +111,34 @@ async def _execute_generation(
     author_id: str,
     author_type: str,
 ) -> dict[str, Any]:
+    total_started_at = perf_counter()
     settings = get_settings()
     if not is_openai_configured(settings):
         raise RuntimeError("OpenAI API key not configured")
 
+
     outputs = reviewed_pipeline_output.get("outputs") or {}
-    entity_proposals = outputs.get("entity_proposals") or []
-    scene_proposals = outputs.get("scene_proposals") or []
-    milestones_per_scene = outputs.get("milestones_per_scene") or []
+    entity_proposals = _normalize_entity_proposals(outputs.get("entity_proposals") or [])
+    # Accept both 'scene_proposals' and 'scenes' for compatibility
+    scene_proposals = _normalize_scene_proposals(
+        outputs.get("scene_proposals") or outputs.get("scenes") or []
+    )
+    # Accept both 'milestones_per_scene', 'milestone_proposals', and 'milestones' for compatibility
+    milestones_per_scene = _normalize_milestone_groups(
+        outputs.get("milestones_per_scene")
+        or outputs.get("milestone_proposals")
+        or outputs.get("milestones")
+        or [],
+        scene_proposals,
+    )
+
+    logger.info(
+        "architect.generate run=%s start payload entity_proposals=%d scene_proposals=%d milestone_scene_groups=%d",
+        run_id,
+        len(entity_proposals),
+        len(scene_proposals),
+        len(milestones_per_scene),
+    )
 
     async with AsyncSessionMaker() as session:
         repo = ArchitectRepository(session)
@@ -126,6 +155,25 @@ async def _execute_generation(
             ontology_id = run.ontology_id
             if not ontology_id:
                 raise ValueError("Run ontology id is missing")
+
+            instance_meta_result = await graph_session.run(
+                """
+                MATCH (i:OntologyInstance {instance_id: $instance_id})
+                RETURN i.ontology_id AS ontology_id
+                LIMIT 1
+                """,
+                instance_id=run.ontology_instance_id,
+            )
+            instance_meta = await instance_meta_result.single()
+            if not instance_meta:
+                raise ValueError(
+                    f"Ontology instance '{run.ontology_instance_id}' not found in graph"
+                )
+            graph_ontology_id = instance_meta.get("ontology_id")
+            if graph_ontology_id is None:
+                raise ValueError(
+                    f"Ontology instance '{run.ontology_instance_id}' missing ontology_id in graph"
+                )
 
             instance = await service.get_instance(run.ontology_instance_id)
             existing_entities_map = {
@@ -152,15 +200,119 @@ async def _execute_generation(
                 for definition_id, data in entity_definitions_map.items()
             }
 
+            logger.info(
+                "architect.generate run=%s context_loaded existing_entities=%d auto_generatable_definitions=%d elapsed=%ss",
+                run_id,
+                len(existing_entities_map),
+                len(entity_definitions_map),
+                _elapsed_seconds(total_started_at),
+            )
+
             created_entity_ids: list[str] = []
             updated_entity_ids: list[str] = []
             approved_entities = [item for item in entity_proposals if _is_approved(item.get("status"))]
 
-            await update_job_progress(job_id, 0.18, {"status": "Step 1/4: inserting approved entities"})
-
             proposal_to_entity_id: dict[int, str] = {}
             proposal_scene_refs: dict[str, list[str]] = {}
             update_targets: set[str] = set()
+            created_instance_ids: list[str] = []
+            skipped_entities = 0
+
+            await update_job_progress(
+                job_id,
+                0.14,
+                {"status": "Step 0/4: applying approved update_instance entity updates"},
+            )
+            step0_started_at = perf_counter()
+            for idx, proposal in enumerate(approved_entities):
+                alias = (
+                    ((proposal.get("updates") or {}).get("name"))
+                    or proposal.get("name")
+                    or "Unnamed"
+                ).strip()
+                scene_refs = [str(ref) for ref in (proposal.get("scene_refs") or []) if str(ref or "").strip()]
+                if alias:
+                    proposal_scene_refs[_norm(alias)] = scene_refs
+                canonical = (proposal.get("canonical") or "").strip()
+                if canonical:
+                    proposal_scene_refs[_norm(canonical)] = scene_refs
+
+                proposal_type = _effective_proposal_type(proposal)
+                if proposal_type != ArchitectProposalType.UPDATE_INSTANCE.value:
+                    continue
+
+                explicit_id = _extract_effective_entity_instance_id(proposal)
+                if not explicit_id:
+                    logger.warning(
+                        "Skipping update_instance proposal without entity_instance_id alias=%s",
+                        alias,
+                    )
+                    skipped_entities += 1
+                    continue
+
+                definition_id = _extract_effective_definition_id(proposal)
+                definition_id_int: int | None = None
+                if definition_id is not None:
+                    try:
+                        candidate = int(definition_id)
+                    except (TypeError, ValueError):
+                        candidate = None
+                    if candidate is not None and candidate in entity_definitions_map:
+                        definition_id_int = candidate
+
+                result = await graph_session.run(
+                    """
+                    MATCH (:OntologyInstance {instance_id: $instance_id})-[:HAS_ENTITY]->(e:EntityInstance {entity_instance_id: $entity_id})
+                    SET e.alias = coalesce($alias, e.alias),
+                        e.entity_definition_id = coalesce($definition_id, e.entity_definition_id),
+                        e.updated_at = datetime(),
+                        e.last_updated_date = datetime(),
+                        e.author_type = 'agent',
+                        e.author_id = $author_id
+                    RETURN e.entity_instance_id AS entity_id
+                    """,
+                    instance_id=run.ontology_instance_id,
+                    entity_id=explicit_id,
+                    alias=alias or None,
+                    definition_id=definition_id_int,
+                    author_id=author_id,
+                )
+                row = await result.single()
+                if not row:
+                    logger.warning(
+                        "Skipping update_instance proposal for unknown entity_instance_id=%s",
+                        explicit_id,
+                    )
+                    skipped_entities += 1
+                    continue
+
+                update_targets.add(explicit_id)
+                proposal_to_entity_id[idx] = explicit_id
+                if alias:
+                    alias_to_entity_id[_norm(alias)] = explicit_id
+                if canonical:
+                    alias_to_entity_id[_norm(canonical)] = explicit_id
+                existing_entity = existing_entities_map.get(explicit_id)
+                if existing_entity is not None:
+                    if alias:
+                        existing_entity["alias"] = alias
+                    if definition_id_int is not None:
+                        existing_entity["definition_id"] = definition_id_int
+
+            logger.info(
+                "architect.generate run=%s step=0 done elapsed=%ss updated_entities=%d",
+                run_id,
+                _elapsed_seconds(step0_started_at),
+                len(update_targets),
+            )
+
+            await update_job_progress(job_id, 0.18, {"status": "Step 1/4: inserting approved new entities"})
+            step1_started_at = perf_counter()
+            logger.info(
+                "architect.generate run=%s step=1 start approved_entities=%d",
+                run_id,
+                len(approved_entities),
+            )
 
             for idx, proposal in enumerate(approved_entities):
                 alias = (
@@ -175,60 +327,71 @@ async def _execute_generation(
                 proposal_scene_refs[_norm(alias)] = scene_refs
                 proposal_scene_refs[_norm(proposal.get("canonical") or "")] = scene_refs
 
-                explicit_id = ((proposal.get("updates") or {}).get("corrected_entity_instance_id") or proposal.get("entity_instance_id"))
-                if explicit_id:
-                    update_targets.add(explicit_id)
-                    proposal_to_entity_id[idx] = explicit_id
-                    alias_to_entity_id[_norm(alias)] = explicit_id
+                proposal_type = _effective_proposal_type(proposal)
+                if proposal_type and proposal_type != ArchitectProposalType.NEW_INSTANCE.value:
+                    logger.info(
+                        "Skipping non-new proposal in step1 entity-creation mode alias=%s proposal_type=%s",
+                        alias,
+                        proposal_type,
+                    )
+                    skipped_entities += 1
                     continue
 
                 ontology_name = ((proposal.get("updates") or {}).get("ontology") or proposal.get("ontology") or "").strip()
-                definition_id = (proposal.get("updates") or {}).get("corrected_entity_definition_id")
+                definition_id = _extract_effective_definition_id(proposal)
                 if definition_id is None and ontology_name:
                     definition_id = by_name.get(_norm(ontology_name))
                 if definition_id is None:
                     logger.warning("Skipping proposal '%s' without resolvable definition", alias)
+                    skipped_entities += 1
                     continue
 
-                new_entity_id = str(uuid4())
-                now = datetime.utcnow().isoformat() + "Z"
-                await graph_session.run(
-                    """
-                    MATCH (i:OntologyInstance {instance_id: $instance_id})
-                    CREATE (i)-[:HAS_ENTITY]->(e:EntityInstance {
-                        entity_instance_id: $entity_instance_id,
-                        instance_id: $instance_id,
-                        ontology_id: $ontology_id,
-                        entity_definition_id: $entity_definition_id,
-                        properties: $properties,
-                        text: $text,
-                        text_linked: $text,
-                        autogenerated_text: $autogenerated_text,
-                        autogenerated_text_linked: $autogenerated_text,
-                        created_date: $now,
-                        last_updated_date: $now,
-                        author_type: $author_type,
-                        author_id: $author_id,
-                        created_at: $now,
-                        updated_at: $now,
-                        alias: $alias,
-                        is_embedded: false,
-                        last_embedded_date: null
-                    })
-                    """,
-                    instance_id=run.ontology_instance_id,
-                    ontology_id=ontology_id,
-                    entity_instance_id=new_entity_id,
-                    entity_definition_id=int(definition_id),
-                    properties=json.dumps({}),
-                    text="",
-                    autogenerated_text=(proposal.get("why") or "").strip(),
-                    now=now,
-                    author_type="agent",
-                    author_id=author_id,
-                    alias=alias,
+                try:
+                    definition_id_int = int(definition_id)
+                except (TypeError, ValueError):
+                    logger.warning(
+                        "Skipping proposal '%s' with invalid definition id '%s'",
+                        alias,
+                        definition_id,
+                    )
+                    skipped_entities += 1
+                    continue
+                if definition_id_int not in entity_definitions_map:
+                    logger.warning(
+                        "Skipping proposal '%s' with out-of-ontology definition id '%s'",
+                        alias,
+                        definition_id_int,
+                    )
+                    skipped_entities += 1
+                    continue
+
+                created_instance = await service.create_instance(
+                    OntologyInstanceCreate(
+                        ontology_id=int(graph_ontology_id),
+                        name=alias,
+                        entities=[
+                            OntologyInstanceEntityCreate(
+                                definition_id=definition_id_int,
+                                alias=alias,
+                                text="",
+                                node_avatar_url=None,
+                                autogenerated_text=(proposal.get("why") or "").strip(),
+                                author_type=OntologyAuthorType.AGENT,
+                                author_id=author_id,
+                                properties=[],
+                                relationships=[],
+                            )
+                        ],
+                        scenes=[],
+                    )
                 )
+                if not created_instance.entities:
+                    raise ValueError(
+                        f"Failed to create entity for proposal alias '{alias}' in instance '{run.ontology_instance_id}'"
+                    )
+                new_entity_id = created_instance.entities[0].entity_instance_id
                 created_entity_ids.append(new_entity_id)
+                created_instance_ids.append(created_instance.instance_id)
                 proposal_to_entity_id[idx] = new_entity_id
                 alias_to_entity_id[_norm(alias)] = new_entity_id
                 canonical = proposal.get("canonical")
@@ -237,10 +400,37 @@ async def _execute_generation(
 
             impacted_entity_ids: set[str] = set(created_entity_ids) | set(update_targets)
 
+            logger.info(
+                "architect.generate run=%s step=1 done elapsed=%ss created_entities=%d update_targets=%d skipped_entities=%d impacted_entities=%d",
+                run_id,
+                _elapsed_seconds(step1_started_at),
+                len(created_entity_ids),
+                len(update_targets),
+                skipped_entities,
+                len(impacted_entity_ids),
+            )
+
+            await update_job_progress(
+                job_id,
+                0.32,
+                {
+                    "status": "Step 1/4 completed",
+                    "created_entities": len(created_entity_ids),
+                    "created_instances": len(created_instance_ids),
+                    "skipped_entities": skipped_entities,
+                },
+            )
+
             await update_job_progress(job_id, 0.36, {"status": "Step 2/4: inserting approved scenes"})
+            step2_started_at = perf_counter()
 
             approved_scenes = [item for item in scene_proposals if _is_approved(item.get("status"))]
             approved_scenes.sort(key=lambda s: int(s.get("scene_order") or 0))
+            logger.info(
+                "architect.generate run=%s step=2 start approved_scenes=%d",
+                run_id,
+                len(approved_scenes),
+            )
             scene_ref_to_scene_id: dict[str, str] = {}
             scene_ref_to_entities: dict[str, set[str]] = {}
             previous_scene_id: str | None = None
@@ -261,7 +451,7 @@ async def _execute_generation(
                 scene_ref_to_scene_id[scene_ref] = scene_id
 
                 related_entity_ids: set[str] = set()
-                for related in scene.get("related_to") or []:
+                for related in _effective_scene_related(scene):
                     related_id = related.get("entity_instance_id")
                     if not related_id:
                         candidate_aliases = [related.get("alias"), related.get("canonical")]
@@ -276,7 +466,11 @@ async def _execute_generation(
 
                 payload = SceneCreate(
                     id=scene_id,
-                    name=(scene.get("scene_name") or "Scene").strip(),
+                    name=(
+                        (scene.get("updates") or {}).get("name")
+                        or scene.get("scene_name")
+                        or "Scene"
+                    ).strip(),
                     description=(scene.get("scene_description") or scene.get("scene_text") or "").strip()[:2000],
                     created_by_type="agent",
                     created_by_author=author_id,
@@ -288,9 +482,28 @@ async def _execute_generation(
                 previous_scene_id = scene_id
                 created_scenes += 1
 
+            scene_relation_links = sum(
+                len(entity_ids) for entity_ids in scene_ref_to_entities.values()
+            )
+            logger.info(
+                "architect.generate run=%s step=2 done elapsed=%ss created_scenes=%d scene_rel_links=%d impacted_entities=%d",
+                run_id,
+                _elapsed_seconds(step2_started_at),
+                created_scenes,
+                scene_relation_links,
+                len(impacted_entity_ids),
+            )
+
             await update_job_progress(job_id, 0.54, {"status": "Step 3/4: inserting approved milestones"})
+            step3_started_at = perf_counter()
+            logger.info(
+                "architect.generate run=%s step=3 start milestone_scene_groups=%d",
+                run_id,
+                len(milestones_per_scene),
+            )
 
             created_milestones = 0
+            milestone_rel_links = 0
             for scene_bundle in milestones_per_scene:
                 scene_ref = scene_bundle.get("scene_ref")
                 if scene_ref not in scene_ref_to_scene_id:
@@ -310,20 +523,24 @@ async def _execute_generation(
                     )
                     relates = []
                     allowed_entities = scene_ref_to_entities.get(scene_ref, set())
-                    for rel in milestone.get("related_to") or []:
+                    for rel in _effective_milestone_related(milestone):
                         target_id = _resolve_alias([rel.get("entity")], alias_to_entity_id)
+                        if not target_id:
+                            target_id = rel.get("entity_instance_id")
                         if not target_id:
                             raise ValueError(
                                 f"Unresolvable milestone related entity '{rel.get('entity')}' in scene {scene_ref}"
                             )
                         if target_id not in allowed_entities:
-                            continue
+                            allowed_entities.add(target_id)
+                            scene_ref_to_entities.setdefault(scene_ref, set()).add(target_id)
                         relates.append(
                             MilestoneEntityRelation(
                                 entity_instance_id=target_id,
                                 label=_normalize_label(rel.get("relationship_label") or "related_to"),
                             )
                         )
+                        milestone_rel_links += 1
                         impacted_entity_ids.add(target_id)
 
                     payload = MilestoneCreate(
@@ -341,7 +558,22 @@ async def _execute_generation(
                     prev_milestone_id = milestone_id
                     created_milestones += 1
 
+            logger.info(
+                "architect.generate run=%s step=3 done elapsed=%ss created_milestones=%d milestone_rel_links=%d impacted_entities=%d",
+                run_id,
+                _elapsed_seconds(step3_started_at),
+                created_milestones,
+                milestone_rel_links,
+                len(impacted_entity_ids),
+            )
+
             await update_job_progress(job_id, 0.74, {"status": "Step 4/4: enriching and updating entities"})
+            step4_started_at = perf_counter()
+            logger.info(
+                "architect.generate run=%s step=4 start enrichment_targets=%d",
+                run_id,
+                len(impacted_entity_ids),
+            )
 
             refreshed_instance = await service.get_instance(run.ontology_instance_id)
             current_entities_map = {
@@ -381,8 +613,12 @@ async def _execute_generation(
                 max_retries=3,
             )
             generator = EntityGenerator(llm_client, model_policy)
+            entity_scene_refs: dict[str, set[str]] = defaultdict(set)
+            for scene_ref, related_ids in scene_ref_to_entities.items():
+                for related_id in related_ids:
+                    entity_scene_refs[related_id].add(scene_ref)
             try:
-                await _apply_enrichment_updates(
+                enrichment_stats = await _apply_enrichment_updates(
                     graph_session=graph_session,
                     generator=generator,
                     target_entity_ids=sorted(impacted_entity_ids),
@@ -392,18 +628,43 @@ async def _execute_generation(
                     scene_proposals=approved_scenes,
                     scene_ref_to_entities=scene_ref_to_entities,
                     proposal_scene_refs=proposal_scene_refs,
+                    entity_scene_refs=entity_scene_refs,
                     original_text=original_text,
                     author_id=author_id,
                 )
             finally:
                 await llm_client.aclose()
 
+            logger.info(
+                "architect.generate run=%s step=4 done elapsed=%ss scanned=%d skipped=%d summary_updates=%d property_updates=%d relationship_creates=%d",
+                run_id,
+                _elapsed_seconds(step4_started_at),
+                enrichment_stats["scanned_entities"],
+                enrichment_stats["skipped_entities"],
+                enrichment_stats["summary_updates"],
+                enrichment_stats["property_updates"],
+                enrichment_stats["relationship_creates"],
+            )
+
             await update_job_progress(job_id, 0.9, {"status": "Triggering linking and embedding jobs"})
+            step5_started_at = perf_counter()
+            logger.info(
+                "architect.generate run=%s step=post_jobs start impacted_entities=%d",
+                run_id,
+                len(impacted_entity_ids),
+            )
 
             if impacted_entity_ids:
                 link_instance_task.delay(run.ontology_instance_id, author_type="agent", author_id=author_id)
                 embed_nodes_task.delay(ontology_id, sorted(impacted_entity_ids), author_type="agent", author_id=author_id)
                 embed_instance_task.delay(run.ontology_instance_id, author_type="agent", author_id=author_id)
+
+            logger.info(
+                "architect.generate run=%s step=post_jobs done elapsed=%ss jobs_triggered=%s",
+                run_id,
+                _elapsed_seconds(step5_started_at),
+                bool(impacted_entity_ids),
+            )
 
             await _sync_entity_proposal_states(
                 repo=repo,
@@ -412,6 +673,17 @@ async def _execute_generation(
                 proposal_to_entity_id=proposal_to_entity_id,
             )
             await session.commit()
+
+            logger.info(
+                "architect.generate run=%s done total_elapsed=%ss created_entities=%d updated_entities=%d created_scenes=%d created_milestones=%d impacted_entities=%d",
+                run_id,
+                _elapsed_seconds(total_started_at),
+                len(created_entity_ids),
+                len(update_targets),
+                created_scenes,
+                created_milestones,
+                len(impacted_entity_ids),
+            )
 
             return {
                 "run_id": run_id,
@@ -434,18 +706,29 @@ async def _apply_enrichment_updates(
     scene_proposals: list[dict[str, Any]],
     scene_ref_to_entities: dict[str, set[str]],
     proposal_scene_refs: dict[str, list[str]],
+    entity_scene_refs: dict[str, set[str]],
     original_text: str,
     author_id: str,
-) -> None:
+) -> dict[str, int]:
+    stats = {
+        "scanned_entities": 0,
+        "skipped_entities": 0,
+        "summary_updates": 0,
+        "property_updates": 0,
+        "relationship_creates": 0,
+    }
     for entity_id in target_entity_ids:
+        stats["scanned_entities"] += 1
         entity_data = existing_entities_map.get(entity_id)
         if not entity_data:
+            stats["skipped_entities"] += 1
             continue
 
         alias = entity_data.get("alias") or ""
         scene_refs = set(proposal_scene_refs.get(_norm(alias), []))
+        scene_refs |= set(entity_scene_refs.get(entity_id, set()))
         for scene in scene_proposals:
-            related = scene.get("related_to") or []
+            related = _effective_scene_related(scene)
             for rel in related:
                 rel_id = rel.get("entity_instance_id") or _resolve_alias([rel.get("alias"), rel.get("canonical")], alias_to_entity_id)
                 if rel_id == entity_id:
@@ -462,11 +745,13 @@ async def _apply_enrichment_updates(
                 allowed_targets |= scene_ref_to_entities.get(scene_ref, set())
 
         if not chunks:
+            stats["skipped_entities"] += 1
             continue
 
         definition_id = entity_data.get("definition_id")
         entity_def = entity_definitions_map.get(definition_id)
         if not entity_def:
+            stats["skipped_entities"] += 1
             continue
 
         extracted = await generator._extract_properties_and_relationships(
@@ -502,6 +787,7 @@ async def _apply_enrichment_updates(
                 summary=merged_summary,
                 author_id=author_id,
             )
+            stats["summary_updates"] += 1
 
         # Update properties only when evidence indicates a change/new value.
         result = await graph_session.run(
@@ -543,6 +829,7 @@ async def _apply_enrichment_updates(
                 properties=json.dumps(prop_map),
                 author_id=author_id,
             )
+            stats["property_updates"] += 1
 
         # Strict relationship rule: only create relationships to entities linked to the same scene context.
         rel_defs = {r["id"]: r for r in (entity_def.get("relationships") or [])}
@@ -582,6 +869,9 @@ async def _apply_enrichment_updates(
                 destiny_entity_definition_id=rel_def.get("destiny_entity_id"),
                 data=json.dumps({"justification": rel.justification or ""}),
             )
+            stats["relationship_creates"] += 1
+
+    return stats
 
 
 async def _sync_entity_proposal_states(
@@ -621,6 +911,172 @@ async def _sync_entity_proposal_states(
         generated_id = proposal_to_entity_id.get(idx)
         if generated_id:
             await repo.update_proposal_generated_entity(proposal.id, generated_id)
+
+
+def _effective_proposal_type(proposal: dict[str, Any]) -> str:
+    updates = proposal.get("updates") or {}
+    raw = (
+        updates.get("corrected_proposal_type")
+        or updates.get("proposal_type")
+        or proposal.get("corrected_proposal_type")
+        or proposal.get("proposal_type")
+        or ""
+    )
+    return _norm(raw)
+
+
+def _extract_effective_entity_instance_id(proposal: dict[str, Any]) -> str | None:
+    updates = proposal.get("updates") or {}
+    value = (
+        updates.get("corrected_entity_instance_id")
+        or updates.get("entity_instance_id")
+        or proposal.get("corrected_entity_instance_id")
+        or proposal.get("entity_instance_id")
+    )
+    normalized = str(value or "").strip()
+    return normalized or None
+
+
+def _extract_effective_definition_id(proposal: dict[str, Any]) -> Any:
+    updates = proposal.get("updates") or {}
+    return (
+        updates.get("corrected_entity_definition_id")
+        or updates.get("entity_definition_id")
+        or proposal.get("corrected_entity_definition_id")
+        or proposal.get("entity_definition_id")
+    )
+
+
+def _effective_scene_related(scene: dict[str, Any]) -> list[dict[str, Any]]:
+    updates = scene.get("updates") or {}
+    base = (
+        updates.get("related_to")
+        if isinstance(updates.get("related_to"), list)
+        else (scene.get("related_to") or [])
+    )
+    related = [dict(item) for item in base if isinstance(item, dict)]
+
+    for deletion in updates.get("relationship_deletions") or []:
+        if not isinstance(deletion, dict):
+            continue
+        if _norm(deletion.get("operation")) != "delete":
+            continue
+        if _norm(deletion.get("relation_type")) != "related_to":
+            continue
+        target_idx = deletion.get("target_proposal_index")
+        target_alias = _norm(deletion.get("target_alias"))
+        target_id = deletion.get("target_entity_instance_id")
+        filtered: list[dict[str, Any]] = []
+        for item in related:
+            proposal_idx = item.get("proposal_index")
+            alias = _norm(item.get("alias"))
+            canonical = _norm(item.get("canonical"))
+            entity_id = item.get("entity_instance_id")
+            should_delete = False
+            if target_idx is not None and proposal_idx == target_idx:
+                should_delete = True
+            if target_alias and target_alias in {alias, canonical}:
+                should_delete = True
+            if target_id and target_id == entity_id:
+                should_delete = True
+            if not should_delete:
+                filtered.append(item)
+        related = filtered
+
+    for entity_id in updates.get("additional_related_entity_instance_ids") or []:
+        entity_id_str = str(entity_id or "").strip()
+        if not entity_id_str:
+            continue
+        if any(item.get("entity_instance_id") == entity_id_str for item in related):
+            continue
+        related.append(
+            {"entity_instance_id": entity_id_str, "alias": None, "canonical": None}
+        )
+
+    return related
+
+
+def _effective_milestone_related(milestone: dict[str, Any]) -> list[dict[str, Any]]:
+    updates = milestone.get("updates") or {}
+    base = (
+        updates.get("related_to")
+        if isinstance(updates.get("related_to"), list)
+        else (milestone.get("related_to") or [])
+    )
+    related = [dict(item) for item in base if isinstance(item, dict)]
+
+    for deletion in updates.get("relationship_deletions") or []:
+        if not isinstance(deletion, dict):
+            continue
+        if _norm(deletion.get("operation")) != "delete":
+            continue
+        if _norm(deletion.get("relation_type")) != "related_to":
+            continue
+        target_alias = _norm(deletion.get("target_alias"))
+        target_id = deletion.get("target_entity_instance_id")
+        filtered: list[dict[str, Any]] = []
+        for item in related:
+            entity_name = _norm(item.get("entity"))
+            entity_id = item.get("entity_instance_id")
+            should_delete = False
+            if target_alias and entity_name == target_alias:
+                should_delete = True
+            if target_id and target_id == entity_id:
+                should_delete = True
+            if not should_delete:
+                filtered.append(item)
+        related = filtered
+
+    return related
+
+
+def _normalize_entity_proposals(raw: Any) -> list[dict[str, Any]]:
+    if not isinstance(raw, list):
+        return []
+    return [item for item in raw if isinstance(item, dict)]
+
+
+def _normalize_scene_proposals(raw: Any) -> list[dict[str, Any]]:
+    if not isinstance(raw, list):
+        return []
+    return [item for item in raw if isinstance(item, dict)]
+
+
+def _normalize_milestone_groups(
+    raw: Any,
+    scenes: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    if not isinstance(raw, list):
+        return []
+    if raw and isinstance(raw[0], dict) and isinstance(raw[0].get("milestones"), list):
+        return [dict(item) for item in raw if isinstance(item, dict)]
+
+    scene_id_to_ref: dict[str, str] = {}
+    for scene in scenes:
+        scene_ref = str(scene.get("scene_ref") or "").strip()
+        scene_id = str(scene.get("scene_id") or "").strip()
+        if scene_ref and scene_id:
+            scene_id_to_ref[scene_id] = scene_ref
+
+    grouped: dict[str, dict[str, Any]] = {}
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        scene_ref = str(item.get("scene_ref") or "").strip()
+        if not scene_ref:
+            scene_id = str(item.get("scene_id") or "").strip()
+            scene_ref = scene_id_to_ref.get(scene_id, scene_id)
+        if not scene_ref:
+            continue
+        if scene_ref not in grouped:
+            grouped[scene_ref] = {
+                "scene_ref": scene_ref,
+                "scene_id": item.get("scene_id"),
+                "milestones": [],
+            }
+        grouped[scene_ref]["milestones"].append(item)
+
+    return list(grouped.values())
 
 
 def _is_approved(status: Any) -> bool:

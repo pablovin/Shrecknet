@@ -9,7 +9,6 @@ from openai import (
     APIConnectionError,
     APITimeoutError,
     APIStatusError,
-    AsyncOpenAI,
     InternalServerError,
     RateLimitError,
 )
@@ -34,11 +33,6 @@ class OpenAIClient:
         self.api_key = api_key
         self.timeout = timeout
         self.max_retries = max_retries
-        self._client: AsyncOpenAI = AsyncOpenAI(
-            api_key=api_key,
-            timeout=timeout,
-            max_retries=max_retries,
-        )
         # LangChain model cache and in-memory conversation buffers.
         self._lc_models: dict[Tuple[str, float], ChatOpenAI] = {}
         self._conversations: dict[str, list[BaseMessage]] = {}
@@ -47,16 +41,22 @@ class OpenAIClient:
         self.transient_retries = 2
 
     async def aclose(self) -> None:
-        """Close the underlying HTTP client to avoid loop shutdown errors."""
-        # AsyncOpenAI exposes `close()`; some versions omit `aclose()`
-        close_fn = getattr(self._client, "aclose", None) or getattr(
-            self._client, "close", None
-        )
-        if close_fn is None:
-            return
-        maybe_coro = close_fn()
-        if asyncio.iscoroutine(maybe_coro):
-            await maybe_coro
+        """Best-effort cleanup for cached model clients and conversation buffers."""
+        for llm in self._lc_models.values():
+            close_fn = getattr(llm, "aclose", None) or getattr(llm, "close", None)
+            if close_fn is None:
+                continue
+            try:
+                maybe_coro = close_fn()
+                if asyncio.iscoroutine(maybe_coro):
+                    await maybe_coro
+            except RuntimeError as exc:
+                if "event loop is closed" not in str(exc).lower():
+                    raise
+                logger.debug("Ignoring loop-closed error during OpenAI client cleanup: %s", exc)
+
+        self._lc_models.clear()
+        self._conversations.clear()
 
     async def __aenter__(self) -> "OpenAIClient":
         return self

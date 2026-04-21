@@ -371,6 +371,20 @@ class OntologyInstanceEntityTypeClearJobResponse(BaseModel):
     monitor_url: str
 
 
+class OntologyInstanceTimelineClearRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    ontology_id: int
+
+
+class OntologyInstanceTimelineClearJobResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    message: str
+    kind: str
+    job_id: int
+    status: str
+    monitor_url: str
+
+
 class OntologyInstanceSearchHit(BaseModel):
     model_config = ConfigDict(extra="ignore")
     instance: OntologyInstanceRead

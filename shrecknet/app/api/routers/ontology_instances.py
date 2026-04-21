@@ -30,6 +30,8 @@ from app.schemas.ontology_instance import (
     MilestoneUpdate,
     OntologyInstanceEntityTypeClearJobResponse,
     OntologyInstanceEntityTypeClearRequest,
+    OntologyInstanceTimelineClearJobResponse,
+    OntologyInstanceTimelineClearRequest,
     OntologyInstanceCountResponse,
     OntologyInstanceCreate,
     OntologyInstanceRead,
@@ -403,6 +405,101 @@ async def list_entity_type_clear_jobs(
     return [_to_frontend_job(job) for job in jobs]
 
 
+@router.post(
+    "/admin/clear-timeline-events/trigger",
+    status_code=status.HTTP_202_ACCEPTED,
+    response_model=OntologyInstanceTimelineClearJobResponse,
+)
+async def trigger_clear_timeline_events(
+    payload: OntologyInstanceTimelineClearRequest,
+    _: User = Depends(get_current_admin_user),
+) -> OntologyInstanceTimelineClearJobResponse:
+    from app.models.background_job import AuthorType
+    from app.tasks.ontology_instance_clear import clear_timeline_events_and_orphans
+    from app.utils.async_helpers import run_async
+    from app.utils.job_tracking import create_background_job
+
+    job_id = run_async(
+        create_background_job(
+            author_type=AuthorType.USER,
+            author_id="admin",
+            job_type=JobType.ONTOLOGY_INSTANCE_TIMELINE_CLEAR,
+            description=(
+                f"Clearing timeline events/orphans for ontology {payload.ontology_id}"
+            ),
+            details={
+                "ontology_id": payload.ontology_id,
+                "status": "queued",
+            },
+            ontology_id=payload.ontology_id,
+        )
+    )
+
+    clear_timeline_events_and_orphans.delay(
+        ontology_id=payload.ontology_id,
+        author_type="user",
+        author_id="admin",
+        job_id=job_id,
+    )
+
+    return OntologyInstanceTimelineClearJobResponse(
+        message="Background timeline clear job queued",
+        kind=JobType.ONTOLOGY_INSTANCE_TIMELINE_CLEAR.value,
+        job_id=job_id,
+        status=JobStatus.QUEUED.value,
+        monitor_url=f"/ontology-instances/admin/clear-timeline-events/jobs/{job_id}",
+    )
+
+
+@router.get(
+    "/admin/clear-timeline-events/jobs/{job_id}",
+    status_code=status.HTTP_200_OK,
+)
+async def get_timeline_clear_job_status(
+    job_id: int,
+    jobs_session: AsyncSession = Depends(get_jobs_session),
+    _: User = Depends(get_current_admin_user),
+) -> dict[str, Any]:
+    result = await jobs_session.execute(
+        select(BackgroundJob).where(
+            BackgroundJob.id == job_id,
+            BackgroundJob.job_type == JobType.ONTOLOGY_INSTANCE_TIMELINE_CLEAR,
+        )
+    )
+    job = result.scalar_one_or_none()
+    if not job:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Timeline clear job {job_id} not found",
+        )
+    return _to_frontend_job(job)
+
+
+@router.get(
+    "/admin/clear-timeline-events/jobs",
+    status_code=status.HTTP_200_OK,
+)
+async def list_timeline_clear_jobs(
+    jobs_session: AsyncSession = Depends(get_jobs_session),
+    _: User = Depends(get_current_admin_user),
+    ontology_id: int | None = Query(None, ge=1),
+    status_filter: JobStatus | None = Query(None, alias="status"),
+    limit: int = Query(50, ge=1, le=200),
+) -> list[dict[str, Any]]:
+    query = select(BackgroundJob).where(
+        BackgroundJob.job_type == JobType.ONTOLOGY_INSTANCE_TIMELINE_CLEAR
+    )
+    if ontology_id is not None:
+        query = query.where(BackgroundJob.ontology_id == ontology_id)
+    if status_filter is not None:
+        query = query.where(BackgroundJob.status == status_filter)
+    query = query.order_by(BackgroundJob.started_at.desc()).limit(limit)
+
+    result = await jobs_session.execute(query)
+    jobs = result.scalars().all()
+    return [_to_frontend_job(job) for job in jobs]
+
+
 def _resolve_status(
     exc: ValueError, *, default: int = status.HTTP_400_BAD_REQUEST
 ) -> int:
@@ -420,6 +517,44 @@ async def list_scenes(
 ) -> list[SceneRead]:
     try:
         return await service.list_scenes(instance_id)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=_resolve_status(exc, default=status.HTTP_404_NOT_FOUND),
+            detail=str(exc),
+        ) from exc
+
+
+@router.get(
+    "/{instance_id}/scenes/derived-from/{entity_instance_id}",
+    response_model=list[SceneRead],
+)
+async def list_scenes_by_derived_from(
+    instance_id: str,
+    entity_instance_id: str,
+    service: OntologyInstanceService = Depends(get_ontology_instance_service),
+    _: User = Depends(get_current_user),
+) -> list[SceneRead]:
+    try:
+        return await service.list_scenes_by_derived_from(instance_id, entity_instance_id)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=_resolve_status(exc, default=status.HTTP_404_NOT_FOUND),
+            detail=str(exc),
+        ) from exc
+
+
+@router.get(
+    "/{instance_id}/scenes/related-to/{entity_instance_id}",
+    response_model=list[SceneRead],
+)
+async def list_scenes_by_related_to(
+    instance_id: str,
+    entity_instance_id: str,
+    service: OntologyInstanceService = Depends(get_ontology_instance_service),
+    _: User = Depends(get_current_user),
+) -> list[SceneRead]:
+    try:
+        return await service.list_scenes_by_related_to(instance_id, entity_instance_id)
     except ValueError as exc:
         raise HTTPException(
             status_code=_resolve_status(exc, default=status.HTTP_404_NOT_FOUND),

@@ -1,551 +1,258 @@
-# Architect Agent Endpoints
+# Architect Agent Endpoints (Current API)
 
-This document describes the **actual Architect API endpoints** and provides **fully expanded proposal examples** so frontend can implement UX without inferring missing fields.
+This document reflects the real endpoints implemented in:
+- shrecknet/app/api/routers/architect.py
 
-## Base Router
-- Router prefix: `/jobs/architect`
-- Source: `shrecknet/app/api/routers/architect.py`
+Router prefix:
+- /jobs/architect
 
----
+Authentication:
+- All endpoints require authenticated user context.
 
-## 1) Start Analysis Run
+## 1. Start Analysis
 
-### Endpoint
-`POST /jobs/architect/{agent_id}/analyze`
+Endpoint:
+- POST /jobs/architect/{agent_id}/analyze
 
-### Purpose
-Creates an Architect run and triggers async analysis task (`architect.analyze_instance`) to produce proposals.
+Purpose:
+- Creates an architect run and starts async analysis.
 
-### Request Body (`ArchitectAnalysisRequest`)
+Request body (ArchitectAnalysisRequest):
 ```json
 {
-  "ontology_instance_id": "instance-9f2e7f42",
-  "ontology_id": 12,
-  "max_chunks": 60,
+  "ontology_instance_id": "28d4658b-30f5-4789-b5bb-b319e9e6e471",
+  "ontology_id": 1,
+  "max_chunks": 50,
   "chunk_size": 1000
 }
 ```
 
-### Response (`202`, `ArchitectAnalysisRunRead`)
-Note: At creation time, run may still be `pending/running`; proposals may be empty until task completes.
+Response:
+- 202 Accepted
+- ArchitectAnalysisRunRead
 
+Common errors:
+- 404 Agent not found
+- 400 Agent is not active
+- 400 Agent job type is not architect
+- 503 OpenAI API key not configured
+
+## 2. Get Run Details
+
+Endpoint:
+- GET /jobs/architect/runs/{run_id}
+
+Purpose:
+- Returns one run with proposals.
+
+Response:
+- 200 OK
+- ArchitectAnalysisRunRead
+
+Common errors:
+- 404 Architect run not found
+
+## 3. List Runs for Agent
+
+Endpoint:
+- GET /jobs/architect/{agent_id}/runs?limit=20&offset=0
+
+Purpose:
+- Lists runs for an architect agent.
+
+Query params:
+- limit: integer, min 1, max 100, default 20
+- offset: integer, min 0, default 0
+
+Response:
+- 200 OK
+- list of ArchitectAnalysisRunSummary
+
+Common errors:
+- 404 Agent not found
+- 400 Agent job type is not architect
+
+## 4. Delete One Run
+
+Endpoint:
+- DELETE /jobs/architect/{agent_id}/runs/{run_id}
+
+Response:
 ```json
 {
-  "id": "run-4f61136f-0f7b-4e8d-b8e7-22fb19a45f5f",
-  "agent_id": "9f0cf9da-4d3c-482f-b58e-3f9db2ff1d0c",
-  "background_job_id": 781,
-  "generation_job_id": null,
-  "ontology_id": 12,
-  "ontology_instance_id": "instance-9f2e7f42",
-  "status": "running",
-  "input_chunk_count": null,
-  "settings": {
-    "requested_by": 42,
-    "max_chunks": 60,
-    "chunk_size": 1000
-  },
-  "created_at": "2026-04-17T15:11:22.114000+00:00",
-  "updated_at": "2026-04-17T15:11:22.114000+00:00",
-  "proposals": []
+  "deleted": 1
 }
 ```
 
----
+Common errors:
+- 404 Architect run not found
 
-## 2) Get Run With Proposals
+## 5. Delete All Runs for Agent
 
-### Endpoint
-`GET /jobs/architect/runs/{run_id}`
+Endpoint:
+- DELETE /jobs/architect/{agent_id}/runs
 
-### Purpose
-Returns run status plus full proposals list after analysis.
-
-### Response (`ArchitectAnalysisRunRead`) With Expanded Proposal Examples
-
+Response:
 ```json
 {
-  "id": "run-4f61136f-0f7b-4e8d-b8e7-22fb19a45f5f",
-  "agent_id": "9f0cf9da-4d3c-482f-b58e-3f9db2ff1d0c",
-  "background_job_id": 781,
-  "generation_job_id": null,
-  "ontology_id": 12,
-  "ontology_instance_id": "instance-9f2e7f42",
-  "status": "completed",
-  "input_chunk_count": 18,
-  "settings": {
-    "requested_by": 42,
-    "max_chunks": 60,
-    "chunk_size": 1000
-  },
-  "created_at": "2026-04-17T15:11:22.114000+00:00",
-  "updated_at": "2026-04-17T15:11:34.402000+00:00",
-  "proposals": [
-    {
-      "id": "prop-entity-new-1",
-      "proposal_type": "new_instance",
-      "status": "pending",
-      "entity_definition_id": null,
-      "entity_instance_id": null,
-      "alias": "Mary",
-      "confidence": 0.91,
-      "justification": "Character is directly referenced and performs actions in multiple chunks",
-      "evidence": null,
-      "metadata": {
-        "resolved_status": "new",
-        "mention_count": 4,
-        "chunk_indices": [0, 1, 2, 4],
-        "ontology_name": "character"
-      },
-      "chunks": [],
-      "merged_into_proposal_id": null,
-      "corrected_alias": null,
-      "corrected_entity_definition_id": null,
-      "corrected_proposal_type": null,
-      "corrected_entity_instance_id": null,
-      "generated_entity_instance_id": null,
-      "created_at": "2026-04-17T15:11:34.338000+00:00",
-      "updated_at": "2026-04-17T15:11:34.338000+00:00"
-    },
-    {
-      "id": "prop-entity-update-1",
-      "proposal_type": "update_instance",
-      "status": "pending",
-      "entity_definition_id": null,
-      "entity_instance_id": "entity-1e1f7f9b",
-      "alias": "The Old Tavern",
-      "confidence": 0.86,
-      "justification": "Existing location is referenced with new state details",
-      "evidence": null,
-      "metadata": {
-        "resolved_status": "existing",
-        "mention_count": 3,
-        "chunk_indices": [0, 1, 3],
-        "ontology_name": "location"
-      },
-      "chunks": [],
-      "merged_into_proposal_id": null,
-      "corrected_alias": null,
-      "corrected_entity_definition_id": null,
-      "corrected_proposal_type": null,
-      "corrected_entity_instance_id": null,
-      "generated_entity_instance_id": null,
-      "created_at": "2026-04-17T15:11:34.339000+00:00",
-      "updated_at": "2026-04-17T15:11:34.339000+00:00"
-    },
-    {
-      "id": "prop-scene-1",
-      "proposal_type": "propose_scene",
-      "status": "pending",
-      "entity_definition_id": null,
-      "entity_instance_id": null,
-      "alias": "Tavern Confrontation",
-      "confidence": 0.8,
-      "justification": "A single continuous confrontation inside the tavern",
-      "evidence": null,
-      "metadata": {
-        "proposal_kind": "scene",
-        "scene_ref": "scene-8b7a69b2-bd42-4fd2-a6b5-2f1ee7f80ad8",
-        "name": "Tavern Confrontation",
-        "description": "Mary confronts John about betrayal in the tavern",
-        "created_at": "2026-04-17T15:11:34.212000+00:00",
-        "author": {
-          "created_by_type": "agent",
-          "created_by_author": "9f0cf9da-4d3c-482f-b58e-3f9db2ff1d0c"
-        },
-        "derived_from": {
-          "entity_instance_id": "entity-8a4f2cb1"
-        },
-        "mentions": ["Mary", "John", "The Old Tavern"],
-        "scene_order": 1
-      },
-      "chunks": [],
-      "merged_into_proposal_id": null,
-      "corrected_alias": null,
-      "corrected_entity_definition_id": null,
-      "corrected_proposal_type": null,
-      "corrected_entity_instance_id": null,
-      "generated_entity_instance_id": null,
-      "created_at": "2026-04-17T15:11:34.340000+00:00",
-      "updated_at": "2026-04-17T15:11:34.340000+00:00"
-    },
-    {
-      "id": "prop-milestone-1",
-      "proposal_type": "propose_milestone",
-      "status": "pending",
-      "entity_definition_id": null,
-      "entity_instance_id": null,
-      "alias": "Confrontation begins",
-      "confidence": 0.75,
-      "justification": "Marks the start of conflict in-scene",
-      "evidence": null,
-      "metadata": {
-        "proposal_kind": "milestone",
-        "milestone_ref": "milestone-5f619cae-aec0-461f-8f5f-8fd3e65314e4",
-        "scene_ref": "scene-8b7a69b2-bd42-4fd2-a6b5-2f1ee7f80ad8",
-        "label": "Confrontation begins",
-        "description": "Mary accuses John of betrayal",
-        "boundary_type": "begin",
-        "created_at": "2026-04-17T15:11:34.212000+00:00",
-        "author": {
-          "created_by_type": "agent",
-          "created_by_author": "9f0cf9da-4d3c-482f-b58e-3f9db2ff1d0c"
-        },
-        "derived_from": {
-          "entity_instance_id": "entity-8a4f2cb1"
-        },
-        "mentions": ["Mary", "John"],
-        "milestone_order": 1
-      },
-      "chunks": [],
-      "merged_into_proposal_id": null,
-      "corrected_alias": null,
-      "corrected_entity_definition_id": null,
-      "corrected_proposal_type": null,
-      "corrected_entity_instance_id": null,
-      "generated_entity_instance_id": null,
-      "created_at": "2026-04-17T15:11:34.341000+00:00",
-      "updated_at": "2026-04-17T15:11:34.341000+00:00"
-    },
-    {
-      "id": "prop-milestone-2",
-      "proposal_type": "propose_milestone",
-      "status": "pending",
-      "entity_definition_id": null,
-      "entity_instance_id": null,
-      "alias": "Confrontation ends",
-      "confidence": 0.75,
-      "justification": "Marks scene closure when John exits",
-      "evidence": null,
-      "metadata": {
-        "proposal_kind": "milestone",
-        "milestone_ref": "milestone-5fcb2f04-102d-4f9d-a811-4da5ec03f9ec",
-        "scene_ref": "scene-8b7a69b2-bd42-4fd2-a6b5-2f1ee7f80ad8",
-        "label": "Confrontation ends",
-        "description": "John leaves the tavern",
-        "boundary_type": "end",
-        "created_at": "2026-04-17T15:11:34.212000+00:00",
-        "author": {
-          "created_by_type": "agent",
-          "created_by_author": "9f0cf9da-4d3c-482f-b58e-3f9db2ff1d0c"
-        },
-        "derived_from": {
-          "entity_instance_id": "entity-8a4f2cb1"
-        },
-        "mentions": ["John", "The Old Tavern"],
-        "milestone_order": 3
-      },
-      "chunks": [],
-      "merged_into_proposal_id": null,
-      "corrected_alias": null,
-      "corrected_entity_definition_id": null,
-      "corrected_proposal_type": null,
-      "corrected_entity_instance_id": null,
-      "generated_entity_instance_id": null,
-      "created_at": "2026-04-17T15:11:34.342000+00:00",
-      "updated_at": "2026-04-17T15:11:34.342000+00:00"
-    },
-    {
-      "id": "prop-relates-to-1",
-      "proposal_type": "propose_relates_to",
-      "status": "pending",
-      "entity_definition_id": null,
-      "entity_instance_id": null,
-      "alias": "milestone:milestone-5f619cae-aec0-461f-8f5f-8fd3e65314e4 -> Mary",
-      "confidence": 0.84,
-      "justification": "Milestone text explicitly names Mary as actor",
-      "evidence": null,
-      "metadata": {
-        "proposal_kind": "relates_to",
-        "source_ref": "milestone-5f619cae-aec0-461f-8f5f-8fd3e65314e4",
-        "source_kind": "milestone",
-        "target": {
-          "kind": "new_entity_proposal",
-          "alias": "Mary"
-        },
-        "relationship": "RELATES_TO",
-        "confidence": 0.84,
-        "evidence": "Milestone mentions Mary by name"
-      },
-      "chunks": [],
-      "merged_into_proposal_id": null,
-      "corrected_alias": null,
-      "corrected_entity_definition_id": null,
-      "corrected_proposal_type": null,
-      "corrected_entity_instance_id": null,
-      "generated_entity_instance_id": null,
-      "created_at": "2026-04-17T15:11:34.343000+00:00",
-      "updated_at": "2026-04-17T15:11:34.343000+00:00"
-    }
-  ]
+  "deleted": 4
 }
 ```
 
-### Frontend UX Field Notes (Important)
-- `proposal_type` drives card/component type:
-  - `new_instance`, `update_instance`
-  - `propose_scene`, `propose_milestone`, `propose_relates_to`
-- `status` drives moderation state badge/action availability:
-  - `pending`, `approved`, `rejected`, `merged`
-- `metadata` is the detailed payload per type:
-  - scene: `scene_ref`, `description`, `mentions`, `scene_order`, `derived_from`
-  - milestone: `milestone_ref`, `scene_ref`, `boundary_type`, `milestone_order`, `mentions`
-  - relates_to: `source_ref`, `source_kind`, `target`, `relationship`, `evidence`
-- `corrected_*` fields are frontend curation outputs before generation.
-- `generated_entity_instance_id` is populated after generation task (step 2) for applied entity proposals.
+## 6. Bulk Update Proposal Status
 
-### Frontend polling pattern (recommended)
+Endpoint:
+- PATCH /jobs/architect/runs/{run_id}/proposals/status
 
-Use standard jobs polling, same as other agents:
-
-1. Start Architect analysis with `POST /jobs/architect/{agent_id}/analyze`.
-2. Get `background_job_id` from the run (`GET /jobs/architect/runs/{run_id}`).
-3. Poll `GET /jobs/{job_id}` until `status = done`.
-4. Parse `details` JSON and read `details.pipeline_output`.
-
----
-
-## 3) List Runs For Agent
-
-### Endpoint
-`GET /jobs/architect/{agent_id}/runs?limit=20&offset=0`
-
-### Purpose
-Returns run summaries for an Architect agent.
-
-### Response (`ArchitectAnalysisRunSummary[]`)
-```json
-[
-  {
-    "id": "run-4f61136f-0f7b-4e8d-b8e7-22fb19a45f5f",
-    "agent_id": "9f0cf9da-4d3c-482f-b58e-3f9db2ff1d0c",
-    "background_job_id": 781,
-    "generation_job_id": null,
-    "ontology_id": 12,
-    "ontology_instance_id": "instance-9f2e7f42",
-    "status": "completed",
-    "input_chunk_count": 18,
-    "created_at": "2026-04-17T15:11:22.114000+00:00",
-    "updated_at": "2026-04-17T15:11:34.402000+00:00"
-  }
-]
-```
-
----
-
-## 4) Patch Proposal Status In Bulk
-
-### Endpoint
-`PATCH /jobs/architect/runs/{run_id}/proposals/status`
-
-### Request (`ArchitectProposalStatusUpdate`)
+Request body (ArchitectProposalStatusUpdate):
 ```json
 {
-  "proposal_ids": ["prop-entity-new-1", "prop-scene-1"],
+  "proposal_ids": [
+    "0a7b0d2a-2a8d-4a19-86a8-1c285adf2c9f",
+    "43b72243-c88a-4317-b9d6-e879dc879fa4"
+  ],
   "status": "approved"
 }
 ```
 
-### Response
+Response:
 ```json
 {
   "updated": 2
 }
 ```
 
----
+Common errors:
+- 404 Architect run not found
 
-## 5) Create Proposal (Manual Insert)
+## 7. Create Proposal in Run
 
-### Endpoint
-`POST /jobs/architect/runs/{run_id}/proposals`
+Endpoint:
+- POST /jobs/architect/runs/{run_id}/proposals
 
-### Purpose
-Allows frontend/admin tooling to insert a proposal manually.
+Request body:
+- Same shape as ArchitectProposalRead (id and timestamps optional; backend can generate id).
 
-### Request (all writable fields)
+Example:
 ```json
 {
-  "proposal_type": "propose_scene",
+  "proposal_type": "new_instance",
   "status": "pending",
-  "entity_definition_id": null,
+  "entity_definition_id": 18,
   "entity_instance_id": null,
-  "alias": "Bridge Scene",
-  "confidence": 0.72,
-  "justification": "Transition scene",
-  "evidence": null,
+  "alias": "Londinium",
+  "confidence": 0.86,
+  "justification": "Detected location mention",
+  "evidence": [],
   "metadata": {
-    "proposal_kind": "scene",
-    "scene_ref": "scene-9d1e1a0a-2b8a-4f56-b433-1d5219f3c2a1",
-    "name": "Bridge Scene",
-    "description": "Characters move from tavern to docks",
-    "created_at": "2026-04-17T15:20:00.000000+00:00",
-    "author": {
-      "created_by_type": "agent",
-      "created_by_author": "9f0cf9da-4d3c-482f-b58e-3f9db2ff1d0c"
-    },
-    "derived_from": {
-      "entity_instance_id": "entity-8a4f2cb1"
-    },
-    "mentions": ["Mary", "John"],
-    "scene_order": 2
+    "source": "manual"
   },
-  "chunks": []
+  "chunks": ["Rome withdrew from Britain..."],
+  "merged_into_proposal_id": null,
+  "corrected_alias": null,
+  "corrected_entity_definition_id": null,
+  "corrected_proposal_type": null,
+  "corrected_entity_instance_id": null,
+  "generated_entity_instance_id": null
 }
 ```
 
-### Response
-`ArchitectProposalRead` (same shape as proposal objects shown above).
+Response:
+- 201 Created
+- ArchitectProposalRead
 
----
+## 8. Update Proposal (Patch)
 
-## 6) Update Single Proposal
+Endpoint:
+- PATCH /jobs/architect/runs/{run_id}/proposals/{proposal_id}
 
-### Endpoints
-- `PATCH /jobs/architect/runs/{run_id}/proposals/{proposal_id}`
-- `PUT /jobs/architect/runs/{run_id}/proposals/{proposal_id}`
+## 9. Update Proposal (Put)
 
-### Typical Frontend Curation Payload
+Endpoint:
+- PUT /jobs/architect/runs/{run_id}/proposals/{proposal_id}
+
+Purpose for both:
+- Updates mutable proposal fields.
+
+Example request:
 ```json
 {
   "status": "approved",
-  "corrected_alias": "Mary O'Neil",
-  "corrected_entity_definition_id": 7,
-  "corrected_proposal_type": "new_instance",
-  "corrected_entity_instance_id": null,
-  "metadata": {
-    "ux_note": "Merged duplicate cards before approve"
+  "corrected_alias": "Archbishop Dubricus",
+  "corrected_entity_definition_id": 16,
+  "corrected_proposal_type": "update_instance",
+  "corrected_entity_instance_id": "320842e1-4aa4-4aa4-b4d3-afc9edf87bd5",
+  "proposal_metadata": {
+    "reviewed_by": "frontend"
   }
 }
 ```
 
-### Response
-`ArchitectProposalRead` with updated fields.
+Response:
+- 200 OK
+- ArchitectProposalRead
 
----
+Common errors:
+- 404 Architect run not found
+- 404 Architect proposal not found
 
-## 7) Start Generation From Curated Proposals (Step 2)
+## 10. Start Generation
 
-### Endpoint
-`POST /jobs/architect/runs/{run_id}/generate`
+Endpoint:
+- POST /jobs/architect/runs/{run_id}/generate
 
-### Purpose
-Starts async generation/update task from curated proposals.
+Purpose:
+- Starts async generation task based on reviewed pipeline output.
 
-### Request (`ArchitectValidationRequest`)
-At least one of `validated_proposals` or `revised_suggestions` must be present.
-
-#### Option A: `validated_proposals`
+Request body (ArchitectGenerationRequest):
 ```json
 {
-  "run_id": "run-4f61136f-0f7b-4e8d-b8e7-22fb19a45f5f",
-  "validated_proposals": [
-    {
-      "proposal_id": "prop-entity-new-1",
-      "status": "approved",
-      "corrected_alias": "Mary O'Neil",
-      "corrected_entity_definition_id": 7,
-      "corrected_proposal_type": "new_instance",
-      "corrected_entity_instance_id": null,
-      "merged_into_proposal_id": null
-    },
-    {
-      "proposal_id": "prop-entity-update-1",
-      "status": "approved",
-      "corrected_alias": null,
-      "corrected_entity_definition_id": null,
-      "corrected_proposal_type": "update_instance",
-      "corrected_entity_instance_id": "entity-1e1f7f9b",
-      "merged_into_proposal_id": null
-    }
-  ],
+  "run_id": "ad1111a5-6a83-4f2b-b325-391ce6b56cf3",
   "author_type": "user",
-  "author_id": "42"
+  "author_id": "42",
+  "reviewed_pipeline_output": {
+    "run_id": "ad1111a5-6a83-4f2b-b325-391ce6b56cf3",
+    "ontology_instance_id": "28d4658b-30f5-4789-b5bb-b319e9e6e471",
+    "outputs": {
+      "entity_proposals": [],
+      "scenes": [],
+      "milestones": []
+    }
+  }
 }
 ```
 
-#### Option B: `revised_suggestions`
-```json
-{
-  "run_id": "run-4f61136f-0f7b-4e8d-b8e7-22fb19a45f5f",
-  "revised_suggestions": [
-    {
-      "suggestion_id": "prop-entity-new-1",
-      "action": "new",
-      "alias": "Mary O'Neil",
-      "entity_definition_id": 7,
-      "entity_instance_id": null,
-      "chunk_indices": [0, 1, 2, 4],
-      "merged_suggestion_ids": null,
-      "merged_aliases": null,
-      "status": "approved"
-    }
-  ],
-  "author_type": "user",
-  "author_id": "42"
-}
-```
-
-### Response (`202`)
+Response:
+- 202 Accepted
 ```json
 {
   "status": "accepted",
   "task_id": "0b10d4f7-6d9c-4d9a-8b6b-cad2f34b6b86",
-  "run_id": "run-4f61136f-0f7b-4e8d-b8e7-22fb19a45f5f",
+  "run_id": "ad1111a5-6a83-4f2b-b325-391ce6b56cf3",
   "message": "Entity generation task started"
 }
 ```
 
----
+Validation rules:
+- Path run_id must match body run_id.
+- body.run_id must match reviewed_pipeline_output.run_id.
 
-## 8) Delete Run(s)
+Compatibility note:
+- Generation currently accepts outputs.scene_proposals or outputs.scenes.
+- Generation currently accepts outputs.milestones_per_scene, outputs.milestone_proposals, or outputs.milestones.
 
-### Endpoints
-- `DELETE /jobs/architect/{agent_id}/runs/{run_id}`
-- `DELETE /jobs/architect/{agent_id}/runs`
+## Enum Notes
 
-### Responses
-```json
-{ "deleted": 1 }
-```
+Common proposal status values:
+- pending
+- approved
+- rejected
+- merged
+- approved_with_updates
+- disapproved
 
-or
+Common proposal type values:
+- new_instance
+- update_instance
 
-```json
-{ "deleted": 4 }
-```
-
----
-
-## Proposal Type Quick Reference (Frontend)
-
-### `new_instance`
-- Entity candidate not matched to existing node.
-- Main UX actions: approve/reject/edit alias/entity_definition.
-
-### `update_instance`
-- Existing entity matched (`entity_instance_id` present).
-- Main UX actions: approve/reject/re-target entity_instance.
-
-### `propose_scene`
-- Narrative segment container.
-- Uses `metadata.scene_ref` as scene key in UI graph/timeline.
-
-### `propose_milestone`
-- Atomic in-scene event.
-- Uses `metadata.scene_ref` + `metadata.milestone_ref` + `metadata.boundary_type`.
-
-### `propose_relates_to`
-- Edge proposal from scene/milestone to entity.
-- Target in `metadata.target`:
-  - existing entity: `{ kind: "existing_entity", entity_instance_id, alias }`
-  - new proposal: `{ kind: "new_entity_proposal", alias }`
-
----
-
-## Notes For UX Robustness
-- Do not assume every proposal has `entity_definition_id`/`entity_instance_id`; scene/milestone/relates_to proposals commonly have `null` there.
-- Treat `metadata` as required-by-type payload. Render fallback only if absent.
-- Track lifecycle with `status`; do not infer approval from confidence.
-- Use `id` as stable proposal key, not alias.
-- Run-level `status` and proposal-level `status` are different scopes.
-- For generation step, non-entity proposals are ignored by generation task by design.
+Use values from app.models.architect enums as source of truth when in doubt.

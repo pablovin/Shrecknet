@@ -189,13 +189,9 @@ async def _embed_instance_impl(job_id: int, instance_id: str) -> dict[str, Any]:
         instance_query = """
         MATCH (instance:OntologyInstance {instance_id: $instance_id})
         OPTIONAL MATCH (instance)-[:HAS_ENTITY]->(entity:EntityInstance)
-        OPTIONAL MATCH (instance)-[:HAS_SCENE]->(scene:Scene)
-        OPTIONAL MATCH (scene)-[:CONTAINS]->(milestone:Milestone)
         RETURN
             instance.ontology_id AS ontology_id,
-            collect(DISTINCT entity.entity_instance_id) AS entity_ids,
-            collect(DISTINCT scene.id) AS scene_ids,
-            collect(DISTINCT milestone.id) AS milestone_ids
+            collect(DISTINCT entity.entity_instance_id) AS entity_ids
         LIMIT 1
         """
         result = await session.run(instance_query, instance_id=instance_id)

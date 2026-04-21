@@ -388,7 +388,8 @@ class Neo4jGraphRetriever:
         """Stream entity aliases for a single ontology in deterministic batches."""
         query = """
         MATCH (inst:OntologyInstance)-[:HAS_ENTITY]->(entity:EntityInstance)
-        WHERE inst.ontology_id = $ontology_id OR entity.ontology_id = $ontology_id
+          WHERE toInteger(inst.ontology_id) = toInteger($ontology_id)
+              OR toInteger(entity.ontology_id) = toInteger($ontology_id)
         RETURN entity.entity_instance_id AS node_id,
                coalesce(entity.alias, entity.name, entity.entity_instance_id) AS alias,
                head(labels(entity)) AS ontology

@@ -57,6 +57,11 @@ class NovelistRunRead(BaseModel):
     previous_session_summary: Optional[str] = None
     previous_session_lookup_status: Optional[str] = None
     elder_qna_by_part: Optional[dict[str, dict[str, list[str]]]] = None
+    scene_results: Optional[list[dict[str, Any]]] = None
+    step_outputs: Optional[dict[str, Any]] = None
+    timing_summary: Optional[dict[str, Any]] = None
+    stage_timings: Optional[dict[str, float]] = None
+    scene_progress: Optional[dict[str, dict[str, Any]]] = None
     draft_text: Optional[str] = None
     critic_notes: Optional[str] = None
     error_message: Optional[str] = None
@@ -103,10 +108,35 @@ class NovelistRunRead(BaseModel):
             payload = data.get("request_payload") or {}
             artifacts = data.get("artifacts") or {}
             inputs = artifacts.get("inputs") if isinstance(artifacts, dict) else {}
+            stages = artifacts.get("stages") if isinstance(artifacts, dict) else {}
+            timings = artifacts.get("timings_ms") if isinstance(artifacts, dict) else {}
+            step_outputs = artifacts.get("step_outputs") if isinstance(artifacts, dict) else None
             if not isinstance(payload, dict):
                 payload = {}
             if not isinstance(inputs, dict):
                 inputs = {}
+            if not isinstance(stages, dict):
+                stages = {}
+            if not isinstance(timings, dict):
+                timings = {}
+            if not isinstance(step_outputs, dict):
+                step_outputs = None
+
+            scene_results = None
+            revision_stage = stages.get("revision")
+            if isinstance(revision_stage, dict) and isinstance(
+                revision_stage.get("scenes"), list
+            ):
+                scene_results = revision_stage.get("scenes")
+
+            timing_summary = None
+            if timings:
+                total_ms = timings.get("total")
+                timing_summary = {
+                    "total_ms": float(total_ms) if isinstance(total_ms, (int, float)) else 0.0,
+                    "by_stage_ms": timings,
+                    "scene_count": len(scene_results or []),
+                }
             if data.get("previous_session_id") is None:
                 data["previous_session_id"] = (
                     payload.get("previous_session_id") or inputs.get("previous_session_id")
@@ -123,11 +153,27 @@ class NovelistRunRead(BaseModel):
                 )
             if data.get("elder_qna_by_part") is None:
                 data["elder_qna_by_part"] = _extract_elder_qna(artifacts)
+            if data.get("scene_results") is None:
+                data["scene_results"] = scene_results
+            if data.get("step_outputs") is None:
+                data["step_outputs"] = step_outputs
+            if data.get("timing_summary") is None:
+                data["timing_summary"] = timing_summary
+            if data.get("stage_timings") is None:
+                data["stage_timings"] = timings or None
+            if data.get("scene_progress") is None and isinstance(artifacts, dict):
+                scene_progress = artifacts.get("scene_progress")
+                data["scene_progress"] = (
+                    scene_progress if isinstance(scene_progress, dict) else None
+                )
             return data
 
         payload = getattr(data, "request_payload", None) or {}
         artifacts = getattr(data, "artifacts", None) or {}
         inputs = artifacts.get("inputs") if isinstance(artifacts, dict) else {}
+        stages = artifacts.get("stages") if isinstance(artifacts, dict) else {}
+        timings = artifacts.get("timings_ms") if isinstance(artifacts, dict) else {}
+        step_outputs = artifacts.get("step_outputs") if isinstance(artifacts, dict) else None
         previous_session_id = None
         previous_session_summary = None
         previous_session_lookup_status = None
@@ -142,6 +188,23 @@ class NovelistRunRead(BaseModel):
                 or inputs.get("continuity_brief")
             )
             previous_session_lookup_status = inputs.get("previous_session_lookup_status")
+
+        scene_results = None
+        if isinstance(stages, dict):
+            revision_stage = stages.get("revision")
+            if isinstance(revision_stage, dict) and isinstance(
+                revision_stage.get("scenes"), list
+            ):
+                scene_results = revision_stage.get("scenes")
+
+        timing_summary = None
+        if isinstance(timings, dict) and timings:
+            total_ms = timings.get("total")
+            timing_summary = {
+                "total_ms": float(total_ms) if isinstance(total_ms, (int, float)) else 0.0,
+                "by_stage_ms": timings,
+                "scene_count": len(scene_results or []),
+            }
         return {
             "id": getattr(data, "id"),
             "agent_id": getattr(data, "agent_id"),
@@ -157,6 +220,16 @@ class NovelistRunRead(BaseModel):
             "previous_session_summary": previous_session_summary,
             "previous_session_lookup_status": previous_session_lookup_status,
             "elder_qna_by_part": _extract_elder_qna(artifacts),
+            "scene_results": scene_results,
+            "step_outputs": step_outputs if isinstance(step_outputs, dict) else None,
+            "timing_summary": timing_summary,
+            "stage_timings": timings if isinstance(timings, dict) and timings else None,
+            "scene_progress": (
+                artifacts.get("scene_progress")
+                if isinstance(artifacts, dict)
+                and isinstance(artifacts.get("scene_progress"), dict)
+                else None
+            ),
             "draft_text": getattr(data, "draft_text", None),
             "critic_notes": getattr(data, "critic_notes", None),
             "error_message": getattr(data, "error_message", None),

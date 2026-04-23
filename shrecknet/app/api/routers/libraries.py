@@ -521,6 +521,15 @@ async def replace_library_item_content(
 ) -> LibraryItemRead:
     _require_pdf(file)
     item = await _get_item_or_404(session, ontology_id, item_id)
+
+    # Hard-delete old embeddings when replacing content so stale chunks cannot leak.
+    driver = get_driver()
+    async with driver.session(database=get_settings().neo4j_database) as graph_session:
+        from app.services.pdf_embedding_service import PdfEmbeddingService
+
+        pdf_service = PdfEmbeddingService(graph_session)
+        await pdf_service.delete_embeddings(item.id)
+
     relative_path = _library_pdf_relative_path(ontology_id, item.id)
     await _write_pdf(file, relative_path)
     item.pdf_path = relative_path.as_posix()
@@ -631,12 +640,23 @@ async def clear_all_library_embeddings(
 
     driver = get_driver()
     total_deleted = 0
+    orphan_deleted = 0
     async with driver.session(database=get_settings().neo4j_database) as graph_session:
         from app.services.pdf_embedding_service import PdfEmbeddingService
 
         pdf_service = PdfEmbeddingService(graph_session)
-        for item in items:
-            total_deleted += await pdf_service.delete_embeddings(item.id)
+        if ontology_id is not None:
+            total_deleted = await pdf_service.delete_embeddings_for_ontology(
+                ontology_id=ontology_id,
+                library_item_ids=[item.id for item in items],
+            )
+        else:
+            total_deleted = await pdf_service.delete_all_embeddings()
+
+        # Also remove orphan chunks not tied to SQL library_items to avoid stale pull risk.
+        orphan_deleted = await pdf_service.delete_orphan_embeddings(
+            valid_library_item_ids=[item.id for item in items]
+        )
 
     item_ids = [item.id for item in items]
     if ontology_id is not None:
@@ -670,6 +690,7 @@ async def clear_all_library_embeddings(
         "items_affected": len(item_ids),
         "ontology_id": ontology_id,
         "chunks_deleted": total_deleted,
+        "orphan_chunks_deleted": orphan_deleted,
         "jobs_deleted": jobs_deleted,
     }
 

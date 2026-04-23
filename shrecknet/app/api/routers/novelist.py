@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 from io import BytesIO
+import re
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,6 +23,8 @@ from app.services.novelist_service import NovelistService
 from app.tasks.novelist import generate_draft
 
 router = APIRouter(prefix="/jobs/novelist", tags=["novelist"])
+_BULLET_OR_NUMBERED_START = re.compile(r"^\s*(?:[●•\-\*]\s+|\d+[.)]\s+)")
+_TIMESTAMP_MARKER = re.compile(r"\(\d{1,2}:\d{2}:\d{2}\)")
 
 
 async def _get_novelist_agent_or_404(
@@ -74,14 +77,37 @@ def _extract_text_from_upload(file: UploadFile) -> str:
         pages: list[str] = []
         for page in reader.pages:
             try:
-                pages.append(page.extract_text() or "")
+                pages.append(_normalize_pdf_extracted_text(page.extract_text() or ""))
             except Exception:
                 continue
-        return "\n".join(pages).strip()
+        return "\n\n".join(page for page in pages if page).strip()
     raise HTTPException(
         status_code=status.HTTP_400_BAD_REQUEST,
         detail="Unsupported file type. Use .txt or .pdf",
     )
+
+
+def _normalize_pdf_extracted_text(text: str) -> str:
+    lines = [line.strip() for line in text.splitlines() if line and line.strip()]
+    if not lines:
+        return ""
+
+    blocks: list[list[str]] = []
+    current: list[str] = []
+    for line in lines:
+        starts_block = bool(_BULLET_OR_NUMBERED_START.match(line)) or bool(
+            _TIMESTAMP_MARKER.search(line)
+        )
+        if starts_block and current:
+            blocks.append(current)
+            current = [line]
+            continue
+        current.append(line)
+
+    if current:
+        blocks.append(current)
+
+    return "\n\n".join(" ".join(block) for block in blocks if block).strip()
 
 
 async def _create_and_queue_run(
@@ -234,5 +260,4 @@ async def delete_novelist_run(
             status_code=status.HTTP_404_NOT_FOUND, detail="Novelist run not found"
         )
     return {"deleted": deleted}
-
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -32,11 +33,11 @@ from app.schemas.ontology_instance import (
     OntologyInstanceEntityCreate,
     SceneCreate,
     SceneDerivedFrom,
+    SceneEntityRelation,
     SceneLocalOrder,
 )
 from app.services.ontology_instance_service import OntologyInstanceService
-from app.tasks.neo4j_embedding import embed_instance as embed_instance_task
-from app.tasks.neo4j_embedding import embed_nodes as embed_nodes_task
+from app.tasks.neo4j_embedding import embed_reconciliation as embed_reconciliation_task
 from app.tasks.ontology_links import link_instance as link_instance_task
 from app.utils.async_helpers import run_async
 from app.utils.job_tracking import (
@@ -118,18 +119,22 @@ async def _execute_generation(
 
 
     outputs = reviewed_pipeline_output.get("outputs") or {}
-    entity_proposals = _normalize_entity_proposals(outputs.get("entity_proposals") or [])
+    entity_proposals = _canonicalize_entity_proposals(
+        _normalize_entity_proposals(outputs.get("entity_proposals") or [])
+    )
     # Accept both 'scene_proposals' and 'scenes' for compatibility
-    scene_proposals = _normalize_scene_proposals(
-        outputs.get("scene_proposals") or outputs.get("scenes") or []
+    scene_proposals = _canonicalize_scene_proposals(
+        _normalize_scene_proposals(outputs.get("scene_proposals") or outputs.get("scenes") or [])
     )
     # Accept both 'milestones_per_scene', 'milestone_proposals', and 'milestones' for compatibility
-    milestones_per_scene = _normalize_milestone_groups(
-        outputs.get("milestones_per_scene")
-        or outputs.get("milestone_proposals")
-        or outputs.get("milestones")
-        or [],
-        scene_proposals,
+    milestones_per_scene = _canonicalize_milestone_groups(
+        _normalize_milestone_groups(
+            outputs.get("milestones_per_scene")
+            or outputs.get("milestone_proposals")
+            or outputs.get("milestones")
+            or [],
+            scene_proposals,
+        )
     )
 
     logger.info(
@@ -210,12 +215,17 @@ async def _execute_generation(
 
             created_entity_ids: list[str] = []
             updated_entity_ids: list[str] = []
-            approved_entities = [item for item in entity_proposals if _is_approved(item.get("status"))]
+            approved_entities = [
+                {**item, "_proposal_index": idx}
+                for idx, item in enumerate(entity_proposals)
+                if _is_approved(item.get("status"))
+            ]
 
             proposal_to_entity_id: dict[int, str] = {}
             proposal_scene_refs: dict[str, list[str]] = {}
             update_targets: set[str] = set()
             created_instance_ids: list[str] = []
+            pending_merge_resolutions: list[dict[str, Any]] = []
             skipped_entities = 0
 
             await update_job_progress(
@@ -224,24 +234,24 @@ async def _execute_generation(
                 {"status": "Step 0/4: applying approved update_instance entity updates"},
             )
             step0_started_at = perf_counter()
-            for idx, proposal in enumerate(approved_entities):
-                alias = (
-                    ((proposal.get("updates") or {}).get("name"))
-                    or proposal.get("name")
-                    or "Unnamed"
-                ).strip()
-                scene_refs = [str(ref) for ref in (proposal.get("scene_refs") or []) if str(ref or "").strip()]
-                if alias:
-                    proposal_scene_refs[_norm(alias)] = scene_refs
+            for proposal in approved_entities:
+                proposal_index = int(proposal.get("_proposal_index"))
+                alias = str(proposal.get("effective_name") or "Unnamed").strip()
+                alias_keys = _proposal_alias_keys(proposal)
+                scene_refs = [
+                    str(ref)
+                    for ref in (proposal.get("effective_scene_refs") or [])
+                    if str(ref or "").strip()
+                ]
+                for alias_key in alias_keys:
+                    proposal_scene_refs[alias_key] = scene_refs
                 canonical = (proposal.get("canonical") or "").strip()
-                if canonical:
-                    proposal_scene_refs[_norm(canonical)] = scene_refs
 
-                proposal_type = _effective_proposal_type(proposal)
+                proposal_type = str(proposal.get("effective_proposal_type") or "")
                 if proposal_type != ArchitectProposalType.UPDATE_INSTANCE.value:
                     continue
 
-                explicit_id = _extract_effective_entity_instance_id(proposal)
+                explicit_id = str(proposal.get("effective_entity_instance_id") or "").strip() or None
                 if not explicit_id:
                     logger.warning(
                         "Skipping update_instance proposal without entity_instance_id alias=%s",
@@ -250,7 +260,7 @@ async def _execute_generation(
                     skipped_entities += 1
                     continue
 
-                definition_id = _extract_effective_definition_id(proposal)
+                definition_id = proposal.get("effective_definition_id")
                 definition_id_int: int | None = None
                 if definition_id is not None:
                     try:
@@ -260,38 +270,87 @@ async def _execute_generation(
                     if candidate is not None and candidate in entity_definitions_map:
                         definition_id_int = candidate
 
-                result = await graph_session.run(
-                    """
-                    MATCH (:OntologyInstance {instance_id: $instance_id})-[:HAS_ENTITY]->(e:EntityInstance {entity_instance_id: $entity_id})
-                    SET e.alias = coalesce($alias, e.alias),
-                        e.entity_definition_id = coalesce($definition_id, e.entity_definition_id),
-                        e.updated_at = datetime(),
-                        e.last_updated_date = datetime(),
-                        e.author_type = 'agent',
-                        e.author_id = $author_id
-                    RETURN e.entity_instance_id AS entity_id
-                    """,
-                    instance_id=run.ontology_instance_id,
-                    entity_id=explicit_id,
-                    alias=alias or None,
-                    definition_id=definition_id_int,
-                    author_id=author_id,
-                )
-                row = await result.single()
-                if not row:
-                    logger.warning(
-                        "Skipping update_instance proposal for unknown entity_instance_id=%s",
-                        explicit_id,
+                async def _update_entity_node(target_entity_id: str) -> Any:
+                    return await graph_session.run(
+                        """
+                        MATCH (e:EntityInstance {entity_instance_id: $entity_id})
+                        SET e.alias = coalesce($alias, e.alias),
+                            e.entity_definition_id = coalesce($definition_id, e.entity_definition_id),
+                            e.updated_at = datetime(),
+                            e.last_updated_date = datetime(),
+                            e.author_type = 'agent',
+                            e.author_id = $author_id
+                        RETURN e.entity_instance_id AS entity_id
+                        """,
+                        entity_id=target_entity_id,
+                        alias=alias or None,
+                        definition_id=definition_id_int,
+                        author_id=author_id,
                     )
-                    skipped_entities += 1
-                    continue
+
+                row = None
+                ontology_scope_result = await graph_session.run(
+                    """
+                    MATCH (e:EntityInstance {entity_instance_id: $entity_id})<-[:HAS_ENTITY]-(:OntologyInstance {ontology_id: $ontology_id})
+                    RETURN e.entity_instance_id AS entity_id
+                    LIMIT 1
+                    """,
+                    entity_id=explicit_id,
+                    ontology_id=int(graph_ontology_id),
+                )
+                ontology_scope_row = await ontology_scope_result.single()
+                if ontology_scope_row:
+                    update_result = await _update_entity_node(explicit_id)
+                    row = await update_result.single()
+
+                if not row:
+                    # Fallback: resolve by alias/canonical across the whole ontology, not only
+                    # the current instance.
+                    ontology_alias_candidates = [alias, canonical]
+                    ontology_alias_matches: list[str] = []
+                    for alias_candidate in ontology_alias_candidates:
+                        alias_value = str(alias_candidate or "").strip()
+                        if not alias_value:
+                            continue
+                        alias_result = await graph_session.run(
+                            """
+                            MATCH (i:OntologyInstance {ontology_id: $ontology_id})-[:HAS_ENTITY]->(e:EntityInstance)
+                            WHERE toLower(coalesce(e.alias, '')) = toLower($alias)
+                            RETURN e.entity_instance_id AS entity_id
+                            LIMIT 2
+                            """,
+                            ontology_id=int(graph_ontology_id),
+                            alias=alias_value,
+                        )
+                        alias_rows = await alias_result.data()
+                        ontology_alias_matches.extend(
+                            [
+                                str(item.get("entity_id") or "").strip()
+                                for item in alias_rows
+                                if str(item.get("entity_id") or "").strip()
+                            ]
+                        )
+                    ontology_alias_matches = list(dict.fromkeys(ontology_alias_matches))
+                    if len(ontology_alias_matches) == 1:
+                        resolved_id = ontology_alias_matches[0]
+                        update_result = await _update_entity_node(resolved_id)
+                        fallback_row = await update_result.single()
+                        if fallback_row:
+                            explicit_id = resolved_id
+                            row = fallback_row
+
+                if not row:
+                    raise ValueError(
+                        "Unresolvable update_instance target "
+                        f"proposal_index={proposal_index} alias='{alias}' "
+                        f"entity_instance_id='{explicit_id}'. "
+                        "The payload references an entity that does not exist in the target ontology instance."
+                    )
 
                 update_targets.add(explicit_id)
-                proposal_to_entity_id[idx] = explicit_id
-                if alias:
-                    alias_to_entity_id[_norm(alias)] = explicit_id
-                if canonical:
-                    alias_to_entity_id[_norm(canonical)] = explicit_id
+                proposal_to_entity_id[proposal_index] = explicit_id
+                for alias_key in alias_keys:
+                    alias_to_entity_id[alias_key] = explicit_id
                 existing_entity = existing_entities_map.get(explicit_id)
                 if existing_entity is not None:
                     if alias:
@@ -314,20 +373,18 @@ async def _execute_generation(
                 len(approved_entities),
             )
 
-            for idx, proposal in enumerate(approved_entities):
-                alias = (
-                    ((proposal.get("updates") or {}).get("name"))
-                    or proposal.get("name")
-                    or "Unnamed"
-                ).strip()
+            for proposal in approved_entities:
+                proposal_index = int(proposal.get("_proposal_index"))
+                alias = str(proposal.get("effective_name") or "Unnamed").strip()
                 if not alias:
                     continue
 
-                scene_refs = [str(ref) for ref in (proposal.get("scene_refs") or [])]
-                proposal_scene_refs[_norm(alias)] = scene_refs
-                proposal_scene_refs[_norm(proposal.get("canonical") or "")] = scene_refs
+                scene_refs = [str(ref) for ref in (proposal.get("effective_scene_refs") or [])]
+                alias_keys = _proposal_alias_keys(proposal)
+                for alias_key in alias_keys:
+                    proposal_scene_refs[alias_key] = scene_refs
 
-                proposal_type = _effective_proposal_type(proposal)
+                proposal_type = str(proposal.get("effective_proposal_type") or "")
                 if proposal_type and proposal_type != ArchitectProposalType.NEW_INSTANCE.value:
                     logger.info(
                         "Skipping non-new proposal in step1 entity-creation mode alias=%s proposal_type=%s",
@@ -337,8 +394,27 @@ async def _execute_generation(
                     skipped_entities += 1
                     continue
 
-                ontology_name = ((proposal.get("updates") or {}).get("ontology") or proposal.get("ontology") or "").strip()
-                definition_id = _extract_effective_definition_id(proposal)
+                merge_update = _extract_merge_update(proposal)
+                if merge_update:
+                    pending_merge_resolutions.append(
+                        {
+                            "proposal_index": proposal_index,
+                            "alias": alias,
+                            "canonical": (proposal.get("canonical") or "").strip(),
+                            "scene_refs": scene_refs,
+                            "merge": merge_update,
+                        }
+                    )
+                    logger.info(
+                        "Skipping merged proposal insertion alias=%s maintained_alias=%s",
+                        alias,
+                        merge_update.get("maintained_alias"),
+                    )
+                    skipped_entities += 1
+                    continue
+
+                ontology_name = str(proposal.get("effective_ontology") or "").strip()
+                definition_id = proposal.get("effective_definition_id")
                 if definition_id is None and ontology_name:
                     definition_id = by_name.get(_norm(ontology_name))
                 if definition_id is None:
@@ -392,20 +468,62 @@ async def _execute_generation(
                 new_entity_id = created_instance.entities[0].entity_instance_id
                 created_entity_ids.append(new_entity_id)
                 created_instance_ids.append(created_instance.instance_id)
-                proposal_to_entity_id[idx] = new_entity_id
-                alias_to_entity_id[_norm(alias)] = new_entity_id
-                canonical = proposal.get("canonical")
-                if canonical:
-                    alias_to_entity_id[_norm(canonical)] = new_entity_id
+                proposal_to_entity_id[proposal_index] = new_entity_id
+                for alias_key in alias_keys:
+                    alias_to_entity_id[alias_key] = new_entity_id
 
-            impacted_entity_ids: set[str] = set(created_entity_ids) | set(update_targets)
+            merge_maintained_entity_ids: set[str] = set()
+            for pending in pending_merge_resolutions:
+                target_id = _resolve_maintained_entity_id(
+                    merge_update=pending.get("merge") or {},
+                    alias_to_entity_id=alias_to_entity_id,
+                    proposal_to_entity_id=proposal_to_entity_id,
+                )
+                if not target_id:
+                    logger.warning(
+                        "Unable to resolve merge target for proposal alias=%s",
+                        pending.get("alias"),
+                    )
+                    continue
+
+                merged_alias = str(pending.get("alias") or "").strip()
+                merged_canonical = str(pending.get("canonical") or "").strip()
+                maintained_alias = str((pending.get("merge") or {}).get("maintained_alias") or "").strip()
+                merged_scene_refs = [
+                    str(ref)
+                    for ref in (pending.get("scene_refs") or [])
+                    if str(ref or "").strip()
+                ]
+
+                proposal_to_entity_id[pending["proposal_index"]] = target_id
+                merge_maintained_entity_ids.add(target_id)
+
+                for key in [merged_alias, merged_canonical]:
+                    normalized = _norm(key)
+                    if normalized:
+                        alias_to_entity_id[normalized] = target_id
+
+                if maintained_alias and merged_scene_refs:
+                    maintained_key = _norm(maintained_alias)
+                    existing_refs = proposal_scene_refs.get(maintained_key, [])
+                    proposal_scene_refs[maintained_key] = _merge_ref_lists(
+                        existing_refs,
+                        merged_scene_refs,
+                    )
+
+            impacted_entity_ids: set[str] = (
+                set(created_entity_ids)
+                | set(update_targets)
+                | set(merge_maintained_entity_ids)
+            )
 
             logger.info(
-                "architect.generate run=%s step=1 done elapsed=%ss created_entities=%d update_targets=%d skipped_entities=%d impacted_entities=%d",
+                "architect.generate run=%s step=1 done elapsed=%ss created_entities=%d update_targets=%d merge_targets=%d skipped_entities=%d impacted_entities=%d",
                 run_id,
                 _elapsed_seconds(step1_started_at),
                 len(created_entity_ids),
                 len(update_targets),
+                len(merge_maintained_entity_ids),
                 skipped_entities,
                 len(impacted_entity_ids),
             )
@@ -435,6 +553,8 @@ async def _execute_generation(
             scene_ref_to_entities: dict[str, set[str]] = {}
             previous_scene_id: str | None = None
             created_scenes = 0
+            created_scene_ids: list[str] = []
+            expected_scene_relation_links = 0
 
             existing_entity_ids = set(existing_entities_map.keys()) | set(created_entity_ids)
             default_source_entity_id = next(iter(existing_entity_ids), None)
@@ -451,40 +571,64 @@ async def _execute_generation(
                 scene_ref_to_scene_id[scene_ref] = scene_id
 
                 related_entity_ids: set[str] = set()
-                for related in _effective_scene_related(scene):
-                    related_id = related.get("entity_instance_id")
-                    if not related_id:
-                        candidate_aliases = [related.get("alias"), related.get("canonical")]
-                        related_id = _resolve_alias(candidate_aliases, alias_to_entity_id)
+                for related in (scene.get("effective_related_to") or []):
+                    related_id = _resolve_related_target_entity_id(
+                        related=related,
+                        proposal_to_entity_id=proposal_to_entity_id,
+                        alias_to_entity_id=alias_to_entity_id,
+                        alias_candidates=[related.get("alias"), related.get("canonical")],
+                        fallback_entity_instance_id=related.get("entity_instance_id"),
+                        valid_entity_ids=existing_entity_ids,
+                    )
                     if not related_id:
                         raise ValueError(
-                            f"Unresolvable related_to alias in scene {scene_ref}: {related.get('alias') or related.get('canonical')}"
+                            "Unresolvable related_to target in scene "
+                            f"{scene_ref}: {related.get('alias') or related.get('canonical') or related.get('entity_instance_id')}"
                         )
                     related_entity_ids.add(related_id)
                 scene_ref_to_entities[scene_ref] = related_entity_ids
                 impacted_entity_ids |= related_entity_ids
+                expected_scene_relation_links += len(related_entity_ids)
 
                 payload = SceneCreate(
                     id=scene_id,
-                    name=(
-                        (scene.get("updates") or {}).get("name")
-                        or scene.get("scene_name")
-                        or "Scene"
-                    ).strip(),
+                    name=str(scene.get("effective_name") or scene.get("scene_name") or "Scene").strip(),
                     description=(scene.get("scene_description") or scene.get("scene_text") or "").strip()[:2000],
                     created_by_type="agent",
                     created_by_author=author_id,
                     derived_from=SceneDerivedFrom(entity_instance_id=source_entity_id),
+                    relates_to=[
+                        SceneEntityRelation(entity_instance_id=entity_id, label="related_to")
+                        for entity_id in sorted(related_entity_ids)
+                    ],
                     local_order=SceneLocalOrder(preceded_by_scene_id=previous_scene_id),
                     milestones=[],
                 )
                 await service.create_scene(run.ontology_instance_id, payload)
                 previous_scene_id = scene_id
                 created_scenes += 1
+                created_scene_ids.append(scene_id)
 
-            scene_relation_links = sum(
-                len(entity_ids) for entity_ids in scene_ref_to_entities.values()
-            )
+            actual_scene_relation_links = 0
+            if created_scene_ids:
+                scene_rel_result = await graph_session.run(
+                    """
+                    UNWIND $scene_ids AS scene_id
+                    MATCH (scene:Scene {id: scene_id})
+                    OPTIONAL MATCH (scene)-[rel:RELATES_TO]->(:EntityInstance)
+                    RETURN count(rel) AS relation_count
+                    """,
+                    scene_ids=created_scene_ids,
+                )
+                scene_rel_row = await scene_rel_result.single()
+                actual_scene_relation_links = int((scene_rel_row or {}).get("relation_count") or 0)
+            if actual_scene_relation_links != expected_scene_relation_links:
+                raise ValueError(
+                    "Scene relation persistence mismatch "
+                    f"expected={expected_scene_relation_links} actual={actual_scene_relation_links}"
+                )
+
+            scene_relation_links = expected_scene_relation_links
             logger.info(
                 "architect.generate run=%s step=2 done elapsed=%ss created_scenes=%d scene_rel_links=%d impacted_entities=%d",
                 run_id,
@@ -504,6 +648,9 @@ async def _execute_generation(
 
             created_milestones = 0
             milestone_rel_links = 0
+            created_milestone_ids: list[str] = []
+            milestone_ref_to_milestone_id: dict[str, str] = {}
+            expected_milestone_relation_links = 0
             for scene_bundle in milestones_per_scene:
                 scene_ref = scene_bundle.get("scene_ref")
                 if scene_ref not in scene_ref_to_scene_id:
@@ -522,26 +669,40 @@ async def _execute_generation(
                         fallback=default_source_entity_id,
                     )
                     relates = []
+                    milestone_relation_pairs: set[tuple[str, str]] = set()
                     allowed_entities = scene_ref_to_entities.get(scene_ref, set())
-                    for rel in _effective_milestone_related(milestone):
-                        target_id = _resolve_alias([rel.get("entity")], alias_to_entity_id)
-                        if not target_id:
-                            target_id = rel.get("entity_instance_id")
+                    for rel in (milestone.get("effective_related_to") or []):
+                        target_id = _resolve_related_target_entity_id(
+                            related=rel,
+                            proposal_to_entity_id=proposal_to_entity_id,
+                            alias_to_entity_id=alias_to_entity_id,
+                            alias_candidates=[rel.get("entity"), rel.get("alias"), rel.get("canonical")],
+                            fallback_entity_instance_id=rel.get("entity_instance_id"),
+                            valid_entity_ids=existing_entity_ids,
+                        )
                         if not target_id:
                             raise ValueError(
-                                f"Unresolvable milestone related entity '{rel.get('entity')}' in scene {scene_ref}"
+                                "Unresolvable milestone related target "
+                                f"'{rel.get('entity') or rel.get('entity_instance_id')}' in scene {scene_ref}"
                             )
                         if target_id not in allowed_entities:
                             allowed_entities.add(target_id)
                             scene_ref_to_entities.setdefault(scene_ref, set()).add(target_id)
+                        label = _normalize_label(rel.get("relationship_label") or "related_to")
+                        pair = (str(target_id), label)
+                        if pair in milestone_relation_pairs:
+                            continue
+                        milestone_relation_pairs.add(pair)
                         relates.append(
                             MilestoneEntityRelation(
                                 entity_instance_id=target_id,
-                                label=_normalize_label(rel.get("relationship_label") or "related_to"),
+                                label=label,
                             )
                         )
-                        milestone_rel_links += 1
                         impacted_entity_ids.add(target_id)
+
+                    milestone_rel_links += len(milestone_relation_pairs)
+                    expected_milestone_relation_links += len(milestone_relation_pairs)
 
                     payload = MilestoneCreate(
                         id=milestone_id,
@@ -557,6 +718,28 @@ async def _execute_generation(
                     await service.create_milestone(run.ontology_instance_id, scene_id, payload)
                     prev_milestone_id = milestone_id
                     created_milestones += 1
+                    created_milestone_ids.append(milestone_id)
+                    milestone_ref = str(milestone.get("milestone_ref") or milestone_id)
+                    milestone_ref_to_milestone_id[milestone_ref] = milestone_id
+
+            actual_milestone_relation_links = 0
+            if created_milestone_ids:
+                milestone_rel_result = await graph_session.run(
+                    """
+                    UNWIND $milestone_ids AS milestone_id
+                    MATCH (milestone:Milestone {id: milestone_id})
+                    OPTIONAL MATCH (milestone)-[rel:RELATES_TO]->(:EntityInstance)
+                    RETURN count(rel) AS relation_count
+                    """,
+                    milestone_ids=created_milestone_ids,
+                )
+                milestone_rel_row = await milestone_rel_result.single()
+                actual_milestone_relation_links = int((milestone_rel_row or {}).get("relation_count") or 0)
+            if actual_milestone_relation_links != expected_milestone_relation_links:
+                raise ValueError(
+                    "Milestone relation persistence mismatch "
+                    f"expected={expected_milestone_relation_links} actual={actual_milestone_relation_links}"
+                )
 
             logger.info(
                 "architect.generate run=%s step=3 done elapsed=%ss created_milestones=%d milestone_rel_links=%d impacted_entities=%d",
@@ -636,7 +819,7 @@ async def _execute_generation(
                 await llm_client.aclose()
 
             logger.info(
-                "architect.generate run=%s step=4 done elapsed=%ss scanned=%d skipped=%d summary_updates=%d property_updates=%d relationship_creates=%d",
+                "architect.generate run=%s step=4 done elapsed=%ss scanned=%d skipped=%d summary_updates=%d property_updates=%d relationship_creates=%d relationship_updates=%d",
                 run_id,
                 _elapsed_seconds(step4_started_at),
                 enrichment_stats["scanned_entities"],
@@ -644,6 +827,7 @@ async def _execute_generation(
                 enrichment_stats["summary_updates"],
                 enrichment_stats["property_updates"],
                 enrichment_stats["relationship_creates"],
+                enrichment_stats["relationship_updates"],
             )
 
             await update_job_progress(job_id, 0.9, {"status": "Triggering linking and embedding jobs"})
@@ -654,10 +838,21 @@ async def _execute_generation(
                 len(impacted_entity_ids),
             )
 
-            if impacted_entity_ids:
+            batch_embed_node_ids = sorted(
+                set(impacted_entity_ids)
+                | set(created_scene_ids)
+                | set(created_milestone_ids)
+            )
+
+            if batch_embed_node_ids:
                 link_instance_task.delay(run.ontology_instance_id, author_type="agent", author_id=author_id)
-                embed_nodes_task.delay(ontology_id, sorted(impacted_entity_ids), author_type="agent", author_id=author_id)
-                embed_instance_task.delay(run.ontology_instance_id, author_type="agent", author_id=author_id)
+                embed_reconciliation_task.delay(
+                    ontology_id=ontology_id,
+                    instance_id=None,
+                    node_ids=batch_embed_node_ids,
+                    author_type="agent",
+                    author_id=author_id,
+                )
 
             logger.info(
                 "architect.generate run=%s step=post_jobs done elapsed=%ss jobs_triggered=%s",
@@ -692,7 +887,24 @@ async def _execute_generation(
                 "created_scenes": created_scenes,
                 "created_milestones": created_milestones,
                 "impacted_entities": len(impacted_entity_ids),
+                "embedding_nodes_requested": len(batch_embed_node_ids),
+                # Frontend reconciliation: real persisted IDs keyed by proposal/ref.
+                "entity_reconciliation": [
+                    {"proposal_index": proposal_index, "entity_instance_id": entity_instance_id}
+                    for proposal_index, entity_instance_id in sorted(proposal_to_entity_id.items())
+                ],
+                "scene_reconciliation": [
+                    {"scene_ref": scene_ref, "scene_id": scene_id}
+                    for scene_ref, scene_id in scene_ref_to_scene_id.items()
+                ],
+                "milestone_reconciliation": [
+                    {"milestone_ref": milestone_ref, "milestone_id": milestone_id}
+                    for milestone_ref, milestone_id in milestone_ref_to_milestone_id.items()
+                ],
             }
+
+
+_ENRICHMENT_CONCURRENCY = 10
 
 
 async def _apply_enrichment_updates(
@@ -716,13 +928,24 @@ async def _apply_enrichment_updates(
         "summary_updates": 0,
         "property_updates": 0,
         "relationship_creates": 0,
+        "relationship_updates": 0,
     }
-    for entity_id in target_entity_ids:
-        stats["scanned_entities"] += 1
+
+    # ------------------------------------------------------------------
+    # Phase 1: Prepare per-entity context and run LLM extraction in
+    # parallel (max _ENRICHMENT_CONCURRENCY concurrent calls).  Graph
+    # writes happen in Phase 2 sequentially so the Neo4j session is
+    # never accessed concurrently.
+    # ------------------------------------------------------------------
+
+    semaphore = asyncio.Semaphore(_ENRICHMENT_CONCURRENCY)
+
+    async def _prepare_and_extract(entity_id: str):
+        """Return (entity_id, entity_data, entity_def, allowed_targets, extracted)
+        or None when the entity should be skipped."""
         entity_data = existing_entities_map.get(entity_id)
         if not entity_data:
-            stats["skipped_entities"] += 1
-            continue
+            return None
 
         alias = entity_data.get("alias") or ""
         scene_refs = set(proposal_scene_refs.get(_norm(alias), []))
@@ -730,7 +953,9 @@ async def _apply_enrichment_updates(
         for scene in scene_proposals:
             related = _effective_scene_related(scene)
             for rel in related:
-                rel_id = rel.get("entity_instance_id") or _resolve_alias([rel.get("alias"), rel.get("canonical")], alias_to_entity_id)
+                rel_id = rel.get("entity_instance_id") or _resolve_alias(
+                    [rel.get("alias"), rel.get("canonical")], alias_to_entity_id
+                )
                 if rel_id == entity_id:
                     scene_refs.add(str(scene.get("scene_ref") or ""))
 
@@ -745,32 +970,77 @@ async def _apply_enrichment_updates(
                 allowed_targets |= scene_ref_to_entities.get(scene_ref, set())
 
         if not chunks:
-            stats["skipped_entities"] += 1
-            continue
+            return None
 
         definition_id = entity_data.get("definition_id")
         entity_def = entity_definitions_map.get(definition_id)
         if not entity_def:
+            return None
+        related_entities_for_prompt: list[dict[str, Any]] = []
+        for target_id in sorted(allowed_targets):
+            target_data = existing_entities_map.get(target_id) or {}
+            target_def_id = target_data.get("definition_id")
+            target_def = entity_definitions_map.get(target_def_id) or {}
+            related_entities_for_prompt.append(
+                {
+                    "entity_instance_id": target_id,
+                    "alias": target_data.get("alias") or target_id,
+                    "entity_type_name": target_def.get("name") or "Entity",
+                }
+            )
+
+        async with semaphore:
+            extracted = await generator._extract_properties_and_relationships(
+                entity_definition_id=definition_id,
+                entity_alias=alias,
+                entity_type_name=entity_def.get("name") or "Entity",
+                properties_catalog=entity_def.get("properties") or [],
+                relationships_catalog=entity_def.get("relationships") or [],
+                chunks=chunks,
+                related_entities=related_entities_for_prompt,
+                original_text=original_text,
+                is_update=True,
+                existing_text=entity_data.get("text") or "",
+                existing_autogenerated_text=entity_data.get("autogenerated_text") or "",
+                existing_properties=entity_data.get("properties") or [],
+                existing_relationships=entity_data.get("relationships") or [],
+            )
+
+        return (entity_id, entity_data, entity_def, allowed_targets, extracted)
+
+    stats["scanned_entities"] = len(target_entity_ids)
+    extraction_tasks = [_prepare_and_extract(eid) for eid in target_entity_ids]
+    extraction_results = await asyncio.gather(*extraction_tasks)
+    extraction_by_target = dict(zip(target_entity_ids, extraction_results, strict=False))
+
+    # ------------------------------------------------------------------
+    # Phase 2: Apply graph writes sequentially.
+    # ------------------------------------------------------------------
+    def _snippet(value: Any, *, limit: int = 50) -> str:
+        text = str(value or "").replace("\n", " ").strip()
+        if len(text) <= limit:
+            return text
+        return f"{text[:limit]}..."
+
+    for target_entity_id in target_entity_ids:
+        result_item = extraction_by_target.get(target_entity_id)
+        if result_item is None:
             stats["skipped_entities"] += 1
+            logger.info(
+                "architect.generate enrichment entity_id=%s status=not_updated reason=skipped_no_context_or_definition auto_text_50= attributes_50= relationships_added=0 summary_updated=false properties_updated=false",
+                target_entity_id,
+            )
             continue
 
-        extracted = await generator._extract_properties_and_relationships(
-            entity_definition_id=definition_id,
-            entity_alias=alias,
-            entity_type_name=entity_def.get("name") or "Entity",
-            properties_catalog=entity_def.get("properties") or [],
-            relationships_catalog=entity_def.get("relationships") or [],
-            chunks=chunks,
-            original_text=original_text,
-            is_update=True,
-            existing_text=entity_data.get("text") or "",
-            existing_autogenerated_text=entity_data.get("autogenerated_text") or "",
-            existing_properties=entity_data.get("properties") or [],
-            existing_relationships=entity_data.get("relationships") or [],
-        )
+        entity_id, entity_data, entity_def, allowed_targets, extracted = result_item
+        entity_alias = str(entity_data.get("alias") or "").strip() or entity_id
 
         existing_summary = (entity_data.get("autogenerated_text") or "").strip()
         candidate_summary = (extracted.updated_autogenerated_summary or "").strip()
+        summary_updated = False
+        properties_updated = False
+        relationships_added = 0
+        relationships_updated = 0
         if candidate_summary and not _summary_contains(existing_summary, candidate_summary):
             merged_summary = _merge_summaries(existing_summary, candidate_summary)
             await graph_session.run(
@@ -788,16 +1058,19 @@ async def _apply_enrichment_updates(
                 author_id=author_id,
             )
             stats["summary_updates"] += 1
+            summary_updated = True
+        else:
+            merged_summary = existing_summary
 
         # Update properties only when evidence indicates a change/new value.
-        result = await graph_session.run(
+        prop_result = await graph_session.run(
             """
             MATCH (e:EntityInstance {entity_instance_id: $entity_id})
             RETURN e.properties AS properties
             """,
             entity_id=entity_id,
         )
-        record = await result.single()
+        record = await prop_result.single()
         prop_map: dict[str, Any] = {}
         if record and record.get("properties"):
             raw_props = record.get("properties")
@@ -830,8 +1103,10 @@ async def _apply_enrichment_updates(
                 author_id=author_id,
             )
             stats["property_updates"] += 1
+            properties_updated = True
 
-        # Strict relationship rule: only create relationships to entities linked to the same scene context.
+        # Strict relationship rule: only create relationships to entities
+        # linked to the same scene context (entity-to-entity only).
         rel_defs = {r["id"]: r for r in (entity_def.get("relationships") or [])}
         for rel in extracted.new_relationships:
             rel_def = rel_defs.get(rel.definition_id)
@@ -844,32 +1119,66 @@ async def _apply_enrichment_updates(
             if not target_id or target_id not in allowed_targets:
                 continue
 
-            await graph_session.run(
+            rel_data = json.dumps({"justification": rel.justification or ""})
+            rel_check_result = await graph_session.run(
                 """
                 MATCH (source:EntityInstance {entity_instance_id: $source_id})
                 MATCH (target:EntityInstance {entity_instance_id: $target_id})
                 OPTIONAL MATCH (source)-[existing:RELATES_TO {
                     relationship_definition_id: $definition_id
                 }]->(target)
-                WITH source, target, existing
-                WHERE existing IS NULL
-                CREATE (source)-[:RELATES_TO {
-                    relationship_instance_id: $relationship_id,
-                    relationship_definition_id: $definition_id,
-                    destiny_entity_definition_id: $destiny_entity_definition_id,
-                    data: $data,
-                    created_at: datetime(),
-                    updated_at: datetime()
+                RETURN existing.data AS existing_data
+                LIMIT 1
+                """,
+                source_id=entity_id,
+                target_id=target_id,
+                definition_id=rel.definition_id,
+            )
+            rel_check_row = await rel_check_result.single()
+            existing_data = (rel_check_row or {}).get("existing_data")
+
+            await graph_session.run(
+                """
+                MATCH (source:EntityInstance {entity_instance_id: $source_id})
+                MATCH (target:EntityInstance {entity_instance_id: $target_id})
+                MERGE (source)-[rel:RELATES_TO {
+                    relationship_definition_id: $definition_id
                 }]->(target)
+                ON CREATE SET
+                    rel.relationship_instance_id = $relationship_id,
+                    rel.destiny_entity_definition_id = $destiny_entity_definition_id,
+                    rel.created_at = datetime(),
+                    rel.data = $data
+                SET rel.updated_at = datetime(),
+                    rel.data = $data
                 """,
                 source_id=entity_id,
                 target_id=target_id,
                 relationship_id=str(uuid4()),
                 definition_id=rel.definition_id,
                 destiny_entity_definition_id=rel_def.get("destiny_entity_id"),
-                data=json.dumps({"justification": rel.justification or ""}),
+                data=rel_data,
             )
-            stats["relationship_creates"] += 1
+            if existing_data is None:
+                stats["relationship_creates"] += 1
+                relationships_added += 1
+            elif existing_data != rel_data:
+                stats["relationship_updates"] += 1
+                relationships_updated += 1
+
+        was_updated = summary_updated or properties_updated or relationships_added > 0
+        logger.info(
+            "architect.generate enrichment entity=%s entity_id=%s status=%s auto_text_50=%s attributes_50=%s relationships_added=%d relationships_updated=%d summary_updated=%s properties_updated=%s",
+            entity_alias,
+            entity_id,
+            "updated" if was_updated else "not_updated",
+            _snippet(merged_summary, limit=50),
+            _snippet(json.dumps(prop_map, ensure_ascii=False), limit=50),
+            relationships_added,
+            relationships_updated,
+            summary_updated,
+            properties_updated,
+        )
 
     return stats
 
@@ -927,11 +1236,26 @@ def _effective_proposal_type(proposal: dict[str, Any]) -> str:
 
 def _extract_effective_entity_instance_id(proposal: dict[str, Any]) -> str | None:
     updates = proposal.get("updates") or {}
+    entity_in_instance_updates = updates.get("entityInInstance")
+    if not isinstance(entity_in_instance_updates, dict):
+        entity_in_instance_updates = {}
+    entity_in_instance_proposal = proposal.get("entityInInstance")
+    if not isinstance(entity_in_instance_proposal, dict):
+        entity_in_instance_proposal = {}
+
     value = (
         updates.get("corrected_entity_instance_id")
+        or updates.get("correctedEntityInstanceId")
         or updates.get("entity_instance_id")
+        or updates.get("entityInstanceId")
+        or entity_in_instance_updates.get("entity_instance_id")
+        or entity_in_instance_updates.get("entityInstanceId")
         or proposal.get("corrected_entity_instance_id")
+        or proposal.get("correctedEntityInstanceId")
         or proposal.get("entity_instance_id")
+        or proposal.get("entityInstanceId")
+        or entity_in_instance_proposal.get("entity_instance_id")
+        or entity_in_instance_proposal.get("entityInstanceId")
     )
     normalized = str(value or "").strip()
     return normalized or None
@@ -945,6 +1269,116 @@ def _extract_effective_definition_id(proposal: dict[str, Any]) -> Any:
         or proposal.get("corrected_entity_definition_id")
         or proposal.get("entity_definition_id")
     )
+
+
+def _extract_merge_update(proposal: dict[str, Any]) -> dict[str, Any] | None:
+    updates = proposal.get("updates") or {}
+    merge = updates.get("merge")
+    if isinstance(merge, dict):
+        return merge
+    return None
+
+
+def _parse_analysis_entity_index(value: Any) -> int | None:
+    raw = str(value or "").strip().lower()
+    if not raw:
+        return None
+    direct = re.fullmatch(r"\d+", raw)
+    if direct:
+        return int(raw)
+    match = re.search(r"(?:analysis-entity-|entity-)(\d+)$", raw)
+    if not match:
+        return None
+    return int(match.group(1))
+
+
+def _resolve_maintained_entity_id(
+    *,
+    merge_update: dict[str, Any],
+    alias_to_entity_id: dict[str, str],
+    proposal_to_entity_id: dict[int, str],
+) -> str | None:
+    maintained_alias = str(merge_update.get("maintained_alias") or "").strip()
+    if maintained_alias:
+        resolved = alias_to_entity_id.get(_norm(maintained_alias))
+        if resolved:
+            return resolved
+
+    explicit_id = str(
+        merge_update.get("maintained_entity_instance_id")
+        or merge_update.get("maintained_entity_id")
+        or ""
+    ).strip()
+    if explicit_id:
+        return explicit_id
+
+    proposal_index_candidates: list[int] = []
+    for key in [
+        "maintained_proposal_index",
+        "merged_into_proposal_index",
+    ]:
+        raw = merge_update.get(key)
+        if isinstance(raw, int):
+            proposal_index_candidates.append(raw)
+
+    for key in [
+        "maintained_proposal_id",
+        "merged_into_proposal_id",
+        "maintained_proposal",
+        "merged_into_proposal",
+    ]:
+        parsed = _parse_analysis_entity_index(merge_update.get(key))
+        if parsed is not None:
+            proposal_index_candidates.append(parsed)
+
+    for proposal_index in proposal_index_candidates:
+        mapped = proposal_to_entity_id.get(proposal_index)
+        if mapped:
+            return mapped
+
+    return None
+
+
+def _merge_ref_lists(existing: list[str], incoming: list[str]) -> list[str]:
+    merged: list[str] = []
+    for ref in [*existing, *incoming]:
+        ref_str = str(ref or "").strip()
+        if not ref_str:
+            continue
+        if ref_str not in merged:
+            merged.append(ref_str)
+    return merged
+
+
+def _resolve_related_target_entity_id(
+    *,
+    related: dict[str, Any],
+    proposal_to_entity_id: dict[int, str],
+    alias_to_entity_id: dict[str, str],
+    alias_candidates: list[Any],
+    fallback_entity_instance_id: Any,
+    valid_entity_ids: set[str],
+) -> str | None:
+    proposal_index = related.get("proposal_index")
+    parsed_index: int | None = None
+    if isinstance(proposal_index, int):
+        parsed_index = proposal_index
+    elif isinstance(proposal_index, str) and proposal_index.strip().isdigit():
+        parsed_index = int(proposal_index.strip())
+
+    if parsed_index is not None:
+        mapped = proposal_to_entity_id.get(parsed_index)
+        if mapped:
+            return mapped
+
+    resolved_alias = _resolve_alias(alias_candidates, alias_to_entity_id)
+    if resolved_alias:
+        return resolved_alias
+
+    fallback = str(fallback_entity_instance_id or "").strip()
+    if fallback and fallback in valid_entity_ids:
+        return fallback
+    return None
 
 
 def _effective_scene_related(scene: dict[str, Any]) -> list[dict[str, Any]]:
@@ -1079,6 +1513,89 @@ def _normalize_milestone_groups(
     return list(grouped.values())
 
 
+def _canonicalize_entity_proposals(raw: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    canonical: list[dict[str, Any]] = []
+    for item in raw:
+        updates = item.get("updates") or {}
+        if not isinstance(updates, dict):
+            updates = {}
+        effective_name = (
+            str(updates.get("name") or item.get("name") or "").strip() or "Unnamed"
+        )
+        effective_scene_refs = _merge_ref_lists([], item.get("scene_refs") or [])
+        effective_ontology = (
+            str(updates.get("ontology") or item.get("ontology") or "").strip()
+        )
+        canonical.append(
+            {
+                **item,
+                "updates": updates,
+                "effective_status": _norm(item.get("status")),
+                "effective_name": effective_name,
+                "effective_scene_refs": effective_scene_refs,
+                "effective_ontology": effective_ontology,
+                "effective_proposal_type": _effective_proposal_type(item),
+                "effective_entity_instance_id": _extract_effective_entity_instance_id(item),
+                "effective_definition_id": _extract_effective_definition_id(item),
+                "effective_merge": _extract_merge_update(item),
+            }
+        )
+    return canonical
+
+
+def _canonicalize_scene_proposals(raw: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    canonical: list[dict[str, Any]] = []
+    for item in raw:
+        updates = item.get("updates") or {}
+        if not isinstance(updates, dict):
+            updates = {}
+        canonical.append(
+            {
+                **item,
+                "updates": updates,
+                "effective_status": _norm(item.get("status")),
+                "effective_name": (
+                    str(updates.get("name") or item.get("scene_name") or "Scene").strip() or "Scene"
+                ),
+                "effective_related_to": _effective_scene_related({**item, "updates": updates}),
+            }
+        )
+    return canonical
+
+
+def _canonicalize_milestone_groups(raw: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    canonical_groups: list[dict[str, Any]] = []
+    for group in raw:
+        milestones = group.get("milestones") or []
+        canonical_milestones: list[dict[str, Any]] = []
+        for milestone in milestones:
+            if not isinstance(milestone, dict):
+                continue
+            updates = milestone.get("updates") or {}
+            if not isinstance(updates, dict):
+                updates = {}
+            canonical_milestones.append(
+                {
+                    **milestone,
+                    "updates": updates,
+                    "effective_status": _norm(milestone.get("status")),
+                    "effective_name": (
+                        str(milestone.get("title") or milestone.get("label") or "Milestone").strip() or "Milestone"
+                    ),
+                    "effective_related_to": _effective_milestone_related(
+                        {**milestone, "updates": updates}
+                    ),
+                }
+            )
+        canonical_groups.append(
+            {
+                **group,
+                "milestones": canonical_milestones,
+            }
+        )
+    return canonical_groups
+
+
 def _is_approved(status: Any) -> bool:
     return str(status or "").lower() in {"approved", "approved_with_updates", "merged"}
 
@@ -1101,6 +1618,35 @@ def _resolve_alias(candidates: list[Any], alias_to_entity_id: dict[str, str]) ->
         if normalized and normalized in alias_to_entity_id:
             return alias_to_entity_id[normalized]
     return None
+
+
+def _proposal_alias_keys(proposal: dict[str, Any]) -> list[str]:
+    candidates: list[Any] = []
+    updates = proposal.get("updates") or {}
+    if isinstance(updates, dict):
+        candidates.extend(
+            [
+                updates.get("name"),
+                updates.get("corrected_alias"),
+            ]
+        )
+    candidates.extend(
+        [
+            proposal.get("effective_name"),
+            proposal.get("name"),
+            proposal.get("corrected_alias"),
+            proposal.get("canonical"),
+        ]
+    )
+
+    keys: list[str] = []
+    for candidate in candidates:
+        normalized = _norm(candidate)
+        if not normalized:
+            continue
+        if normalized not in keys:
+            keys.append(normalized)
+    return keys
 
 
 def _build_summary_candidate(chunks: list[str], max_chars: int = 900) -> str:

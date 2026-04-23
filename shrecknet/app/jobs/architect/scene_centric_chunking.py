@@ -16,6 +16,8 @@ logger = logging.getLogger(__name__)
 
 
 PARAGRAPH_MARKER_PATTERN = re.compile(r"^\[P(\d+)\]\s*(.*)$")
+_BULLET_OR_NUMBERED_START = re.compile(r"^\s*(?:[●•\-\*]\s+|\d+[.)]\s+)")
+_TIMESTAMP_MARKER = re.compile(r"\(\d{1,2}:\d{2}:\d{2}\)")
 
 
 @dataclass
@@ -113,7 +115,37 @@ def _looks_like_html(value: str) -> bool:
 
 def _extract_non_html_paragraphs(text: str) -> list[str]:
     parts = re.split(r"\n\s*\n+", text)
-    return [" ".join(unescape(part).split()) for part in parts if part and part.strip()]
+    normalized_parts = [
+        " ".join(unescape(part).split()) for part in parts if part and part.strip()
+    ]
+    if len(normalized_parts) > 1:
+        return normalized_parts
+
+    # Fallback for transcript-like inputs that use single newlines with list markers
+    # rather than blank lines between semantic blocks.
+    lines = [line.strip() for line in text.splitlines() if line and line.strip()]
+    if not lines:
+        return []
+
+    blocks: list[list[str]] = []
+    current: list[str] = []
+    for line in lines:
+        starts_block = bool(_BULLET_OR_NUMBERED_START.match(line)) or bool(
+            _TIMESTAMP_MARKER.search(line)
+        )
+        if starts_block and current:
+            blocks.append(current)
+            current = [line]
+            continue
+        current.append(line)
+
+    if current:
+        blocks.append(current)
+
+    if len(blocks) <= 1:
+        return normalized_parts
+
+    return [" ".join(unescape(" ".join(block)).split()) for block in blocks if block]
 
 
 def extract_paragraphs_from_sources(

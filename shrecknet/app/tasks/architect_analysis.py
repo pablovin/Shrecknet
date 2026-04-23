@@ -594,6 +594,24 @@ async def _load_existing_nodes(
     return nodes
 
 
+def _existing_nodes_from_instance(ontology_instance: Any) -> list[dict[str, Any]]:
+    """Build reconciliation catalogue from entities in the target ontology instance only."""
+    nodes: list[dict[str, Any]] = []
+    for entity in getattr(ontology_instance, "entities", []) or []:
+        node_id = str(getattr(entity, "entity_instance_id", "") or "").strip()
+        alias = str(getattr(entity, "alias", "") or "").strip()
+        if not node_id or not alias:
+            continue
+        nodes.append(
+            {
+                "node_id": node_id,
+                "alias": alias,
+                "ontology": str(getattr(entity, "definition_id", "") or "").strip(),
+            }
+        )
+    return nodes
+
+
 def _flatten_scene_inputs(chunk_results: list[dict[str, Any]]) -> list[dict[str, Any]]:
     scenes: list[dict[str, Any]] = []
     for chunk in chunk_results:
@@ -1255,14 +1273,13 @@ async def _run_milestone_proposal_phase(
                     }
                 )
 
-            if milestones:
-                milestones = _ensure_scene_milestone_boundaries(
-                    milestones,
-                    scene_ref=scene_ref,
-                    scene_id=scene_id,
-                    source_entity_instance_id=scene.get("source_entity_instance_id"),
-                    author_id=author_id,
-                )
+            milestones = _ensure_scene_milestone_boundaries(
+                milestones,
+                scene_ref=scene_ref,
+                scene_id=scene_id,
+                source_entity_instance_id=scene.get("source_entity_instance_id"),
+                author_id=author_id,
+            )
 
             logger.info(
                 "milestone_proposal_scene_total: run_id=%s scene_ref=%s milestone_count=%d",
@@ -1278,16 +1295,9 @@ async def _run_milestone_proposal_phase(
             }
 
     by_scene = await asyncio.gather(*(_process_scene(scene) for scene in proposed_scenes))
-    removed_scene_refs = [row.get("scene_ref") for row in by_scene if not row.get("milestones")]
-    kept_scene_refs = [row.get("scene_ref") for row in by_scene if row.get("milestones")]
-
-    if removed_scene_refs:
-        logger.info(
-            "milestone_proposal_scene_prune: run_id=%s removed_scene_count=%d removed_scene_refs=%s",
-            run_id,
-            len(removed_scene_refs),
-            removed_scene_refs,
-        )
+    # Milestones are always coerced to at least begin/end per scene.
+    removed_scene_refs: list[str] = []
+    kept_scene_refs = [row.get("scene_ref") for row in by_scene if row.get("scene_ref")]
 
     all_milestones: list[dict[str, Any]] = []
     for row in by_scene:
@@ -1552,15 +1562,23 @@ async def _execute_architect_pipeline(
                 max_retries=3,
             )
 
-            agent_ontology_ids = [ontology.id for ontology in agent.ontologies]
-            if ontology_id not in agent_ontology_ids:
-                agent_ontology_ids.append(ontology_id)
-
+            existing_nodes = _existing_nodes_from_instance(ontology_instance)
+            # Always merge with graph catalogue so reconciliation sees persisted entities
+            # beyond whatever happens to be present in the loaded instance payload.
             graph_retriever = Neo4jGraphRetriever(graph_session)
-            existing_nodes = await _load_existing_nodes(
+            graph_nodes = await _load_existing_nodes(
                 graph_retriever,
-                agent_ontology_ids,
+                [ontology_id],
             )
+            if graph_nodes:
+                merged_nodes: dict[str, dict[str, Any]] = {}
+                for node in [*existing_nodes, *graph_nodes]:
+                    node_id = str(node.get("node_id") or "").strip()
+                    alias = str(node.get("alias") or "").strip()
+                    if not node_id or not alias:
+                        continue
+                    merged_nodes[node_id] = node
+                existing_nodes = list(merged_nodes.values())
 
             try:
                 result = await _run_scene_centric_chunking_test(
@@ -1672,23 +1690,9 @@ async def _run_scene_centric_chunking_test(
     )
     proposed_milestones = milestone_phase["proposed_milestones"]
     milestones_per_scene = milestone_phase["per_scene"]
-    scene_refs_with_milestones = set(milestone_phase["scene_refs_with_milestones"])
     removed_scene_refs = milestone_phase["removed_scene_refs"]
     removed_scene_count = milestone_phase["removed_scene_count"]
     milestone_proposal_elapsed_seconds = milestone_phase["elapsed_seconds"]
-
-    if removed_scene_count:
-        original_scene_count = len(proposed_scenes)
-        proposed_scenes = [
-            scene for scene in proposed_scenes if scene.get("scene_ref") in scene_refs_with_milestones
-        ]
-        logger.info(
-            "scene_proposal_prune_after_milestones: run_id=%s original_scene_count=%d kept_scene_count=%d removed_scene_count=%d",
-            run_id,
-            original_scene_count,
-            len(proposed_scenes),
-            removed_scene_count,
-        )
 
     pipeline_output_payload = {
         "run_id": run_id,

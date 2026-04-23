@@ -60,9 +60,9 @@ class SemanticSearchRequest(BaseModel):
     score_threshold: float = Field(0.0, description="Minimum score", ge=0.0, le=1.0)
     include_neighbors: bool = Field(True, description="Include neighbor nodes")
     neighbor_limit: int = Field(10, description="Max neighbors per node", ge=1, le=50)
-    node_scope: Literal["everything", "entity", "scene"] = Field(
+    node_scope: Literal["everything", "entity", "scene", "milestone", "mixed"] = Field(
         "everything",
-        description="Limit retrieval to entity nodes, scene nodes, or both",
+        description="Limit retrieval to entity, scene, milestone nodes, or mixed",
     )
     candidate_limit: int = Field(
         40,
@@ -116,9 +116,9 @@ class ContextRequest(BaseModel):
     ontology_id: int | None = Field(None, description="Filter by ontology")
     k: int = Field(5, description="Number of results", ge=1, le=20)
     score_threshold: float = Field(0.5, description="Minimum score", ge=0.0, le=1.0)
-    node_scope: Literal["everything", "entity", "scene"] = Field(
+    node_scope: Literal["everything", "entity", "scene", "milestone", "mixed"] = Field(
         "everything",
-        description="Limit retrieval to entity nodes, scene nodes, or both",
+        description="Limit retrieval to entity, scene, milestone nodes, or mixed",
     )
 
 

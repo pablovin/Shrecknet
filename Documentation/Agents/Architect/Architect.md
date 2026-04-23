@@ -69,13 +69,39 @@ Input contract:
 
 - `ArchitectGenerationRequest` with `reviewed_pipeline_output`
 
+Route handler: `generate_entities_from_validated_proposals` in `shrecknet/app/api/routers/architect.py`.
+Dispatches to Celery task `architect.generate_entities` (`shrecknet/app/tasks/architect_generation.py`).
+
+Input contract:
+
+- `ArchitectGenerationRequest` with `reviewed_pipeline_output`
+
 High-level flow:
 
-1. Insert approved new entities.
-2. Insert approved scenes and scene ordering links.
-3. Insert approved milestones and milestone ordering links.
-4. Enrich/update validated entities with scene-bounded evidence.
+0. Canonicalize all reviewed payload updates (entities, scenes, milestones).
+1. Insert approved new entities. Build `proposal_to_entity_id` map.
+2. Insert approved scenes and scene ordering links. Persist Scene → Entity RELATES_TO edges.
+3. Insert approved milestones grouped by scene. Persist Milestone → Entity RELATES_TO edges.
+4. Enrich and update validated entities with scene-bounded evidence (parallel LLM, max 10 concurrent).
 5. Trigger post-generation jobs (`link_instance`, `embed_nodes`, `embed_instance`).
+6. Sync proposal states and store final reconciliation payload in job details.
+
+### Step 4 Guarantees
+
+- Only entities from the approved new/update proposal set are written. Scenes and milestones are never mutated in Step 4.
+- Relationships produced by Step 4 are strictly entity-to-entity (`EntityInstance → EntityInstance`). No edges to Scene or Milestone nodes are created.
+- LLM extraction calls run in parallel with a maximum concurrency of 10 (`asyncio.Semaphore(10)` + `asyncio.gather`). Graph writes remain sequential.
+- Relationship targets must resolve to an entity that appears in the same scene context as the source entity (scene-bounded policy).
+
+### Final Reconciliation Payload
+
+When the job completes, `GET /jobs/{generation_job_id}` returns a `details` object that contains:
+
+- `entity_reconciliation` — list of `{proposal_index, entity_instance_id}` for every created/updated entity.
+- `scene_reconciliation` — list of `{scene_ref, scene_id}` for every persisted scene.
+- `milestone_reconciliation` — list of `{milestone_ref, milestone_id}` for every persisted milestone.
+
+The `generation_job_id` is available on the `ArchitectAnalysisRun` returned by `GET /jobs/architect/runs/{run_id}`.
 
 Detailed generate doc:
 
@@ -101,7 +127,8 @@ Files:
 - Analyze does not mutate graph entities/scenes/milestones.
 - Generate performs persistence and then kicks link/embed maintenance jobs.
 - OpenAI configuration is required for analyze and enrichment logic in generate.
-- Frontend should poll `/jobs/{job_id}` until `done`.
+- Frontend should poll `/jobs/{generation_job_id}` until status is `done`. The `details` field of the completed job contains the full reconciliation payload.
+- `generation_job_id` is set on the run after the Celery task starts. If not yet populated, poll `GET /jobs/architect/runs/{run_id}` briefly before starting job polling.
 
 Endpoint reference:
 

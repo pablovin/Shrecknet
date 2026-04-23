@@ -37,6 +37,7 @@ class RetrievalService:
     def __init__(self, graph_session: AsyncNeo4jSession) -> None:
         self.graph_session = graph_session
         self.embedding_service = EmbeddingService(graph_session)
+        self.neighbor_parallelism_cap = 8
 
     @staticmethod
     def _is_temporal_query(query_terms: set[str]) -> bool:
@@ -168,6 +169,7 @@ class RetrievalService:
         include_neighbors: bool = True,
         neighbor_limit: int = 10,
         node_scope: str = "everything",
+        allowed_labels: list[str] | None = None,
         candidate_limit: int | None = None,
         rerank_limit: int | None = None,
     ) -> dict[str, Any]:
@@ -200,11 +202,18 @@ class RetrievalService:
         )
 
         node_scope = (node_scope or "everything").strip().lower()
-        allowed_labels = ["EntityInstance", "Scene", "Milestone"]
-        if node_scope == "entity":
-            allowed_labels = ["EntityInstance"]
-        elif node_scope == "scene":
-            allowed_labels = ["Scene"]
+        effective_allowed_labels = allowed_labels or [
+            "EntityInstance",
+            "Scene",
+            "Milestone",
+        ]
+        if allowed_labels is None:
+            if node_scope == "entity":
+                effective_allowed_labels = ["EntityInstance"]
+            elif node_scope == "scene":
+                effective_allowed_labels = ["Scene"]
+            elif node_scope == "milestone":
+                effective_allowed_labels = ["Milestone"]
 
         candidate_k = max(k * 4, k)
         if candidate_limit is not None:
@@ -229,7 +238,7 @@ class RetrievalService:
             query_embedding=query_embedding,
             score_threshold=score_threshold,
             ontology_id=ontology_id,
-            allowed_labels=allowed_labels,
+            allowed_labels=effective_allowed_labels,
         )
         records = await result.data()
         t_query = time.monotonic() - t_query_start
@@ -457,12 +466,27 @@ class RetrievalService:
         scene_neighbor_sets: list[set[str]] = []
         t_neighbors_start = time.monotonic()
         total_neighbors_retrieved = 0
+
+        node_ids = [
+            str(node_info.get("node_id"))
+            for node_info in nodes_data
+            if node_info.get("node_id")
+        ]
+        neighbors_by_node: dict[str, list[dict[str, Any]]] = {}
+        if node_ids:
+            try:
+                neighbors_by_node = await self._fetch_neighbors_batch(node_ids, neighbor_limit)
+            except Exception:
+                # Fallback keeps behavior resilient if batch query fails unexpectedly.
+                neighbors_by_node = await self._fetch_neighbors_parallel_fallback(
+                    node_ids=node_ids,
+                    limit=neighbor_limit,
+                )
+
         for node_info in nodes_data:
             node_id = node_info.get("node_id")
-            if not node_id:
-                node_info["_neighbors"] = []
-                continue
-            neighbors = await self._fetch_neighbors(node_id, neighbor_limit)
+            node_key = str(node_id) if node_id is not None else ""
+            neighbors = neighbors_by_node.get(node_key, [])
             total_neighbors_retrieved += len(neighbors)
             node_info["_neighbors"] = neighbors
             label = (
@@ -472,11 +496,7 @@ class RetrievalService:
             )
             if label == "Scene":
                 scene_neighbor_sets.append(
-                    {
-                        str(n.get("node_id"))
-                        for n in neighbors
-                        if n.get("node_id")
-                    }
+                    {str(n.get("node_id")) for n in neighbors if n.get("node_id")}
                 )
 
         t_neighbors = time.monotonic() - t_neighbors_start
@@ -557,6 +577,13 @@ class RetrievalService:
             "ontology_id": ontology_id,
             "node_scope": node_scope,
             "evidence_bundles": evidence_bundles,
+            "debug_stats": {
+                "raw_candidates": len(records),
+                "after_parent_grouping": len(grouped),
+                "after_dedup": len(grouped_nodes),
+                "final_k": len(nodes_data),
+                "allowed_labels": effective_allowed_labels,
+            },
         }
 
         try:
@@ -623,6 +650,96 @@ class RetrievalService:
             )
 
         return neighbors
+
+    async def _fetch_neighbors_batch(
+        self, node_ids: list[str], limit: int = 10
+    ) -> dict[str, list[dict[str, Any]]]:
+        """
+        Fetch neighbors for many nodes in one query, grouped by source node ID.
+
+        Args:
+            node_ids: Source node IDs
+            limit: Max neighbors per source node
+
+        Returns:
+            Mapping {source_node_id -> list of neighbor info dicts}
+        """
+        query = """
+        UNWIND $node_ids AS node_id
+        MATCH (n)
+            WHERE (
+                n['entity_instance_id'] = node_id
+                OR n['id'] = node_id
+            )
+            AND any(label IN labels(n) WHERE label IN ['EntityInstance', 'Scene', 'Milestone'])
+        MATCH (n)-[r]->(m)
+            WHERE any(label IN labels(m) WHERE label IN ['EntityInstance', 'Scene', 'Milestone'])
+        WITH node_id, type(r) AS rel_type,
+             coalesce(m['entity_instance_id'], m['id']) AS related_node_id,
+             coalesce(m['name'], m['title'], m['alias'], m['entity_instance_id'], m['id']) AS related_name,
+             CASE
+                 WHEN 'Scene' IN labels(m) THEN 'Scene'
+                 WHEN 'Milestone' IN labels(m) THEN 'Milestone'
+                 ELSE head(labels(m))
+             END AS related_label
+        WITH node_id, collect({
+            rel_type: rel_type,
+            node_id: related_node_id,
+            name: related_name,
+            label: related_label
+        })[..$limit] AS neighbors
+        RETURN node_id, neighbors
+        """
+
+        result = await self.graph_session.run(
+            query, node_ids=node_ids, limit=limit
+        )
+        records = await result.data()
+        out: dict[str, list[dict[str, Any]]] = {}
+        for record in records:
+            source_node_id = str(record.get("node_id") or "")
+            if not source_node_id:
+                continue
+            neighbors = record.get("neighbors") or []
+            out[source_node_id] = [
+                {
+                    "rel_type": n.get("rel_type"),
+                    "node_id": n.get("node_id"),
+                    "name": n.get("name"),
+                    "label": n.get("label"),
+                }
+                for n in neighbors
+            ]
+        return out
+
+    async def _fetch_neighbors_parallel_fallback(
+        self, *, node_ids: list[str], limit: int = 10
+    ) -> dict[str, list[dict[str, Any]]]:
+        semaphore = asyncio.Semaphore(self.neighbor_parallelism_cap)
+
+        async def _one(node_id: str) -> tuple[str, list[dict[str, Any]]]:
+            async with semaphore:
+                neighbors = await self._fetch_neighbors(node_id, limit)
+                return node_id, neighbors
+
+        tasks = [_one(node_id) for node_id in node_ids]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        out: dict[str, list[dict[str, Any]]] = {}
+        had_errors = False
+        for idx, result in enumerate(results):
+            if isinstance(result, Exception):
+                had_errors = True
+                continue
+            node_id, neighbors = result
+            out[node_id] = neighbors
+
+        if had_errors:
+            # Fall back to fully sequential fetches for unresolved nodes.
+            for node_id in node_ids:
+                if node_id in out:
+                    continue
+                out[node_id] = await self._fetch_neighbors(node_id, limit)
+        return out
 
     async def get_context_for_llm(
         self,

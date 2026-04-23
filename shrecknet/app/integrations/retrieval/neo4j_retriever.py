@@ -1,7 +1,11 @@
 """Neo4j graph retriever for Elder pipeline."""
 
+from __future__ import annotations
+
 import asyncio
 import logging
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
 from typing import Any, Protocol
 
 from neo4j import AsyncSession as AsyncNeo4jSession
@@ -21,6 +25,7 @@ class GraphRetriever(Protocol):
         ontology_ids: list[int],
         top_k: int = 10,
         node_scope: str = "everything",
+        allowed_labels: list[str] | None = None,
         candidate_limit: int | None = None,
         rerank_limit: int | None = None,
     ) -> list[RetrievedChunk]:
@@ -79,17 +84,36 @@ class GraphRetriever(Protocol):
 class Neo4jGraphRetriever:
     """Neo4j-based graph retriever using existing GraphRAG service."""
 
-    def __init__(self, graph_session: AsyncNeo4jSession):
+    def __init__(
+        self,
+        graph_session: AsyncNeo4jSession | None = None,
+        *,
+        session_factory: Callable[[], AsyncIterator[AsyncNeo4jSession]] | None = None,
+    ):
         """
         Initialize retriever.
 
         Args:
-            graph_session: Neo4j async session
+            graph_session: Neo4j async session (shared-session compatibility mode)
+            session_factory: Factory that yields a fresh Neo4j session per search call
         """
-        self.retrieval_service = RetrievalService(graph_session)
-        # Guard concurrent searches sharing a single AsyncSession
+        if graph_session is None and session_factory is None:
+            raise ValueError("Either graph_session or session_factory must be provided")
+        self._graph_session = graph_session
+        self._session_factory = session_factory
+        # Guard concurrent searches only when sharing a single AsyncSession
         self._search_lock = asyncio.Lock()
         self.last_errors: list[str] = []
+        self.last_search_stats: list[dict[str, Any]] = []
+
+    @asynccontextmanager
+    async def _acquire_session(self) -> AsyncIterator[AsyncNeo4jSession]:
+        if self._session_factory is not None:
+            async with self._session_factory() as session:
+                yield session
+            return
+        assert self._graph_session is not None
+        yield self._graph_session
 
     async def search(
         self,
@@ -97,6 +121,7 @@ class Neo4jGraphRetriever:
         ontology_ids: list[int],
         top_k: int = 10,
         node_scope: str = "everything",
+        allowed_labels: list[str] | None = None,
         candidate_limit: int | None = None,
         rerank_limit: int | None = None,
     ) -> list[RetrievedChunk]:
@@ -121,6 +146,7 @@ class Neo4jGraphRetriever:
 
         # reset error buffer
         self.last_errors = []
+        self.last_search_stats = []
         logger.info(
             "retrieval_start: query='%s' ontologies=%s top_k=%d",
             query,
@@ -131,20 +157,27 @@ class Neo4jGraphRetriever:
         # If no ontologies specified, search across all
         search_ontologies = ontology_ids if ontology_ids else [None]
 
-        # Important: do not run queries concurrently on a single AsyncSession
-        # Serialize per-ontology searches to avoid driver read() contention
-        async with self._search_lock:
+        async def _run_searches(session: AsyncNeo4jSession) -> None:
+            retrieval_service = RetrievalService(session)
             for oid in search_ontologies:
                 try:
-                    results = await self.retrieval_service.semantic_search(
+                    results = await retrieval_service.semantic_search(
                         query=query,
                         ontology_id=oid,
                         k=top_k,
                         score_threshold=0.1,
                         include_neighbors=False,
                         node_scope=node_scope,
+                        allowed_labels=allowed_labels,
                         candidate_limit=candidate_limit,
                         rerank_limit=rerank_limit,
+                    )
+                    self.last_search_stats.append(
+                        {
+                            "ontology_id": oid,
+                            "query": query,
+                            "debug_stats": results.get("debug_stats") or {},
+                        }
                     )
                     nodes = results.get("results", [])
                     for rank, node in enumerate(nodes, start=1):
@@ -221,6 +254,14 @@ class Neo4jGraphRetriever:
                     logger.error(f"Error searching ontology {oid}: {e}")
                     self.last_errors.append(msg)
 
+        async with self._acquire_session() as session:
+            # In shared-session mode, serialize to avoid AsyncSession contention.
+            if self._session_factory is None:
+                async with self._search_lock:
+                    await _run_searches(session)
+            else:
+                await _run_searches(session)
+
         # Sort by score and take top_k
         chunks.sort(key=lambda c: c.score, reverse=True)
         return chunks[:top_k]
@@ -259,12 +300,11 @@ class Neo4jGraphRetriever:
         # If no ontologies specified, search across all
         search_ontologies = ontology_ids if ontology_ids else [None]
 
-        # Important: do not run queries concurrently on a single AsyncSession
-        # Serialize per-ontology searches to avoid driver read() contention
-        async with self._search_lock:
+        async def _run_searches(session: AsyncNeo4jSession) -> None:
+            retrieval_service = RetrievalService(session)
             for oid in search_ontologies:
                 try:
-                    results = await self.retrieval_service.semantic_search(
+                    results = await retrieval_service.semantic_search(
                         query=query,
                         ontology_id=oid,
                         k=top_k,
@@ -335,6 +375,14 @@ class Neo4jGraphRetriever:
                     logger.error(f"Error searching ontology {oid}: {e}")
                     self.last_errors.append(msg)
 
+        async with self._acquire_session() as session:
+            # In shared-session mode, serialize to avoid AsyncSession contention.
+            if self._session_factory is None:
+                async with self._search_lock:
+                    await _run_searches(session)
+            else:
+                await _run_searches(session)
+
         # Sort by score and take top_k
         chunks.sort(key=lambda c: c.score, reverse=True)
         return chunks[:top_k]
@@ -360,10 +408,19 @@ class Neo4jGraphRetriever:
         LIMIT 50
         """
         try:
-            result = await self.retrieval_service.graph_session.run(
-                query, ontology_ids=ontology_ids, max_aliases=max_aliases
-            )
-            records = await result.data()
+            async with self._acquire_session() as session:
+                retrieval_service = RetrievalService(session)
+                if self._session_factory is None:
+                    async with self._search_lock:
+                        result = await retrieval_service.graph_session.run(
+                            query, ontology_ids=ontology_ids, max_aliases=max_aliases
+                        )
+                        records = await result.data()
+                else:
+                    result = await retrieval_service.graph_session.run(
+                        query, ontology_ids=ontology_ids, max_aliases=max_aliases
+                    )
+                    records = await result.data()
             for r in records:
                 alias_list = [a for a in (r.get("aliases") or []) if a]
                 hint = f"aliases: {', '.join(alias_list)} | entities: {r.get('entity_count',0)}"
@@ -398,14 +455,25 @@ class Neo4jGraphRetriever:
         LIMIT $limit
         """
         try:
-            async with self._search_lock:
-                result = await self.retrieval_service.graph_session.run(
-                    query,
-                    ontology_id=ontology_id,
-                    skip=skip,
-                    limit=limit,
-                )
-                records = await result.data()
+            async with self._acquire_session() as session:
+                retrieval_service = RetrievalService(session)
+                if self._session_factory is None:
+                    async with self._search_lock:
+                        result = await retrieval_service.graph_session.run(
+                            query,
+                            ontology_id=ontology_id,
+                            skip=skip,
+                            limit=limit,
+                        )
+                        records = await result.data()
+                else:
+                    result = await retrieval_service.graph_session.run(
+                        query,
+                        ontology_id=ontology_id,
+                        skip=skip,
+                        limit=limit,
+                    )
+                    records = await result.data()
         except Exception as e:
             msg = f"ontology {ontology_id}: {e}"
             logger.error("Error fetching entities for ontology %s: %s", ontology_id, e)

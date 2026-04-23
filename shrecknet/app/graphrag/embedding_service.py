@@ -753,6 +753,111 @@ Summary: {summary}"""
             "embedding_dim": self.embed_dim,
         }
 
+    async def embed_scene_node(
+        self, scene_id: str, ontology_id: int | None = None
+    ) -> dict[str, Any]:
+        """Embed a single Scene node by rebuilding its scene-centric chunks."""
+        fetch_query = """
+        MATCH (scene:Scene {id: $scene_id})
+        WHERE $ontology_id IS NULL OR toInteger(scene.ontology_id) = toInteger($ontology_id)
+        OPTIONAL MATCH (scene)-[:CONTAINS]->(milestone:Milestone)
+        OPTIONAL MATCH (milestone)-[rel:RELATES_TO]->(entity:EntityInstance)
+        WITH scene,
+             collect(DISTINCT {
+                 id: milestone.id,
+                 name: milestone.name,
+                 description: milestone.description,
+                 temporal_type: milestone.temporal_type,
+                 boundary_type: milestone.boundary_type,
+                 created_at: milestone.created_at
+             }) AS milestones,
+             collect(DISTINCT {
+                 entity_instance_id: entity.entity_instance_id,
+                 entity_alias: entity.alias,
+                 entity_name: entity.name,
+                 label: rel.label,
+                 description: milestone.description
+             }) AS entity_links
+        RETURN scene.id AS scene_id,
+               scene.name AS scene_name,
+               scene.description AS scene_description,
+               [m IN milestones WHERE m.id IS NOT NULL] AS milestones,
+               [l IN entity_links WHERE l.entity_instance_id IS NOT NULL] AS entity_links
+        LIMIT 1
+        """
+        fetch_res = await self.graph_session.run(
+            fetch_query, scene_id=scene_id, ontology_id=ontology_id
+        )
+        row = await fetch_res.single()
+        if not row:
+            raise ValueError(f"Scene node {scene_id} not found")
+
+        milestones = sorted(
+            row.get("milestones") or [],
+            key=lambda item: str(item.get("created_at") or ""),
+        )
+        await self._refresh_scene_chunks(
+            scene_id=row["scene_id"],
+            scene_name=row.get("scene_name") or row["scene_id"],
+            scene_description=row.get("scene_description") or "",
+            ordered_milestones=milestones,
+            entity_links=row.get("entity_links") or [],
+        )
+        return {
+            "node_id": row["scene_id"],
+            "node_type": "scene",
+            "embedding_model": self.model_id,
+            "embedding_dim": self.embed_dim,
+        }
+
+    async def embed_milestone_node(
+        self, milestone_id: str, ontology_id: int | None = None
+    ) -> dict[str, Any]:
+        """Embed a single Milestone node by rebuilding its milestone-centric chunks."""
+        fetch_query = """
+        MATCH (milestone:Milestone {id: $milestone_id})
+        WHERE $ontology_id IS NULL OR toInteger(milestone.ontology_id) = toInteger($ontology_id)
+        OPTIONAL MATCH (milestone)-[rel:RELATES_TO]->(entity:EntityInstance)
+        RETURN milestone.id AS milestone_id,
+               milestone.name AS milestone_name,
+               milestone.description AS milestone_description,
+               milestone.temporal_type AS temporal_type,
+               milestone.boundary_type AS boundary_type,
+               collect(DISTINCT {
+                 entity_instance_id: entity.entity_instance_id,
+                 entity_alias: entity.alias,
+                 entity_name: entity.name,
+                 label: rel.label,
+                 description: milestone.description
+               }) AS relates_to
+        LIMIT 1
+        """
+        fetch_res = await self.graph_session.run(
+            fetch_query, milestone_id=milestone_id, ontology_id=ontology_id
+        )
+        row = await fetch_res.single()
+        if not row:
+            raise ValueError(f"Milestone node {milestone_id} not found")
+
+        await self._refresh_milestone_chunks(
+            milestone_id=row["milestone_id"],
+            milestone_name=row.get("milestone_name") or row["milestone_id"],
+            milestone_description=row.get("milestone_description") or "",
+            temporal_type=row.get("temporal_type"),
+            boundary_type=row.get("boundary_type"),
+            relates_to=[
+                item
+                for item in (row.get("relates_to") or [])
+                if item and item.get("entity_instance_id")
+            ],
+        )
+        return {
+            "node_id": row["milestone_id"],
+            "node_type": "milestone",
+            "embedding_model": self.model_id,
+            "embedding_dim": self.embed_dim,
+        }
+
     async def embed_ontology(
         self, ontology_id: int, batch_size: int = 50
     ) -> dict[str, Any]:

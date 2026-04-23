@@ -28,6 +28,8 @@ from app.schemas.ontology_instance import (
     MilestoneCreate,
     MilestoneRead,
     MilestoneUpdate,
+    OntologyEntityResolveRequest,
+    OntologyEntityResolveResponse,
     OntologyInstanceEntityTypeClearJobResponse,
     OntologyInstanceEntityTypeClearRequest,
     OntologyInstanceTimelineClearJobResponse,
@@ -108,6 +110,36 @@ async def search_ontology_instances(
         except Exception:
             logger.exception("Failed to serialize ontology search response")
         return response
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
+
+
+@router.post(
+    "/resolve-entities",
+    response_model=OntologyEntityResolveResponse,
+    summary="Resolve entity instance ids to ontology instances",
+    description=(
+        "Bulk-resolve entity instance ids constrained to a single ontology.\n\n"
+        "Validation semantics:\n"
+        "- `entity_instance_ids` accepts up to 200 unique ids.\n"
+        "- Empty/blank ids are ignored; if no valid ids remain the request is rejected.\n"
+        "- Duplicate ids are deduplicated while preserving first-seen order.\n"
+        "- IDs not found (or found outside `ontology_id`) are returned in "
+        "`missing_entity_instance_ids`."
+    ),
+)
+async def resolve_ontology_entities(
+    payload: OntologyEntityResolveRequest,
+    service: OntologyInstanceService = Depends(get_ontology_instance_service),
+    _: User = Depends(get_current_user),
+) -> OntologyEntityResolveResponse:
+    try:
+        return await service.resolve_entities(
+            ontology_id=payload.ontology_id,
+            entity_instance_ids=payload.entity_instance_ids,
+        )
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)

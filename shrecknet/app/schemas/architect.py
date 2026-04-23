@@ -203,7 +203,32 @@ class FrontendEntityProposalUpdates(BaseModel):
     name: str | None = None
     corrected_entity_definition_id: int | None = None
     corrected_entity_instance_id: str | None = None
+    corrected_proposal_type: str | None = None
+    entity_definition_id: int | None = None
+    entity_instance_id: str | None = None
+    proposal_type: str | None = None
     ontology: str | None = None
+    merge: dict[str, Any] | None = None
+
+
+class FrontendRelationshipDeletion(BaseModel):
+    operation: str | None = None
+    relation_type: str | None = None
+    target_proposal_index: int | None = None
+    target_alias: str | None = None
+    target_entity_instance_id: str | None = None
+
+
+class FrontendSceneProposalUpdates(BaseModel):
+    name: str | None = None
+    related_to: list[FrontendRelatedEntityRef] | None = None
+    additional_related_entity_instance_ids: list[str] | None = None
+    relationship_deletions: list[FrontendRelationshipDeletion] | None = None
+
+
+class FrontendMilestoneProposalUpdates(BaseModel):
+    related_to: list[dict[str, Any]] | None = None
+    relationship_deletions: list[FrontendRelationshipDeletion] | None = None
 
 
 class FrontendEntityProposal(BaseModel):
@@ -242,6 +267,7 @@ class FrontendSceneProposal(BaseModel):
     related_to: list[FrontendRelatedEntityRef] = Field(default_factory=list)
     preceded_by: FrontendSceneOrderRef | None = None
     followed_by: FrontendSceneOrderRef | None = None
+    updates: FrontendSceneProposalUpdates | None = None
     status: FrontendProposalStatus
 
 
@@ -261,6 +287,7 @@ class FrontendMilestoneProposal(BaseModel):
     boundary_type: Literal["begin", "end", "none"] = "none"
     milestone_order: int | None = None
     related_to: list[FrontendMilestoneRelation] = Field(default_factory=list)
+    updates: FrontendMilestoneProposalUpdates | None = None
     status: FrontendProposalStatus
 
 

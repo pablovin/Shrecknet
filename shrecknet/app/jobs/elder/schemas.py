@@ -1,7 +1,8 @@
 """Pydantic schemas for Elder job requests and responses."""
 
-from typing import Literal
-from typing import Any, Optional
+from __future__ import annotations
+
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -17,11 +18,11 @@ class RetrievedChunk(BaseModel):
         None, description="Parent ontology instance ID if available"
     )
     chunk_id: Optional[str] = Field(None, description="Chunk identifier")
-    chunk_type: Optional[str] = Field(None, description="Type of chunk (text/properties/relationships)")
+    chunk_type: Optional[str] = Field(None, description="Type of chunk")
     chunk_index: Optional[int] = Field(None, description="Chunk ordering index")
     text: str = Field(..., description="Context text from the node")
     score: float = Field(..., description="Similarity score (0-1)")
-    confidence_pct: float = Field(..., description="Similarity score expressed as percentage (0-100)")
+    confidence_pct: float = Field(..., description="Similarity score as percentage")
     source: Optional[str] = Field(None, description="Source identifier")
     properties: dict[str, Any] = Field(
         default_factory=dict, description="Node properties snapshot"
@@ -49,16 +50,6 @@ class RetrievedChunk(BaseModel):
     )
 
 
-class SubAnswer(BaseModel):
-    """Schema for a sub-answer to a sub-query."""
-
-    subquery: str = Field(..., description="The sub-query")
-    answer: str = Field(..., description="Answer to the sub-query")
-    retrieval: list[RetrievedChunk] = Field(
-        default_factory=list, description="Retrieved context chunks"
-    )
-
-
 class TraceStep(BaseModel):
     """Schema for a single trace step."""
 
@@ -66,33 +57,75 @@ class TraceStep(BaseModel):
     data: dict[str, Any] = Field(default_factory=dict, description="Step data")
 
 
+class DecomposedIntent(BaseModel):
+    """Intent used by retrieval pipeline."""
+
+    subquery: str = Field(..., min_length=1, max_length=400)
+    target_data_type: Literal["entity", "scene", "milestone", "mixed"] = Field(
+        "mixed"
+    )
+    reason: str = Field(default="general")
+    top_k_entities: list[str] = Field(
+        default_factory=list,
+        description="Top-k retrieved EntityInstance node IDs for this subquery",
+    )
+    top_k_scenes: list[str] = Field(
+        default_factory=list,
+        description="Top-k retrieved Scene node IDs for this subquery",
+    )
+    top_k_milestones: list[str] = Field(
+        default_factory=list,
+        description="Top-k retrieved Milestone node IDs for this subquery",
+    )
+
+
+class SourceEvidenceChunk(BaseModel):
+    """Evidence chunk attached to a source node."""
+
+    chunk_id: Optional[str] = None
+    chunk_type: Optional[str] = None
+    score: float = 0.0
+    text: Optional[str] = None
+
+
+class SourceNode(BaseModel):
+    """Grounding source returned to clients."""
+
+    node_id: str
+    node_label: Optional[str] = None
+    node_name: Optional[str] = None
+    score: float = 0.0
+    evidence_chunks: list[SourceEvidenceChunk] = Field(default_factory=list)
+
+
 class ElderQueryRequest(BaseModel):
     """Request schema for Elder query."""
 
     query: str = Field(..., min_length=1, max_length=2000, description="User query")
+    # Kept for request backward-compatibility; response no longer depends on mode.
     mode: str = Field(
         "both",
         pattern="^(nl|context|both)$",
-        description="Response mode: 'nl' (natural language), 'context' (context only), or 'both'",
+        description="Legacy response mode field",
     )
     top_k: Optional[int] = Field(
-        None, ge=1, le=50, description="Number of results per sub-query"
+        None, ge=1, le=50, description="Number of results per intent"
     )
     include_trace: bool = Field(False, description="Include execution trace")
     fast: bool = Field(
         False,
-        description="Fast mode: single retrieval + single LLM pass (no decompose/validate/style)",
+        description="Fast mode: skip decomposition and use one mixed intent",
     )
     chat_id: Optional[str] = Field(
         None, description="Optional chat ID to use conversation history as context"
     )
     entities_hint: Optional[str] = Field(
         None,
-        description="Optional pre-built list of ontology entities (name + description) to guide decomposition",
+        description="Optional pre-built list of ontology entities (name + description)",
     )
-    node_scope: Literal["everything", "entity", "scene"] = Field(
+    node_scope: Literal["everything", "entity", "scene", "milestone", "mixed"] = Field(
         "everything",
-        description="Limit retrieval to entity nodes, scene nodes, or both",
+        description="Legacy retrieval scope. Decomposition target_data_type is preferred.",
     )
     candidate_limit: Optional[int] = Field(
         40,
@@ -109,28 +142,20 @@ class ElderQueryRequest(BaseModel):
 
 
 class ElderQueryResponse(BaseModel):
-    """Response schema for Elder query."""
+    """Source-grounded Elder response contract."""
 
     agent_id: str = Field(..., description="Agent ID")
-    mode: str = Field(..., description="Response mode used")
     query: str = Field(..., description="Original query")
-    answer: Optional[str] = Field(
-        None, description="Natural language answer (if mode includes 'nl')"
-    )
-    subanswers: list[SubAnswer] = Field(
-        default_factory=list, description="Sub-answers with retrieval context"
-    )
-    important_nodes: list[str] = Field(
-        default_factory=list, description="Top unique node IDs by score"
-    )
-    context: list[RetrievedChunk] = Field(
-        default_factory=list,
-        description="Deduplicated context chunks (if mode includes 'context')",
+    answer: str = Field(..., description="Grounded synthesized answer")
+    timings: dict[str, float] = Field(default_factory=dict)
+    intents: list[DecomposedIntent] = Field(default_factory=list)
+    sources: list[SourceNode] = Field(default_factory=list)
+    memory_priors_applied: list[dict[str, Any]] = Field(default_factory=list)
+    trace_id: str = Field(..., description="Trace identifier for logs")
+    trace: Optional[list[TraceStep]] = Field(
+        None, description="Execution trace when include_trace=true"
     )
     retrieval_debug: Optional[list[dict[str, Any]]] = Field(
         None,
-        description="Debug information about sub-query retrieval (temporary exposure)",
-    )
-    trace: Optional[list[TraceStep]] = Field(
-        None, description="Execution trace (if include_trace=true)"
+        description="Debug information about per-intent retrieval/counters",
     )

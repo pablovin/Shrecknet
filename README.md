@@ -5,7 +5,7 @@
 ![Neo4j](https://img.shields.io/badge/Neo4j-5.x-018BFF)
 ![Redis](https://img.shields.io/badge/Redis-7.x-DC382D)
 ![License](https://img.shields.io/badge/license-GPLv3-blue)
-![Version](https://img.shields.io/badge/version-0.5.5-orange)
+![Version](https://img.shields.io/badge/version-0.5.6-orange)
 
 Shrecknet is a scene-centric memory engine for storytelling. It incrementally builds longitudinal episodic memory through an agentic architecture where scenes and milestones are first-class narrative records and structure can evolve over time.
 

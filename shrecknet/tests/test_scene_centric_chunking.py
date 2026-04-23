@@ -36,6 +36,42 @@ def test_extract_paragraphs_handles_plain_text_blocks() -> None:
     assert paragraphs == ["Alpha line one Alpha line two", "Beta line"]
 
 
+def test_extract_paragraphs_fallback_splits_transcript_markers() -> None:
+    source = (
+        "● Recap of plot thread\n"
+        "wrapped continuation line\n"
+        "still same bullet\n"
+        "● Next event marker (00:15:36)\n"
+        "more detail on next event\n"
+        "2. Numbered beat starts here\n"
+        "continues here"
+    )
+
+    paragraphs = extract_paragraphs_from_sources(source, None)
+
+    assert len(paragraphs) == 3
+    assert paragraphs[0].startswith("● Recap of plot thread wrapped continuation line")
+    assert "(00:15:36)" in paragraphs[1]
+    assert paragraphs[2].startswith("2. Numbered beat starts here continues here")
+
+
+def test_extract_paragraphs_fallback_does_not_over_split_plain_wrapped_text() -> None:
+    source = (
+        "This is a wrapped prose paragraph line one\n"
+        "line two with no bullet or timestamp markers\n"
+        "line three continues the same thought"
+    )
+
+    paragraphs = extract_paragraphs_from_sources(source, None)
+
+    assert paragraphs == [
+        (
+            "This is a wrapped prose paragraph line one line two with no bullet or "
+            "timestamp markers line three continues the same thought"
+        )
+    ]
+
+
 def test_normalize_scene_ranges_accepts_zero_based_model_output() -> None:
     scenes = [
         {

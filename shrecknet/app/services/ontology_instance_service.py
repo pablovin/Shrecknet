@@ -21,6 +21,8 @@ from app.schemas.ontology_instance import (
     MilestoneCreate,
     MilestoneRead,
     MilestoneUpdate,
+    OntologyEntityResolveItem,
+    OntologyEntityResolveResponse,
     OntologyInstanceCreate,
     OntologyInstanceEntityCreate,
     OntologyInstanceRead,
@@ -132,11 +134,13 @@ def _slug_alias_pattern(slug: str) -> str:
 
 def _normalize_id_list(values: list[str] | None) -> list[str]:
     normalized: list[str] = []
+    seen: set[str] = set()
     if not values:
         return normalized
     for value in values:
         cleaned = _normalize_optional_str(value)
-        if cleaned:
+        if cleaned and cleaned not in seen:
+            seen.add(cleaned)
             normalized.append(cleaned)
     return normalized
 
@@ -640,6 +644,64 @@ class OntologyInstanceService:
             world_name=applied_ontology_name,
             direct_results=direct_hits,
             deep_results=deep_hits,
+        )
+
+    async def resolve_entities(
+        self,
+        *,
+        ontology_id: int,
+        entity_instance_ids: list[str],
+    ) -> OntologyEntityResolveResponse:
+        requested_ids = _normalize_id_list(entity_instance_ids)
+        if not requested_ids:
+            raise ValueError("entity_instance_ids cannot be empty")
+        if len(requested_ids) > 200:
+            raise ValueError("entity_instance_ids cannot contain more than 200 ids")
+
+        result = await self.graph_session.run(
+            """
+            UNWIND $entity_ids AS entity_id
+            OPTIONAL MATCH (entity:EntityInstance {entity_instance_id: entity_id})
+            WHERE entity IS NOT NULL
+              AND toInteger(entity.ontology_id) = toInteger($ontology_id)
+            OPTIONAL MATCH (inst:OntologyInstance {instance_id: entity.instance_id})
+            RETURN entity.entity_instance_id AS entity_instance_id,
+                   entity.instance_id AS instance_id,
+                   toInteger(entity.ontology_id) AS ontology_id,
+                   toInteger(entity.entity_definition_id) AS entity_definition_id,
+                   entity.alias AS entity_alias,
+                   inst.name AS instance_name
+            """,
+            entity_ids=requested_ids,
+            ontology_id=ontology_id,
+        )
+        rows = await result.data()
+        resolved_by_id: dict[str, OntologyEntityResolveItem] = {}
+        for row in rows:
+            entity_id = _normalize_optional_str(row.get("entity_instance_id"))
+            if not entity_id or entity_id in resolved_by_id:
+                continue
+            resolved_by_id[entity_id] = OntologyEntityResolveItem(
+                entity_instance_id=entity_id,
+                instance_id=str(row.get("instance_id") or ""),
+                ontology_id=int(row.get("ontology_id") or ontology_id),
+                entity_definition_id=int(row.get("entity_definition_id") or 0),
+                entity_alias=_normalize_optional_str(row.get("entity_alias")),
+                instance_name=_normalize_optional_str(row.get("instance_name")),
+            )
+
+        ordered_results: list[OntologyEntityResolveItem] = []
+        missing_ids: list[str] = []
+        for entity_id in requested_ids:
+            item = resolved_by_id.get(entity_id)
+            if item is None:
+                missing_ids.append(entity_id)
+                continue
+            ordered_results.append(item)
+
+        return OntologyEntityResolveResponse(
+            results=ordered_results,
+            missing_entity_instance_ids=missing_ids,
         )
 
     async def _perform_direct_search(
@@ -1856,6 +1918,30 @@ class OntologyInstanceService:
                 "Scene derived_from.entity_instance_id must reference an existing entity in the same instance"
             )
 
+    async def _validate_scene_relates_to_entities(
+        self, *, instance_id: str, entity_instance_ids: list[str]
+    ) -> None:
+        if not entity_instance_ids:
+            return
+        result = await self.graph_session.run(
+            """
+            UNWIND $entity_ids AS entity_id
+            OPTIONAL MATCH (entity:EntityInstance {entity_instance_id: entity_id})
+            RETURN entity_id, entity IS NOT NULL AS exists
+            """,
+            entity_ids=entity_instance_ids,
+        )
+        rows = await result.data()
+        invalid = [
+            str(row.get("entity_id") or "")
+            for row in rows
+            if not bool(row.get("exists"))
+        ]
+        if invalid:
+            raise ValueError(
+                "Scene relates_to.entity_instance_id must reference existing entities"
+            )
+
     async def _validate_milestone_derived_from(
         self, *, instance_id: str, entity_instance_id: str
     ) -> None:
@@ -2021,6 +2107,23 @@ class OntologyInstanceService:
             else None,
         }
 
+        scene_relates_result = await self.graph_session.run(
+            """
+            MATCH (scene:Scene {id: $scene_id})-[rel:RELATES_TO]->(entity:EntityInstance)
+            RETURN collect(DISTINCT {
+                entity_instance_id: entity.entity_instance_id,
+                label: rel.label
+            }) AS relates
+            """,
+            scene_id=scene_id,
+        )
+        scene_relates_row = await scene_relates_result.single()
+        scene_relates = [
+            item
+            for item in (scene_relates_row or {}).get("relates") or []
+            if item and item.get("entity_instance_id")
+        ]
+
         milestones = await self.list_milestones(props.get("instance_id") or "", scene_id)
 
         return SceneRead(
@@ -2033,6 +2136,7 @@ class OntologyInstanceService:
             created_by_author=props.get("created_by_author") or "",
             local_order=local_order,
             derived_from={"entity_instance_id": derived_from_entity_id},
+            relates_to=scene_relates,
             created_at=_parse_dt(props.get("created_at")),
             updated_at=_parse_dt(props.get("updated_at")),
             milestones=milestones,
@@ -2172,6 +2276,10 @@ class OntologyInstanceService:
             instance_id=instance_id,
             entity_instance_id=payload.derived_from.entity_instance_id,
         )
+        await self._validate_scene_relates_to_entities(
+            instance_id=instance_id,
+            entity_instance_ids=[item.entity_instance_id for item in payload.relates_to],
+        )
         normalized_milestones = await self._validate_scene_milestones_payload(
             instance_id=instance_id,
             milestones=payload.milestones,
@@ -2215,6 +2323,18 @@ class OntologyInstanceService:
                 scene_id=scene_id,
                 entity_instance_id=payload.derived_from.entity_instance_id,
             )
+
+            for relates in payload.relates_to:
+                await tx.run(
+                    """
+                    MATCH (scene:Scene {id: $scene_id})
+                    MATCH (entity:EntityInstance {entity_instance_id: $entity_instance_id})
+                    MERGE (scene)-[:RELATES_TO {label: $label}]->(entity)
+                    """,
+                    scene_id=scene_id,
+                    entity_instance_id=relates.entity_instance_id,
+                    label=relates.label,
+                )
 
             followed_scene_id = payload.local_order.followed_by_scene_id
             preceded_scene_id = payload.local_order.preceded_by_scene_id
@@ -2331,9 +2451,17 @@ class OntologyInstanceService:
         else:
             await tx.commit()
             await tx.close()
-        from app.tasks.neo4j_embedding import embed_ontology as embed_ontology_task
+        from app.tasks.neo4j_embedding import (
+            embed_reconciliation as embed_reconciliation_task,
+        )
 
-        embed_ontology_task.delay(ontology_id=ontology_id, author_type="agent", author_id="scene-create")
+        embed_reconciliation_task.delay(
+            ontology_id=ontology_id,
+            instance_id=instance_id,
+            node_ids=[],
+            author_type="agent",
+            author_id="scene-create",
+        )
         return await self.get_scene(instance_id, scene_id)
 
     async def _replace_scenes_for_instance(
@@ -2363,6 +2491,11 @@ class OntologyInstanceService:
             await self._validate_scene_derived_from(
                 instance_id=instance_id,
                 entity_instance_id=payload.derived_from.entity_instance_id,
+            )
+        if payload.relates_to is not None:
+            await self._validate_scene_relates_to_entities(
+                instance_id=instance_id,
+                entity_instance_ids=[item.entity_instance_id for item in payload.relates_to],
             )
 
         params = {"scene_id": scene_id, "instance_id": instance_id}
@@ -2438,6 +2571,26 @@ class OntologyInstanceService:
                     entity_instance_id=payload.derived_from.entity_instance_id,
                 )
 
+            if payload.relates_to is not None:
+                await tx.run(
+                    """
+                    MATCH (scene:Scene {id: $scene_id})-[rel:RELATES_TO]->()
+                    DELETE rel
+                    """,
+                    scene_id=scene_id,
+                )
+                for relates in payload.relates_to:
+                    await tx.run(
+                        """
+                        MATCH (scene:Scene {id: $scene_id})
+                        MATCH (entity:EntityInstance {entity_instance_id: $entity_instance_id})
+                        MERGE (scene)-[:RELATES_TO {label: $label}]->(entity)
+                        """,
+                        scene_id=scene_id,
+                        entity_instance_id=relates.entity_instance_id,
+                        label=relates.label,
+                    )
+
             milestones = await self.list_milestones(instance_id, scene_id)
             begin_count = sum(1 for milestone in milestones if milestone.boundary_type == "begin")
             end_count = sum(1 for milestone in milestones if milestone.boundary_type == "end")
@@ -2465,9 +2618,17 @@ class OntologyInstanceService:
             await tx.close()
 
         ontology_id = await self._get_instance_ontology_id(instance_id)
-        from app.tasks.neo4j_embedding import embed_ontology as embed_ontology_task
+        from app.tasks.neo4j_embedding import (
+            embed_reconciliation as embed_reconciliation_task,
+        )
 
-        embed_ontology_task.delay(ontology_id=ontology_id, author_type="agent", author_id="scene-update")
+        embed_reconciliation_task.delay(
+            ontology_id=ontology_id,
+            instance_id=instance_id,
+            node_ids=[],
+            author_type="agent",
+            author_id="scene-update",
+        )
 
         return await self.get_scene(instance_id, scene_id)
 
@@ -2495,9 +2656,17 @@ class OntologyInstanceService:
             await tx.close()
 
         ontology_id = await self._get_instance_ontology_id(instance_id)
-        from app.tasks.neo4j_embedding import embed_ontology as embed_ontology_task
+        from app.tasks.neo4j_embedding import (
+            embed_reconciliation as embed_reconciliation_task,
+        )
 
-        embed_ontology_task.delay(ontology_id=ontology_id, author_type="agent", author_id="scene-delete")
+        embed_reconciliation_task.delay(
+            ontology_id=ontology_id,
+            instance_id=instance_id,
+            node_ids=[],
+            author_type="agent",
+            author_id="scene-delete",
+        )
 
     async def list_milestones(
         self, instance_id: str, scene_id: str
@@ -2670,9 +2839,17 @@ class OntologyInstanceService:
             await tx.commit()
             await tx.close()
 
-        from app.tasks.neo4j_embedding import embed_ontology as embed_ontology_task
+        from app.tasks.neo4j_embedding import (
+            embed_reconciliation as embed_reconciliation_task,
+        )
 
-        embed_ontology_task.delay(ontology_id=ontology_id, author_type="agent", author_id="milestone-create")
+        embed_reconciliation_task.delay(
+            ontology_id=ontology_id,
+            instance_id=instance_id,
+            node_ids=[],
+            author_type="agent",
+            author_id="milestone-create",
+        )
 
         # No milestone count or boundary validation enforced
         return await self.get_milestone(instance_id, scene_id, milestone_id)
@@ -2807,9 +2984,17 @@ class OntologyInstanceService:
             await tx.close()
 
         ontology_id = await self._get_instance_ontology_id(instance_id)
-        from app.tasks.neo4j_embedding import embed_ontology as embed_ontology_task
+        from app.tasks.neo4j_embedding import (
+            embed_reconciliation as embed_reconciliation_task,
+        )
 
-        embed_ontology_task.delay(ontology_id=ontology_id, author_type="agent", author_id="milestone-update")
+        embed_reconciliation_task.delay(
+            ontology_id=ontology_id,
+            instance_id=instance_id,
+            node_ids=[],
+            author_type="agent",
+            author_id="milestone-update",
+        )
 
         # No milestone count or boundary validation enforced
         return await self.get_milestone(instance_id, scene_id, milestone_id)
@@ -2844,9 +3029,17 @@ class OntologyInstanceService:
             await tx.close()
 
         ontology_id = await self._get_instance_ontology_id(instance_id)
-        from app.tasks.neo4j_embedding import embed_ontology as embed_ontology_task
+        from app.tasks.neo4j_embedding import (
+            embed_reconciliation as embed_reconciliation_task,
+        )
 
-        embed_ontology_task.delay(ontology_id=ontology_id, author_type="agent", author_id="milestone-delete")
+        embed_reconciliation_task.delay(
+            ontology_id=ontology_id,
+            instance_id=instance_id,
+            node_ids=[],
+            author_type="agent",
+            author_id="milestone-delete",
+        )
 
         milestones = await self.list_milestones(instance_id, scene_id)
         begin_count = sum(1 for milestone in milestones if milestone.boundary_type == "begin")

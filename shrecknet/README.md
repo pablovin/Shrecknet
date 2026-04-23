@@ -2,7 +2,7 @@
 
 Standalone Shrecknet core platform.
 
-Current version: 0.5.5
+Current version: 0.5.6
 
 Architect scene-centric chunking docs: `../Documentation/Agents/Architect/Scene Chunking.md`
 

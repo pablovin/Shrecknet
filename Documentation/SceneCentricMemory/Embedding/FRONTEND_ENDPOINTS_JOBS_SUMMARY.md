@@ -6,6 +6,12 @@ Current embedding scope:
 
 - Embedded node types: `EntityInstance`, `Scene`, `Milestone`
 
+## Lifecycle Notes
+
+- Retrieval uses `EntityChunk` vectors (`entity_chunk_vec_idx`).
+- Scene/milestone writes now use coalesced reconciliation embedding triggers in backend flows to reduce queue fanout.
+- Reconciliation strategy favors targeted refresh + instance reconciliation over repeated broad full-ontology fanout.
+
 ## GET /ontologies/{ontology_id}/embedding-stats
 
 Returns aggregate and per-type embedding counts.
@@ -114,3 +120,14 @@ Response example:
   }
 ]
 ```
+
+## Queue Metrics (Backend-facing)
+
+Coalesced reconciliation jobs expose queue metrics in task outputs/logs:
+
+- `jobs_enqueued`
+- `jobs_coalesced`
+- `avg_nodes_per_job`
+- `fanout_per_request`
+
+These are useful for latency/load monitoring dashboards.

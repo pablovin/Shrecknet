@@ -5,71 +5,112 @@ Purpose: concise technical reference for current retrieval behavior in GraphRAG 
 ## Scope
 
 Retrieval operates on embedded parents of type:
+
 - `EntityInstance`
 - `Scene`
 - `Milestone`
 
-Query-time scope filter:
-- `node_scope = everything | entity | scene`
+Label-target filtering supports:
 
-## Retrieval Pipeline (actual flow)
+- `entity`
+- `scene`
+- `milestone`
+- `mixed` (all)
 
-1. Query embedding
-- The raw query is embedded using the configured embedding model.
+## Retrieval Pipeline (Current)
 
-2. Vector candidate fetch
-- Neo4j vector search runs on chunk vectors (`entity_chunk_vec_idx`).
-- Candidate window is controlled by:
-  - `candidate_limit` when provided
-  - otherwise internal default window based on `k`
+### 1. Query Construction
 
-3. Parent filtering
-- Candidates are projected from chunk -> parent node.
-- Parents are filtered by:
-  - allowed labels from `node_scope`
-  - optional `ontology_id`
+- Elder decomposes user question into `1..10` intents.
+- Each intent includes:
+  - `subquery`
+  - `target_data_type`
+  - `reason`
+  - `top_k_entities`
+  - `top_k_scenes`
+  - `top_k_milestones`
 
-4. Deterministic node scoring
-- Chunk matches are grouped per parent node.
-- Node score is computed from stable signals:
+### 2. Candidate Generation
+
+- Query is embedded.
+- Neo4j vector search runs on `EntityChunk` vectors (`entity_chunk_vec_idx`).
+- Candidate window controls:
+  - `candidate_limit`
+  - `rerank_limit`
+- Label filtering uses the intent target type.
+
+### 3. Candidate Consolidation
+
+- Chunk candidates are grouped to parent nodes.
+- Dedup is node-level (by `node_id`) for Elder consolidation.
+- Top evidence chunks are attached per node.
+
+### 4. Reranking
+
+- Deterministic node scoring combines:
   - best chunk score
   - chunk coverage
-  - top chunk average
+  - top-chunk average
   - keyword overlap
-  - exact/fuzzy match signal
+  - exact/fuzzy signal
   - node-type prior
+- Graph boosts are additive and bounded.
+- Memory priors (Elder) can bias ranking:
+  - `entity_prior`
+  - `temporal_prior`
+  - `disambiguation_prior`
+  - `continuity_prior`
 
-5. Rerank window and graph enrichments
-- Node rerank window uses `rerank_limit` (or default window).
-- Neighbor traversal adds graph-aware boosts and evidence assembly.
-- Additive graph boosts are bounded and merged into `importance_index`.
+### 5. Grounded Synthesis (Elder)
 
-6. Final top-k
-- Results are sorted by boosted `importance_index`.
-- Final response is truncated to requested `k`.
+- Final answer is synthesized from consolidated node evidence.
+- Output includes explicit `sources` for provenance.
 
-## Additive Retrieval Fields
+## Retrieval Debug Counters
+
+Per intent retrieval includes:
+
+- `raw_candidates`
+- `after_parent_grouping`
+- `after_dedup`
+- `final_k`
+
+## Additive Retrieval Fields (GraphRAG Node Results)
 
 Per result node/chunk:
-- `chunk_score`: best chunk-level similarity for the node
-- `node_score`: deterministic pre-boost node score
-- `importance_index`: final ranking score after additive boosts
-- `matched_chunk_count`: matched chunk count for the node
-- `score_breakdown`: deterministic scoring + graph boost components
-- `graph_boost`: additive bounded graph boost
-- `evidence_bundle`: structured supporting graph evidence
+
+- `chunk_score`
+- `node_score`
+- `importance_index`
+- `matched_chunk_count`
+- `score_breakdown`
+- `graph_boost`
+- `evidence_bundle`
 
 Top-level GraphRAG response:
-- `evidence_bundles`: list of non-null evidence bundles from returned results
 
-## Elder Consumption
+- `evidence_bundles`
+- `debug_stats` (includes retrieval counters and effective allowed labels)
 
-Elder retrieval now forwards and returns the same additive scoring/evidence fields so downstream UX can:
-- display ranking rationale
-- surface evidence context
-- tune retrieval windows per query (`candidate_limit`, `rerank_limit`)
+## Elder Response Grounding
 
-## Compatibility
+Elder now returns source-grounded payload:
 
-All retrieval additions are additive.
-Existing request/response fields remain valid and unchanged.
+- `intents[]`
+  - includes per-intent retrieval links: `top_k_entities|top_k_scenes|top_k_milestones`
+- `sources[]` (node-backed evidence)
+- `memory_priors_applied[]`
+- `timings`
+- `trace_id`
+
+## Latency Visibility
+
+Elder timing fields:
+
+- `decompose_ms`
+- `memory_summary_ms`
+- `retrieve_ms`
+- `consolidate_ms`
+- `rerank_ms`
+- `synthesize_ms`
+- `total_ms`

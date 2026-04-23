@@ -189,7 +189,7 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title=get_settings().app_name, version="0.5.6", lifespan=lifespan)
+app = FastAPI(title=get_settings().app_name, version="0.5.7", lifespan=lifespan)
 
 settings = get_settings()
 effective_origins = _effective_cors_origins(settings.cors_allow_origins)

@@ -4,6 +4,7 @@ This folder contains release notes by application version.
 
 ## Entries
 
+- [v0.5.7](./v0.5.7.md) - Librarian embedding/retrieval/query behavior documentation updates, freshness and stale-data controls, plus version bump.
 - [v0.5.6](./v0.5.6.md) - Backend version bump to 0.5.6 and architect analysis payload clarification to keep scene/milestone outputs proposed-only and concise.
 - [v0.5.5](./v0.5.5.md) - Architect milestone proposal phase docs/artifacts, scene proposal provenance updates, and version bump.
 - [v0.5.4](./v0.5.4.md) - Architect scene-centric chunking documentation rollout, README updates, and project version bump.

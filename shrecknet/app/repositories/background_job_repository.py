@@ -164,7 +164,10 @@ class BackgroundJobRepository:
         return job
 
     async def mark_as_failed(
-        self, job_id: int, error_message: str
+        self,
+        job_id: int,
+        error_message: str,
+        details: str | None = None,
     ) -> BackgroundJob | None:
         """Mark a job as failed."""
         job = await self.get_by_id(job_id)
@@ -173,6 +176,8 @@ class BackgroundJobRepository:
 
         job.status = JobStatus.FAILED
         job.error_message = error_message
+        if details is not None:
+            job.details = details
         job.completed_at = datetime.now(timezone.utc)
 
         # Calculate duration

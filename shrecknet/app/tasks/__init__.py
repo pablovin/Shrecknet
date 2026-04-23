@@ -7,10 +7,11 @@ from . import (
     pdf_embedding,
     library_metadata,
     architect_analysis,
+    architect_generation,
     architect_generation_v2,
     backup_tasks,
     novelist,
-    novelist_timeline_generation,
+    ontology_instance_clear,
 )
 
 __all__ = [
@@ -19,8 +20,9 @@ __all__ = [
     "pdf_embedding",
     "library_metadata",
     "architect_analysis",
+    "architect_generation",
     "architect_generation_v2",
     "backup_tasks",
     "novelist",
-    "novelist_timeline_generation",
+    "ontology_instance_clear",
 ]

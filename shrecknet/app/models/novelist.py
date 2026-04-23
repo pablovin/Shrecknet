@@ -26,12 +26,14 @@ class NovelistStage(str, Enum):
     """Progress markers for the multi-step pipeline."""
 
     INGEST = "ingest"
-    RELEVANT = "relevant"
-    PLANNING = "planning"
-    WRITING = "writing"
+    SCAFFOLDING = "scaffolding"
+    SCENE_PACKAGE = "scene_package"
+    RETRIEVAL = "retrieval"
+    INTENT_DRAFTING = "intent_drafting"
+    PROSE_GENERATION = "prose_generation"
     MERGING = "merging"
     CRITIC = "critic"
-    APPLY_CRITIC = "apply_critic"
+    REVISION = "revision"
     DONE = "done"
 
 

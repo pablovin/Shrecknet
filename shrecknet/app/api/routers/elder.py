@@ -1,14 +1,14 @@
 """API router for Elder job execution."""
 
+from contextlib import asynccontextmanager
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from neo4j import AsyncSession as AsyncNeo4jSession
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db_session
 from app.core.config_store import get_settings, is_openai_configured
-from app.graph.neo4j import get_neo4j_session
+from app.graph.neo4j import get_driver
 from app.integrations.llm.model_policy import ModelPolicy
 from app.integrations.llm.openai_client import OpenAIClient
 from app.integrations.retrieval.neo4j_retriever import Neo4jGraphRetriever
@@ -64,11 +64,17 @@ async def get_model_policy() -> ModelPolicy:
     )
 
 
-async def get_graph_retriever(
-    graph_session: AsyncNeo4jSession = Depends(get_neo4j_session),
-) -> Neo4jGraphRetriever:
+async def get_graph_retriever() -> Neo4jGraphRetriever:
     """Dependency to get graph retriever."""
-    return Neo4jGraphRetriever(graph_session)
+    settings = get_settings()
+    driver = get_driver()
+
+    @asynccontextmanager
+    async def _session_factory():
+        async with driver.session(database=settings.neo4j_database) as session:
+            yield session
+
+    return Neo4jGraphRetriever(session_factory=_session_factory)
 
 
 async def get_elder_orchestrator(
@@ -207,8 +213,10 @@ async def query_elder(
                 return item
 
             meta: dict | None = {
-                "context": [_to_plain(c) for c in (response.context or [])],
-                "subanswers": [_to_plain(sa) for sa in (response.subanswers or [])],
+                "sources": [_to_plain(s) for s in (response.sources or [])],
+                "timings": _to_plain(response.timings),
+                "memory_priors_applied": _to_plain(response.memory_priors_applied),
+                "trace_id": response.trace_id,
             }
 
             if request.include_trace:
@@ -221,8 +229,15 @@ async def query_elder(
                         except Exception:
                             step_name = None
                             data = None
-                        if step_name == "decompose" and data and "subqueries" in data:
-                            subqueries = data["subqueries"]
+                        if step_name == "decompose" and data:
+                            if "subqueries" in data:
+                                subqueries = data["subqueries"]
+                            elif "intents" in data and isinstance(data["intents"], list):
+                                subqueries = [
+                                    str(item.get("subquery") or "")
+                                    for item in data["intents"]
+                                    if isinstance(item, dict) and item.get("subquery")
+                                ]
                             break
                 meta.update(
                     {

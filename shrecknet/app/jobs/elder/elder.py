@@ -1,24 +1,27 @@
-"""Elder orchestrator using LangGraph for pipeline execution."""
+"""Elder orchestrator with layered retrieval pipeline."""
+
+from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import re
 import time
+from collections import defaultdict
 from typing import Any, Optional
+from uuid import uuid4
 
 from app.integrations.llm.model_policy import LLMTask, ModelPolicy
 from app.integrations.llm.openai_client import OpenAIClient
 from app.integrations.retrieval.neo4j_retriever import GraphRetriever
-from app.jobs.elder.prompts import (
-    DECOMPOSE_PROMPT,
-    SUBANSWER_PROMPT,
-    SYNTHESIS_PROMPT,
-    COMBINED_SYNTHESIS_PROMPT,
-)
+from app.jobs.elder.prompts import DECOMPOSE_PROMPT, SYNTHESIS_PROMPT
 from app.jobs.elder.schemas import (
+    DecomposedIntent,
     ElderQueryRequest,
     ElderQueryResponse,
     RetrievedChunk,
-    SubAnswer,
+    SourceEvidenceChunk,
+    SourceNode,
     TraceStep,
 )
 from app.models.agent import Agent
@@ -27,10 +30,7 @@ logger = logging.getLogger(__name__)
 
 
 class ElderOrchestrator:
-    """
-    Orchestrates the Elder pipeline:
-    Decompose → Retrieve → Sub-answer → Synthesize
-    """
+    """Layered Elder pipeline: query -> retrieve -> consolidate -> rerank -> synthesize."""
 
     def __init__(
         self,
@@ -39,22 +39,12 @@ class ElderOrchestrator:
         graph_retriever: GraphRetriever,
         default_top_k: int = 8,
     ):
-        """
-        Initialize orchestrator.
-
-        Args:
-            llm_client: OpenAI client for LLM calls
-            model_policy: Policy for task-to-model mapping
-            graph_retriever: Graph retrieval interface
-            default_top_k: Default number of retrieval results per sub-query
-        """
         self.llm_client = llm_client
         self.model_policy = model_policy
         self.graph_retriever = graph_retriever
         self.default_top_k = default_top_k
-        self.max_subqueries = 3
-        self.max_concurrency = 3
-        self.max_fast_mode_top_k = 10  # Maximum top_k for fast mode responses
+        self.max_subqueries = 10
+        self.max_concurrency = 10
         self.last_retrieval_debug: list[dict[str, Any]] = []
 
     async def execute(
@@ -63,297 +53,117 @@ class ElderOrchestrator:
         request: ElderQueryRequest,
         chat_history: Optional[list[dict[str, str]]] = None,
     ) -> ElderQueryResponse:
-        """
-        Execute the Elder pipeline for a query.
-
-        Args:
-            agent: Agent instance with configuration
-            request: Query request
-            chat_history: Optional chat history for context
-
-        Returns:
-            Query response with answer and/or context
-        """
         trace: list[TraceStep] = [] if request.include_trace else []
+        trace_id = str(uuid4())
         timings: dict[str, float] = {}
         overall_start = time.monotonic()
         top_k = request.top_k or self.default_top_k
-        self.last_retrieval_debug = []
-
-        # Get ontology IDs from agent
         ontology_ids = [ont.id for ont in agent.ontologies]
 
-        # Fast path: single retrieval + single generation (optional)
+        # Layer 1: query construction (decompose + memory summary)
+        t0 = time.monotonic()
         if request.fast:
-            top_k = min(top_k, self.max_fast_mode_top_k)
-            model = self.model_policy.get_model(LLMTask.SYNTHESIS)
-            t_retr_start = time.monotonic()
-            chunks = await self.graph_retriever.search(
-                query=request.query, ontology_ids=ontology_ids, top_k=top_k
-            )
-            timings["retrieve"] = time.monotonic() - t_retr_start
-            self.last_retrieval_debug = [
-                {
-                    "subquery": request.query,
-                    "duration": timings["retrieve"],
-                    "results": [
-                        {
-                            "node_id": c.node_id,
-                            "node_name": c.node_name,
-                            "instance_id": c.instance_id,
-                            "chunk_type": c.chunk_type,
-                            "chunk_index": c.chunk_index,
-                            "score": c.score,
-                            "confidence_pct": c.confidence_pct,
-                            "text": c.text,
-                        }
-                        for c in chunks
-                    ],
-                }
-            ]
-
-            if not chunks:
-                no_context_answer = (
-                    "I couldn't find any relevant information about your question in the "
-                    "knowledge base. Please rephrase or provide more details."
-                )
-                response = ElderQueryResponse(
-                    agent_id=agent.id,
-                    mode=request.mode,
-                    query=request.query,
-                    subanswers=[],
-                    important_nodes=[],
-                    context=[],
-                    trace=trace if request.include_trace else None,
-                    retrieval_debug=self.last_retrieval_debug or None,
-                    answer=no_context_answer if request.mode in ("nl", "both") else None,
-                )
-                timings["overall"] = time.monotonic() - overall_start
-                logger.info(
-                    "elder_fast_timing: no_context retrieve=%.3fs overall=%.3fs",
-                    timings.get("retrieve", 0.0),
-                    timings.get("overall", 0.0),
-                )
-                logger.info(
-                    "elder_pipeline_steps_durations: %s",
-                    {k: round(v, 3) for k, v in timings.items()},
-                )
-                return response
-
-            context_snippets = []
-            for c in chunks[:top_k]:
-                text = c.text.strip().replace("\n", " ")
-                if len(text) > 500:
-                    text = text[:500] + "…"
-                context_snippets.append(f"- {text}")
-            compact_context = "\n".join(context_snippets)
-
-            prompt = (
-                "You are a helpful assistant. Use only the provided context to answer the question "
-                "with concrete facts, names, and numbers. Keep it concise but specific (<=150 words). "
-                "If the context doesn't contain the answer, say so explicitly.\n"
-                f"Question: {request.query}\n"
-                f"Context:\n{compact_context}"
-            )
-            t_llm_start = time.monotonic()
-            answer = await self.llm_client.chat(
-                model=model,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.3,
-            )
-            timings["llm_synthesis"] = time.monotonic() - t_llm_start
-
-            # In fast mode, we skip decomposition and use the original query directly
-            # Include it in subanswers with retrieval sources for consistency with normal mode
-            subanswers: list[SubAnswer] = [
-                SubAnswer(
+            intents = [
+                DecomposedIntent(
                     subquery=request.query,
-                    answer=answer,
-                    retrieval=chunks,
+                    target_data_type="mixed",
+                    reason="fast_mode",
                 )
             ]
-            important_nodes = [c.node_id for c in chunks]
-            response = ElderQueryResponse(
-                agent_id=agent.id,
-                mode=request.mode,
-                query=request.query,
-                subanswers=subanswers,
-                important_nodes=(
-                    important_nodes if request.mode in ("context", "both") else []
-                ),
-                context=chunks if request.mode in ("context", "both") else [],
-                trace=trace if request.include_trace else None,
-                retrieval_debug=self.last_retrieval_debug or None,
-                answer=answer if request.mode in ("nl", "both") else None,
-            )
-            timings["overall"] = time.monotonic() - overall_start
-            logger.info(
-                "elder_fast_timing: retrieve=%.3fs, llm=%.3fs, overall=%.3fs",
-                timings.get("retrieve", 0.0),
-                timings.get("llm_synthesis", 0.0),
-                timings.get("overall", 0.0),
-            )
-            logger.info(
-                "elder_pipeline_steps_durations: %s",
-                {k: round(v, 3) for k, v in timings.items()},
-            )
-            return response
-
-        # Step 1: Decompose query into sub-queries
-        t_decomp = time.monotonic()
-        subqueries = await self._decompose(
-            request.query, ontology_ids, chat_history, trace, request.entities_hint
-        )
-        timings["decompose"] = time.monotonic() - t_decomp
-        logger.info(
-            "elder_decompose: query='%s' subqueries=%s", request.query, subqueries
-        )
-
-        # Step 2: Retrieve context for sub-queries + main query in parallel
-        # Add the main query to retrieval list for comprehensive coverage
-        all_queries = subqueries + [request.query]
-        t_retrieve = time.monotonic()
-        retrieval_results = await self._retrieve(
-            all_queries, ontology_ids, top_k, trace
-        )
-        timings["retrieve"] = time.monotonic() - t_retrieve
-
-        # Build debug summary of retrieval names per subquery
-        def extract_name(chunk: RetrievedChunk) -> str:
-            txt = (chunk.text or "").splitlines()
-            for line in txt[:3]:
-                if line.lower().startswith("name:"):
-                    return line.split(":", 1)[-1].strip()
-            return "(unknown)"
-
-        retrieval_summary = [
-            {
-                "subquery": sq,
-                "duration": duration,
-                "names": [extract_name(c) for c in chunks[:5]],
-                "context_preview": [
-                    (c.text[:200] + "…") if len(c.text) > 200 else c.text
-                    for c in chunks[:2]
-                ],
-            }
-            for (sq, chunks, duration) in retrieval_results
-        ]
-
-        # If no context retrieved, return without generating an answer
-        total_chunks = sum(len(chunks) for _, chunks, _ in retrieval_results)
-        if total_chunks == 0:
-            important_nodes: list[str] = []
-            context: list[RetrievedChunk] = []
-            # Surface retrieval errors to client via trace even if include_trace=false
-            retrieval_errors = getattr(self.graph_retriever, "last_errors", [])
-            resp_trace = trace if request.include_trace else []
-            if retrieval_errors:
-                resp_trace = resp_trace or []
-                resp_trace.append(
-                    TraceStep(step="retrieval_error", data={"errors": retrieval_errors})
-                )
-            no_context_answer = (
-                "I couldn't find any relevant information about your question in the "
-                "knowledge base. Please rephrase or ask about a different topic."
-            )
-            response = ElderQueryResponse(
-                agent_id=agent.id,
-                mode=request.mode,
-                query=request.query,
-                subanswers=[],
-                important_nodes=[],
-                context=[],
-                trace=resp_trace or None,
-                retrieval_debug=self.last_retrieval_debug or None,
-                answer=no_context_answer if request.mode in ("nl", "both") else None,
-            )
-            timings["overall"] = time.monotonic() - overall_start
-            logger.info(
-                "elder_timing: no_context decompose=%.3fs retrieve=%.3fs overall=%.3fs",
-                timings.get("decompose", 0.0),
-                timings.get("retrieve", 0.0),
-                timings.get("overall", 0.0),
-            )
-            logger.info(
-                "elder_pipeline_steps_durations: %s",
-                {k: round(v, 3) for k, v in timings.items()},
-            )
-            return response
-
-        # Step 3: Generate sub-answers (parallel)
-        t_subans = time.monotonic()
-        subanswers = await self._subanswer(retrieval_results, trace)
-        timings["subanswer"] = time.monotonic() - t_subans
-
-        # Step 4: Synthesize final answer if mode includes 'nl'
-        answer = None
-        if request.mode in ("nl", "both"):
-            if len(subqueries) > 1 or total_chunks >= 4:
-                answer_mode = "expanded"
-            elif total_chunks <= 1:
-                answer_mode = "direct"
-            else:
-                answer_mode = "balanced"
-            t_synth = time.monotonic()
-            answer = await self._synthesize(
-                agent,
+        else:
+            intents = await self._decompose(
                 request.query,
-                subanswers,
+                ontology_ids,
+                chat_history,
                 trace,
-                answer_mode,
+                request.entities_hint,
             )
-            timings["synthesis"] = time.monotonic() - t_synth
+            if not intents:
+                intents = [
+                    DecomposedIntent(
+                        subquery=request.query,
+                        target_data_type="mixed",
+                        reason="fallback",
+                    )
+                ]
+        timings["decompose_ms"] = round((time.monotonic() - t0) * 1000, 2)
 
-        # Step 7: Build context and important nodes
-        important_nodes, context = self._build_context(subanswers)
+        t1 = time.monotonic()
+        memory_summary = self._extract_memory_summary(chat_history)
+        timings["memory_summary_ms"] = round((time.monotonic() - t1) * 1000, 2)
 
-        # Build response based on mode
-        response = ElderQueryResponse(
-            agent_id=agent.id,
-            mode=request.mode,
+        # Layer 2: candidate generation
+        t2 = time.monotonic()
+        retrieval_results = await self._retrieve_intents(
+            intents=intents,
+            ontology_ids=ontology_ids,
+            top_k=top_k,
+            candidate_limit=request.candidate_limit,
+            rerank_limit=request.rerank_limit,
+        )
+        intents = self._attach_intent_top_k(intents=intents, retrieval_results=retrieval_results)
+        timings["retrieve_ms"] = round((time.monotonic() - t2) * 1000, 2)
+
+        # Layer 3: candidate consolidation
+        t3 = time.monotonic()
+        consolidated_sources = self._consolidate_sources(retrieval_results)
+        timings["consolidate_ms"] = round((time.monotonic() - t3) * 1000, 2)
+
+        # Layer 4: reranking + memory priors
+        t4 = time.monotonic()
+        memory_priors_applied = self._apply_memory_priors(
+            request_query=request.query,
+            sources=consolidated_sources,
+            memory_summary=memory_summary,
+        )
+        consolidated_sources.sort(key=lambda s: s.score, reverse=True)
+        consolidated_sources = consolidated_sources[: max(top_k, 1)]
+        timings["rerank_ms"] = round((time.monotonic() - t4) * 1000, 2)
+
+        # Layer 5: grounded synthesis
+        t5 = time.monotonic()
+        answer = await self._synthesize(
+            agent=agent,
             query=request.query,
-            subanswers=subanswers,
-            important_nodes=(
-                important_nodes if request.mode in ("context", "both") else []
-            ),
-            context=context if request.mode in ("context", "both") else [],
-            trace=trace if request.include_trace else None,
+            sources=consolidated_sources,
         )
-        response.retrieval_debug = self.last_retrieval_debug or None
+        timings["synthesize_ms"] = round((time.monotonic() - t5) * 1000, 2)
 
-        if request.mode in ("nl", "both"):
-            response.answer = answer
+        timings["total_ms"] = round((time.monotonic() - overall_start) * 1000, 2)
 
-        timings["overall"] = time.monotonic() - overall_start
         logger.info(
-            "elder_timing: decompose=%.3fs, retrieve=%.3fs, subanswer=%.3fs, synthesis=%.3fs, overall=%.3fs",
-            timings.get("decompose", 0.0),
-            timings.get("retrieve", 0.0),
-            timings.get("subanswer", 0.0),
-            timings.get("synthesis", 0.0),
-            timings.get("overall", 0.0),
+            "elder_query_timing trace_id=%s decompose_ms=%.2f memory_summary_ms=%.2f "
+            "retrieve_ms=%.2f consolidate_ms=%.2f rerank_ms=%.2f synthesize_ms=%.2f total_ms=%.2f",
+            trace_id,
+            timings["decompose_ms"],
+            timings["memory_summary_ms"],
+            timings["retrieve_ms"],
+            timings["consolidate_ms"],
+            timings["rerank_ms"],
+            timings["synthesize_ms"],
+            timings["total_ms"],
         )
-        logger.info(
-            "elder_pipeline_steps_durations: %s",
-            {k: round(v, 3) for k, v in timings.items()},
-        )
-        # Final verbose debug block
-        try:
-            logger.info("elder_summary_original_query: %s", request.query)
-            logger.info("elder_summary_subqueries: %s", subqueries)
-            for entry in retrieval_summary:
-                logger.info(
-                    "elder_summary_retrieval subquery='%s' names=%s context_preview=%s",
-                    entry["subquery"],
-                    entry["names"],
-                    entry["context_preview"],
+
+        if trace is not None:
+            trace.append(
+                TraceStep(
+                    step="timings",
+                    data={"trace_id": trace_id, "timings": timings},
                 )
-            if response.answer:
-                logger.info("elder_summary_synthesis: %s", response.answer)
-        except Exception:
-            pass
+            )
 
-        return response
+        return ElderQueryResponse(
+            agent_id=agent.id,
+            query=request.query,
+            answer=answer,
+            timings=timings,
+            intents=intents,
+            sources=consolidated_sources,
+            memory_priors_applied=memory_priors_applied,
+            trace_id=trace_id,
+            trace=trace if request.include_trace else None,
+            retrieval_debug=self.last_retrieval_debug or None,
+        )
 
     async def _decompose(
         self,
@@ -362,33 +172,26 @@ class ElderOrchestrator:
         chat_history: Optional[list[dict[str, str]]],
         trace: list[TraceStep],
         entities_hint: Optional[str] = None,
-    ) -> list[str]:
-        """Decompose query into 1-5 sub-queries."""
+    ) -> list[DecomposedIntent]:
         model = self.model_policy.get_model(LLMTask.DECOMPOSE)
 
-        # Build conversation context if chat history exists
-        messages = []
+        messages: list[dict[str, str]] = []
         if chat_history:
-            # Add recent history for context
-            for msg in chat_history[-10:]:  # Use last 10 messages for context
+            for msg in chat_history[-8:]:
                 messages.append({"role": msg["role"], "content": msg["content"]})
 
-        # Add the decomposition prompt
-        # Prefer SQL entities (names+descriptions) if provided by API layer
         if entities_hint:
             instances_text = entities_hint
         else:
-            # Fallback to graph instance summaries
             try:
                 summaries = await self.graph_retriever.instance_summaries(ontology_ids)
             except Exception:
                 summaries = []
-            if summaries:
-                instances_text = "\n".join(
-                    [f"- {s['name']}: {s['hint']}" for s in summaries]
-                )
-            else:
-                instances_text = "(no instance summaries available)"
+            instances_text = (
+                "\n".join([f"- {s['name']}: {s['hint']}" for s in summaries])
+                if summaries
+                else "(no instance summaries available)"
+            )
 
         prompt = DECOMPOSE_PROMPT.format(
             query=query,
@@ -397,343 +200,446 @@ class ElderOrchestrator:
         messages.append({"role": "user", "content": prompt})
 
         try:
-            # Log prompt
-            logger.info(
-                "elder_llm_decompose_prompt(model=%s):\n%s",
-                model,
-                "\n".join([m.get("content", "") for m in messages]),
-            )
             response = await self.llm_client.chat(
                 model=model,
                 messages=messages,
-                temperature=0.7,
+                temperature=0.2,
             )
-            logger.info("elder_llm_decompose_response: %s", response)
+            payload = self._extract_json(response)
+            raw_intents = payload.get("intents") if isinstance(payload, dict) else None
+            intents: list[DecomposedIntent] = []
+            if isinstance(raw_intents, list):
+                for item in raw_intents:
+                    if not isinstance(item, dict):
+                        continue
+                    subquery = str(item.get("subquery") or "").strip()
+                    if not subquery:
+                        continue
+                    target = str(item.get("target_data_type") or "mixed").strip().lower()
+                    if target not in {"entity", "scene", "milestone", "mixed"}:
+                        target = "mixed"
+                    reason = str(item.get("reason") or "general").strip() or "general"
+                    intents.append(
+                        DecomposedIntent(
+                            subquery=subquery,
+                            target_data_type=target,
+                            reason=reason,
+                        )
+                    )
 
-            # Parse sub-queries from response (one per line)
-            lines = [
-                line.strip() for line in response.strip().split("\n") if line.strip()
-            ]
-            subqueries = [line.lstrip("0123456789.-) ") for line in lines if line][
-                : self.max_subqueries
-            ]
+            if not intents:
+                intents = [
+                    DecomposedIntent(
+                        subquery=query,
+                        target_data_type="mixed",
+                        reason="fallback_parse",
+                    )
+                ]
 
-            # Fallback to original query if empty
-            if not subqueries:
-                subqueries = [query]
+            intents = intents[: self.max_subqueries]
 
             if trace is not None:
                 trace.append(
                     TraceStep(
                         step="decompose",
                         data={
-                            "subqueries": subqueries,
                             "model": model,
+                            "intents": [intent.model_dump() for intent in intents],
                             "used_chat_history": bool(chat_history),
                         },
                     )
                 )
+            return intents
+        except Exception as exc:
+            logger.error("Decomposition failed: %s", exc)
+            return [
+                DecomposedIntent(
+                    subquery=query,
+                    target_data_type="mixed",
+                    reason="fallback_error",
+                )
+            ]
 
-            logger.info(f"Decomposed into {len(subqueries)} sub-queries")
-            return subqueries
-
-        except Exception as e:
-            logger.error(f"Decomposition failed: {e}")
-            # Fallback to original query
-            return [query]
-
-    async def _retrieve(
+    async def _retrieve_intents(
         self,
-        subqueries: list[str],
+        *,
+        intents: list[DecomposedIntent],
         ontology_ids: list[int],
         top_k: int,
-        trace: list[TraceStep],
-    ) -> list[tuple[str, list[RetrievedChunk], float]]:
-        """Retrieve context for each sub-query in parallel."""
+        candidate_limit: int | None,
+        rerank_limit: int | None,
+    ) -> list[dict[str, Any]]:
+        semaphore = asyncio.Semaphore(self.max_concurrency)
 
-        def _deduplicate_chunks(chunks: list[RetrievedChunk]) -> list[RetrievedChunk]:
-            """Deduplicate chunks by (source, instance_id), keeping highest score."""
-            original_count = len(chunks)
-            seen_keys: dict[tuple[Optional[str], Optional[str]], RetrievedChunk] = {}
-            for chunk in chunks:
-                key = (chunk.source, chunk.instance_id)
-                if key not in seen_keys or chunk.score > seen_keys[key].score:
-                    seen_keys[key] = chunk
-            # Return chunks sorted by score descending
-            deduplicated = sorted(
-                seen_keys.values(), key=lambda c: c.score, reverse=True
-            )
-            if original_count > len(deduplicated):
-                logger.info(
-                    "elder_deduplication: original=%d deduplicated=%d removed=%d",
-                    original_count,
-                    len(deduplicated),
-                    original_count - len(deduplicated),
-                )
-            return deduplicated
-
-        async def retrieve_one(
-            subquery: str,
-        ) -> tuple[str, list[RetrievedChunk], float]:
-            # Use a fresh Neo4j session per subquery to allow safe parallel retrieval
-            sub_start = time.monotonic()
-            try:
-                from app.graph.neo4j import get_driver
-                from app.core.config_store import get_settings as _get_settings
-                from app.integrations.retrieval.neo4j_retriever import (
-                    Neo4jGraphRetriever,
-                )
-
-                driver = get_driver()
-                settings = _get_settings()
-                async with driver.session(database=settings.neo4j_database) as session:
-                    retr = Neo4jGraphRetriever(session)
-                    chunks = await retr.search(
-                        query=subquery,
+        async def _run(intent: DecomposedIntent) -> dict[str, Any]:
+            async with semaphore:
+                started = time.monotonic()
+                labels = self._labels_from_target(intent.target_data_type)
+                chunks: list[RetrievedChunk] = []
+                debug_stats: dict[str, Any] = {}
+                try:
+                    chunks = await self.graph_retriever.search(
+                        query=intent.subquery,
                         ontology_ids=ontology_ids,
                         top_k=top_k,
+                        node_scope="everything",
+                        allowed_labels=labels,
+                        candidate_limit=candidate_limit,
+                        rerank_limit=rerank_limit,
                     )
-                    # Deduplicate chunks by (source, instance_id)
-                    chunks = _deduplicate_chunks(chunks)
-                    elapsed = time.monotonic() - sub_start
-                    return (subquery, chunks, elapsed)
-            except Exception as e:
-                logger.error(f"Retrieval failed for '{subquery}': {e}")
-                elapsed = time.monotonic() - sub_start
-                return (subquery, [], elapsed)
+                    # retriever may expose stats per ontology; aggregate best-effort
+                    stats_entries = getattr(self.graph_retriever, "last_search_stats", []) or []
+                    agg = {"raw_candidates": 0, "after_parent_grouping": 0, "after_dedup": 0, "final_k": 0}
+                    for entry in stats_entries:
+                        ds = (entry or {}).get("debug_stats") or {}
+                        for key in agg:
+                            agg[key] += int(ds.get(key) or 0)
+                    debug_stats = agg
+                except Exception as exc:
+                    logger.error("Retrieval failed for intent '%s': %s", intent.subquery, exc)
 
-        # Bounded parallel retrieval using separate sessions
-        semaphore = asyncio.Semaphore(self.max_concurrency)
-
-        async def _run_with_limit(sq: str):
-            async with semaphore:
-                return await retrieve_one(sq)
-
-        logger.info(
-            "elder_retrieval_parallel_start subqueries=%d concurrency=%d",
-            len(subqueries),
-            self.max_concurrency,
-        )
-
-        tasks = [asyncio.create_task(_run_with_limit(sq)) for sq in subqueries]
-        results = await asyncio.gather(*tasks)
-        aggregate_duration = sum(duration for _, _, duration in results)
-        max_duration = max((duration for _, _, duration in results), default=0.0)
-
-        debug_entries: list[dict[str, Any]] = []
-        for subquery, chunks, duration in results:
-            debug_entry = {
-                "subquery": subquery,
-                "duration": duration,
-                "results": [
-                    {
-                        "node_id": chunk.node_id,
-                        "node_name": chunk.node_name,
-                        "instance_id": chunk.instance_id,
-                        "chunk_type": chunk.chunk_type,
-                        "chunk_index": chunk.chunk_index,
-                        "score": chunk.score,
-                        "confidence_pct": chunk.confidence_pct,
-                        "text": chunk.text,
-                    }
-                    for chunk in chunks
-                ],
-            }
-            debug_entries.append(debug_entry)
-            logger.info(
-                "elder_retrieval_summary subquery='%s' total_chunks=%d duration=%.3fs",
-                subquery,
-                len(chunks),
-                duration,
-            )
-        self.last_retrieval_debug = debug_entries
-
-        if trace is not None:
-            trace.append(
-                TraceStep(
-                    step="retrieve",
-                    data={"retrieval": debug_entries},
+                duration_ms = round((time.monotonic() - started) * 1000, 2)
+                top_ids = [c.node_id for c in chunks[:5]]
+                logger.info(
+                    "elder_intent_retrieve subquery='%s' target=%s duration_ms=%.2f top_node_ids=%s",
+                    intent.subquery,
+                    intent.target_data_type,
+                    duration_ms,
+                    top_ids,
                 )
-            )
+                return {
+                    "intent": intent,
+                    "chunks": chunks,
+                    "duration_ms": duration_ms,
+                    "debug_stats": debug_stats,
+                }
 
-        logger.info(
-            "elder_retrieval_parallel_done subqueries=%d total_chunks=%d aggregate_time=%.3fs wall_time=%.3fs",
-            len(results),
-            sum(len(chunks) for _, chunks, _ in results),
-            aggregate_duration,
-            max_duration,
-        )
+        tasks = [asyncio.create_task(_run(intent)) for intent in intents]
+        results = await asyncio.gather(*tasks)
+
+        self.last_retrieval_debug = [
+            {
+                "subquery": r["intent"].subquery,
+                "target_data_type": r["intent"].target_data_type,
+                "duration_ms": r["duration_ms"],
+                "counters": r["debug_stats"],
+                "top_node_ids": [c.node_id for c in r["chunks"][:5]],
+            }
+            for r in results
+        ]
+
         return results
 
-    async def _subanswer(
+    def _attach_intent_top_k(
         self,
-        retrieval_results: list[tuple[str, list[RetrievedChunk], float]],
-        trace: list[TraceStep],
-    ) -> list[SubAnswer]:
-        """Generate sub-answers for each sub-query in parallel."""
-        model = self.model_policy.get_model(LLMTask.SUBANSWER)
+        *,
+        intents: list[DecomposedIntent],
+        retrieval_results: list[dict[str, Any]],
+    ) -> list[DecomposedIntent]:
+        enriched: list[DecomposedIntent] = []
+        for intent, result in zip(intents, retrieval_results):
+            chunks: list[RetrievedChunk] = result.get("chunks") or []
+            entity_ids: list[str] = []
+            scene_ids: list[str] = []
+            milestone_ids: list[str] = []
 
-        async def answer_one(subquery: str, chunks: list[RetrievedChunk]) -> SubAnswer:
-            # Build context from chunks
-            if not chunks:
-                context_text = "(No context retrieved)"
-            else:
-                context_parts = [
-                    f"[Score: {chunk.score:.2f}] {chunk.text}" for chunk in chunks
-                ]
-                context_text = "\n\n".join(context_parts)
+            for chunk in chunks:
+                node_id = (chunk.node_id or "").strip()
+                if not node_id:
+                    continue
+                label = (chunk.node_label or "").strip().lower()
+                if label == "entityinstance":
+                    if node_id not in entity_ids:
+                        entity_ids.append(node_id)
+                elif label == "scene":
+                    if node_id not in scene_ids:
+                        scene_ids.append(node_id)
+                elif label == "milestone":
+                    if node_id not in milestone_ids:
+                        milestone_ids.append(node_id)
 
-            prompt = SUBANSWER_PROMPT.format(
-                subquery=subquery,
-                context=context_text,
+            enriched.append(
+                intent.model_copy(
+                    update={
+                        "top_k_entities": entity_ids,
+                        "top_k_scenes": scene_ids,
+                        "top_k_milestones": milestone_ids,
+                    }
+                )
             )
+        if len(enriched) < len(intents):
+            enriched.extend(intents[len(enriched) :])
+        return enriched
 
-            try:
-                logger.info(
-                    "elder_llm_subanswer_prompt(model=%s, subquery='%s'):\n%s",
-                    model,
-                    subquery,
-                    prompt,
-                )
-                answer_text = await self.llm_client.chat(
-                    model=model,
-                    messages=[{"role": "user", "content": prompt}],
-                    temperature=0.3,
-                )
-                logger.info(
-                    "elder_llm_subanswer_response(subquery='%s'): %s",
-                    subquery,
-                    answer_text,
-                )
-
-                return SubAnswer(
-                    subquery=subquery,
-                    answer=answer_text,
-                    retrieval=chunks,
-                )
-            except Exception as e:
-                logger.error(f"Sub-answer generation failed for '{subquery}': {e}")
-                return SubAnswer(
-                    subquery=subquery,
-                    answer="Error generating answer.",
-                    retrieval=chunks,
-                )
-
-        # Use semaphore to limit concurrency
-        semaphore = asyncio.Semaphore(self.max_concurrency)
-
-        async def answer_with_limit(sq: str, chunks: list[RetrievedChunk]) -> SubAnswer:
-            async with semaphore:
-                return await answer_one(sq, chunks)
-
-        subanswers = await asyncio.gather(
-            *[answer_with_limit(sq, chunks) for sq, chunks, _ in retrieval_results]
+    def _consolidate_sources(self, retrieval_results: list[dict[str, Any]]) -> list[SourceNode]:
+        by_node: dict[str, dict[str, Any]] = defaultdict(
+            lambda: {
+                "node_id": "",
+                "node_label": None,
+                "node_name": None,
+                "score": 0.0,
+                "evidence_chunks": [],
+            }
         )
 
-        if trace is not None:
-            trace.append(
-                TraceStep(
-                    step="subanswer",
-                    data={
-                        "subanswers": [
-                            {"subquery": sa.subquery, "answer_preview": sa.answer[:100]}
-                            for sa in subanswers
-                        ],
-                        "model": model,
-                    },
+        for result in retrieval_results:
+            for chunk in result.get("chunks") or []:
+                node_id = chunk.node_id
+                if not node_id:
+                    continue
+                entry = by_node[node_id]
+                entry["node_id"] = node_id
+                entry["node_label"] = chunk.node_label
+                entry["node_name"] = chunk.node_name or chunk.node_alias or chunk.node_id
+                entry["score"] = max(float(entry["score"]), float(chunk.score))
+                entry["evidence_chunks"].append(
+                    SourceEvidenceChunk(
+                        chunk_id=chunk.chunk_id,
+                        chunk_type=chunk.chunk_type,
+                        score=float(chunk.score),
+                        text=chunk.text[:300] if chunk.text else None,
+                    )
+                )
+
+        sources: list[SourceNode] = []
+        for node_id, entry in by_node.items():
+            evidence_chunks = sorted(
+                entry["evidence_chunks"],
+                key=lambda x: x.score,
+                reverse=True,
+            )[:3]
+            sources.append(
+                SourceNode(
+                    node_id=node_id,
+                    node_label=entry["node_label"],
+                    node_name=entry["node_name"],
+                    score=float(entry["score"]),
+                    evidence_chunks=evidence_chunks,
                 )
             )
 
-        logger.info(f"Generated {len(subanswers)} sub-answers")
-        return subanswers
+        return sources
+
+    def _apply_memory_priors(
+        self,
+        *,
+        request_query: str,
+        sources: list[SourceNode],
+        memory_summary: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        priors_applied: list[dict[str, Any]] = []
+        if not sources:
+            return priors_applied
+
+        recent_entities = {e.lower() for e in memory_summary.get("recent_entities", [])}
+        temporal_terms = set(memory_summary.get("temporal_terms", []))
+        last_answer_terms = set(memory_summary.get("last_answer_terms", []))
+        query_has_pronouns = bool(re.search(r"\b(it|they|he|she|that|those|this)\b", request_query.lower()))
+
+        boosted_entity_targets: list[str] = []
+        boosted_temporal_targets: list[str] = []
+        boosted_disambiguation_targets: list[str] = []
+        boosted_continuity_targets: list[str] = []
+
+        for source in sources:
+            base = source.score
+            name_l = (source.node_name or "").lower()
+
+            if recent_entities and any(token in name_l for token in recent_entities):
+                source.score += 0.03
+                boosted_entity_targets.append(source.node_id)
+
+            if source.node_label in {"Scene", "Milestone"} and temporal_terms:
+                source.score += 0.02
+                boosted_temporal_targets.append(source.node_id)
+
+            if query_has_pronouns and source.node_label == "EntityInstance":
+                source.score += 0.015
+                boosted_disambiguation_targets.append(source.node_id)
+
+            source_text = " ".join((c.text or "") for c in source.evidence_chunks).lower()
+            if last_answer_terms and any(term in source_text for term in last_answer_terms):
+                source.score += 0.01
+                boosted_continuity_targets.append(source.node_id)
+
+            if source.score > 1.0:
+                source.score = 1.0
+            if source.score < base:
+                source.score = base
+
+        if boosted_entity_targets:
+            priors_applied.append(
+                {
+                    "type": "entity_prior",
+                    "effect": "boost",
+                    "targets": sorted(set(boosted_entity_targets)),
+                    "why": "recently discussed entities in chat history",
+                    "impact_on_scores": 0.03,
+                }
+            )
+        if boosted_temporal_targets:
+            priors_applied.append(
+                {
+                    "type": "temporal_prior",
+                    "effect": "boost",
+                    "targets": sorted(set(boosted_temporal_targets)),
+                    "why": "temporal references in recent memory",
+                    "impact_on_scores": 0.02,
+                }
+            )
+        if boosted_disambiguation_targets:
+            priors_applied.append(
+                {
+                    "type": "disambiguation_prior",
+                    "effect": "boost",
+                    "targets": sorted(set(boosted_disambiguation_targets)),
+                    "why": "pronoun/reference ambiguity in query",
+                    "impact_on_scores": 0.015,
+                }
+            )
+        if boosted_continuity_targets:
+            priors_applied.append(
+                {
+                    "type": "continuity_prior",
+                    "effect": "boost",
+                    "targets": sorted(set(boosted_continuity_targets)),
+                    "why": "follow-up continuity with previous answer",
+                    "impact_on_scores": 0.01,
+                }
+            )
+
+        return priors_applied
 
     async def _synthesize(
         self,
+        *,
         agent: Agent,
         query: str,
-        subanswers: list[SubAnswer],
-        trace: list[TraceStep],
-        answer_mode: str,
+        sources: list[SourceNode],
     ) -> str:
-        """Synthesize final chat-style answer from sub-answers using combined prompt."""
+        if not sources:
+            return (
+                "I couldn't find relevant grounded evidence in the knowledge base for this question. "
+                "Please try rephrasing or ask for a narrower scope."
+            )
+
         model = self.model_policy.get_model(LLMTask.SYNTHESIS)
+        source_lines: list[str] = []
+        for src in sources[:12]:
+            source_lines.append(
+                f"- [{src.node_label or 'Node'}] {src.node_name or src.node_id} "
+                f"(id={src.node_id}, score={src.score:.3f})"
+            )
+            for ev in src.evidence_chunks[:2]:
+                snippet = (ev.text or "").replace("\n", " ").strip()
+                if len(snippet) > 220:
+                    snippet = snippet[:220] + "…"
+                source_lines.append(
+                    f"  * chunk={ev.chunk_id or 'n/a'} type={ev.chunk_type or 'n/a'} "
+                    f"score={ev.score:.3f} text={snippet}"
+                )
 
-        subanswers_text = "\n\n".join(
-            [f"Q: {sa.subquery}\nA: {sa.answer}" for sa in subanswers]
-        )
-
-        if answer_mode == "expanded":
-            guidance = "Bring together the most relevant points from multiple sources. Provide a short intro, then a few concise bullet points or short paragraphs covering each angle."
-        elif answer_mode == "direct":
-            guidance = "Answer in 2-3 crisp sentences that address the question directly. Mention source confidence only if relevant."
-        else:
-            guidance = "Keep the reply compact (one short paragraph or 3-4 bullets) while touching on the key facts you found."
-
-        # Use combined prompt for synthesis+validation+style in single call
-        prompt = COMBINED_SYNTHESIS_PROMPT.format(
+        sources_block = "\n".join(source_lines)
+        prompt = SYNTHESIS_PROMPT.format(
             agent_name=agent.name,
-            writing_style=agent.writing_style or "empathetic, thoughtful mentor",
-            answer_guidance=guidance,
+            writing_style=agent.writing_style or "thoughtful, concise mentor",
             query=query,
-            subanswers=subanswers_text,
+            sources_block=sources_block,
         )
 
         try:
-            logger.info(
-                "elder_llm_synthesis_combined_prompt(model=%s):\n%s",
-                model,
-                prompt,
-            )
-            answer = await self.llm_client.chat(
+            return await self.llm_client.chat(
                 model=model,
                 messages=[{"role": "user", "content": prompt}],
-                temperature=0.4,
+                temperature=0.3,
             )
-            logger.info("elder_llm_synthesis_combined_response: %s", answer)
+        except Exception as exc:
+            logger.error("Synthesis failed: %s", exc)
+            return "I had trouble synthesizing a response from the retrieved evidence. Please try again."
 
-            if trace is not None:
-                trace.append(
-                    TraceStep(
-                        step="synthesize_combined",
-                        data={"answer_preview": answer[:200], "model": model},
-                    )
-                )
+    @staticmethod
+    def _labels_from_target(target_data_type: str) -> list[str]:
+        target = (target_data_type or "mixed").strip().lower()
+        if target == "entity":
+            return ["EntityInstance"]
+        if target == "scene":
+            return ["Scene"]
+        if target == "milestone":
+            return ["Milestone"]
+        return ["EntityInstance", "Scene", "Milestone"]
 
-            logger.info(
-                "Synthesized final chat-style answer (combined synthesis+validation+style)"
-            )
-            return answer
+    @staticmethod
+    def _extract_json(raw: str) -> dict[str, Any]:
+        text = (raw or "").strip()
+        if not text:
+            return {}
+        try:
+            parsed = json.loads(text)
+            return parsed if isinstance(parsed, dict) else {}
+        except json.JSONDecodeError:
+            pass
 
-        except Exception as e:
-            logger.error(f"Synthesis failed: {e}")
-            return (
-                "I'm having trouble forming a response right now. Could you try again?"
-            )
+        start = text.find("{")
+        end = text.rfind("}")
+        if start >= 0 and end > start:
+            try:
+                parsed = json.loads(text[start : end + 1])
+                return parsed if isinstance(parsed, dict) else {}
+            except json.JSONDecodeError:
+                return {}
+        return {}
 
-    def _build_context(
-        self, subanswers: list[SubAnswer]
-    ) -> tuple[list[str], list[RetrievedChunk]]:
-        """Build important nodes and deduplicated context."""
-        # Collect all chunks
-        all_chunks: list[RetrievedChunk] = []
-        for sa in subanswers:
-            all_chunks.extend(sa.retrieval)
+    @staticmethod
+    def _extract_memory_summary(
+        chat_history: Optional[list[dict[str, str]]],
+    ) -> dict[str, Any]:
+        if not chat_history:
+            return {
+                "recent_entities": [],
+                "temporal_terms": [],
+                "last_answer_terms": [],
+            }
 
-        # Sort by score
-        all_chunks.sort(key=lambda c: c.score, reverse=True)
+        recent = chat_history[-8:]
+        entity_tokens: list[str] = []
+        temporal_terms: list[str] = []
+        last_answer_terms: list[str] = []
 
-        # Deduplicate by node_id
-        seen_nodes = set()
-        unique_chunks = []
-        for chunk in all_chunks:
-            if chunk.node_id not in seen_nodes:
-                seen_nodes.add(chunk.node_id)
-                unique_chunks.append(chunk)
+        temporal_vocab = {
+            "before",
+            "after",
+            "during",
+            "then",
+            "later",
+            "earlier",
+            "next",
+            "previous",
+            "recent",
+            "timeline",
+            "milestone",
+        }
 
-        # Take top 12 for important nodes
-        important_nodes = [chunk.node_id for chunk in unique_chunks[:12]]
+        assistant_messages = [m.get("content", "") for m in recent if m.get("role") == "assistant"]
+        last_assistant = assistant_messages[-1] if assistant_messages else ""
 
-        logger.info(
-            f"Built context: {len(important_nodes)} important nodes, {len(unique_chunks)} unique chunks"
-        )
-        return important_nodes, unique_chunks
+        for msg in recent:
+            text = str(msg.get("content") or "")
+            caps = re.findall(r"\b[A-Z][a-zA-Z]{2,}\b", text)
+            for token in caps:
+                token = token.strip()
+                if token not in entity_tokens:
+                    entity_tokens.append(token)
+            low = text.lower()
+            for term in temporal_vocab:
+                if term in low and term not in temporal_terms:
+                    temporal_terms.append(term)
+
+        for token in re.findall(r"\b[a-z]{4,}\b", last_assistant.lower())[:30]:
+            if token not in {"that", "with", "from", "this", "have", "will"}:
+                last_answer_terms.append(token)
+
+        return {
+            "recent_entities": entity_tokens[:12],
+            "temporal_terms": temporal_terms[:8],
+            "last_answer_terms": last_answer_terms[:20],
+        }

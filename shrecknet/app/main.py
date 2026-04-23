@@ -1,3 +1,4 @@
+import asyncio
 from contextlib import asynccontextmanager
 import logging
 import os
@@ -39,9 +40,12 @@ from app.core.config_store import get_settings
 from app.db.init_db import init_db_async
 from app.db.init_jobs_db import init_jobs_db
 from app.db.jobs_session import get_jobs_engine
+from app.graphrag.embedding_service import get_embedding_model
+from app.graph.neo4j import ensure_temporal_graph_constraints, get_driver
 
 
 logger = logging.getLogger(__name__)
+_embedding_prewarm_task: asyncio.Task | None = None
 
 
 def _effective_cors_origins(origins: list[str]) -> list[str]:
@@ -135,15 +139,57 @@ def _log_storage_diagnostics(settings) -> None:
         )
 
 
+async def _run_embedding_prewarm() -> None:
+    started = asyncio.get_running_loop().time()
+    logger.info("embedding_prewarm_start")
+    try:
+        loop = asyncio.get_running_loop()
+
+        def _warm() -> None:
+            model = get_embedding_model()
+            model.encode(
+                ["startup prewarm"],
+                convert_to_numpy=True,
+                normalize_embeddings=True,
+            )
+
+        await loop.run_in_executor(None, _warm)
+        duration_s = asyncio.get_running_loop().time() - started
+        logger.info("embedding_prewarm_done duration_s=%.3f", duration_s)
+    except Exception as exc:
+        logger.warning("embedding_prewarm_failed error=%s", exc, exc_info=True)
+
+
+def _start_embedding_prewarm() -> asyncio.Task | None:
+    global _embedding_prewarm_task
+    if _embedding_prewarm_task is not None and not _embedding_prewarm_task.done():
+        return _embedding_prewarm_task
+    try:
+        _embedding_prewarm_task = asyncio.create_task(_run_embedding_prewarm())
+    except RuntimeError:
+        # No running loop available at this point; startup must remain resilient.
+        logger.warning("embedding_prewarm_failed error=no_running_event_loop")
+        _embedding_prewarm_task = None
+    return _embedding_prewarm_task
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     _log_storage_diagnostics(get_settings())
     await init_db_async()
     init_jobs_db(get_jobs_engine())
+    _start_embedding_prewarm()
+    try:
+        settings = get_settings()
+        driver = get_driver()
+        async with driver.session(database=settings.neo4j_database) as neo4j_session:
+            await ensure_temporal_graph_constraints(neo4j_session)
+    except Exception:
+        logger.exception("Unable to ensure temporal graph constraints during startup")
     yield
 
 
-app = FastAPI(title=get_settings().app_name, version="0.5.0", lifespan=lifespan)
+app = FastAPI(title=get_settings().app_name, version="0.5.7", lifespan=lifespan)
 
 settings = get_settings()
 effective_origins = _effective_cors_origins(settings.cors_allow_origins)

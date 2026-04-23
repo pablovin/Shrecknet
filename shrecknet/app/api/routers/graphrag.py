@@ -11,7 +11,7 @@ from app.api.deps import (
 from app.core.config_store import get_settings
 from app.graph.neo4j import get_neo4j_session
 from app.graphrag.embedding_service import EmbeddingService
-from app.graphrag.retrieval_service import RetrievalService
+from app.integrations.retrieval.neo4j_retriever import Neo4jGraphRetriever
 from app.models.user import User
 from app.schemas.graphrag import (
     ContextRequest,
@@ -91,18 +91,47 @@ async def semantic_search(
 
     Open to all authenticated users (dependency in router registration).
     """
-    service = RetrievalService(graph_session)
+    retriever = Neo4jGraphRetriever(graph_session)
 
     try:
-        result = await service.semantic_search(
+        chunks = await retriever.search(
             query=request.query,
-            ontology_id=request.ontology_id,
-            k=request.k,
-            score_threshold=request.score_threshold,
-            include_neighbors=request.include_neighbors,
-            neighbor_limit=request.neighbor_limit,
+            ontology_ids=[request.ontology_id] if request.ontology_id is not None else [],
+            top_k=request.k,
+            node_scope=request.node_scope,
+            candidate_limit=request.candidate_limit,
+            rerank_limit=request.rerank_limit,
         )
-        return SemanticSearchResponse(**result)
+        results = [
+            {
+                "node_id": chunk.node_id,
+                "name": chunk.node_name or chunk.node_alias or chunk.node_id,
+                "labels": [chunk.node_label] if chunk.node_label else [],
+                "score": chunk.score,
+                "context_text": chunk.text,
+                "ontology_id": request.ontology_id,
+                "chunk_score": chunk.chunk_score,
+                "node_score": chunk.node_score,
+                "importance_index": chunk.importance_index,
+                "matched_chunk_count": chunk.matched_chunk_count,
+                "score_breakdown": chunk.score_breakdown,
+                "graph_boost": chunk.graph_boost,
+                "evidence_bundle": chunk.evidence_bundle,
+            }
+            for chunk in chunks
+        ]
+        evidence_bundles = [
+            bundle
+            for bundle in [chunk.evidence_bundle for chunk in chunks]
+            if bundle is not None
+        ]
+        return SemanticSearchResponse(
+            query=request.query,
+            results=results,
+            total=len(results),
+            ontology_id=request.ontology_id,
+            evidence_bundles=evidence_bundles,
+        )
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
@@ -119,15 +148,26 @@ async def get_context(
 
     Open to all authenticated users (dependency in router registration).
     """
-    service = RetrievalService(graph_session)
+    retriever = Neo4jGraphRetriever(graph_session)
 
     try:
-        context = await service.get_context_for_llm(
+        chunks = await retriever.search(
             query=request.query,
-            ontology_id=request.ontology_id,
-            k=request.k,
-            score_threshold=request.score_threshold,
+            ontology_ids=[request.ontology_id] if request.ontology_id is not None else [],
+            top_k=request.k,
+            node_scope=request.node_scope,
         )
+        if not chunks:
+            context = "No relevant information found."
+        else:
+            lines = [f"Query: {request.query}\n", "Relevant Information:\n"]
+            for idx, chunk in enumerate(chunks, start=1):
+                name = chunk.node_name or chunk.node_alias or chunk.node_id
+                lines.append(f"\n{idx}. {name} (Score: {chunk.score:.2f})")
+                if chunk.text:
+                    lines.append(f"\n{chunk.text}")
+                lines.append("\n" + "-" * 40)
+            context = "\n".join(lines)
         return ContextResponse(
             query=request.query, context=context, ontology_id=request.ontology_id
         )

@@ -10,13 +10,19 @@ from typing import Any
 from uuid import uuid4
 
 from neo4j import AsyncSession as AsyncNeo4jSession, AsyncTransaction
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.models.ontology_instance import OntologyInstance as SqlOntologyInstance
 from app.models.ontology import OntologyEntity
 from app.repositories.ontology_repository import OntologyRepository
 from app.schemas.ontology_instance import (
+    MilestoneCreate,
+    MilestoneRead,
+    MilestoneUpdate,
+    OntologyEntityResolveItem,
+    OntologyEntityResolveResponse,
     OntologyInstanceCreate,
     OntologyInstanceEntityCreate,
     OntologyInstanceRead,
@@ -25,9 +31,9 @@ from app.schemas.ontology_instance import (
     OntologyInstanceSearchResponse,
     OntologyInstanceSummary,
     OntologyInstanceSummaryPage,
-    TimelineEventCreate,
-    TimelineEventRead,
-    TimelineEventUpdate,
+    SceneCreate,
+    SceneRead,
+    SceneUpdate,
 )
 
 from neo4j.time import DateTime as Neo4jDateTime
@@ -128,11 +134,13 @@ def _slug_alias_pattern(slug: str) -> str:
 
 def _normalize_id_list(values: list[str] | None) -> list[str]:
     normalized: list[str] = []
+    seen: set[str] = set()
     if not values:
         return normalized
     for value in values:
         cleaned = _normalize_optional_str(value)
-        if cleaned:
+        if cleaned and cleaned not in seen:
+            seen.add(cleaned)
             normalized.append(cleaned)
     return normalized
 
@@ -164,31 +172,6 @@ def _strip_links_to_instances(
     return pattern.sub(r"\2", text)
 
 
-def _build_timeline_text(
-    title: str,
-    description: str,
-    source: str | None,
-    created_from_instance_id: str | None,
-    related_entity_ids: list[str],
-    before_event_id: str | None,
-    after_event_id: str | None,
-) -> str:
-    lines = [f"Timeline Event: {title}"]
-    if description:
-        lines.append(description.strip())
-    if source:
-        lines.append(f"Source: {source.strip()}")
-    if created_from_instance_id:
-        lines.append(f"Created From Instance: {created_from_instance_id}")
-    if related_entity_ids:
-        lines.append(f"Involved Entities: {', '.join(related_entity_ids)}")
-    if before_event_id:
-        lines.append(f"Occurs After Event: {before_event_id}")
-    if after_event_id:
-        lines.append(f"Precedes Event: {after_event_id}")
-    return "\n".join(lines)
-
-
 class OntologyInstanceService:
     def __init__(
         self, sql_session: AsyncSession, graph_session: AsyncNeo4jSession
@@ -211,351 +194,6 @@ class OntologyInstanceService:
                 continue
             resolved[ordered_ids[idx]] = result
         return resolved
-
-    async def _event_ids(self, instance_id: str) -> set[str]:
-        result = await self.graph_session.run(
-            """
-            MATCH (:OntologyInstance {instance_id: $instance_id})-[rel]->(event)
-            WHERE type(rel) = 'HAS_EVENT' AND 'Event' IN labels(event)
-            RETURN event.event_id AS event_id
-            """,
-            instance_id=instance_id,
-        )
-        rows = await result.data()
-        return {row["event_id"] for row in rows if row.get("event_id")}
-
-    async def _clear_timeline_event_edges(
-        self, tx: AsyncTransaction, *, event_id: str
-    ) -> None:
-        """Remove derived relationships for an event before reapplying."""
-        await tx.run(
-            """
-            MATCH (event:Event {event_id: $event_id})-[rel:SOURCE_ENTITY]->()
-            DELETE rel
-            """,
-            event_id=event_id,
-        )
-        await tx.run(
-            """
-            MATCH (event:Event {event_id: $event_id})-[rel:INVOLVES_ENTITY]->()
-            DELETE rel
-            """,
-            event_id=event_id,
-        )
-        await tx.run(
-            """
-            MATCH (event:Event {event_id: $event_id})-[rel:BEFORE|AFTER|DERIVED_FROM|RELATED_TO]->()
-            DELETE rel
-            """,
-            event_id=event_id,
-        )
-
-    async def _apply_timeline_event_edges(
-        self,
-        tx: AsyncTransaction,
-        *,
-        event_id: str,
-        instance_id: str,
-        source_entity_id: str | None,
-        involves_entity_ids: list[str] | None,
-        relations: list[dict[str, Any]] | None,
-    ) -> None:
-        """Create explicit event relations for traversal/retrieval."""
-        if source_entity_id:
-            await tx.run(
-                """
-                MATCH (event:Event {event_id: $event_id})
-                MATCH (entity:EntityInstance {entity_instance_id: $source_entity_id})
-                MERGE (event)-[:SOURCE_ENTITY]->(entity)
-                """,
-                event_id=event_id,
-                source_entity_id=source_entity_id,
-            )
-        related_ids = [rid for rid in (involves_entity_ids or []) if rid]
-        if related_ids:
-            await tx.run(
-                """
-                MATCH (event:Event {event_id: $event_id})
-                WITH event
-                UNWIND $involves_entity_ids AS related_id
-                MATCH (entity:EntityInstance {entity_instance_id: related_id})
-                MERGE (event)-[:INVOLVES_ENTITY]->(entity)
-                """,
-                event_id=event_id,
-                involves_entity_ids=related_ids,
-            )
-
-        for rel in relations or []:
-            relation_type = rel.get("relation_type")
-            target_id = rel.get("target_event_id")
-            if relation_type not in {"BEFORE", "AFTER", "DERIVED_FROM", "RELATED_TO"}:
-                continue
-            if not target_id:
-                continue
-            if relation_type == "BEFORE":
-                await tx.run(
-                    """
-                    MATCH (event:Event {event_id: $event_id})
-                    MATCH (target:Event {event_id: $target_event_id})
-                    WHERE target.instance_id = $instance_id
-                    MERGE (event)-[:BEFORE]->(target)
-                    MERGE (target)-[:AFTER]->(event)
-                    """,
-                    event_id=event_id,
-                    target_event_id=target_id,
-                    instance_id=instance_id,
-                )
-            elif relation_type == "AFTER":
-                await tx.run(
-                    """
-                    MATCH (event:Event {event_id: $event_id})
-                    MATCH (target:Event {event_id: $target_event_id})
-                    WHERE target.instance_id = $instance_id
-                    MERGE (event)-[:AFTER]->(target)
-                    MERGE (target)-[:BEFORE]->(event)
-                    """,
-                    event_id=event_id,
-                    target_event_id=target_id,
-                    instance_id=instance_id,
-                )
-            elif relation_type == "DERIVED_FROM":
-                await tx.run(
-                    """
-                    MATCH (event:Event {event_id: $event_id})
-                    MATCH (target:Event {event_id: $target_event_id})
-                    WHERE target.instance_id = $instance_id
-                    MERGE (event)-[:DERIVED_FROM]->(target)
-                    """,
-                    event_id=event_id,
-                    target_event_id=target_id,
-                    instance_id=instance_id,
-                )
-            else:
-                await tx.run(
-                    """
-                    MATCH (event:Event {event_id: $event_id})
-                    MATCH (target:Event {event_id: $target_event_id})
-                    WHERE target.instance_id = $instance_id
-                    MERGE (event)-[:RELATED_TO]->(target)
-                    """,
-                    event_id=event_id,
-                    target_event_id=target_id,
-                    instance_id=instance_id,
-                )
-
-    def _timeline_node_to_read(self, node: Any) -> TimelineEventRead:
-        props = dict(node)
-        source_entity_id = (
-            props.get("_source_entity_edge_id")
-            or props.get("source_entity_id")
-            or props.get("created_from_entity_id")
-        )
-        source = _normalize_optional_str(props.get("source")) or _extract_legacy_event_source(
-            props.get("text"),
-            props.get("text_linked"),
-            props.get("autogenerated_text"),
-            props.get("autogenerated_text_linked"),
-        )
-        involves_entity_ids = (
-            props.get("_involves_entity_edge_ids")
-            or props.get("involves_entity_ids")
-            or props.get("related_entity_ids")
-            or []
-        )
-        if not isinstance(involves_entity_ids, list):
-            involves_entity_ids = [involves_entity_ids]
-        normalized_involves: list[str] = []
-        for value in involves_entity_ids:
-            cleaned = _normalize_optional_str(value)
-            if cleaned:
-                normalized_involves.append(cleaned)
-        relations_raw = props.get("relations_json")
-        relations: list[dict[str, Any]] = []
-        if isinstance(relations_raw, str) and relations_raw.strip():
-            try:
-                parsed = json.loads(relations_raw)
-                if isinstance(parsed, list):
-                    relations = [item for item in parsed if isinstance(item, dict)]
-            except json.JSONDecodeError:
-                relations = []
-        return TimelineEventRead(
-            event_id=props.get("event_id") or props.get("event_id"),
-            instance_id=props["instance_id"],
-            ontology_id=props["ontology_id"],
-            title=props.get("title") or "",
-            description=props.get("description") or "",
-            source=source,
-            source_entity_id=_normalize_optional_str(source_entity_id),
-            involves_entity_ids=normalized_involves,
-            relations=relations,
-            created_at=_parse_dt(props.get("created_at")),
-            updated_at=_parse_dt(props.get("updated_at")),
-        )
-
-    def _prepare_timeline_event_rows(
-        self,
-        events: list[TimelineEventCreate],
-        *,
-        instance_id: str,
-        ontology_id: int,
-    ) -> list[dict[str, Any]]:
-        if not events:
-            return []
-        timestamp = _format_dt(datetime.utcnow())
-        rows: list[dict[str, Any]] = []
-        ids: set[str] = set()
-        for event in events:
-            event_id = _normalize_optional_str(event.event_id or event.event_id) or str(uuid4())
-            if event_id in ids:
-                raise ValueError(f"Duplicate timeline event id '{event_id}' in payload")
-            title = event.title.strip()
-            description = event.description.strip()
-            relations = [rel.model_dump() for rel in event.relations]
-            source = _normalize_optional_str(event.source)
-            source_entity = _normalize_optional_str(event.source_entity_id)
-            involves_entity_ids = _normalize_id_list(event.involves_entity_ids)
-            text_payload = _build_timeline_text(
-                title,
-                description,
-                source,
-                None,
-                involves_entity_ids,
-                None,
-                None,
-            )
-            row = {
-                "event_id": event_id,
-                "entity_instance_id": event_id,
-                "instance_id": instance_id,
-                "ontology_id": ontology_id,
-                "name": title,
-                "alias": title,
-                "title": title,
-                "description": description,
-                "source": source,
-                "source_entity_id": source_entity,
-                "involves_entity_ids": involves_entity_ids,
-                "relations_json": json.dumps(relations, ensure_ascii=False),
-                "created_at": timestamp,
-                "updated_at": timestamp,
-                "last_updated_date": timestamp,
-                "text": text_payload,
-                "autogenerated_text": text_payload,
-                "is_embedded": False,
-                "last_embedded_date": None,
-            }
-            rows.append(row)
-            ids.add(event_id)
-
-        for row in rows:
-            parsed_relations: list[dict[str, Any]] = []
-            try:
-                parsed_relations = json.loads(row.get("relations_json") or "[]")
-            except json.JSONDecodeError:
-                parsed_relations = []
-            for relation in parsed_relations:
-                target_id = relation.get("target_event_id")
-                if target_id and target_id not in ids:
-                    raise ValueError(f"Unknown event id '{target_id}' referenced in relations")
-
-        return rows
-
-    async def _replace_timeline_events_in_tx(
-        self,
-        tx: AsyncTransaction,
-        *,
-        instance_id: str,
-        ontology_id: int,
-        events: list[TimelineEventCreate],
-    ) -> None:
-        await tx.run(
-            """
-            MATCH (:OntologyInstance {instance_id: $instance_id})-[:HAS_EVENT]->(event:Event)-[:HAS_CHUNK]->(chunk:EntityChunk)
-            DETACH DELETE chunk
-            """,
-            instance_id=instance_id,
-        )
-        await tx.run(
-            """
-            MATCH (:OntologyInstance {instance_id: $instance_id})-[:HAS_EVENT]->(event:Event)
-            DETACH DELETE event
-            """,
-            instance_id=instance_id,
-        )
-        rows = self._prepare_timeline_event_rows(
-            events, instance_id=instance_id, ontology_id=ontology_id
-        )
-        if not rows:
-            return
-        for row in rows:
-            await tx.run(
-                """
-                MATCH (i:OntologyInstance {instance_id: $instance_id})
-                CREATE (i)-[:HAS_EVENT]->(event:Event {
-                    event_id: $event_id,
-                    entity_instance_id: $entity_instance_id,
-                    instance_id: $instance_id,
-                    ontology_id: $ontology_id,
-                    name: $name,
-                    alias: $alias,
-                    title: $title,
-                    description: $description,
-                    source: $source,
-                    created_from_instance_id: $created_from_instance_id,
-                    created_from_entity_id: $created_from_entity_id,
-                    source_instance_id: $source_instance_id,
-                    source_entity_id: $source_entity_id,
-                    related_instance_ids: $related_instance_ids,
-                    related_entity_ids: $related_entity_ids,
-                    before_event_id: $before_event_id,
-                    after_event_id: $after_event_id,
-                    created_at: $created_at,
-                    updated_at: $updated_at,
-                    last_updated_date: $last_updated_date,
-                    text: $text,
-                    autogenerated_text: $autogenerated_text,
-                    is_embedded: $is_embedded,
-                    last_embedded_date: $last_embedded_date
-                })
-                """,
-                **row,
-            )
-            await self._apply_timeline_event_edges(
-                tx,
-                event_id=row["event_id"],
-                instance_id=instance_id,
-                source_entity_id=row.get("source_entity_id"),
-                involves_entity_ids=row.get("involves_entity_ids"),
-                relations=json.loads(row.get("relations_json") or "[]"),
-            )
-
-    async def _timeline_events_for_instance(
-        self, instance_id: str
-    ) -> list[TimelineEventRead]:
-        result = await self.graph_session.run(
-            """
-            MATCH (:OntologyInstance {instance_id: $instance_id})-[rel]->(event)
-            WHERE type(rel) = 'HAS_EVENT' AND 'Event' IN labels(event)
-            OPTIONAL MATCH (event)-[:SOURCE_ENTITY]->(source_entity:EntityInstance)
-            OPTIONAL MATCH (event)-[:INVOLVES_ENTITY]->(involved_entity:EntityInstance)
-            RETURN event,
-                   source_entity.entity_instance_id AS source_entity_edge_id,
-                   collect(DISTINCT involved_entity.entity_instance_id) AS involves_entity_edge_ids
-            ORDER BY event.created_at ASC
-            """,
-            instance_id=instance_id,
-        )
-        rows = await result.data()
-        events: list[TimelineEventRead] = []
-        for record in rows:
-            node = record.get("event")
-            if not node:
-                continue
-            event_payload = dict(node)
-            event_payload["_source_entity_edge_id"] = record.get("source_entity_edge_id")
-            event_payload["_involves_entity_edge_ids"] = record.get("involves_entity_edge_ids") or []
-            events.append(self._timeline_node_to_read(event_payload))
-        return events
 
     async def _get_instance_ontology_id(self, instance_id: str) -> int:
         result = await self.graph_session.run(
@@ -767,12 +405,6 @@ class OntologyInstanceService:
                         )
                         impacted_entity_ids.add(target_id)
                         impacted_entity_ids.add(entity_node_id)
-            await self._replace_timeline_events_in_tx(
-                tx,
-                instance_id=instance_id,
-                ontology_id=payload.ontology_id,
-                events=payload.events,
-            )
         except Exception:
             await tx.rollback()
             await tx.close()
@@ -780,6 +412,8 @@ class OntologyInstanceService:
         else:
             await tx.commit()
             await tx.close()
+            if payload.scenes:
+                await self._replace_scenes_for_instance(instance_id, payload.scenes)
             instance = await self.get_instance(instance_id)
             from app.tasks.ontology_links import link_instance as link_instance_task
             from app.tasks.neo4j_embedding import embed_nodes as embed_nodes_task
@@ -1012,6 +646,64 @@ class OntologyInstanceService:
             deep_results=deep_hits,
         )
 
+    async def resolve_entities(
+        self,
+        *,
+        ontology_id: int,
+        entity_instance_ids: list[str],
+    ) -> OntologyEntityResolveResponse:
+        requested_ids = _normalize_id_list(entity_instance_ids)
+        if not requested_ids:
+            raise ValueError("entity_instance_ids cannot be empty")
+        if len(requested_ids) > 200:
+            raise ValueError("entity_instance_ids cannot contain more than 200 ids")
+
+        result = await self.graph_session.run(
+            """
+            UNWIND $entity_ids AS entity_id
+            OPTIONAL MATCH (entity:EntityInstance {entity_instance_id: entity_id})
+            WHERE entity IS NOT NULL
+              AND toInteger(entity.ontology_id) = toInteger($ontology_id)
+            OPTIONAL MATCH (inst:OntologyInstance {instance_id: entity.instance_id})
+            RETURN entity.entity_instance_id AS entity_instance_id,
+                   entity.instance_id AS instance_id,
+                   toInteger(entity.ontology_id) AS ontology_id,
+                   toInteger(entity.entity_definition_id) AS entity_definition_id,
+                   entity.alias AS entity_alias,
+                   inst.name AS instance_name
+            """,
+            entity_ids=requested_ids,
+            ontology_id=ontology_id,
+        )
+        rows = await result.data()
+        resolved_by_id: dict[str, OntologyEntityResolveItem] = {}
+        for row in rows:
+            entity_id = _normalize_optional_str(row.get("entity_instance_id"))
+            if not entity_id or entity_id in resolved_by_id:
+                continue
+            resolved_by_id[entity_id] = OntologyEntityResolveItem(
+                entity_instance_id=entity_id,
+                instance_id=str(row.get("instance_id") or ""),
+                ontology_id=int(row.get("ontology_id") or ontology_id),
+                entity_definition_id=int(row.get("entity_definition_id") or 0),
+                entity_alias=_normalize_optional_str(row.get("entity_alias")),
+                instance_name=_normalize_optional_str(row.get("instance_name")),
+            )
+
+        ordered_results: list[OntologyEntityResolveItem] = []
+        missing_ids: list[str] = []
+        for entity_id in requested_ids:
+            item = resolved_by_id.get(entity_id)
+            if item is None:
+                missing_ids.append(entity_id)
+                continue
+            ordered_results.append(item)
+
+        return OntologyEntityResolveResponse(
+            results=ordered_results,
+            missing_entity_instance_ids=missing_ids,
+        )
+
     async def _perform_direct_search(
         self,
         query: str,
@@ -1198,7 +890,7 @@ class OntologyInstanceService:
                 }
             )
 
-        timeline_events = await self._timeline_events_for_instance(instance_id)
+        scenes = await self.list_scenes(instance_id)
 
         return OntologyInstanceRead(
             instance_id=instance_node["instance_id"],
@@ -1233,7 +925,7 @@ class OntologyInstanceService:
                 }
                 for entity_data in entities_map.values()
             ],
-            events=timeline_events,
+            scenes=scenes,
         )
 
     async def get_instance_by_slug_alias(self, slug_alias: str) -> OntologyInstanceRead:
@@ -1296,123 +988,22 @@ class OntologyInstanceService:
 
     async def _delete_entity_relationships(
         self, tx: AsyncTransaction, *, entity_ids: set[str]
-    ) -> None:
+    ) -> int:
         if not entity_ids:
-            return
-        await tx.run(
+            return 0
+        result = await tx.run(
             """
             MATCH (source:EntityInstance)-[rel:RELATES_TO]->(target:EntityInstance)
             WHERE source.entity_instance_id IN $entity_ids
                OR target.entity_instance_id IN $entity_ids
-            DELETE rel
+            WITH count(rel) AS rel_count, collect(rel) AS rels
+            FOREACH (r IN rels | DELETE r)
+            RETURN rel_count AS rel_count
             """,
             entity_ids=list(entity_ids),
         )
-
-    async def _prune_timeline_references(
-        self,
-        tx: AsyncTransaction,
-        *,
-        instance_ids: list[str],
-        entity_ids: set[str],
-        event_ids: set[str],
-    ) -> None:
-        instance_set = set(instance_ids)
-        entity_set = set(entity_ids)
-        timeline_set = set(event_ids)
-        result = await tx.run(
-            """
-            MATCH (event:Event)
-            WHERE NOT event.instance_id IN $instance_ids AND (
-                event.source_instance_id IN $instance_ids
-                OR any(instId IN $instance_ids WHERE instId IN coalesce(event.related_instance_ids, []))
-                OR any(entityId IN $entity_ids WHERE entityId IN coalesce(event.related_entity_ids, []))
-                OR event.before_event_id IN $event_ids
-                OR event.after_event_id IN $event_ids
-            )
-            RETURN event.event_id AS event_id,
-                   event.source_instance_id AS source_instance_id,
-                   event.source_entity_id AS source_entity_id,
-                   event.related_instance_ids AS related_instance_ids,
-                   event.related_entity_ids AS related_entity_ids,
-                   event.before_event_id AS before_event_id,
-                   event.after_event_id AS after_event_id
-            """,
-            instance_ids=instance_ids,
-            entity_ids=list(entity_ids),
-            event_ids=list(event_ids),
-        )
-        rows = await result.data()
-        payload: list[dict[str, Any]] = []
-        for row in rows:
-            event_id = row.get("event_id")
-            if not event_id:
-                continue
-            source_instance = row.get("source_instance_id")
-            created_from_instance = (
-                None if source_instance in instance_set else source_instance
-            )
-            source_entity = row.get("source_entity_id")
-            created_from_entity = (
-                None
-                if source_entity in entity_set or created_from_instance is None
-                else source_entity
-            )
-            related_instances = [
-                value
-                for value in (row.get("related_instance_ids") or [])
-                if value not in instance_set
-            ]
-            related_entities = [
-                value
-                for value in (row.get("related_entity_ids") or [])
-                if value not in entity_set
-            ]
-            before_event = (
-                None
-                if row.get("before_event_id") in timeline_set
-                else row.get("before_event_id")
-            )
-            after_event = (
-                None
-                if row.get("after_event_id") in timeline_set
-                else row.get("after_event_id")
-            )
-            if (
-                created_from_instance != source_instance
-                or created_from_entity != source_entity
-                or related_instances != (row.get("related_instance_ids") or [])
-                or related_entities != (row.get("related_entity_ids") or [])
-                or before_event != row.get("before_event_id")
-                or after_event != row.get("after_event_id")
-            ):
-                payload.append(
-                    {
-                        "event_id": event_id,
-                        "created_from_instance_id": created_from_instance,
-                        "created_from_entity_id": created_from_entity,
-                        "related_instance_ids": related_instances,
-                        "related_entity_ids": related_entities,
-                        "before_event_id": before_event,
-                        "after_event_id": after_event,
-                    }
-                )
-        if payload:
-            await tx.run(
-                """
-                UNWIND $payload AS item
-                MATCH (event:Event {event_id: item.event_id})
-                SET event.created_from_instance_id = item.created_from_instance_id,
-                    event.created_from_entity_id = item.created_from_entity_id,
-                    event.source_instance_id = item.created_from_instance_id,
-                    event.source_entity_id = item.created_from_entity_id,
-                    event.related_instance_ids = item.related_instance_ids,
-                    event.related_entity_ids = item.related_entity_ids,
-                    event.before_event_id = item.before_event_id,
-                    event.after_event_id = item.after_event_id
-                """,
-                payload=payload,
-            )
+        record = await result.single()
+        return int(record["rel_count"]) if record and record.get("rel_count") else 0
 
     async def _remove_cross_instance_links(
         self, tx: AsyncTransaction, *, instance_ids: list[str]
@@ -1490,17 +1081,8 @@ class OntologyInstanceService:
         tx = await self.graph_session.begin_transaction()
         try:
             entity_ids = await self._entity_ids_for_instances(tx, instance_list)
-            event_ids = await self._event_ids_for_instances(
-                tx, instance_list
-            )
 
             await self._delete_entity_relationships(tx, entity_ids=entity_ids)
-            await self._prune_timeline_references(
-                tx,
-                instance_ids=instance_list,
-                entity_ids=entity_ids,
-                event_ids=event_ids,
-            )
             await self._remove_cross_instance_links(
                 tx, instance_ids=list(instance_list)
             )
@@ -1556,6 +1138,305 @@ class OntologyInstanceService:
     async def delete_instance(self, instance_id: str) -> None:
         await self.delete_instances([instance_id])
 
+    async def clear_instance_content_by_entity_types(
+        self,
+        *,
+        ontology_id: int,
+        entity_definition_ids: Sequence[int] | None = None,
+        entity_type_names: Sequence[str] | None = None,
+    ) -> dict[str, Any]:
+        ontology = await self.repository.get(ontology_id)
+        if ontology is None:
+            raise ValueError("Ontology not found")
+
+        definitions = await self._load_entity_definitions(ontology_id)
+        valid_definition_ids = set(definitions.keys())
+        names_to_ids = {
+            definition_data["entity"].name.strip().lower(): definition_id
+            for definition_id, definition_data in definitions.items()
+            if definition_data.get("entity") and definition_data["entity"].name
+        }
+
+        normalized_ids: list[int] = []
+        for definition_id in entity_definition_ids or []:
+            if definition_id <= 0:
+                continue
+            if definition_id not in normalized_ids:
+                normalized_ids.append(definition_id)
+
+        missing_names: list[str] = []
+        for raw_name in entity_type_names or []:
+            cleaned = (raw_name or "").strip()
+            if not cleaned:
+                continue
+            matched_id = names_to_ids.get(cleaned.lower())
+            if matched_id is None:
+                missing_names.append(cleaned)
+                continue
+            if matched_id not in normalized_ids:
+                normalized_ids.append(matched_id)
+
+        if not normalized_ids:
+            raise ValueError(
+                "Provide at least one valid entity definition id or entity type name"
+            )
+
+        missing_ids = [
+            definition_id
+            for definition_id in normalized_ids
+            if definition_id not in valid_definition_ids
+        ]
+        if missing_ids:
+            raise ValueError(
+                "Entity definition(s) not found in ontology: "
+                + ", ".join(str(definition_id) for definition_id in sorted(missing_ids))
+            )
+        if missing_names:
+            raise ValueError(
+                "Entity type name(s) not found in ontology: "
+                + ", ".join(sorted(missing_names))
+            )
+
+        chunk_count = 0
+        relationships_deleted = 0
+        empty_instance_ids: list[str] = []
+
+        tx = await self.graph_session.begin_transaction()
+        try:
+            target_result = await tx.run(
+                """
+                MATCH (i:OntologyInstance)-[:HAS_ENTITY]->(e:EntityInstance)
+                WHERE toInteger(i.ontology_id) = toInteger($ontology_id)
+                  AND toInteger(e.entity_definition_id) IN $definition_ids
+                RETURN e.entity_instance_id AS entity_id,
+                       i.instance_id AS instance_id
+                """,
+                ontology_id=ontology_id,
+                definition_ids=normalized_ids,
+            )
+            target_rows = await target_result.data()
+            target_entity_ids = {
+                row["entity_id"] for row in target_rows if row.get("entity_id")
+            }
+            affected_instance_ids = {
+                row["instance_id"] for row in target_rows if row.get("instance_id")
+            }
+
+            if target_entity_ids:
+                chunk_count_result = await tx.run(
+                    """
+                    MATCH (e:EntityInstance)-[:HAS_CHUNK]->(chunk:EntityChunk)
+                    WHERE e.entity_instance_id IN $entity_ids
+                    RETURN count(chunk) AS chunk_count
+                    """,
+                    entity_ids=list(target_entity_ids),
+                )
+                chunk_record = await chunk_count_result.single()
+                chunk_count = (
+                    int(chunk_record["chunk_count"])
+                    if chunk_record and chunk_record.get("chunk_count")
+                    else 0
+                )
+
+                relationships_deleted = await self._delete_entity_relationships(
+                    tx, entity_ids=target_entity_ids
+                )
+                await tx.run(
+                    """
+                    MATCH (e:EntityInstance)-[:HAS_CHUNK]->(chunk:EntityChunk)
+                    WHERE e.entity_instance_id IN $entity_ids
+                    DETACH DELETE chunk
+                    """,
+                    entity_ids=list(target_entity_ids),
+                )
+                await tx.run(
+                    """
+                    MATCH (e:EntityInstance)
+                    WHERE e.entity_instance_id IN $entity_ids
+                    DETACH DELETE e
+                    """,
+                    entity_ids=list(target_entity_ids),
+                )
+
+            empty_instance_result = await tx.run(
+                """
+                MATCH (i:OntologyInstance)
+                WHERE toInteger(i.ontology_id) = toInteger($ontology_id)
+                OPTIONAL MATCH (i)-[:HAS_ENTITY]->(entity:EntityInstance)
+                WITH i, count(entity) AS remaining_entities
+                OPTIONAL MATCH (i)-[:HAS_EVENT]->(event:Event)
+                WITH i, remaining_entities, count(event) AS remaining_events
+                WHERE remaining_entities = 0 AND remaining_events = 0
+                RETURN i.instance_id AS instance_id
+                """,
+                ontology_id=ontology_id,
+            )
+            empty_rows = await empty_instance_result.data()
+            empty_instance_ids = [
+                row["instance_id"] for row in empty_rows if row.get("instance_id")
+            ]
+
+            if empty_instance_ids:
+                await tx.run(
+                    """
+                    MATCH (i:OntologyInstance)
+                    WHERE i.instance_id IN $instance_ids
+                    DETACH DELETE i
+                    """,
+                    instance_ids=empty_instance_ids,
+                )
+        except Exception:
+            await tx.rollback()
+            await tx.close()
+            raise
+        else:
+            await tx.commit()
+            await tx.close()
+
+        sql_instances_deleted = 0
+        if empty_instance_ids:
+            delete_result = await self.sql_session.execute(
+                delete(SqlOntologyInstance).where(
+                    SqlOntologyInstance.instance_id.in_(empty_instance_ids)
+                )
+            )
+            await self.sql_session.commit()
+            sql_instances_deleted = int(delete_result.rowcount or 0)
+
+        return {
+            "ontology_id": ontology_id,
+            "entity_definition_ids": sorted(normalized_ids),
+            "entity_type_names": [
+                definitions[definition_id]["entity"].name
+                for definition_id in sorted(normalized_ids)
+            ],
+            "instances_affected": len(affected_instance_ids),
+            "entities_deleted": len(target_entity_ids),
+            "chunks_deleted": chunk_count,
+            "relationships_deleted": relationships_deleted,
+            "instances_deleted": len(empty_instance_ids),
+            "sql_instances_deleted": sql_instances_deleted,
+        }
+
+    async def clear_timeline_events_and_orphans(
+        self,
+        *,
+        ontology_id: int,
+    ) -> dict[str, Any]:
+        ontology = await self.repository.get(ontology_id)
+        if ontology is None:
+            raise ValueError("Ontology not found")
+
+        tx = await self.graph_session.begin_transaction()
+        try:
+            legacy_counts_result = await tx.run(
+                """
+                MATCH (i:OntologyInstance)
+                WHERE toInteger(i.ontology_id) = toInteger($ontology_id)
+                OPTIONAL MATCH (i)-[:HAS_EVENT]->(event:Event)
+                OPTIONAL MATCH (event)-[:HAS_CHUNK]->(chunk:EntityChunk)
+                RETURN
+                    count(DISTINCT event) AS legacy_event_count,
+                    count(DISTINCT chunk) AS legacy_chunk_count
+                """,
+                ontology_id=ontology_id,
+            )
+            legacy_counts_row = await legacy_counts_result.single()
+            legacy_event_count = int(
+                legacy_counts_row.get("legacy_event_count") if legacy_counts_row else 0
+            )
+            legacy_chunk_count = int(
+                legacy_counts_row.get("legacy_chunk_count") if legacy_counts_row else 0
+            )
+
+            await tx.run(
+                """
+                MATCH (i:OntologyInstance)-[:HAS_EVENT]->(event:Event)-[:HAS_CHUNK]->(chunk:EntityChunk)
+                WHERE toInteger(i.ontology_id) = toInteger($ontology_id)
+                DETACH DELETE chunk
+                """,
+                ontology_id=ontology_id,
+            )
+            await tx.run(
+                """
+                MATCH (i:OntologyInstance)-[:HAS_EVENT]->(event:Event)
+                WHERE toInteger(i.ontology_id) = toInteger($ontology_id)
+                DETACH DELETE event
+                """,
+                ontology_id=ontology_id,
+            )
+
+            milestones_count_result = await tx.run(
+                """
+                                MATCH (i:OntologyInstance)-[scene_rel]->(scene)-[contains_rel]->(milestone)
+                WHERE toInteger(i.ontology_id) = toInteger($ontology_id)
+                                    AND type(scene_rel) = 'HAS_SCENE'
+                                    AND 'Scene' IN labels(scene)
+                                    AND type(contains_rel) = 'CONTAINS'
+                                    AND 'Milestone' IN labels(milestone)
+                RETURN count(DISTINCT milestone) AS milestones_count
+                """,
+                ontology_id=ontology_id,
+            )
+            milestones_count_row = await milestones_count_result.single()
+            milestones_count = int(
+                milestones_count_row.get("milestones_count") if milestones_count_row else 0
+            )
+
+            await tx.run(
+                """
+                                MATCH (i:OntologyInstance)-[scene_rel]->(scene)-[contains_rel]->(milestone)
+                WHERE toInteger(i.ontology_id) = toInteger($ontology_id)
+                                    AND type(scene_rel) = 'HAS_SCENE'
+                                    AND 'Scene' IN labels(scene)
+                                    AND type(contains_rel) = 'CONTAINS'
+                                    AND 'Milestone' IN labels(milestone)
+                DETACH DELETE milestone
+                """,
+                ontology_id=ontology_id,
+            )
+
+            scenes_count_result = await tx.run(
+                """
+                                MATCH (i:OntologyInstance)-[scene_rel]->(scene)
+                WHERE toInteger(i.ontology_id) = toInteger($ontology_id)
+                                    AND type(scene_rel) = 'HAS_SCENE'
+                                    AND 'Scene' IN labels(scene)
+                RETURN count(DISTINCT scene) AS scenes_count
+                """,
+                ontology_id=ontology_id,
+            )
+            scenes_count_row = await scenes_count_result.single()
+            scenes_count = int(
+                scenes_count_row.get("scenes_count") if scenes_count_row else 0
+            )
+
+            await tx.run(
+                """
+                                MATCH (i:OntologyInstance)-[scene_rel]->(scene)
+                WHERE toInteger(i.ontology_id) = toInteger($ontology_id)
+                                    AND type(scene_rel) = 'HAS_SCENE'
+                                    AND 'Scene' IN labels(scene)
+                DETACH DELETE scene
+                """,
+                ontology_id=ontology_id,
+            )
+        except Exception:
+            await tx.rollback()
+            await tx.close()
+            raise
+        else:
+            await tx.commit()
+            await tx.close()
+
+        return {
+            "ontology_id": ontology_id,
+            "legacy_events_deleted": legacy_event_count,
+            "legacy_event_chunks_deleted": legacy_chunk_count,
+            "milestones_deleted": milestones_count,
+            "scenes_deleted": scenes_count,
+        }
+
     async def update_instance(
         self, instance_id: str, payload: OntologyInstanceUpdate
     ) -> OntologyInstanceRead:
@@ -1574,22 +1455,8 @@ class OntologyInstanceService:
         )
 
         if payload.entities is None:
-            if payload.events is not None:
-                tx = await self.graph_session.begin_transaction()
-                try:
-                    await self._replace_timeline_events_in_tx(
-                        tx,
-                        instance_id=instance_id,
-                        ontology_id=current.ontology_id,
-                        events=payload.events,
-                    )
-                except Exception:
-                    await tx.rollback()
-                    await tx.close()
-                    raise
-                else:
-                    await tx.commit()
-                    await tx.close()
+            if payload.scenes is not None:
+                await self._replace_scenes_for_instance(instance_id, payload.scenes)
             instance = await self.get_instance(instance_id)
 
             # Notifications are owned by ShreckRPG; Shrecknet keeps core update only.
@@ -1781,13 +1648,6 @@ class OntologyInstanceService:
                         )
                         impacted_entity_ids.add(target_id)
                         impacted_entity_ids.add(entity_node_id)
-            if payload.events is not None:
-                await self._replace_timeline_events_in_tx(
-                    tx,
-                    instance_id=instance_id,
-                    ontology_id=current.ontology_id,
-                    events=payload.events,
-                )
         except Exception:
             await tx.rollback()
             await tx.close()
@@ -1795,6 +1655,9 @@ class OntologyInstanceService:
         else:
             await tx.commit()
             await tx.close()
+
+            if payload.scenes is not None:
+                await self._replace_scenes_for_instance(instance_id, payload.scenes)
 
             instance = await self.get_instance(instance_id)
 
@@ -1874,440 +1737,6 @@ class OntologyInstanceService:
                 )
             )
         return sanitized_entities
-
-    async def list_timeline_events(self, instance_id: str) -> list[TimelineEventRead]:
-        await self._get_instance_ontology_id(instance_id)
-        return await self._timeline_events_for_instance(instance_id)
-
-    async def get_timeline_event(
-        self, instance_id: str, event_id: str
-    ) -> TimelineEventRead:
-        result = await self.graph_session.run(
-            """
-            MATCH (:OntologyInstance {instance_id: $instance_id})-[rel]->(event)
-            WHERE type(rel) = 'HAS_EVENT'
-              AND 'Event' IN labels(event)
-              AND event.event_id = $event_id
-            RETURN event
-            """,
-            instance_id=instance_id,
-            event_id=event_id,
-        )
-        record = await result.single()
-        if not record or not record.get("event"):
-            raise ValueError("Timeline event not found")
-        return self._timeline_node_to_read(record["event"])
-
-    async def create_timeline_event(
-        self, instance_id: str, payload: TimelineEventCreate
-    ) -> TimelineEventRead:
-        ontology_id = await self._get_instance_ontology_id(instance_id)
-        existing_ids = await self._event_ids(instance_id)
-        event_id = _normalize_optional_str(payload.event_id) or str(uuid4())
-        if event_id in existing_ids:
-            raise ValueError(f"Event id '{event_id}' already exists")
-
-        relations = [rel.model_dump() for rel in payload.relations]
-        for relation in relations:
-            target_id = _normalize_optional_str(relation.get("target_event_id"))
-            if not target_id:
-                raise ValueError("Relation target_event_id cannot be empty")
-            if target_id == event_id:
-                raise ValueError("Event cannot reference itself")
-            if target_id not in existing_ids:
-                raise ValueError(f"Related event '{target_id}' does not exist for this instance")
-            relation["target_event_id"] = target_id
-
-        title = payload.title.strip()
-        description = payload.description.strip()
-        source_entity_id = _normalize_optional_str(payload.source_entity_id)
-        source = _normalize_optional_str(payload.source)
-        involves_entity_ids = _normalize_id_list(payload.involves_entity_ids)
-        created_at = _format_dt(datetime.utcnow())
-        text_payload = _build_timeline_text(
-            title,
-            description,
-            source,
-            None,
-            involves_entity_ids,
-            None,
-            None,
-        )
-
-        tx = await self.graph_session.begin_transaction()
-        try:
-            await tx.run(
-                """
-                MATCH (i:OntologyInstance {instance_id: $instance_id})
-                CREATE (i)-[:HAS_EVENT]->(event:Event {
-                    event_id: $event_id,
-                    entity_instance_id: $event_id,
-                    instance_id: $instance_id,
-                    ontology_id: $ontology_id,
-                    name: $title,
-                    alias: $title,
-                    title: $title,
-                    description: $description,
-                    source: $source,
-                    source_entity_id: $source_entity_id,
-                    involves_entity_ids: $involves_entity_ids,
-                    relations_json: $relations_json,
-                    created_at: $created_at,
-                    updated_at: $created_at,
-                    last_updated_date: $created_at,
-                    text: $text,
-                    autogenerated_text: $text,
-                    is_embedded: false,
-                    last_embedded_date: null
-                })
-                """,
-                instance_id=instance_id,
-                ontology_id=ontology_id,
-                event_id=event_id,
-                title=title,
-                description=description,
-                source=source,
-                source_entity_id=source_entity_id,
-                involves_entity_ids=involves_entity_ids,
-                relations_json=json.dumps(relations, ensure_ascii=False),
-                created_at=created_at,
-                text=text_payload,
-            )
-            await self._apply_timeline_event_edges(
-                tx,
-                event_id=event_id,
-                instance_id=instance_id,
-                source_entity_id=source_entity_id,
-                involves_entity_ids=involves_entity_ids,
-                relations=relations,
-            )
-        except Exception:
-            await tx.rollback()
-            await tx.close()
-            raise
-        else:
-            await tx.commit()
-            await tx.close()
-        
-        # Notifications are owned by ShreckRPG; Shrecknet keeps core event update only.
-
-        return await self.get_timeline_event(instance_id, event_id)
-
-    async def update_timeline_event(
-        self,
-        instance_id: str,
-        event_id: str,
-        payload: TimelineEventUpdate,
-    ) -> TimelineEventRead:
-        current_event = await self.get_timeline_event(instance_id, event_id)
-        existing_ids = await self._event_ids(instance_id)
-        updates: dict[str, Any] = {}
-
-        if payload.title is not None:
-            title = payload.title.strip()
-            if not title:
-                raise ValueError("Timeline event title cannot be empty")
-            updates["title"] = title
-            updates["name"] = title
-            updates["alias"] = title
-        if payload.description is not None:
-            description = payload.description.strip()
-            if not description:
-                raise ValueError("Timeline event description cannot be empty")
-            updates["description"] = description
-        if payload.source is not None:
-            updates["source"] = _normalize_optional_str(payload.source)
-        if payload.source_entity_id is not None:
-            updates["source_entity_id"] = _normalize_optional_str(payload.source_entity_id)
-        if payload.involves_entity_ids is not None:
-            updates["involves_entity_ids"] = _normalize_id_list(payload.involves_entity_ids)
-        if payload.relations is not None:
-            relations = [rel.model_dump() for rel in payload.relations]
-            for relation in relations:
-                target_id = _normalize_optional_str(relation.get("target_event_id"))
-                if not target_id:
-                    raise ValueError("Relation target_event_id cannot be empty")
-                if target_id == event_id:
-                    raise ValueError("Event cannot reference itself")
-                if target_id not in existing_ids:
-                    raise ValueError(f"Related event '{target_id}' does not exist")
-                relation["target_event_id"] = target_id
-            updates["relations_json"] = json.dumps(relations, ensure_ascii=False)
-
-        now_str = _format_dt(datetime.utcnow())
-        final_title = updates.get("title", current_event.title)
-        final_description = updates.get("description", current_event.description or "")
-        final_source = updates.get("source", current_event.source)
-        final_source_entity = updates.get("source_entity_id", current_event.source_entity_id)
-        final_involves = updates.get("involves_entity_ids", current_event.involves_entity_ids or [])
-        if "relations_json" in updates:
-            final_relations = json.loads(updates["relations_json"])
-        else:
-            final_relations = [rel.model_dump() for rel in current_event.relations]
-
-        text_payload = _build_timeline_text(
-            final_title,
-            final_description,
-            final_source,
-            None,
-            final_involves,
-            None,
-            None,
-        )
-        updates["text"] = text_payload
-        updates["autogenerated_text"] = text_payload
-        updates["last_updated_date"] = now_str
-        updates["is_embedded"] = False
-
-        params = {
-            "instance_id": instance_id,
-            "event_id": event_id,
-            "updated_at": now_str,
-        }
-        set_parts = ["event.updated_at = $updated_at"]
-        for field, value in updates.items():
-            set_parts.append(f"event.{field} = ${field}")
-            params[field] = value
-        set_clause = ", ".join(set_parts)
-
-        tx = await self.graph_session.begin_transaction()
-        try:
-            await tx.run(
-                f"""
-                MATCH (:OntologyInstance {{instance_id: $instance_id}})-[:HAS_EVENT]->(event:Event {{event_id: $event_id}})
-                SET {set_clause}
-                """,
-                **params,
-            )
-            await self._clear_timeline_event_edges(
-                tx, event_id=event_id
-            )
-            await self._apply_timeline_event_edges(
-                tx,
-                event_id=event_id,
-                instance_id=instance_id,
-                source_entity_id=final_source_entity,
-                involves_entity_ids=final_involves,
-                relations=final_relations,
-            )
-        except Exception:
-            await tx.rollback()
-            await tx.close()
-            raise
-        else:
-            await tx.commit()
-            await tx.close()
-        
-        # Notifications are owned by ShreckRPG; Shrecknet keeps core event update only.
-
-        return await self.get_timeline_event(instance_id, event_id)
-
-    async def delete_timeline_event(
-        self, instance_id: str, event_id: str
-    ) -> None:
-        await self.get_timeline_event(instance_id, event_id)
-        tx = await self.graph_session.begin_transaction()
-        try:
-            await tx.run(
-                """
-                MATCH (:OntologyInstance {instance_id: $instance_id})-[:HAS_EVENT]->(event:Event {event_id: $event_id})-[:HAS_CHUNK]->(chunk:EntityChunk)
-                DETACH DELETE chunk
-                """,
-                instance_id=instance_id,
-                event_id=event_id,
-            )
-            await tx.run(
-                """
-                MATCH (:OntologyInstance {instance_id: $instance_id})-[:HAS_EVENT]->(event:Event {event_id: $event_id})
-                DETACH DELETE event
-                """,
-                instance_id=instance_id,
-                event_id=event_id,
-            )
-        except Exception:
-            await tx.rollback()
-            await tx.close()
-            raise
-        else:
-            await tx.commit()
-            await tx.close()
-
-    async def rebuild_timeline_relationships(
-        self, *, instance_id: str | None = None
-    ) -> dict[str, int]:
-        """
-        Recreate graph edges for timeline events so legacy data gains explicit relationships.
-
-        Args:
-            instance_id: Optional ontology instance to limit the rebuild scope.
-
-        Returns:
-            Dictionary reporting how many events were processed and how many failed.
-        """
-        clauses = [
-            "MATCH (inst:OntologyInstance)-[:HAS_EVENT]->(event:Event)"
-        ]
-        params: dict[str, Any] = {}
-        if instance_id:
-            clauses.append("WHERE inst.instance_id = $instance_id")
-            params["instance_id"] = instance_id
-        clauses.append(
-            """
-            RETURN event.event_id AS event_id,
-                   inst.instance_id AS instance_id,
-                   properties(event)['created_from_instance_id'] AS created_from_instance_id,
-                   properties(event)['created_from_entity_id'] AS created_from_entity_id,
-                   properties(event)['source_instance_id'] AS source_instance_id,
-                   properties(event)['source_entity_id'] AS source_entity_id,
-                     properties(event)['involves_entity_ids'] AS involves_entity_ids,
-                   properties(event)['related_instance_ids'] AS related_instance_ids,
-                   properties(event)['related_entity_ids'] AS related_entity_ids,
-                   properties(event)['relations_json'] AS relations_json,
-                   properties(event)['before_event_id'] AS before_event_id,
-                   properties(event)['after_event_id'] AS after_event_id
-            """
-        )
-        query = "\n".join(clauses)
-        result = await self.graph_session.run(query, params)
-        rows = await result.data()
-
-        entities_result = await self.graph_session.run(
-            """
-            MATCH (inst:OntologyInstance)-[:HAS_ENTITY]->(entity:EntityInstance)
-            RETURN inst.instance_id AS instance_id,
-                   collect(DISTINCT entity.entity_instance_id) AS entity_ids
-            """
-        )
-        entity_rows = await entities_result.data()
-        entity_ids_by_instance: dict[str, list[str]] = {}
-        known_entity_ids: set[str] = set()
-        for entity_row in entity_rows:
-            row_instance_id = _normalize_optional_str(entity_row.get("instance_id"))
-            if not row_instance_id:
-                continue
-            ids = [
-                str(value)
-                for value in (entity_row.get("entity_ids") or [])
-                if value is not None and str(value).strip()
-            ]
-            if not ids:
-                continue
-            deduped = sorted(set(ids))
-            entity_ids_by_instance[row_instance_id] = deduped
-            known_entity_ids.update(deduped)
-
-        processed = 0
-        failed = 0
-        for row in rows:
-            relations = self._legacy_event_row_to_relations(row)
-
-            row_instance_id = _normalize_optional_str(row.get("instance_id")) or ""
-            related_ids_raw = row.get("involves_entity_ids") or row.get("related_entity_ids") or []
-            if isinstance(related_ids_raw, str):
-                related_ids_raw = [related_ids_raw]
-            related_ids = [
-                str(rid)
-                for rid in related_ids_raw
-                if rid is not None and str(rid).strip() and str(rid) in known_entity_ids
-            ]
-
-            source_entity_id = _normalize_optional_str(
-                row.get("created_from_entity_id") or row.get("source_entity_id")
-            )
-            if source_entity_id and source_entity_id not in known_entity_ids:
-                source_entity_id = None
-            if not source_entity_id:
-                source_instance_id = _normalize_optional_str(
-                    row.get("created_from_instance_id") or row.get("source_instance_id")
-                )
-                if source_instance_id:
-                    candidates = entity_ids_by_instance.get(source_instance_id, [])
-                    if len(candidates) == 1:
-                        source_entity_id = candidates[0]
-
-            if not related_ids:
-                related_instance_ids = row.get("related_instance_ids") or []
-                if isinstance(related_instance_ids, str):
-                    related_instance_ids = [related_instance_ids]
-                recovered_related: list[str] = []
-                for related_instance_id in related_instance_ids:
-                    rid = _normalize_optional_str(related_instance_id)
-                    if not rid:
-                        continue
-                    candidates = entity_ids_by_instance.get(rid, [])
-                    if len(candidates) == 1:
-                        recovered_related.append(candidates[0])
-                related_ids = recovered_related
-
-            tx = await self.graph_session.begin_transaction()
-            try:
-                await self._clear_timeline_event_edges(
-                    tx, event_id=row["event_id"]
-                )
-                await self._apply_timeline_event_edges(
-                    tx,
-                    event_id=row["event_id"],
-                    instance_id=row["instance_id"],
-                    source_entity_id=source_entity_id,
-                    involves_entity_ids=[str(rid) for rid in related_ids if rid],
-                    relations=relations,
-                )
-            except Exception:
-                failed += 1
-                await tx.rollback()
-                await tx.close()
-                continue
-            else:
-                processed += 1
-                await tx.commit()
-                await tx.close()
-        return {"processed_events": processed, "failed_events": failed}
-
-    def _legacy_event_row_to_relations(
-        self, row: dict[str, Any]
-    ) -> list[dict[str, str]]:
-        relations_raw = row.get("relations_json")
-        relations: list[dict[str, str]] = []
-        if isinstance(relations_raw, str) and relations_raw.strip():
-            try:
-                parsed = json.loads(relations_raw)
-            except json.JSONDecodeError:
-                parsed = []
-            if isinstance(parsed, list):
-                for item in parsed:
-                    if not isinstance(item, dict):
-                        continue
-                    relation_type = item.get("relation_type")
-                    target_event_id = item.get("target_event_id")
-                    if relation_type in {
-                        "BEFORE",
-                        "AFTER",
-                        "DERIVED_FROM",
-                        "RELATED_TO",
-                    } and target_event_id:
-                        relations.append(
-                            {
-                                "relation_type": str(relation_type),
-                                "target_event_id": str(target_event_id),
-                            }
-                        )
-        if relations:
-            return relations
-
-        fallback_pairs = (
-            ("before_event_id", "BEFORE"),
-            ("after_event_id", "AFTER"),
-        )
-        for field_name, relation_type in fallback_pairs:
-            target_event_id = row.get(field_name)
-            if target_event_id:
-                relations.append(
-                    {
-                        "relation_type": relation_type,
-                        "target_event_id": str(target_event_id),
-                    }
-                )
-        return relations
 
     # ------------------------------------------------------------------
     async def _load_entity_definitions(
@@ -2424,4 +1853,1198 @@ class OntologyInstanceService:
         ):
             raise ValueError(
                 "Target entity instance does not match relationship destiny definition"
+            )
+
+    async def _entity_ids_for_instance(self, instance_id: str) -> set[str]:
+        result = await self.graph_session.run(
+            """
+            MATCH (:OntologyInstance {instance_id: $instance_id})-[:HAS_ENTITY]->(entity:EntityInstance)
+            RETURN entity.entity_instance_id AS entity_instance_id
+            """,
+            instance_id=instance_id,
+        )
+        rows = await result.data()
+        return {
+            str(row["entity_instance_id"])
+            for row in rows
+            if row.get("entity_instance_id") is not None
+        }
+
+    async def _scene_ids_for_instance(self, instance_id: str) -> set[str]:
+        result = await self.graph_session.run(
+            """
+            MATCH (:OntologyInstance {instance_id: $instance_id})-[rel]->(scene)
+            WHERE type(rel) = 'HAS_SCENE' AND 'Scene' IN labels(scene)
+            RETURN scene.id AS scene_id
+            """,
+            instance_id=instance_id,
+        )
+        rows = await result.data()
+        return {
+            str(row["scene_id"])
+            for row in rows
+            if row.get("scene_id") is not None
+        }
+
+    async def _milestone_ids_for_scene(
+        self, instance_id: str, scene_id: str
+    ) -> set[str]:
+        result = await self.graph_session.run(
+            """
+            MATCH (:OntologyInstance {instance_id: $instance_id})-[scene_rel]->(scene)-[contains_rel]->(milestone)
+            WHERE type(scene_rel) = 'HAS_SCENE'
+              AND 'Scene' IN labels(scene)
+              AND scene.id = $scene_id
+              AND type(contains_rel) = 'CONTAINS'
+              AND 'Milestone' IN labels(milestone)
+            RETURN milestone.id AS milestone_id
+            """,
+            instance_id=instance_id,
+            scene_id=scene_id,
+        )
+        rows = await result.data()
+        return {
+            str(row["milestone_id"])
+            for row in rows
+            if row.get("milestone_id") is not None
+        }
+
+    async def _validate_scene_derived_from(
+        self, *, instance_id: str, entity_instance_id: str
+    ) -> None:
+        known_ids = await self._entity_ids_for_instance(instance_id)
+        if entity_instance_id not in known_ids:
+            raise ValueError(
+                "Scene derived_from.entity_instance_id must reference an existing entity in the same instance"
+            )
+
+    async def _validate_scene_relates_to_entities(
+        self, *, instance_id: str, entity_instance_ids: list[str]
+    ) -> None:
+        if not entity_instance_ids:
+            return
+        result = await self.graph_session.run(
+            """
+            UNWIND $entity_ids AS entity_id
+            OPTIONAL MATCH (entity:EntityInstance {entity_instance_id: entity_id})
+            RETURN entity_id, entity IS NOT NULL AS exists
+            """,
+            entity_ids=entity_instance_ids,
+        )
+        rows = await result.data()
+        invalid = [
+            str(row.get("entity_id") or "")
+            for row in rows
+            if not bool(row.get("exists"))
+        ]
+        if invalid:
+            raise ValueError(
+                "Scene relates_to.entity_instance_id must reference existing entities"
+            )
+
+    async def _validate_milestone_derived_from(
+        self, *, instance_id: str, entity_instance_id: str
+    ) -> None:
+        known_ids = await self._entity_ids_for_instance(instance_id)
+        if entity_instance_id not in known_ids:
+            raise ValueError(
+                "Milestone derived_from.entity_instance_id must reference an existing entity in the same instance"
+            )
+
+    def _build_local_order_pairs(
+        self,
+        milestone_ids: set[str],
+        milestone_payloads: list[MilestoneCreate],
+    ) -> list[tuple[str, str]]:
+        pairs: list[tuple[str, str]] = []
+        for payload in milestone_payloads:
+            milestone_id = _normalize_optional_str(payload.id)
+            if not milestone_id:
+                continue
+            followed = payload.local_order.followed_by_milestone_id
+            preceded_by = payload.local_order.preceded_by_milestone_id
+            if followed:
+                if followed not in milestone_ids:
+                    raise ValueError(
+                        f"Milestone local order target '{followed}' does not exist in scene payload"
+                    )
+                if followed == milestone_id:
+                    raise ValueError("Milestone cannot follow itself")
+                pairs.append((milestone_id, followed))
+            if preceded_by:
+                if preceded_by not in milestone_ids:
+                    raise ValueError(
+                        f"Milestone local order predecessor '{preceded_by}' does not exist in scene payload"
+                    )
+                if preceded_by == milestone_id:
+                    raise ValueError("Milestone cannot be preceded by itself")
+                pairs.append((preceded_by, milestone_id))
+
+        outgoing: dict[str, str] = {}
+        incoming: dict[str, str] = {}
+        for source, target in pairs:
+            if source in outgoing and outgoing[source] != target:
+                raise ValueError(
+                    f"Milestone '{source}' has multiple FOLLOWED_BY targets"
+                )
+            if target in incoming and incoming[target] != source:
+                raise ValueError(
+                    f"Milestone '{target}' has multiple PRECEDED_BY sources"
+                )
+            outgoing[source] = target
+            incoming[target] = source
+        return list({pair for pair in pairs})
+
+    async def _validate_scene_milestones_payload(
+        self, *, instance_id: str, milestones: list[MilestoneCreate]
+    ) -> list[MilestoneCreate]:
+        milestone_ids: set[str] = set()
+        normalized_milestones: list[MilestoneCreate] = []
+        for milestone in milestones:
+            milestone_id = _normalize_optional_str(milestone.id)
+            if not milestone_id:
+                if (
+                    milestone.local_order.followed_by_milestone_id
+                    or milestone.local_order.preceded_by_milestone_id
+                ):
+                    raise ValueError(
+                        "Milestone local_order references require explicit milestone ids"
+                    )
+                milestone_id = str(uuid4())
+            if milestone_id in milestone_ids:
+                raise ValueError(f"Duplicate milestone id '{milestone_id}' in scene")
+            milestone_ids.add(milestone_id)
+            normalized_milestones.append(
+                milestone.model_copy(update={"id": milestone_id})
+            )
+
+            await self._validate_milestone_derived_from(
+                instance_id=instance_id,
+                entity_instance_id=milestone.derived_from.entity_instance_id,
+            )
+
+        self._build_local_order_pairs(milestone_ids, normalized_milestones)
+        return normalized_milestones
+
+    async def _milestone_node_to_read(
+        self,
+        *,
+        node: Any,
+        scene_id: str,
+        derived_from_entity_id: str | None,
+        relates_to: list[dict[str, Any]],
+        local_order: dict[str, Any] | None,
+    ) -> MilestoneRead:
+        props = dict(node)
+        return MilestoneRead(
+            id=props.get("id") or "",
+            scene_id=scene_id,
+            instance_id=props.get("instance_id") or "",
+            ontology_id=int(props.get("ontology_id") or 0),
+            name=props.get("name") or "",
+            description=props.get("description") or "",
+            created_by_type=props.get("created_by_type") or "human",
+            created_by_author=props.get("created_by_author") or "",
+            temporal_type=props.get("temporal_type") or "other",
+            boundary_type=props.get("boundary_type") or "none",
+            local_order=local_order or {},
+            derived_from={"entity_instance_id": derived_from_entity_id or ""},
+            relates_to=relates_to,
+            created_at=_parse_dt(props.get("created_at")),
+            updated_at=_parse_dt(props.get("updated_at")),
+        )
+
+    async def _scene_node_to_read(self, *, node: Any) -> SceneRead:
+        props = dict(node)
+        scene_id = props.get("id") or ""
+
+        ontology_id_raw = props.get("ontology_id")
+        if ontology_id_raw is None:
+            raise ValueError(f"Scene '{scene_id}' is missing ontology_id")
+        try:
+            ontology_id = int(ontology_id_raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"Scene '{scene_id}' has invalid ontology_id") from exc
+        if ontology_id <= 0:
+            raise ValueError(f"Scene '{scene_id}' has invalid ontology_id")
+
+        derived_result = await self.graph_session.run(
+            """
+            MATCH (:Scene {id: $scene_id})-[:DERIVED_FROM]->(entity:EntityInstance)
+            RETURN entity.entity_instance_id AS entity_instance_id
+            LIMIT 1
+            """,
+            scene_id=scene_id,
+        )
+        derived_row = await derived_result.single()
+        derived_from_entity_id = None
+        if derived_row:
+            derived_from_entity_id = _normalize_optional_str(
+                str(derived_row.get("entity_instance_id") or "")
+            )
+        if not derived_from_entity_id:
+            raise ValueError(
+                f"Scene '{scene_id}' must have a DERIVED_FROM entity_instance_id"
+            )
+
+        local_order_result = await self.graph_session.run(
+            """
+            MATCH (scene:Scene {id: $scene_id})
+            OPTIONAL MATCH (scene)-[:FOLLOWED_BY]->(followed:Scene)
+            OPTIONAL MATCH (scene)-[:PRECEDED_BY]->(preceded:Scene)
+            RETURN followed.id AS followed_by_scene_id,
+                   preceded.id AS preceded_by_scene_id
+            """,
+            scene_id=scene_id,
+        )
+        local_order_row = await local_order_result.single()
+        local_order = {
+            "followed_by_scene_id": local_order_row.get("followed_by_scene_id")
+            if local_order_row
+            else None,
+            "preceded_by_scene_id": local_order_row.get("preceded_by_scene_id")
+            if local_order_row
+            else None,
+        }
+
+        scene_relates_result = await self.graph_session.run(
+            """
+            MATCH (scene:Scene {id: $scene_id})-[rel:RELATES_TO]->(entity:EntityInstance)
+            RETURN collect(DISTINCT {
+                entity_instance_id: entity.entity_instance_id,
+                label: rel.label
+            }) AS relates
+            """,
+            scene_id=scene_id,
+        )
+        scene_relates_row = await scene_relates_result.single()
+        scene_relates = [
+            item
+            for item in (scene_relates_row or {}).get("relates") or []
+            if item and item.get("entity_instance_id")
+        ]
+
+        milestones = await self.list_milestones(props.get("instance_id") or "", scene_id)
+
+        return SceneRead(
+            id=scene_id,
+            instance_id=props.get("instance_id") or "",
+            ontology_id=ontology_id,
+            name=props.get("name") or "",
+            description=props.get("description") or "",
+            created_by_type=props.get("created_by_type") or "human",
+            created_by_author=props.get("created_by_author") or "",
+            local_order=local_order,
+            derived_from={"entity_instance_id": derived_from_entity_id},
+            relates_to=scene_relates,
+            created_at=_parse_dt(props.get("created_at")),
+            updated_at=_parse_dt(props.get("updated_at")),
+            milestones=milestones,
+        )
+
+    async def list_scenes_by_derived_from(
+        self, instance_id: str, entity_instance_id: str
+    ) -> list[SceneRead]:
+        await self._get_instance_ontology_id(instance_id)
+        entity_id = _normalize_optional_str(entity_instance_id)
+        if not entity_id:
+            raise ValueError("derived_from entity_instance_id cannot be empty")
+
+        result = await self.graph_session.run(
+            """
+            MATCH (:OntologyInstance {instance_id: $instance_id})-[rel]->(scene:Scene)
+            WHERE type(rel) = 'HAS_SCENE'
+              AND (
+                EXISTS {
+                    MATCH (scene)-[:DERIVED_FROM]->(:EntityInstance {entity_instance_id: $entity_instance_id})
+                }
+                OR EXISTS {
+                    MATCH (scene)-[:CONTAINS]->(:Milestone)-[:DERIVED_FROM]->(:EntityInstance {entity_instance_id: $entity_instance_id})
+                }
+              )
+            RETURN DISTINCT scene
+            ORDER BY scene.created_at ASC
+            """,
+            instance_id=instance_id,
+            entity_instance_id=entity_id,
+        )
+        rows = await result.data()
+        scenes: list[SceneRead] = []
+        for row in rows:
+            scene_node = row.get("scene")
+            if scene_node is None:
+                continue
+            scenes.append(await self._scene_node_to_read(node=scene_node))
+        return scenes
+
+    async def list_scenes_by_related_to(
+        self, instance_id: str, entity_instance_id: str
+    ) -> list[SceneRead]:
+        await self._get_instance_ontology_id(instance_id)
+        entity_id = _normalize_optional_str(entity_instance_id)
+        if not entity_id:
+            raise ValueError("related_to entity_instance_id cannot be empty")
+
+        result = await self.graph_session.run(
+            """
+            MATCH (:OntologyInstance {instance_id: $instance_id})-[rel]->(scene:Scene)
+            WHERE type(rel) = 'HAS_SCENE'
+              AND (
+                EXISTS {
+                    MATCH (scene)-[:RELATES_TO]->(:EntityInstance {entity_instance_id: $entity_instance_id})
+                }
+                OR EXISTS {
+                    MATCH (scene)-[:CONTAINS]->(:Milestone)-[:RELATES_TO]->(:EntityInstance {entity_instance_id: $entity_instance_id})
+                }
+              )
+            RETURN DISTINCT scene
+            ORDER BY scene.created_at ASC
+            """,
+            instance_id=instance_id,
+            entity_instance_id=entity_id,
+        )
+        rows = await result.data()
+        scenes: list[SceneRead] = []
+        for row in rows:
+            scene_node = row.get("scene")
+            if scene_node is None:
+                continue
+            scenes.append(await self._scene_node_to_read(node=scene_node))
+        return scenes
+
+    async def list_scenes(self, instance_id: str) -> list[SceneRead]:
+        await self._get_instance_ontology_id(instance_id)
+        result = await self.graph_session.run(
+            """
+            MATCH (:OntologyInstance {instance_id: $instance_id})-[rel]->(scene)
+            WHERE type(rel) = 'HAS_SCENE' AND 'Scene' IN labels(scene)
+            RETURN scene
+            ORDER BY scene.created_at ASC
+            """,
+            instance_id=instance_id,
+        )
+        rows = await result.data()
+        scenes: list[SceneRead] = []
+        for row in rows:
+            scene_node = row.get("scene")
+            if scene_node is None:
+                continue
+            scenes.append(await self._scene_node_to_read(node=scene_node))
+        return scenes
+
+    async def get_scene(self, instance_id: str, scene_id: str) -> SceneRead:
+        await self._assert_scene_exists(instance_id=instance_id, scene_id=scene_id)
+        result = await self.graph_session.run(
+            """
+            MATCH (:OntologyInstance {instance_id: $instance_id})-[rel]->(scene)
+            WHERE type(rel) = 'HAS_SCENE'
+              AND 'Scene' IN labels(scene)
+              AND scene.id = $scene_id
+            RETURN scene
+            """,
+            instance_id=instance_id,
+            scene_id=scene_id,
+        )
+        record = await result.single()
+        if not record or not record.get("scene"):
+            raise ValueError("Scene not found")
+        return await self._scene_node_to_read(node=record["scene"])
+
+    async def _assert_scene_exists(self, *, instance_id: str, scene_id: str) -> None:
+        result = await self.graph_session.run(
+            """
+            MATCH (:OntologyInstance {instance_id: $instance_id})-[rel]->(scene)
+            WHERE type(rel) = 'HAS_SCENE'
+              AND 'Scene' IN labels(scene)
+              AND scene.id = $scene_id
+            RETURN count(scene) AS count
+            """,
+            instance_id=instance_id,
+            scene_id=scene_id,
+        )
+        row = await result.single()
+        if not row or int(row.get("count") or 0) == 0:
+            raise ValueError("Scene not found")
+
+    async def create_scene(self, instance_id: str, payload: SceneCreate) -> SceneRead:
+        ontology_id = await self._get_instance_ontology_id(instance_id)
+        scene_id = _normalize_optional_str(payload.id) or str(uuid4())
+        if scene_id in await self._scene_ids_for_instance(instance_id):
+            raise ValueError(f"Scene id '{scene_id}' already exists")
+
+        await self._validate_scene_derived_from(
+            instance_id=instance_id,
+            entity_instance_id=payload.derived_from.entity_instance_id,
+        )
+        await self._validate_scene_relates_to_entities(
+            instance_id=instance_id,
+            entity_instance_ids=[item.entity_instance_id for item in payload.relates_to],
+        )
+        normalized_milestones = await self._validate_scene_milestones_payload(
+            instance_id=instance_id,
+            milestones=payload.milestones,
+        )
+
+        now_str = _format_dt(datetime.utcnow())
+        tx = await self.graph_session.begin_transaction()
+        try:
+            await tx.run(
+                """
+                MATCH (inst:OntologyInstance {instance_id: $instance_id})
+                CREATE (inst)-[:HAS_SCENE]->(scene:Scene {
+                    id: $scene_id,
+                    instance_id: $instance_id,
+                    ontology_id: $ontology_id,
+                    name: $name,
+                    description: $description,
+                    created_by_type: $created_by_type,
+                    created_by_author: $created_by_author,
+                    created_at: $created_at,
+                    updated_at: $updated_at
+                })
+                """,
+                instance_id=instance_id,
+                scene_id=scene_id,
+                ontology_id=ontology_id,
+                name=payload.name,
+                description=payload.description,
+                created_by_type=payload.created_by_type,
+                created_by_author=payload.created_by_author,
+                created_at=now_str,
+                updated_at=now_str,
+            )
+
+            await tx.run(
+                """
+                MATCH (scene:Scene {id: $scene_id})
+                MATCH (entity:EntityInstance {entity_instance_id: $entity_instance_id})
+                MERGE (scene)-[:DERIVED_FROM]->(entity)
+                """,
+                scene_id=scene_id,
+                entity_instance_id=payload.derived_from.entity_instance_id,
+            )
+
+            for relates in payload.relates_to:
+                await tx.run(
+                    """
+                    MATCH (scene:Scene {id: $scene_id})
+                    MATCH (entity:EntityInstance {entity_instance_id: $entity_instance_id})
+                    MERGE (scene)-[:RELATES_TO {label: $label}]->(entity)
+                    """,
+                    scene_id=scene_id,
+                    entity_instance_id=relates.entity_instance_id,
+                    label=relates.label,
+                )
+
+            followed_scene_id = payload.local_order.followed_by_scene_id
+            preceded_scene_id = payload.local_order.preceded_by_scene_id
+            if followed_scene_id:
+                await tx.run(
+                    """
+                    MATCH (scene:Scene {id: $scene_id})
+                    MATCH (target:Scene {id: $target_scene_id, instance_id: $instance_id})
+                    MERGE (scene)-[:FOLLOWED_BY]->(target)
+                    MERGE (target)-[:PRECEDED_BY]->(scene)
+                    """,
+                    scene_id=scene_id,
+                    target_scene_id=followed_scene_id,
+                    instance_id=instance_id,
+                )
+            if preceded_scene_id:
+                await tx.run(
+                    """
+                    MATCH (scene:Scene {id: $scene_id})
+                    MATCH (target:Scene {id: $target_scene_id, instance_id: $instance_id})
+                    MERGE (scene)-[:PRECEDED_BY]->(target)
+                    MERGE (target)-[:FOLLOWED_BY]->(scene)
+                    """,
+                    scene_id=scene_id,
+                    target_scene_id=preceded_scene_id,
+                    instance_id=instance_id,
+                )
+
+            milestone_ids: set[str] = set()
+            for milestone in normalized_milestones:
+                milestone_id = _normalize_optional_str(milestone.id) or str(uuid4())
+                milestone_ids.add(milestone_id)
+                await tx.run(
+                    """
+                    MATCH (scene:Scene {id: $scene_id})
+                    CREATE (scene)-[:CONTAINS]->(milestone:Milestone {
+                        id: $milestone_id,
+                        scene_id: $scene_id,
+                        instance_id: $instance_id,
+                        ontology_id: $ontology_id,
+                        name: $name,
+                        description: $description,
+                        created_by_type: $created_by_type,
+                        created_by_author: $created_by_author,
+                        temporal_type: $temporal_type,
+                        boundary_type: $boundary_type,
+                        relates_to_json: $relates_to_json,
+                        created_at: $created_at,
+                        updated_at: $updated_at
+                    })
+                    """,
+                    scene_id=scene_id,
+                    milestone_id=milestone_id,
+                    instance_id=instance_id,
+                    ontology_id=ontology_id,
+                    name=milestone.name,
+                    description=milestone.description,
+                    created_by_type=milestone.created_by_type,
+                    created_by_author=milestone.created_by_author,
+                    temporal_type=milestone.temporal_type,
+                    boundary_type=milestone.boundary_type,
+                    relates_to_json=json.dumps(
+                        [item.model_dump() for item in milestone.relates_to],
+                        ensure_ascii=False,
+                    ),
+                    created_at=now_str,
+                    updated_at=now_str,
+                )
+                await tx.run(
+                    """
+                    MATCH (milestone:Milestone {id: $milestone_id})
+                    MATCH (entity:EntityInstance {entity_instance_id: $entity_instance_id})
+                    MERGE (milestone)-[:DERIVED_FROM]->(entity)
+                    """,
+                    milestone_id=milestone_id,
+                    entity_instance_id=milestone.derived_from.entity_instance_id,
+                )
+                for relates in milestone.relates_to:
+                    await tx.run(
+                        """
+                        MATCH (milestone:Milestone {id: $milestone_id})
+                        MATCH (entity:EntityInstance {entity_instance_id: $entity_instance_id})
+                        MERGE (milestone)-[:RELATES_TO {label: $label}]->(entity)
+                        """,
+                        milestone_id=milestone_id,
+                        entity_instance_id=relates.entity_instance_id,
+                        label=relates.label,
+                    )
+
+            ordered_payload = []
+            for milestone in normalized_milestones:
+                milestone_id = _normalize_optional_str(milestone.id)
+                if milestone_id:
+                    ordered_payload.append(milestone)
+            for source, target in self._build_local_order_pairs(
+                milestone_ids,
+                ordered_payload,
+            ):
+                await tx.run(
+                    """
+                    MATCH (source:Milestone {id: $source_id, scene_id: $scene_id})
+                    MATCH (target:Milestone {id: $target_id, scene_id: $scene_id})
+                    MERGE (source)-[:FOLLOWED_BY]->(target)
+                    MERGE (target)-[:PRECEDED_BY]->(source)
+                    """,
+                    scene_id=scene_id,
+                    source_id=source,
+                    target_id=target,
+                )
+        except Exception:
+            await tx.rollback()
+            await tx.close()
+            raise
+        else:
+            await tx.commit()
+            await tx.close()
+        from app.tasks.neo4j_embedding import (
+            embed_reconciliation as embed_reconciliation_task,
+        )
+
+        embed_reconciliation_task.delay(
+            ontology_id=ontology_id,
+            instance_id=instance_id,
+            node_ids=[],
+            author_type="agent",
+            author_id="scene-create",
+        )
+        return await self.get_scene(instance_id, scene_id)
+
+    async def _replace_scenes_for_instance(
+        self, instance_id: str, scenes: list[SceneCreate]
+    ) -> None:
+        existing = await self.list_scenes(instance_id)
+        for scene in existing:
+            await self.delete_scene(instance_id, scene.id)
+        for scene_payload in scenes:
+            await self.create_scene(instance_id, scene_payload)
+
+    async def update_scene(
+        self, instance_id: str, scene_id: str, payload: SceneUpdate
+    ) -> SceneRead:
+        await self.get_scene(instance_id, scene_id)
+        updates: dict[str, Any] = {}
+        if payload.name is not None:
+            updates["name"] = payload.name
+        if payload.description is not None:
+            updates["description"] = payload.description
+        if payload.created_by_type is not None:
+            updates["created_by_type"] = payload.created_by_type
+        if payload.created_by_author is not None:
+            updates["created_by_author"] = payload.created_by_author
+
+        if payload.derived_from is not None:
+            await self._validate_scene_derived_from(
+                instance_id=instance_id,
+                entity_instance_id=payload.derived_from.entity_instance_id,
+            )
+        if payload.relates_to is not None:
+            await self._validate_scene_relates_to_entities(
+                instance_id=instance_id,
+                entity_instance_ids=[item.entity_instance_id for item in payload.relates_to],
+            )
+
+        params = {"scene_id": scene_id, "instance_id": instance_id}
+        set_parts: list[str] = []
+        if updates:
+            updates["updated_at"] = _format_dt(datetime.utcnow())
+            for field, value in updates.items():
+                set_parts.append(f"scene.{field} = ${field}")
+                params[field] = value
+
+        tx = await self.graph_session.begin_transaction()
+        try:
+            if set_parts:
+                await tx.run(
+                    f"""
+                                        MATCH (:OntologyInstance {{instance_id: $instance_id}})-[rel]->(scene)
+                                        WHERE type(rel) = 'HAS_SCENE'
+                                            AND 'Scene' IN labels(scene)
+                                            AND scene.id = $scene_id
+                    SET {', '.join(set_parts)}
+                    """,
+                    **params,
+                )
+
+            await tx.run(
+                """
+                MATCH (scene:Scene {id: $scene_id})-[rel:FOLLOWED_BY|PRECEDED_BY]->()
+                DELETE rel
+                """,
+                scene_id=scene_id,
+            )
+
+            if payload.local_order and payload.local_order.followed_by_scene_id:
+                await tx.run(
+                    """
+                    MATCH (scene:Scene {id: $scene_id})
+                    MATCH (target:Scene {id: $target_scene_id, instance_id: $instance_id})
+                    MERGE (scene)-[:FOLLOWED_BY]->(target)
+                    MERGE (target)-[:PRECEDED_BY]->(scene)
+                    """,
+                    scene_id=scene_id,
+                    target_scene_id=payload.local_order.followed_by_scene_id,
+                    instance_id=instance_id,
+                )
+            if payload.local_order and payload.local_order.preceded_by_scene_id:
+                await tx.run(
+                    """
+                    MATCH (scene:Scene {id: $scene_id})
+                    MATCH (target:Scene {id: $target_scene_id, instance_id: $instance_id})
+                    MERGE (scene)-[:PRECEDED_BY]->(target)
+                    MERGE (target)-[:FOLLOWED_BY]->(scene)
+                    """,
+                    scene_id=scene_id,
+                    target_scene_id=payload.local_order.preceded_by_scene_id,
+                    instance_id=instance_id,
+                )
+
+            if payload.derived_from is not None:
+                await tx.run(
+                    """
+                    MATCH (scene:Scene {id: $scene_id})-[rel:DERIVED_FROM]->()
+                    DELETE rel
+                    """,
+                    scene_id=scene_id,
+                )
+                await tx.run(
+                    """
+                    MATCH (scene:Scene {id: $scene_id})
+                    MATCH (entity:EntityInstance {entity_instance_id: $entity_instance_id})
+                    MERGE (scene)-[:DERIVED_FROM]->(entity)
+                    """,
+                    scene_id=scene_id,
+                    entity_instance_id=payload.derived_from.entity_instance_id,
+                )
+
+            if payload.relates_to is not None:
+                await tx.run(
+                    """
+                    MATCH (scene:Scene {id: $scene_id})-[rel:RELATES_TO]->()
+                    DELETE rel
+                    """,
+                    scene_id=scene_id,
+                )
+                for relates in payload.relates_to:
+                    await tx.run(
+                        """
+                        MATCH (scene:Scene {id: $scene_id})
+                        MATCH (entity:EntityInstance {entity_instance_id: $entity_instance_id})
+                        MERGE (scene)-[:RELATES_TO {label: $label}]->(entity)
+                        """,
+                        scene_id=scene_id,
+                        entity_instance_id=relates.entity_instance_id,
+                        label=relates.label,
+                    )
+
+            milestones = await self.list_milestones(instance_id, scene_id)
+            begin_count = sum(1 for milestone in milestones if milestone.boundary_type == "begin")
+            end_count = sum(1 for milestone in milestones if milestone.boundary_type == "end")
+            if len(milestones) < 2 or begin_count != 1 or end_count != 1:
+                raise ValueError(
+                    "Scene remains invalid after update: it must contain at least two milestones with one begin and one end boundary"
+                )
+
+            refreshed = await tx.run(
+                """
+                MATCH (scene:Scene {id: $scene_id})-[:DERIVED_FROM]->(:EntityInstance)
+                RETURN count(*) AS derived_count
+                """,
+                scene_id=scene_id,
+            )
+            derived_count_record = await refreshed.single()
+            if not derived_count_record or int(derived_count_record["derived_count"] or 0) != 1:
+                raise ValueError("Scene must have exactly one DERIVED_FROM entity")
+        except Exception:
+            await tx.rollback()
+            await tx.close()
+            raise
+        else:
+            await tx.commit()
+            await tx.close()
+
+        ontology_id = await self._get_instance_ontology_id(instance_id)
+        from app.tasks.neo4j_embedding import (
+            embed_reconciliation as embed_reconciliation_task,
+        )
+
+        embed_reconciliation_task.delay(
+            ontology_id=ontology_id,
+            instance_id=instance_id,
+            node_ids=[],
+            author_type="agent",
+            author_id="scene-update",
+        )
+
+        return await self.get_scene(instance_id, scene_id)
+
+    async def delete_scene(self, instance_id: str, scene_id: str) -> None:
+        await self.get_scene(instance_id, scene_id)
+        tx = await self.graph_session.begin_transaction()
+        try:
+            await tx.run(
+                """
+                                MATCH (:OntologyInstance {instance_id: $instance_id})-[rel]->(scene)
+                                WHERE type(rel) = 'HAS_SCENE'
+                                    AND 'Scene' IN labels(scene)
+                                    AND scene.id = $scene_id
+                DETACH DELETE scene
+                """,
+                instance_id=instance_id,
+                scene_id=scene_id,
+            )
+        except Exception:
+            await tx.rollback()
+            await tx.close()
+            raise
+        else:
+            await tx.commit()
+            await tx.close()
+
+        ontology_id = await self._get_instance_ontology_id(instance_id)
+        from app.tasks.neo4j_embedding import (
+            embed_reconciliation as embed_reconciliation_task,
+        )
+
+        embed_reconciliation_task.delay(
+            ontology_id=ontology_id,
+            instance_id=instance_id,
+            node_ids=[],
+            author_type="agent",
+            author_id="scene-delete",
+        )
+
+    async def list_milestones(
+        self, instance_id: str, scene_id: str
+    ) -> list[MilestoneRead]:
+        await self._assert_scene_exists(instance_id=instance_id, scene_id=scene_id)
+        result = await self.graph_session.run(
+            """
+                        MATCH (:OntologyInstance {instance_id: $instance_id})-[scene_rel]->(scene)-[contains_rel]->(milestone)
+                        WHERE type(scene_rel) = 'HAS_SCENE'
+                            AND 'Scene' IN labels(scene)
+                            AND scene.id = $scene_id
+                            AND type(contains_rel) = 'CONTAINS'
+                            AND 'Milestone' IN labels(milestone)
+                        OPTIONAL MATCH (milestone)-[derived_rel]->(derived)
+                        WHERE type(derived_rel) = 'DERIVED_FROM' AND 'EntityInstance' IN labels(derived)
+                        OPTIONAL MATCH (milestone)-[relates:RELATES_TO]->(related)
+                        WHERE 'EntityInstance' IN labels(related)
+                        OPTIONAL MATCH (milestone)-[followed_rel]->(followed)
+                        WHERE type(followed_rel) = 'FOLLOWED_BY' AND 'Milestone' IN labels(followed)
+                        OPTIONAL MATCH (milestone)-[preceded_rel]->(preceded)
+                        WHERE type(preceded_rel) = 'PRECEDED_BY' AND 'Milestone' IN labels(preceded)
+              WITH milestone,
+                  head(collect(DISTINCT derived.entity_instance_id)) AS derived_from_entity_id,
+                  collect(DISTINCT {entity_instance_id: related.entity_instance_id, label: relates.label}) AS relates,
+                   head(collect(DISTINCT followed.id)) AS followed_by_milestone_id,
+                   head(collect(DISTINCT preceded.id)) AS preceded_by_milestone_id
+              RETURN milestone,
+                    derived_from_entity_id,
+                    relates,
+                    followed_by_milestone_id,
+                    preceded_by_milestone_id
+            ORDER BY milestone.created_at ASC
+            """,
+            instance_id=instance_id,
+            scene_id=scene_id,
+        )
+        rows = await result.data()
+        milestones: list[MilestoneRead] = []
+        for row in rows:
+            node = row.get("milestone")
+            if not node:
+                continue
+            milestone_id = _normalize_optional_str((dict(node)).get("id")) or ""
+            derived_from_entity_id = _normalize_optional_str(
+                row.get("derived_from_entity_id")
+            )
+            if not derived_from_entity_id:
+                raise ValueError(
+                    f"Milestone '{milestone_id}' must have a DERIVED_FROM entity_instance_id"
+                )
+            relates = []
+            for item in row.get("relates") or []:
+                if not isinstance(item, dict):
+                    continue
+                entity_instance_id = _normalize_optional_str(item.get("entity_instance_id"))
+                label = _normalize_optional_str(item.get("label"))
+                if not entity_instance_id and not label:
+                    continue
+                if not entity_instance_id or not label:
+                    raise ValueError(
+                        f"Milestone '{milestone_id}' has malformed RELATES_TO relationship"
+                    )
+                relates.append(
+                    {
+                        "entity_instance_id": entity_instance_id,
+                        "label": label,
+                    }
+                )
+            milestones.append(
+                await self._milestone_node_to_read(
+                    node=node,
+                    scene_id=scene_id,
+                    derived_from_entity_id=derived_from_entity_id,
+                    relates_to=relates,
+                    local_order={
+                        "followed_by_milestone_id": row.get("followed_by_milestone_id"),
+                        "preceded_by_milestone_id": row.get("preceded_by_milestone_id"),
+                    },
+                )
+            )
+        return milestones
+
+    async def get_milestone(
+        self, instance_id: str, scene_id: str, milestone_id: str
+    ) -> MilestoneRead:
+        milestones = await self.list_milestones(instance_id, scene_id)
+        for milestone in milestones:
+            if milestone.id == milestone_id:
+                return milestone
+        raise ValueError("Milestone not found")
+
+    async def create_milestone(
+        self, instance_id: str, scene_id: str, payload: MilestoneCreate
+    ) -> MilestoneRead:
+        scene = await self.get_scene(instance_id, scene_id)
+        ontology_id = scene.ontology_id
+        milestone_id = _normalize_optional_str(payload.id) or str(uuid4())
+        existing_ids = await self._milestone_ids_for_scene(instance_id, scene_id)
+        if milestone_id in existing_ids:
+            raise ValueError(f"Milestone id '{milestone_id}' already exists")
+        await self._validate_milestone_derived_from(
+            instance_id=instance_id,
+            entity_instance_id=payload.derived_from.entity_instance_id,
+        )
+
+        now_str = _format_dt(datetime.utcnow())
+        tx = await self.graph_session.begin_transaction()
+        try:
+            await tx.run(
+                """
+                MATCH (scene:Scene {id: $scene_id, instance_id: $instance_id})
+                CREATE (scene)-[:CONTAINS]->(milestone:Milestone {
+                    id: $milestone_id,
+                    scene_id: $scene_id,
+                    instance_id: $instance_id,
+                    ontology_id: $ontology_id,
+                    name: $name,
+                    description: $description,
+                    created_by_type: $created_by_type,
+                    created_by_author: $created_by_author,
+                    temporal_type: $temporal_type,
+                    boundary_type: $boundary_type,
+                    relates_to_json: $relates_to_json,
+                    created_at: $created_at,
+                    updated_at: $updated_at
+                })
+                """,
+                scene_id=scene_id,
+                instance_id=instance_id,
+                milestone_id=milestone_id,
+                ontology_id=ontology_id,
+                name=payload.name,
+                description=payload.description,
+                created_by_type=payload.created_by_type,
+                created_by_author=payload.created_by_author,
+                temporal_type=payload.temporal_type,
+                boundary_type=payload.boundary_type,
+                relates_to_json=json.dumps(
+                    [item.model_dump() for item in payload.relates_to],
+                    ensure_ascii=False,
+                ),
+                created_at=now_str,
+                updated_at=now_str,
+            )
+            await tx.run(
+                """
+                MATCH (milestone:Milestone {id: $milestone_id})
+                MATCH (entity:EntityInstance {entity_instance_id: $entity_instance_id})
+                MERGE (milestone)-[:DERIVED_FROM]->(entity)
+                """,
+                milestone_id=milestone_id,
+                entity_instance_id=payload.derived_from.entity_instance_id,
+            )
+            for relates in payload.relates_to:
+                await tx.run(
+                    """
+                    MATCH (milestone:Milestone {id: $milestone_id})
+                    MATCH (entity:EntityInstance {entity_instance_id: $entity_instance_id})
+                    MERGE (milestone)-[:RELATES_TO {label: $label}]->(entity)
+                    """,
+                    milestone_id=milestone_id,
+                    entity_instance_id=relates.entity_instance_id,
+                    label=relates.label,
+                )
+        except Exception:
+            await tx.rollback()
+            await tx.close()
+            raise
+        else:
+            await tx.commit()
+            await tx.close()
+
+        from app.tasks.neo4j_embedding import (
+            embed_reconciliation as embed_reconciliation_task,
+        )
+
+        embed_reconciliation_task.delay(
+            ontology_id=ontology_id,
+            instance_id=instance_id,
+            node_ids=[],
+            author_type="agent",
+            author_id="milestone-create",
+        )
+
+        # No milestone count or boundary validation enforced
+        return await self.get_milestone(instance_id, scene_id, milestone_id)
+
+    async def update_milestone(
+        self,
+        instance_id: str,
+        scene_id: str,
+        milestone_id: str,
+        payload: MilestoneUpdate,
+    ) -> MilestoneRead:
+        current = await self.get_milestone(instance_id, scene_id, milestone_id)
+        updates: dict[str, Any] = {}
+        if payload.name is not None:
+            updates["name"] = payload.name
+        if payload.description is not None:
+            updates["description"] = payload.description
+        if payload.created_by_type is not None:
+            updates["created_by_type"] = payload.created_by_type
+        if payload.created_by_author is not None:
+            updates["created_by_author"] = payload.created_by_author
+        if payload.temporal_type is not None:
+            updates["temporal_type"] = payload.temporal_type
+        if payload.boundary_type is not None:
+            updates["boundary_type"] = payload.boundary_type
+        if payload.relates_to is not None:
+            updates["relates_to_json"] = json.dumps(
+                [item.model_dump() for item in payload.relates_to],
+                ensure_ascii=False,
+            )
+
+        if payload.derived_from is not None:
+            await self._validate_milestone_derived_from(
+                instance_id=instance_id,
+                entity_instance_id=payload.derived_from.entity_instance_id,
+            )
+
+        tx = await self.graph_session.begin_transaction()
+        try:
+            if updates:
+                updates["updated_at"] = _format_dt(datetime.utcnow())
+                set_parts = []
+                params = {
+                    "instance_id": instance_id,
+                    "scene_id": scene_id,
+                    "milestone_id": milestone_id,
+                }
+                for field, value in updates.items():
+                    set_parts.append(f"milestone.{field} = ${field}")
+                    params[field] = value
+                await tx.run(
+                    f"""
+                                        MATCH (:OntologyInstance {{instance_id: $instance_id}})-[scene_rel]->(scene)-[contains_rel]->(milestone)
+                                        WHERE type(scene_rel) = 'HAS_SCENE'
+                                            AND 'Scene' IN labels(scene)
+                                            AND scene.id = $scene_id
+                                            AND type(contains_rel) = 'CONTAINS'
+                                            AND 'Milestone' IN labels(milestone)
+                                            AND milestone.id = $milestone_id
+                    SET {', '.join(set_parts)}
+                    """,
+                    **params,
+                )
+
+            await tx.run(
+                """
+                MATCH (milestone:Milestone {id: $milestone_id})-[rel:FOLLOWED_BY|PRECEDED_BY|RELATES_TO|DERIVED_FROM]->()
+                DELETE rel
+                """,
+                milestone_id=milestone_id,
+            )
+
+            local_order = payload.local_order or current.local_order
+            if local_order.followed_by_milestone_id:
+                await tx.run(
+                    """
+                    MATCH (source:Milestone {id: $milestone_id, scene_id: $scene_id})
+                    MATCH (target:Milestone {id: $target_milestone_id, scene_id: $scene_id})
+                    MERGE (source)-[:FOLLOWED_BY]->(target)
+                    MERGE (target)-[:PRECEDED_BY]->(source)
+                    """,
+                    milestone_id=milestone_id,
+                    scene_id=scene_id,
+                    target_milestone_id=local_order.followed_by_milestone_id,
+                )
+            if local_order.preceded_by_milestone_id:
+                await tx.run(
+                    """
+                    MATCH (source:Milestone {id: $milestone_id, scene_id: $scene_id})
+                    MATCH (target:Milestone {id: $target_milestone_id, scene_id: $scene_id})
+                    MERGE (source)-[:PRECEDED_BY]->(target)
+                    MERGE (target)-[:FOLLOWED_BY]->(source)
+                    """,
+                    milestone_id=milestone_id,
+                    scene_id=scene_id,
+                    target_milestone_id=local_order.preceded_by_milestone_id,
+                )
+
+            derived_from_entity_id = (
+                payload.derived_from.entity_instance_id
+                if payload.derived_from is not None
+                else current.derived_from.entity_instance_id
+            )
+            await tx.run(
+                """
+                MATCH (milestone:Milestone {id: $milestone_id})
+                MATCH (entity:EntityInstance {entity_instance_id: $entity_instance_id})
+                MERGE (milestone)-[:DERIVED_FROM]->(entity)
+                """,
+                milestone_id=milestone_id,
+                entity_instance_id=derived_from_entity_id,
+            )
+
+            relates_to = payload.relates_to if payload.relates_to is not None else current.relates_to
+            for relates in relates_to:
+                await tx.run(
+                    """
+                    MATCH (milestone:Milestone {id: $milestone_id})
+                    MATCH (entity:EntityInstance {entity_instance_id: $entity_instance_id})
+                    MERGE (milestone)-[:RELATES_TO {label: $label}]->(entity)
+                    """,
+                    milestone_id=milestone_id,
+                    entity_instance_id=relates.entity_instance_id,
+                    label=relates.label,
+                )
+        except Exception:
+            await tx.rollback()
+            await tx.close()
+            raise
+        else:
+            await tx.commit()
+            await tx.close()
+
+        ontology_id = await self._get_instance_ontology_id(instance_id)
+        from app.tasks.neo4j_embedding import (
+            embed_reconciliation as embed_reconciliation_task,
+        )
+
+        embed_reconciliation_task.delay(
+            ontology_id=ontology_id,
+            instance_id=instance_id,
+            node_ids=[],
+            author_type="agent",
+            author_id="milestone-update",
+        )
+
+        # No milestone count or boundary validation enforced
+        return await self.get_milestone(instance_id, scene_id, milestone_id)
+
+    async def delete_milestone(
+        self, instance_id: str, scene_id: str, milestone_id: str
+    ) -> None:
+        await self.get_milestone(instance_id, scene_id, milestone_id)
+        tx = await self.graph_session.begin_transaction()
+        try:
+            await tx.run(
+                """
+                                MATCH (:OntologyInstance {instance_id: $instance_id})-[scene_rel]->(scene)-[contains_rel]->(milestone)
+                                WHERE type(scene_rel) = 'HAS_SCENE'
+                                    AND 'Scene' IN labels(scene)
+                                    AND scene.id = $scene_id
+                                    AND type(contains_rel) = 'CONTAINS'
+                                    AND 'Milestone' IN labels(milestone)
+                                    AND milestone.id = $milestone_id
+                DETACH DELETE milestone
+                """,
+                instance_id=instance_id,
+                scene_id=scene_id,
+                milestone_id=milestone_id,
+            )
+        except Exception:
+            await tx.rollback()
+            await tx.close()
+            raise
+        else:
+            await tx.commit()
+            await tx.close()
+
+        ontology_id = await self._get_instance_ontology_id(instance_id)
+        from app.tasks.neo4j_embedding import (
+            embed_reconciliation as embed_reconciliation_task,
+        )
+
+        embed_reconciliation_task.delay(
+            ontology_id=ontology_id,
+            instance_id=instance_id,
+            node_ids=[],
+            author_type="agent",
+            author_id="milestone-delete",
+        )
+
+        milestones = await self.list_milestones(instance_id, scene_id)
+        begin_count = sum(1 for milestone in milestones if milestone.boundary_type == "begin")
+        end_count = sum(1 for milestone in milestones if milestone.boundary_type == "end")
+        if len(milestones) < 2 or begin_count != 1 or end_count != 1:
+            raise ValueError(
+                "Cannot delete milestone because scene would become invalid (needs >=2 milestones with one begin and one end)"
             )

@@ -78,6 +78,34 @@ async def get_optional_neo4j_session() -> AsyncGenerator[AsyncSession | None, No
         settings = get_settings()
     except Neo4jError:
         yield None
+
+
+async def ensure_temporal_graph_constraints(session: AsyncSession) -> None:
+    """Create idempotent constraints and indexes for Scene/Milestone temporal model."""
+    statements = [
+        """
+        CREATE CONSTRAINT scene_id_unique IF NOT EXISTS
+        FOR (scene:Scene)
+        REQUIRE scene.id IS UNIQUE
+        """,
+        """
+        CREATE CONSTRAINT milestone_id_unique IF NOT EXISTS
+        FOR (milestone:Milestone)
+        REQUIRE milestone.id IS UNIQUE
+        """,
+        """
+        CREATE INDEX scene_instance_ontology_idx IF NOT EXISTS
+        FOR (scene:Scene)
+        ON (scene.instance_id, scene.ontology_id)
+        """,
+        """
+        CREATE INDEX milestone_scene_temporal_idx IF NOT EXISTS
+        FOR (milestone:Milestone)
+        ON (milestone.scene_id, milestone.temporal_type, milestone.boundary_type)
+        """,
+    ]
+    for statement in statements:
+        await session.run(statement)
         return
     try:
         async with driver.session(database=settings.neo4j_database) as session:

@@ -149,8 +149,13 @@ async def mark_job_done(job_id: int, details: dict | None = None) -> None:
         await repo.mark_as_done(job_id, details_str)
 
 
-async def mark_job_failed(job_id: int, error_message: str) -> None:
+async def mark_job_failed(
+    job_id: int,
+    error_message: str,
+    details: dict | None = None,
+) -> None:
     """Mark a job as failed."""
     async with JobsSessionMaker() as session:
         repo = BackgroundJobRepository(session)
-        await repo.mark_as_failed(job_id, error_message)
+        details_str = json.dumps(details) if details else None
+        await repo.mark_as_failed(job_id, error_message, details_str)

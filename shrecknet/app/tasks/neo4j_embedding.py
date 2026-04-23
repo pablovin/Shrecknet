@@ -89,7 +89,7 @@ async def _embed_ontology_impl(job_id: int, ontology_id: int) -> dict[str, Any]:
             # Get count of nodes that need embedding
             count_query = """
             MATCH (n)
-            WHERE any(label IN labels(n) WHERE label IN ['EntityInstance', 'Event'])
+                        WHERE any(label IN labels(n) WHERE label IN ['EntityInstance', 'Scene', 'Milestone'])
               AND toInteger(n['ontology_id']) = toInteger($ontology_id)
               AND (
                   n['is_embedded'] IS NULL OR n['is_embedded'] = false
@@ -130,25 +130,16 @@ async def _embed_ontology_impl(job_id: int, ontology_id: int) -> dict[str, Any]:
                 ontology_id, batch_size=50
             )
 
-            # Mark nodes as embedded
             await update_job_progress(
-                job_id, 0.9, {"status": "Marking nodes as embedded"}
+                job_id, 0.9, {"status": "Finalizing embedding results"}
             )
-
-            update_query = """
-            MATCH (n:EntityInstance)
-            WHERE n.ontology_id = $ontology_id
-              AND n.text_embedding IS NOT NULL
-            SET n.is_embedded = true,
-                n.last_embedded_date = datetime()
-            """
-            await session.run(update_query, ontology_id=ontology_id)
 
             return {
                 "ontology_id": ontology_id,
                 "nodes_processed": embed_result["nodes_processed"],
                 "nodes_failed": embed_result["nodes_failed"],
                 "total_found": total_to_embed,
+                "processed_by_type": embed_result.get("processed_by_type", {}),
                 "status": "success",
             }
 
@@ -198,11 +189,9 @@ async def _embed_instance_impl(job_id: int, instance_id: str) -> dict[str, Any]:
         instance_query = """
         MATCH (instance:OntologyInstance {instance_id: $instance_id})
         OPTIONAL MATCH (instance)-[:HAS_ENTITY]->(entity:EntityInstance)
-        OPTIONAL MATCH (instance)-[:HAS_EVENT]->(event:Event)
         RETURN
             instance.ontology_id AS ontology_id,
-            collect(DISTINCT entity.entity_instance_id) AS entity_ids,
-            collect(DISTINCT event.event_id) AS event_ids
+            collect(DISTINCT entity.entity_instance_id) AS entity_ids
         LIMIT 1
         """
         result = await session.run(instance_query, instance_id=instance_id)
@@ -212,8 +201,7 @@ async def _embed_instance_impl(job_id: int, instance_id: str) -> dict[str, Any]:
 
         ontology_id = record.get("ontology_id")
         entity_ids = [value for value in (record.get("entity_ids") or []) if value]
-        event_ids = [value for value in (record.get("event_ids") or []) if value]
-        node_ids = list(dict.fromkeys([*entity_ids, *event_ids]))
+        node_ids = list(dict.fromkeys(entity_ids))
 
         await update_job_progress(
             job_id,
@@ -365,7 +353,7 @@ async def _embed_nodes_impl(
     Args:
         job_id: Background job identifier
         ontology_id: Ontology identifier for filtering
-        node_ids: Requested EntityInstance ids
+        node_ids: Requested node ids (EntityInstance.entity_instance_id or Scene/Milestone.id)
 
     Returns:
         Summary of the embedding run
@@ -414,19 +402,34 @@ async def _embed_nodes_impl(
 
         validation_query = """
         UNWIND $ids AS node_id
-        MATCH (node:EntityInstance {entity_instance_id: node_id})
-        WHERE node.ontology_id = $ontology_id
-        RETURN node.entity_instance_id AS entity_id
+        OPTIONAL MATCH (entity:EntityInstance {entity_instance_id: node_id})
+        WHERE toInteger(entity.ontology_id) = toInteger($ontology_id)
+        OPTIONAL MATCH (scene:Scene {id: node_id})
+        WHERE toInteger(scene.ontology_id) = toInteger($ontology_id)
+        OPTIONAL MATCH (milestone:Milestone {id: node_id})
+        WHERE toInteger(milestone.ontology_id) = toInteger($ontology_id)
+        WITH node_id, entity, scene, milestone
+        RETURN node_id,
+               CASE
+                   WHEN entity IS NOT NULL THEN "entity"
+                   WHEN scene IS NOT NULL THEN "scene"
+                   WHEN milestone IS NOT NULL THEN "milestone"
+                   ELSE NULL
+               END AS node_type
         """
         result = await session.run(
             validation_query, ids=normalized, ontology_id=ontology_id
         )
         rows = await result.data()
-        valid_ids = [row["entity_id"] for row in rows if row.get("entity_id")]
-        valid_set = set(valid_ids)
+        valid_rows = [
+            {"node_id": row["node_id"], "node_type": row["node_type"]}
+            for row in rows
+            if row.get("node_id") and row.get("node_type")
+        ]
+        valid_set = {row["node_id"] for row in valid_rows}
         missing = sorted(set(normalized) - valid_set)
 
-        if not valid_ids:
+        if not valid_rows:
             await update_job_progress(
                 job_id,
                 1.0,
@@ -447,12 +450,21 @@ async def _embed_nodes_impl(
 
         processed = 0
         failed = 0
-        total = len(valid_ids)
+        total = len(valid_rows)
 
-        for idx, node_id in enumerate(valid_ids, start=1):
+        for idx, row in enumerate(valid_rows, start=1):
             progress = 0.2 + 0.75 * (idx / total)
+            node_id = row["node_id"]
+            node_type = row["node_type"]
             try:
-                await embedding_service.embed_node(node_id, ontology_id)
+                if node_type == "entity":
+                    await embedding_service.embed_node(node_id, ontology_id)
+                elif node_type == "scene":
+                    await embedding_service.embed_scene_node(node_id, ontology_id)
+                elif node_type == "milestone":
+                    await embedding_service.embed_milestone_node(node_id, ontology_id)
+                else:
+                    raise ValueError(f"Unsupported node type: {node_type}")
                 processed += 1
             except Exception as exc:  # pragma: no cover - just tracking failures
                 failed += 1
@@ -464,6 +476,7 @@ async def _embed_nodes_impl(
                         "nodes_completed": processed,
                         "nodes_failed": failed,
                         "current_node": node_id,
+                        "current_node_type": node_type,
                         "error": str(exc),
                     },
                 )
@@ -477,6 +490,7 @@ async def _embed_nodes_impl(
                     "nodes_completed": processed,
                     "nodes_failed": failed,
                     "current_node": node_id,
+                    "current_node_type": node_type,
                 },
             )
 
@@ -499,3 +513,75 @@ async def _embed_nodes_impl(
             "nodes_skipped": len(missing),
             "missing_nodes": missing,
         }
+
+
+@celery_app.task(name="ontology.embed_reconciliation")
+def embed_reconciliation(
+    ontology_id: int,
+    instance_id: str | None = None,
+    node_ids: list[str] | None = None,
+    author_type: str = "agent",
+    author_id: str = "system",
+) -> dict[str, Any]:
+    """
+    Coalesced embedding reconciliation task.
+
+    Strategy:
+    - If node_ids are provided, embed targeted nodes first.
+    - If instance_id is provided, run a single instance-level reconciliation.
+    """
+    node_ids = node_ids or []
+    queue_metrics = {
+        "jobs_enqueued": 1,
+        "jobs_coalesced": 1,
+        "avg_nodes_per_job": float(len(node_ids)),
+        "fanout_per_request": 1.0,
+    }
+    job_id = run_async(
+        create_background_job(
+            author_type=AuthorType(author_type),
+            author_id=author_id,
+            job_type=JobType.NEO4J_EMBEDDING,
+            description="Embedding reconciliation",
+            celery_task_id=embed_reconciliation.request.id,
+            details={
+                "ontology_id": ontology_id,
+                "instance_id": instance_id,
+                "node_ids_count": len(node_ids),
+            },
+            ontology_id=ontology_id,
+        )
+    )
+
+    try:
+        run_async(mark_job_running(job_id))
+        embed_nodes_result = (
+            run_async(_embed_nodes_impl(job_id, ontology_id, node_ids))
+            if node_ids
+            else {
+                "nodes_requested": 0,
+                "nodes_embedded": 0,
+                "nodes_failed": 0,
+                "nodes_skipped": 0,
+                "missing_nodes": [],
+            }
+        )
+        embed_instance_result = (
+            run_async(_embed_instance_impl(job_id, instance_id))
+            if instance_id
+            else {"status": "skipped"}
+        )
+
+        result = {
+            "ontology_id": ontology_id,
+            "instance_id": instance_id,
+            "node_ids_count": len(node_ids),
+            "embed_nodes": embed_nodes_result,
+            "embed_instance": embed_instance_result,
+            "queue_metrics": queue_metrics,
+        }
+        run_async(mark_job_done(job_id, result))
+        return {"job_id": job_id, **result}
+    except Exception as e:
+        run_async(mark_job_failed(job_id, str(e)))
+        raise

@@ -5,15 +5,15 @@
 ![Neo4j](https://img.shields.io/badge/Neo4j-5.x-018BFF)
 ![Redis](https://img.shields.io/badge/Redis-7.x-DC382D)
 ![License](https://img.shields.io/badge/license-GPLv3-blue)
-![Version](https://img.shields.io/badge/version-0.5.0-orange)
+![Version](https://img.shields.io/badge/version-0.5.7-orange)
 
-Shrecknet is an event-driven memory engine for storytelling. It incrementally builds longitudinal episodic memory through an agentic architecture where events are first-class citizens and structure can evolve over time.
+Shrecknet is a scene-centric memory engine for storytelling. It incrementally builds longitudinal episodic memory through an agentic architecture where scenes and milestones are first-class narrative records and structure can evolve over time.
 
 ## Introducing Shrecknet
 
 Shrecknet is an agentic architecture for incremental construction of longitudinal episodic memory under controlled ontology evolution. Its core principle is explicit separation and coordinated co-evolution of three representational layers: Ontology, Graph, and Knowledge.
 
-Instead of treating memory as plain text or a frozen knowledge base, Shrecknet models memory as a dynamic system: every new observation can update entity state, append new timeline events, and, when needed, evolve the schema itself.
+Instead of treating memory as plain text or a frozen knowledge base, Shrecknet models memory as a dynamic system: every new observation can update entity state, append new scenes and milestones, and, when needed, evolve the schema itself.
 
 Architecture diagram:
 
@@ -21,9 +21,23 @@ Architecture diagram:
 
 Detailed architecture note: [Documentation/Architecture/SHRECKNET_ARCHITECTURE.md](Documentation/Architecture/SHRECKNET_ARCHITECTURE.md)
 
-## Event-Centric Mental Model
+## Scene-Centric Canonical Temporal Model
 
-Shrecknet is built around event-centric memory. The core question is not only what exists, but what happened, when, and how one event relates to another.
+Shrecknet now treats Scene and Milestone as the canonical write model for temporal memory.
+
+- Scene captures a bounded narrative unit in one ontology instance.
+- Milestones capture timeline anchors and progression inside the scene.
+- Scene and milestone provenance is anchored to ontology entities through derived_from links.
+
+Scene-centric memory documentation:
+- [Documentation/SceneCentricMemory/README.md](Documentation/SceneCentricMemory/README.md)
+- [Documentation/SceneCentricMemory/SCENE_MILESTONE_ENDPOINTS.md](Documentation/SceneCentricMemory/SCENE_MILESTONE_ENDPOINTS.md)
+
+Scene and milestone endpoints are the canonical temporal write and read flows.
+
+## Scene-Centric Mental Model
+
+Shrecknet is built around scene-centric memory. The core question is not only what exists, but what changed in each scene and how milestones connect narrative progression.
 
 ### The Triad: Ontology, Graph, Knowledge
 
@@ -32,13 +46,13 @@ Shrecknet is built around event-centric memory. The core question is not only wh
    Example: Character, Location, Faction, Session, CombatEncounter.
 
 2. Graph layer
-   Stores world state and event topology in connected form.
-   Event nodes and entity nodes are linked, enabling causal and temporal traversals.
+    Stores world state and scene/milestone topology in connected form.
+    Scene and milestone nodes are linked with entities, enabling causal and temporal traversals.
 
 3. Knowledge layer
    Contains narrative text, chunks, summaries, and embeddings used by retrieval and generation agents.
 
-### Ontologies and Event Types
+### Ontologies and Narrative Structure
 
 In Shrecknet, an ontology is the schema for a world. It includes:
 
@@ -46,7 +60,7 @@ In Shrecknet, an ontology is the schema for a world. It includes:
 - Property definitions: what attributes those entities can carry.
 - Relationship definitions: how entities can connect.
 
-Event types are represented through ontology definitions and timeline events, so they can evolve with the world. As campaigns change, new event categories or relation patterns can be introduced without destroying historical memory.
+Narrative structure is represented through ontology definitions plus scenes and milestones, so it can evolve with the world. As campaigns change, new scene-level relation patterns can be introduced without destroying historical memory.
 
 ### Why This Matters for Storytelling
 
@@ -66,11 +80,20 @@ Document intelligence agent. Librarian searches embedded PDF/library content and
 
 ### Architect
 
-Ontology and structure evolution agent. Architect analyzes existing instances/events and proposes additions, updates, and merges to keep ontology and world state coherent as memory grows.
+Ontology and structure evolution agent. Architect analyzes existing instances, scenes, and milestones and proposes additions, updates, and merges to keep ontology and world state coherent as memory grows.
+
+Current Architect analysis includes a scene-centric chunking mode that:
+- Merges `text` and `autogenerated_text` inputs per entity
+- Extracts narrative paragraphs from HTML and plain text
+- Packs chunks to a 16k token ceiling
+- Segments each chunk into full-coverage scenes using the Architect extract model
+- Stores chunking artifacts for local inspection
+
+See: [Documentation/Agents/Architect/Scene Chunking.md](Documentation/Agents/Architect/Scene%20Chunking.md)
 
 ### Novelist
 
-Narrative generation agent. Novelist turns unstructured notes or session text into polished prose and can generate event timelines for existing entities.
+Narrative generation agent. Novelist turns unstructured notes or session text into polished prose.
 
 ## Functionalities by Group
 
@@ -78,7 +101,7 @@ Narrative generation agent. Novelist turns unstructured notes or session text in
 
 - Ontology CRUD with entities, properties, and relationships
 - Ontology instances with entity-level state
-- Timeline event creation, update, retrieval, and relation linking
+- Scene and milestone creation, update, retrieval, and relation linking
 - Event emission endpoint for event-driven integration flows
 
 ### Retrieval and reasoning
@@ -92,7 +115,7 @@ Narrative generation agent. Novelist turns unstructured notes or session text in
 - Elder query orchestration with chat continuity
 - Librarian retrieval over embedded library items
 - Architect async analysis and proposal validation loops
-- Novelist async draft generation and timeline generation
+- Novelist async draft generation
 
 ### Platform and operations
 
@@ -160,7 +183,7 @@ Expected:
 - Swagger UI loads at http://localhost:8100/docs
 - Neo4j browser is reachable at http://localhost:7475
 
-## Service Lifecycle: From Zero to Event-Driven Story Memory
+## Service Lifecycle: From Zero to Scene-Centric Story Memory
 
 Below is a practical sequence to initialize and use Shrecknet through the API.
 
@@ -200,7 +223,7 @@ headers = {"Authorization": f"Bearer {token}"}
 
 ### 2. Set up ontologies
 
-Create ontology, then evolve it with entities/properties/relationships as your event model matures.
+Create ontology, then evolve it with entities/properties/relationships as your narrative model matures.
 
 ```python
 # Create ontology
@@ -209,7 +232,7 @@ ontology = requests.post(
     headers=headers,
     json={
         "name": "Chronicles of Marshfall",
-        "description": "Event-centric ontology for campaign memory",
+        "description": "Scene-centric ontology for campaign memory",
         "image_url": None,
     },
 )
@@ -253,7 +276,7 @@ architect_id = create_agent("Architect One", "architect", [ontology_id])
 novelist_id = create_agent("Novelist One", "novelist", [ontology_id])
 ```
 
-### 4. Build event-centric memory with ontology instances and events
+### 4. Build scene-centric memory with ontology instances, scenes, and milestones
 
 ```python
 # Create ontology instance with initial entities
@@ -275,26 +298,42 @@ instance_resp = requests.post(
             }
         ],
         "events": [],
+        "scenes": [],
     },
 )
 instance_resp.raise_for_status()
 instance_id = instance_resp.json()["instance_id"]
 
-# Add timeline event
-event_resp = requests.post(
-    f"{BASE}/ontology-instances/{instance_id}/events",
+# Add a scene
+scene_resp = requests.post(
+    f"{BASE}/ontology-instances/{instance_id}/scenes",
     headers=headers,
     json={
-        "title": "Ambush at Reed Bridge",
+        "name": "Ambush At Reed Bridge",
         "description": "Arin discovers a staged ambush tied to the Black Lantern guild.",
-        "source": "session_notes",
-        "source_entity_id": "Arin",
-        "involves_entity_ids": ["Arin"],
-        "relations": [],
+        "created_by_type": "human",
+        "created_by_author": "1",
+        "derived_from": {"entity_instance_id": "entity-arin"},
     },
 )
-event_resp.raise_for_status()
-event_id = event_resp.json()["event_id"]
+scene_resp.raise_for_status()
+scene_id = scene_resp.json()["id"]
+
+# Add milestone to the scene
+milestone_resp = requests.post(
+    f"{BASE}/ontology-instances/{instance_id}/scenes/{scene_id}/milestones",
+    headers=headers,
+    json={
+        "name": "Ambush Is Revealed",
+        "description": "Arin identifies the ambush trap and its sponsor.",
+        "created_by_type": "human",
+        "created_by_author": "1",
+        "boundary_type": "begin",
+        "derived_from": {"entity_instance_id": "entity-arin"},
+    },
+)
+milestone_resp.raise_for_status()
+milestone_id = milestone_resp.json()["id"]
 
 # Emit integration event for external consumers/webhooks
 emit = requests.post(
@@ -302,7 +341,7 @@ emit = requests.post(
     headers=headers,
     json={
         "event_type": "story.event.created",
-        "payload": {"instance_id": instance_id, "event_id": event_id},
+        "payload": {"instance_id": instance_id, "scene_id": scene_id, "milestone_id": milestone_id},
     },
 )
 emit.raise_for_status()
@@ -354,7 +393,7 @@ Tip: use http://localhost:8100/docs to inspect exact payloads and all endpoint v
 
 ## Project Scope as a Single Product
 
-Shrecknet is presented and operated as one product: one API surface, one memory model, one event-centric architecture, and one set of agents orchestrated through shared ontology and graph state.
+Shrecknet is presented and operated as one product: one API surface, one memory model, one scene-centric architecture, and one set of agents orchestrated through shared ontology and graph state.
 
 ## Documentation
 

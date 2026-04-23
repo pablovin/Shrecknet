@@ -1,0 +1,272 @@
+from __future__ import annotations
+
+from app.tasks.architect_generation import (
+    _canonicalize_entity_proposals,
+    _canonicalize_milestone_groups,
+    _canonicalize_scene_proposals,
+    _extract_effective_entity_instance_id,
+    _extract_merge_update,
+    _merge_ref_lists,
+    _proposal_alias_keys,
+    _resolve_related_target_entity_id,
+    _resolve_maintained_entity_id,
+)
+
+
+def test_extract_merge_update_returns_merge_payload() -> None:
+    proposal = {
+        "name": "Dumnonia",
+        "updates": {
+            "merge": {
+                "maintained_alias": "Britain",
+                "merged_into_proposal_id": "analysis-entity-0",
+            }
+        },
+    }
+
+    merge = _extract_merge_update(proposal)
+
+    assert merge is not None
+    assert merge["maintained_alias"] == "Britain"
+
+
+def test_resolve_maintained_entity_id_by_explicit_instance_id() -> None:
+    resolved = _resolve_maintained_entity_id(
+        merge_update={"maintained_entity_instance_id": "entity-123"},
+        alias_to_entity_id={},
+        proposal_to_entity_id={},
+    )
+
+    assert resolved == "entity-123"
+
+
+def test_resolve_maintained_entity_id_by_merged_into_proposal_id() -> None:
+    resolved = _resolve_maintained_entity_id(
+        merge_update={"merged_into_proposal_id": "analysis-entity-0"},
+        alias_to_entity_id={},
+        proposal_to_entity_id={0: "entity-britain"},
+    )
+
+    assert resolved == "entity-britain"
+
+
+def test_resolve_maintained_entity_id_by_maintained_alias() -> None:
+    resolved = _resolve_maintained_entity_id(
+        merge_update={"maintained_alias": "Britain"},
+        alias_to_entity_id={"britain": "entity-britain"},
+        proposal_to_entity_id={},
+    )
+
+    assert resolved == "entity-britain"
+
+
+def test_resolve_maintained_entity_id_prefers_maintained_alias_over_explicit_id() -> None:
+    resolved = _resolve_maintained_entity_id(
+        merge_update={
+            "maintained_alias": "Britain",
+            "maintained_entity_instance_id": "entity-explicit",
+        },
+        alias_to_entity_id={"britain": "entity-britain"},
+        proposal_to_entity_id={},
+    )
+
+    assert resolved == "entity-britain"
+
+
+def test_merge_ref_lists_keeps_order_and_deduplicates() -> None:
+    merged = _merge_ref_lists(["chunk_0_scene_1", "chunk_0_scene_2"], ["chunk_0_scene_2", "chunk_0_scene_3"])
+
+    assert merged == ["chunk_0_scene_1", "chunk_0_scene_2", "chunk_0_scene_3"]
+
+
+def test_canonicalize_entity_proposals_applies_effective_fields() -> None:
+    canonical = _canonicalize_entity_proposals(
+        [
+            {
+                "name": "Rome",
+                "status": "approved_with_updates",
+                "proposal_type": "update_instance",
+                "entity_instance_id": "entity-1",
+                "scene_refs": ["chunk_0_scene_1", "chunk_0_scene_1"],
+                "ontology": "Important Locations",
+                "updates": {
+                    "name": "Romess",
+                    "proposal_type": "new_instance",
+                    "entity_definition_id": 17,
+                },
+            }
+        ]
+    )
+
+    assert len(canonical) == 1
+    item = canonical[0]
+    assert item["effective_name"] == "Romess"
+    assert item["effective_status"] == "approved_with_updates"
+    assert item["effective_proposal_type"] == "new_instance"
+    assert item["effective_definition_id"] == 17
+    assert item["effective_entity_instance_id"] == "entity-1"
+    assert item["effective_scene_refs"] == ["chunk_0_scene_1"]
+
+
+def test_canonicalize_scene_proposals_applies_related_updates() -> None:
+    canonical = _canonicalize_scene_proposals(
+        [
+            {
+                "scene_ref": "chunk_0_scene_1",
+                "scene_name": "Old Scene Name",
+                "status": "approved",
+                "related_to": [
+                    {
+                        "proposal_index": 1,
+                        "alias": "Rome",
+                        "entity_instance_id": "entity-rome",
+                    }
+                ],
+                "updates": {
+                    "name": "New Scene Name",
+                    "related_to": [
+                        {
+                            "proposal_index": 2,
+                            "alias": "Britain",
+                            "entity_instance_id": "entity-britain",
+                        }
+                    ],
+                    "additional_related_entity_instance_ids": ["entity-extra"],
+                },
+            }
+        ]
+    )
+
+    assert canonical[0]["effective_name"] == "New Scene Name"
+    related = canonical[0]["effective_related_to"]
+    assert [item["entity_instance_id"] for item in related] == ["entity-britain", "entity-extra"]
+
+
+def test_canonicalize_milestone_groups_applies_relationship_deletions() -> None:
+    canonical = _canonicalize_milestone_groups(
+        [
+            {
+                "scene_ref": "chunk_0_scene_1",
+                "milestones": [
+                    {
+                        "milestone_ref": "m-1",
+                        "title": "Rome withdraws",
+                        "status": "approved",
+                        "related_to": [
+                            {"entity": "Rome", "relationship_label": "withdraws"},
+                            {"entity": "Britain", "relationship_label": "is_abandoned"},
+                        ],
+                        "updates": {
+                            "relationship_deletions": [
+                                {
+                                    "operation": "delete",
+                                    "relation_type": "related_to",
+                                    "target_alias": "Rome",
+                                }
+                            ]
+                        },
+                    }
+                ],
+            }
+        ]
+    )
+
+    milestone = canonical[0]["milestones"][0]
+    assert milestone["effective_name"] == "Rome withdraws"
+    assert milestone["effective_status"] == "approved"
+    assert len(milestone["effective_related_to"]) == 1
+    assert milestone["effective_related_to"][0]["entity"] == "Britain"
+
+
+def test_resolve_related_target_prefers_proposal_mapping_over_stale_id() -> None:
+    resolved = _resolve_related_target_entity_id(
+        related={
+            "proposal_index": 8,
+            "alias": "Saxons",
+            "entity_instance_id": "stale-old-id",
+        },
+        proposal_to_entity_id={8: "new-created-id"},
+        alias_to_entity_id={"saxons": "new-created-id"},
+        alias_candidates=["Saxons"],
+        fallback_entity_instance_id="stale-old-id",
+        valid_entity_ids={"new-created-id"},
+    )
+
+    assert resolved == "new-created-id"
+
+
+def test_resolve_related_target_rejects_unknown_stale_id_without_mapping() -> None:
+    resolved = _resolve_related_target_entity_id(
+        related={
+            "entity_instance_id": "stale-old-id",
+        },
+        proposal_to_entity_id={},
+        alias_to_entity_id={},
+        alias_candidates=[],
+        fallback_entity_instance_id="stale-old-id",
+        valid_entity_ids={"known-id"},
+    )
+
+    assert resolved is None
+
+
+def test_extract_effective_entity_instance_id_reads_updates_entity_in_instance() -> None:
+    proposal = {
+        "entity_instance_id": None,
+        "updates": {
+            "proposal_type": "update_instance",
+            "entityInInstance": {"entity_instance_id": "entity-nested-1"},
+        },
+    }
+
+    assert _extract_effective_entity_instance_id(proposal) == "entity-nested-1"
+
+
+def test_extract_effective_entity_instance_id_reads_camel_case_keys() -> None:
+    proposal = {
+        "entityInstanceId": None,
+        "updates": {
+            "proposal_type": "update_instance",
+            "entityInstanceId": "entity-camel-1",
+        },
+    }
+
+    assert _extract_effective_entity_instance_id(proposal) == "entity-camel-1"
+
+
+def test_proposal_alias_keys_include_original_updated_and_canonical_names() -> None:
+    keys = _proposal_alias_keys(
+        {
+            "name": "Lady Tamura Evrain",
+            "effective_name": "Evrain",
+            "canonical": "evrain",
+            "updates": {"name": "Evrain"},
+        }
+    )
+
+    assert "lady tamura evrain" in keys
+    assert "evrain" in keys
+
+
+def test_resolve_related_target_uses_original_alias_after_rename() -> None:
+    alias_to_entity_id = {}
+    for key in _proposal_alias_keys(
+        {
+            "name": "Lady Tamura Evrain",
+            "effective_name": "Evrain",
+            "canonical": "evrain",
+            "updates": {"name": "Evrain"},
+        }
+    ):
+        alias_to_entity_id[key] = "entity-evrain"
+
+    resolved = _resolve_related_target_entity_id(
+        related={"entity": "Lady Tamura Evrain"},
+        proposal_to_entity_id={},
+        alias_to_entity_id=alias_to_entity_id,
+        alias_candidates=["Lady Tamura Evrain"],
+        fallback_entity_instance_id=None,
+        valid_entity_ids={"entity-evrain"},
+    )
+
+    assert resolved == "entity-evrain"

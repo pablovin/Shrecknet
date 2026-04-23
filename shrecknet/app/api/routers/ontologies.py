@@ -52,17 +52,21 @@ def _sanitize_payload(data: dict[str, Any]) -> dict[str, Any]:
 
 async def _get_safe_ontology_embedding_stats(
     graph_session: Any, ontology_id: int
-) -> dict[str, int]:
+) -> dict[str, Any]:
     """Read embedding stats without triggering Neo4j unknown schema warnings."""
     stats_query = """
-    MATCH (i:OntologyInstance)
-    WHERE toInteger(i.ontology_id) = toInteger($ontology_id)
-    OPTIONAL MATCH (i)-[:HAS_ENTITY]->(n)
-    WITH collect(n) AS nodes
-    UNWIND CASE WHEN size(nodes) = 0 THEN [NULL] ELSE nodes END AS n
-    WITH n
-    WHERE n IS NOT NULL
-    WITH count(n) AS total,
+    MATCH (n)
+    WHERE toInteger(n.ontology_id) = toInteger($ontology_id)
+            AND any(label IN labels(n) WHERE label IN ['EntityInstance', 'Scene', 'Milestone'])
+    WITH CASE
+            WHEN 'EntityInstance' IN labels(n) THEN 'entities'
+            WHEN 'Scene' IN labels(n) THEN 'scenes'
+            WHEN 'Milestone' IN labels(n) THEN 'milestones'
+            ELSE 'other'
+         END AS node_type,
+         n
+    WITH node_type,
+         count(n) AS total,
          count(CASE WHEN coalesce(n["is_embedded"], false) = true THEN 1 END) AS embedded,
          count(CASE WHEN coalesce(n["is_embedded"], false) = false THEN 1 END) AS unembedded,
          count(CASE
@@ -72,18 +76,60 @@ async def _get_safe_ontology_embedding_stats(
              AND n["last_updated_date"] > n["last_embedded_date"]
              THEN 1
          END) AS outdated
-    RETURN total, embedded, unembedded, outdated
+    RETURN node_type, total, embedded, unembedded, outdated
     """
     result = await graph_session.run(stats_query, ontology_id=ontology_id)
-    record = await result.single()
-    if not record:
-        return {"total": 0, "embedded": 0, "unembedded": 0, "outdated": 0}
-    return {
-        "total": int(record["total"] or 0),
-        "embedded": int(record["embedded"] or 0),
-        "unembedded": int(record["unembedded"] or 0),
-        "outdated": int(record["outdated"] or 0),
+    rows = await result.data()
+    breakdown = {
+        "entities": {"total": 0, "embedded": 0, "unembedded": 0, "outdated": 0},
+        "scenes": {"total": 0, "embedded": 0, "unembedded": 0, "outdated": 0},
+        "milestones": {"total": 0, "embedded": 0, "unembedded": 0, "outdated": 0},
     }
+    for row in rows:
+        node_type = row.get("node_type")
+        if node_type not in breakdown:
+            continue
+        breakdown[node_type] = {
+            "total": int(row.get("total") or 0),
+            "embedded": int(row.get("embedded") or 0),
+            "unembedded": int(row.get("unembedded") or 0),
+            "outdated": int(row.get("outdated") or 0),
+        }
+
+    totals = {
+        "total": sum(item["total"] for item in breakdown.values()),
+        "embedded": sum(item["embedded"] for item in breakdown.values()),
+        "unembedded": sum(item["unembedded"] for item in breakdown.values()),
+        "outdated": sum(item["outdated"] for item in breakdown.values()),
+    }
+    return {
+        **totals,
+        "breakdown": breakdown,
+    }
+
+
+async def _count_ontology_nodes_by_type(graph_session: Any, ontology_id: int) -> dict[str, int]:
+    query = """
+    MATCH (n)
+    WHERE toInteger(n.ontology_id) = toInteger($ontology_id)
+            AND any(label IN labels(n) WHERE label IN ['EntityInstance', 'Scene', 'Milestone'])
+    WITH CASE
+            WHEN 'EntityInstance' IN labels(n) THEN 'entities'
+            WHEN 'Scene' IN labels(n) THEN 'scenes'
+            WHEN 'Milestone' IN labels(n) THEN 'milestones'
+            ELSE 'other'
+         END AS node_type,
+         count(n) AS count
+    RETURN node_type, count
+    """
+    result = await graph_session.run(query, ontology_id=ontology_id)
+    rows = await result.data()
+    counts = {"entities": 0, "scenes": 0, "milestones": 0}
+    for row in rows:
+        node_type = row.get("node_type")
+        if node_type in counts:
+            counts[node_type] = int(row.get("count") or 0)
+    return counts
 
 
 async def _get_sql_ontology_node_total(
@@ -642,6 +688,9 @@ class EmbeddingStatsResponse(BaseModel):
     embedded_nodes: int
     unembedded_nodes: int
     outdated_nodes: int
+    entities: dict[str, int]
+    scenes: dict[str, int]
+    milestones: dict[str, int]
 
 
 class TriggerEmbeddingRequest(BaseModel):
@@ -656,6 +705,9 @@ class TriggerEmbeddingResponse(BaseModel):
     job_id: str
     ontology_id: int
     message: str
+    requested_entities: int
+    requested_scenes: int
+    requested_milestones: int
 
 
 @router.get("/{ontology_id}/embedding-stats", response_model=EmbeddingStatsResponse)
@@ -690,10 +742,22 @@ async def get_embedding_stats(
             "embedded": 0,
             "unembedded": sql_total,
             "outdated": 0,
+            "breakdown": {
+                "entities": {
+                    "total": sql_total,
+                    "embedded": 0,
+                    "unembedded": sql_total,
+                    "outdated": 0,
+                },
+                "scenes": {"total": 0, "embedded": 0, "unembedded": 0, "outdated": 0},
+                "milestones": {"total": 0, "embedded": 0, "unembedded": 0, "outdated": 0},
+            },
         }
-    elif sql_total > stats["total"]:
-        missing_in_graph = sql_total - stats["total"]
-        stats["total"] = sql_total
+    elif sql_total > stats["breakdown"]["entities"]["total"]:
+        missing_in_graph = sql_total - stats["breakdown"]["entities"]["total"]
+        stats["breakdown"]["entities"]["total"] = sql_total
+        stats["breakdown"]["entities"]["unembedded"] += missing_in_graph
+        stats["total"] += missing_in_graph
         stats["unembedded"] += missing_in_graph
 
     return EmbeddingStatsResponse(
@@ -702,6 +766,9 @@ async def get_embedding_stats(
         embedded_nodes=stats["embedded"],
         unembedded_nodes=stats["unembedded"],
         outdated_nodes=stats["outdated"],
+        entities=stats["breakdown"]["entities"],
+        scenes=stats["breakdown"]["scenes"],
+        milestones=stats["breakdown"]["milestones"],
     )
 
 
@@ -713,6 +780,7 @@ async def get_embedding_stats(
 async def trigger_embedding(
     ontology_id: int,
     request: TriggerEmbeddingRequest,
+    graph_session: Annotated[Any, Depends(get_neo4j_session)],
     service: OntologyService = Depends(get_ontology_service),
     current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.WORLD_BUILDER)),
 ) -> TriggerEmbeddingResponse:
@@ -729,6 +797,7 @@ async def trigger_embedding(
         )
 
     # Trigger the Celery task
+    counts = await _count_ontology_nodes_by_type(graph_session, ontology_id)
     result = embed_ontology.delay(
         ontology_id=ontology_id, author_type="user", author_id=str(current_user.id)
     )
@@ -737,6 +806,9 @@ async def trigger_embedding(
         job_id=result.id,
         ontology_id=ontology_id,
         message=f"Embedding job triggered for ontology {ontology_id}",
+        requested_entities=counts["entities"],
+        requested_scenes=counts["scenes"],
+        requested_milestones=counts["milestones"],
     )
 
 

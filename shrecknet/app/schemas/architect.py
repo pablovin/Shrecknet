@@ -190,3 +190,147 @@ class ArchitectValidationRequest(BaseModel):
                 "Either validated_proposals or revised_suggestions must be provided"
             )
         return values
+
+
+FrontendProposalStatus = Literal[
+    "approved",
+    "approved_with_updates",
+    "disapproved",
+]
+
+
+class FrontendEntityProposalUpdates(BaseModel):
+    name: str | None = None
+    corrected_entity_definition_id: int | None = None
+    corrected_entity_instance_id: str | None = None
+    corrected_proposal_type: str | None = None
+    entity_definition_id: int | None = None
+    entity_instance_id: str | None = None
+    proposal_type: str | None = None
+    ontology: str | None = None
+    merge: dict[str, Any] | None = None
+
+
+class FrontendRelationshipDeletion(BaseModel):
+    operation: str | None = None
+    relation_type: str | None = None
+    target_proposal_index: int | None = None
+    target_alias: str | None = None
+    target_entity_instance_id: str | None = None
+
+
+class FrontendSceneProposalUpdates(BaseModel):
+    name: str | None = None
+    related_to: list[FrontendRelatedEntityRef] | None = None
+    additional_related_entity_instance_ids: list[str] | None = None
+    relationship_deletions: list[FrontendRelationshipDeletion] | None = None
+
+
+class FrontendMilestoneProposalUpdates(BaseModel):
+    related_to: list[dict[str, Any]] | None = None
+    relationship_deletions: list[FrontendRelationshipDeletion] | None = None
+
+
+class FrontendEntityProposal(BaseModel):
+    name: str
+    canonical: str | None = None
+    ontology: str | None = None
+    status: FrontendProposalStatus
+    proposal_type: ArchitectProposalType | str | None = None
+    entity_instance_id: str | None = None
+    scene_refs: list[str] = Field(default_factory=list)
+    updates: FrontendEntityProposalUpdates | None = None
+
+
+class FrontendRelatedEntityRef(BaseModel):
+    canonical: str | None = None
+    alias: str | None = None
+    entity_instance_id: str | None = None
+    proposal_index: int | None = None
+    proposal_type: str | None = None
+    status: str | None = None
+
+
+class FrontendSceneOrderRef(BaseModel):
+    scene_ref: str | None = None
+    scene_id: str | None = None
+
+
+class FrontendSceneProposal(BaseModel):
+    scene_ref: str
+    scene_id: str | None = None
+    scene_order: int | None = None
+    scene_name: str
+    scene_description: str
+    scene_text: str
+    source_entity_instance_id: str | None = None
+    related_to: list[FrontendRelatedEntityRef] = Field(default_factory=list)
+    preceded_by: FrontendSceneOrderRef | None = None
+    followed_by: FrontendSceneOrderRef | None = None
+    updates: FrontendSceneProposalUpdates | None = None
+    status: FrontendProposalStatus
+
+
+class FrontendMilestoneRelation(BaseModel):
+    entity: str
+    relationship_label: str
+    relationship_description: str | None = None
+
+
+class FrontendMilestoneProposal(BaseModel):
+    milestone_ref: str
+    scene_ref: str | None = None
+    scene_id: str | None = None
+    title: str | None = None
+    label: str | None = None
+    description: str
+    boundary_type: Literal["begin", "end", "none"] = "none"
+    milestone_order: int | None = None
+    related_to: list[FrontendMilestoneRelation] = Field(default_factory=list)
+    updates: FrontendMilestoneProposalUpdates | None = None
+    status: FrontendProposalStatus
+
+
+class FrontendMilestonesPerSceneItem(BaseModel):
+    scene_ref: str
+    scene_id: str | None = None
+    milestones: list[FrontendMilestoneProposal] = Field(default_factory=list)
+
+
+class ArchitectReviewedPipelineOutput(BaseModel):
+    run_id: str
+    ontology_instance_id: str
+    outputs: dict[str, Any]
+
+    @property
+    def entity_proposals(self) -> list[FrontendEntityProposal]:
+        proposals = self.outputs.get("entity_proposals") or []
+        return [FrontendEntityProposal.model_validate(item) for item in proposals]
+
+    @property
+    def scene_proposals(self) -> list[FrontendSceneProposal]:
+        proposals = self.outputs.get("scene_proposals") or []
+        return [FrontendSceneProposal.model_validate(item) for item in proposals]
+
+    @property
+    def milestone_proposals(self) -> list[FrontendMilestoneProposal]:
+        proposals = self.outputs.get("milestone_proposals") or []
+        return [FrontendMilestoneProposal.model_validate(item) for item in proposals]
+
+    @property
+    def milestones_per_scene(self) -> list[FrontendMilestonesPerSceneItem]:
+        payload = self.outputs.get("milestones_per_scene") or []
+        return [FrontendMilestonesPerSceneItem.model_validate(item) for item in payload]
+
+
+class ArchitectGenerationRequest(BaseModel):
+    run_id: str
+    reviewed_pipeline_output: ArchitectReviewedPipelineOutput
+    author_type: str = Field(default="user")
+    author_id: str
+
+    @model_validator(mode="after")
+    def ensure_run_matches(cls, values: "ArchitectGenerationRequest") -> "ArchitectGenerationRequest":
+        if values.run_id != values.reviewed_pipeline_output.run_id:
+            raise ValueError("run_id must match reviewed_pipeline_output.run_id")
+        return values

@@ -1,4 +1,4 @@
-"""Simplified Novelist orchestrator with strict structure controls."""
+"""Scene-centric Novelist orchestrator."""
 
 from __future__ import annotations
 
@@ -6,18 +6,30 @@ import asyncio
 import json
 import logging
 import re
+import time
 from typing import Any, Awaitable, Callable
 
 from app.integrations.llm.model_policy import LLMTask, ModelPolicy
 from app.integrations.llm.openai_client import OpenAIClient
+from app.jobs.architect.prompts import (
+    ARCHITECT_ENTITY_PROPOSAL_PROMPT,
+    ARECHITECT_MILESTONE_PROPOSAL_PROMPT,
+)
+from app.jobs.architect.scene_centric_chunking import (
+    build_scene_chunks,
+    extract_paragraphs_from_sources,
+    segment_chunk_into_scenes,
+)
+from app.jobs.architect.schemas import ChunkExtractionResponse
 from app.jobs.novelist.prompts import (
     CONTINUITY_BRIEF_PROMPT,
-    CRITIC_PROMPT,
-    ELDER_QUERY_PLANNING_PROMPT,
-    EVENT_COVERAGE_PROMPT,
-    PART_PROMPT,
-    PLAN_PROMPT,
-    REVISION_PROMPT,
+    NOVELIST_ELDER_QUERY_PROMPT,
+    NOVELIST_SCAFFOLD_NORMALIZATION_PROMPT,
+    NOVELIST_SCENE_CRITIC_PROMPT,
+    NOVELIST_SCENE_INTENT_PROMPT,
+    NOVELIST_SCENE_PACKAGE_PROMPT,
+    NOVELIST_SCENE_PROSE_PROMPT,
+    NOVELIST_SCENE_REVISION_PROMPT,
 )
 from app.models.agent import Agent
 from app.models.novelist import NovelistStage
@@ -27,25 +39,35 @@ logger = logging.getLogger(__name__)
 
 StageCallback = Callable[[NovelistStage, dict[str, Any]], Awaitable[None]]
 ElderQueryRunner = Callable[[Agent, str], Awaitable[list[dict[str, Any]]]]
+ArchitectScaffoldingRunner = Callable[
+    [Agent, str, str | None], Awaitable[dict[str, Any]]
+]
 
 
 class NovelistOrchestrator:
-    """Chapter pipeline: plan -> elder enrich (optional) -> write -> critic -> revise -> merge."""
+    """Scene-centric Novelist pipeline.
+
+    Stages:
+    ingest -> scaffolding -> scene_package -> retrieval -> intent_drafting ->
+    prose_generation -> critic -> revision -> merging -> done
+    """
 
     def __init__(
         self,
         *,
         llm_client: OpenAIClient,
         model_policy: ModelPolicy,
-        max_concurrency: int = 4,
+        max_concurrency: int = 10,
         elder_query_runner: ElderQueryRunner | None = None,
+        architect_scaffolding_runner: ArchitectScaffoldingRunner | None = None,
     ) -> None:
         self.llm_client = llm_client
         self.model_policy = model_policy
         self.draft_model = getattr(model_policy, "model_novelist_draft", None)
         self.critic_model = getattr(model_policy, "model_novelist_critic", None)
-        self.max_concurrency = max_concurrency
+        self.max_concurrency = max(1, min(10, max_concurrency))
         self.elder_query_runner = elder_query_runner
+        self.architect_scaffolding_runner = architect_scaffolding_runner
 
     async def execute(
         self,
@@ -55,10 +77,12 @@ class NovelistOrchestrator:
         conversation_id: str | None = None,
         stage_callback: StageCallback | None = None,
     ) -> dict[str, Any]:
+        started_total = time.monotonic()
         unstructured_text = payload.unstructured_text.strip()
         language = (payload.language or "").strip()
         instructions = (payload.instructions or "").strip()
         previous_session_text = (payload.previous_session_text or "").strip()
+
         continuity_brief = (payload.previous_session_summary or "").strip()
         if not continuity_brief:
             continuity_brief = await self._build_continuity_brief(
@@ -68,382 +92,1216 @@ class NovelistOrchestrator:
                 conversation_id=conversation_id,
             )
 
-        # Stage 1: Planning
-        plan_prompt = self._build_plan_user_prompt(
-            unstructured_text=unstructured_text,
-            language=language,
-            instructions=instructions,
-            agent=agent,
-            continuity_brief=continuity_brief,
-        )
-        plan_system_prompt = self._compose_system_prompt(
-            PLAN_PROMPT, language=language, instructions=instructions
-        )
-        raw_plan = await self.llm_client.chat(
-            model=self.model_policy.get_model(LLMTask.VALIDATION),
-            messages=[
-                {"role": "system", "content": plan_system_prompt},
-                {"role": "user", "content": plan_prompt},
-            ],
-            temperature=0.3,
-            conversation_id=conversation_id,
-        )
-        parsed_plan = self._parse_plan(raw_plan)
-
-        # Stage 1.5: Plan Elder queries from assigned events and fetch flavor-only context.
-        elder_query_plan_system_prompt = self._compose_system_prompt(
-            ELDER_QUERY_PLANNING_PROMPT,
-            language=language,
-            instructions=instructions,
-        )
-        elder_query_plan_user_prompt = self._build_elder_query_plan_user_prompt(
-            parsed_plan=parsed_plan,
-            source_context=self._short_source_context(unstructured_text),
-            continuity_brief=continuity_brief,
-            language=language,
-            instructions=instructions,
-            agent=agent,
-        )
-        raw_elder_query_plan = ""
-        try:
-            raw_elder_query_plan = await self.llm_client.chat(
-                model=self.critic_model or self.model_policy.get_model(LLMTask.VALIDATION),
-                messages=[
-                    {"role": "system", "content": elder_query_plan_system_prompt},
-                    {"role": "user", "content": elder_query_plan_user_prompt},
-                ],
-                temperature=0.2,
-                conversation_id=conversation_id,
-            )
-        except Exception:
-            logger.warning(
-                "Failed Elder query planning; using deterministic fallback",
-                exc_info=True,
-            )
-        elder_query_plan = self._parse_elder_query_plan(
-            raw=raw_elder_query_plan,
-            parsed_plan=parsed_plan,
-        )
-        # Elder context is flavor-only support; it must never change assigned events.
-        elder_context_by_part = await self._collect_elder_context_by_part(
-            agent=agent,
-            elder_query_plan=elder_query_plan,
-        )
-        if stage_callback:
-            await stage_callback(
-                NovelistStage.PLANNING,
-                {
-                    "plan_raw": raw_plan,
-                    "plan_parsed": parsed_plan,
-                    "elder_query_plan_raw": raw_elder_query_plan,
-                    "elder_query_plan_parsed": elder_query_plan,
-                    "elder_context_by_part": elder_context_by_part,
-                },
-            )
-
-        # Stage 2: Write parts sequentially and carry short summaries forward.
-        write_part_prompts: dict[str, dict[str, str]] = {}
-        part_keys = ("part_1", "part_2", "part_3")
-        draft_parts: dict[str, str] = {}
-        part_summaries: dict[str, str] = {}
-        short_source_context = self._short_source_context(unstructured_text)
-        part_system_prompt = self._compose_system_prompt(
-            PART_PROMPT, language=language, instructions=instructions
-        )
-
-        for part_key in part_keys:
-            part_data = parsed_plan[part_key]
-            user_prompt = self._build_part_user_prompt(
-                part_key=part_key,
-                part_data=part_data,
-                source_context=short_source_context,
-                language=language,
-                instructions=instructions,
-                agent=agent,
-                previous_summaries=[part_summaries[k] for k in part_keys if k in part_summaries],
-                continuity_brief=continuity_brief,
-                elder_context_lines=self._normalize_text_list(
-                    elder_context_by_part.get(part_key, {}).get("elder_context", []),
-                    max_items=8,
-                ),
-            )
-            write_part_prompts[part_key] = {
-                "system_prompt": part_system_prompt,
-                "user_prompt": user_prompt,
-            }
-            raw_part = await self.llm_client.chat(
-                model=self.draft_model or self.model_policy.get_model(LLMTask.SYNTHESIS),
-                messages=[
-                    {"role": "system", "content": part_system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                temperature=0.2,  # Lower creativity to prioritize correctness.
-                conversation_id=conversation_id,
-            )
-            cleaned_part = self._ensure_readable_html(raw_part)
-            draft_parts[part_key] = cleaned_part
-            part_summary = self._summarize_part_for_context(
-                part_key=part_key,
-                part_title=part_data.get("title", part_key),
-                part_html=cleaned_part,
-            )
-            part_summaries[part_key] = part_summary
-        if stage_callback:
-            await stage_callback(
-                NovelistStage.WRITING,
-                {"parts": draft_parts, "part_summaries": part_summaries},
-            )
-
-        # Stage 3: Critic on merged draft
-        pre_critic_draft = self._merge_parts_html(parsed_plan, draft_parts)
-        critic_user_prompt = self._build_critic_user_prompt(
-            parsed_plan=parsed_plan,
-            draft_text=pre_critic_draft,
-            language=language,
-            instructions=instructions,
-        )
-        critic_system_prompt = self._compose_system_prompt(
-            CRITIC_PROMPT, language=language, instructions=instructions
-        )
-        raw_critic = await self.llm_client.chat(
-            model=self.critic_model or self.model_policy.get_model(LLMTask.VALIDATION),
-            messages=[
-                {"role": "system", "content": critic_system_prompt},
-                {"role": "user", "content": critic_user_prompt},
-            ],
-            temperature=0.3,
-            conversation_id=conversation_id,
-        )
-        critic_notes = self._parse_critic(raw_critic)
-        if stage_callback:
-            await stage_callback(
-                NovelistStage.CRITIC,
-                {"draft_text": pre_critic_draft, "critic_notes": critic_notes},
-            )
-
-        # Stage 4: Apply critic to each part with strict revision constraints.
-        revise_part_prompts: dict[str, dict[str, str]] = {}
-        coverage_part_prompts: dict[str, dict[str, str]] = {}
-        coverage_reports: dict[str, dict[str, Any]] = {}
-        revised_parts: dict[str, str] = {}
-        revise_system_prompt = self._compose_system_prompt(
-            REVISION_PROMPT, language=language, instructions=instructions
-        )
-        coverage_system_prompt = self._compose_system_prompt(
-            EVENT_COVERAGE_PROMPT, language=language, instructions=instructions
-        )
-        for part_key in part_keys:
-            part_data = parsed_plan[part_key]
-            part_text = draft_parts.get(part_key, "")
-            part_note = critic_notes.get(f"{part_key}_notes", "")
-            remove_items = critic_notes.get(f"remove_from_{part_key}", [])
-            user_prompt = self._build_revise_user_prompt(
-                part_key=part_key,
-                part_data=part_data,
-                part_text=part_text,
-                part_critic_note=part_note,
-                global_critic_note=critic_notes.get("global_notes", ""),
-                remove_items=remove_items if isinstance(remove_items, list) else [],
-                source_context=short_source_context,
-                language=language,
-                instructions=instructions,
-                agent=agent,
-                continuity_brief=continuity_brief,
-                elder_context_lines=self._normalize_text_list(
-                    elder_context_by_part.get(part_key, {}).get("elder_context", []),
-                    max_items=8,
-                ),
-            )
-            revise_part_prompts[part_key] = {
-                "system_prompt": revise_system_prompt,
-                "user_prompt": user_prompt,
-            }
-            revised_raw = await self.llm_client.chat(
-                model=self.draft_model or self.model_policy.get_model(LLMTask.SYNTHESIS),
-                messages=[
-                    {"role": "system", "content": revise_system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                temperature=0.2,  # Lower creativity to prioritize correctness.
-                conversation_id=conversation_id,
-            )
-            revised_html = self._ensure_readable_html(revised_raw)
-            coverage_user_prompt = self._build_event_coverage_user_prompt(
-                part_key=part_key,
-                part_title=part_data.get("title", part_key),
-                part_events=part_data.get("events", []),
-                part_html=revised_html,
-                language=language,
-                instructions=instructions,
-            )
-            coverage_part_prompts[part_key] = {
-                "system_prompt": coverage_system_prompt,
-                "user_prompt": coverage_user_prompt,
-            }
-            coverage_raw = await self.llm_client.chat(
-                model=self.critic_model or self.model_policy.get_model(LLMTask.VALIDATION),
-                messages=[
-                    {"role": "system", "content": coverage_system_prompt},
-                    {"role": "user", "content": coverage_user_prompt},
-                ],
-                temperature=0.1,
-                conversation_id=conversation_id,
-            )
-            coverage_result = self._parse_event_coverage(
-                coverage_raw=coverage_raw,
-                fallback_html=revised_html,
-            )
-            # Fail-safe retry if validator still reports missing assigned events.
-            missing_after = coverage_result.get("missing_after", [])
-            if isinstance(missing_after, list) and missing_after:
-                retry_prompt = self._build_event_coverage_user_prompt(
-                    part_key=part_key,
-                    part_title=part_data.get("title", part_key),
-                    part_events=part_data.get("events", []),
-                    part_html=str(coverage_result.get("revised_html", revised_html)),
-                    language=language,
-                    instructions=instructions,
-                    required_missing=[str(item) for item in missing_after if str(item).strip()],
-                )
-                retry_raw = await self.llm_client.chat(
-                    model=self.critic_model or self.model_policy.get_model(LLMTask.VALIDATION),
-                    messages=[
-                        {"role": "system", "content": coverage_system_prompt},
-                        {"role": "user", "content": retry_prompt},
-                    ],
-                    temperature=0.1,
-                    conversation_id=conversation_id,
-                )
-                coverage_result = self._parse_event_coverage(
-                    coverage_raw=retry_raw,
-                    fallback_html=str(coverage_result.get("revised_html", revised_html)),
-                )
-            coverage_reports[part_key] = coverage_result
-            revised_parts[part_key] = self._ensure_readable_html(
-                coverage_result.get("revised_html", revised_html)
-            )
-        if stage_callback:
-            await stage_callback(
-                NovelistStage.APPLY_CRITIC,
-                {
-                    "critic_notes": critic_notes,
-                    "parts_revised": revised_parts,
-                    "coverage_reports": coverage_reports,
-                },
-            )
-
-        # Stage 5: Final merge
-        if stage_callback:
-            await stage_callback(NovelistStage.MERGING, {})
-        final_text = self._merge_parts_html(parsed_plan, revised_parts)
-
-        artifacts = {
+        artifacts: dict[str, Any] = {
             "inputs": {
                 "unstructured_text": payload.unstructured_text,
                 "language": payload.language,
                 "instructions": payload.instructions,
                 "previous_session_id": payload.previous_session_id,
-                # Non-authoritative summary of previous session text for continuity only.
                 "continuity_brief": continuity_brief,
                 "previous_session_summary": continuity_brief,
             },
-            "step_1_plan": {
-                "system_prompt": plan_system_prompt,
-                "user_prompt": plan_prompt,
-                "raw_output": raw_plan,
-                "parsed_output": parsed_plan,
-            },
-            "step_1_5_elder_query_planning": {
-                "system_prompt": elder_query_plan_system_prompt,
-                "user_prompt": elder_query_plan_user_prompt,
-                "raw_output": raw_elder_query_plan,
-                "parsed_output": elder_query_plan,
-                # Elder context is flavor-only and non-authoritative.
-                "per_part": elder_context_by_part,
-            },
-            "step_2_write_parts": {
-                "system_prompt": part_system_prompt,
-                "part_prompts": write_part_prompts,
-                "part_outputs": draft_parts,
-                "part_summaries": part_summaries,
-                "elder_context_by_part": elder_context_by_part,
-            },
-            "step_3_critic": {
-                "system_prompt": critic_system_prompt,
-                "user_prompt": critic_user_prompt,
-                "raw_output": raw_critic,
-                "parsed_output": critic_notes,
-            },
-            "step_4_apply_critic": {
-                "part_prompts": revise_part_prompts,
-                "part_outputs": revised_parts,
-                "coverage_system_prompt": coverage_system_prompt,
-                "coverage_prompts": coverage_part_prompts,
-                "coverage_reports": coverage_reports,
-                "elder_context_by_part": elder_context_by_part,
-            },
-            "step_5_final_merge": {
-                "final_text": final_text,
-            },
+            "stages": {},
+            "scene_progress": {},
+            "timings_ms": {},
+            "models": {},
         }
+
+        if stage_callback:
+            await stage_callback(
+                NovelistStage.INGEST,
+                {
+                    "artifacts": artifacts,
+                },
+            )
+
+        # Stage: scaffolding
+        scaffolding_t0 = time.monotonic()
+        scaffolding = await self._build_scaffolding(
+            agent=agent,
+            unstructured_text=unstructured_text,
+            language=language,
+            instructions=instructions,
+            conversation_id=conversation_id,
+        )
+        artifacts["stages"]["scaffolding"] = scaffolding
+        artifacts["timings_ms"]["scaffolding"] = round(
+            (time.monotonic() - scaffolding_t0) * 1000, 2
+        )
+        if stage_callback:
+            await stage_callback(
+                NovelistStage.SCAFFOLDING,
+                {
+                    "artifacts": artifacts,
+                    "scene_count": len(scaffolding.get("scenes", [])),
+                },
+            )
+
+        # Stage: scene package extraction
+        package_t0 = time.monotonic()
+        scene_packages = await self._build_scene_packages(
+            scenes=scaffolding.get("scenes", []),
+            language=language,
+            instructions=instructions,
+            conversation_id=conversation_id,
+        )
+        artifacts["stages"]["scene_package"] = {
+            "count": len(scene_packages),
+            "packages": scene_packages,
+        }
+        artifacts["timings_ms"]["scene_package"] = round(
+            (time.monotonic() - package_t0) * 1000, 2
+        )
+        if stage_callback:
+            await stage_callback(
+                NovelistStage.SCENE_PACKAGE,
+                {
+                    "artifacts": artifacts,
+                    "scene_count": len(scene_packages),
+                },
+            )
+
+        # Stage: Elder retrieval
+        retrieval_t0 = time.monotonic()
+        retrieval_by_scene = await self._collect_scene_retrieval(
+            agent=agent,
+            scene_packages=scene_packages,
+            language=language,
+            instructions=instructions,
+            conversation_id=conversation_id,
+        )
+        artifacts["stages"]["retrieval"] = retrieval_by_scene
+        artifacts["timings_ms"]["retrieval"] = round(
+            (time.monotonic() - retrieval_t0) * 1000, 2
+        )
+        if stage_callback:
+            await stage_callback(
+                NovelistStage.RETRIEVAL,
+                {
+                    "artifacts": artifacts,
+                    "scene_count": len(scene_packages),
+                },
+            )
+
+        # Stage: scene intent drafting
+        intent_t0 = time.monotonic()
+        intents_by_scene = await self._draft_scene_intents(
+            scene_packages=scene_packages,
+            retrieval_by_scene=retrieval_by_scene,
+            continuity_brief=continuity_brief,
+            language=language,
+            instructions=instructions,
+            conversation_id=conversation_id,
+        )
+        artifacts["stages"]["intent_drafting"] = intents_by_scene
+        artifacts["timings_ms"]["intent_drafting"] = round(
+            (time.monotonic() - intent_t0) * 1000, 2
+        )
+        if stage_callback:
+            await stage_callback(
+                NovelistStage.INTENT_DRAFTING,
+                {
+                    "artifacts": artifacts,
+                    "scene_count": len(scene_packages),
+                },
+            )
+
+        # Stage: prose generation
+        prose_t0 = time.monotonic()
+        prose_by_scene = await self._generate_scene_prose(
+            agent=agent,
+            scene_packages=scene_packages,
+            intents_by_scene=intents_by_scene,
+            retrieval_by_scene=retrieval_by_scene,
+            continuity_brief=continuity_brief,
+            language=language,
+            instructions=instructions,
+            conversation_id=conversation_id,
+        )
+        artifacts["stages"]["prose_generation"] = prose_by_scene
+        artifacts["timings_ms"]["prose_generation"] = round(
+            (time.monotonic() - prose_t0) * 1000, 2
+        )
+        if stage_callback:
+            await stage_callback(
+                NovelistStage.PROSE_GENERATION,
+                {
+                    "artifacts": artifacts,
+                    "draft_text": self._merge_scene_html(prose_by_scene),
+                },
+            )
+
+        # Stage: critic
+        critic_t0 = time.monotonic()
+        critic = await self._critic_scene_set(
+            scene_packages=scene_packages,
+            prose_by_scene=prose_by_scene,
+            language=language,
+            instructions=instructions,
+            conversation_id=conversation_id,
+        )
+        artifacts["stages"]["critic"] = critic
+        artifacts["timings_ms"]["critic"] = round(
+            (time.monotonic() - critic_t0) * 1000, 2
+        )
+        if stage_callback:
+            await stage_callback(
+                NovelistStage.CRITIC,
+                {
+                    "artifacts": artifacts,
+                    "critic_notes": critic,
+                },
+            )
+
+        # Stage: revision
+        revision_t0 = time.monotonic()
+        revision = await self._revise_scene_set(
+            scene_packages=scene_packages,
+            prose_by_scene=prose_by_scene,
+            critic=critic,
+            language=language,
+            instructions=instructions,
+            conversation_id=conversation_id,
+        )
+        artifacts["stages"]["revision"] = revision
+        artifacts["timings_ms"]["revision"] = round(
+            (time.monotonic() - revision_t0) * 1000, 2
+        )
+        if stage_callback:
+            await stage_callback(
+                NovelistStage.REVISION,
+                {
+                    "artifacts": artifacts,
+                    "critic_notes": critic,
+                },
+            )
+
+        # Stage: merging
+        merge_t0 = time.monotonic()
+        revised_scenes = revision.get("scenes", []) if isinstance(revision, dict) else []
+        if not revised_scenes:
+            revised_scenes = [
+                {
+                    "scene_id": item.get("scene_id"),
+                    "name": item.get("name") or item.get("scene_summary") or item.get("scene_id"),
+                    "prose_html": item.get("prose_html", ""),
+                    "merged_from": [item.get("scene_id")],
+                    "split_from": None,
+                    "notes": [],
+                }
+                for item in prose_by_scene
+            ]
+        final_html = self._merge_revised_scene_html(revised_scenes)
+        artifacts["stages"]["merging"] = {
+            "scene_count": len(revised_scenes),
+            "final_text": final_html,
+        }
+        artifacts["timings_ms"]["merging"] = round((time.monotonic() - merge_t0) * 1000, 2)
+
+        scene_results = self._build_scene_results(
+            scene_packages=scene_packages,
+            retrieval_by_scene=retrieval_by_scene,
+            intents_by_scene=intents_by_scene,
+            prose_by_scene=prose_by_scene,
+            critic=critic,
+            revision=revision,
+        )
+
+        artifacts["scene_progress"] = {
+            item["scene_id"]: {
+                "intent_done": bool(item.get("intent")),
+                "prose_done": bool(item.get("prose_html")),
+                "critic_issue_count": item.get("critic_issue_count", 0),
+                "revision_action": item.get("revision_action", "kept"),
+            }
+            for item in scene_results
+        }
+        artifacts["timings_ms"]["total"] = round((time.monotonic() - started_total) * 1000, 2)
+
+        timing_summary = {
+            "total_ms": artifacts["timings_ms"].get("total", 0.0),
+            "by_stage_ms": artifacts["timings_ms"],
+            "scene_count": len(scene_results),
+            "retrieval_query_count": sum(
+                len((retrieval_by_scene.get(item.get("scene_id", ""), {}) or {}).get("queries", []))
+                for item in scene_packages
+            ),
+        }
+        step_outputs = self._build_step_outputs(
+            scaffolding=scaffolding,
+            scene_packages=scene_packages,
+            retrieval_by_scene=retrieval_by_scene,
+            intents_by_scene=intents_by_scene,
+            prose_by_scene=prose_by_scene,
+            critic=critic,
+            revision=revision,
+            final_html=final_html,
+        )
+        artifacts["step_outputs"] = step_outputs
+
+        if stage_callback:
+            await stage_callback(
+                NovelistStage.MERGING,
+                {
+                    "artifacts": artifacts,
+                    "draft_text": final_html,
+                    "critic_notes": critic,
+                    "scene_results": scene_results,
+                    "timing_summary": timing_summary,
+                },
+            )
 
         return {
             "artifacts": artifacts,
-            "draft_text": final_text,
-            "critic_notes": json.dumps(critic_notes, ensure_ascii=True),
+            "draft_text": final_html,
+            "critic_notes": json.dumps(critic, ensure_ascii=True),
+            "scene_results": scene_results,
+            "timing_summary": timing_summary,
+            "step_outputs": step_outputs,
         }
 
-    def _build_plan_user_prompt(
+    async def _build_scaffolding(
         self,
         *,
+        agent: Agent,
         unstructured_text: str,
         language: str,
         instructions: str,
-        agent: Agent,
-        continuity_brief: str,
-    ) -> str:
-        style_hint = f"\nWriter style: {agent.writing_style}" if agent.writing_style else ""
-        continuity_block = continuity_brief or "None"
-        return (
-            f"Language: {language or 'match source'}\n"
-            f"Instructions: {instructions or 'None'}{style_hint}\n\n"
-            "Previous session context (for continuity only, NOT new events. Use this to enhance the events, "
-            "if needed, in order to pick up events continuity that were important on the last session!):\n"
-            f"{continuity_block}\n\n"
-            f"Raw unstructured text:\n{unstructured_text}"
+        conversation_id: str | None,
+    ) -> dict[str, Any]:
+        if self.architect_scaffolding_runner:
+            try:
+                shared = await self.architect_scaffolding_runner(
+                    agent,
+                    unstructured_text,
+                    conversation_id,
+                )
+                if isinstance(shared, dict) and isinstance(shared.get("scenes"), list):
+                    return shared
+                logger.warning("architect_scaffolding_runner returned invalid payload")
+            except Exception:
+                logger.warning(
+                    "architect_scaffolding_runner_failed_fallback_to_local",
+                    exc_info=True,
+                )
+
+        model = self.model_policy.get_model(LLMTask.ARCHITECT_EXTRACT)
+        paragraphs = extract_paragraphs_from_sources(unstructured_text, None)
+        if not paragraphs:
+            paragraphs = [re.sub(r"\s+", " ", unstructured_text).strip()][:1]
+
+        chunks = build_scene_chunks(paragraphs, token_limit=16_000)
+        segmented_scenes: list[dict[str, Any]] = []
+
+        for chunk in chunks:
+            try:
+                scenes = await segment_chunk_into_scenes(
+                    llm_client=self.llm_client,
+                    model=model,
+                    marked_paragraphs=chunk.marked_paragraphs,
+                    paragraph_count=chunk.paragraph_count,
+                    paragraphs=chunk.paragraphs,
+                )
+            except Exception as exc:
+                logger.warning("scene_segmentation_failed chunk=%s err=%s", chunk.chunk_index, exc)
+                scenes = [
+                    {
+                        "scene_id": 0,
+                        "name": f"Scene {chunk.chunk_index + 1}",
+                        "description": "",
+                        "start_paragraph": 1,
+                        "end_paragraph": chunk.paragraph_count,
+                        "text": "\n".join(
+                            [
+                                f"[P{idx}] {paragraph}"
+                                for idx, paragraph in enumerate(chunk.paragraphs, start=1)
+                            ]
+                        ),
+                    }
+                ]
+
+            for local_scene in scenes:
+                abs_start = chunk.paragraph_start + int(local_scene.get("start_paragraph", 1)) - 1
+                abs_end = chunk.paragraph_start + int(local_scene.get("end_paragraph", 1)) - 1
+                segmented_scenes.append(
+                    {
+                        "scene_id": "",
+                        "name": str(local_scene.get("name") or "").strip(),
+                        "scene_summary": str(local_scene.get("description") or "").strip(),
+                        "raw_scene_text": str(local_scene.get("text") or "").strip(),
+                        "source_paragraphs": list(range(abs_start, abs_end + 1)),
+                        "source_anchors": [f"P{abs_start}-P{abs_end}"],
+                    }
+                )
+
+        segmented_scenes.sort(key=lambda item: item["source_paragraphs"][0])
+        for idx, scene in enumerate(segmented_scenes, start=1):
+            scene["scene_id"] = f"scene-{idx:03d}"
+            if not scene.get("name"):
+                scene["name"] = f"Scene {idx}"
+
+        ontology_definitions = self._serialize_ontology_definitions(agent)
+        enriched_scenes = await self._extract_scene_entities_and_milestones(
+            scenes=segmented_scenes,
+            ontology_definitions=ontology_definitions,
+            model=model,
+            conversation_id=conversation_id,
         )
 
-    def _build_elder_query_plan_user_prompt(
+        normalize_system = self._compose_system_prompt(
+            NOVELIST_SCAFFOLD_NORMALIZATION_PROMPT,
+            language=language,
+            instructions=instructions,
+        )
+        normalize_user = json.dumps({"scenes": enriched_scenes}, ensure_ascii=True)
+        normalize_raw, normalize_ms = await self._call_llm(
+            model=self.critic_model or self.model_policy.get_model(LLMTask.VALIDATION),
+            messages=[
+                {"role": "system", "content": normalize_system},
+                {"role": "user", "content": normalize_user},
+            ],
+            temperature=0.1,
+            conversation_id=conversation_id,
+        )
+        normalized = self._parse_json_object(normalize_raw) or {}
+        normalized_scenes = normalized.get("scenes") if isinstance(normalized, dict) else None
+        if not isinstance(normalized_scenes, list) or not normalized_scenes:
+            normalized_scenes = [
+                {
+                    "scene_id": scene["scene_id"],
+                    "name": scene["name"],
+                    "scene_summary": scene.get("scene_summary", ""),
+                    "milestones": scene.get("milestones", []),
+                    "related_entities": scene.get("related_entities", []),
+                    "source_anchors": scene.get("source_anchors", []),
+                    "new_or_update": "new",
+                    "source_paragraphs": scene.get("source_paragraphs", []),
+                    "raw_scene_text": scene.get("raw_scene_text", ""),
+                }
+                for scene in enriched_scenes
+            ]
+
+        by_id: dict[str, dict[str, Any]] = {scene["scene_id"]: scene for scene in enriched_scenes}
+        final_scenes: list[dict[str, Any]] = []
+        for idx, scene in enumerate(normalized_scenes, start=1):
+            scene_id = str(scene.get("scene_id") or f"scene-{idx:03d}").strip()
+            source = by_id.get(scene_id, {})
+            final_scenes.append(
+                {
+                    "scene_id": scene_id,
+                    "name": str(scene.get("name") or source.get("name") or scene_id).strip(),
+                    "scene_summary": str(
+                        scene.get("scene_summary") or source.get("scene_summary") or ""
+                    ).strip(),
+                    "milestones": self._normalize_text_list(
+                        scene.get("milestones") or source.get("milestones") or [], max_items=8
+                    ),
+                    "related_entities": self._normalize_text_list(
+                        scene.get("related_entities") or source.get("related_entities") or [],
+                        max_items=12,
+                    ),
+                    "source_anchors": self._normalize_text_list(
+                        scene.get("source_anchors") or source.get("source_anchors") or [], max_items=8
+                    ),
+                    "new_or_update": str(scene.get("new_or_update") or "new").strip().lower() or "new",
+                    "source_paragraphs": source.get("source_paragraphs", []),
+                    "raw_scene_text": source.get("raw_scene_text", ""),
+                }
+            )
+
+        return {
+            "model": model,
+            "normalize_model": self.critic_model
+            or self.model_policy.get_model(LLMTask.VALIDATION),
+            "normalize_latency_ms": normalize_ms,
+            "normalize_raw": normalize_raw,
+            "scene_count": len(final_scenes),
+            "scenes": final_scenes,
+        }
+
+    async def _extract_scene_entities_and_milestones(
         self,
         *,
-        parsed_plan: dict[str, dict[str, Any]],
-        source_context: str,
+        scenes: list[dict[str, Any]],
+        ontology_definitions: str,
+        model: str,
+        conversation_id: str | None,
+    ) -> list[dict[str, Any]]:
+        semaphore = asyncio.Semaphore(self.max_concurrency)
+
+        async def _run(scene: dict[str, Any]) -> dict[str, Any]:
+            async with semaphore:
+                scene_name = str(scene.get("name") or scene.get("scene_id") or "Scene").strip()
+                scene_summary = str(scene.get("scene_summary") or "").strip()
+                raw_scene_text = str(scene.get("raw_scene_text") or "").strip()
+
+                entity_prompt = ARCHITECT_ENTITY_PROPOSAL_PROMPT.format(
+                    ontology_definitions=ontology_definitions,
+                    scene_name=scene_name,
+                    scene_description=scene_summary or "(no description)",
+                    scene_text=raw_scene_text or "(no text)",
+                )
+                entity_raw, _ = await self._call_llm(
+                    model=model,
+                    messages=[{"role": "user", "content": entity_prompt}],
+                    temperature=0.1,
+                    conversation_id=conversation_id,
+                )
+                entity_payload = self._parse_json_object(entity_raw) or {}
+                entities = self._parse_architect_entities(entity_payload)
+
+                milestone_prompt = ARECHITECT_MILESTONE_PROPOSAL_PROMPT.format(
+                    scene_ref=scene.get("scene_id", "scene"),
+                    scene_name=scene_name,
+                    scene_description=scene_summary or "(no description)",
+                    scene_entities="\n".join(f"- {name}" for name in entities) or "(none)",
+                    scene_text=raw_scene_text or "(no text)",
+                )
+                milestone_raw, _ = await self._call_llm(
+                    model=model,
+                    messages=[{"role": "user", "content": milestone_prompt}],
+                    temperature=0.1,
+                    conversation_id=conversation_id,
+                )
+                milestone_payload = self._parse_json_object(milestone_raw) or {}
+                milestones = self._parse_milestones(milestone_payload)
+
+                return {
+                    **scene,
+                    "related_entities": entities,
+                    "milestones": milestones,
+                    "entity_raw": entity_raw,
+                    "milestone_raw": milestone_raw,
+                }
+
+        return await asyncio.gather(*[asyncio.create_task(_run(scene)) for scene in scenes])
+
+    async def _build_scene_packages(
+        self,
+        *,
+        scenes: list[dict[str, Any]],
+        language: str,
+        instructions: str,
+        conversation_id: str | None,
+    ) -> list[dict[str, Any]]:
+        if not scenes:
+            return []
+
+        semaphore = asyncio.Semaphore(self.max_concurrency)
+        system_prompt = self._compose_system_prompt(
+            NOVELIST_SCENE_PACKAGE_PROMPT,
+            language=language,
+            instructions=instructions,
+        )
+
+        async def _run(scene: dict[str, Any]) -> dict[str, Any]:
+            async with semaphore:
+                user_prompt = json.dumps({"scenes": [scene]}, ensure_ascii=True)
+                raw, latency_ms = await self._call_llm(
+                    model=self.draft_model or self.model_policy.get_model(LLMTask.SYNTHESIS),
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    temperature=0.2,
+                    conversation_id=conversation_id,
+                )
+                parsed = self._parse_json_object(raw) or {}
+                packages = parsed.get("scene_packages") if isinstance(parsed, dict) else None
+                package = {}
+                if isinstance(packages, list) and packages:
+                    candidate = packages[0]
+                    package = candidate if isinstance(candidate, dict) else {}
+                if not package:
+                    package = {
+                        "scene_id": scene.get("scene_id"),
+                        "source_paragraphs": scene.get("source_paragraphs", []),
+                        "raw_scene_text": scene.get("raw_scene_text", ""),
+                        "scene_summary": scene.get("scene_summary", ""),
+                        "scene_goal": scene.get("scene_summary", ""),
+                        "milestones": scene.get("milestones", []),
+                        "related_entities": scene.get("related_entities", []),
+                        "temporal_position_hint": "middle",
+                        "tone_hint": "dramatic",
+                        "open_questions_for_retrieval": [
+                            f"What prior event most affects {scene.get('name', 'this scene')}?"
+                        ],
+                    }
+                package["scene_id"] = str(package.get("scene_id") or scene.get("scene_id"))
+                package.setdefault("source_paragraphs", scene.get("source_paragraphs", []))
+                package.setdefault("raw_scene_text", scene.get("raw_scene_text", ""))
+                package.setdefault("scene_summary", scene.get("scene_summary", ""))
+                package.setdefault("milestones", scene.get("milestones", []))
+                package.setdefault("related_entities", scene.get("related_entities", []))
+                package.setdefault("new_or_update", scene.get("new_or_update", "new"))
+                package["_raw_scene_package"] = raw
+                package["_latency_ms"] = latency_ms
+                return package
+
+        out = await asyncio.gather(*[asyncio.create_task(_run(scene)) for scene in scenes])
+        out.sort(key=lambda item: str(item.get("scene_id", "")))
+        return out
+
+    async def _collect_scene_retrieval(
+        self,
+        *,
+        agent: Agent,
+        scene_packages: list[dict[str, Any]],
+        language: str,
+        instructions: str,
+        conversation_id: str | None,
+    ) -> dict[str, dict[str, Any]]:
+        if not self.elder_query_runner:
+            return {
+                str(scene.get("scene_id")): {
+                    "queries": [],
+                    "buckets": self._empty_retrieval_buckets(),
+                    "raw_sources": [],
+                }
+                for scene in scene_packages
+            }
+
+        query_system = self._compose_system_prompt(
+            NOVELIST_ELDER_QUERY_PROMPT,
+            language=language,
+            instructions=instructions,
+        )
+
+        async def _generate_queries(scene: dict[str, Any]) -> tuple[str, list[str], str]:
+            user_prompt = json.dumps(scene, ensure_ascii=True)
+            raw, _ = await self._call_llm(
+                model=self.critic_model or self.model_policy.get_model(LLMTask.VALIDATION),
+                messages=[
+                    {"role": "system", "content": query_system},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=0.1,
+                conversation_id=conversation_id,
+            )
+            payload = self._parse_json_object(raw) or {}
+            queries = self._normalize_text_list(payload.get("queries", []), max_items=4)
+            if not queries:
+                queries = self._normalize_text_list(
+                    scene.get("open_questions_for_retrieval", []), max_items=4
+                )
+            return str(scene.get("scene_id")), queries, raw
+
+        query_results = await asyncio.gather(
+            *[asyncio.create_task(_generate_queries(scene)) for scene in scene_packages]
+        )
+
+        semaphore = asyncio.Semaphore(self.max_concurrency)
+
+        async def _fetch(scene_id: str, query: str) -> tuple[str, str, list[dict[str, Any]]]:
+            async with semaphore:
+                try:
+                    raw_sources = await self.elder_query_runner(agent, query)
+                except Exception:
+                    logger.warning("scene_retrieval_failed scene=%s query=%s", scene_id, query, exc_info=True)
+                    raw_sources = []
+                return scene_id, query, [s for s in raw_sources if isinstance(s, dict)]
+
+        fetch_tasks = [
+            asyncio.create_task(_fetch(scene_id, query))
+            for scene_id, queries, _ in query_results
+            for query in queries
+        ]
+        fetched = await asyncio.gather(*fetch_tasks) if fetch_tasks else []
+
+        grouped: dict[str, dict[str, Any]] = {
+            scene_id: {
+                "queries": queries,
+                "query_plan_raw": query_raw,
+                "raw_sources": [],
+                "buckets": self._empty_retrieval_buckets(),
+            }
+            for scene_id, queries, query_raw in query_results
+        }
+
+        for scene_id, _query, sources in fetched:
+            grouped.setdefault(
+                scene_id,
+                {
+                    "queries": [],
+                    "query_plan_raw": "",
+                    "raw_sources": [],
+                    "buckets": self._empty_retrieval_buckets(),
+                },
+            )
+            grouped[scene_id]["raw_sources"].extend(sources)
+
+        for scene_id, payload in grouped.items():
+            payload["buckets"] = self._filter_scene_retrieval(payload.get("raw_sources", []))
+            payload["bucket_counts"] = {
+                key: len(values) for key, values in payload["buckets"].items()
+            }
+
+        return grouped
+
+    async def _draft_scene_intents(
+        self,
+        *,
+        scene_packages: list[dict[str, Any]],
+        retrieval_by_scene: dict[str, dict[str, Any]],
         continuity_brief: str,
         language: str,
         instructions: str,
-        agent: Agent,
-    ) -> str:
-        style_hint = f"\nWriter style: {agent.writing_style}" if agent.writing_style else ""
-        return (
-            f"Language: {language or 'match source'}\n"
-            f"Instructions: {instructions or 'None'}{style_hint}\n\n"
-            "Assigned chapter plan (authoritative events):\n"
-            f"{json.dumps(parsed_plan, ensure_ascii=True)}\n\n"
-            "Frontend correction instructions (authoritative for names/terms):\n"
-            f"{instructions or 'None'}\n\n"
-            "Source excerpt (for grounding only):\n"
-            f"{source_context}\n\n"
-            "Previous session continuity brief (continuity only):\n"
-            f"{continuity_brief or 'None'}\n\n"
-            "Generate 2-5 targeted Elder questions for each part."
+        conversation_id: str | None,
+    ) -> dict[str, dict[str, Any]]:
+        if not scene_packages:
+            return {}
+
+        semaphore = asyncio.Semaphore(self.max_concurrency)
+        system_prompt = self._compose_system_prompt(
+            NOVELIST_SCENE_INTENT_PROMPT,
+            language=language,
+            instructions=instructions,
         )
+
+        async def _run(scene: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+            async with semaphore:
+                scene_id = str(scene.get("scene_id"))
+                retrieval = retrieval_by_scene.get(scene_id, {})
+                user_payload = {
+                    "scene": scene,
+                    "continuity_brief": continuity_brief,
+                    "retrieval_buckets": retrieval.get("buckets", {}),
+                }
+                raw, latency_ms = await self._call_llm(
+                    model=self.draft_model or self.model_policy.get_model(LLMTask.SYNTHESIS),
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": json.dumps(user_payload, ensure_ascii=True)},
+                    ],
+                    temperature=0.2,
+                    conversation_id=conversation_id,
+                )
+                parsed = self._parse_json_object(raw) or {}
+                if not isinstance(parsed, dict):
+                    parsed = {}
+                parsed.setdefault("scene_id", scene_id)
+                parsed.setdefault("what_happens", [scene.get("scene_goal") or scene.get("scene_summary") or ""]) 
+                parsed.setdefault("emotional_progression", [])
+                parsed.setdefault("speaking_goals", [])
+                parsed.setdefault("implied_history", [])
+                parsed.setdefault("forbidden_contradictions", [])
+                parsed["_raw"] = raw
+                parsed["_latency_ms"] = latency_ms
+                return scene_id, parsed
+
+        pairs = await asyncio.gather(*[asyncio.create_task(_run(scene)) for scene in scene_packages])
+        return {scene_id: payload for scene_id, payload in pairs}
+
+    async def _generate_scene_prose(
+        self,
+        *,
+        agent: Agent,
+        scene_packages: list[dict[str, Any]],
+        intents_by_scene: dict[str, dict[str, Any]],
+        retrieval_by_scene: dict[str, dict[str, Any]],
+        continuity_brief: str,
+        language: str,
+        instructions: str,
+        conversation_id: str | None,
+    ) -> list[dict[str, Any]]:
+        if not scene_packages:
+            return []
+
+        semaphore = asyncio.Semaphore(self.max_concurrency)
+        system_prompt = self._compose_system_prompt(
+            NOVELIST_SCENE_PROSE_PROMPT,
+            language=language,
+            instructions=instructions,
+        )
+        style_hint = str(agent.writing_style or "").strip()
+
+        async def _run(scene: dict[str, Any]) -> dict[str, Any]:
+            async with semaphore:
+                scene_id = str(scene.get("scene_id"))
+                intent = intents_by_scene.get(scene_id, {})
+                retrieval = retrieval_by_scene.get(scene_id, {})
+                user_payload = {
+                    "scene": scene,
+                    "intent": intent,
+                    "retrieval_buckets": retrieval.get("buckets", {}),
+                    "continuity_brief": continuity_brief,
+                    "writer_style": style_hint,
+                }
+                raw, latency_ms = await self._call_llm(
+                    model=self.draft_model or self.model_policy.get_model(LLMTask.SYNTHESIS),
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": json.dumps(user_payload, ensure_ascii=True)},
+                    ],
+                    temperature=0.25,
+                    conversation_id=conversation_id,
+                )
+                html = self._ensure_readable_html(raw)
+                return {
+                    "scene_id": scene_id,
+                    "name": scene.get("name") or scene.get("scene_summary") or scene_id,
+                    "scene_summary": scene.get("scene_summary", ""),
+                    "prose_html": html,
+                    "_raw": raw,
+                    "_latency_ms": latency_ms,
+                }
+
+        out = await asyncio.gather(*[asyncio.create_task(_run(scene)) for scene in scene_packages])
+        order = {str(scene.get("scene_id")): idx for idx, scene in enumerate(scene_packages)}
+        out.sort(key=lambda item: order.get(str(item.get("scene_id")), 0))
+        return out
+
+    async def _critic_scene_set(
+        self,
+        *,
+        scene_packages: list[dict[str, Any]],
+        prose_by_scene: list[dict[str, Any]],
+        language: str,
+        instructions: str,
+        conversation_id: str | None,
+    ) -> dict[str, Any]:
+        system_prompt = self._compose_system_prompt(
+            NOVELIST_SCENE_CRITIC_PROMPT,
+            language=language,
+            instructions=instructions,
+        )
+        user_payload = {
+            "scene_packages": scene_packages,
+            "scene_drafts": prose_by_scene,
+        }
+        raw, latency_ms = await self._call_llm(
+            model=self.critic_model or self.model_policy.get_model(LLMTask.VALIDATION),
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": json.dumps(user_payload, ensure_ascii=True)},
+            ],
+            temperature=0.1,
+            conversation_id=conversation_id,
+        )
+        parsed = self._parse_json_object(raw) or {}
+        by_scene = parsed.get("by_scene") if isinstance(parsed, dict) else None
+        if not isinstance(by_scene, dict):
+            by_scene = {}
+        normalized_by_scene: dict[str, dict[str, list[str]]] = {}
+        for scene in scene_packages:
+            scene_id = str(scene.get("scene_id"))
+            row = by_scene.get(scene_id) if isinstance(by_scene.get(scene_id), dict) else {}
+            normalized_by_scene[scene_id] = {
+                "continuity_issues": self._normalize_text_list(row.get("continuity_issues", []), max_items=8),
+                "duplication": self._normalize_text_list(row.get("duplication", []), max_items=8),
+                "missing_transitions": self._normalize_text_list(row.get("missing_transitions", []), max_items=8),
+                "voice_drift": self._normalize_text_list(row.get("voice_drift", []), max_items=8),
+                "pacing": self._normalize_text_list(row.get("pacing", []), max_items=8),
+                "graph_contradictions": self._normalize_text_list(row.get("graph_contradictions", []), max_items=8),
+                "exposition_problems": self._normalize_text_list(row.get("exposition_problems", []), max_items=8),
+            }
+
+        return {
+            "global_notes": self._normalize_text_list(parsed.get("global_notes", []), max_items=20)
+            if isinstance(parsed, dict)
+            else [],
+            "by_scene": normalized_by_scene,
+            "raw": raw,
+            "latency_ms": latency_ms,
+        }
+
+    async def _revise_scene_set(
+        self,
+        *,
+        scene_packages: list[dict[str, Any]],
+        prose_by_scene: list[dict[str, Any]],
+        critic: dict[str, Any],
+        language: str,
+        instructions: str,
+        conversation_id: str | None,
+    ) -> dict[str, Any]:
+        system_prompt = self._compose_system_prompt(
+            NOVELIST_SCENE_REVISION_PROMPT,
+            language=language,
+            instructions=instructions,
+        )
+        user_payload = {
+            "scene_packages": scene_packages,
+            "scene_drafts": prose_by_scene,
+            "critic": critic,
+        }
+        raw, latency_ms = await self._call_llm(
+            model=self.draft_model or self.model_policy.get_model(LLMTask.SYNTHESIS),
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": json.dumps(user_payload, ensure_ascii=True)},
+            ],
+            temperature=0.2,
+            conversation_id=conversation_id,
+        )
+        parsed = self._parse_json_object(raw) or {}
+
+        scenes = parsed.get("scenes") if isinstance(parsed, dict) else None
+        if not isinstance(scenes, list):
+            scenes = []
+
+        normalized_scenes: list[dict[str, Any]] = []
+        for idx, scene in enumerate(scenes, start=1):
+            if not isinstance(scene, dict):
+                continue
+            scene_id = str(scene.get("scene_id") or f"scene-rev-{idx:03d}")
+            normalized_scenes.append(
+                {
+                    "scene_id": scene_id,
+                    "name": str(scene.get("name") or scene_id),
+                    "prose_html": self._ensure_readable_html(str(scene.get("prose_html") or "")),
+                    "merged_from": self._normalize_text_list(scene.get("merged_from", []), max_items=10),
+                    "split_from": scene.get("split_from"),
+                    "notes": self._normalize_text_list(scene.get("notes", []), max_items=10),
+                }
+            )
+
+        lineage = parsed.get("lineage") if isinstance(parsed, dict) else None
+        if not isinstance(lineage, dict):
+            lineage = {}
+
+        for scene in normalized_scenes:
+            sid = scene["scene_id"]
+            if sid not in lineage:
+                lineage[sid] = {
+                    "source_scene_ids": scene.get("merged_from") or [sid],
+                    "action": "merged" if scene.get("merged_from") else "kept",
+                }
+
+        if not normalized_scenes:
+            normalized_scenes = [
+                {
+                    "scene_id": item.get("scene_id"),
+                    "name": item.get("name") or item.get("scene_id"),
+                    "prose_html": item.get("prose_html", ""),
+                    "merged_from": [item.get("scene_id")],
+                    "split_from": None,
+                    "notes": [],
+                }
+                for item in prose_by_scene
+            ]
+            lineage = {
+                str(item.get("scene_id")): {
+                    "source_scene_ids": [item.get("scene_id")],
+                    "action": "kept",
+                }
+                for item in prose_by_scene
+            }
+
+        return {
+            "scenes": normalized_scenes,
+            "lineage": lineage,
+            "global_revision_notes": self._normalize_text_list(
+                parsed.get("global_revision_notes", []), max_items=20
+            )
+            if isinstance(parsed, dict)
+            else [],
+            "raw": raw,
+            "latency_ms": latency_ms,
+        }
+
+    @staticmethod
+    def _empty_retrieval_buckets() -> dict[str, list[str]]:
+        return {
+            "prior_events": [],
+            "relationship_summaries": [],
+            "personality_reminders": [],
+            "unresolved_tensions": [],
+            "style_details": [],
+            "contradiction_warnings": [],
+        }
+
+    def _filter_scene_retrieval(self, sources: list[dict[str, Any]]) -> dict[str, list[str]]:
+        buckets = self._empty_retrieval_buckets()
+
+        for source in sources[:10]:
+            line = self._compact_retrieved_text(str(source.get("text") or ""), max_chars=220)
+            if not line:
+                continue
+            lowered = line.lower()
+            label = str(source.get("node_label") or "").lower()
+
+            if any(token in lowered for token in ("contradict", "inconsistent", "does not match")):
+                buckets["contradiction_warnings"].append(line)
+            if any(token in lowered for token in ("tension", "conflict", "resent", "grudge")):
+                buckets["unresolved_tensions"].append(line)
+            if any(token in lowered for token in ("temper", "personality", "voice", "ideal", "belief")):
+                buckets["personality_reminders"].append(line)
+            if any(token in lowered for token in ("style", "speaks", "phrasing", "mannerism", "gesture")):
+                buckets["style_details"].append(line)
+            if any(token in lowered for token in ("relationship", "ally", "enemy", "bond", "rival")):
+                buckets["relationship_summaries"].append(line)
+            if label in {"scene", "milestone"} or any(
+                token in lowered for token in ("before", "after", "earlier", "previously")
+            ):
+                buckets["prior_events"].append(line)
+
+        # Fallback fill so retrieval still contributes deterministic short context.
+        flattened = [
+            self._compact_retrieved_text(str(source.get("text") or ""), max_chars=220)
+            for source in sources[:10]
+        ]
+        flattened = [line for line in flattened if line]
+        if flattened and not any(buckets.values()):
+            buckets["prior_events"] = flattened[:4]
+
+        for key, values in buckets.items():
+            buckets[key] = self._dedupe_and_limit(values, limit=6)
+
+        return buckets
+
+    @staticmethod
+    def _parse_architect_entities(payload: dict[str, Any]) -> list[str]:
+        try:
+            parsed = ChunkExtractionResponse.model_validate(payload)
+        except Exception:
+            return []
+        entities = [item.name.strip() for item in parsed.entities if item.name and item.name.strip()]
+        return NovelistOrchestrator._dedupe_and_limit(entities, limit=20)
+
+    @staticmethod
+    def _parse_milestones(payload: dict[str, Any]) -> list[str]:
+        items = payload.get("milestones") if isinstance(payload, dict) else None
+        if not isinstance(items, list):
+            items = []
+
+        normalized: list[dict[str, str]] = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            title = str(item.get("title") or item.get("label") or "").strip()
+            description = str(item.get("description") or "").strip()
+            boundary_type = str(item.get("boundary_type") or "none").strip().lower()
+            if boundary_type in {"start"}:
+                boundary_type = "begin"
+            elif boundary_type in {"finish", "stop"}:
+                boundary_type = "end"
+            elif boundary_type not in {"begin", "end", "none"}:
+                boundary_type = "none"
+            normalized.append(
+                {
+                    "title": title,
+                    "description": description,
+                    "boundary_type": boundary_type,
+                }
+            )
+
+        if not normalized:
+            normalized = [
+                {
+                    "title": "Scene opening beat",
+                    "description": "The scene begins.",
+                    "boundary_type": "begin",
+                },
+                {
+                    "title": "Scene closing beat",
+                    "description": "The scene ends.",
+                    "boundary_type": "end",
+                },
+            ]
+        elif len(normalized) == 1:
+            only = normalized[0]
+            normalized = [
+                {**only, "boundary_type": "begin"},
+                {**only, "boundary_type": "end"},
+            ]
+        else:
+            if not any(item["boundary_type"] == "begin" for item in normalized):
+                normalized[0]["boundary_type"] = "begin"
+            if not any(item["boundary_type"] == "end" for item in normalized):
+                normalized[-1]["boundary_type"] = "end"
+
+        values: list[str] = []
+        for item in normalized:
+            title = item["title"]
+            description = item["description"]
+            if title and description:
+                values.append(f"{title}: {description}")
+            elif title:
+                values.append(title)
+            elif description:
+                values.append(description)
+        return NovelistOrchestrator._dedupe_and_limit(values, limit=12)
+
+    @staticmethod
+    def _serialize_ontology_definitions(agent: Agent) -> str:
+        lines: list[str] = []
+        for ontology in getattr(agent, "ontologies", []) or []:
+            ont_name = str(getattr(ontology, "name", "Ontology")).strip() or "Ontology"
+            entities = getattr(ontology, "entities", None) or []
+            if not entities:
+                lines.append(f"- {ont_name}: no entity definitions")
+                continue
+            lines.append(f"- {ont_name}:")
+            for entity in entities:
+                entity_name = str(getattr(entity, "name", "Entity")).strip()
+                entity_desc = str(getattr(entity, "description", "") or "").strip()
+                if entity_desc:
+                    lines.append(f"  - {entity_name}: {entity_desc}")
+                else:
+                    lines.append(f"  - {entity_name}")
+        return "\n".join(lines) if lines else "- Character\n- Place\n- Faction\n- Item"
+
+    @staticmethod
+    def _build_scene_results(
+        *,
+        scene_packages: list[dict[str, Any]],
+        retrieval_by_scene: dict[str, dict[str, Any]],
+        intents_by_scene: dict[str, dict[str, Any]],
+        prose_by_scene: list[dict[str, Any]],
+        critic: dict[str, Any],
+        revision: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        prose_map = {str(item.get("scene_id")): item for item in prose_by_scene}
+        critic_by_scene = critic.get("by_scene", {}) if isinstance(critic, dict) else {}
+        lineage = revision.get("lineage", {}) if isinstance(revision, dict) else {}
+
+        out: list[dict[str, Any]] = []
+        for order, scene in enumerate(scene_packages, start=1):
+            scene_id = str(scene.get("scene_id"))
+            prose = prose_map.get(scene_id, {})
+            critic_row = critic_by_scene.get(scene_id, {}) if isinstance(critic_by_scene, dict) else {}
+            issue_count = sum(
+                len(values)
+                for values in critic_row.values()
+                if isinstance(values, list)
+            )
+            lineage_row = lineage.get(scene_id, {}) if isinstance(lineage, dict) else {}
+            out.append(
+                {
+                    "scene_id": scene_id,
+                    "order": order,
+                    "scene_summary": scene.get("scene_summary", ""),
+                    "scene_goal": scene.get("scene_goal", ""),
+                    "source_paragraphs": scene.get("source_paragraphs", []),
+                    "milestones": scene.get("milestones", []),
+                    "related_entities": scene.get("related_entities", []),
+                    "retrieval": retrieval_by_scene.get(scene_id, {}).get("buckets", {}),
+                    "intent": intents_by_scene.get(scene_id, {}),
+                    "prose_html": prose.get("prose_html", ""),
+                    "critic": critic_row,
+                    "critic_issue_count": issue_count,
+                    "revision_action": str(lineage_row.get("action") or "kept"),
+                    "lineage": lineage_row,
+                }
+            )
+        return out
+
+    @staticmethod
+    def _build_step_outputs(
+        *,
+        scaffolding: dict[str, Any],
+        scene_packages: list[dict[str, Any]],
+        retrieval_by_scene: dict[str, dict[str, Any]],
+        intents_by_scene: dict[str, dict[str, Any]],
+        prose_by_scene: list[dict[str, Any]],
+        critic: dict[str, Any],
+        revision: dict[str, Any],
+        final_html: str,
+    ) -> dict[str, Any]:
+        ordered_scene_ids = [str(item.get("scene_id")) for item in scene_packages]
+        prose_map = {str(item.get("scene_id")): item for item in prose_by_scene}
+
+        step_1_scenes: list[dict[str, Any]] = []
+        for scene in scaffolding.get("scenes", []) if isinstance(scaffolding, dict) else []:
+            if not isinstance(scene, dict):
+                continue
+            step_1_scenes.append(
+                {
+                    "scene_id": scene.get("scene_id"),
+                    "name": scene.get("name"),
+                    "scene_summary": scene.get("scene_summary", ""),
+                    "milestones": scene.get("milestones", []),
+                    "related_entities": scene.get("related_entities", []),
+                    "source_anchors": scene.get("source_anchors", []),
+                    "new_or_update": scene.get("new_or_update", "new"),
+                }
+            )
+
+        step_3_context: list[dict[str, Any]] = []
+        for scene_id in ordered_scene_ids:
+            retrieval = retrieval_by_scene.get(scene_id, {})
+            step_3_context.append(
+                {
+                    "scene_id": scene_id,
+                    "queries": retrieval.get("queries", []),
+                    "narrative_context": retrieval.get("buckets", {}),
+                }
+            )
+
+        step_4_intents: list[dict[str, Any]] = []
+        for scene_id in ordered_scene_ids:
+            step_4_intents.append(intents_by_scene.get(scene_id, {"scene_id": scene_id}))
+
+        step_5_prose: list[dict[str, Any]] = []
+        for scene_id in ordered_scene_ids:
+            prose = prose_map.get(scene_id, {})
+            step_5_prose.append(
+                {
+                    "scene_id": scene_id,
+                    "name": prose.get("name") or scene_id,
+                    "scene_summary": prose.get("scene_summary", ""),
+                    "prose_html": prose.get("prose_html", ""),
+                }
+            )
+
+        return {
+            "step_1": {
+                "label": "scene_scaffolding",
+                "scenes": step_1_scenes,
+            },
+            "step_2": {
+                "label": "scene_writing_packages",
+                "scene_packages": scene_packages,
+            },
+            "step_3": {
+                "label": "scene_narrative_context",
+                "narrative_context_by_scene": step_3_context,
+            },
+            "step_4": {
+                "label": "scene_intended_draft_output",
+                "scene_intents": step_4_intents,
+            },
+            "step_5": {
+                "label": "scene_prose_output",
+                "scene_prose": step_5_prose,
+            },
+            "step_6": {
+                "label": "critic_response",
+                "critic": critic,
+            },
+            "step_7": {
+                "label": "full_rewritten_text",
+                "final_rewritten_text": final_html,
+                "revised_scenes": revision.get("scenes", []) if isinstance(revision, dict) else [],
+                "lineage": revision.get("lineage", {}) if isinstance(revision, dict) else {},
+            },
+        }
+
+    @staticmethod
+    def _merge_scene_html(prose_by_scene: list[dict[str, Any]]) -> str:
+        blocks: list[str] = []
+        for idx, item in enumerate(prose_by_scene, start=1):
+            title = str(item.get("name") or item.get("scene_id") or f"Scene {idx}").strip()
+            html = str(item.get("prose_html") or "").strip()
+            blocks.append(f"<h2>Scene {idx}: {title}</h2>\n{html}")
+        return "\n\n".join(blocks).strip()
+
+    @staticmethod
+    def _merge_revised_scene_html(revised_scenes: list[dict[str, Any]]) -> str:
+        blocks: list[str] = []
+        for idx, item in enumerate(revised_scenes, start=1):
+            title = str(item.get("name") or item.get("scene_id") or f"Scene {idx}").strip()
+            html = str(item.get("prose_html") or "").strip()
+            blocks.append(f"<h2>Scene {idx}: {title}</h2>\n{html}")
+        return "\n\n".join(blocks).strip()
 
     @staticmethod
     def _compose_system_prompt(base_prompt: str, *, language: str, instructions: str) -> str:
         language_rule = (
-            f"- MANDATORY OUTPUT LANGUAGE: {language}. Every field and all prose must be in this language."
+            f"- MANDATORY OUTPUT LANGUAGE: {language}."
             if language
-            else "- MANDATORY OUTPUT LANGUAGE: Match the source language unless explicitly instructed."
+            else "- MANDATORY OUTPUT LANGUAGE: Match source language unless instructed otherwise."
         )
         instructions_rule = (
             f"- MANDATORY INSTRUCTIONS TO FOLLOW: {instructions}"
@@ -454,121 +1312,7 @@ class NovelistOrchestrator:
             f"{base_prompt}\n\nGlobal mandatory constraints:\n"
             f"{language_rule}\n"
             f"{instructions_rule}\n"
-            "- If any instruction conflicts with these constraints, prioritize these constraints."
-        )
-
-    def _build_part_user_prompt(
-        self,
-        *,
-        part_key: str,
-        part_data: dict[str, Any],
-        source_context: str,
-        language: str,
-        instructions: str,
-        agent: Agent,
-        previous_summaries: list[str],
-        continuity_brief: str,
-        elder_context_lines: list[str],
-    ) -> str:
-        style_hint = f"\nWriter style: {agent.writing_style}" if agent.writing_style else ""
-        events = part_data.get("events") or []
-        events_block = (
-            "\n".join(f"{idx}. {b}" for idx, b in enumerate(events, start=1))
-            if events
-            else "1. No events provided."
-        )
-        summaries_block = "\n\n".join(previous_summaries) if previous_summaries else "None"
-        continuity_block = continuity_brief or "None"
-        elder_block = "\n".join(f"- {line}" for line in elder_context_lines) or "- None"
-        return (
-            f"Part: {part_key}\n"
-            f"Part title: {part_data.get('title', part_key)}\n"
-            f"Language: {language or 'match source'}\n"
-            f"Instructions: {instructions or 'None'}{style_hint}\n\n"
-            "Assigned events (strict timeline order):\n"
-            f"{events_block}\n\n"
-            "Short context from source (optional):\n"
-            f"{source_context}\n\n"
-            "Previous part summaries (context only, no reuse):\n"
-            f"{summaries_block}\n\n"
-            "Continuity context (use only for tone, memory, and references -- DO NOT introduce new events):\n"
-            f"{continuity_block}\n\n"
-            "Elder context (flavor only -- do NOT introduce new events):\n"
-            f"{elder_block}\n\n"
-            "Truth hierarchy (strict): assigned events > continuity brief > elder context.\n"
-            "Elder context is NON-AUTHORITATIVE. It may enrich how text is written, never what happens.\n"
-            "If Elder context conflicts with assigned events, ignore Elder context.\n"
-            "If Elder context is not directly useful, ignore it.\n\n"
-            "Coverage checklist: every assigned event must appear explicitly at least once.\n"
-            "Write this part now with strict compliance."
-        )
-
-    def _build_critic_user_prompt(
-        self,
-        *,
-        parsed_plan: dict[str, dict[str, Any]],
-        draft_text: str,
-        language: str,
-        instructions: str,
-    ) -> str:
-        return (
-            f"Language: {language or 'match source'}\n"
-            f"Instructions: {instructions or 'None'}\n\n"
-            "Assigned plan by part:\n"
-            f"{json.dumps(parsed_plan, ensure_ascii=True)}\n\n"
-            f"Draft to review:\n{draft_text}"
-        )
-
-    def _build_revise_user_prompt(
-        self,
-        *,
-        part_key: str,
-        part_data: dict[str, Any],
-        part_text: str,
-        part_critic_note: str,
-        global_critic_note: str,
-        remove_items: list[str],
-        source_context: str,
-        language: str,
-        instructions: str,
-        agent: Agent,
-        continuity_brief: str,
-        elder_context_lines: list[str],
-    ) -> str:
-        style_hint = f"\nWriter style: {agent.writing_style}" if agent.writing_style else ""
-        events = part_data.get("events") or []
-        events_block = (
-            "\n".join(f"{idx}. {b}" for idx, b in enumerate(events, start=1))
-            if events
-            else "1. No events provided."
-        )
-        remove_block = "\n".join(f"- {item}" for item in remove_items) if remove_items else "- None"
-        continuity_block = continuity_brief or "None"
-        elder_block = "\n".join(f"- {line}" for line in elder_context_lines) or "- None"
-        return (
-            f"Part: {part_key}\n"
-            f"Part title: {part_data.get('title', part_key)}\n"
-            f"Language: {language or 'match source'}\n"
-            f"Instructions: {instructions or 'None'}{style_hint}\n\n"
-            "Assigned events for this part (do not add others):\n"
-            f"{events_block}\n\n"
-            "Must remove these overlap/invalid items:\n"
-            f"{remove_block}\n\n"
-            "Short source context:\n"
-            f"{source_context}\n\n"
-            "Continuity context (use only for tone, memory, and references -- DO NOT introduce new events):\n"
-            f"{continuity_block}\n\n"
-            "Elder context (flavor only -- do NOT introduce new events):\n"
-            f"{elder_block}\n\n"
-            "Truth hierarchy (strict): assigned events > continuity brief > elder context.\n"
-            "Elder context is NON-AUTHORITATIVE. It may enrich how text is written, never what happens.\n"
-            "If Elder context conflicts with assigned events, ignore Elder context.\n"
-            "If Elder context is not directly useful, ignore it.\n\n"
-            f"Current part text:\n{part_text}\n\n"
-            f"Global critic notes:\n{global_critic_note}\n\n"
-            f"Notes for this part:\n{part_critic_note}\n\n"
-            "Coverage checklist: every assigned event must remain explicitly present.\n"
-            "Return only revised HTML for this part."
+            "- Output MUST follow the requested schema exactly when a JSON schema is requested."
         )
 
     async def _build_continuity_brief(
@@ -589,12 +1333,10 @@ class NovelistOrchestrator:
         user_prompt = (
             "Previous session text:\n"
             f"{raw}\n\n"
-            "Frontend correction instructions (authoritative for names/terms):\n"
-            f"{instructions or 'None'}\n\n"
             "Return 5-8 short lines only."
         )
         try:
-            continuity_raw = await self.llm_client.chat(
+            continuity_raw, _ = await self._call_llm(
                 model=self.critic_model or self.model_policy.get_model(LLMTask.VALIDATION),
                 messages=[
                     {"role": "system", "content": system_prompt},
@@ -620,130 +1362,7 @@ class NovelistOrchestrator:
             compact = re.sub(r"\s+", " ", raw_brief or "").strip()
             if compact:
                 lines = [f"- {compact[:220]}"]
-        if len(lines) < 5:
-            compact = re.sub(r"\s+", " ", raw_brief or "").strip()
-            extra_chunks = [s.strip() for s in re.split(r"(?<=[.!?;])\s+", compact) if s.strip()]
-            for chunk in extra_chunks:
-                if len(lines) >= 5:
-                    break
-                candidate = f"- {chunk[:220]}"
-                if candidate not in lines:
-                    lines.append(candidate)
         return "\n".join(lines[:8])
-
-    def _build_event_coverage_user_prompt(
-        self,
-        *,
-        part_key: str,
-        part_title: str,
-        part_events: list[str],
-        part_html: str,
-        language: str,
-        instructions: str,
-        required_missing: list[str] | None = None,
-    ) -> str:
-        events_block = (
-            "\n".join(f"{idx}. {event}" for idx, event in enumerate(part_events, start=1))
-            if part_events
-            else "1. No events provided."
-        )
-        required_block = (
-            "\n".join(f"- {event}" for event in required_missing)
-            if required_missing
-            else "- None (validate full list anyway)"
-        )
-        return (
-            f"Part: {part_key}\n"
-            f"Part title: {part_title}\n"
-            f"Language: {language or 'match source'}\n"
-            f"Instructions: {instructions or 'None'}\n\n"
-            "Assigned events (all must be present):\n"
-            f"{events_block}\n\n"
-            "Events explicitly required in this pass:\n"
-            f"{required_block}\n\n"
-            f"Current part HTML:\n{part_html}"
-        )
-
-    async def _collect_elder_context_by_part(
-        self,
-        *,
-        agent: Agent,
-        elder_query_plan: dict[str, list[str]],
-    ) -> dict[str, dict[str, list[str]]]:
-        part_keys = ("part_1", "part_2", "part_3")
-        output: dict[str, dict[str, list[str]]] = {
-            part_key: {
-                "queries": self._normalize_text_list(
-                    elder_query_plan.get(part_key, []), max_items=5
-                ),
-                "elder_context": [],
-            }
-            for part_key in part_keys
-        }
-        if not self.elder_query_runner:
-            return output
-
-        semaphore = asyncio.Semaphore(max(1, self.max_concurrency))
-
-        async def run_query(part_key: str, query: str) -> tuple[str, str, list[dict[str, Any]]]:
-            async with semaphore:
-                try:
-                    raw_chunks = await self.elder_query_runner(agent, query)
-                except Exception:
-                    logger.warning(
-                        "Elder retrieval failed for part=%s query=%s",
-                        part_key,
-                        query,
-                        exc_info=True,
-                    )
-                    raw_chunks = []
-                chunks = [c for c in raw_chunks if isinstance(c, dict)]
-                return part_key, query, chunks
-
-        tasks = [
-            asyncio.create_task(run_query(part_key, query))
-            for part_key in part_keys
-            for query in output[part_key]["queries"]
-        ]
-        if not tasks:
-            return output
-
-        query_results = await asyncio.gather(*tasks)
-        per_part_results: dict[str, list[tuple[str, list[dict[str, Any]]]]] = {
-            key: [] for key in part_keys
-        }
-        for part_key, query, chunks in query_results:
-            per_part_results[part_key].append((query, chunks))
-
-        for part_key in part_keys:
-            output[part_key]["elder_context"] = self._compact_elder_context_lines(
-                per_part_results.get(part_key, [])
-            )
-        return output
-
-    def _parse_elder_query_plan(
-        self,
-        *,
-        raw: str,
-        parsed_plan: dict[str, dict[str, Any]],
-    ) -> dict[str, list[str]]:
-        part_keys = ("part_1", "part_2", "part_3")
-        fallback = self._fallback_elder_queries_from_plan(parsed_plan)
-        payload = self._parse_json_object(raw)
-        data = payload if isinstance(payload, dict) else {}
-        result: dict[str, list[str]] = {}
-        for part_key in part_keys:
-            part_block = data.get(part_key)
-            part_payload = part_block if isinstance(part_block, dict) else {}
-            queries = self._normalize_text_list(part_payload.get("queries", []), max_items=5)
-            if len(queries) < 2:
-                for candidate in fallback.get(part_key, []):
-                    if candidate not in queries:
-                        queries.append(candidate)
-                    if len(queries) >= 2:
-                        break
-            result[part_key] = queries[:5]
-        return result
 
     @staticmethod
     def _normalize_text_list(values: Any, *, max_items: int, max_chars: int = 220) -> list[str]:
@@ -762,80 +1381,54 @@ class NovelistOrchestrator:
                 break
         return items
 
-    def _fallback_elder_queries_from_plan(
-        self,
-        parsed_plan: dict[str, dict[str, Any]],
-    ) -> dict[str, list[str]]:
-        out: dict[str, list[str]] = {}
-        for part_key in ("part_1", "part_2", "part_3"):
-            events = parsed_plan.get(part_key, {}).get("events", [])
-            event_list = self._normalize_text_list(events, max_items=3, max_chars=160)
-            primary_event = event_list[0] if event_list else "the assigned scene events"
-            secondary_event = event_list[1] if len(event_list) > 1 else primary_event
-            out[part_key] = [
-                (
-                    "Which established personality or speaking-style trait should shape dialogue "
-                    f"during '{primary_event}'?"
-                ),
-                (
-                    "What prior relationship tension should influence reactions during "
-                    f"'{primary_event}'?"
-                ),
-                (
-                    "Which earlier exchange is most relevant to the emotional subtext in "
-                    f"'{secondary_event}'?"
-                ),
-                (
-                    "What known history of places, factions, or objects tied to "
-                    f"'{primary_event}' should appear as texture only?"
-                ),
-                (
-                    "What emotional or symbolic echo from the past can reinforce "
-                    f"'{secondary_event}' without changing events?"
-                ),
-            ]
+    @staticmethod
+    def _dedupe_and_limit(values: list[str], *, limit: int) -> list[str]:
+        out: list[str] = []
+        seen: set[str] = set()
+        for value in values:
+            compact = re.sub(r"\s+", " ", str(value or "")).strip()
+            if not compact:
+                continue
+            key = compact.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(compact)
+            if len(out) >= limit:
+                break
         return out
 
-    def _compact_elder_context_lines(
-        self,
-        query_results: list[tuple[str, list[dict[str, Any]]]],
-        *,
-        max_lines: int = 8,
-    ) -> list[str]:
-        candidates: list[tuple[float, str]] = []
-        for _query, chunks in query_results:
-            top_chunks = chunks[:3]
-            for chunk in top_chunks:
-                text = self._compact_retrieved_text(str(chunk.get("text", "")))
-                if not text:
-                    continue
-                score_raw = chunk.get("score", 0.0)
-                try:
-                    score = float(score_raw)
-                except (TypeError, ValueError):
-                    score = 0.0
-                source_name = (
-                    str(chunk.get("node_name") or "")
-                    or str(chunk.get("node_alias") or "")
-                    or str(chunk.get("node_label") or "")
-                    or "Context"
-                )
-                source_name = re.sub(r"\s+", " ", source_name).strip()[:80]
-                line = f"{source_name}: {text[:190]}"
-                candidates.append((score, line))
+    @staticmethod
+    def _parse_json_object(raw: str) -> Any:
+        try:
+            return json.loads(raw)
+        except Exception:
+            # Try extracting first JSON object from mixed output.
+            match = re.search(r"\{.*\}", raw or "", flags=re.DOTALL)
+            if not match:
+                return None
+            try:
+                return json.loads(match.group(0))
+            except Exception:
+                return None
 
-        candidates.sort(key=lambda item: item[0], reverse=True)
-        lines: list[str] = []
-        seen: set[str] = set()
-        for _, line in candidates:
-            dedupe_key = line.lower()
-            if dedupe_key in seen:
-                continue
-            seen.add(dedupe_key)
-            lines.append(line)
-            if len(lines) >= max_lines:
-                break
-        return lines[:max_lines]
+    async def _call_llm(
+        self,
+        *,
+        model: str,
+        messages: list[dict[str, str]],
+        temperature: float,
+        conversation_id: str | None,
+    ) -> tuple[str, float]:
+        started = time.monotonic()
+        raw = await self.llm_client.chat(
+            model=model,
+            messages=messages,
+            temperature=temperature,
+            conversation_id=conversation_id,
+        )
+        elapsed_ms = round((time.monotonic() - started) * 1000, 2)
+        return raw, elapsed_ms
 
     @staticmethod
     def _compact_retrieved_text(raw_text: str, max_chars: int = 200) -> str:
@@ -846,178 +1439,6 @@ class NovelistOrchestrator:
         sentences = [s.strip() for s in re.split(r"(?<=[.!?;])\s+", compact) if s.strip()]
         seed = sentences[0] if sentences else compact
         return seed[:max_chars]
-
-    @staticmethod
-    def _parse_plan(raw: str) -> dict[str, dict[str, Any]]:
-        try:
-            data = json.loads(raw)
-            return {
-                k: NovelistOrchestrator._normalize_part_plan(data.get(k), default_title=f"Part {i}")
-                for i, k in enumerate(("part_1", "part_2", "part_3"), start=1)
-            }
-        except Exception:
-            return {
-                "part_1": NovelistOrchestrator._normalize_part_plan(
-                    {"title": "Beginning", "events": [raw.strip() or "Open the chapter events."]},
-                    default_title="Part 1",
-                ),
-                "part_2": NovelistOrchestrator._normalize_part_plan(
-                    {"title": "Middle", "events": ["Escalate conflict and consequences."]},
-                    default_title="Part 2",
-                ),
-                "part_3": NovelistOrchestrator._normalize_part_plan(
-                    {"title": "End", "events": ["Resolve the immediate arc clearly."]},
-                    default_title="Part 3",
-                ),
-            }
-
-    @staticmethod
-    def _normalize_part_plan(raw_part: Any, *, default_title: str) -> dict[str, Any]:
-        part = raw_part if isinstance(raw_part, dict) else {}
-        events = part.get("events")
-        if not isinstance(events, list):
-            fallback = part.get("core_beats", [])
-            events = fallback if isinstance(fallback, list) else []
-        events = [str(event).strip() for event in events if str(event).strip()][:12]
-        title = NovelistOrchestrator._normalize_part_title(
-            raw_title=part.get("title"),
-            events=events,
-            default_title=default_title,
-        )
-        return {
-            "title": title,
-            "events": events,
-        }
-
-    @staticmethod
-    def _prev_part_key(part_key: str) -> str | None:
-        order = ("part_1", "part_2", "part_3")
-        idx = order.index(part_key)
-        return order[idx - 1] if idx > 0 else None
-
-    @staticmethod
-    def _next_part_key(part_key: str) -> str | None:
-        order = ("part_1", "part_2", "part_3")
-        idx = order.index(part_key)
-        return order[idx + 1] if idx < len(order) - 1 else None
-
-    @staticmethod
-    def _parse_critic(raw: str) -> dict[str, Any]:
-        try:
-            data = json.loads(raw)
-            return {
-                "global_notes": str(data.get("global_notes", "")),
-                "repeated_events": data.get("repeated_events", []),
-                "timeline_issues": data.get("timeline_issues", []),
-                "complexity_issues": data.get("complexity_issues", []),
-                "part_1_notes": str(data.get("part_1_notes", "")),
-                "part_2_notes": str(data.get("part_2_notes", "")),
-                "part_3_notes": str(data.get("part_3_notes", "")),
-                "remove_from_part_1": data.get("remove_from_part_1", []),
-                "remove_from_part_2": data.get("remove_from_part_2", []),
-                "remove_from_part_3": data.get("remove_from_part_3", []),
-            }
-        except Exception:
-            return {
-                "global_notes": raw.strip(),
-                "repeated_events": [],
-                "timeline_issues": [],
-                "complexity_issues": [],
-                "part_1_notes": "",
-                "part_2_notes": "",
-                "part_3_notes": "",
-                "remove_from_part_1": [],
-                "remove_from_part_2": [],
-                "remove_from_part_3": [],
-            }
-
-    @staticmethod
-    def _parse_event_coverage(coverage_raw: str, fallback_html: str) -> dict[str, Any]:
-        data = NovelistOrchestrator._parse_json_object(coverage_raw)
-        if not isinstance(data, dict):
-            return {
-                "missing_before": [],
-                "missing_after": [],
-                "revised_html": fallback_html,
-                "raw_output": coverage_raw,
-            }
-        missing_before = data.get("missing_before", [])
-        missing_after = data.get("missing_after", [])
-        revised_html = str(data.get("revised_html", "")).strip() or fallback_html
-        return {
-            "missing_before": missing_before if isinstance(missing_before, list) else [],
-            "missing_after": missing_after if isinstance(missing_after, list) else [],
-            "revised_html": revised_html,
-            "raw_output": coverage_raw,
-        }
-
-    @staticmethod
-    def _parse_json_object(raw: str) -> Any:
-        try:
-            return json.loads(raw)
-        except Exception:
-            match = re.search(r"\{.*\}", raw or "", flags=re.DOTALL)
-            if not match:
-                return None
-            try:
-                return json.loads(match.group(0))
-            except Exception:
-                return None
-
-    @staticmethod
-    def _normalize_part_title(raw_title: Any, events: list[str], default_title: str) -> str:
-        title = str(raw_title or "").strip()
-        is_generic = bool(
-            re.fullmatch(
-                r"(?i)\s*(beginning|middle|end|part\s*[123]|part one|part two|part three)\s*",
-                title,
-            )
-        )
-        if not title or is_generic:
-            return NovelistOrchestrator._derive_title_from_event(events, default_title)
-        return title[:90]
-
-    @staticmethod
-    def _derive_title_from_event(events: list[str], default_title: str) -> str:
-        if not events:
-            return default_title
-        seed = re.sub(r"[^a-zA-Z0-9\s]", "", events[0]).strip()
-        if not seed:
-            return default_title
-        words = [w for w in seed.split() if w][:6]
-        if not words:
-            return default_title
-        title = " ".join(words)
-        return title[:90]
-
-    @staticmethod
-    def _short_source_context(unstructured_text: str, max_chars: int = 2200) -> str:
-        compact = re.sub(r"\s+", " ", unstructured_text).strip()
-        return compact[:max_chars]
-
-    @staticmethod
-    def _summarize_part_for_context(*, part_key: str, part_title: str, part_html: str) -> str:
-        # Create a compact 3-line summary for downstream context; keep it short and factual.
-        plain = re.sub(r"<[^>]+>", " ", part_html or "")
-        plain = re.sub(r"\s+", " ", plain).strip()
-        if not plain:
-            return f"{part_key} - {part_title}\n1) No material generated.\n2) No material generated.\n3) No material generated."
-        sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", plain) if s.strip()]
-        if not sentences:
-            sentences = [plain]
-        lines = [f"{idx + 1}) {sentences[idx][:180]}" for idx in range(min(3, len(sentences)))]
-        while len(lines) < 3:
-            lines.append(f"{len(lines) + 1}) (no additional event)")
-        return f"{part_key} - {part_title}\n" + "\n".join(lines)
-
-    @staticmethod
-    def _merge_parts_html(plan: dict[str, dict[str, str]], parts: dict[str, str]) -> str:
-        blocks = []
-        for idx, key in enumerate(("part_1", "part_2", "part_3"), start=1):
-            title = plan.get(key, {}).get("title") or f"Part {idx}"
-            text = (parts.get(key) or "").strip()
-            blocks.append(f"<h2>Part {idx}: {title}</h2>\n{text}")
-        return "\n\n".join(blocks).strip()
 
     @staticmethod
     def _ensure_readable_html(text: str) -> str:
@@ -1034,11 +1455,11 @@ class NovelistOrchestrator:
             if not sentences:
                 return f"<p>{raw}</p>"
             chunks = []
-            for i in range(0, len(sentences), 3):
-                chunks.append(" ".join(sentences[i : i + 3]).strip())
+            for i in range(0, len(sentences), 2):
+                chunks.append(" ".join(sentences[i : i + 2]).strip())
 
         html_blocks: list[str] = []
-        for chunk in chunks:
+        for chunk in chunks[:2]:
             is_dialogue = (
                 chunk.startswith('"')
                 or chunk.startswith("'")

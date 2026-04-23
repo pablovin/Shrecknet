@@ -1,16 +1,26 @@
-"""Background task for Architect step 2 (generation) - streamlined v2 pipeline."""
-
 from __future__ import annotations
-
+from dataclasses import dataclass, field
 import json
 import logging
 import re
-from collections import defaultdict
-from dataclasses import dataclass, field
 from datetime import datetime
 from html import escape
 from typing import Any, Iterable, Optional, Tuple
 from uuid import uuid4
+
+"""Background task for Architect step 2 (generation) - streamlined v2 pipeline."""
+
+# --- Data Classes ---
+@dataclass
+class NormalizedSuggestion:
+    suggestion_id: str
+    mode: str  # "new" or "update"
+    alias: str
+    entity_definition_id: int
+    entity_instance_id: str | None
+    chunk_indices: list[int] = field(default_factory=list)
+    alias_variants: set[str] = field(default_factory=set)
+    merged_from: list[str] = field(default_factory=list)
 
 from app.celery_app import celery_app
 from app.core.config_store import get_settings, is_openai_configured
@@ -48,565 +58,6 @@ def _normalize_alias(alias: Optional[str]) -> str:
     return (alias or "").strip().lower()
 
 
-def _chunk_text(text: str, *, chunk_size: int, overlap: int) -> Iterable[str]:
-    words = text.split()
-    total = len(words)
-    if total <= chunk_size:
-        yield text
-        return
-
-    start = 0
-    while start < total:
-        end = min(start + chunk_size, total)
-        yield " ".join(words[start:end])
-        if end >= total:
-            break
-        start = max(0, end - overlap)
-
-
-@dataclass
-class NormalizedSuggestion:
-    suggestion_id: str
-    mode: str  # "new" or "update"
-    alias: str
-    entity_definition_id: int
-    entity_instance_id: str | None
-    chunk_indices: list[int] = field(default_factory=list)
-    alias_variants: set[str] = field(default_factory=set)
-    merged_from: list[str] = field(default_factory=list)
-
-
-@celery_app.task(name="architect.generate_entities")
-def generate_entities(
-    run_id: str,
-    revised_suggestions: Optional[list[dict[str, Any]]] = None,
-    validated_proposals: Optional[list[dict[str, Any]]] = None,
-    *,
-    author_type: str = "user",
-    author_id: str = "system",
-) -> dict[str, Any]:
-    """Entry point for Architect generation (v2)."""
-
-    description = f"Architect entity generation (v2) for run {run_id}"
-    job_id = run_async(
-        create_background_job(
-            author_type=AuthorType(author_type),
-            author_id=author_id,
-            job_type=JobType.ARCHITECT_GENERATION,
-            description=description,
-            celery_task_id=generate_entities.request.id,
-            details={
-                "run_id": run_id,
-                "suggestion_count": len(
-                    revised_suggestions or validated_proposals or []
-                ),
-            },
-        )
-    )
-
-    try:
-        run_async(mark_job_running(job_id))
-        run_async(_attach_generation_job_to_run(run_id, job_id))
-        run_async(
-            update_job_progress(
-                job_id, 0.05, {"status": "Preparing architect generation (v2)"}
-            )
-        )
-
-        result = run_async(
-            _execute_generation(
-                run_id=run_id,
-                revised_suggestions=revised_suggestions or [],
-                validated_proposals=validated_proposals or [],
-                job_id=job_id,
-                author_type=author_type,
-                author_id=author_id,
-            )
-        )
-
-        run_async(
-            mark_job_done(
-                job_id,
-                {
-                    "run_id": run_id,
-                    "created_entities": len(result.get("created_entity_ids", [])),
-                    "updated_entities": len(result.get("updated_entity_ids", [])),
-                    "status": "completed",
-                },
-            )
-        )
-        return {"job_id": job_id, "status": "success", "run_id": run_id, **result}
-    except Exception as exc:  # pragma: no cover - defensive
-        logger.error(
-            "architect_generation_v2 failed for run %s: %s", run_id, exc, exc_info=True
-        )
-        run_async(mark_job_failed(job_id, str(exc)))
-        raise
-
-
-async def _attach_generation_job_to_run(run_id: str, job_id: int) -> None:
-    async with AsyncSessionMaker() as session:
-        repo = ArchitectRepository(session)
-        await repo.attach_generation_job(run_id, job_id)
-        await session.commit()
-
-
-async def _execute_generation(
-    *,
-    run_id: str,
-    revised_suggestions: list[dict[str, Any]],
-    validated_proposals: list[dict[str, Any]],
-    job_id: int,
-    author_type: str,
-    author_id: str,
-) -> dict[str, Any]:
-    settings = get_settings()
-    if not is_openai_configured(settings):
-        raise RuntimeError("OpenAI API key not configured")
-    async with AsyncSessionMaker() as session:
-        repo = ArchitectRepository(session)
-        run = await repo.get_run(run_id, with_proposals=False)
-        if not run:
-            raise ValueError("Architect run not found")
-
-        # Load proposals so we can map suggestion ids back to metadata stored in DB
-        all_proposals = await repo.get_proposals_by_run(run_id)
-        proposals_by_id = {p.id: p for p in all_proposals}
-
-        suggestions_payload = revised_suggestions
-
-        if not suggestions_payload:
-            suggestions_payload = _convert_validated_to_revised(
-                validated_proposals, proposals_by_id
-            )
-        if not suggestions_payload:
-            logger.info("No revised suggestions provided for run %s", run_id)
-            return {"created_entity_ids": [], "updated_entity_ids": []}
-
-        await update_job_progress(job_id, 0.12, {"status": "Loading ontology data"})
-
-        driver = get_driver()
-
-        async with driver.session(database=settings.neo4j_database) as graph_session:
-            instance_service = OntologyInstanceService(session, graph_session)
-            ontology_instance = await instance_service.get_instance(
-                run.ontology_instance_id
-            )
-
-            # Always trust the ontology attached to the actual instance to avoid mismatches.
-            ontology_id = ontology_instance.ontology_id
-            if not ontology_id:
-                raise ValueError("Ontology instance does not specify an ontology")
-            if run.ontology_id != ontology_id:
-                run.ontology_id = ontology_id
-                await session.flush()
-
-            onto_repo = OntologyRepository(session)
-            entity_defs = await onto_repo.list_entities(ontology_id)
-            entity_definitions_map = _build_entity_definitions_map(entity_defs)
-            auto_generatable_definition_ids = {
-                entity_def.id
-                for entity_def in entity_defs
-                if getattr(entity_def, "auto_generatable", False)
-            }
-
-            existing_alias_map, existing_entities_map = (
-                await _load_existing_entity_catalog(
-                    graph_session=graph_session,
-                    ontology_id=ontology_id,
-                    auto_generatable_definition_ids=auto_generatable_definition_ids,
-                )
-            )
-
-            original_text = _collect_original_text(ontology_instance)
-            language_code, language_name = _detect_language(original_text)
-            language_context = {"code": language_code, "label": language_name}
-
-            chunk_size = int((run.settings or {}).get("chunk_size") or 1000)
-            chunk_overlap = 100
-            max_chunks = (run.settings or {}).get("max_chunks") or None
-            chunk_texts = _chunk_instance_text(
-                ontology_instance,
-                chunk_size=chunk_size,
-                chunk_overlap=chunk_overlap,
-                max_chunks=max_chunks,
-            )
-
-            normalized_suggestions = _normalize_suggestions(
-                suggestions_payload, proposals_by_id, chunk_texts
-            )
-            if not normalized_suggestions:
-                return {"created_entity_ids": [], "updated_entity_ids": []}
-
-            _synchronize_revised_metadata(normalized_suggestions, proposals_by_id)
-            suggestion_lookup = {s.suggestion_id: s for s in normalized_suggestions}
-
-            alias_variants = _collect_alias_variants(
-                normalized_suggestions, existing_alias_map
-            )
-
-            logger.info(
-                "architect_generation_v2: detected language %s (%s) for run %s",
-                language_context["code"],
-                language_context["label"],
-                run_id,
-            )
-
-            model_policy = ModelPolicy(
-                decompose_model=settings.model_decompose,
-                subanswer_model=settings.model_subanswer,
-                synthesis_model=settings.model_synthesis,
-                validation_model=settings.model_validation,
-                style_model=settings.model_style,
-                architect_extract_model=getattr(
-                    settings, "model_architect_extract", settings.model_decompose
-                ),
-            )
-            llm_client = OpenAIClient(
-                api_key=settings.openai_api_key, timeout=60, max_retries=3
-            )
-
-            created_entity_ids: list[str] = []
-            updated_entity_ids: list[str] = []
-            created_entity_definition_map: dict[str, int] = {}
-            pending_relationships: list[dict[str, Any]] = []
-            generated_instance_ids: list[str] = []
-            succeeded_proposal_ids: set[str] = set()
-            suggestion_results: list[dict[str, Any]] = []
-
-            try:
-                # --- Chunk-first extraction to minimize LLM calls ---
-                await update_job_progress(
-                    job_id, 0.30, {"status": "Extracting entities per chunk"}
-                )
-                suggestion_enrichment = await _extract_per_chunk(
-                    llm_client=llm_client,
-                    model_policy=model_policy,
-                    chunk_texts=chunk_texts,
-                    suggestions=normalized_suggestions,
-                    entity_definitions_map=entity_definitions_map,
-                    language_name=language_name,
-                )
-
-                await _compose_autogenerated_summaries(
-                    llm_client=llm_client,
-                    model_policy=model_policy,
-                    suggestions=normalized_suggestions,
-                    enrichment=suggestion_enrichment,
-                    existing_entities_map=existing_entities_map,
-                    entity_definitions_map=entity_definitions_map,
-                    language_name=language_name,
-                )
-
-                # Build create/update payloads from aggregated chunk data
-                new_entities_map, new_relationships_map, update_results = (
-                    _build_payloads_from_chunk_data(
-                        suggestions=normalized_suggestions,
-                        enrichment=suggestion_enrichment,
-                        entity_definitions=entity_definitions_map,
-                        author_type=author_type,
-                        author_id=author_id,
-                        existing_entities_map=existing_entities_map,
-                    )
-                )
-                timeline_plans = _build_timeline_plans(
-                    normalized_suggestions,
-                    suggestion_enrichment,
-                )
-                logger.info(
-                    "architect_generation_v2: extracted timeline plans for %d/%d suggestions",
-                    len(timeline_plans),
-                    len(normalized_suggestions),
-                )
-
-                creation_result: dict[str, Any] = {
-                    "proposal_to_entity_id": {},
-                    "proposal_to_instance_id": {},
-                    "instance_ids": [],
-                }
-
-                # --- Persist new entities, each in its own sibling ontology instance ---
-                if new_entities_map:
-                    await update_job_progress(
-                        job_id,
-                        0.60,
-                        {"status": "Creating ontology instances for new entities"},
-                    )
-                    creation_result = await _create_entities_per_instance(
-                        graph_session=graph_session,
-                        ontology_id=ontology_id,
-                        base_instance=ontology_instance,
-                        entities_by_proposal=new_entities_map,
-                        definitions=entity_definitions_map,
-                        alias_variants=alias_variants,
-                    )
-                    generated_instance_ids.extend(creation_result["instance_ids"])
-                    created_entity_ids.extend(creation_result["created_entity_ids"])
-                    created_entity_definition_map.update(
-                        creation_result["definition_map"]
-                    )
-                    for suggestion in normalized_suggestions:
-                        entity_id = creation_result["proposal_to_entity_id"].get(
-                            suggestion.suggestion_id
-                        )
-                        if not entity_id:
-                            continue
-                        succeeded_proposal_ids.add(suggestion.suggestion_id)
-                        suggestion_results.append(
-                            {
-                                "suggestion_id": suggestion.suggestion_id,
-                                "action": suggestion.mode,
-                                "result": "created",
-                                "entity_instance_id": entity_id,
-                                "entity_definition_id": suggestion.entity_definition_id,
-                            }
-                        )
-                        # Persist the generated entity id on the proposal for frontend retrieval
-                        await repo.update_proposal_generated_entity(
-                            suggestion.suggestion_id, entity_id
-                        )
-                        for variant in suggestion.alias_variants or {
-                            _normalize_alias(suggestion.alias)
-                        }:
-                            if not variant:
-                                continue
-                            current = alias_variants.get(variant)
-                            if current and current.get("entity_instance_id"):
-                                continue
-                            alias_variants[variant] = {
-                                "entity_instance_id": entity_id,
-                                "definition_id": suggestion.entity_definition_id,
-                            }
-                    pending_relationships.extend(
-                        _prepare_relationship_payloads(
-                            creation_result["proposal_to_entity_id"],
-                            new_relationships_map,
-                            normalized_suggestions,
-                        )
-                    )
-
-                # --- Apply updates (properties + relationships) ---
-                if update_results:
-                    await update_job_progress(
-                        job_id, 0.75, {"status": "Updating existing entities"}
-                    )
-                    updated_ids = await _apply_updates(
-                        graph_session=graph_session,
-                        update_payloads=update_results,
-                        entity_definitions=entity_definitions_map,
-                        existing_entities_map=existing_entities_map,
-                        alias_variants=alias_variants,
-                        created_definitions=created_entity_definition_map,
-                    )
-                    updated_entity_ids.extend(updated_ids)
-                    for payload in update_results:
-                        proposal_id = payload.get("proposal_id")
-                        entity_id = payload.get("entity_instance_id")
-                        if not proposal_id or not entity_id:
-                            continue
-                        suggestion = suggestion_lookup.get(proposal_id)
-                        suggestion_results.append(
-                            {
-                                "suggestion_id": proposal_id,
-                                "action": suggestion.mode if suggestion else "update",
-                                "result": "updated",
-                                "entity_instance_id": entity_id,
-                                "entity_definition_id": (
-                                    suggestion.entity_definition_id
-                                    if suggestion
-                                    else existing_entities_map.get(entity_id, {}).get(
-                                        "definition_id"
-                                    )
-                                ),
-                            }
-                        )
-                    succeeded_proposal_ids.update(
-                        {
-                            payload["proposal_id"]
-                            for payload in update_results
-                            if payload.get("proposal_id")
-                        }
-                    )
-
-                # --- Add relationships after all nodes exist ---
-                if pending_relationships:
-                    await update_job_progress(
-                        job_id, 0.85, {"status": "Creating relationships"}
-                    )
-                    await _create_relationships(
-                        graph_session=graph_session,
-                        relationships=pending_relationships,
-                        entity_definitions=entity_definitions_map,
-                        alias_variants=alias_variants,
-                        created_definitions=created_entity_definition_map,
-                        existing_entities_map=existing_entities_map,
-                    )
-
-                suggestion_instance_map: dict[str, str] = {}
-                proposal_to_instance = creation_result.get(
-                    "proposal_to_instance_id", {}
-                )
-                for suggestion in normalized_suggestions:
-                    target_instance_id: str | None = None
-                    if suggestion.mode == "new":
-                        target_instance_id = proposal_to_instance.get(
-                            suggestion.suggestion_id
-                        )
-                    else:
-                        existing_info = existing_entities_map.get(
-                            suggestion.entity_instance_id or ""
-                        )
-                        if existing_info:
-                            target_instance_id = existing_info.get("instance_id")
-                    if target_instance_id:
-                        suggestion_instance_map[suggestion.suggestion_id] = (
-                            target_instance_id
-                        )
-
-                if timeline_plans:
-                    await update_job_progress(
-                        job_id, 0.88, {"status": "Recording timeline events"}
-                    )
-                    await _apply_timeline_events(
-                        graph_session=graph_session,
-                        ontology_id=ontology_id,
-                        source_instance_id=getattr(
-                            ontology_instance, "instance_id", None
-                        ),
-                        timeline_plans=timeline_plans,
-                        suggestion_lookup=suggestion_lookup,
-                        suggestion_instance_map=suggestion_instance_map,
-                        new_entity_ids=creation_result.get("proposal_to_entity_id", {}),
-                        alias_variants=alias_variants,
-                        existing_entities_map=existing_entities_map,
-                    )
-
-                merged_ids: set[str] = set()
-                for suggestion in normalized_suggestions:
-                    merged_ids.update(suggestion.merged_from or [])
-                normalized_ids = {s.suggestion_id for s in normalized_suggestions}
-                failed_ids = normalized_ids - succeeded_proposal_ids
-                remaining_ids = (
-                    set(proposals_by_id.keys()) - normalized_ids - merged_ids
-                )
-
-                if succeeded_proposal_ids:
-                    await repo.update_proposal_states(
-                        list(succeeded_proposal_ids),
-                        status=ArchitectProposalStatus.APPROVED,
-                    )
-                if merged_ids:
-                    await repo.update_proposal_states(
-                        list(merged_ids), status=ArchitectProposalStatus.MERGED
-                    )
-                combined_rejected = failed_ids | remaining_ids
-                if combined_rejected:
-                    await repo.update_proposal_states(
-                        list(combined_rejected), status=ArchitectProposalStatus.REJECTED
-                    )
-
-                await session.commit()
-                await update_job_progress(
-                    job_id, 0.95, {"status": "Entity generation completed"}
-                )
-
-                from app.tasks.ontology_links import link_instance as link_instance_task
-                from app.tasks.neo4j_embedding import (
-                    embed_ontology as embed_ontology_task,
-                )
-
-                if created_entity_ids or updated_entity_ids:
-                    for inst_id in generated_instance_ids:
-                        link_instance_task.delay(inst_id)
-                    link_instance_task.delay(run.ontology_instance_id)
-                    embed_ontology_task.delay(
-                        ontology_id=ontology_id,
-                        author_type=author_type,
-                        author_id=author_id,
-                    )
-
-                return {
-                    "created_entity_ids": created_entity_ids,
-                    "updated_entity_ids": updated_entity_ids,
-                    "suggestion_results": suggestion_results,
-                    "language": language_context,
-                }
-            finally:
-                await llm_client.aclose()
-
-
-def _convert_validated_to_revised(
-    validated: list[dict[str, Any]], proposals: dict[str, Any]
-) -> list[dict[str, Any]]:
-    """Best-effort compatibility: convert validated proposals into the new suggestion shape."""
-    translated: list[dict[str, Any]] = []
-    for item in validated:
-        proposal_id = item.get("proposal_id")
-        status = item.get("status")
-        if status not in {
-            ArchitectProposalStatus.APPROVED,
-            ArchitectProposalStatus.MERGED,
-        }:
-            continue
-        base = proposals.get(proposal_id)
-        if not base:
-            continue
-
-        corrected_type = item.get("corrected_proposal_type")
-        if corrected_type and not isinstance(corrected_type, ArchitectProposalType):
-            corrected_type = ArchitectProposalType(corrected_type)
-        base_corrected_type = getattr(base, "corrected_proposal_type", None)
-        base_proposal_type = getattr(base, "proposal_type", None)
-        effective_type = corrected_type or base_corrected_type or base_proposal_type
-
-        incoming_corrected_instance_id = item.get("corrected_entity_instance_id")
-        stored_corrected_instance_id = getattr(
-            base, "corrected_entity_instance_id", None
-        )
-        corrected_instance_id = incoming_corrected_instance_id
-        if corrected_instance_id is None:
-            corrected_instance_id = stored_corrected_instance_id
-        base_instance_id = getattr(base, "entity_instance_id", None)
-
-        action = "new"
-        effective_instance_id: str | None = None
-        if status == ArchitectProposalStatus.MERGED:
-            action = "merged"
-        else:
-            should_update = False
-            if effective_type == ArchitectProposalType.UPDATE_INSTANCE:
-                should_update = True
-            elif incoming_corrected_instance_id is not None:
-                should_update = True
-            elif (
-                stored_corrected_instance_id is not None
-                and base_corrected_type == ArchitectProposalType.UPDATE_INSTANCE
-            ):
-                should_update = True
-
-            if should_update:
-                action = "updated"
-                effective_instance_id = corrected_instance_id or base_instance_id
-
-        translated.append(
-            {
-                "suggestion_id": proposal_id,
-                "action": action,
-                "alias": item.get("corrected_alias")
-                or base.corrected_alias
-                or base.alias,
-                "entity_definition_id": item.get("corrected_entity_definition_id")
-                or base.corrected_entity_definition_id
-                or base.entity_definition_id,
-                "entity_instance_id": effective_instance_id,
-                "merged_suggestion_ids": (
-                    [item.get("merged_into_proposal_id")]
-                    if item.get("merged_into_proposal_id")
-                    else None
-                ),
-            }
-        )
-    return translated
 
 
 async def _extract_per_chunk(
@@ -622,121 +73,120 @@ async def _extract_per_chunk(
     Run one LLM call per chunk to extract properties/relationships for all suggestions tied to that chunk.
     Returns a mapping suggestion_id -> aggregated data.
     """
-    enrichment: dict[str, dict[str, Any]] = {
-        s.suggestion_id: {
-            "properties": [],
-            "relationships": [],
-            "summaries": [],
-            "timeline_events": [],
-        }
-        for s in suggestions
-    }
-    chunk_map = {idx: text for idx, text in chunk_texts}
-    suggestion_by_chunk: dict[int, list[NormalizedSuggestion]] = {}
-    for suggestion in suggestions:
-        target_indices = suggestion.chunk_indices or list(chunk_map.keys())
-        for idx in target_indices:
-            if idx not in chunk_map:
-                continue
-            suggestion_by_chunk.setdefault(idx, []).append(suggestion)
+    return {}  # placeholder to bypass extraction in this simplified version
+    # enrichment: dict[str, dict[str, Any]] = {
+    #     s.suggestion_id: {
+    #         "properties": [],
+    #         "relationships": [],
+    #         "summaries": [],
+    #     }
+    #     for s in suggestions
+    # }
+    # chunk_map = {idx: text for idx, text in chunk_texts}
+    # suggestion_by_chunk: dict[int, list[NormalizedSuggestion]] = {}
+    # for suggestion in suggestions:
+    #     target_indices = suggestion.chunk_indices or list(chunk_map.keys())
+    #     for idx in target_indices:
+    #         if idx not in chunk_map:
 
-    extract_model = model_policy.get_model(LLMTask.ARCHITECT_EXTRACT)
+    #                 "relationship_prompts": definition.get("relationship_prompts", []),
+    #                 """
+    #                 Converts validated suggestions to revised suggestions for artifact output.
+    #                 """
+    #                 translated = []
+    #                 for item in validated:
+    #                     proposal_id = item["proposal_id"]
+    #                     base = base_suggestions.get(proposal_id, {})
+    #                     should_update = item.get("should_update", False)
+    #                     base_instance_id = base.get("entity_instance_id")
+    #                     corrected_instance_id = item.get("corrected_entity_instance_id")
+    #                     action = "new"
+    #                     effective_instance_id = base_instance_id
+    #                     if should_update:
+    #                         action = "updated"
+    #                         effective_instance_id = corrected_instance_id or base_instance_id
 
-    for chunk_idx, chunk_suggestions in suggestion_by_chunk.items():
-        chunk_text = chunk_map.get(chunk_idx)
-        if not chunk_text:
-            continue
-        target_payload = []
-        for s in chunk_suggestions:
-            definition = entity_definitions_map.get(s.entity_definition_id)
-            if not definition:
-                continue
-            target_payload.append(
-                {
-                    "suggestion_id": s.suggestion_id,
-                    "alias": s.alias,
-                    "entity_definition_id": s.entity_definition_id,
-                    "entity_name": definition["name"],
-                    "entity_description": definition.get("description") or "",
-                    "properties": definition["properties"],
-                    "relationships": definition["relationships"],
-                    "property_prompts": definition.get("property_prompts", []),
-                    "relationship_prompts": definition.get("relationship_prompts", []),
-                }
-            )
-        if not target_payload:
-            continue
+    #                     translated.append(
+    #                         {
+    #                             "suggestion_id": proposal_id,
+    #                             "action": action,
+    #                             "alias": item.get("corrected_alias")
+    #                             or base.get("corrected_alias")
+    #                             or base.get("alias"),
+    #                             "entity_definition_id": item.get("corrected_entity_definition_id")
+    #                             or base.get("corrected_entity_definition_id")
+    #                             or base.get("entity_definition_id"),
+    #                             "entity_instance_id": effective_instance_id,
+    #                             "merged_suggestion_ids": (
+    #                                 [item.get("merged_into_proposal_id")]
+    #                                 if item.get("merged_into_proposal_id")
+    #                                 else None
+    #                             ),
+    #                         }
+    #                     )
+    #                 return translated
+    #             }
+    #         )
+    #     if not target_payload:
+    #         continue
 
-        prompt = _build_chunk_prompt(
-            chunk_text, target_payload, language_name=language_name
-        )
-        try:
-            response = await llm_client.chat(
-                model=extract_model,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": (
-                            f"You are an information extraction specialist working in {language_name}. "
-                            f"CRITICAL REQUIREMENT: Every piece of generated text MUST be written in {language_name}. "
-                            "Return only the requested JSON format."
-                        ),
-                    },
-                    {"role": "user", "content": prompt},
-                ],
-                temperature=0.1,
-            )
-            parsed = _parse_chunk_response(response)
-        except Exception as exc:  # pragma: no cover - defensive
-            logger.error(
-                "architect_generation_v2 chunk %s extraction failed: %s",
-                chunk_idx,
-                exc,
-                exc_info=True,
-            )
-            parsed = []
+    #     prompt = _build_chunk_prompt(
+    #         chunk_text, target_payload, language_name=language_name
+    #     )
+    #     try:
+    #         response = await llm_client.chat(
+    #             model=extract_model,
+    #             messages=[
+    #                 {
+    #                     "role": "system",
+    #                     "content": (
+    #                         f"You are an information extraction specialist working in {language_name}. "
+    #                         f"CRITICAL REQUIREMENT: Every piece of generated text MUST be written in {language_name}. "
+    #                         "Return only the requested JSON format."
+    #                     ),
+    #                 },
+    #                 {"role": "user", "content": prompt},
+    #             ],
+    #             temperature=0.1,
+    #         )
+    #         parsed = _parse_chunk_response(response)
+    #     except Exception as exc:  # pragma: no cover - defensive
+    #         logger.error(
+    #             "architect_generation_v2 chunk %s extraction failed: %s",
+    #             chunk_idx,
+    #             exc,
+    #             exc_info=True,
+    #         )
+    #         parsed = []
 
-        for entry in parsed:
-            suggestion_id = entry.get("suggestion_id")
-            if suggestion_id not in enrichment:
-                continue
+    #     for entry in parsed:
+    #         suggestion_id = entry.get("suggestion_id")
+    #         if suggestion_id not in enrichment:
+    #             continue
 
-            # Strip markdown code blocks from properties if they contain text values
-            properties = entry.get("properties", [])
-            for prop in properties:
-                if isinstance(prop.get("value"), str):
-                    prop["value"] = _strip_markdown_code_blocks(prop["value"])
-            enrichment[suggestion_id]["properties"].extend(properties)
+    #         # Strip markdown code blocks from properties if they contain text values
+    #         properties = entry.get("properties", [])
+    #         for prop in properties:
+    #             if isinstance(prop.get("value"), str):
+    #                 prop["value"] = _strip_markdown_code_blocks(prop["value"])
+    #         enrichment[suggestion_id]["properties"].extend(properties)
 
-            # Strip markdown code blocks from relationship justifications
-            relationships = entry.get("relationships", [])
-            for rel in relationships:
-                if isinstance(rel.get("justification"), str):
-                    rel["justification"] = _strip_markdown_code_blocks(
-                        rel["justification"]
-                    )
-            enrichment[suggestion_id]["relationships"].extend(relationships)
+    #         # Strip markdown code blocks from relationship justifications
+    #         relationships = entry.get("relationships", [])
+    #         for rel in relationships:
+    #             if isinstance(rel.get("justification"), str):
+    #                 rel["justification"] = _strip_markdown_code_blocks(
+    #                     rel["justification"]
+    #                 )
+    #         enrichment[suggestion_id]["relationships"].extend(relationships)
 
-            summary = entry.get("summary")
-            if summary:
-                # Strip markdown code blocks from summaries
-                enrichment[suggestion_id]["summaries"].append(
-                    _strip_markdown_code_blocks(summary)
-                )
-            raw_events = entry.get("timeline_events", []) or []
-            per_chunk_events: list[dict[str, Any]] = []
-            for event_index, timeline_event in enumerate(raw_events, start=1):
-                normalized_event = _normalize_timeline_event_entry(
-                    timeline_event,
-                    chunk_index=chunk_idx,
-                    fallback_order=event_index,
-                )
-                if normalized_event:
-                    per_chunk_events.append(normalized_event)
-            # Do not limit per chunk; limit after merging all chunks
-            enrichment[suggestion_id]["timeline_events"].extend(per_chunk_events)
-
-    return enrichment
+    #         summary = entry.get("summary")
+    #         if summary:
+    #             # Strip markdown code blocks from summaries
+    #             enrichment[suggestion_id]["summaries"].append(
+    #                 _strip_markdown_code_blocks(summary)
+    #             )
+    # return enrichment
 
 
 async def _compose_autogenerated_summaries(
@@ -962,9 +412,7 @@ def _build_chunk_prompt(
         "You are the Architect Agent. Read the CHUNK and extract data for each TARGET.",
         "Emit concise JSON only. Respect each relationship contract `source -> relation -> target_type`.",
         "Skip any relationship if the candidate target is not clearly the required target_type.",
-        "For every target, also list meaningful timeline events that describe changes or actions affecting that entity.",
-        "Timeline events must be written in chronological order and include the involved participants.",
-        f"REMINDER: All text in properties, relationships justifications, summaries, and timeline events MUST be in {language_name}.",
+        f"REMINDER: All text in properties, relationships justifications, and summaries MUST be in {language_name}.",
     ]
     lines.append('\nCHUNK:\n"""\n' + chunk_text + '\n"""')
     lines.append("\nTARGETS:")
@@ -991,29 +439,18 @@ Return JSON array (ALL text values MUST be in {language_name}):
     "suggestion_id": "...",
     "properties": [{{"definition_id": 123, "value": "text in {language_name}"}}],
     "relationships": [{{"definition_id": 456, "target_alias": "alias in chunk", "justification": "justification in {language_name}"}}],
-    "summary": "2-3 sentence summary in {language_name}",
-    "timeline_events": [
-      {{
-        "title": "event title in {language_name}",
-        "description": "description in {language_name}",
-        "source_alias": "alias that proves this event (optional)",
-        "related_aliases": ["alias_a", "alias_b"],
-        "order": 1
-      }}
-    ]
+        "summary": "2-3 sentence summary in {language_name}"
   }}
 ]
 
 Rules:
-- ALL TEXT MUST BE IN {language_name} - this includes property values, relationship justifications, summaries, timeline titles and descriptions.
+- ALL TEXT MUST BE IN {language_name} - this includes property values, relationship justifications, and summaries.
 - Only extract information present in the chunk.
 - One property value per property definition id.
 - One relationship per relationship definition id; use target_alias, not ids.
 - Skip the relationship if the candidate target alias does not clearly match the required target type.
 - If no data for a target, return empty arrays for that target.
 - Use the provided entity definitions; do not invent properties or relationships.
-- Produce at least one timeline event per target entity. If multiple events exist, assign ascending integer `order` values (1 = earliest in this chunk).
-- Timeline events must be output in chronological order and clearly reference any other aliases involved.
 """
     )
     return "\n".join(lines)
@@ -1032,45 +469,6 @@ def _parse_chunk_response(raw: str) -> list[dict[str, Any]]:
         logger.warning("architect_generation_v2 parse chunk response failed: %s", exc)
     return []
 
-
-def _normalize_timeline_event_entry(
-    entry: dict[str, Any],
-    *,
-    chunk_index: int | None = None,
-    fallback_order: int | None = None,
-) -> dict[str, Any] | None:
-    if not isinstance(entry, dict):
-        return None
-    title = _strip_markdown_code_blocks((entry.get("title") or "").strip())
-    description = _strip_markdown_code_blocks((entry.get("description") or "").strip())
-    if not title or not description:
-        return None
-    source_alias = (entry.get("source_alias") or "").strip() or None
-    related_aliases_raw = entry.get("related_aliases")
-    related_aliases: list[str] = []
-    if isinstance(related_aliases_raw, str):
-        related_aliases_raw = [related_aliases_raw]
-    if isinstance(related_aliases_raw, list):
-        for alias in related_aliases_raw:
-            alias_text = (alias or "").strip()
-            if alias_text:
-                related_aliases.append(alias_text)
-    order = entry.get("order")
-    try:
-        order_value = float(order) if order is not None else None
-    except (TypeError, ValueError):
-        order_value = None
-    chunk_order = fallback_order if fallback_order is not None else order_value
-    return {
-        "title": title,
-        "description": description,
-        "source_alias": source_alias,
-        "related_aliases": related_aliases,
-        "order": order_value,
-        "chunk_index": chunk_index,
-        "chunk_order": chunk_order,
-        "temporal_hint": _detect_temporal_hint(description),
-    }
 
 
 def _build_payloads_from_chunk_data(
@@ -1145,186 +543,6 @@ def _build_payloads_from_chunk_data(
             )
 
     return new_entities, new_relationships, updates
-
-
-def _build_timeline_plans(
-    suggestions: list[NormalizedSuggestion],
-    enrichment: dict[str, dict[str, Any]],
-) -> dict[str, list[dict[str, Any]]]:
-    plans: dict[str, list[dict[str, Any]]] = {}
-    for suggestion in suggestions:
-        entry = enrichment.get(suggestion.suggestion_id) or {}
-        events = entry.get("timeline_events") or []
-        deduped = _limit_chunk_timeline_events(_dedup_timeline_events(events))
-        if deduped and len(deduped) <= 3:
-            plans[suggestion.suggestion_id] = deduped
-            logger.info(
-                "architect_generation_v2: suggestion %s (%s) produced %d timeline events",
-                suggestion.suggestion_id,
-                suggestion.alias,
-                len(deduped),
-            )
-        else:
-            logger.warning(
-                "architect_generation_v2: no timeline events extracted for suggestion %s (alias=%s)",
-                suggestion.suggestion_id,
-                suggestion.alias,
-            )
-    return plans
-
-
-def _dedup_timeline_events(
-    events: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    deduped: dict[str, dict[str, Any]] = {}
-    fallback_order = 0
-    for event in events or []:
-        title = (event.get("title") or "").strip()
-        description = (event.get("description") or "").strip()
-        if not title or not description:
-            continue
-        normalized = re.sub(r"\s+", " ", title.lower())
-        fallback_order += 1
-        order_value = event.get("order")
-        if order_value is None or not isinstance(order_value, (int, float)):
-            order_value = float(fallback_order)
-        chunk_index = event.get("chunk_index")
-        chunk_order = event.get("chunk_order")
-        if chunk_order is None:
-            chunk_order = order_value
-        temporal_hint = event.get("temporal_hint") or 0.0
-        candidate_payload = {
-            "title": title,
-            "description": description,
-            "source_alias": event.get("source_alias"),
-            "related_aliases": event.get("related_aliases") or [],
-            "order": order_value,
-            "chunk_index": chunk_index,
-            "chunk_order": chunk_order,
-            "temporal_hint": temporal_hint,
-        }
-        existing = deduped.get(normalized)
-        if existing and _timeline_event_sort_key(existing) <= _timeline_event_sort_key(
-            candidate_payload
-        ):
-            continue
-        deduped[normalized] = candidate_payload
-    sorted_events = sorted(deduped.values(), key=_timeline_event_sort_key)
-    # Enforce min 1, max 3 timeline events per node after merging all chunks
-    if len(sorted_events) > 3:
-        # Use clustering to select the most representative 3 events
-        clustered = _cluster_timeline_events(sorted_events, max_events=3)
-        return clustered if clustered else sorted_events[:3]
-    return sorted_events
-
-
-def _timeline_event_sort_key(event: dict[str, Any]) -> tuple[float, float, float, str]:
-    chunk_rank = (
-        float(event.get("chunk_index"))
-        if isinstance(event.get("chunk_index"), (int, float))
-        else float("inf")
-    )
-    primary_order_source = event.get("chunk_order")
-    if not isinstance(primary_order_source, (int, float)):
-        primary_order_source = event.get("order") or 0
-    adjustment = event.get("temporal_hint") or 0.0
-    order_value = float(event.get("order") or 0)
-    return (
-        chunk_rank,
-        float(primary_order_source) + adjustment,
-        order_value,
-        event.get("title", "").lower(),
-    )
-
-
-def _limit_chunk_timeline_events(
-    events: list[dict[str, Any]], max_events: int = 3
-) -> list[dict[str, Any]]:
-    if not events:
-        return []
-    if len(events) <= max_events:
-        return events
-    clustered = _cluster_timeline_events(events, max_events=max_events)
-    return clustered or events[:max_events]
-
-
-def _cluster_timeline_events(
-    events: list[dict[str, Any]], *, max_events: int = 3
-) -> list[dict[str, Any]]:
-    buckets: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for event in events:
-        key = _event_theme_key(event)
-        buckets[key].append(event)
-    ordered_buckets = sorted(
-        buckets.items(),
-        key=lambda item: _timeline_event_sort_key(
-            sorted(item[1], key=_timeline_event_sort_key)[0]
-        ),
-    )
-    clustered: list[dict[str, Any]] = []
-    for key, bucket in ordered_buckets:
-        merged = _combine_event_group(key, bucket)
-        clustered.append(merged)
-        if len(clustered) >= max_events:
-            break
-    return clustered
-
-
-def _event_theme_key(event: dict[str, Any]) -> str:
-    basis = f"{event.get('title', '')} {event.get('description', '')}".lower()
-    tokens = re.findall(r"[a-z0-9']+", basis)
-    keywords = [
-        token for token in tokens if len(token) > 3 and token not in _TIMELINE_STOPWORDS
-    ]
-    if not keywords:
-        return "general"
-    return " ".join(keywords[:2])
-
-
-def _combine_event_group(
-    theme_key: str, events: list[dict[str, Any]]
-) -> dict[str, Any]:
-    ordered_events = sorted(events, key=_timeline_event_sort_key)
-    if len(ordered_events) == 1:
-        return ordered_events[0]
-    representative = ordered_events[0]
-    title = _build_cluster_title(theme_key)
-    description_parts = [
-        f"{event['title']}: {event['description']}" for event in ordered_events
-    ]
-    merged_aliases = []
-    seen: set[str] = set()
-    for event in ordered_events:
-        for alias in event.get("related_aliases") or []:
-            if alias not in seen:
-                seen.add(alias)
-                merged_aliases.append(alias)
-    return {
-        "title": title,
-        "description": " ".join(description_parts),
-        "source_alias": representative.get("source_alias"),
-        "related_aliases": merged_aliases,
-        "order": representative.get("order"),
-        "chunk_index": representative.get("chunk_index"),
-        "chunk_order": representative.get("chunk_order"),
-        "temporal_hint": representative.get("temporal_hint"),
-    }
-
-
-def _build_cluster_title(theme_key: str) -> str:
-    if theme_key == "general":
-        return "Key Developments"
-    words = [word.capitalize() for word in theme_key.split()]
-    return f"{' '.join(words)} Event"
-
-
-def _detect_temporal_hint(description: str) -> float:
-    lowered = description.lower()
-    if any(token in lowered for token in _BEFORE_HINTS):
-        return -0.5
-    if any(token in lowered for token in _AFTER_HINTS):
-        return 0.5
-    return 0.0
 
 
 def _build_entity_definitions_map(
@@ -1488,49 +706,6 @@ _PORTUGUESE_HINT_WORDS = {
     "porque",
     "ainda",
 }
-
-_TIMELINE_STOPWORDS = {
-    "the",
-    "and",
-    "with",
-    "into",
-    "from",
-    "that",
-    "this",
-    "have",
-    "has",
-    "had",
-    "were",
-    "been",
-    "after",
-    "before",
-    "onto",
-    "over",
-    "under",
-    "upon",
-    "amid",
-    "amidst",
-    "about",
-    "event",
-}
-
-_BEFORE_HINTS = {
-    "before",
-    "earlier",
-    "prior to",
-    "previously",
-    "ahead of",
-    "leading up",
-}
-_AFTER_HINTS = {
-    "after",
-    "later",
-    "subsequently",
-    "eventually",
-    "afterward",
-    "following",
-}
-
 
 def _chunk_instance_text(
     ontology_instance: Any,
@@ -2235,513 +1410,6 @@ async def _load_existing_entity_catalog(
         }
 
     return alias_map, entities_map
-
-
-async def _fetch_instance_timeline_events(
-    graph_session: Any, instance_id: str
-) -> list[dict[str, Any]]:
-    result = await graph_session.run(
-        """
-        MATCH (:OntologyInstance {instance_id: $instance_id})-[:HAS_EVENT]->(event:Event)
-        RETURN event
-        """,
-        {"instance_id": instance_id},
-    )
-    records = await result.data()
-    events: list[dict[str, Any]] = []
-    for record in records:
-        event_node = record.get("event")
-        if not event_node:
-            continue
-        props = dict(event_node)
-        created_at = props.get("created_at")
-        if created_at is not None:
-            try:
-                created_at_value = created_at.isoformat()  # type: ignore[union-attr]
-            except AttributeError:
-                created_at_value = str(created_at)
-        else:
-            created_at_value = None
-        events.append(
-            {
-                "event_id": props.get("event_id"),
-                "title": props.get("title"),
-                "before_event_id": props.get("before_event_id"),
-                "after_event_id": props.get("after_event_id"),
-                "created_at": created_at_value,
-            }
-        )
-    return events
-
-
-def _order_timeline_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    events_by_id: dict[str, dict[str, Any]] = {}
-    for event in events:
-        event_id = event.get("event_id")
-        if event_id:
-            events_by_id[event_id] = event
-    if not events_by_id:
-        return []
-    next_links: dict[str, str] = {}
-    has_previous: set[str] = set()
-    for event_id, event in events_by_id.items():
-        after_id = event.get("after_event_id")
-        if after_id and after_id in events_by_id:
-            next_links[event_id] = after_id
-            has_previous.add(after_id)
-    heads = [event_id for event_id in events_by_id if event_id not in has_previous]
-    ordered: list[dict[str, Any]] = []
-    visited: set[str] = set()
-    for head in heads:
-        current = head
-        while current and current not in visited:
-            visited.add(current)
-            ordered.append(events_by_id[current])
-            current = next_links.get(current)
-    if len(visited) != len(events_by_id):
-        remaining = [
-            events_by_id[event_id]
-            for event_id in events_by_id
-            if event_id not in visited
-        ]
-        ordered.extend(
-            sorted(
-                remaining,
-                key=lambda payload: (
-                    payload.get("created_at") or "",
-                    payload.get("event_id") or "",
-                ),
-            )
-        )
-    return ordered
-
-
-async def _attach_timeline_entities(
-    graph_session: Any,
-    *,
-    instance_id: str,
-    event_id: str,
-    source_entity_id: str | None,
-    related_entity_ids: list[str],
-) -> None:
-    """
-    Create SOURCE/INVOLVES relationships for a timeline event.
-
-    Timeline events are stored on the source instance (ontology_instance) but can
-    reference entities from any instance, allowing cross-instance entity relationships.
-    This enables timeline events to track entities that were created on different instances
-    during the generation process.
-    """
-    if source_entity_id:
-        await graph_session.run(
-            """
-            MATCH (event:Event {event_id: $event_id})
-            MATCH (entity:EntityInstance {entity_instance_id: $source_entity_id})
-            WHERE event.instance_id = $instance_id
-            MERGE (event)-[:SOURCE_ENTITY]->(entity)
-            """,
-            {
-                "event_id": event_id,
-                "source_entity_id": source_entity_id,
-                "instance_id": instance_id,
-            },
-        )
-    valid_related = [rid for rid in related_entity_ids if rid]
-    if valid_related:
-        # Note: No instance constraint on entities - allows cross-instance entity involvement
-        # Timeline events are stored on source instance but can reference entities anywhere
-        await graph_session.run(
-            """
-            MATCH (event:Event {event_id: $event_id})
-            WHERE event.instance_id = $instance_id
-            WITH event
-            UNWIND $related_ids AS related_id
-            MATCH (entity:EntityInstance {entity_instance_id: related_id})
-            MERGE (event)-[:INVOLVES_ENTITY]->(entity)
-            """,
-            {
-                "event_id": event_id,
-                "instance_id": instance_id,
-                "related_ids": valid_related,
-            },
-        )
-
-
-async def _link_source_generation_instance(
-    graph_session: Any, *, event_id: str, source_instance_id: str | None
-) -> None:
-    """Link timeline events to the ontology instance that supplied their evidence."""
-    if not source_instance_id:
-        return
-    await graph_session.run(
-        """
-        MATCH (event:Event {event_id: $event_id})
-        MATCH (source:OntologyInstance {instance_id: $source_instance_id})
-        MERGE (event)-[:REFERENCES_SOURCE_INSTANCE]->(source)
-        """,
-        {
-            "event_id": event_id,
-            "source_instance_id": source_instance_id,
-        },
-    )
-
-
-async def _link_timeline_order(
-    graph_session: Any,
-    *,
-    instance_id: str,
-    event_id: str,
-    before_event_id: str | None,
-    after_event_id: str | None,
-) -> None:
-    """Create temporal AFTER/BEFORE edges so retrieval honors chronology."""
-    if before_event_id:
-        await graph_session.run(
-            """
-            MATCH (current:Event {event_id: $event_id})
-            MATCH (previous:Event {event_id: $before_event_id})
-            WHERE current.instance_id = $instance_id AND previous.instance_id = $instance_id
-            MERGE (current)-[:AFTER]->(previous)
-            """,
-            {
-                "event_id": event_id,
-                "before_event_id": before_event_id,
-                "instance_id": instance_id,
-            },
-        )
-    if after_event_id:
-        await graph_session.run(
-            """
-            MATCH (current:Event {event_id: $event_id})
-            MATCH (next:Event {event_id: $after_event_id})
-            WHERE current.instance_id = $instance_id AND next.instance_id = $instance_id
-            MERGE (current)-[:BEFORE]->(next)
-            """,
-            {
-                "event_id": event_id,
-                "after_event_id": after_event_id,
-                "instance_id": instance_id,
-            },
-        )
-
-
-def _find_tail_event(events: list[dict[str, Any]]) -> dict[str, Any] | None:
-    if not events:
-        return None
-    for event in events:
-        if not event.get("after_event_id"):
-            return event
-    return events[-1]
-
-
-def _compose_timeline_text(
-    title: str,
-    description: str,
-    *,
-    source_label: str | None,
-    related_labels: list[str],
-    after_title: str | None,
-) -> str:
-    lines = [f"Timeline Event: {title}", description]
-    if source_label:
-        lines.append(f"Source: {source_label}")
-    if related_labels:
-        lines.append(f"Related: {', '.join(related_labels)}")
-    if after_title:
-        lines.append(f"Follows: {after_title}")
-    return "\n".join(lines)
-
-
-def _resolve_alias_to_entity_id(
-    alias: str | None,
-    alias_variants: dict[str, dict[str, Any]],
-    existing_entities_map: dict[str, dict[str, Any]],
-) -> str | None:
-    if not alias:
-        return None
-    normalized = _normalize_alias(alias)
-    if normalized:
-        lookup = alias_variants.get(normalized)
-        if lookup and lookup.get("entity_instance_id"):
-            return lookup["entity_instance_id"]
-    for entity_id, payload in existing_entities_map.items():
-        entity_alias = payload.get("alias")
-        if entity_alias and _normalize_alias(entity_alias) == normalized:
-            return entity_id
-    return None
-
-
-def _resolve_aliases_to_ids(
-    aliases: list[str],
-    alias_variants: dict[str, dict[str, Any]],
-    existing_entities_map: dict[str, dict[str, Any]],
-) -> list[str]:
-    resolved: list[str] = []
-    seen: set[str] = set()
-    for alias in aliases or []:
-        entity_id = _resolve_alias_to_entity_id(
-            alias, alias_variants, existing_entities_map
-        )
-        if entity_id and entity_id not in seen:
-            seen.add(entity_id)
-            resolved.append(entity_id)
-    return resolved
-
-
-async def _apply_timeline_events(
-    *,
-    graph_session: Any,
-    ontology_id: int,
-    source_instance_id: str | None,
-    timeline_plans: dict[str, list[dict[str, Any]]],
-    suggestion_lookup: dict[str, NormalizedSuggestion],
-    suggestion_instance_map: dict[str, str],
-    new_entity_ids: dict[str, str],
-    alias_variants: dict[str, dict[str, Any]],
-    existing_entities_map: dict[str, dict[str, Any]],
-) -> list[str]:
-    if not timeline_plans:
-        logger.info("architect_generation_v2: no timeline events to apply")
-        return []
-
-    if not source_instance_id:
-        logger.error(
-            "architect_generation_v2: source_instance_id is required for timeline events - "
-            "no timeline events will be created without a valid source instance"
-        )
-        return []
-
-    instance_event_cache: dict[str, dict[str, Any]] = {}
-    created_event_ids: list[str] = []
-
-    entity_instance_lookup: dict[str, str] = {}
-    for entity_id, payload in existing_entities_map.items():
-        instance_id = payload.get("instance_id")
-        if entity_id and instance_id:
-            entity_instance_lookup[entity_id] = instance_id
-    for suggestion_id, entity_id in new_entity_ids.items():
-        instance_id = suggestion_instance_map.get(suggestion_id)
-        if entity_id and instance_id:
-            entity_instance_lookup[entity_id] = instance_id
-
-    for suggestion_id, events in timeline_plans.items():
-        limited_events = _limit_chunk_timeline_events(events, max_events=3)
-        if not limited_events:
-            continue
-        suggestion = suggestion_lookup.get(suggestion_id)
-        if not suggestion:
-            continue
-        if suggestion.mode == "new":
-            entity_id = new_entity_ids.get(suggestion_id)
-        else:
-            entity_id = suggestion.entity_instance_id
-        if not entity_id:
-            logger.warning(
-                "architect_generation_v2: cannot attach timeline events for suggestion %s (missing entity id)",
-                suggestion_id,
-            )
-            continue
-
-        owning_instance_id = entity_instance_lookup.get(entity_id)
-        if not owning_instance_id:
-            logger.warning(
-                "architect_generation_v2: cannot attach timeline events for suggestion %s (missing owning instance for entity %s)",
-                suggestion_id,
-                entity_id,
-            )
-            continue
-
-        if owning_instance_id not in instance_event_cache:
-            existing_events = await _fetch_instance_timeline_events(
-                graph_session, owning_instance_id
-            )
-            ordered_events = _order_timeline_events(existing_events)
-            chain_state = {
-                "events": ordered_events,
-                "by_id": {
-                    event.get("event_id"): event
-                    for event in ordered_events
-                    if event.get("event_id")
-                },
-            }
-            tail_event = _find_tail_event(ordered_events)
-            if tail_event:
-                chain_state["tail_event_id"] = tail_event.get("event_id")
-                chain_state["tail_event_title"] = tail_event.get("title")
-            else:
-                chain_state["tail_event_id"] = None
-                chain_state["tail_event_title"] = None
-            instance_event_cache[owning_instance_id] = chain_state
-            logger.info(
-                "architect_generation_v2: loaded %d existing timeline events for target instance %s",
-                len(existing_events),
-                owning_instance_id,
-            )
-        chain_state = instance_event_cache[owning_instance_id]
-        previous_event_id = chain_state.get("tail_event_id")
-        previous_event_title = chain_state.get("tail_event_title")
-        logger.info(
-            "architect_generation_v2: applying %d timeline events for suggestion %s -> entity %s (instance=%s current_tail=%s provenance_instance=%s)",
-            len(limited_events),
-            suggestion_id,
-            entity_id,
-            owning_instance_id,
-            previous_event_id,
-            source_instance_id,
-        )
-
-        for event in limited_events:
-            # Timeline events are always stored on the source instance (ontology_instance)
-            # and reference related entities via related_entity_ids
-            source_entity_id = None
-            resolved_related = _resolve_aliases_to_ids(
-                event.get("related_aliases") or [],
-                alias_variants,
-                existing_entities_map,
-            )
-            related_ids = [rid for rid in resolved_related if rid]
-            dedup_related = []
-            seen_related: set[str] = set()
-            for rid in related_ids:
-                if rid and rid not in seen_related:
-                    seen_related.add(rid)
-                    dedup_related.append(rid)
-            related_instance_ids: list[str] = []
-            seen_pages: set[str] = set()
-            for rid in dedup_related:
-                parent_instance = entity_instance_lookup.get(rid)
-                if (
-                    not parent_instance
-                    or parent_instance == owning_instance_id
-                    or parent_instance == source_instance_id
-                    or parent_instance in seen_pages
-                ):
-                    continue
-                seen_pages.add(parent_instance)
-                related_instance_ids.append(parent_instance)
-
-            event_id = str(uuid4())
-            timestamp = datetime.utcnow().isoformat() + "Z"
-            text = _compose_timeline_text(
-                event["title"],
-                event["description"],
-                source_label=event.get("source_alias"),
-                related_labels=event.get("related_aliases") or [],
-                after_title=previous_event_title,
-            )
-
-            await graph_session.run(
-                """
-                MATCH (inst:OntologyInstance {instance_id: $instance_id})
-                CREATE (inst)-[:HAS_EVENT]->(event:Event {
-                    event_id: $event_id,
-                    entity_instance_id: $event_id,
-                    instance_id: $instance_id,
-                    ontology_id: $ontology_id,
-                    name: $title,
-                    alias: $title,
-                    title: $title,
-                    description: $description,
-                    created_from_instance_id: $created_from_instance_id,
-                    created_from_entity_id: $created_from_entity_id,
-                    source_instance_id: $created_from_instance_id,
-                    source_entity_id: $created_from_entity_id,
-                    related_instance_ids: $related_instance_ids,
-                    related_entity_ids: $related_entity_ids,
-                    before_event_id: $before_event_id,
-                    after_event_id: $after_event_id,
-                    created_at: $timestamp,
-                    updated_at: $timestamp,
-                    last_updated_date: $timestamp,
-                    text: $text,
-                    autogenerated_text: $text,
-                    is_embedded: false,
-                    last_embedded_date: null
-                })
-                """,
-                {
-                    "instance_id": owning_instance_id,
-                    "ontology_id": ontology_id,
-                    "event_id": event_id,
-                    "title": event["title"],
-                    "description": event["description"],
-                    "created_from_instance_id": source_instance_id,
-                    "created_from_entity_id": source_entity_id,
-                    "related_instance_ids": related_instance_ids,
-                    "related_entity_ids": dedup_related,
-                    "before_event_id": previous_event_id,
-                    "after_event_id": None,
-                    "timestamp": timestamp,
-                    "text": text,
-                },
-            )
-            await _attach_timeline_entities(
-                graph_session,
-                instance_id=owning_instance_id,
-                event_id=event_id,
-                source_entity_id=source_entity_id,
-                related_entity_ids=dedup_related,
-            )
-            await _link_source_generation_instance(
-                graph_session,
-                event_id=event_id,
-                source_instance_id=source_instance_id,
-            )
-            await _link_timeline_order(
-                graph_session,
-                instance_id=owning_instance_id,
-                event_id=event_id,
-                before_event_id=previous_event_id,
-                after_event_id=None,
-            )
-
-            if previous_event_id:
-                await graph_session.run(
-                    """
-                    MATCH (event:Event {event_id: $event_id})
-                    SET event.after_event_id = $after_event_id,
-                        event.updated_at = datetime(),
-                        event.last_updated_date = datetime(),
-                        event.is_embedded = false
-                    """,
-                    {"event_id": previous_event_id, "after_event_id": event_id},
-                )
-                await _link_timeline_order(
-                    graph_session,
-                    instance_id=owning_instance_id,
-                    event_id=previous_event_id,
-                    before_event_id=None,
-                    after_event_id=event_id,
-                )
-                prev_payload = chain_state["by_id"].get(previous_event_id)
-                if prev_payload:
-                    prev_payload["after_event_id"] = event_id
-
-            new_event_payload = {
-                "event_id": event_id,
-                "title": event["title"],
-                "before_event_id": previous_event_id,
-                "after_event_id": None,
-                "created_at": timestamp,
-            }
-            chain_state["events"].append(new_event_payload)
-            chain_state["by_id"][event_id] = new_event_payload
-            previous_event_id = event_id
-            previous_event_title = event["title"]
-            chain_state["tail_event_id"] = event_id
-            chain_state["tail_event_title"] = event["title"]
-            created_event_ids.append(event_id)
-            logger.info(
-                "architect_generation_v2: created timeline event %s for entity %s via suggestion %s (instance=%s provenance_instance=%s title=%s)",
-                event_id,
-                entity_id,
-                suggestion_id,
-                owning_instance_id,
-                source_instance_id,
-                event["title"],
-            )
-
-    return created_event_ids
 
 
 def _strip_markdown_code_blocks(text: str | None) -> str:

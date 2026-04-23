@@ -68,6 +68,9 @@ def embed_pdf_book(
         )
     )
 
+    deleted_old_chunks = 0
+    duplicate_chunk_keys = 0
+
     try:
         # Mark as running
         run_async(mark_job_running(job_id))
@@ -123,6 +126,18 @@ def embed_pdf_book(
             async with driver.session(database=settings.neo4j_database) as graph_session:
                 service = PdfEmbeddingService(graph_session)
 
+                # Always remove previous chunks first to guarantee single-version state.
+                await update_job_progress(
+                    job_id, 0.25, {"status": "Clearing previous embeddings"}
+                )
+                deleted_old = await service.delete_embeddings(library_item_id)
+                logger.info(
+                    "pdf_embedding_task stage=delete_old_embeddings library_item_id=%s job_id=%s deleted_old_chunks=%s",
+                    library_item_id,
+                    job_id,
+                    deleted_old,
+                )
+
                 # Ensure vector index
                 await update_job_progress(
                     job_id, 0.3, {"status": "Ensuring vector index"}
@@ -152,11 +167,34 @@ def embed_pdf_book(
                     batch_size=20,
                 )
 
-                return result
+                verify_query = """
+                MATCH (c:PdfChunk {library_item_id: $library_item_id})
+                WITH c.library_item_id AS library_item_id,
+                     c.chunk_index AS chunk_index,
+                     count(*) AS occurrences
+                WHERE occurrences > 1
+                RETURN count(*) AS duplicate_keys
+                """
+                verify_result = await graph_session.run(
+                    verify_query, library_item_id=library_item_id
+                )
+                verify_record = await verify_result.single()
+                duplicate_keys = int(
+                    verify_record["duplicate_keys"] if verify_record else 0
+                )
 
-        result = run_async(embed_pdf())
+                return {
+                    "result": result,
+                    "deleted_old_chunks": deleted_old,
+                    "duplicate_chunk_keys": duplicate_keys,
+                }
+
+        embed_payload = run_async(embed_pdf())
+        result = embed_payload["result"]
+        deleted_old_chunks = int(embed_payload.get("deleted_old_chunks", 0))
+        duplicate_chunk_keys = int(embed_payload.get("duplicate_chunk_keys", 0))
         logger.info(
-            "pdf_embedding_task stage=embed_complete library_item_id=%s job_id=%s total_pages=%s embedded_pages=%s missing_pages=%s chunks_created=%s chunks_failed=%s status=%s",
+            "pdf_embedding_task stage=embed_complete library_item_id=%s job_id=%s total_pages=%s embedded_pages=%s missing_pages=%s chunks_created=%s chunks_failed=%s deleted_old_chunks=%s duplicate_chunk_keys=%s status=%s",
             library_item_id,
             job_id,
             result.get("total_pages", 0),
@@ -164,6 +202,8 @@ def embed_pdf_book(
             result.get("pages_with_no_text", 0),
             result.get("chunks_created", 0),
             result.get("chunks_failed", 0),
+            deleted_old_chunks,
+            duplicate_chunk_keys,
             result.get("status", "unknown"),
         )
 
@@ -201,6 +241,8 @@ def embed_pdf_book(
             mark_job_done(
                 job_id,
                 {
+                    "deleted_old_chunks": deleted_old_chunks,
+                    "duplicate_chunk_keys": duplicate_chunk_keys,
                     "chunks_created": result.get("chunks_created", 0),
                     "chunks_failed": result.get("chunks_failed", 0),
                     "total_pages": result.get("total_pages", 0),
@@ -210,19 +252,38 @@ def embed_pdf_book(
         )
 
         logger.info(
-            "pdf_embedding_task stage=done library_item_id=%s job_id=%s chunks_created=%s total_pages=%s embedded_pages=%s missing_pages=%s",
+            "pdf_embedding_task stage=done library_item_id=%s job_id=%s chunks_created=%s total_pages=%s embedded_pages=%s missing_pages=%s deleted_old_chunks=%s duplicate_chunk_keys=%s",
             library_item_id,
             job_id,
             result.get("chunks_created", 0),
             result.get("total_pages", 0),
             result.get("pages_extracted", 0),
             result.get("pages_with_no_text", 0),
+            deleted_old_chunks,
+            duplicate_chunk_keys,
         )
 
         return {"job_id": job_id, "status": "success", "result": result}
 
     except Exception as e:
         logger.error(f"PDF embedding failed for item {library_item_id}: {e}")
+        from app.db.session import AsyncSessionMaker
+
+        async def mark_item_unvectorized() -> None:
+            async with AsyncSessionMaker() as session:
+                repo = LibraryRepository(session)
+                item = await repo.get_item_by_id(library_item_id)
+                if item:
+                    await repo.update_item(
+                        item,
+                        {
+                            "vectorized": False,
+                            "last_vectorized_at": None,
+                        },
+                    )
+                    await session.commit()
+
+        run_async(mark_item_unvectorized())
         run_async(mark_job_failed(job_id, str(e)))
         raise
 

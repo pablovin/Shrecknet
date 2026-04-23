@@ -84,10 +84,16 @@ class LibrarianOrchestrator:
         # Step 1: Retrieve top chunks across all library items in ontology
         all_chunks = []
         for ontology_id in ontology_ids:
+            allowed_item_ids = await self._list_vectorized_item_ids(
+                db_session=db_session,
+                ontology_id=ontology_id,
+                requested_item_ids=request.library_item_ids,
+            )
             chunks = await self._retrieve_chunks(
                 query=request.query,
                 ontology_id=ontology_id,
                 library_item_ids=request.library_item_ids,
+                active_library_item_ids=allowed_item_ids,
                 top_k=top_k,
                 trace=trace,
                 score_threshold=request.score_threshold if request.score_threshold is not None else 0.3,
@@ -110,6 +116,8 @@ class LibrarianOrchestrator:
         retrieved_chunks = []
         for chunk in all_chunks:
             metadata_for_item = library_metadata.get(chunk["library_item_id"], {})
+            if not metadata_for_item.get("vectorized", False):
+                continue
             retrieved_chunks.append(
                 RetrievedChunk(
                     library_item_id=chunk["library_item_id"],
@@ -186,6 +194,7 @@ class LibrarianOrchestrator:
         query: str,
         ontology_id: int,
         library_item_ids: list[int] | None,
+        active_library_item_ids: list[int] | None,
         top_k: int,
         trace: list[dict[str, Any]],
         score_threshold: float | None = None,
@@ -207,6 +216,7 @@ class LibrarianOrchestrator:
             query_text=query,
             ontology_id=ontology_id,
             library_item_ids=library_item_ids,
+            active_library_item_ids=active_library_item_ids,
             top_k=top_k,
             score_threshold=score_threshold if score_threshold is not None else 0.3,
         )
@@ -224,6 +234,7 @@ class LibrarianOrchestrator:
                     "data": {
                         "ontology_id": ontology_id,
                         "library_item_ids": library_item_ids,
+                        "active_library_item_ids": active_library_item_ids,
                         "chunks_found": len(chunks),
                         "top_k": top_k,
                     },
@@ -232,11 +243,31 @@ class LibrarianOrchestrator:
 
         return chunks
 
+    async def _list_vectorized_item_ids(
+        self,
+        db_session: AsyncSession,
+        ontology_id: int,
+        requested_item_ids: list[int] | None,
+    ) -> list[int]:
+        from sqlalchemy import select
+
+        from app.models.library import LibraryItem
+
+        query = select(LibraryItem.id).where(
+            LibraryItem.ontology_id == ontology_id,
+            LibraryItem.vectorized.is_(True),
+        )
+        if requested_item_ids:
+            query = query.where(LibraryItem.id.in_(requested_item_ids))
+
+        rows = (await db_session.execute(query)).all()
+        return [int(row[0]) for row in rows]
+
     async def _fetch_library_metadata(
         self,
         db_session: AsyncSession,
         library_item_ids: list[int],
-    ) -> dict[int, dict[str, str | None]]:
+    ) -> dict[int, dict[str, str | bool | None]]:
         """
         Fetch library item metadata (title, authors) from the database.
 
@@ -265,13 +296,18 @@ class LibrarianOrchestrator:
             metadata[item.id] = {
                 "title": item.title,
                 "authors": item.authors,
+                "vectorized": bool(getattr(item, "vectorized", False)),
             }
 
         # Add None entries for any missing items
         for item_id in library_item_ids:
             if item_id not in metadata:
                 logger.warning(f"Library item {item_id} not found in database")
-                metadata[item_id] = {"title": None, "authors": None}
+                metadata[item_id] = {
+                    "title": None,
+                    "authors": None,
+                    "vectorized": False,
+                }
 
         return metadata
 

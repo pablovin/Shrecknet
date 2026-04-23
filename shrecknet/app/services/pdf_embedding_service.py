@@ -572,11 +572,119 @@ class PdfEmbeddingService:
 
         return deleted
 
+    async def delete_embeddings_for_ontology(
+        self,
+        ontology_id: int,
+        library_item_ids: list[int] | None = None,
+    ) -> int:
+        """
+        Delete all embeddings for an ontology, including stale chunks whose ontology_id
+        is missing/invalid but belong to the ontology's library items.
+
+        Args:
+            ontology_id: Ontology to clear
+            library_item_ids: Optional known SQL item IDs for fallback stale cleanup
+
+        Returns:
+            Number of chunks deleted
+        """
+        if library_item_ids:
+            query = """
+            MATCH (c:PdfChunk)
+            WHERE c.ontology_id = $ontology_id
+               OR c.library_item_id IN $library_item_ids
+            WITH collect(c) AS chunks
+            WITH chunks, size(chunks) AS total
+            UNWIND chunks AS c
+            DETACH DELETE c
+            RETURN total
+            """
+            params: dict[str, Any] = {
+                "ontology_id": ontology_id,
+                "library_item_ids": library_item_ids,
+            }
+        else:
+            query = """
+            MATCH (c:PdfChunk {ontology_id: $ontology_id})
+            WITH collect(c) AS chunks
+            WITH chunks, size(chunks) AS total
+            UNWIND chunks AS c
+            DETACH DELETE c
+            RETURN total
+            """
+            params = {"ontology_id": ontology_id}
+
+        result = await self.graph_session.run(query, **params)
+        record = await result.single()
+        deleted = int(record["total"]) if record else 0
+        logger.info(
+            "Deleted %s PDF chunks for ontology %s (fallback_ids=%s)",
+            deleted,
+            ontology_id,
+            len(library_item_ids or []),
+        )
+        return deleted
+
+    async def delete_all_embeddings(self) -> int:
+        """
+        Delete all PdfChunk nodes in Neo4j.
+
+        Returns:
+            Number of chunks deleted
+        """
+        query = """
+        MATCH (c:PdfChunk)
+        WITH collect(c) AS chunks
+        WITH chunks, size(chunks) AS total
+        UNWIND chunks AS c
+        DETACH DELETE c
+        RETURN total
+        """
+        result = await self.graph_session.run(query)
+        record = await result.single()
+        deleted = int(record["total"]) if record else 0
+        logger.info("Deleted %s PDF chunks globally", deleted)
+        return deleted
+
+    async def delete_orphan_embeddings(
+        self,
+        valid_library_item_ids: list[int],
+    ) -> int:
+        """
+        Delete chunks whose library_item_id is not present in SQL library_items.
+
+        Args:
+            valid_library_item_ids: Current SQL library item IDs
+
+        Returns:
+            Number of orphan chunks deleted
+        """
+        if not valid_library_item_ids:
+            return 0
+
+        query = """
+        MATCH (c:PdfChunk)
+        WHERE NOT c.library_item_id IN $valid_library_item_ids
+        WITH collect(c) AS chunks
+        WITH chunks, size(chunks) AS total
+        UNWIND chunks AS c
+        DETACH DELETE c
+        RETURN total
+        """
+        result = await self.graph_session.run(
+            query, valid_library_item_ids=valid_library_item_ids
+        )
+        record = await result.single()
+        deleted = int(record["total"]) if record else 0
+        logger.info("Deleted %s orphan PDF chunks", deleted)
+        return deleted
+
     async def search_chunks(
         self,
         query_text: str,
         ontology_id: int,
         library_item_ids: list[int] | None = None,
+        active_library_item_ids: list[int] | None = None,
         top_k: int = 10,
         score_threshold: float = 0.5,
     ) -> list[dict[str, Any]]:
@@ -597,10 +705,14 @@ class PdfEmbeddingService:
         query_embedding = self.embedding_service.embed_text(query_text)
 
         # Build query
+        item_filters: list[str] = []
         if library_item_ids:
-            item_filter = "AND c.library_item_id IN $library_item_ids"
-        else:
-            item_filter = ""
+            item_filters.append("c.library_item_id IN $library_item_ids")
+        if active_library_item_ids is not None:
+            if not active_library_item_ids:
+                return []
+            item_filters.append("c.library_item_id IN $active_library_item_ids")
+        item_filter = f"AND {' AND '.join(item_filters)}" if item_filters else ""
 
         query = f"""
         CALL db.index.vector.queryNodes(
@@ -628,6 +740,7 @@ class PdfEmbeddingService:
             top_k=top_k * 2,  # Fetch more to account for filtering
             ontology_id=ontology_id,
             library_item_ids=library_item_ids,
+            active_library_item_ids=active_library_item_ids,
             score_threshold=score_threshold,
         )
 

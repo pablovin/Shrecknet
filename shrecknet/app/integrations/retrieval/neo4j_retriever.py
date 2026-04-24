@@ -451,8 +451,8 @@ class Neo4jGraphRetriever:
         MATCH (inst:OntologyInstance)-[:HAS_ENTITY]->(entity:EntityInstance)
           WHERE toInteger(coalesce(inst['ontology_id'], -1)) = toInteger($ontology_id)
               OR toInteger(coalesce(entity['ontology_id'], -1)) = toInteger($ontology_id)
-        RETURN coalesce(entity['entity_instance_id'], toString(id(entity))) AS node_id,
-               coalesce(entity['alias'], entity['name'], entity['entity_instance_id'], toString(id(entity))) AS alias,
+        RETURN coalesce(entity['entity_instance_id'], elementId(entity)) AS node_id,
+               coalesce(entity['alias'], entity['name'], entity['entity_instance_id'], elementId(entity)) AS alias,
                head(labels(entity)) AS ontology
         ORDER BY alias, node_id
         SKIP $skip

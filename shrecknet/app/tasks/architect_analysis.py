@@ -82,20 +82,24 @@ def _write_local_json_artifact(
     payload: dict[str, Any],
 ) -> str | None:
     """Write a JSON artifact to local_tests, returning path on success."""
-    output_path = output_dir / filename
-    try:
-        output_path.write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
-        return str(output_path)
-    except OSError as exc:
-        logger.warning(
-            "analysis_local_artifact_write_error: file=%s error=%s",
-            output_path,
-            exc,
-        )
-        return None
+    # Debug artifact writing is intentionally disabled for architect/analyse.
+    # Keep the implementation below commented for quick re-enable when needed.
+    return None
+
+    # output_path = output_dir / filename
+    # try:
+    #     output_path.write_text(
+    #         json.dumps(payload, ensure_ascii=False, indent=2),
+    #         encoding="utf-8",
+    #     )
+    #     return str(output_path)
+    # except OSError as exc:
+    #     logger.warning(
+    #         "analysis_local_artifact_write_error: file=%s error=%s",
+    #         output_path,
+    #         exc,
+    #     )
+    #     return None
 
 
 def _extract_json_block(raw: str) -> str:
@@ -117,6 +121,23 @@ def _parse_chunk_extraction(response_text: str, scene_ref: str) -> ChunkExtracti
             exc,
         )
         return ChunkExtractionResponse(entities=[])
+
+
+def _normalize_ontology_name(value: str | None) -> str:
+    raw = str(value or "").strip().lower()
+    return re.sub(r"\s+", " ", raw)
+
+
+def _build_allowed_ontology_map(entity_defs: list[Any]) -> dict[str, str]:
+    allowed: dict[str, str] = {}
+    for definition in entity_defs:
+        if not bool(getattr(definition, "auto_generatable", True)):
+            continue
+        name = (getattr(definition, "name", "") or "").strip()
+        if not name:
+            continue
+        allowed[_normalize_ontology_name(name)] = name
+    return allowed
 
 
 def _canonical_alias(alias: str | None) -> str:
@@ -268,6 +289,7 @@ async def _reconcile_with_existing(
     deduped: dict[str, dict[str, Any]],
     existing_nodes: list[dict[str, Any]],
     ontology_definitions: str,
+    allowed_ontology_names: dict[str, str],
 ) -> dict[str, Any]:
     if not deduped:
         return {"existing": [], "new": []}
@@ -331,10 +353,34 @@ async def _reconcile_with_existing(
             for node in filtered_catalogue
             if str(node.get("node_id") or "")
         }
+        deduped_by_canonical = {
+            _canonical_alias(entry.get("name")): entry for entry in entities_needing_llm
+        }
 
         for entry in parsed.existing:
             if entry.matched_node_id and entry.matched_node_id in valid_ids:
-                existing_results.append(entry.model_dump())
+                canonical = _canonical_alias(entry.proposed_name)
+                fallback_ontology = (
+                    (deduped_by_canonical.get(canonical) or {}).get("ontology") or ""
+                )
+                selected_ontology = entry.ontology or fallback_ontology
+                mapped = allowed_ontology_names.get(
+                    _normalize_ontology_name(selected_ontology)
+                )
+                if not mapped:
+                    logger.warning(
+                        "scene_entity_reconcile_invalid_ontology_existing: proposed=%s ontology=%s",
+                        entry.proposed_name,
+                        selected_ontology,
+                    )
+                    continue
+                existing_results.append(
+                    {
+                        "proposed_name": entry.proposed_name,
+                        "matched_node_id": entry.matched_node_id,
+                        "ontology": mapped,
+                    }
+                )
             else:
                 logger.warning(
                     "scene_entity_reconcile_invalid_match: proposed=%s matched_id=%s",
@@ -342,9 +388,21 @@ async def _reconcile_with_existing(
                     entry.matched_node_id,
                 )
 
+        new_results: list[dict[str, Any]] = []
+        for item in parsed.new:
+            mapped = allowed_ontology_names.get(_normalize_ontology_name(item.ontology))
+            if not mapped:
+                logger.warning(
+                    "scene_entity_reconcile_invalid_ontology_new: name=%s ontology=%s",
+                    item.name,
+                    item.ontology,
+                )
+                continue
+            new_results.append({"name": item.name, "ontology": mapped})
+
         return {
             "existing": existing_results,
-            "new": [item.model_dump() for item in parsed.new],
+            "new": new_results,
         }
     except Exception as exc:
         logger.warning("scene_entity_reconcile_fallback_new: %s", exc)
@@ -361,6 +419,7 @@ async def _classify_entities_with_reconciliation(
     scene_results: list[dict[str, Any]],
     existing_nodes: list[dict[str, Any]],
     ontology_definitions: str,
+    allowed_ontology_names: dict[str, str],
 ) -> dict[str, Any]:
     deduped: dict[str, dict[str, Any]] = {}
     for scene in scene_results:
@@ -368,13 +427,25 @@ async def _classify_entities_with_reconciliation(
             canonical = _canonical_alias(entity.get("name"))
             if not canonical:
                 continue
+            ontology_value = str(entity.get("ontology") or "").strip()
+            mapped_ontology = allowed_ontology_names.get(
+                _normalize_ontology_name(ontology_value)
+            )
+            if not mapped_ontology:
+                logger.warning(
+                    "scene_entity_invalid_ontology_filtered: name=%s ontology=%s canonical=%s",
+                    entity.get("name"),
+                    ontology_value,
+                    canonical,
+                )
+                continue
 
             dedup_key = _find_matching_canonical_key(canonical, deduped) or canonical
             if dedup_key not in deduped:
                 deduped[dedup_key] = {
                     "canonical": dedup_key,
                     "name": entity.get("name") or "",
-                    "ontology": entity.get("ontology") or "",
+                    "ontology": mapped_ontology,
                     "confidence_values": [],
                     "whys": [],
                     "scene_refs": [],
@@ -385,8 +456,7 @@ async def _classify_entities_with_reconciliation(
             name = entity.get("name") or ""
             if len(name) > len(entry["name"]):
                 entry["name"] = name
-            if entity.get("ontology"):
-                entry["ontology"] = entity["ontology"]
+            entry["ontology"] = mapped_ontology
 
             confidence = entity.get("confidence")
             if isinstance(confidence, (int, float)):
@@ -410,6 +480,7 @@ async def _classify_entities_with_reconciliation(
         deduped=deduped,
         existing_nodes=existing_nodes,
         ontology_definitions=ontology_definitions,
+        allowed_ontology_names=allowed_ontology_names,
     )
 
     existing_map: dict[str, dict[str, Any]] = {}
@@ -433,7 +504,14 @@ async def _classify_entities_with_reconciliation(
     }
 
     for canonical, entry in deduped.items():
-        ontology = entry.get("ontology") or "Unknown"
+        ontology = entry.get("ontology") or ""
+        if not ontology:
+            logger.warning(
+                "scene_entity_missing_ontology_filtered: canonical=%s name=%s",
+                canonical,
+                entry.get("name"),
+            )
+            continue
         avg_confidence = 0.0
         if entry["confidence_values"]:
             avg_confidence = round(
@@ -643,7 +721,9 @@ async def _extract_scene_entities(
     llm_client: OpenAIClient,
     model: str,
     ontology_definitions: str,
+    allowed_ontology_names: dict[str, str],
     scenes: list[dict[str, Any]],
+    instructions: str | None = None,
 ) -> list[dict[str, Any]]:
     semaphore = asyncio.Semaphore(SCENE_ENTITY_EXTRACTION_CONCURRENCY)
 
@@ -663,6 +743,12 @@ async def _extract_scene_entities(
                     # Backward compatibility if the template still references {chunk_text}.
                     chunk_text=scene_text,
                 )
+                instructions_text = str(instructions or "").strip()
+                if instructions_text:
+                    prompt = (
+                        f"{prompt}\n\nFrontend instructions (authoritative constraints):\n"
+                        f"{instructions_text}"
+                    )
                 response_text = await llm_client.chat(
                     model=model,
                     messages=[{"role": "user", "content": prompt}],
@@ -670,7 +756,23 @@ async def _extract_scene_entities(
                 )
 
             parsed = _parse_chunk_extraction(response_text, scene_ref)
-            entities = [entity.model_dump() for entity in parsed.entities]
+            entities: list[dict[str, Any]] = []
+            for entity in parsed.entities:
+                mapped = allowed_ontology_names.get(
+                    _normalize_ontology_name(entity.ontology)
+                )
+                if not mapped:
+                    logger.warning(
+                        "scene_entity_invalid_ontology_dropped: run_id=%s scene_ref=%s name=%s ontology=%s",
+                        run_id,
+                        scene_ref,
+                        entity.name,
+                        entity.ontology,
+                    )
+                    continue
+                payload = entity.model_dump()
+                payload["ontology"] = mapped
+                entities.append(payload)
             logger.info(
                 "scene_entity_extraction_scene_done: run_id=%s scene_ref=%s entity_count=%d",
                 run_id,
@@ -785,6 +887,7 @@ async def _run_scene_chunking_phase(
     ontology_instance: Any,
     llm_client: OpenAIClient,
     model: str,
+    instructions: str | None = None,
 ) -> dict[str, Any]:
     started = perf_counter()
     all_chunk_results: list[dict[str, Any]] = []
@@ -824,6 +927,7 @@ async def _run_scene_chunking_phase(
                     marked_paragraphs=chunk.marked_paragraphs,
                     paragraph_count=chunk.paragraph_count,
                     paragraphs=chunk.paragraphs,
+                    instructions=instructions,
                 )
                 total_scenes += len(scenes)
                 logger.info(
@@ -896,8 +1000,10 @@ async def _run_entity_proposal_phase(
     llm_client: OpenAIClient,
     model: str,
     ontology_definitions: str,
+    allowed_ontology_names: dict[str, str],
     existing_nodes: list[dict[str, Any]],
     chunk_results: list[dict[str, Any]],
+    instructions: str | None = None,
 ) -> dict[str, Any]:
     scene_inputs = _flatten_scene_inputs(chunk_results)
     logger.info(
@@ -913,7 +1019,9 @@ async def _run_entity_proposal_phase(
         llm_client=llm_client,
         model=model,
         ontology_definitions=ontology_definitions,
+        allowed_ontology_names=allowed_ontology_names,
         scenes=scene_inputs,
+        instructions=instructions,
     )
 
     classified = await _classify_entities_with_reconciliation(
@@ -922,6 +1030,7 @@ async def _run_entity_proposal_phase(
         scene_results=scene_entity_results,
         existing_nodes=existing_nodes,
         ontology_definitions=ontology_definitions,
+        allowed_ontology_names=allowed_ontology_names,
     )
 
     elapsed_seconds = round(perf_counter() - started, 3)
@@ -1182,6 +1291,7 @@ async def _run_milestone_proposal_phase(
     model: str,
     proposed_scenes: list[dict[str, Any]],
     author_id: str,
+    instructions: str | None = None,
 ) -> dict[str, Any]:
     started = perf_counter()
     semaphore = asyncio.Semaphore(MILESTONE_EXTRACTION_CONCURRENCY)
@@ -1213,6 +1323,12 @@ async def _run_milestone_proposal_phase(
                 scene_text=_safe_json_text(scene.get("scene_text")),
                 scene_entities=json.dumps(aliases, ensure_ascii=False),
             )
+            instructions_text = str(instructions or "").strip()
+            if instructions_text:
+                prompt = (
+                    f"{prompt}\n\nFrontend instructions (authoritative constraints):\n"
+                    f"{instructions_text}"
+                )
 
             try:
                 response = await llm_client.chat(
@@ -1543,6 +1659,7 @@ async def _execute_architect_pipeline(
             ontology_definitions = _format_ontology_definitions_from_entities(
                 list(ontology_entities)
             )
+            allowed_ontology_names = _build_allowed_ontology_map(list(ontology_entities))
             run.ontology_id = ontology_id
             await session.flush()
 
@@ -1590,6 +1707,7 @@ async def _execute_architect_pipeline(
                     llm_client=llm_client,
                     model=model_policy.get_model(LLMTask.ARCHITECT_EXTRACT),
                     ontology_definitions=ontology_definitions,
+                    allowed_ontology_names=allowed_ontology_names,
                     existing_nodes=existing_nodes,
                     celery_task_id=analyze_instance.request.id,
                     author_id=agent_id,
@@ -1634,6 +1752,7 @@ async def _run_scene_centric_chunking_test(
     llm_client: OpenAIClient,
     model: str,
     ontology_definitions: str,
+    allowed_ontology_names: dict[str, str],
     existing_nodes: list[dict[str, Any]],
     celery_task_id: str | None,
     author_id: str,
@@ -1660,6 +1779,7 @@ async def _run_scene_centric_chunking_test(
         llm_client=llm_client,
         model=model,
         ontology_definitions=ontology_definitions,
+        allowed_ontology_names=allowed_ontology_names,
         existing_nodes=existing_nodes,
         chunk_results=all_chunk_results,
     )

@@ -1318,8 +1318,14 @@ Summary: {summary}"""
             await result.consume()
             return True
         except Exception as e:
-            # Index might already exist or other error
-            print(f"Error creating index: {e}")
+            message = str(e)
+            if "EquivalentSchemaRuleAlreadyExists" in message:
+                logger.info(
+                    "Vector index already exists (equivalent schema): %s",
+                    index_name,
+                )
+                return True
+            logger.warning("Error creating index %s: %s", index_name, e)
             return False
 
     async def ensure_chunk_vector_index(
@@ -1346,7 +1352,14 @@ Summary: {summary}"""
             await res.consume()
             return True
         except Exception as e:
-            print(f"Error creating chunk index: {e}")
+            message = str(e)
+            if "EquivalentSchemaRuleAlreadyExists" in message:
+                logger.info(
+                    "Chunk vector index already exists (equivalent schema): %s",
+                    index_name,
+                )
+                return True
+            logger.warning("Error creating chunk index %s: %s", index_name, e)
             return False
 
 

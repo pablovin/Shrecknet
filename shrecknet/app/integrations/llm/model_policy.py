@@ -24,7 +24,7 @@ class ModelPolicy:
         synthesis_model: str = "gpt-4o",
         validation_model: str = "gpt-4o-mini",
         style_model: str = "gpt-4o-mini",
-        architect_extract_model: str = "gpt-4o-mini",
+        architect_extract_model: str = "gpt-5.4-nano",
     ):
         self.task_to_model = {
             LLMTask.DECOMPOSE: decompose_model,

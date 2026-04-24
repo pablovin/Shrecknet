@@ -72,7 +72,8 @@ class OpenAIClient:
         max_tokens: Optional[int] = None,
         conversation_id: Optional[str] = None,
         use_conversation_memory: bool = False,
-    ) -> str:
+        return_metadata: bool = False,
+    ) -> str | dict[str, Any]:
         """
         Send a request using the Responses API.
 
@@ -112,11 +113,19 @@ class OpenAIClient:
                 )
                 resp = await llm.ainvoke(input_messages)
                 text = self._extract_text_from_langchain_response(resp)
+                usage = self._extract_usage_metadata(resp)
+                response_metadata = self._extract_response_metadata(resp)
                 if conversation_id and use_conversation_memory:
                     # Persist only compact role-structured messages for this run thread.
                     self._conversations.setdefault(conversation_id, []).extend(
                         [*lc_messages, AIMessage(content=text)]
                     )
+                if return_metadata:
+                    return {
+                        "text": text,
+                        "usage": usage,
+                        "response_metadata": response_metadata,
+                    }
                 return text
             except Exception as e:
                 if not self._is_retryable_exception(e) or attempt >= attempts:
@@ -165,6 +174,48 @@ class OpenAIClient:
                         parts.append(text_value)
             return "\n".join([p for p in parts if p]).strip()
         return str(content or "")
+
+    @staticmethod
+    def _extract_usage_metadata(resp: Any) -> dict[str, int | None]:
+        usage_meta = getattr(resp, "usage_metadata", None)
+        if isinstance(usage_meta, dict):
+            prompt_tokens = usage_meta.get("input_tokens")
+            completion_tokens = usage_meta.get("output_tokens")
+            total_tokens = usage_meta.get("total_tokens")
+            return {
+                "prompt_tokens": int(prompt_tokens) if isinstance(prompt_tokens, int) else None,
+                "completion_tokens": int(completion_tokens)
+                if isinstance(completion_tokens, int)
+                else None,
+                "total_tokens": int(total_tokens) if isinstance(total_tokens, int) else None,
+            }
+
+        response_meta = getattr(resp, "response_metadata", None)
+        if isinstance(response_meta, dict):
+            token_usage = response_meta.get("token_usage")
+            if isinstance(token_usage, dict):
+                prompt_tokens = token_usage.get("prompt_tokens")
+                completion_tokens = token_usage.get("completion_tokens")
+                total_tokens = token_usage.get("total_tokens")
+                return {
+                    "prompt_tokens": int(prompt_tokens)
+                    if isinstance(prompt_tokens, int)
+                    else None,
+                    "completion_tokens": int(completion_tokens)
+                    if isinstance(completion_tokens, int)
+                    else None,
+                    "total_tokens": int(total_tokens) if isinstance(total_tokens, int) else None,
+                }
+        return {
+            "prompt_tokens": None,
+            "completion_tokens": None,
+            "total_tokens": None,
+        }
+
+    @staticmethod
+    def _extract_response_metadata(resp: Any) -> dict[str, Any]:
+        response_meta = getattr(resp, "response_metadata", None)
+        return response_meta if isinstance(response_meta, dict) else {}
 
     def _get_langchain_model(
         self,

@@ -85,6 +85,12 @@ def _stale_reaper_loop() -> None:
 @worker_ready.connect
 def _start_stale_reaper(sender=None, **_kwargs) -> None:  # pragma: no cover - startup hook
     global _stale_reaper_thread_started
+    try:
+        from app.celery_queue_reaper import reset_jobs_and_queues_on_startup
+
+        reset_jobs_and_queues_on_startup()
+    except Exception:  # pragma: no cover - defensive startup logic
+        logger.exception("Startup job/queue reset failed")
     _run_stale_reaper_once()
     with _stale_reaper_lock:
         if _stale_reaper_thread_started:

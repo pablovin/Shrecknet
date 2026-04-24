@@ -30,6 +30,8 @@ from app.schemas.ontology_instance import (
     MilestoneUpdate,
     OntologyEntityResolveRequest,
     OntologyEntityResolveResponse,
+    OntologyInstanceSceneCountsRequest,
+    OntologyInstanceSceneCountsResponse,
     OntologyInstanceEntityTypeClearJobResponse,
     OntologyInstanceEntityTypeClearRequest,
     OntologyInstanceTimelineClearJobResponse,
@@ -196,6 +198,22 @@ async def count_ontology_instances(
         search=search,
     )
     return OntologyInstanceCountResponse(total=total)
+
+
+@router.post("/scenes/counts", response_model=OntologyInstanceSceneCountsResponse)
+async def count_scenes_for_instances(
+    payload: OntologyInstanceSceneCountsRequest,
+    service: OntologyInstanceService = Depends(get_ontology_instance_service),
+    _: User = Depends(get_current_user),
+) -> OntologyInstanceSceneCountsResponse:
+    try:
+        return await service.count_scenes_by_instances(
+            instance_ids=payload.instance_ids,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
 
 
 @router.get("/basic", response_model=OntologyInstanceSummaryPage)

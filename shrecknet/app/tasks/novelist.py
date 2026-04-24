@@ -25,6 +25,7 @@ from app.repositories.ontology_repository import OntologyRepository
 from app.repositories.novelist_repository import NovelistRepository
 from app.schemas.novelist import NovelistRunCreate
 from app.tasks.architect_analysis import (
+    _build_allowed_ontology_map,
     _format_ontology_definitions_from_entities,
     _load_existing_nodes,
     _run_entity_proposal_phase,
@@ -161,6 +162,17 @@ async def _execute_run(
             # Attach novelist-specific model preferences for orchestrator
             setattr(model_policy, "model_novelist_draft", settings.model_novelist_draft)
             setattr(model_policy, "model_novelist_critic", settings.model_novelist_critic)
+            setattr(
+                model_policy,
+                "model_novelist_scene_exploration",
+                settings.model_novelist_scene_exploration,
+            )
+            setattr(
+                model_policy,
+                "model_novelist_scene_context_creation",
+                settings.model_novelist_scene_context_creation,
+            )
+            setattr(model_policy, "model_elder_query", settings.model_elder_query)
 
             async def elder_query_runner(agent: Agent, query: str) -> list[dict[str, Any]]:
                 # Elder context is an optional flavor-only layer: never plot authority.
@@ -181,10 +193,10 @@ async def _execute_run(
                             agent,
                             ElderQueryRequest(
                                 query=query,
-                                mode="both",
+                                mode="context",
                                 top_k=6,
                                 include_trace=False,
-                                fast=False,
+                                fast=True,
                             ),
                         )
                 except Exception:
@@ -214,6 +226,7 @@ async def _execute_run(
             async def architect_scaffolding_runner(
                 agent: Agent,
                 unstructured_text: str,
+                instructions: str,
                 _conversation_id: str | None,
             ) -> dict[str, Any]:
                 ontology_repo = OntologyRepository(session)
@@ -248,14 +261,17 @@ async def _execute_run(
                     ontology_instance=pseudo_instance,
                     llm_client=llm_client,
                     model=model,
+                    instructions=instructions,
                 )
                 entity_phase = await _run_entity_proposal_phase(
                     run_id=run_id,
                     llm_client=llm_client,
                     model=model,
                     ontology_definitions=ontology_definitions,
+                    allowed_ontology_names=_build_allowed_ontology_map(ontology_entities),
                     existing_nodes=existing_nodes,
                     chunk_results=chunking_phase["chunk_results"],
+                    instructions=instructions,
                 )
                 scene_phase = _run_scene_proposal_phase(
                     run_id=run_id,
@@ -269,6 +285,7 @@ async def _execute_run(
                     model=model,
                     proposed_scenes=scene_phase["proposed_scenes"],
                     author_id=agent.id,
+                    instructions=instructions,
                 )
 
                 milestone_titles_by_scene: dict[str, list[str]] = {}

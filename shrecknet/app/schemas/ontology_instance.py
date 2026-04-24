@@ -385,6 +385,56 @@ class OntologyInstanceCountResponse(BaseModel):
     total: int
 
 
+class OntologyInstanceSceneCountsRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    instance_ids: list[str] = Field(
+        ...,
+        min_length=1,
+        max_length=200,
+        description=(
+            "Ontology instance ids to aggregate scene counts for. "
+            "Duplicate values are deduplicated server-side while preserving first-seen order."
+        ),
+    )
+
+    @field_validator("instance_ids", mode="before")
+    def validate_instance_ids(cls, value: Any) -> list[str]:
+        if value is None:
+            raise ValueError("instance_ids cannot be empty")
+        if not isinstance(value, list):
+            raise ValueError("instance_ids must be a list of strings")
+
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for raw in value:
+            if raw is None:
+                continue
+            cleaned = str(raw).strip()
+            if not cleaned:
+                continue
+            if cleaned in seen:
+                continue
+            seen.add(cleaned)
+            normalized.append(cleaned)
+
+        if not normalized:
+            raise ValueError("instance_ids cannot be empty")
+        if len(normalized) > 200:
+            raise ValueError("instance_ids cannot contain more than 200 unique ids")
+        return normalized
+
+
+class OntologyInstanceSceneCountItem(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    instance_id: str
+    scene_count: int
+
+
+class OntologyInstanceSceneCountsResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    results: list[OntologyInstanceSceneCountItem] = Field(default_factory=list)
+
+
 class OntologyInstanceEntityTypeClearRequest(BaseModel):
     model_config = ConfigDict(extra="ignore")
     ontology_id: int

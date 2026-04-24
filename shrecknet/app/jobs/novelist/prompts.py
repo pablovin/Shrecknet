@@ -1,5 +1,29 @@
-"""Prompt set for the scene-centric Novelist pipeline."""
+"""Prompt set for the scene-centric Novelist pipeline.
 
+Step mapping (orchestrator):
+- continuity_brief: CONTINUITY_BRIEF_PROMPT
+- step_1_scaffolding: deterministic (no novelist LLM prompt)
+- step_2_scene_exploration: NOVELIST_SCENE_EXPLORATION_PROMPT
+- step_3_scene_context_creation: NOVELIST_SCENE_CONTEXT_CREATION_PROMPT
+- step_4_scene_intent: NOVELIST_SCENE_INTENT_PROMPT
+- step_5_scene_prose: NOVELIST_SCENE_PROSE_PROMPT
+- step_6_scene_critic: NOVELIST_SCENE_CRITIC_PROMPT
+- step_7_scene_revision: NOVELIST_SCENE_REVISION_PROMPT
+"""
+
+# Prompt inventory for quick lookup in logs/debug UIs.
+NOVELIST_PROMPT_BY_STEP = {
+    "continuity_brief": "CONTINUITY_BRIEF_PROMPT",
+    "step_1_scaffolding": "deterministic_no_prompt",
+    "step_2_scene_exploration": "NOVELIST_SCENE_EXPLORATION_PROMPT",
+    "step_3_scene_context_creation": "NOVELIST_SCENE_CONTEXT_CREATION_PROMPT",
+    "step_4_scene_intent": "NOVELIST_SCENE_INTENT_PROMPT",
+    "step_5_scene_prose": "NOVELIST_SCENE_PROSE_PROMPT",
+    "step_6_scene_critic": "NOVELIST_SCENE_CRITIC_PROMPT",
+    "step_7_scene_revision": "NOVELIST_SCENE_REVISION_PROMPT",
+}
+
+# Continuity context prompt (previous session summary helper).
 CONTINUITY_BRIEF_PROMPT = """You are extracting compact continuity context from the previous session text.
 
 Output requirements:
@@ -21,6 +45,7 @@ Strict rules:
 - If frontend instructions provide corrected names/labels, always use those corrected forms.
 - Return plain text lines only."""
 
+# Step 1: scaffolding normalization (legacy, currently unused in pipeline).
 NOVELIST_SCAFFOLD_NORMALIZATION_PROMPT = """You are normalizing Architect-derived scene scaffolding for a scene-centric novelist pipeline.
 
 Task:
@@ -49,59 +74,61 @@ Return ONLY valid JSON in this exact shape:
   ]
 }"""
 
-NOVELIST_SCENE_PACKAGE_PROMPT = """You are converting a normalized scene scaffold into a scene writing package.
+# Step 2: scene package exploration.
+NOVELIST_SCENE_EXPLORATION_PROMPT = """You are exploring one scene to produce only missing planning details.
 
 Task:
-For each input scene, produce a package with these fields:
-- scene_id
-- source_paragraphs
-- raw_scene_text
-- scene_summary
+For the given scene, produce ONLY:
+- prior_knowledge_needed (max 5 items, each with question+answer)
+- scene_tone (one short paragraph)
 - scene_goal
-- milestones
-- related_entities
-- temporal_position_hint
-- tone_hint
-- open_questions_for_retrieval
 
 Strict rules:
 - Output JSON only.
-- Keep open_questions_for_retrieval short and concrete.
-- Do not rewrite raw_scene_text.
+- Do not repeat fields already provided by input.
+- Questions must ask for prior knowledge useful to write this scene.
+- Keep questions concrete and continuity-focused.
+- Do not invent events outside the scene context.
 
 Return ONLY valid JSON in this exact shape:
 {
-  "scene_packages": [
-    {
-      "scene_id": "scene-001",
-      "source_paragraphs": [1, 2, 3],
-      "raw_scene_text": "...",
-      "scene_summary": "...",
-      "scene_goal": "...",
-      "milestones": ["..."],
-      "related_entities": ["..."],
-      "temporal_position_hint": "early|middle|late",
-      "tone_hint": "...",
-      "open_questions_for_retrieval": ["..."]
-    }
-  ]
+  "scene_id": "scene-001",
+  "prior_knowledge_needed": [
+    {"question": "...", "answer": "..."}
+  ],
+  "scene_tone": "...",
+  "scene_goal": "..."
 }"""
 
-NOVELIST_ELDER_QUERY_PROMPT = """You are generating scene-local Elder retrieval questions.
+# Step 3: retrieval-informed narrative context creation.
+NOVELIST_SCENE_CONTEXT_CREATION_PROMPT = """You are creating focused narrative context from scene data and retrieved Q/A evidence.
 
 Task:
-- Create 2 to 4 concrete retrieval questions for this scene package.
+Using only the provided scene payload and the provided questions/answers, output ONLY:
+- prior_events
+- relationship_summaries
+- personality_reminders
+- unresolved_tensions
+- style_details
+- contradiction_warnings
 
 Strict rules:
-- Questions must target continuity and dramatic relevance only.
-- Do not ask Elder to invent new plot events.
-- Questions should help retrieve prior events, relationships, personality cues, unresolved tensions, style details, and contradiction risks.
+- Output JSON only.
+- Each field should be a short but detailed paragraph.
+- Do not invent unsupported facts.
+- If evidence is weak for one field, still provide the best grounded compact summary.
 
 Return ONLY valid JSON in this exact shape:
 {
-  "queries": ["..."]
+  "prior_events": "...",
+  "relationship_summaries": "...",
+  "personality_reminders": "...",
+  "unresolved_tensions": "...",
+  "style_details": "...",
+  "contradiction_warnings": "..."
 }"""
 
+# Step 4: scene intent drafting.
 NOVELIST_SCENE_INTENT_PROMPT = """You are drafting a compact scene intent.
 
 Task:
@@ -109,7 +136,6 @@ Task:
 
 Return ONLY valid JSON in this exact shape:
 {
-  "scene_id": "scene-001",
   "what_happens": ["..."],
   "emotional_progression": ["..."],
   "speaking_goals": ["..."],
@@ -117,16 +143,19 @@ Return ONLY valid JSON in this exact shape:
   "forbidden_contradictions": ["..."]
 }"""
 
+# Step 5: scene prose generation.
 NOVELIST_SCENE_PROSE_PROMPT = """You are writing one scene in third-person prose.
 
 Strict rules:
-- Write exactly 1 paragraph plus 1 dialogue block when possible.
-- Keep dialogue and narration balanced.
+- Output full HTML only.
+- Use only <p> and <blockquote> tags.
+- Write one strong scene passage with narration, description, tension, and dialogue when needed.
 - Keep third-person perspective.
-- Return valid HTML only, using <p> and <blockquote> only.
-- DO NOT output markdown or any text outside HTML.
+- DO NOT output markdown, JSON, or commentary.
+- Output only the scene HTML.
 """
 
+# Step 6: full-draft critic pass.
 NOVELIST_SCENE_CRITIC_PROMPT = """You are a structural critic over one complete chapter draft.
 
 Task:
@@ -139,6 +168,7 @@ Return ONLY valid JSON in this exact shape:
   "by_scene": {}
 }"""
 
+# Step 7: full-draft revision pass.
 NOVELIST_SCENE_REVISION_PROMPT = """Revise the full draft using critic feedback.
 
 Strict rules:

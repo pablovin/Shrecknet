@@ -27,6 +27,8 @@ from app.schemas.ontology_instance import (
     OntologyInstanceCreate,
     OntologyInstanceEntityCreate,
     OntologyInstanceRead,
+    OntologyInstanceSceneCountItem,
+    OntologyInstanceSceneCountsResponse,
     OntologyInstanceUpdate,
     OntologyInstanceSearchHit,
     OntologyInstanceSearchResponse,
@@ -246,7 +248,7 @@ class OntologyInstanceService:
 
     # ------------------------------------------------------------------
     async def create_instance(
-        self, payload: OntologyInstanceCreate
+        self, payload: OntologyInstanceCreate, *, trigger_background_jobs: bool = True
     ) -> OntologyInstanceRead:
         ontology = await self.repository.get(payload.ontology_id)
         if not ontology:
@@ -451,11 +453,12 @@ class OntologyInstanceService:
             if payload.scenes:
                 await self._replace_scenes_for_instance(instance_id, payload.scenes)
             instance = await self.get_instance(instance_id)
-            from app.tasks.neo4j_embedding import embed_nodes as embed_nodes_task
+            if trigger_background_jobs:
+                from app.tasks.neo4j_embedding import embed_nodes as embed_nodes_task
 
-            _enqueue_link_instance(instance.instance_id)
-            if impacted_entity_ids:
-                embed_nodes_task.delay(payload.ontology_id, sorted(impacted_entity_ids))
+                _enqueue_link_instance(instance.instance_id)
+                if impacted_entity_ids:
+                    embed_nodes_task.delay(payload.ontology_id, sorted(impacted_entity_ids))
             return instance
 
     async def list_instances(
@@ -738,6 +741,43 @@ class OntologyInstanceService:
             results=ordered_results,
             missing_entity_instance_ids=missing_ids,
         )
+
+    async def count_scenes_by_instances(
+        self,
+        *,
+        instance_ids: list[str],
+    ) -> OntologyInstanceSceneCountsResponse:
+        requested_ids = _normalize_id_list(instance_ids)
+        if not requested_ids:
+            raise ValueError("instance_ids cannot be empty")
+        if len(requested_ids) > 200:
+            raise ValueError("instance_ids cannot contain more than 200 ids")
+
+        result = await self.graph_session.run(
+            """
+            UNWIND $instance_ids AS instance_id
+            OPTIONAL MATCH (:OntologyInstance {instance_id: instance_id})-[rel]->(scene)
+            WHERE type(rel) = 'HAS_SCENE' AND 'Scene' IN labels(scene)
+            RETURN instance_id AS instance_id, count(DISTINCT scene) AS scene_count
+            """,
+            instance_ids=requested_ids,
+        )
+        rows = await result.data()
+        counts_by_instance: dict[str, int] = {}
+        for row in rows:
+            instance_id = _normalize_optional_str(str(row.get("instance_id") or ""))
+            if not instance_id:
+                continue
+            counts_by_instance[instance_id] = int(row.get("scene_count") or 0)
+
+        ordered_results = [
+            OntologyInstanceSceneCountItem(
+                instance_id=instance_id,
+                scene_count=counts_by_instance.get(instance_id, 0),
+            )
+            for instance_id in requested_ids
+        ]
+        return OntologyInstanceSceneCountsResponse(results=ordered_results)
 
     async def _perform_direct_search(
         self,
@@ -1260,8 +1300,10 @@ class OntologyInstanceService:
             if target_entity_ids:
                 chunk_count_result = await tx.run(
                     """
-                    MATCH (e:EntityInstance)-[:HAS_CHUNK]->(chunk:EntityChunk)
+                    MATCH (e:EntityInstance)-[chunk_rel]->(chunk)
                     WHERE e.entity_instance_id IN $entity_ids
+                      AND type(chunk_rel) = 'HAS_CHUNK'
+                      AND 'EntityChunk' IN labels(chunk)
                     RETURN count(chunk) AS chunk_count
                     """,
                     entity_ids=list(target_entity_ids),
@@ -1278,8 +1320,10 @@ class OntologyInstanceService:
                 )
                 await tx.run(
                     """
-                    MATCH (e:EntityInstance)-[:HAS_CHUNK]->(chunk:EntityChunk)
+                    MATCH (e:EntityInstance)-[chunk_rel]->(chunk)
                     WHERE e.entity_instance_id IN $entity_ids
+                      AND type(chunk_rel) = 'HAS_CHUNK'
+                      AND 'EntityChunk' IN labels(chunk)
                     DETACH DELETE chunk
                     """,
                     entity_ids=list(target_entity_ids),
@@ -1299,7 +1343,9 @@ class OntologyInstanceService:
                 WHERE toInteger(i.ontology_id) = toInteger($ontology_id)
                 OPTIONAL MATCH (i)-[:HAS_ENTITY]->(entity:EntityInstance)
                 WITH i, count(entity) AS remaining_entities
-                OPTIONAL MATCH (i)-[:HAS_EVENT]->(event:Event)
+                OPTIONAL MATCH (i)-[event_rel]->(event)
+                WHERE type(event_rel) = 'HAS_EVENT'
+                  AND 'Event' IN labels(event)
                 WITH i, remaining_entities, count(event) AS remaining_events
                 WHERE remaining_entities = 0 AND remaining_events = 0
                 RETURN i.instance_id AS instance_id
@@ -1368,8 +1414,12 @@ class OntologyInstanceService:
                 """
                 MATCH (i:OntologyInstance)
                 WHERE toInteger(i.ontology_id) = toInteger($ontology_id)
-                OPTIONAL MATCH (i)-[:HAS_EVENT]->(event:Event)
-                OPTIONAL MATCH (event)-[:HAS_CHUNK]->(chunk:EntityChunk)
+                OPTIONAL MATCH (i)-[event_rel]->(event)
+                WHERE type(event_rel) = 'HAS_EVENT'
+                  AND 'Event' IN labels(event)
+                OPTIONAL MATCH (event)-[chunk_rel]->(chunk)
+                WHERE type(chunk_rel) = 'HAS_CHUNK'
+                  AND 'EntityChunk' IN labels(chunk)
                 RETURN
                     count(DISTINCT event) AS legacy_event_count,
                     count(DISTINCT chunk) AS legacy_chunk_count
@@ -1386,16 +1436,22 @@ class OntologyInstanceService:
 
             await tx.run(
                 """
-                MATCH (i:OntologyInstance)-[:HAS_EVENT]->(event:Event)-[:HAS_CHUNK]->(chunk:EntityChunk)
+                MATCH (i:OntologyInstance)-[event_rel]->(event)-[chunk_rel]->(chunk)
                 WHERE toInteger(i.ontology_id) = toInteger($ontology_id)
+                  AND type(event_rel) = 'HAS_EVENT'
+                  AND 'Event' IN labels(event)
+                  AND type(chunk_rel) = 'HAS_CHUNK'
+                  AND 'EntityChunk' IN labels(chunk)
                 DETACH DELETE chunk
                 """,
                 ontology_id=ontology_id,
             )
             await tx.run(
                 """
-                MATCH (i:OntologyInstance)-[:HAS_EVENT]->(event:Event)
+                MATCH (i:OntologyInstance)-[event_rel]->(event)
                 WHERE toInteger(i.ontology_id) = toInteger($ontology_id)
+                  AND type(event_rel) = 'HAS_EVENT'
+                  AND 'Event' IN labels(event)
                 DETACH DELETE event
                 """,
                 ontology_id=ontology_id,
@@ -1907,7 +1963,7 @@ class OntologyInstanceService:
             """
             MATCH (:OntologyInstance {instance_id: $instance_id})-[rel]->(scene)
             WHERE type(rel) = 'HAS_SCENE' AND 'Scene' IN labels(scene)
-            RETURN scene.id AS scene_id
+            RETURN scene['id'] AS scene_id
             """,
             instance_id=instance_id,
         )
@@ -2121,11 +2177,17 @@ class OntologyInstanceService:
 
         local_order_result = await self.graph_session.run(
             """
-            MATCH (scene:Scene {id: $scene_id})
-            OPTIONAL MATCH (scene)-[:FOLLOWED_BY]->(followed:Scene)
-            OPTIONAL MATCH (scene)-[:PRECEDED_BY]->(preceded:Scene)
-            RETURN followed.id AS followed_by_scene_id,
-                   preceded.id AS preceded_by_scene_id
+            MATCH (scene)
+            WHERE 'Scene' IN labels(scene)
+              AND scene['id'] = $scene_id
+            OPTIONAL MATCH (scene)-[followed_rel]->(followed)
+            WHERE type(followed_rel) = 'FOLLOWED_BY'
+              AND 'Scene' IN labels(followed)
+            OPTIONAL MATCH (scene)-[preceded_rel]->(preceded)
+            WHERE type(preceded_rel) = 'PRECEDED_BY'
+              AND 'Scene' IN labels(preceded)
+            RETURN followed['id'] AS followed_by_scene_id,
+                   preceded['id'] AS preceded_by_scene_id
             """,
             scene_id=scene_id,
         )
@@ -2298,7 +2360,9 @@ class OntologyInstanceService:
         if not row or int(row.get("count") or 0) == 0:
             raise ValueError("Scene not found")
 
-    async def create_scene(self, instance_id: str, payload: SceneCreate) -> SceneRead:
+    async def create_scene(
+        self, instance_id: str, payload: SceneCreate, *, trigger_background_jobs: bool = True
+    ) -> SceneRead:
         ontology_id = await self._get_instance_ontology_id(instance_id)
         scene_id = _normalize_optional_str(payload.id) or str(uuid4())
         if scene_id in await self._scene_ids_for_instance(instance_id):
@@ -2483,12 +2547,13 @@ class OntologyInstanceService:
         else:
             await tx.commit()
             await tx.close()
-        _enqueue_embed_reconciliation(
-            ontology_id=ontology_id,
-            instance_id=instance_id,
-            node_ids=[],
-            author_id="scene-create",
-        )
+        if trigger_background_jobs:
+            _enqueue_embed_reconciliation(
+                ontology_id=ontology_id,
+                instance_id=instance_id,
+                node_ids=[],
+                author_id="scene-create",
+            )
         return await self.get_scene(instance_id, scene_id)
 
     async def _replace_scenes_for_instance(
@@ -2776,7 +2841,12 @@ class OntologyInstanceService:
         raise ValueError("Milestone not found")
 
     async def create_milestone(
-        self, instance_id: str, scene_id: str, payload: MilestoneCreate
+        self,
+        instance_id: str,
+        scene_id: str,
+        payload: MilestoneCreate,
+        *,
+        trigger_background_jobs: bool = True,
     ) -> MilestoneRead:
         scene = await self.get_scene(instance_id, scene_id)
         ontology_id = scene.ontology_id
@@ -2856,12 +2926,13 @@ class OntologyInstanceService:
             await tx.commit()
             await tx.close()
 
-        _enqueue_embed_reconciliation(
-            ontology_id=ontology_id,
-            instance_id=instance_id,
-            node_ids=[],
-            author_id="milestone-create",
-        )
+        if trigger_background_jobs:
+            _enqueue_embed_reconciliation(
+                ontology_id=ontology_id,
+                instance_id=instance_id,
+                node_ids=[],
+                author_id="milestone-create",
+            )
 
         # No milestone count or boundary validation enforced
         return await self.get_milestone(instance_id, scene_id, milestone_id)

@@ -129,9 +129,12 @@ class Settings(BaseSettings):
     model_synthesis: str = "gpt-4o-mini"
     model_validation: str = "gpt-4o-mini"
     model_style: str = "gpt-4o-mini"
-    model_architect_extract: str = "gpt-4o-mini"
+    model_architect_extract: str = "gpt-5.4-nano"
     model_novelist_draft: str = "gpt-5.1"
     model_novelist_critic: str = "gpt-4o-mini"
+    model_novelist_scene_exploration: str = "gpt-5.4-mini"
+    model_novelist_scene_context_creation: str = "gpt-5.4-nano"
+    model_elder_query: str = "gpt-5.4-nano"
     default_top_k: int = 8
     embedding_model_id: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
     embedding_dimension: int = 384

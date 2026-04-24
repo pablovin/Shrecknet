@@ -47,6 +47,12 @@ class ElderOrchestrator:
         self.max_concurrency = 10
         self.last_retrieval_debug: list[dict[str, Any]] = []
 
+    def _query_model(self, fallback_task: LLMTask) -> str:
+        model = getattr(self.model_policy, "model_elder_query", None)
+        if isinstance(model, str) and model.strip():
+            return model.strip()
+        return self.model_policy.get_model(fallback_task)
+
     async def execute(
         self,
         agent: Agent,
@@ -122,12 +128,16 @@ class ElderOrchestrator:
 
         # Layer 5: grounded synthesis
         t5 = time.monotonic()
-        answer = await self._synthesize(
-            agent=agent,
-            query=request.query,
-            sources=consolidated_sources,
-        )
-        timings["synthesize_ms"] = round((time.monotonic() - t5) * 1000, 2)
+        if request.mode == "context":
+            answer = ""
+            timings["synthesize_ms"] = 0.0
+        else:
+            answer = await self._synthesize(
+                agent=agent,
+                query=request.query,
+                sources=consolidated_sources,
+            )
+            timings["synthesize_ms"] = round((time.monotonic() - t5) * 1000, 2)
 
         timings["total_ms"] = round((time.monotonic() - overall_start) * 1000, 2)
 
@@ -173,7 +183,7 @@ class ElderOrchestrator:
         trace: list[TraceStep],
         entities_hint: Optional[str] = None,
     ) -> list[DecomposedIntent]:
-        model = self.model_policy.get_model(LLMTask.DECOMPOSE)
+        model = self._query_model(LLMTask.DECOMPOSE)
 
         messages: list[dict[str, str]] = []
         if chat_history:
@@ -523,7 +533,7 @@ class ElderOrchestrator:
                 "Please try rephrasing or ask for a narrower scope."
             )
 
-        model = self.model_policy.get_model(LLMTask.SYNTHESIS)
+        model = self._query_model(LLMTask.SYNTHESIS)
         source_lines: list[str] = []
         for src in sources[:12]:
             source_lines.append(

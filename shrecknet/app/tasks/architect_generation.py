@@ -459,7 +459,8 @@ async def _execute_generation(
                             )
                         ],
                         scenes=[],
-                    )
+                    ),
+                    trigger_background_jobs=False,
                 )
                 if not created_instance.entities:
                     raise ValueError(
@@ -604,7 +605,11 @@ async def _execute_generation(
                     local_order=SceneLocalOrder(preceded_by_scene_id=previous_scene_id),
                     milestones=[],
                 )
-                await service.create_scene(run.ontology_instance_id, payload)
+                await service.create_scene(
+                    run.ontology_instance_id,
+                    payload,
+                    trigger_background_jobs=False,
+                )
                 previous_scene_id = scene_id
                 created_scenes += 1
                 created_scene_ids.append(scene_id)
@@ -715,7 +720,12 @@ async def _execute_generation(
                         derived_from=MilestoneDerivedFrom(entity_instance_id=source_entity_id),
                         relates_to=relates,
                     )
-                    await service.create_milestone(run.ontology_instance_id, scene_id, payload)
+                    await service.create_milestone(
+                        run.ontology_instance_id,
+                        scene_id,
+                        payload,
+                        trigger_background_jobs=False,
+                    )
                     prev_milestone_id = milestone_id
                     created_milestones += 1
                     created_milestone_ids.append(milestone_id)
@@ -757,11 +767,12 @@ async def _execute_generation(
             )
             excluded_from_enrichment = len(set(impacted_entity_ids) - set(enrichment_target_entity_ids))
             logger.info(
-                "architect.generate run=%s step=4 start impacted_entities=%d enrichment_targets=%d excluded_no_scene_or_milestone_link=%d",
+                "architect.generate run=%s step=4 start impacted_entities=%d enrichment_targets=%d excluded_no_scene_or_milestone_link=%d target_ids_sample=%s",
                 run_id,
                 len(impacted_entity_ids),
                 len(enrichment_target_entity_ids),
                 excluded_from_enrichment,
+                enrichment_target_entity_ids[:20],
             )
 
             refreshed_instance = await service.get_instance(run.ontology_instance_id)
@@ -810,11 +821,13 @@ async def _execute_generation(
                 enrichment_stats = await _apply_enrichment_updates(
                     graph_session=graph_session,
                     generator=generator,
+                    debug_job_id=job_id,
                     target_entity_ids=enrichment_target_entity_ids,
                     entity_definitions_map=entity_definitions_map,
                     existing_entities_map=current_entities_map,
                     alias_to_entity_id=alias_to_entity_id,
                     scene_proposals=approved_scenes,
+                    milestone_groups=milestones_per_scene,
                     scene_ref_to_entities=scene_ref_to_entities,
                     proposal_scene_refs=proposal_scene_refs,
                     entity_scene_refs=entity_scene_refs,
@@ -825,11 +838,13 @@ async def _execute_generation(
                 await llm_client.aclose()
 
             logger.info(
-                "architect.generate run=%s step=4 done elapsed=%ss scanned=%d skipped=%d summary_updates=%d property_updates=%d relationship_creates=%d relationship_updates=%d",
+                "architect.generate run=%s step=4 done elapsed=%ss scanned=%d processed=%d fallback=%d failed=%d summary_updates=%d property_updates=%d relationship_creates=%d relationship_updates=%d",
                 run_id,
                 _elapsed_seconds(step4_started_at),
                 enrichment_stats["scanned_entities"],
-                enrichment_stats["skipped_entities"],
+                enrichment_stats["processed_entities"],
+                enrichment_stats["fallback_entities"],
+                enrichment_stats["failed_entities"],
                 enrichment_stats["summary_updates"],
                 enrichment_stats["property_updates"],
                 enrichment_stats["relationship_creates"],
@@ -925,11 +940,13 @@ async def _apply_enrichment_updates(
     *,
     graph_session: Any,
     generator: EntityGenerator,
+    debug_job_id: int | None,
     target_entity_ids: list[str],
     entity_definitions_map: dict[int, dict[str, Any]],
     existing_entities_map: dict[str, dict[str, Any]],
     alias_to_entity_id: dict[str, str],
     scene_proposals: list[dict[str, Any]],
+    milestone_groups: list[dict[str, Any]],
     scene_ref_to_entities: dict[str, set[str]],
     proposal_scene_refs: dict[str, list[str]],
     entity_scene_refs: dict[str, set[str]],
@@ -938,12 +955,76 @@ async def _apply_enrichment_updates(
 ) -> dict[str, int]:
     stats = {
         "scanned_entities": 0,
-        "skipped_entities": 0,
+        "processed_entities": 0,
+        "fallback_entities": 0,
+        "failed_entities": 0,
         "summary_updates": 0,
         "property_updates": 0,
         "relationship_creates": 0,
         "relationship_updates": 0,
     }
+
+    # ------------------------------------------------------------------
+    missing_entity_ids = [
+        entity_id
+        for entity_id in target_entity_ids
+        if entity_id not in existing_entities_map
+    ]
+    if missing_entity_ids:
+        hydration_result = await graph_session.run(
+            """
+            UNWIND $entity_ids AS entity_id
+            MATCH (e:EntityInstance {entity_instance_id: entity_id})
+            RETURN
+                e.entity_instance_id AS entity_id,
+                e.alias AS alias,
+                e.entity_definition_id AS definition_id,
+                coalesce(e.text, '') AS text,
+                coalesce(e.autogenerated_text, '') AS autogenerated_text,
+                coalesce(e.properties, '{}') AS properties
+            """,
+            entity_ids=missing_entity_ids,
+        )
+        hydrated_rows = await hydration_result.data()
+        hydrated_ids: set[str] = set()
+        for row in hydrated_rows:
+            entity_id = str(row.get("entity_id") or "").strip()
+            if not entity_id:
+                continue
+            hydrated_ids.add(entity_id)
+            raw_properties = row.get("properties")
+            parsed_properties: list[dict[str, Any]] = []
+            if isinstance(raw_properties, str):
+                try:
+                    decoded = json.loads(raw_properties)
+                except Exception:
+                    decoded = {}
+            elif isinstance(raw_properties, dict):
+                decoded = raw_properties
+            else:
+                decoded = {}
+            if isinstance(decoded, dict):
+                parsed_properties = [
+                    {"definition_id": int(k), "value": v}
+                    for k, v in decoded.items()
+                    if str(k).isdigit()
+                ]
+            existing_entities_map[entity_id] = {
+                "alias": str(row.get("alias") or "").strip(),
+                "definition_id": row.get("definition_id"),
+                "properties": parsed_properties,
+                "relationships": [],
+                "text": str(row.get("text") or ""),
+                "autogenerated_text": str(row.get("autogenerated_text") or ""),
+            }
+        unresolved_ids = sorted(set(missing_entity_ids) - hydrated_ids)
+        logger.info(
+            "architect.generate enrichment_hydration requested=%d hydrated=%d unresolved=%d unresolved_ids=%s",
+            len(missing_entity_ids),
+            len(hydrated_ids),
+            len(unresolved_ids),
+            unresolved_ids[:20],
+        )
 
     # ------------------------------------------------------------------
     # Phase 1: Prepare per-entity context and run LLM extraction in
@@ -955,11 +1036,19 @@ async def _apply_enrichment_updates(
     semaphore = asyncio.Semaphore(_ENRICHMENT_CONCURRENCY)
 
     async def _prepare_and_extract(entity_id: str):
-        """Return (entity_id, entity_data, entity_def, allowed_targets, extracted)
-        or None when the entity should be skipped."""
+        """Prepare enrichment inputs and run extraction for one entity."""
         entity_data = existing_entities_map.get(entity_id)
+        anomalies: list[str] = []
         if not entity_data:
-            return None
+            anomalies.append("missing_entity_data")
+            entity_data = {
+                "alias": entity_id,
+                "definition_id": None,
+                "properties": [],
+                "relationships": [],
+                "text": "",
+                "autogenerated_text": "",
+            }
 
         alias = entity_data.get("alias") or ""
         scene_refs = set(proposal_scene_refs.get(_norm(alias), []))
@@ -974,39 +1063,142 @@ async def _apply_enrichment_updates(
                     scene_refs.add(str(scene.get("scene_ref") or ""))
 
         chunks: list[str] = []
+        scenes_for_context: list[dict[str, Any]] = []
         allowed_targets: set[str] = set()
+        def _entity_ref(entity_instance_id: str) -> dict[str, str]:
+            target_data = existing_entities_map.get(entity_instance_id) or {}
+            target_def = entity_definitions_map.get(target_data.get("definition_id")) or {}
+            return {
+                "name": str(target_data.get("alias") or entity_instance_id),
+                "id": str(entity_instance_id),
+                "type": str(target_def.get("name") or "Entity"),
+            }
+
         for scene in scene_proposals:
             scene_ref = str(scene.get("scene_ref") or "")
             if scene_ref in scene_refs:
-                text = (scene.get("scene_text") or "").strip()
-                if text:
-                    chunks.append(text)
+                # Architect scene proposals provide scene_text/scene_description.
+                context_parts = [
+                    str(scene.get("scene_text") or "").strip(),
+                    str(scene.get("scene_description") or "").strip(),
+                ]
+                context = "\n".join(part for part in context_parts if part)
+                if context:
+                    chunks.append(context)
                 allowed_targets |= scene_ref_to_entities.get(scene_ref, set())
+                scenes_for_context.append(
+                    {
+                        "scene_ref": scene_ref,
+                        "title": str(scene.get("effective_name") or scene.get("scene_name") or "Scene").strip(),
+                        "description": str(scene.get("scene_description") or scene.get("scene_text") or "").strip(),
+                        "related_entities": [
+                            _entity_ref(target_id)
+                            for target_id in sorted(scene_ref_to_entities.get(scene_ref, set()))
+                        ],
+                    }
+                )
+
+        milestones_for_context: list[dict[str, Any]] = []
+        milestone_refs = {item.get("scene_ref") for item in scenes_for_context}
+        for group in milestone_groups:
+            scene_ref = str(group.get("scene_ref") or "")
+            if scene_ref not in milestone_refs:
+                continue
+            for milestone in (group.get("milestones") or []):
+                related = [
+                    str(
+                        _resolve_related_target_entity_id(
+                            related=rel,
+                            proposal_to_entity_id={},
+                            alias_to_entity_id=alias_to_entity_id,
+                            alias_candidates=[rel.get("entity"), rel.get("alias"), rel.get("canonical")],
+                            fallback_entity_instance_id=rel.get("entity_instance_id"),
+                            valid_entity_ids=set(existing_entities_map.keys()) | set(target_entity_ids),
+                        )
+                        or rel.get("entity_instance_id")
+                        or rel.get("entity")
+                        or rel.get("alias")
+                        or ""
+                    ).strip()
+                    for rel in (milestone.get("effective_related_to") or [])
+                ]
+                milestones_for_context.append(
+                    {
+                        "scene_ref": scene_ref,
+                        "milestone_ref": str(milestone.get("milestone_ref") or ""),
+                        "title": str(milestone.get("title") or milestone.get("label") or "Milestone").strip(),
+                        "description": str(milestone.get("description") or "").strip(),
+                        "related_entities": [
+                            _entity_ref(item)
+                            for item in related
+                            if item and (item in existing_entities_map)
+                        ],
+                    }
+                )
 
         if not chunks:
-            return None
+            anomalies.append("no_context")
+            chunks = [
+                "No scene text context was linked to this entity in step 4. "
+                "Use existing entity state and global text context to infer safe updates."
+            ]
 
         definition_id = entity_data.get("definition_id")
-        entity_def = entity_definitions_map.get(definition_id)
+        entity_def = entity_definitions_map.get(definition_id) if definition_id is not None else None
         if not entity_def:
-            return None
+            anomalies.append("missing_definition")
+            entity_def = {
+                "id": definition_id if isinstance(definition_id, int) else -1,
+                "name": "Unknown Entity",
+                "properties": [],
+                "relationships": [],
+            }
+            if definition_id is None:
+                definition_id = -1
         related_entities_for_prompt: list[dict[str, Any]] = []
+        compatible_destiny_ids = {
+            int(rel.get("destiny_entity_id"))
+            for rel in (entity_def.get("relationships") or [])
+            if rel.get("destiny_entity_id") is not None
+            and str(rel.get("destiny_entity_id")).isdigit()
+        }
         for target_id in sorted(allowed_targets):
             target_data = existing_entities_map.get(target_id) or {}
             target_def_id = target_data.get("definition_id")
+            try:
+                target_def_id_int = int(target_def_id) if target_def_id is not None else None
+            except (TypeError, ValueError):
+                target_def_id_int = None
+            if compatible_destiny_ids and target_def_id_int not in compatible_destiny_ids:
+                continue
             target_def = entity_definitions_map.get(target_def_id) or {}
             related_entities_for_prompt.append(
                 {
                     "entity_instance_id": target_id,
-                    "alias": target_data.get("alias") or target_id,
+                    "name": target_data.get("alias") or target_id,
                     "entity_type_name": target_def.get("name") or "Entity",
                 }
             )
+        try:
+            definition_id_int = int(definition_id)
+        except (TypeError, ValueError):
+            definition_id_int = -1
+            if "invalid_definition_id" not in anomalies:
+                anomalies.append("invalid_definition_id")
+
+        context_package = {
+            "entity_id": entity_id,
+            "entity_alias": alias or entity_id,
+            "allowed_relationship_targets": sorted(allowed_targets),
+            "related_entities": related_entities_for_prompt,
+            "scenes": scenes_for_context,
+            "milestones": milestones_for_context,
+        }
 
         async with semaphore:
             extracted = await generator._extract_properties_and_relationships(
-                entity_definition_id=definition_id,
-                entity_alias=alias,
+                entity_definition_id=definition_id_int,
+                entity_alias=alias or entity_id,
                 entity_type_name=entity_def.get("name") or "Entity",
                 properties_catalog=entity_def.get("properties") or [],
                 relationships_catalog=entity_def.get("relationships") or [],
@@ -1018,9 +1210,22 @@ async def _apply_enrichment_updates(
                 existing_autogenerated_text=entity_data.get("autogenerated_text") or "",
                 existing_properties=entity_data.get("properties") or [],
                 existing_relationships=entity_data.get("relationships") or [],
+                debug_job_id=debug_job_id,
+                debug_entity_id=entity_id,
+                debug_anomalies=anomalies,
+                debug_context_package=context_package,
+                update_response_mode="strict_name_based",
             )
 
-        return (entity_id, entity_data, entity_def, allowed_targets, extracted)
+        return {
+            "entity_id": entity_id,
+            "entity_data": entity_data,
+            "entity_def": entity_def,
+            "allowed_targets": allowed_targets,
+            "extracted": extracted,
+            "anomalies": anomalies,
+            "context_package": context_package,
+        }
 
     stats["scanned_entities"] = len(target_entity_ids)
     extraction_tasks = [_prepare_and_extract(eid) for eid in target_entity_ids]
@@ -1039,15 +1244,23 @@ async def _apply_enrichment_updates(
     for target_entity_id in target_entity_ids:
         result_item = extraction_by_target.get(target_entity_id)
         if result_item is None:
-            stats["skipped_entities"] += 1
+            stats["failed_entities"] += 1
             logger.info(
-                "architect.generate enrichment entity_id=%s status=not_updated reason=skipped_no_context_or_definition auto_text_50= attributes_50= relationships_added=0 summary_updated=false properties_updated=false",
+                "architect.generate enrichment entity_id=%s status=not_updated reason=processing_failed auto_text_50= attributes_50= relationships_added=0 summary_updated=false properties_updated=false",
                 target_entity_id,
             )
             continue
 
-        entity_id, entity_data, entity_def, allowed_targets, extracted = result_item
+        entity_id = result_item["entity_id"]
+        entity_data = result_item["entity_data"]
+        entity_def = result_item["entity_def"]
+        allowed_targets = result_item["allowed_targets"]
+        extracted = result_item["extracted"]
+        anomalies = result_item.get("anomalies") or []
         entity_alias = str(entity_data.get("alias") or "").strip() or entity_id
+        stats["processed_entities"] += 1
+        if anomalies:
+            stats["fallback_entities"] += 1
 
         existing_summary = (entity_data.get("autogenerated_text") or "").strip()
         candidate_summary = (extracted.updated_autogenerated_summary or "").strip()
@@ -1055,8 +1268,8 @@ async def _apply_enrichment_updates(
         properties_updated = False
         relationships_added = 0
         relationships_updated = 0
-        if candidate_summary and not _summary_contains(existing_summary, candidate_summary):
-            merged_summary = _merge_summaries(existing_summary, candidate_summary)
+        if candidate_summary and candidate_summary != existing_summary:
+            merged_summary = candidate_summary
             await graph_session.run(
                 """
                 MATCH (e:EntityInstance {entity_instance_id: $entity_id})
@@ -1095,11 +1308,20 @@ async def _apply_enrichment_updates(
                     prop_map = {}
 
         properties_changed = False
-        for prop in extracted.new_properties:
-            key = str(prop.definition_id)
+        prop_defs_by_name: dict[str, int] = {}
+        for prop_def in (entity_def.get("properties") or []):
+            name_key = _norm(prop_def.get("name"))
+            if name_key and name_key not in prop_defs_by_name:
+                prop_defs_by_name[name_key] = int(prop_def.get("id"))
+
+        for prop in getattr(extracted, "properties_update", []):
+            def_id = prop_defs_by_name.get(_norm(prop.property_name))
+            if def_id is None:
+                continue
+            key = str(def_id)
             old_value = prop_map.get(key)
-            if old_value is None or old_value != prop.value:
-                prop_map[key] = prop.value
+            if old_value is None or old_value != prop.property_value:
+                prop_map[key] = prop.property_value
                 properties_changed = True
 
         if properties_changed:
@@ -1121,19 +1343,30 @@ async def _apply_enrichment_updates(
 
         # Strict relationship rule: only create relationships to entities
         # linked to the same scene context (entity-to-entity only).
-        rel_defs = {r["id"]: r for r in (entity_def.get("relationships") or [])}
-        for rel in extracted.new_relationships:
-            rel_def = rel_defs.get(rel.definition_id)
+        rel_defs_by_name: dict[str, dict[str, Any]] = {}
+        for rel_def in (entity_def.get("relationships") or []):
+            name_key = _norm(rel_def.get("name"))
+            if name_key and name_key not in rel_defs_by_name:
+                rel_defs_by_name[name_key] = rel_def
+
+        for rel in getattr(extracted, "relationships_update", []):
+            rel_def = rel_defs_by_name.get(_norm(rel.relationship_name))
             if not rel_def:
                 continue
-            target_id = rel.target_entity_instance_id or _resolve_alias(
-                [rel.target_alias],
-                alias_to_entity_id,
-            )
+            target_id = str(rel.relationship_target or "").strip()
             if not target_id or target_id not in allowed_targets:
                 continue
+            target_data = existing_entities_map.get(target_id) or {}
+            target_def_id = target_data.get("definition_id")
+            destiny_def_id = rel_def.get("destiny_entity_id")
+            if destiny_def_id is not None and target_def_id is not None:
+                try:
+                    if int(target_def_id) != int(destiny_def_id):
+                        continue
+                except (TypeError, ValueError):
+                    continue
 
-            rel_data = json.dumps({"justification": rel.justification or ""})
+            rel_data = json.dumps({"justification": ""})
             rel_check_result = await graph_session.run(
                 """
                 MATCH (source:EntityInstance {entity_instance_id: $source_id})
@@ -1146,7 +1379,7 @@ async def _apply_enrichment_updates(
                 """,
                 source_id=entity_id,
                 target_id=target_id,
-                definition_id=rel.definition_id,
+                definition_id=rel_def.get("id"),
             )
             rel_check_row = await rel_check_result.single()
             existing_data = (rel_check_row or {}).get("existing_data")
@@ -1169,7 +1402,7 @@ async def _apply_enrichment_updates(
                 source_id=entity_id,
                 target_id=target_id,
                 relationship_id=str(uuid4()),
-                definition_id=rel.definition_id,
+                definition_id=rel_def.get("id"),
                 destiny_entity_definition_id=rel_def.get("destiny_entity_id"),
                 data=rel_data,
             )
@@ -1182,10 +1415,12 @@ async def _apply_enrichment_updates(
 
         was_updated = summary_updated or properties_updated or relationships_added > 0
         logger.info(
-            "architect.generate enrichment entity=%s entity_id=%s status=%s auto_text_50=%s attributes_50=%s relationships_added=%d relationships_updated=%d summary_updated=%s properties_updated=%s",
+            "architect.generate enrichment entity=%s entity_id=%s status=%s mode=%s fallback_reasons=%s auto_text_50=%s attributes_50=%s relationships_added=%d relationships_updated=%d summary_updated=%s properties_updated=%s",
             entity_alias,
             entity_id,
             "updated" if was_updated else "not_updated",
+            "processed_with_fallback_context" if anomalies else "processed",
+            ",".join(anomalies) if anomalies else "",
             _snippet(merged_summary, limit=50),
             _snippet(json.dumps(prop_map, ensure_ascii=False), limit=50),
             relationships_added,

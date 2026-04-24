@@ -385,10 +385,17 @@ async def _run_scene_unifier(
     model: str,
     scenes: list[dict[str, Any]],
     paragraph_count: int,
+    instructions: str | None = None,
 ) -> list[dict[str, Any]]:
     prompt = architect_prompts.ARCHITECT_SCENE_UNIFIER_PROMPT.format(
         scene_list=_serialize_scenes_for_unifier(scenes)
     )
+    instructions_text = str(instructions or "").strip()
+    if instructions_text:
+        prompt = (
+            f"{prompt}\n\nFrontend instructions (authoritative constraints):\n"
+            f"{instructions_text}"
+        )
     response_text = await llm_client.chat(
         model=model,
         messages=[{"role": "user", "content": prompt}],
@@ -411,10 +418,17 @@ async def segment_chunk_into_scenes(
     marked_paragraphs: str,
     paragraph_count: int,
     paragraphs: list[str],
+    instructions: str | None = None,
 ) -> list[dict[str, Any]]:
     prompt = architect_prompts.ARCHITECT_SCENE_CENTRIC_CHUNKING_PROMPT.format(
         marked_paragraphs=marked_paragraphs
     )
+    instructions_text = str(instructions or "").strip()
+    if instructions_text:
+        prompt = (
+            f"{prompt}\n\nFrontend instructions (authoritative constraints):\n"
+            f"{instructions_text}"
+        )
     response_text = await llm_client.chat(
         model=model,
         messages=[{"role": "user", "content": prompt}],
@@ -435,6 +449,7 @@ async def segment_chunk_into_scenes(
             model=model,
             scenes=normalized,
             paragraph_count=paragraph_count,
+            instructions=instructions,
         )
     except Exception as exc:
         unifier_status = "fallback_original"

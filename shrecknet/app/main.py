@@ -37,6 +37,7 @@ from app.api.routers import (
     worlds,
 )
 from app.core.config_store import get_settings
+from app.celery_queue_reaper import reset_jobs_and_queues_on_startup
 from app.db.init_db import init_db_async
 from app.db.init_jobs_db import init_jobs_db
 from app.db.jobs_session import get_jobs_engine
@@ -178,6 +179,10 @@ async def lifespan(_: FastAPI):
     _log_storage_diagnostics(get_settings())
     await init_db_async()
     init_jobs_db(get_jobs_engine())
+    try:
+        reset_jobs_and_queues_on_startup()
+    except Exception:
+        logger.exception("Unable to run startup Celery cleanup")
     _start_embedding_prewarm()
     try:
         settings = get_settings()

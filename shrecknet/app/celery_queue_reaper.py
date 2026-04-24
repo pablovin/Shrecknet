@@ -5,6 +5,7 @@ import json
 import logging
 import sqlite3
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -31,6 +32,19 @@ def _open_sqlite(url: str) -> sqlite3.Connection | None:
     conn = sqlite3.connect(path.as_posix())
     conn.row_factory = sqlite3.Row
     return conn
+
+
+def _sqlite_table_exists(conn: sqlite3.Connection | None, table_name: str) -> bool:
+    if conn is None:
+        return False
+    try:
+        row = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
+            (table_name,),
+        ).fetchone()
+    except sqlite3.Error:
+        return False
+    return row is not None
 
 
 def _decode_kwargs(message: dict[str, Any]) -> dict[str, Any]:
@@ -137,3 +151,68 @@ def reap_stale_celery_messages() -> dict[str, int]:
         logger.info("Celery stale queue reaper removed=%s inspected=%s", removed, inspected)
     return stats
 
+
+def fail_non_terminal_background_jobs(reason: str | None = None) -> int:
+    settings = get_settings()
+    jobs_conn = _open_sqlite(settings.jobs_database_url)
+    if jobs_conn is None or not _sqlite_table_exists(jobs_conn, "background_jobs"):
+        if jobs_conn is not None:
+            jobs_conn.close()
+        return 0
+
+    failure_reason = (
+        reason
+        or "Job failed during startup cleanup because a previous worker/session ended unexpectedly."
+    )
+    completed_at = datetime.now(timezone.utc).isoformat()
+    try:
+        cursor = jobs_conn.execute(
+            """
+            UPDATE background_jobs
+            SET
+                status = 'failed',
+                error_message = CASE
+                    WHEN error_message IS NULL OR TRIM(error_message) = ''
+                    THEN ?
+                    ELSE error_message
+                END,
+                completed_at = COALESCE(completed_at, ?)
+            WHERE status IN ('queued', 'running')
+            """,
+            (failure_reason, completed_at),
+        )
+        jobs_conn.commit()
+        return int(cursor.rowcount or 0)
+    finally:
+        jobs_conn.close()
+
+
+def purge_celery_queues(queue_names: tuple[str, ...] | None = None) -> dict[str, int]:
+    settings = get_settings()
+    redis_client = redis.Redis.from_url(settings.celery_broker_url, decode_responses=True)
+    queues = queue_names or ("ontology_linking", "architect")
+
+    purged = 0
+    inspected = 0
+    for queue in queues:
+        try:
+            inspected += int(redis_client.llen(queue) or 0)
+            purged += int(redis_client.delete(queue) or 0)
+        except Exception:
+            logger.exception("Failed purging Celery queue '%s'", queue)
+    return {"inspected": inspected, "purged_keys": purged}
+
+
+def reset_jobs_and_queues_on_startup() -> dict[str, int]:
+    failed_jobs = fail_non_terminal_background_jobs()
+    purge_stats = purge_celery_queues()
+    stats = {
+        "failed_jobs": failed_jobs,
+        "queued_messages_inspected": purge_stats["inspected"],
+        "queues_purged": purge_stats["purged_keys"],
+    }
+    if failed_jobs > 0 or purge_stats["inspected"] > 0:
+        logger.warning("Startup Celery cleanup applied: %s", stats)
+    else:
+        logger.info("Startup Celery cleanup found no stale jobs/messages")
+    return stats

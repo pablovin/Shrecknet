@@ -25,11 +25,10 @@ from app.jobs.architect.scene_centric_chunking import (
 )
 from app.jobs.architect.schemas import ChunkExtractionResponse
 from app.jobs.novelist.prompts import (
-    NOVELIST_ELDER_QUERY_PROMPT,
-    NOVELIST_SCAFFOLD_NORMALIZATION_PROMPT,
+    NOVELIST_SCENE_CONTEXT_CREATION_PROMPT,
     NOVELIST_SCENE_CRITIC_PROMPT,
+    NOVELIST_SCENE_EXPLORATION_PROMPT,
     NOVELIST_SCENE_INTENT_PROMPT,
-    NOVELIST_SCENE_PACKAGE_PROMPT,
     NOVELIST_SCENE_PROSE_PROMPT,
     NOVELIST_SCENE_REVISION_PROMPT,
 )
@@ -42,7 +41,7 @@ logger = logging.getLogger(__name__)
 StageCallback = Callable[[NovelistStage, dict[str, Any]], Awaitable[None]]
 ElderQueryRunner = Callable[[Agent, str], Awaitable[list[dict[str, Any]]]]
 ArchitectScaffoldingRunner = Callable[
-    [Agent, str, str | None], Awaitable[dict[str, Any]]
+    [Agent, str, str, str | None], Awaitable[dict[str, Any]]
 ]
 
 
@@ -67,7 +66,15 @@ class NovelistOrchestrator:
         self.model_policy = model_policy
         self.draft_model = getattr(model_policy, "model_novelist_draft", None)
         self.critic_model = getattr(model_policy, "model_novelist_critic", None)
-        self.max_concurrency = max(2, min(4, max_concurrency))
+        self.scene_exploration_model = getattr(
+            model_policy, "model_novelist_scene_exploration", None
+        )
+        self.scene_context_creation_model = getattr(
+            model_policy, "model_novelist_scene_context_creation", None
+        )
+        self.max_concurrency = max(1, min(10, max_concurrency))
+        self._elder_query_concurrency = 3
+        self._elder_query_semaphore = asyncio.Semaphore(self._elder_query_concurrency)
         self._scene_prose_max_chars = 1400
         self._critic_input_max_chars = 110_000
         self._revision_input_max_chars = 110_000
@@ -78,6 +85,7 @@ class NovelistOrchestrator:
         self._debug_run_date: str = "unknown_run_date"
         self._debug_prompt_calls: list[dict[str, Any]] = []
         self._debug_response_calls: list[dict[str, Any]] = []
+        self._debug_output_dir: Path | None = None
 
     async def execute(
         self,
@@ -130,7 +138,16 @@ class NovelistOrchestrator:
             instructions=instructions,
             conversation_id=conversation_id,
         )
-        step_1_scenes = self._build_step_1_scenes(scaffolding.get("scenes", []))
+        step_1_scenes = self._build_step_1_scenes(
+            scaffolding.get("scenes", []),
+            language_output_text=language,
+            instructions=instructions,
+        )
+        if instructions and any(not str(scene.get("instructions") or "").strip() for scene in step_1_scenes):
+            logger.warning(
+                "novelist_scene_instructions_missing_after_fallback: run_conversation_id=%s",
+                conversation_id,
+            )
         scaffolding["scenes"] = step_1_scenes
         artifacts["stages"]["scaffolding"] = scaffolding
         artifacts["timings_ms"]["scaffolding"] = round(
@@ -165,65 +182,236 @@ class NovelistOrchestrator:
         )
         self._debug_step_label = None
 
-        # Stage: scene package extraction (step 2)
-        self._debug_step_label = "step_2"
-        self._debug_prompt_calls = []
-        self._debug_response_calls = []
+        # Stage 2/3/4/5 per-scene pipeline: each scene runs sequentially.
         package_t0 = time.monotonic()
-        raw_scene_packages = await self._build_scene_packages(
-            scenes=step_1_scenes,
-            language=language,
-            instructions=instructions,
-            conversation_id=conversation_id,
+        total_scenes = len(step_1_scenes)
+        step_2_completed = 0
+        step_3_completed = 0
+        step_4_completed = 0
+        step_5_completed = 0
+        worker_sem = asyncio.Semaphore(10)
+        progress_lock = asyncio.Lock()
+
+        async def _worker(index: int, scene: dict[str, Any]) -> tuple[
+            int,
+            dict[str, Any],
+            dict[str, Any],
+            dict[str, Any],
+            dict[str, Any],
+            list[dict[str, Any]],
+            dict[str, Any],
+            dict[str, Any],
+            str,
+            dict[str, Any],
+            list[dict[str, Any]],
+        ]:
+            async with worker_sem:
+                result = await self._process_scene_pipeline(
+                    agent=agent,
+                    scene=scene,
+                    index=index,
+                    language=language,
+                    instructions=instructions,
+                    conversation_id=conversation_id,
+                )
+                nonlocal step_2_completed, step_3_completed, step_4_completed, step_5_completed
+                async with progress_lock:
+                    step_2_completed += 1
+                    if stage_callback:
+                        await stage_callback(
+                            NovelistStage.SCENE_PACKAGE,
+                            {
+                                "artifacts": artifacts,
+                                "scene_count": total_scenes,
+                                "completed_scenes": step_2_completed,
+                            },
+                        )
+                    step_3_completed += 1
+                    if stage_callback:
+                        await stage_callback(
+                            NovelistStage.RETRIEVAL,
+                            {
+                                "artifacts": artifacts,
+                                "scene_count": total_scenes,
+                                "completed_scenes": step_3_completed,
+                            },
+                        )
+                    step_4_completed += 1
+                    if stage_callback:
+                        await stage_callback(
+                            NovelistStage.INTENT_DRAFTING,
+                            {
+                                "artifacts": artifacts,
+                                "scene_count": total_scenes,
+                                "completed_scenes": step_4_completed,
+                            },
+                        )
+                    step_5_completed += 1
+                    if stage_callback:
+                        await stage_callback(
+                            NovelistStage.PROSE_GENERATION,
+                            {
+                                "artifacts": artifacts,
+                                "scene_count": total_scenes,
+                                "completed_scenes": step_5_completed,
+                            },
+                        )
+                return result
+
+        worker_results = await asyncio.gather(
+            *[asyncio.create_task(_worker(idx, scene)) for idx, scene in enumerate(step_1_scenes)]
         )
-        scene_packages = self._build_step_2_scene_packages(
-            scene_packages=raw_scene_packages,
-            step_1_scenes=step_1_scenes,
-        )
+        worker_results.sort(key=lambda item: item[0])
+
+        step_2_scene_packages = [item[1] for item in worker_results]
+        step_3_scene_packages = [item[2] for item in worker_results]
+        retrieval_by_scene = {
+            str(item[2].get("scene_id") or ""): item[3] for item in worker_results
+        }
+        step_2_scene_traces = [item[4] for item in worker_results]
+        step_3_scene_traces = [trace for item in worker_results for trace in item[5]]
+        intents_by_scene = {
+            str(item[7].get("scene_id") or ""): {
+                "scene_id": str(item[7].get("scene_id") or ""),
+                "what_happens": item[6].get("what_happens", []),
+                "emotional_progression": item[6].get("emotional_progression", []),
+                "speaking_goals": item[6].get("speaking_goals", []),
+                "implied_history": item[6].get("implied_history", []),
+                "forbidden_contradictions": item[6].get("forbidden_contradictions", []),
+            }
+            for item in worker_results
+        }
+        step_4_scene_packages = [item[7] for item in worker_results]
+        prose_paragraphs = [item[8] for item in worker_results]
+        step_4_scene_traces = [item[9] for item in worker_results]
+        step_5_scene_traces = [trace for item in worker_results for trace in item[10]]
+        scene_packages = step_4_scene_packages
+
         artifacts["stages"]["scene_package"] = {
-            "count": len(scene_packages),
-            "packages": scene_packages,
+            "count": len(step_2_scene_packages),
+            "packages": step_2_scene_packages,
+        }
+        artifacts["stages"]["retrieval"] = retrieval_by_scene
+        artifacts["stages"]["intent_drafting"] = {
+            "count": len(intents_by_scene),
+            "scene_intents": list(intents_by_scene.values()),
+        }
+        artifacts["stages"]["prose_generation"] = {
+            "count": len(prose_paragraphs),
+            "scene_paragraphs": [
+                {
+                    "scene_id": str(scene.get("scene_id") or f"scene-{idx+1:03d}"),
+                    "paragraph": prose_paragraphs[idx],
+                }
+                for idx, scene in enumerate(step_4_scene_packages)
+            ],
         }
         artifacts["timings_ms"]["scene_package"] = round(
             (time.monotonic() - package_t0) * 1000, 2
         )
-        if stage_callback:
-            await stage_callback(
-                NovelistStage.SCENE_PACKAGE,
-                {
-                    "artifacts": artifacts,
-                    "scene_count": len(scene_packages),
-                },
-            )
+        artifacts["timings_ms"]["retrieval"] = round(
+            (time.monotonic() - package_t0) * 1000, 2
+        )
+        artifacts["timings_ms"]["intent_drafting"] = round(
+            (time.monotonic() - package_t0) * 1000, 2
+        )
+        artifacts["timings_ms"]["prose_generation"] = round(
+            (time.monotonic() - package_t0) * 1000, 2
+        )
+
         self._write_step_debug_files(
             step="step_2",
             prompt_payload={
                 "entity_name": self._debug_entity_name,
                 "step": "step_2",
-                "llm_calls": self._debug_prompt_calls,
             },
             response_payload={
                 "entity_name": self._debug_entity_name,
                 "step": "step_2",
-                "llm_calls": self._debug_response_calls,
-                "final_step_response": {"scene_packages": scene_packages},
+                "scene_traces": step_2_scene_traces,
+                "token_summary": self._token_summary_from_scene_traces(step_2_scene_traces),
+                "final_step_response": {"scene_packages": step_2_scene_packages},
             },
         )
-        self._debug_step_label = None
+        self._write_step_debug_files(
+            step="step_3",
+            prompt_payload={
+                "entity_name": self._debug_entity_name,
+                "step": "step_3",
+            },
+            response_payload={
+                "entity_name": self._debug_entity_name,
+                "step": "step_3",
+                "scene_traces": step_3_scene_traces,
+                "token_summary": self._token_summary_from_scene_traces(step_3_scene_traces),
+                "final_step_response": {"scene_packages": step_3_scene_packages},
+            },
+        )
+        self._write_step_debug_files(
+            step="step_4",
+            prompt_payload={
+                "entity_name": self._debug_entity_name,
+                "step": "step_4",
+            },
+            response_payload={
+                "entity_name": self._debug_entity_name,
+                "step": "step_4",
+                "scene_traces": step_4_scene_traces,
+                "token_summary": self._token_summary_from_scene_traces(step_4_scene_traces),
+                "final_step_response": {"scene_packages": step_4_scene_packages},
+            },
+        )
+        self._write_step_debug_files(
+            step="step_5",
+            prompt_payload={
+                "entity_name": self._debug_entity_name,
+                "step": "step_5",
+            },
+            response_payload={
+                "entity_name": self._debug_entity_name,
+                "step": "step_5",
+                "scene_traces": step_5_scene_traces,
+                "token_summary": self._token_summary_from_scene_traces(step_5_scene_traces),
+                "final_step_response": {
+                    "scene_paragraphs": [
+                        {
+                            "scene_id": str(scene.get("scene_id") or f"scene-{idx+1:03d}"),
+                            "paragraph": prose_paragraphs[idx],
+                        }
+                        for idx, scene in enumerate(step_4_scene_packages)
+                    ]
+                },
+            },
+        )
 
-        # Temporary debug mode: only steps 1-2 are active; steps 3-7 are disabled.
-        retrieval_by_scene: dict[str, dict[str, Any]] = {}
-        intents_by_scene: dict[str, dict[str, Any]] = {}
-        prose_by_scene: list[dict[str, Any]] = []
+        # Temporary debug mode: steps 1-5 are active; steps 6-7 are disabled.
+        prose_by_scene: list[dict[str, Any]] = [
+            {
+                "scene_id": str(scene.get("scene_id") or f"scene-{idx+1:03d}"),
+                "name": str(scene.get("name") or f"Scene {idx+1}"),
+                "scene_summary": str(scene.get("scene_summary") or ""),
+                "prose_html": prose_paragraphs[idx],
+            }
+            for idx, scene in enumerate(step_4_scene_packages)
+        ]
         critic: dict[str, Any] = {}
         revision: dict[str, Any] = {}
-        final_html = ""
+        final_html = "\n\n".join([p for p in prose_paragraphs if str(p).strip()]).strip()
         artifacts["stages"]["merging"] = {
-            "scene_count": 0,
+            "scene_count": len(step_4_scene_packages),
             "final_text": final_html,
         }
-        artifacts["timings_ms"]["merging"] = 0.0
-        scene_results: list[dict[str, Any]] = []
+        artifacts["timings_ms"]["merging"] = round(
+            (time.monotonic() - package_t0) * 1000, 2
+        )
+        scene_results = self._build_scene_results(
+            scene_packages=scene_packages,
+            retrieval_by_scene=retrieval_by_scene,
+            intents_by_scene=intents_by_scene,
+            prose_by_scene=prose_by_scene,
+            critic=critic,
+            revision=revision,
+        )
 
         artifacts["scene_progress"] = {
             item["scene_id"]: {
@@ -345,8 +533,9 @@ class NovelistOrchestrator:
             json.dumps(response_payload, ensure_ascii=True, indent=2), encoding="utf-8"
         )
 
-    @staticmethod
-    def _resolve_local_tests_output_dir(*, run_date: str) -> Path:
+    def _resolve_local_tests_output_dir(self, *, run_date: str) -> Path:
+        if self._debug_output_dir is not None:
+            return self._debug_output_dir
         data_root = os.getenv("SHRECKNET_DATA_DIR", "/data")
         module_root = Path(__file__).resolve().parents[3]
         candidates = [
@@ -367,12 +556,219 @@ class NovelistOrchestrator:
         for candidate in candidates:
             try:
                 candidate.mkdir(parents=True, exist_ok=True)
+                self._debug_output_dir = candidate
+                logger.info("novelist_debug_output_dir_resolved: path=%s", candidate)
                 return candidate
             except OSError:
                 continue
         fallback = Path("local_test") / "architect" / "draft" / run_date
         fallback.mkdir(parents=True, exist_ok=True)
+        self._debug_output_dir = fallback
+        logger.info("novelist_debug_output_dir_resolved: path=%s", fallback)
         return fallback
+
+    async def _process_scene_pipeline(
+        self,
+        *,
+        agent: Agent,
+        scene: dict[str, Any],
+        index: int,
+        language: str,
+        instructions: str,
+        conversation_id: str | None,
+    ) -> tuple[
+        int,
+        dict[str, Any],
+        dict[str, Any],
+        dict[str, Any],
+        dict[str, Any],
+        list[dict[str, Any]],
+        dict[str, Any],
+        dict[str, Any],
+        str,
+        dict[str, Any],
+        list[dict[str, Any]],
+    ]:
+        scene_id = str(scene.get("scene_id") or f"scene-{index + 1:03d}")
+        scene_conversation_id = (
+            f"{conversation_id}:scene:{scene_id}"
+            if conversation_id
+            else f"novelist_scene:{scene_id}"
+        )
+
+        step_2_calls: list[dict[str, Any]] = []
+        step_3_calls: list[dict[str, Any]] = []
+        step_4_calls: list[dict[str, Any]] = []
+        step_5_calls: list[dict[str, Any]] = []
+
+        step_2_before = self._lean_scene_payload(scene)
+        step_2_t0 = time.monotonic()
+        raw_scene_packages = await self._build_scene_packages(
+            scenes=[scene],
+            language=language,
+            instructions=instructions,
+            conversation_id=scene_conversation_id,
+            use_conversation_memory=True,
+            debug_collector=step_2_calls,
+        )
+        step_2_package = self._build_step_2_scene_packages(
+            scene_packages=raw_scene_packages,
+            step_1_scenes=[scene],
+        )[0]
+        step_2_latency_ms = round((time.monotonic() - step_2_t0) * 1000, 2)
+        step_2_trace: dict[str, Any] = {
+            "scene_id": scene_id,
+            "conversation_id": scene_conversation_id,
+            "status": "ok",
+            "timing_ms": step_2_latency_ms,
+            "llm_calls": step_2_calls,
+            "delta_output": self._scene_delta_allowlist(
+                step_2_before,
+                step_2_package,
+                allowed_fields=("prior_knowledge_needed", "scene_tone", "scene_goal"),
+            ),
+        }
+
+        step_3_t0 = time.monotonic()
+        try:
+            step_3_scene_packages, retrieval_by_scene, step_3_traces = await self._collect_scene_retrieval(
+                agent=agent,
+                scene_packages=[step_2_package],
+                language=language,
+                instructions=instructions,
+                conversation_id=scene_conversation_id,
+                use_conversation_memory=True,
+                debug_collector=step_3_calls,
+                use_delta_prompt=True,
+            )
+            step_3_package = step_3_scene_packages[0]
+            retrieval_payload = retrieval_by_scene.get(scene_id, {})
+            elder_trace_rows = [row for row in step_3_traces if str(row.get("scene_id")) == scene_id]
+            step_3_status = "ok"
+            step_3_error = None
+        except Exception as exc:
+            logger.warning("scene_pipeline_step3_failed scene_id=%s error=%s", scene_id, exc, exc_info=True)
+            step_3_package = dict(step_2_package)
+            retrieval_payload = {}
+            elder_trace_rows = []
+            step_3_status = "error"
+            step_3_error = str(exc)
+
+        step_3_latency_ms = round((time.monotonic() - step_3_t0) * 1000, 2)
+        step_3_trace: list[dict[str, Any]] = [
+            {
+                "scene_id": scene_id,
+                "conversation_id": scene_conversation_id,
+                "status": step_3_status,
+                "error": step_3_error,
+                "timing_ms": step_3_latency_ms,
+                "elder_query_traces": elder_trace_rows,
+                "llm_calls": step_3_calls,
+                "delta_output": self._scene_delta_allowlist(
+                    step_2_package,
+                    step_3_package,
+                    allowed_fields=(
+                        "prior_events",
+                        "relationship_summaries",
+                        "personality_reminders",
+                        "unresolved_tensions",
+                        "style_details",
+                        "contradiction_warnings",
+                        "queries",
+                        "questions_answers",
+                    ),
+                ),
+            }
+        ]
+
+        step_4_t0 = time.monotonic()
+        step_4_delta_input = self._scene_delta_allowlist(
+            step_2_package,
+            step_3_package,
+            allowed_fields=(
+                "prior_events",
+                "relationship_summaries",
+                "personality_reminders",
+                "unresolved_tensions",
+                "style_details",
+                "contradiction_warnings",
+                "queries",
+                "questions_answers",
+            ),
+        )
+        step_4_intent = await self._draft_scene_intent_single(
+            scene_id=scene_id,
+            delta_input=step_4_delta_input,
+            language=language,
+            instructions=instructions,
+            conversation_id=scene_conversation_id,
+            debug_collector=step_4_calls,
+        )
+        step_4_package = {**step_3_package, **step_4_intent}
+        step_4_latency_ms = round((time.monotonic() - step_4_t0) * 1000, 2)
+        step_4_trace: dict[str, Any] = {
+            "scene_id": scene_id,
+            "conversation_id": scene_conversation_id,
+            "status": "ok",
+            "timing_ms": step_4_latency_ms,
+            "llm_calls": step_4_calls,
+            "delta_output": self._scene_delta_allowlist(
+                step_3_package,
+                step_4_package,
+                allowed_fields=(
+                    "what_happens",
+                    "emotional_progression",
+                    "speaking_goals",
+                    "implied_history",
+                    "forbidden_contradictions",
+                ),
+            ),
+        }
+
+        step_5_t0 = time.monotonic()
+        step_5_delta_input = self._scene_delta_allowlist(
+            step_3_package,
+            step_4_package,
+            allowed_fields=(
+                "what_happens",
+                "emotional_progression",
+                "speaking_goals",
+                "implied_history",
+                "forbidden_contradictions",
+            ),
+        )
+        step_5_paragraph = await self._generate_scene_paragraph_single(
+            scene_id=scene_id,
+            delta_input=step_5_delta_input,
+            language=language,
+            instructions=instructions,
+            conversation_id=scene_conversation_id,
+            debug_collector=step_5_calls,
+        )
+        step_5_latency_ms = round((time.monotonic() - step_5_t0) * 1000, 2)
+        step_5_trace: list[dict[str, Any]] = [
+            {
+                "scene_id": scene_id,
+                "conversation_id": scene_conversation_id,
+                "status": "ok",
+                "timing_ms": step_5_latency_ms,
+                "llm_calls": step_5_calls,
+                "delta_output": {"paragraph": {"before": "", "after": step_5_paragraph}},
+            }
+        ]
+        return (
+            index,
+            step_2_package,
+            step_3_package,
+            retrieval_payload,
+            step_2_trace,
+            step_3_trace,
+            step_4_intent,
+            step_4_package,
+            step_5_paragraph,
+            step_4_trace,
+            step_5_trace,
+        )
 
     async def _build_scaffolding(
         self,
@@ -388,6 +784,7 @@ class NovelistOrchestrator:
                 shared = await self.architect_scaffolding_runner(
                     agent,
                     unstructured_text,
+                    instructions,
                     conversation_id,
                 )
                 scenes = shared.get("scenes") if isinstance(shared, dict) else None
@@ -464,49 +861,16 @@ class NovelistOrchestrator:
             model=model,
             conversation_id=conversation_id,
         )
-
-        normalize_system = self._compose_system_prompt(
-            NOVELIST_SCAFFOLD_NORMALIZATION_PROMPT,
-            language=language,
-            instructions=instructions,
-        )
-        normalize_user = json.dumps({"scenes": enriched_scenes}, ensure_ascii=True)
-        normalize_raw, normalize_ms = await self._call_llm(
-            model=self.draft_model or self.model_policy.get_model(LLMTask.SYNTHESIS),
-            messages=[
-                {"role": "system", "content": normalize_system},
-                {"role": "user", "content": normalize_user},
-            ],
-            temperature=0.1,
-            conversation_id=conversation_id,
-        )
-        normalized = self._parse_json_object(normalize_raw) or {}
-        normalized_scenes = normalized.get("scenes") if isinstance(normalized, dict) else None
-        if not isinstance(normalized_scenes, list) or not normalized_scenes:
-            normalized_scenes = [
-                {
-                    "scene_id": scene["scene_id"],
-                    "name": scene["name"],
-                    "scene_summary": scene.get("scene_summary", ""),
-                    "milestones": scene.get("milestones", []),
-                    "related_entities": scene.get("related_entities", []),
-                    "source_anchors": scene.get("source_anchors", []),
-                    "new_or_update": "new",
-                    "source_paragraphs": scene.get("source_paragraphs", []),
-                    "raw_scene_text": scene.get("raw_scene_text", ""),
-                }
-                for scene in enriched_scenes
-            ]
-
         by_id: dict[str, dict[str, Any]] = {scene["scene_id"]: scene for scene in enriched_scenes}
         final_scenes: list[dict[str, Any]] = []
-        for idx, scene in enumerate(normalized_scenes, start=1):
+        for idx, scene in enumerate(enriched_scenes, start=1):
             scene_id = str(scene.get("scene_id") or f"scene-{idx:03d}").strip()
             source = by_id.get(scene_id, {})
             final_scenes.append(
                 {
-                    "scene_id": scene_id,
-                    "name": str(scene.get("name") or source.get("name") or scene_id).strip(),
+                    "scene_id": scene_id or f"scene-{idx:03d}",
+                    "name": str(scene.get("name") or source.get("name") or scene_id).strip()
+                    or f"Scene {idx}",
                     "scene_summary": str(
                         scene.get("scene_summary") or source.get("scene_summary") or ""
                     ).strip(),
@@ -517,21 +881,14 @@ class NovelistOrchestrator:
                         scene.get("related_entities") or source.get("related_entities") or [],
                         max_items=12,
                     ),
-                    "source_anchors": self._normalize_text_list(
-                        scene.get("source_anchors") or source.get("source_anchors") or [], max_items=8
-                    ),
-                    "new_or_update": str(scene.get("new_or_update") or "new").strip().lower() or "new",
-                    "source_paragraphs": source.get("source_paragraphs", []),
-                    "raw_scene_text": source.get("raw_scene_text", ""),
+                    "instructions": instructions,
+                    "Language_output_text": language,
+                    "source_rawtext": source.get("raw_scene_text", ""),
                 }
             )
 
         return {
             "model": model,
-            "normalize_model": self.draft_model
-            or self.model_policy.get_model(LLMTask.SYNTHESIS),
-            "normalize_latency_ms": normalize_ms,
-            "normalize_raw": normalize_raw,
             "scene_count": len(final_scenes),
             "scenes": final_scenes,
         }
@@ -558,7 +915,7 @@ class NovelistOrchestrator:
                     scene_description=scene_summary or "(no description)",
                     scene_text=raw_scene_text or "(no text)",
                 )
-                entity_raw, _ = await self._call_llm(
+                entity_raw, _, _ = await self._call_llm(
                     model=model,
                     messages=[{"role": "user", "content": entity_prompt}],
                     temperature=0.1,
@@ -574,7 +931,7 @@ class NovelistOrchestrator:
                     scene_entities="\n".join(f"- {name}" for name in entities) or "(none)",
                     scene_text=raw_scene_text or "(no text)",
                 )
-                milestone_raw, _ = await self._call_llm(
+                milestone_raw, _, _ = await self._call_llm(
                     model=model,
                     messages=[{"role": "user", "content": milestone_prompt}],
                     temperature=0.1,
@@ -600,57 +957,48 @@ class NovelistOrchestrator:
         language: str,
         instructions: str,
         conversation_id: str | None,
+        use_conversation_memory: bool = False,
+        debug_collector: list[dict[str, Any]] | None = None,
     ) -> list[dict[str, Any]]:
         if not scenes:
             return []
 
         semaphore = asyncio.Semaphore(self.max_concurrency)
         system_prompt = self._compose_system_prompt(
-            NOVELIST_SCENE_PACKAGE_PROMPT,
+            NOVELIST_SCENE_EXPLORATION_PROMPT,
             language=language,
             instructions=instructions,
         )
 
         async def _run(scene: dict[str, Any]) -> dict[str, Any]:
             async with semaphore:
-                user_prompt = json.dumps({"scenes": [scene]}, ensure_ascii=True)
-                raw, latency_ms = await self._call_llm(
-                    model=self.draft_model or self.model_policy.get_model(LLMTask.SYNTHESIS),
+                user_prompt = json.dumps(
+                    scene,
+                    ensure_ascii=True,
+                )
+                raw, latency_ms, _ = await self._call_llm(
+                    model=self.scene_exploration_model
+                    or self.draft_model
+                    or self.model_policy.get_model(LLMTask.SYNTHESIS),
                     messages=[
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_prompt},
                     ],
                     temperature=0.2,
                     conversation_id=conversation_id,
+                    use_conversation_memory=use_conversation_memory,
+                    debug_collector=debug_collector,
                 )
                 parsed = self._parse_json_object(raw) or {}
-                packages = parsed.get("scene_packages") if isinstance(parsed, dict) else None
-                package = {}
-                if isinstance(packages, list) and packages:
-                    candidate = packages[0]
-                    package = candidate if isinstance(candidate, dict) else {}
-                if not package:
-                    package = {
-                        "scene_id": scene.get("scene_id"),
-                        "source_paragraphs": scene.get("source_paragraphs", []),
-                        "raw_scene_text": scene.get("raw_scene_text", ""),
-                        "scene_summary": scene.get("scene_summary", ""),
-                        "scene_goal": scene.get("scene_summary", ""),
-                        "milestones": scene.get("milestones", []),
-                        "related_entities": scene.get("related_entities", []),
-                        "temporal_position_hint": "middle",
-                        "tone_hint": "dramatic",
-                        "open_questions_for_retrieval": [
-                            f"What prior event most affects {scene.get('name', 'this scene')}?"
-                        ],
-                    }
+                package = parsed if isinstance(parsed, dict) else {}
                 package["scene_id"] = str(package.get("scene_id") or scene.get("scene_id"))
-                package.setdefault("source_paragraphs", scene.get("source_paragraphs", []))
-                package.setdefault("raw_scene_text", scene.get("raw_scene_text", ""))
-                package.setdefault("scene_summary", scene.get("scene_summary", ""))
-                package.setdefault("milestones", scene.get("milestones", []))
-                package.setdefault("related_entities", scene.get("related_entities", []))
-                package.setdefault("new_or_update", scene.get("new_or_update", "new"))
+                package["prior_knowledge_needed"] = self._normalize_prior_knowledge_pairs(
+                    package.get("prior_knowledge_needed"),
+                    scene_name=str(scene.get("name") or ""),
+                )
+                package.setdefault("scene_tone", "")
+                package.setdefault("scene_goal", scene.get("scene_summary", ""))
+                package.setdefault("instructions", instructions)
                 package["_raw_scene_package"] = raw
                 package["_latency_ms"] = latency_ms
                 return package
@@ -667,66 +1015,80 @@ class NovelistOrchestrator:
         language: str,
         instructions: str,
         conversation_id: str | None,
-    ) -> dict[str, dict[str, Any]]:
+        use_conversation_memory: bool = False,
+        debug_collector: list[dict[str, Any]] | None = None,
+        use_delta_prompt: bool = False,
+    ) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]], list[dict[str, Any]]]:
         if not self.elder_query_runner:
-            return {
+            empty_by_scene = {
                 str(scene.get("scene_id")): {
                     "queries": [],
+                    "questions_answers": [],
                     "buckets": self._empty_retrieval_buckets(),
                     "raw_sources": [],
                 }
                 for scene in scene_packages
             }
+            enhanced = [self._apply_retrieval_to_scene(scene=scene, retrieval={}) for scene in scene_packages]
+            return enhanced, empty_by_scene, []
 
-        query_system = self._compose_system_prompt(
-            NOVELIST_ELDER_QUERY_PROMPT,
-            language=language,
-            instructions=instructions,
-        )
-
-        async def _generate_queries(scene: dict[str, Any]) -> tuple[str, list[str], str]:
+        query_results: list[tuple[str, list[str]]] = []
+        for scene in scene_packages:
             scene_id = str(scene.get("scene_id") or "")
-            scene_brief = self._build_scene_brief_text(scene)
-            user_prompt = (
-                f"Scene ID: {scene_id or 'scene'}\n"
-                f"{scene_brief}\n\n"
-                "Return JSON with 2-4 short continuity-focused retrieval questions."
+            prior_knowledge_pairs = self._normalize_prior_knowledge_pairs(
+                scene.get("prior_knowledge_needed"),
+                scene_name=str(scene.get("name") or ""),
             )
-            raw, _ = await self._call_llm(
-                model=self.draft_model or self.model_policy.get_model(LLMTask.SYNTHESIS),
-                messages=[
-                    {"role": "system", "content": query_system},
-                    {"role": "user", "content": user_prompt},
-                ],
-                temperature=0.1,
-                conversation_id=conversation_id,
+            queries = self._questions_from_prior_knowledge_pairs(
+                prior_knowledge_pairs,
+                fallback=scene.get("open_questions_for_retrieval") or [],
             )
-            payload = self._parse_json_object(raw) or {}
-            queries = self._normalize_text_list(payload.get("queries", []), max_items=4)
-            if not queries:
-                queries = self._normalize_text_list(
-                    scene.get("open_questions_for_retrieval", []), max_items=4
-                )
-            return str(scene.get("scene_id")), queries, raw
-
-        query_results = await asyncio.gather(
-            *[asyncio.create_task(_generate_queries(scene)) for scene in scene_packages]
-        )
+            query_results.append((scene_id, queries))
 
         semaphore = asyncio.Semaphore(self.max_concurrency)
+        question_traces: list[dict[str, Any]] = []
 
         async def _fetch(scene_id: str, query: str) -> tuple[str, str, list[dict[str, Any]]]:
             async with semaphore:
+                started = time.monotonic()
                 try:
-                    raw_sources = await self.elder_query_runner(agent, query)
+                    async with self._elder_query_semaphore:
+                        raw_sources = await asyncio.wait_for(
+                            self.elder_query_runner(agent, query),
+                            timeout=75.0,
+                        )
+                except TimeoutError:
+                    logger.warning(
+                        "scene_retrieval_timeout scene=%s query=%s timeout_s=75 elder_concurrency=%d",
+                        scene_id,
+                        query,
+                        self._elder_query_concurrency,
+                    )
+                    raw_sources = []
                 except Exception:
                     logger.warning("scene_retrieval_failed scene=%s query=%s", scene_id, query, exc_info=True)
                     raw_sources = []
-                return scene_id, query, [s for s in raw_sources if isinstance(s, dict)]
+                valid_sources = [s for s in raw_sources if isinstance(s, dict)]
+                compact_answers = [
+                    self._compact_retrieved_text(str(source.get("text") or ""), max_chars=220)
+                    for source in valid_sources[:4]
+                ]
+                compact_answers = [item for item in compact_answers if item]
+                question_traces.append(
+                    {
+                        "scene_id": scene_id,
+                        "query": query,
+                        "mode": "context",
+                        "elapsed_ms": round((time.monotonic() - started) * 1000, 2),
+                        "source_count": len(valid_sources),
+                        "answer_text": " ".join(compact_answers[:3]).strip(),
+                    }
+                )
+                return scene_id, query, valid_sources
 
         fetch_tasks = [
             asyncio.create_task(_fetch(scene_id, query))
-            for scene_id, queries, _ in query_results
+            for scene_id, queries in query_results
             for query in queries
         ]
         fetched = await asyncio.gather(*fetch_tasks) if fetch_tasks else []
@@ -734,32 +1096,203 @@ class NovelistOrchestrator:
         grouped: dict[str, dict[str, Any]] = {
             scene_id: {
                 "queries": queries,
-                "query_plan_raw": query_raw,
+                "questions_answers": [],
                 "raw_sources": [],
                 "buckets": self._empty_retrieval_buckets(),
             }
-            for scene_id, queries, query_raw in query_results
+            for scene_id, queries in query_results
         }
 
-        for scene_id, _query, sources in fetched:
+        for scene_id, query, sources in fetched:
             grouped.setdefault(
                 scene_id,
                 {
                     "queries": [],
-                    "query_plan_raw": "",
+                    "questions_answers": [],
                     "raw_sources": [],
                     "buckets": self._empty_retrieval_buckets(),
                 },
             )
             grouped[scene_id]["raw_sources"].extend(sources)
+            compact_answers = [
+                self._compact_retrieved_text(str(source.get("text") or ""), max_chars=220)
+                for source in sources[:4]
+            ]
+            compact_answers = [item for item in compact_answers if item]
+            grouped[scene_id]["questions_answers"].append(
+                {
+                    "question": query,
+                    "answer": " ".join(compact_answers[:3]).strip(),
+                }
+            )
+            grouped[scene_id]["instructions"] = instructions
 
-        for scene_id, payload in grouped.items():
-            payload["buckets"] = self._filter_scene_retrieval(payload.get("raw_sources", []))
-            payload["bucket_counts"] = {
-                key: len(values) for key, values in payload["buckets"].items()
-            }
+        context_system = self._compose_system_prompt(
+            NOVELIST_SCENE_CONTEXT_CREATION_PROMPT,
+            language=language,
+            instructions=instructions,
+        )
+        context_sem = asyncio.Semaphore(self.max_concurrency)
 
-        return grouped
+        async def _build_context(scene: dict[str, Any]) -> tuple[str, dict[str, list[str]]]:
+            scene_id = str(scene.get("scene_id") or "")
+            retrieval_payload = grouped.get(scene_id, {})
+            if use_delta_prompt:
+                user_payload = json.dumps(
+                    {
+                        "scene_id": scene_id,
+                        "Language_output_text": str(scene.get("Language_output_text") or language),
+                        "questions_answers": retrieval_payload.get("questions_answers", []),
+                        "queries": retrieval_payload.get("queries", []),
+                    },
+                    ensure_ascii=True,
+                )
+            else:
+                user_payload = json.dumps(
+                    {
+                        "scene_id": scene_id,
+                        "Language_output_text": str(scene.get("Language_output_text") or language),
+                        "scene_payload": scene,
+                        "questions_answers": retrieval_payload.get("questions_answers", []),
+                    },
+                    ensure_ascii=True,
+                )
+            async with context_sem:
+                raw, _, _ = await self._call_llm(
+                    model=self.scene_exploration_model
+                    or self.scene_context_creation_model
+                    or self.draft_model
+                    or self.model_policy.get_model(LLMTask.SYNTHESIS),
+                    messages=[
+                        {"role": "system", "content": context_system},
+                        {"role": "user", "content": user_payload},
+                    ],
+                    temperature=0.1,
+                    conversation_id=conversation_id,
+                    use_conversation_memory=use_conversation_memory,
+                    debug_collector=debug_collector,
+                )
+            payload = self._parse_json_object(raw) or {}
+            if not isinstance(payload, dict):
+                payload = {}
+            buckets: dict[str, list[str]] = {}
+            for key in self._empty_retrieval_buckets().keys():
+                text = str(payload.get(key) or "").strip()
+                buckets[key] = [text] if text else []
+            return scene_id, buckets
+
+        contexts = await asyncio.gather(
+            *[asyncio.create_task(_build_context(scene)) for scene in scene_packages]
+        )
+        enhanced_scene_packages: list[dict[str, Any]] = []
+        for scene_id, buckets in contexts:
+            grouped.setdefault(scene_id, {"queries": [], "questions_answers": [], "raw_sources": []})
+            grouped[scene_id]["buckets"] = buckets
+            grouped[scene_id]["bucket_counts"] = {key: len(values) for key, values in buckets.items()}
+            grouped[scene_id]["instructions"] = instructions
+
+        retrieval_by_scene = grouped
+        for scene in scene_packages:
+            scene_id = str(scene.get("scene_id") or "")
+            enhanced_scene_packages.append(
+                self._apply_retrieval_to_scene(
+                    scene=scene,
+                    retrieval=retrieval_by_scene.get(scene_id, {}),
+                )
+            )
+
+        return (
+            enhanced_scene_packages,
+            retrieval_by_scene,
+            sorted(question_traces, key=lambda item: (item["scene_id"], item["query"])),
+        )
+
+    async def _draft_scene_intent_single(
+        self,
+        *,
+        scene_id: str,
+        delta_input: dict[str, Any],
+        language: str,
+        instructions: str,
+        conversation_id: str | None,
+        debug_collector: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        system_prompt = self._compose_system_prompt(
+            NOVELIST_SCENE_INTENT_PROMPT,
+            language=language,
+            instructions=instructions,
+        )
+        user_payload = json.dumps(
+            {
+                "scene_id": scene_id,
+                "delta_from_step_3": delta_input,
+            },
+            ensure_ascii=True,
+        )
+        raw, _, _ = await self._call_llm(
+            model=self.scene_exploration_model
+            or self.draft_model
+            or self.model_policy.get_model(LLMTask.SYNTHESIS),
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_payload},
+            ],
+            temperature=0.2,
+            conversation_id=conversation_id,
+            use_conversation_memory=True,
+            debug_collector=debug_collector,
+        )
+        parsed = self._parse_json_object(raw) or {}
+        if not isinstance(parsed, dict):
+            parsed = {}
+        return {
+            "what_happens": self._normalize_text_list(parsed.get("what_happens", []), max_items=8),
+            "emotional_progression": self._normalize_text_list(
+                parsed.get("emotional_progression", []), max_items=8
+            ),
+            "speaking_goals": self._normalize_text_list(parsed.get("speaking_goals", []), max_items=8),
+            "implied_history": self._normalize_text_list(parsed.get("implied_history", []), max_items=8),
+            "forbidden_contradictions": self._normalize_text_list(
+                parsed.get("forbidden_contradictions", []), max_items=8
+            ),
+        }
+
+    async def _generate_scene_paragraph_single(
+        self,
+        *,
+        scene_id: str,
+        delta_input: dict[str, Any],
+        language: str,
+        instructions: str,
+        conversation_id: str | None,
+        debug_collector: list[dict[str, Any]] | None = None,
+    ) -> str:
+        system_prompt = self._compose_system_prompt(
+            NOVELIST_SCENE_PROSE_PROMPT,
+            language=language,
+            instructions=instructions,
+        )
+        user_payload = json.dumps(
+            {
+                "scene_id": scene_id,
+                "delta_from_step_4": delta_input,
+            },
+            ensure_ascii=True,
+        )
+        raw, _, _ = await self._call_llm(
+            model=self.draft_model or self.model_policy.get_model(LLMTask.SYNTHESIS),
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_payload},
+            ],
+            temperature=0.25,
+            conversation_id=conversation_id,
+            use_conversation_memory=True,
+            debug_collector=debug_collector,
+        )
+        html = self._ensure_readable_html(raw)
+        html = self._limit_scene_prose_html(html, max_chars=self._scene_prose_max_chars)
+        return html
 
     async def _draft_scene_intents(
         self,
@@ -792,7 +1325,7 @@ class NovelistOrchestrator:
                     f"Elder context:\n{elder_brief or '(none)'}\n\n"
                     "Return JSON in the required schema."
                 )
-                raw, latency_ms = await self._call_llm(
+                raw, latency_ms, _ = await self._call_llm(
                     model=self.draft_model or self.model_policy.get_model(LLMTask.SYNTHESIS),
                     messages=[
                         {"role": "system", "content": system_prompt},
@@ -854,7 +1387,7 @@ class NovelistOrchestrator:
                     f"Writer style:\n{style_hint or '(none)'}\n\n"
                     "Write only the scene prose."
                 )
-                raw, latency_ms = await self._call_llm(
+                raw, latency_ms, _ = await self._call_llm(
                     model=self.draft_model or self.model_policy.get_model(LLMTask.SYNTHESIS),
                     messages=[
                         {"role": "system", "content": system_prompt},
@@ -899,7 +1432,7 @@ class NovelistOrchestrator:
             f"{merged_text}\n\n"
             "Return only concise critique notes in JSON using the requested schema."
         )
-        raw, latency_ms = await self._call_llm(
+        raw, latency_ms, _ = await self._call_llm(
             model=self.draft_model or self.model_policy.get_model(LLMTask.SYNTHESIS),
             messages=[
                 {"role": "system", "content": system_prompt},
@@ -959,7 +1492,7 @@ class NovelistOrchestrator:
             f"{critic_text or '(none)'}\n\n"
             "Return revised prose HTML only."
         )
-        raw, latency_ms = await self._call_llm(
+        raw, latency_ms, _ = await self._call_llm(
             model=self.draft_model or self.model_policy.get_model(LLMTask.SYNTHESIS),
             messages=[
                 {"role": "system", "content": system_prompt},
@@ -1138,7 +1671,13 @@ class NovelistOrchestrator:
                     lines.append(f"  - {entity_name}")
         return "\n".join(lines) if lines else "- Character\n- Place\n- Faction\n- Item"
 
-    def _build_step_1_scenes(self, scenes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def _build_step_1_scenes(
+        self,
+        scenes: list[dict[str, Any]],
+        *,
+        language_output_text: str,
+        instructions: str,
+    ) -> list[dict[str, Any]]:
         out: list[dict[str, Any]] = []
         for idx, scene in enumerate(scenes, start=1):
             if not isinstance(scene, dict):
@@ -1147,21 +1686,22 @@ class NovelistOrchestrator:
             if not scene_id:
                 scene_id = f"scene-{idx:03d}"
             name = str(scene.get("name") or scene_id).strip() or scene_id
-            status = str(scene.get("new_or_update") or "new").strip().lower() or "new"
             out.append(
                 {
                     "scene_id": scene_id,
                     "name": name,
                     "scene_summary": str(scene.get("scene_summary") or "").strip(),
-                    "raw_scene_text": str(scene.get("raw_scene_text") or "").strip(),
+                    "source_rawtext": str(
+                        scene.get("source_rawtext") or scene.get("raw_scene_text") or ""
+                    ).strip(),
                     "milestones": self._normalize_text_list(scene.get("milestones", []), max_items=8),
                     "related_entities": self._normalize_related_entities(
                         scene.get("related_entities", []),
-                        default_status=status,
                     ),
-                    "source_paragraphs": scene.get("source_paragraphs", []),
-                    "source_anchors": scene.get("source_anchors", []),
-                    "new_or_update": status,
+                    "instructions": str(scene.get("instructions") or instructions or "").strip(),
+                    "Language_output_text": str(
+                        scene.get("Language_output_text") or language_output_text or ""
+                    ).strip(),
                 }
             )
         return out
@@ -1182,11 +1722,21 @@ class NovelistOrchestrator:
             out.append(
                 {
                     "scene_id": scene_id,
-                    "raw_scene_text": str(
-                        package.get("raw_scene_text") or source.get("raw_scene_text") or ""
+                    "source_rawtext": str(
+                        package.get("source_rawtext")
+                        or package.get("raw_scene_text")
+                        or source.get("source_rawtext")
+                        or source.get("raw_scene_text")
+                        or ""
                     ).strip(),
                     "scene_summary": str(
                         package.get("scene_summary") or source.get("scene_summary") or ""
+                    ).strip(),
+                    "name": str(package.get("name") or source.get("name") or scene_id).strip(),
+                    "Language_output_text": str(
+                        package.get("Language_output_text")
+                        or source.get("Language_output_text")
+                        or ""
                     ).strip(),
                     "scene_goal": str(
                         package.get("scene_goal")
@@ -1194,37 +1744,100 @@ class NovelistOrchestrator:
                         or source.get("scene_summary")
                         or ""
                     ).strip(),
+                    "scene_tone": str(package.get("scene_tone") or "").strip(),
+                    "prior_knowledge_needed": self._normalize_prior_knowledge_pairs(
+                        package.get("prior_knowledge_needed"),
+                        scene_name=str(package.get("name") or source.get("name") or scene_id),
+                    ),
                     "milestones": self._normalize_text_list(
                         package.get("milestones") or source.get("milestones") or [],
                         max_items=8,
                     ),
                     "related_entities": self._normalize_related_entities(
                         package.get("related_entities") or source.get("related_entities") or [],
-                        default_status=str(source.get("new_or_update") or "new"),
                     ),
-                    "temporal_position_hint": str(
-                        package.get("temporal_position_hint") or "middle"
-                    ).strip()
-                    or "middle",
-                    "tone_hint": str(package.get("tone_hint") or "dramatic").strip() or "dramatic",
-                    "open_questions_for_retrieval": self._normalize_text_list(
-                        package.get("open_questions_for_retrieval", []),
-                        max_items=4,
-                    ),
+                    "instructions": str(
+                        package.get("instructions") or source.get("instructions") or ""
+                    ).strip(),
                 }
             )
         out.sort(key=lambda item: str(item.get("scene_id", "")))
         return out
 
-    def _normalize_related_entities(self, values: Any, *, default_status: str) -> list[dict[str, str]]:
+    @staticmethod
+    def _normalize_prior_knowledge_pairs(value: Any, *, scene_name: str) -> list[dict[str, str]]:
+        pairs: list[dict[str, str]] = []
+        seen_questions: set[str] = set()
+        if isinstance(value, dict):
+            for question, answer in value.items():
+                q = re.sub(r"\s+", " ", str(question or "")).strip()
+                a = re.sub(r"\s+", " ", str(answer or "")).strip()
+                if not q or q.lower() in seen_questions:
+                    continue
+                seen_questions.add(q.lower())
+                pairs.append({"question": q[:220], "answer": a[:260]})
+        elif isinstance(value, list):
+            for item in value:
+                if isinstance(item, dict):
+                    q = re.sub(r"\s+", " ", str(item.get("question") or "")).strip()
+                    a = re.sub(r"\s+", " ", str(item.get("answer") or "")).strip()
+                else:
+                    q = re.sub(r"\s+", " ", str(item or "")).strip()
+                    a = ""
+                if not q or q.lower() in seen_questions:
+                    continue
+                seen_questions.add(q.lower())
+                pairs.append({"question": q[:220], "answer": a[:260]})
+                if len(pairs) >= 5:
+                    break
+        if pairs:
+            return pairs[:5]
+        default_question = f"What prior event most affects {scene_name or 'this scene'}?"
+        return [{"question": default_question[:220], "answer": ""}]
+
+    def _questions_from_prior_knowledge_pairs(self, value: Any, *, fallback: Any) -> list[str]:
+        pairs = self._normalize_prior_knowledge_pairs(value, scene_name="")
+        questions = self._normalize_text_list(
+            [item.get("question", "") for item in pairs if isinstance(item, dict)],
+            max_items=5,
+        )
+        if questions:
+            return questions
+        return self._normalize_text_list(fallback if isinstance(fallback, list) else [], max_items=5)
+
+    def _apply_retrieval_to_scene(self, *, scene: dict[str, Any], retrieval: dict[str, Any]) -> dict[str, Any]:
+        merged = dict(scene)
+        buckets = retrieval.get("buckets") if isinstance(retrieval, dict) else {}
+        if not isinstance(buckets, dict):
+            buckets = {}
+        summary_fields = (
+            "prior_events",
+            "relationship_summaries",
+            "personality_reminders",
+            "unresolved_tensions",
+            "style_details",
+            "contradiction_warnings",
+        )
+        for key in summary_fields:
+            values = buckets.get(key, [])
+            if isinstance(values, list):
+                merged[key] = str(values[0]).strip() if values else ""
+            else:
+                merged[key] = str(values or "").strip()
+        merged["questions_answers"] = retrieval.get("questions_answers", []) if isinstance(retrieval, dict) else []
+        merged["queries"] = retrieval.get("queries", []) if isinstance(retrieval, dict) else []
+        merged["Language_output_text"] = str(
+            merged.get("Language_output_text") or ""
+        ).strip()
+        return merged
+
+    def _normalize_related_entities(self, values: Any) -> list[str]:
         if not isinstance(values, list):
             return []
-        normalized: list[dict[str, str]] = []
+        normalized: list[str] = []
         seen: set[str] = set()
-        safe_status = str(default_status or "new").strip().lower() or "new"
         for value in values:
             entity_name = ""
-            status = safe_status
             if isinstance(value, dict):
                 entity_name = str(
                     value.get("entity")
@@ -1233,7 +1846,6 @@ class NovelistOrchestrator:
                     or value.get("value")
                     or ""
                 ).strip()
-                status = str(value.get("status") or safe_status).strip().lower() or safe_status
             else:
                 entity_name = str(value or "").strip()
             if not entity_name:
@@ -1242,7 +1854,7 @@ class NovelistOrchestrator:
             if key in seen:
                 continue
             seen.add(key)
-            normalized.append({"entity": entity_name, "status": status})
+            normalized.append(entity_name)
             if len(normalized) >= 12:
                 break
         return normalized
@@ -1278,7 +1890,6 @@ class NovelistOrchestrator:
                     "order": order,
                     "scene_summary": scene.get("scene_summary", ""),
                     "scene_goal": scene.get("scene_goal", ""),
-                    "source_paragraphs": scene.get("source_paragraphs", []),
                     "milestones": scene.get("milestones", []),
                     "related_entities": scene.get("related_entities", []),
                     "retrieval": retrieval_by_scene.get(scene_id, {}).get("buckets", {}),
@@ -1316,9 +1927,11 @@ class NovelistOrchestrator:
                     "scene_id": scene.get("scene_id"),
                     "name": scene.get("name"),
                     "scene_summary": scene.get("scene_summary", ""),
-                    "raw_scene_text": scene.get("raw_scene_text", ""),
+                    "source_rawtext": scene.get("source_rawtext", ""),
                     "milestones": scene.get("milestones", []),
                     "related_entities": scene.get("related_entities", []),
+                    "instructions": scene.get("instructions", ""),
+                    "Language_output_text": scene.get("Language_output_text", ""),
                 }
             )
 
@@ -1329,7 +1942,17 @@ class NovelistOrchestrator:
                 {
                     "scene_id": scene_id,
                     "queries": retrieval.get("queries", []),
+                    "questions_answers": retrieval.get("questions_answers", []),
                     "narrative_context": retrieval.get("buckets", {}),
+                    "instructions": retrieval.get("instructions", ""),
+                    "enhanced_scene_payload": next(
+                        (
+                            scene
+                            for scene in scene_packages
+                            if str(scene.get("scene_id")) == scene_id
+                        ),
+                        {},
+                    ),
                 }
             )
 
@@ -1467,6 +2090,102 @@ class NovelistOrchestrator:
             except Exception:
                 return None
 
+    @staticmethod
+    def _scene_delta(before: dict[str, Any], after: dict[str, Any]) -> dict[str, Any]:
+        keys = sorted(set(before.keys()) | set(after.keys()))
+        delta: dict[str, Any] = {}
+        for key in keys:
+            before_value = before.get(key)
+            after_value = after.get(key)
+            if before_value == after_value:
+                continue
+            delta[key] = {
+                "before": before_value,
+                "after": after_value,
+            }
+        return delta
+
+    @staticmethod
+    def _scene_delta_allowlist(
+        before: dict[str, Any],
+        after: dict[str, Any],
+        *,
+        allowed_fields: tuple[str, ...],
+    ) -> dict[str, Any]:
+        delta: dict[str, Any] = {}
+        for key in allowed_fields:
+            before_value = before.get(key)
+            after_value = after.get(key)
+            if before_value == after_value:
+                continue
+            delta[key] = {"before": before_value, "after": after_value}
+        return delta
+
+    @staticmethod
+    def _lean_scene_payload(scene: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "scene_id": str(scene.get("scene_id") or ""),
+            "name": str(scene.get("name") or ""),
+            "scene_summary": str(scene.get("scene_summary") or ""),
+            "source_rawtext": str(scene.get("source_rawtext") or scene.get("raw_scene_text") or ""),
+            "milestones": scene.get("milestones", []),
+            "related_entities": scene.get("related_entities", []),
+            "instructions": str(scene.get("instructions") or ""),
+            "Language_output_text": str(scene.get("Language_output_text") or ""),
+            "prior_knowledge_needed": scene.get("prior_knowledge_needed", []),
+            "scene_tone": str(scene.get("scene_tone") or ""),
+            "scene_goal": str(scene.get("scene_goal") or ""),
+        }
+
+    @staticmethod
+    def _token_summary_from_scene_traces(scene_traces: list[dict[str, Any]]) -> dict[str, Any]:
+        prompt_total = 0
+        completion_total = 0
+        total_total = 0
+        call_count = 0
+        per_scene: dict[str, dict[str, int]] = {}
+
+        for scene_trace in scene_traces:
+            scene_id = str(scene_trace.get("scene_id") or "")
+            llm_calls = scene_trace.get("llm_calls", [])
+            if not isinstance(llm_calls, list):
+                continue
+            scene_prompt = 0
+            scene_completion = 0
+            scene_total = 0
+            for call in llm_calls:
+                if not isinstance(call, dict):
+                    continue
+                usage = call.get("token_usage")
+                if not isinstance(usage, dict):
+                    continue
+                call_count += 1
+                prompt = usage.get("prompt_tokens")
+                completion = usage.get("completion_tokens")
+                total = usage.get("total_tokens")
+                if isinstance(prompt, int):
+                    prompt_total += prompt
+                    scene_prompt += prompt
+                if isinstance(completion, int):
+                    completion_total += completion
+                    scene_completion += completion
+                if isinstance(total, int):
+                    total_total += total
+                    scene_total += total
+            if scene_id:
+                per_scene[scene_id] = {
+                    "prompt_tokens": scene_prompt,
+                    "completion_tokens": scene_completion,
+                    "total_tokens": scene_total,
+                }
+        return {
+            "prompt_tokens": prompt_total,
+            "completion_tokens": completion_total,
+            "total_tokens": total_total,
+            "call_count": call_count,
+            "per_scene": per_scene,
+        }
+
     async def _call_llm(
         self,
         *,
@@ -1474,24 +2193,58 @@ class NovelistOrchestrator:
         messages: list[dict[str, str]],
         temperature: float,
         conversation_id: str | None,
-    ) -> tuple[str, float]:
+        use_conversation_memory: bool = False,
+        debug_collector: list[dict[str, Any]] | None = None,
+    ) -> tuple[str, float, dict[str, Any]]:
         started = time.monotonic()
+        response_payload: dict[str, Any]
         try:
-            raw = await self.llm_client.chat(
+            response_payload = await self.llm_client.chat(
                 model=model,
                 messages=messages,
                 temperature=temperature,
                 conversation_id=conversation_id,
-                use_conversation_memory=False,
+                use_conversation_memory=use_conversation_memory,
+                return_metadata=True,
             )
         except TypeError:
-            raw = await self.llm_client.chat(
+            raw_text = await self.llm_client.chat(
                 model=model,
                 messages=messages,
                 temperature=temperature,
                 conversation_id=conversation_id,
             )
+            response_payload = {
+                "text": str(raw_text or ""),
+                "usage": {
+                    "prompt_tokens": None,
+                    "completion_tokens": None,
+                    "total_tokens": None,
+                },
+                "response_metadata": {},
+            }
         elapsed_ms = round((time.monotonic() - started) * 1000, 2)
+        raw = str(response_payload.get("text") or "")
+        token_usage = response_payload.get("usage")
+        if not isinstance(token_usage, dict):
+            token_usage = {
+                "prompt_tokens": None,
+                "completion_tokens": None,
+                "total_tokens": None,
+            }
+        debug_call = {
+            "step": self._debug_step_label,
+            "model": model,
+            "temperature": temperature,
+            "conversation_id": conversation_id,
+            "latency_ms": elapsed_ms,
+            "messages_pretty": self._messages_pretty(messages),
+            "raw_response_lines": raw.splitlines(),
+            "token_usage": token_usage,
+            "response_metadata": response_payload.get("response_metadata", {}),
+        }
+        if debug_collector is not None:
+            debug_collector.append(debug_call)
         if self._debug_step_label:
             self._debug_prompt_calls.append(
                 {
@@ -1499,7 +2252,7 @@ class NovelistOrchestrator:
                     "model": model,
                     "temperature": temperature,
                     "conversation_id": conversation_id,
-                    "messages": messages,
+                    "messages_pretty": self._messages_pretty(messages),
                 }
             )
             self._debug_response_calls.append(
@@ -1509,11 +2262,26 @@ class NovelistOrchestrator:
                     "temperature": temperature,
                     "conversation_id": conversation_id,
                     "latency_ms": elapsed_ms,
-                    "messages": messages,
-                    "raw_response": raw,
+                    "messages_pretty": self._messages_pretty(messages),
+                    "raw_response_lines": raw.splitlines(),
+                    "token_usage": token_usage,
                 }
             )
-        return raw, elapsed_ms
+        return raw, elapsed_ms, token_usage
+
+    @staticmethod
+    def _messages_pretty(messages: list[dict[str, str]]) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
+        for message in messages:
+            role = str(message.get("role") or "").strip()
+            content = str(message.get("content") or "")
+            out.append(
+                {
+                    "role": role,
+                    "content_lines": content.splitlines(),
+                }
+            )
+        return out
 
     @staticmethod
     def _compact_retrieved_text(raw_text: str, max_chars: int = 200) -> str:
@@ -1584,6 +2352,16 @@ class NovelistOrchestrator:
             if values:
                 lines.append(f"{label}: {', '.join(values)}")
         return "\n".join(lines)
+
+    @staticmethod
+    def _normalize_single_paragraph(text: str) -> str:
+        raw = re.sub(r"<[^>]+>", " ", str(text or ""))
+        raw = re.sub(r"\s+", " ", raw).strip()
+        if not raw:
+            return ""
+        sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", raw) if s.strip()]
+        paragraph = " ".join(sentences).strip() if sentences else raw
+        return paragraph
 
     @staticmethod
     def _extract_paragraph_and_dialogue(html: str) -> tuple[str, str]:

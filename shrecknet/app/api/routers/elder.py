@@ -52,7 +52,7 @@ async def get_model_policy() -> ModelPolicy:
     """Dependency to get model policy."""
     settings = get_settings()
 
-    return ModelPolicy(
+    model_policy = ModelPolicy(
         decompose_model=settings.model_decompose,
         subanswer_model=settings.model_subanswer,
         synthesis_model=settings.model_synthesis,
@@ -62,6 +62,8 @@ async def get_model_policy() -> ModelPolicy:
             settings, "model_architect_extract", settings.model_decompose
         ),
     )
+    setattr(model_policy, "model_elder_query", settings.model_elder_query)
+    return model_policy
 
 
 async def get_graph_retriever() -> Neo4jGraphRetriever:

@@ -10,8 +10,8 @@ from app.tasks.architect_analysis import (
     _extract_scene_entities,
     _flatten_scene_inputs,
     _format_ontology_definitions_from_entities,
+    _resolve_local_tests_output_dir,
     _run_milestone_proposal_phase,
-    _resolve_analysis_output_dir,
 )
 
 
@@ -22,7 +22,7 @@ def test_resolve_analysis_output_dir_uses_required_layout(
     monkeypatch.delenv("SHRECKNET_DATA_DIR", raising=False)
     monkeypatch.chdir(tmp_path)
 
-    output_dir = _resolve_analysis_output_dir("job-123")
+    output_dir = _resolve_local_tests_output_dir("job-123")
 
     assert output_dir.as_posix().endswith(
         "local_tests/arhictect/Analyses/job-123"
@@ -125,6 +125,7 @@ def test_extract_scene_entities_uses_scene_prompt_fields() -> None:
             llm_client=_FakeLLMClient(),
             model="test-model",
             ontology_definitions="- Players: Playable characters",
+            allowed_ontology_names={"players": "Players"},
             scenes=[
                 {
                     "scene_ref": "chunk_0_scene_0",
@@ -179,6 +180,7 @@ def test_scene_reconcile_dedups_alias_equivalents_without_graph_candidates() -> 
             scene_results=scene_results,
             existing_nodes=[],
             ontology_definitions="- Players: Playable characters",
+            allowed_ontology_names={"players": "Players"},
         )
     )
 
@@ -193,7 +195,7 @@ def test_scene_reconcile_dedups_alias_equivalents_without_graph_candidates() -> 
 def test_scene_reconcile_llm_match_adds_update_metadata() -> None:
     class _FakeLLMClient:
         async def chat(self, *, model, messages, temperature):  # type: ignore[no-untyped-def]
-            del model, messages, temperature
+            del model, temperature
             prompt = messages[0]["content"]
             assert "Jessie" in prompt
             return (
@@ -226,6 +228,7 @@ def test_scene_reconcile_llm_match_adds_update_metadata() -> None:
             scene_results=scene_results,
             existing_nodes=existing_nodes,
             ontology_definitions="- Players: Playable characters",
+            allowed_ontology_names={"players": "Players"},
         )
     )
 
@@ -235,6 +238,38 @@ def test_scene_reconcile_llm_match_adds_update_metadata() -> None:
     assert entity["entity_instance_id"] == "node-1"
     assert entity["proposal_type"] == "update_instance"
     assert entity["proposal_metadata"]["resolved_status"] == "existing"
+
+
+def test_extract_scene_entities_drops_unknown_ontology_values() -> None:
+    class _FakeLLMClient:
+        async def chat(self, *, model, messages, temperature):  # type: ignore[no-untyped-def]
+            del model, messages, temperature
+            return (
+                '{"entities":[{"name":"Arthur","ontology":"Unknown","confidence":0.9,'
+                '"why":"Named in scene"},{"name":"Kay","ontology":"Players",'
+                '"confidence":0.8,"why":"Named in scene"}]}'
+            )
+
+    scene_results = asyncio.run(
+        _extract_scene_entities(
+            run_id="run-1",
+            llm_client=_FakeLLMClient(),
+            model="test-model",
+            ontology_definitions="- Players: Playable characters",
+            allowed_ontology_names={"players": "Players"},
+            scenes=[
+                {
+                    "scene_ref": "chunk_0_scene_0",
+                    "scene_text": "[P1] Arthur and Kay arrive.",
+                }
+            ],
+        )
+    )
+
+    assert scene_results[0]["status"] == "ok"
+    assert len(scene_results[0]["entities"]) == 1
+    assert scene_results[0]["entities"][0]["name"] == "Kay"
+    assert scene_results[0]["entities"][0]["ontology"] == "Players"
 
 
 def test_build_scene_proposals_includes_ordering_links() -> None:
@@ -271,7 +306,7 @@ def test_build_scene_proposals_includes_ordering_links() -> None:
         }
     ]
 
-    proposals = _build_scene_proposals(scenes, proposed_entities)
+    proposals = _build_scene_proposals(scenes, proposed_entities, author_id="agent-1")
 
     assert len(proposals) == 2
     assert proposals[0]["scene_order"] == 1
@@ -444,7 +479,7 @@ def test_build_scene_proposals_related_to_targets_deduped_entities() -> None:
         },
     ]
 
-    proposals = _build_scene_proposals(scenes, proposed_entities)
+    proposals = _build_scene_proposals(scenes, proposed_entities, author_id="agent-1")
 
     related = proposals[0]["related_to"]
     assert len(related) == 2

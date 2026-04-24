@@ -189,9 +189,13 @@ async def _embed_instance_impl(job_id: int, instance_id: str) -> dict[str, Any]:
         instance_query = """
         MATCH (instance:OntologyInstance {instance_id: $instance_id})
         OPTIONAL MATCH (instance)-[:HAS_ENTITY]->(entity:EntityInstance)
+        OPTIONAL MATCH (instance)-[:HAS_SCENE]->(scene:Scene)
+        OPTIONAL MATCH (scene)-[:CONTAINS]->(milestone:Milestone)
         RETURN
             instance.ontology_id AS ontology_id,
-            collect(DISTINCT entity.entity_instance_id) AS entity_ids
+            collect(DISTINCT entity.entity_instance_id) AS entity_ids,
+            collect(DISTINCT scene.id) AS scene_ids,
+            collect(DISTINCT milestone.id) AS milestone_ids
         LIMIT 1
         """
         result = await session.run(instance_query, instance_id=instance_id)
@@ -201,7 +205,21 @@ async def _embed_instance_impl(job_id: int, instance_id: str) -> dict[str, Any]:
 
         ontology_id = record.get("ontology_id")
         entity_ids = [value for value in (record.get("entity_ids") or []) if value]
-        node_ids = list(dict.fromkeys(entity_ids))
+        scene_ids = [value for value in (record.get("scene_ids") or []) if value]
+        milestone_ids = [value for value in (record.get("milestone_ids") or []) if value]
+        typed_nodes: list[tuple[str, str]] = (
+            [("entity", node_id) for node_id in entity_ids]
+            + [("scene", node_id) for node_id in scene_ids]
+            + [("milestone", node_id) for node_id in milestone_ids]
+        )
+        dedup_nodes: list[tuple[str, str]] = []
+        seen_nodes: set[tuple[str, str]] = set()
+        for node_type, node_id in typed_nodes:
+            key = (node_type, node_id)
+            if key in seen_nodes:
+                continue
+            seen_nodes.add(key)
+            dedup_nodes.append(key)
 
         await update_job_progress(
             job_id,
@@ -210,14 +228,17 @@ async def _embed_instance_impl(job_id: int, instance_id: str) -> dict[str, Any]:
                 "status": "resolved instance graph",
                 "instance_id": instance_id,
                 "ontology_id": ontology_id,
-                "nodes_requested": len(node_ids),
+                "nodes_requested": len(dedup_nodes),
+                "entities_requested": len(entity_ids),
+                "scenes_requested": len(scene_ids),
+                "milestones_requested": len(milestone_ids),
             },
         )
 
         if ontology_id is None:
             raise ValueError(f"Ontology instance {instance_id} is missing ontology_id")
 
-        if not node_ids:
+        if not dedup_nodes:
             await update_job_progress(
                 job_id,
                 1.0,
@@ -231,6 +252,9 @@ async def _embed_instance_impl(job_id: int, instance_id: str) -> dict[str, Any]:
                 "instance_id": instance_id,
                 "ontology_id": ontology_id,
                 "nodes_requested": 0,
+                "entities_requested": 0,
+                "scenes_requested": 0,
+                "milestones_requested": 0,
                 "nodes_embedded": 0,
                 "nodes_failed": 0,
                 "nodes_skipped": 0,
@@ -240,13 +264,18 @@ async def _embed_instance_impl(job_id: int, instance_id: str) -> dict[str, Any]:
 
         processed = 0
         failed = 0
-        total = len(node_ids)
+        total = len(dedup_nodes)
         missing_nodes: list[str] = []
 
-        for idx, node_id in enumerate(node_ids, start=1):
+        for idx, (node_type, node_id) in enumerate(dedup_nodes, start=1):
             progress = 0.2 + 0.75 * (idx / total)
             try:
-                await embedding_service.embed_node(node_id, ontology_id)
+                if node_type == "entity":
+                    await embedding_service.embed_node(node_id, ontology_id)
+                elif node_type == "scene":
+                    await embedding_service.embed_scene_node(node_id, ontology_id)
+                else:
+                    await embedding_service.embed_milestone_node(node_id, ontology_id)
                 processed += 1
             except ValueError:
                 missing_nodes.append(node_id)
@@ -259,6 +288,7 @@ async def _embed_instance_impl(job_id: int, instance_id: str) -> dict[str, Any]:
                         "status": "embedding instance nodes",
                         "instance_id": instance_id,
                         "current_node": node_id,
+                        "current_node_type": node_type,
                         "nodes_completed": processed,
                         "nodes_failed": failed,
                         "error": str(exc),
@@ -273,6 +303,7 @@ async def _embed_instance_impl(job_id: int, instance_id: str) -> dict[str, Any]:
                     "status": "embedding instance nodes",
                     "instance_id": instance_id,
                     "current_node": node_id,
+                    "current_node_type": node_type,
                     "nodes_completed": processed,
                     "nodes_failed": failed,
                 },
@@ -294,7 +325,10 @@ async def _embed_instance_impl(job_id: int, instance_id: str) -> dict[str, Any]:
         return {
             "instance_id": instance_id,
             "ontology_id": ontology_id,
-            "nodes_requested": len(node_ids),
+            "nodes_requested": len(dedup_nodes),
+            "entities_requested": len(entity_ids),
+            "scenes_requested": len(scene_ids),
+            "milestones_requested": len(milestone_ids),
             "nodes_embedded": processed,
             "nodes_failed": failed,
             "nodes_skipped": len(missing_nodes),
@@ -402,19 +436,30 @@ async def _embed_nodes_impl(
 
         validation_query = """
         UNWIND $ids AS node_id
-        OPTIONAL MATCH (entity:EntityInstance {entity_instance_id: node_id})
-        WHERE toInteger(entity.ontology_id) = toInteger($ontology_id)
-        OPTIONAL MATCH (scene:Scene {id: node_id})
-        WHERE toInteger(scene.ontology_id) = toInteger($ontology_id)
-        OPTIONAL MATCH (milestone:Milestone {id: node_id})
-        WHERE toInteger(milestone.ontology_id) = toInteger($ontology_id)
-        WITH node_id, entity, scene, milestone
+        OPTIONAL MATCH (node)
+        WHERE toInteger(node.ontology_id) = toInteger($ontology_id)
+          AND (
+            ("EntityInstance" IN labels(node) AND node.entity_instance_id = node_id)
+            OR (
+              ("Scene" IN labels(node) OR "Milestone" IN labels(node))
+              AND node.id = node_id
+            )
+          )
+        WITH node_id,
+             collect(
+               CASE
+                 WHEN "EntityInstance" IN labels(node) THEN "entity"
+                 WHEN "Scene" IN labels(node) THEN "scene"
+                 WHEN "Milestone" IN labels(node) THEN "milestone"
+                 ELSE NULL
+               END
+             ) AS node_types
         RETURN node_id,
                CASE
-                   WHEN entity IS NOT NULL THEN "entity"
-                   WHEN scene IS NOT NULL THEN "scene"
-                   WHEN milestone IS NOT NULL THEN "milestone"
-                   ELSE NULL
+                 WHEN "entity" IN node_types THEN "entity"
+                 WHEN "scene" IN node_types THEN "scene"
+                 WHEN "milestone" IN node_types THEN "milestone"
+                 ELSE NULL
                END AS node_type
         """
         result = await session.run(

@@ -151,21 +151,18 @@ class _FakeLLM:
             )
 
         if "generating scene-local Elder retrieval questions" in system:
-            scene = json.loads(user)
             return json.dumps(
                 {
                     "queries": [
-                        f"What prior event is most relevant to {scene.get('scene_id', 'scene')}?"
+                        "What prior event is most relevant to this scene?"
                     ]
                 }
             )
 
         if "drafting a compact scene intent" in system:
-            payload = json.loads(user)
-            scene = payload["scene"]
             return json.dumps(
                 {
-                    "scene_id": scene["scene_id"],
+                    "scene_id": "scene-001",
                     "what_happens": ["The party requests support from the council."],
                     "emotional_progression": ["cautious", "defiant"],
                     "speaking_goals": ["convince", "avoid confession"],
@@ -177,47 +174,11 @@ class _FakeLLM:
         if "writing one scene in third-person prose" in system:
             return "<p>Aria paused at the chamber threshold and weighed each face before speaking.</p>"
 
-        if "structural critic over an ordered list" in system:
-            payload = json.loads(user)
-            by_scene = {}
-            for scene in payload["scene_packages"]:
-                by_scene[scene["scene_id"]] = {
-                    "continuity_issues": [],
-                    "duplication": [],
-                    "missing_transitions": ["Add one bridge sentence from prior scene."],
-                    "voice_drift": [],
-                    "pacing": [],
-                    "graph_contradictions": [],
-                    "exposition_problems": [],
-                }
-            return json.dumps({"global_notes": ["Transitions need smoothing."], "by_scene": by_scene})
+        if "structural critic over one complete chapter draft" in system:
+            return json.dumps({"global_notes": ["Transitions need smoothing."], "by_scene": {}})
 
-        if "Revise an ordered scene set" in system:
-            return json.dumps(
-                {
-                    "scenes": [
-                        {
-                            "scene_id": "scene-001-merged",
-                            "name": "Unified Council Confrontation",
-                            "prose_html": "<p>The party crossed from suspicion to negotiation without breaking stride.</p>",
-                            "merged_from": ["scene-001", "scene-002"],
-                            "split_from": None,
-                            "notes": ["Merged to smooth transition."],
-                        }
-                    ],
-                    "lineage": {
-                        "scene-001": {
-                            "source_scene_ids": ["scene-001"],
-                            "action": "merged",
-                        },
-                        "scene-002": {
-                            "source_scene_ids": ["scene-002"],
-                            "action": "merged",
-                        },
-                    },
-                    "global_revision_notes": ["Merged scene boundary for flow."],
-                }
-            )
+        if "Revise the full draft using critic feedback" in system:
+            return "<p>The party crossed from suspicion to negotiation without breaking stride.</p><blockquote>\"We ask for terms, not mercy,\" Aria said.</blockquote>"
 
         return "{}"
 
@@ -323,3 +284,78 @@ async def _fake_elder_runner(_agent: Agent, _query: str) -> list[dict[str, str]]
         {"node_label": "Scene", "text": "Earlier, Aria refused the oath before the council."},
         {"node_label": "EntityInstance", "text": "Brenn's speaking style is blunt and confrontational."},
     ]
+
+
+class _CaptureLLM:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str]] = []
+
+    async def chat(self, model, messages, temperature, conversation_id=None):
+        del model, temperature, conversation_id
+        system = ""
+        for msg in messages:
+            if msg.get("role") == "system":
+                system = msg.get("content", "")
+        user = messages[-1].get("content", "")
+        self.calls.append((system, user))
+        if "structural critic over one complete chapter draft" in system:
+            return json.dumps({"global_notes": ["ok"], "by_scene": {}})
+        if "Revise the full draft using critic feedback" in system:
+            return "<p>Revised.</p><blockquote>\"Line.\"</blockquote>"
+        if "writing one scene in third-person prose" in system:
+            return "<p>A</p><blockquote>B</blockquote>"
+        return "{}"
+
+
+@pytest.mark.asyncio
+async def test_prompt_payloads_do_not_include_debug_fields() -> None:
+    llm = _CaptureLLM()
+    orchestrator = NovelistOrchestrator(llm_client=llm, model_policy=_FakeModelPolicy())
+    scene_packages = [
+        {
+            "scene_id": "scene-001",
+            "name": "S1",
+            "scene_summary": "Summary",
+            "scene_goal": "Goal",
+            "milestones": ["M1"],
+            "related_entities": ["E1"],
+            "_raw_scene_package": "debug",
+            "raw_scene_text": "very long text",
+        }
+    ]
+    retrieval = {"scene-001": {"buckets": {"prior_events": ["Ref A"], "style_details": ["Ref B"]}}}
+    intents = {"scene-001": {"what_happens": ["X"]}}
+    prose = await orchestrator._generate_scene_prose(
+        agent=Agent(id="a", name="n", job="novelist", active=True),
+        scene_packages=scene_packages,
+        intents_by_scene=intents,
+        retrieval_by_scene=retrieval,
+        continuity_brief="brief",
+        language="en",
+        instructions="",
+        conversation_id="cid",
+    )
+    assert prose[0]["prose_html"].startswith("<p>")
+    _, prose_user = llm.calls[-1]
+    assert "_raw_scene_package" not in prose_user
+    assert "raw_scene_text" not in prose_user
+
+    await orchestrator._critic_scene_set(
+        scene_packages=scene_packages,
+        prose_by_scene=prose,
+        language="en",
+        instructions="",
+        conversation_id="cid",
+    )
+    _, critic_user = llm.calls[-1]
+    assert "scene_packages" not in critic_user
+    assert "scene_drafts" not in critic_user
+
+
+def test_scene_prose_limiter_enforces_single_paragraph_and_dialogue() -> None:
+    orchestrator = NovelistOrchestrator(llm_client=_FakeLLM(), model_policy=_FakeModelPolicy())
+    html = "<p>" + ("x" * 3000) + "</p><blockquote>" + ("y" * 3000) + "</blockquote>"
+    limited = orchestrator._limit_scene_prose_html(html, max_chars=1400)
+    assert limited.count("<p>") == 1
+    assert limited.count("<blockquote>") <= 1
+    assert len(limited) < 1700

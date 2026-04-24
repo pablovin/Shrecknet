@@ -125,12 +125,15 @@ async def request_architect_analysis(
         },
     )
 
-    architect_task.delay(
-        run_id=run.id,
-        agent_id=agent.id,
-        request_payload=payload.model_dump(),
-        author_type="user",
-        author_id=str(current_user.id),
+    architect_task.apply_async(
+        kwargs={
+            "run_id": run.id,
+            "agent_id": agent.id,
+            "request_payload": payload.model_dump(),
+            "author_type": "user",
+            "author_id": str(current_user.id),
+        },
+        expires=max(60, int(settings.celery_expires_architect_seconds)),
     )
 
     refreshed = await service.get_run(run.id, include_proposals=True)
@@ -375,11 +378,15 @@ async def generate_entities_from_validated_proposals(
     
     # Trigger the background task
     agent_author_id = run.agent_id or payload.author_id
-    result = generation_task.delay(
-        run_id=run_id,
-        reviewed_pipeline_output=payload.reviewed_pipeline_output.model_dump(),
-        author_type="agent",
-        author_id=agent_author_id,
+    settings = get_settings()
+    result = generation_task.apply_async(
+        kwargs={
+            "run_id": run_id,
+            "reviewed_pipeline_output": payload.reviewed_pipeline_output.model_dump(),
+            "author_type": "agent",
+            "author_id": agent_author_id,
+        },
+        expires=max(60, int(settings.celery_expires_architect_seconds)),
     )
     
     return {

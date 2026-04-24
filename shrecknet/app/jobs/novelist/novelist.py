@@ -65,7 +65,10 @@ class NovelistOrchestrator:
         self.model_policy = model_policy
         self.draft_model = getattr(model_policy, "model_novelist_draft", None)
         self.critic_model = getattr(model_policy, "model_novelist_critic", None)
-        self.max_concurrency = max(1, min(10, max_concurrency))
+        self.max_concurrency = max(2, min(4, max_concurrency))
+        self._scene_prose_max_chars = 1400
+        self._critic_input_max_chars = 110_000
+        self._revision_input_max_chars = 110_000
         self.elder_query_runner = elder_query_runner
         self.architect_scaffolding_runner = architect_scaffolding_runner
 
@@ -668,7 +671,13 @@ class NovelistOrchestrator:
         )
 
         async def _generate_queries(scene: dict[str, Any]) -> tuple[str, list[str], str]:
-            user_prompt = json.dumps(scene, ensure_ascii=True)
+            scene_id = str(scene.get("scene_id") or "")
+            scene_brief = self._build_scene_brief_text(scene)
+            user_prompt = (
+                f"Scene ID: {scene_id or 'scene'}\n"
+                f"{scene_brief}\n\n"
+                "Return JSON with 2-4 short continuity-focused retrieval questions."
+            )
             raw, _ = await self._call_llm(
                 model=self.critic_model or self.model_policy.get_model(LLMTask.VALIDATION),
                 messages=[
@@ -762,16 +771,20 @@ class NovelistOrchestrator:
             async with semaphore:
                 scene_id = str(scene.get("scene_id"))
                 retrieval = retrieval_by_scene.get(scene_id, {})
-                user_payload = {
-                    "scene": scene,
-                    "continuity_brief": continuity_brief,
-                    "retrieval_buckets": retrieval.get("buckets", {}),
-                }
+                scene_brief = self._build_scene_brief_text(scene)
+                elder_brief = self._build_elder_context_text(retrieval.get("buckets", {}))
+                user_payload = (
+                    f"Scene ID: {scene_id}\n"
+                    f"{scene_brief}\n\n"
+                    f"Continuity brief:\n{continuity_brief or '(none)'}\n\n"
+                    f"Elder context:\n{elder_brief or '(none)'}\n\n"
+                    "Return JSON in the required schema."
+                )
                 raw, latency_ms = await self._call_llm(
                     model=self.draft_model or self.model_policy.get_model(LLMTask.SYNTHESIS),
                     messages=[
                         {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": json.dumps(user_payload, ensure_ascii=True)},
+                        {"role": "user", "content": user_payload},
                     ],
                     temperature=0.2,
                     conversation_id=conversation_id,
@@ -785,8 +798,7 @@ class NovelistOrchestrator:
                 parsed.setdefault("speaking_goals", [])
                 parsed.setdefault("implied_history", [])
                 parsed.setdefault("forbidden_contradictions", [])
-                parsed["_raw"] = raw
-                parsed["_latency_ms"] = latency_ms
+                parsed["latency_ms"] = latency_ms
                 return scene_id, parsed
 
         pairs = await asyncio.gather(*[asyncio.create_task(_run(scene)) for scene in scene_packages])
@@ -820,30 +832,35 @@ class NovelistOrchestrator:
                 scene_id = str(scene.get("scene_id"))
                 intent = intents_by_scene.get(scene_id, {})
                 retrieval = retrieval_by_scene.get(scene_id, {})
-                user_payload = {
-                    "scene": scene,
-                    "intent": intent,
-                    "retrieval_buckets": retrieval.get("buckets", {}),
-                    "continuity_brief": continuity_brief,
-                    "writer_style": style_hint,
-                }
+                scene_brief = self._build_scene_brief_text(scene)
+                intent_brief = self._build_intent_brief_text(intent)
+                elder_brief = self._build_elder_context_text(retrieval.get("buckets", {}))
+                user_payload = (
+                    f"Scene ID: {scene_id}\n"
+                    f"{scene_brief}\n\n"
+                    f"Intent:\n{intent_brief or '(none)'}\n\n"
+                    f"Elder context:\n{elder_brief or '(none)'}\n\n"
+                    f"Continuity brief:\n{continuity_brief or '(none)'}\n\n"
+                    f"Writer style:\n{style_hint or '(none)'}\n\n"
+                    "Write only the scene prose."
+                )
                 raw, latency_ms = await self._call_llm(
                     model=self.draft_model or self.model_policy.get_model(LLMTask.SYNTHESIS),
                     messages=[
                         {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": json.dumps(user_payload, ensure_ascii=True)},
+                        {"role": "user", "content": user_payload},
                     ],
                     temperature=0.25,
                     conversation_id=conversation_id,
                 )
                 html = self._ensure_readable_html(raw)
+                html = self._limit_scene_prose_html(html, max_chars=self._scene_prose_max_chars)
                 return {
                     "scene_id": scene_id,
                     "name": scene.get("name") or scene.get("scene_summary") or scene_id,
                     "scene_summary": scene.get("scene_summary", ""),
                     "prose_html": html,
-                    "_raw": raw,
-                    "_latency_ms": latency_ms,
+                    "latency_ms": latency_ms,
                 }
 
         out = await asyncio.gather(*[asyncio.create_task(_run(scene)) for scene in scene_packages])
@@ -865,15 +882,18 @@ class NovelistOrchestrator:
             language=language,
             instructions=instructions,
         )
-        user_payload = {
-            "scene_packages": scene_packages,
-            "scene_drafts": prose_by_scene,
-        }
+        merged_text = self._merge_scene_html(prose_by_scene)
+        merged_text = self._clip_text(merged_text, max_chars=self._critic_input_max_chars)
+        user_payload = (
+            "Full draft text to critique:\n"
+            f"{merged_text}\n\n"
+            "Return only concise critique notes in JSON using the requested schema."
+        )
         raw, latency_ms = await self._call_llm(
             model=self.critic_model or self.model_policy.get_model(LLMTask.VALIDATION),
             messages=[
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": json.dumps(user_payload, ensure_ascii=True)},
+                {"role": "user", "content": user_payload},
             ],
             temperature=0.1,
             conversation_id=conversation_id,
@@ -901,7 +921,6 @@ class NovelistOrchestrator:
             if isinstance(parsed, dict)
             else [],
             "by_scene": normalized_by_scene,
-            "raw": raw,
             "latency_ms": latency_ms,
         }
 
@@ -920,83 +939,50 @@ class NovelistOrchestrator:
             language=language,
             instructions=instructions,
         )
-        user_payload = {
-            "scene_packages": scene_packages,
-            "scene_drafts": prose_by_scene,
-            "critic": critic,
-        }
+        merged_text = self._merge_scene_html(prose_by_scene)
+        merged_text = self._clip_text(merged_text, max_chars=self._revision_input_max_chars)
+        critic_text = self._critic_to_text(critic)
+        user_payload = (
+            "Draft text to revise:\n"
+            f"{merged_text}\n\n"
+            "Critic notes:\n"
+            f"{critic_text or '(none)'}\n\n"
+            "Return revised prose HTML only."
+        )
         raw, latency_ms = await self._call_llm(
             model=self.draft_model or self.model_policy.get_model(LLMTask.SYNTHESIS),
             messages=[
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": json.dumps(user_payload, ensure_ascii=True)},
+                {"role": "user", "content": user_payload},
             ],
             temperature=0.2,
             conversation_id=conversation_id,
         )
-        parsed = self._parse_json_object(raw) or {}
-
-        scenes = parsed.get("scenes") if isinstance(parsed, dict) else None
-        if not isinstance(scenes, list):
-            scenes = []
-
-        normalized_scenes: list[dict[str, Any]] = []
-        for idx, scene in enumerate(scenes, start=1):
-            if not isinstance(scene, dict):
-                continue
-            scene_id = str(scene.get("scene_id") or f"scene-rev-{idx:03d}")
-            normalized_scenes.append(
-                {
-                    "scene_id": scene_id,
-                    "name": str(scene.get("name") or scene_id),
-                    "prose_html": self._ensure_readable_html(str(scene.get("prose_html") or "")),
-                    "merged_from": self._normalize_text_list(scene.get("merged_from", []), max_items=10),
-                    "split_from": scene.get("split_from"),
-                    "notes": self._normalize_text_list(scene.get("notes", []), max_items=10),
-                }
-            )
-
-        lineage = parsed.get("lineage") if isinstance(parsed, dict) else None
-        if not isinstance(lineage, dict):
-            lineage = {}
-
-        for scene in normalized_scenes:
-            sid = scene["scene_id"]
-            if sid not in lineage:
-                lineage[sid] = {
-                    "source_scene_ids": scene.get("merged_from") or [sid],
-                    "action": "merged" if scene.get("merged_from") else "kept",
-                }
-
-        if not normalized_scenes:
-            normalized_scenes = [
-                {
-                    "scene_id": item.get("scene_id"),
-                    "name": item.get("name") or item.get("scene_id"),
-                    "prose_html": item.get("prose_html", ""),
-                    "merged_from": [item.get("scene_id")],
-                    "split_from": None,
-                    "notes": [],
-                }
-                for item in prose_by_scene
-            ]
-            lineage = {
-                str(item.get("scene_id")): {
-                    "source_scene_ids": [item.get("scene_id")],
-                    "action": "kept",
-                }
-                for item in prose_by_scene
+        revised_html = self._ensure_readable_html(raw)
+        revised_html = self._limit_scene_prose_html(revised_html, max_chars=self._revision_input_max_chars)
+        normalized_scenes = [
+            {
+                "scene_id": "scene-rev-001",
+                "name": "Final Revised Draft",
+                "prose_html": revised_html,
+                "merged_from": [str(item.get("scene_id")) for item in prose_by_scene if item.get("scene_id")],
+                "split_from": None,
+                "notes": [],
             }
+        ]
+        lineage = {
+            str(item.get("scene_id")): {
+                "source_scene_ids": [item.get("scene_id")],
+                "action": "merged",
+            }
+            for item in prose_by_scene
+            if item.get("scene_id")
+        }
 
         return {
             "scenes": normalized_scenes,
             "lineage": lineage,
-            "global_revision_notes": self._normalize_text_list(
-                parsed.get("global_revision_notes", []), max_items=20
-            )
-            if isinstance(parsed, dict)
-            else [],
-            "raw": raw,
+            "global_revision_notes": [],
             "latency_ms": latency_ms,
         }
 
@@ -1421,12 +1407,21 @@ class NovelistOrchestrator:
         conversation_id: str | None,
     ) -> tuple[str, float]:
         started = time.monotonic()
-        raw = await self.llm_client.chat(
-            model=model,
-            messages=messages,
-            temperature=temperature,
-            conversation_id=conversation_id,
-        )
+        try:
+            raw = await self.llm_client.chat(
+                model=model,
+                messages=messages,
+                temperature=temperature,
+                conversation_id=conversation_id,
+                use_conversation_memory=False,
+            )
+        except TypeError:
+            raw = await self.llm_client.chat(
+                model=model,
+                messages=messages,
+                temperature=temperature,
+                conversation_id=conversation_id,
+            )
         elapsed_ms = round((time.monotonic() - started) * 1000, 2)
         return raw, elapsed_ms
 
@@ -1439,6 +1434,127 @@ class NovelistOrchestrator:
         sentences = [s.strip() for s in re.split(r"(?<=[.!?;])\s+", compact) if s.strip()]
         seed = sentences[0] if sentences else compact
         return seed[:max_chars]
+
+    @staticmethod
+    def _clip_text(text: str, *, max_chars: int) -> str:
+        compact = re.sub(r"\s+", " ", str(text or "")).strip()
+        if len(compact) <= max_chars:
+            return compact
+        return compact[: max(0, max_chars - 1)].rstrip() + "..."
+
+    def _build_scene_brief_text(self, scene: dict[str, Any]) -> str:
+        summary = self._clip_text(str(scene.get("scene_summary") or ""), max_chars=500)
+        goal = self._clip_text(str(scene.get("scene_goal") or ""), max_chars=350)
+        milestones = self._normalize_text_list(scene.get("milestones", []), max_items=5, max_chars=140)
+        entities = self._normalize_text_list(scene.get("related_entities", []), max_items=8, max_chars=80)
+        lines = [
+            f"Scene name: {str(scene.get('name') or scene.get('scene_id') or 'Scene').strip()}",
+            f"Scene summary: {summary or '(none)'}",
+            f"Scene goal: {goal or '(none)'}",
+            f"Milestones: {', '.join(milestones) if milestones else '(none)'}",
+            f"Related entities: {', '.join(entities) if entities else '(none)'}",
+        ]
+        return "\n".join(lines)
+
+    def _build_elder_context_text(self, buckets: Any) -> str:
+        if not isinstance(buckets, dict):
+            return ""
+        ordered_keys = (
+            "prior_events",
+            "relationship_summaries",
+            "personality_reminders",
+            "unresolved_tensions",
+            "style_details",
+            "contradiction_warnings",
+        )
+        lines: list[str] = []
+        for key in ordered_keys:
+            values = buckets.get(key)
+            if not isinstance(values, list):
+                continue
+            for value in values[:4]:
+                compact = self._clip_text(str(value), max_chars=180)
+                if compact:
+                    lines.append(f"- {compact}")
+        return "\n".join(lines[:16])
+
+    def _build_intent_brief_text(self, intent: dict[str, Any]) -> str:
+        if not isinstance(intent, dict):
+            return ""
+        lines: list[str] = []
+        mapping = {
+            "what_happens": "What happens",
+            "emotional_progression": "Emotional progression",
+            "speaking_goals": "Speaking goals",
+            "implied_history": "Implied history",
+            "forbidden_contradictions": "Forbidden contradictions",
+        }
+        for key, label in mapping.items():
+            values = self._normalize_text_list(intent.get(key, []), max_items=6, max_chars=150)
+            if values:
+                lines.append(f"{label}: {', '.join(values)}")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _extract_paragraph_and_dialogue(html: str) -> tuple[str, str]:
+        paragraph_match = re.search(r"<p[^>]*>(.*?)</p>", html, flags=re.IGNORECASE | re.DOTALL)
+        dialogue_match = re.search(
+            r"<blockquote[^>]*>(.*?)</blockquote>", html, flags=re.IGNORECASE | re.DOTALL
+        )
+        paragraph = paragraph_match.group(1).strip() if paragraph_match else ""
+        dialogue = dialogue_match.group(1).strip() if dialogue_match else ""
+        return paragraph, dialogue
+
+    def _limit_scene_prose_html(self, html: str, *, max_chars: int) -> str:
+        paragraph, dialogue = self._extract_paragraph_and_dialogue(html)
+        if not paragraph and not dialogue:
+            fallback = self._clip_text(re.sub(r"<[^>]+>", " ", html or ""), max_chars=max_chars)
+            return f"<p>{fallback}</p>" if fallback else ""
+
+        paragraph = self._clip_text(paragraph, max_chars=max_chars)
+        remaining = max(80, max_chars - len(paragraph))
+        dialogue = self._clip_text(dialogue, max_chars=remaining) if dialogue else ""
+
+        if dialogue:
+            return f"<p>{paragraph}</p>\n<blockquote>{dialogue}</blockquote>"
+        return f"<p>{paragraph}</p>"
+
+    @staticmethod
+    def _critic_to_text(critic: dict[str, Any]) -> str:
+        if not isinstance(critic, dict):
+            return ""
+        lines: list[str] = []
+        global_notes = critic.get("global_notes")
+        if isinstance(global_notes, list):
+            for note in global_notes[:12]:
+                clean = re.sub(r"\s+", " ", str(note)).strip()
+                if clean:
+                    lines.append(f"- {clean}")
+
+        by_scene = critic.get("by_scene")
+        if isinstance(by_scene, dict):
+            for scene_id, payload in by_scene.items():
+                if not isinstance(payload, dict):
+                    continue
+                issue_lines: list[str] = []
+                for key in (
+                    "continuity_issues",
+                    "duplication",
+                    "missing_transitions",
+                    "voice_drift",
+                    "pacing",
+                    "graph_contradictions",
+                    "exposition_problems",
+                ):
+                    values = payload.get(key)
+                    if isinstance(values, list):
+                        for value in values[:2]:
+                            clean = re.sub(r"\s+", " ", str(value)).strip()
+                            if clean:
+                                issue_lines.append(clean)
+                if issue_lines:
+                    lines.append(f"{scene_id}: {' | '.join(issue_lines[:5])}")
+        return "\n".join(lines[:40])
 
     @staticmethod
     def _ensure_readable_html(text: str) -> str:

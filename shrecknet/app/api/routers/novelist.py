@@ -129,11 +129,15 @@ async def _create_and_queue_run(
         request_payload=payload.model_dump(),
     )
 
-    generate_draft.delay(
-        run_id=run.id,
-        request_payload=payload.model_dump(),
-        author_type="user",
-        author_id=str(current_user.id),
+    settings = get_settings()
+    generate_draft.apply_async(
+        kwargs={
+            "run_id": run.id,
+            "request_payload": payload.model_dump(),
+            "author_type": "user",
+            "author_id": str(current_user.id),
+        },
+        expires=max(60, int(settings.celery_expires_novelist_seconds)),
     )
 
     refreshed = await service.get_run(run.id)
@@ -260,4 +264,3 @@ async def delete_novelist_run(
             status_code=status.HTTP_404_NOT_FOUND, detail="Novelist run not found"
         )
     return {"deleted": deleted}
-

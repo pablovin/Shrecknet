@@ -112,7 +112,30 @@ services:
     restart: unless-stopped
     init: true
     user: "${SHRECKNET_CONTAINER_UID:-1000}:${SHRECKNET_CONTAINER_GID:-1000}"
-    command: sh -c "celery -A app.celery_app:celery_app worker --loglevel=info --concurrency=${SHRECKNET_CELERY_CONCURRENCY:-2}"
+    command: sh -c "celery -A app.celery_app:celery_app worker --loglevel=info --concurrency=${SHRECKNET_CELERY_CONCURRENCY:-2} -Q ontology_linking"
+    environment: *shrecknet-env
+    volumes:
+      - ./shrecknet/databases:/data
+      - ./shrecknet/media:/app/media
+    depends_on:
+      shrecknet_permissions:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+      shrecknet_api:
+        condition: service_started
+
+  # Dedicated worker for architect jobs to avoid queue starvation.
+  shrecknet_worker_architect:
+    build:
+      context: ./shrecknet
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    init: true
+    user: "${SHRECKNET_CONTAINER_UID:-1000}:${SHRECKNET_CONTAINER_GID:-1000}"
+    command: sh -c "celery -A app.celery_app:celery_app worker --loglevel=info --concurrency=${SHRECKNET_CELERY_ARCHITECT_CONCURRENCY:-1} -Q architect"
     environment: *shrecknet-env
     volumes:
       - ./shrecknet/databases:/data

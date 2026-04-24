@@ -116,6 +116,12 @@ class Settings(BaseSettings):
     celery_broker_url: str = "redis://redis:6379/0"
     celery_result_backend: str = "redis://redis:6379/1"
     celery_task_always_eager: bool = False
+    celery_expires_architect_seconds: int = 3600
+    celery_expires_novelist_seconds: int = 3600
+    celery_expires_reconciliation_seconds: int = 1800
+    celery_stale_reaper_enabled: bool = True
+    celery_stale_reaper_interval_seconds: int = 300
+    celery_stale_reaper_max_task_age_seconds: int = 7200
 
     openai_api_key: str = ""
     model_decompose: str = "gpt-4o-mini"

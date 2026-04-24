@@ -351,7 +351,7 @@ async def _execute_run(
             orchestrator = NovelistOrchestrator(
                 llm_client=llm_client,
                 model_policy=model_policy,
-                max_concurrency=10,
+                max_concurrency=4,
                 elder_query_runner=elder_query_runner,
                 architect_scaffolding_runner=architect_scaffolding_runner,
             )

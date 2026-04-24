@@ -71,6 +71,7 @@ class OpenAIClient:
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
         conversation_id: Optional[str] = None,
+        use_conversation_memory: bool = False,
     ) -> str:
         """
         Send a request using the Responses API.
@@ -95,7 +96,7 @@ class OpenAIClient:
             temperature = 1.0
 
         lc_messages = self._to_langchain_messages(messages)
-        if conversation_id:
+        if conversation_id and use_conversation_memory:
             history = self._conversations.setdefault(conversation_id, [])
             input_messages = [*history, *lc_messages]
         else:
@@ -111,7 +112,7 @@ class OpenAIClient:
                 )
                 resp = await llm.ainvoke(input_messages)
                 text = self._extract_text_from_langchain_response(resp)
-                if conversation_id:
+                if conversation_id and use_conversation_memory:
                     # Persist only compact role-structured messages for this run thread.
                     self._conversations.setdefault(conversation_id, []).extend(
                         [*lc_messages, AIMessage(content=text)]

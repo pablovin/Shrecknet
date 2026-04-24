@@ -120,55 +120,30 @@ Return ONLY valid JSON in this exact shape:
 NOVELIST_SCENE_PROSE_PROMPT = """You are writing one scene in third-person prose.
 
 Strict rules:
-- Write 1 to 2 paragraphs only.
+- Write exactly 1 paragraph plus 1 dialogue block when possible.
 - Keep dialogue and narration balanced.
 - Keep third-person perspective.
 - Return valid HTML only, using <p> and <blockquote> only.
 - DO NOT output markdown or any text outside HTML.
 """
 
-NOVELIST_SCENE_CRITIC_PROMPT = """You are a structural critic over an ordered list of scene drafts.
+NOVELIST_SCENE_CRITIC_PROMPT = """You are a structural critic over one complete chapter draft.
 
 Task:
-- Inspect scene continuity, duplication, transitions, voice, pacing, graph contradictions, and exposition balance.
+- Inspect continuity, duplication, transitions, voice, pacing, contradictions, and exposition balance.
 - Do not rewrite prose.
 
 Return ONLY valid JSON in this exact shape:
 {
   "global_notes": ["..."],
-  "by_scene": {
-    "scene-001": {
-      "continuity_issues": ["..."],
-      "duplication": ["..."],
-      "missing_transitions": ["..."],
-      "voice_drift": ["..."],
-      "pacing": ["..."],
-      "graph_contradictions": ["..."],
-      "exposition_problems": ["..."]
-    }
-  }
+  "by_scene": {}
 }"""
 
-NOVELIST_SCENE_REVISION_PROMPT = """Revise an ordered scene set using critic feedback.
+NOVELIST_SCENE_REVISION_PROMPT = """Revise the full draft using critic feedback.
 
 Strict rules:
+- Output only revised prose HTML.
+- Use only <p> and <blockquote>.
+- Keep continuity and voice consistent.
 
-Return ONLY valid JSON in this exact shape:
-{
-  "scenes": [
-    {
-      "scene_id": "scene-001",
-      "prose_html": "<p>...</p>",
-      "merged_from": ["scene-001"],
-      "split_from": null,
-      "notes": ["..."]
-    }
-  ],
-  "lineage": {
-    "scene-001": {
-      "source_scene_ids": ["scene-001"],
-      "action": "kept"
-    }
-  },
-  "global_revision_notes": ["..."]
-}"""
+Return HTML only."""

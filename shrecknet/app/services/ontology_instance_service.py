@@ -14,6 +14,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.config_store import get_settings
 from app.models.ontology_instance import OntologyInstance as SqlOntologyInstance
 from app.models.ontology import OntologyEntity
 from app.repositories.ontology_repository import OntologyRepository
@@ -60,6 +61,41 @@ WHERE
         }
     )
 """
+
+
+def _enqueue_embed_reconciliation(
+    *,
+    ontology_id: int,
+    instance_id: str | None,
+    node_ids: list[str],
+    author_id: str,
+) -> None:
+    from app.tasks.neo4j_embedding import (
+        embed_reconciliation as embed_reconciliation_task,
+    )
+
+    settings = get_settings()
+    embed_reconciliation_task.apply_async(
+        kwargs={
+            "ontology_id": ontology_id,
+            "instance_id": instance_id,
+            "node_ids": node_ids,
+            "author_type": "agent",
+            "author_id": author_id,
+        },
+        expires=max(60, int(settings.celery_expires_reconciliation_seconds)),
+    )
+
+
+def _enqueue_link_instance(instance_id: str) -> None:
+    from app.tasks.ontology_links import link_instance as link_instance_task
+
+    settings = get_settings()
+    link_instance_task.apply_async(
+        args=[instance_id],
+        kwargs={"author_type": "agent", "author_id": "system"},
+        expires=max(60, int(settings.celery_expires_reconciliation_seconds)),
+    )
 
 
 def _format_dt(dt: datetime) -> str:
@@ -415,10 +451,9 @@ class OntologyInstanceService:
             if payload.scenes:
                 await self._replace_scenes_for_instance(instance_id, payload.scenes)
             instance = await self.get_instance(instance_id)
-            from app.tasks.ontology_links import link_instance as link_instance_task
             from app.tasks.neo4j_embedding import embed_nodes as embed_nodes_task
 
-            link_instance_task.delay(instance.instance_id)
+            _enqueue_link_instance(instance.instance_id)
             if impacted_entity_ids:
                 embed_nodes_task.delay(payload.ontology_id, sorted(impacted_entity_ids))
             return instance
@@ -1460,9 +1495,7 @@ class OntologyInstanceService:
             instance = await self.get_instance(instance_id)
 
             # Notifications are owned by ShreckRPG; Shrecknet keeps core update only.
-            from app.tasks.ontology_links import link_instance as link_instance_task
-
-            link_instance_task.delay(instance.instance_id)
+            _enqueue_link_instance(instance.instance_id)
             return instance
 
         definitions = await self._load_entity_definitions(current.ontology_id)
@@ -1663,10 +1696,9 @@ class OntologyInstanceService:
 
             # Notifications are owned by ShreckRPG; Shrecknet keeps core update only.
 
-            from app.tasks.ontology_links import link_instance as link_instance_task
             from app.tasks.neo4j_embedding import embed_nodes as embed_nodes_task
 
-            link_instance_task.delay(instance.instance_id)
+            _enqueue_link_instance(instance.instance_id)
             if impacted_entity_ids:
                 embed_nodes_task.delay(current.ontology_id, sorted(impacted_entity_ids))
             
@@ -2451,15 +2483,10 @@ class OntologyInstanceService:
         else:
             await tx.commit()
             await tx.close()
-        from app.tasks.neo4j_embedding import (
-            embed_reconciliation as embed_reconciliation_task,
-        )
-
-        embed_reconciliation_task.delay(
+        _enqueue_embed_reconciliation(
             ontology_id=ontology_id,
             instance_id=instance_id,
             node_ids=[],
-            author_type="agent",
             author_id="scene-create",
         )
         return await self.get_scene(instance_id, scene_id)
@@ -2618,15 +2645,10 @@ class OntologyInstanceService:
             await tx.close()
 
         ontology_id = await self._get_instance_ontology_id(instance_id)
-        from app.tasks.neo4j_embedding import (
-            embed_reconciliation as embed_reconciliation_task,
-        )
-
-        embed_reconciliation_task.delay(
+        _enqueue_embed_reconciliation(
             ontology_id=ontology_id,
             instance_id=instance_id,
             node_ids=[],
-            author_type="agent",
             author_id="scene-update",
         )
 
@@ -2656,15 +2678,10 @@ class OntologyInstanceService:
             await tx.close()
 
         ontology_id = await self._get_instance_ontology_id(instance_id)
-        from app.tasks.neo4j_embedding import (
-            embed_reconciliation as embed_reconciliation_task,
-        )
-
-        embed_reconciliation_task.delay(
+        _enqueue_embed_reconciliation(
             ontology_id=ontology_id,
             instance_id=instance_id,
             node_ids=[],
-            author_type="agent",
             author_id="scene-delete",
         )
 
@@ -2839,15 +2856,10 @@ class OntologyInstanceService:
             await tx.commit()
             await tx.close()
 
-        from app.tasks.neo4j_embedding import (
-            embed_reconciliation as embed_reconciliation_task,
-        )
-
-        embed_reconciliation_task.delay(
+        _enqueue_embed_reconciliation(
             ontology_id=ontology_id,
             instance_id=instance_id,
             node_ids=[],
-            author_type="agent",
             author_id="milestone-create",
         )
 
@@ -2984,15 +2996,10 @@ class OntologyInstanceService:
             await tx.close()
 
         ontology_id = await self._get_instance_ontology_id(instance_id)
-        from app.tasks.neo4j_embedding import (
-            embed_reconciliation as embed_reconciliation_task,
-        )
-
-        embed_reconciliation_task.delay(
+        _enqueue_embed_reconciliation(
             ontology_id=ontology_id,
             instance_id=instance_id,
             node_ids=[],
-            author_type="agent",
             author_id="milestone-update",
         )
 
@@ -3029,15 +3036,10 @@ class OntologyInstanceService:
             await tx.close()
 
         ontology_id = await self._get_instance_ontology_id(instance_id)
-        from app.tasks.neo4j_embedding import (
-            embed_reconciliation as embed_reconciliation_task,
-        )
-
-        embed_reconciliation_task.delay(
+        _enqueue_embed_reconciliation(
             ontology_id=ontology_id,
             instance_id=instance_id,
             node_ids=[],
-            author_type="agent",
             author_id="milestone-delete",
         )
 

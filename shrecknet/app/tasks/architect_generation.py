@@ -845,13 +845,21 @@ async def _execute_generation(
             )
 
             if batch_embed_node_ids:
-                link_instance_task.delay(run.ontology_instance_id, author_type="agent", author_id=author_id)
-                embed_reconciliation_task.delay(
-                    ontology_id=ontology_id,
-                    instance_id=None,
-                    node_ids=batch_embed_node_ids,
-                    author_type="agent",
-                    author_id=author_id,
+                expires_seconds = max(60, int(settings.celery_expires_reconciliation_seconds))
+                link_instance_task.apply_async(
+                    args=[run.ontology_instance_id],
+                    kwargs={"author_type": "agent", "author_id": author_id},
+                    expires=expires_seconds,
+                )
+                embed_reconciliation_task.apply_async(
+                    kwargs={
+                        "ontology_id": ontology_id,
+                        "instance_id": None,
+                        "node_ids": batch_embed_node_ids,
+                        "author_type": "agent",
+                        "author_id": author_id,
+                    },
+                    expires=expires_seconds,
                 )
 
             logger.info(

@@ -59,6 +59,8 @@ class NovelistOrchestrator:
         llm_client: OpenAIClient,
         model_policy: ModelPolicy,
         max_concurrency: int = 10,
+        elder_query_concurrency: int = 1,
+        elder_query_timeout_s: float = 75.0,
         elder_query_runner: ElderQueryRunner | None = None,
         architect_scaffolding_runner: ArchitectScaffoldingRunner | None = None,
     ) -> None:
@@ -73,7 +75,8 @@ class NovelistOrchestrator:
             model_policy, "model_novelist_scene_context_creation", None
         )
         self.max_concurrency = max(1, min(10, max_concurrency))
-        self._elder_query_concurrency = 3
+        self._elder_query_concurrency = max(1, int(elder_query_concurrency))
+        self._elder_query_timeout_s = max(1.0, float(elder_query_timeout_s))
         self._elder_query_semaphore = asyncio.Semaphore(self._elder_query_concurrency)
         self._scene_prose_max_chars = 1400
         self._critic_input_max_chars = 110_000
@@ -268,8 +271,6 @@ class NovelistOrchestrator:
         retrieval_by_scene = {
             str(item[2].get("scene_id") or ""): item[3] for item in worker_results
         }
-        step_2_scene_traces = [item[4] for item in worker_results]
-        step_3_scene_traces = [trace for item in worker_results for trace in item[5]]
         intents_by_scene = {
             str(item[7].get("scene_id") or ""): {
                 "scene_id": str(item[7].get("scene_id") or ""),
@@ -283,9 +284,14 @@ class NovelistOrchestrator:
         }
         step_4_scene_packages = [item[7] for item in worker_results]
         prose_paragraphs = [item[8] for item in worker_results]
-        step_4_scene_traces = [item[9] for item in worker_results]
-        step_5_scene_traces = [trace for item in worker_results for trace in item[10]]
-        scene_packages = step_4_scene_packages
+        step_5_scene_packages = [
+            {
+                **scene,
+                "prose_html": prose_paragraphs[idx],
+            }
+            for idx, scene in enumerate(step_4_scene_packages)
+        ]
+        scene_packages = step_5_scene_packages
 
         artifacts["stages"]["scene_package"] = {
             "count": len(step_2_scene_packages),
@@ -325,13 +331,7 @@ class NovelistOrchestrator:
                 "entity_name": self._debug_entity_name,
                 "step": "step_2",
             },
-            response_payload={
-                "entity_name": self._debug_entity_name,
-                "step": "step_2",
-                "scene_traces": step_2_scene_traces,
-                "token_summary": self._token_summary_from_scene_traces(step_2_scene_traces),
-                "final_step_response": {"scene_packages": step_2_scene_packages},
-            },
+            response_payload={"scene_packages": step_2_scene_packages},
         )
         self._write_step_debug_files(
             step="step_3",
@@ -339,13 +339,7 @@ class NovelistOrchestrator:
                 "entity_name": self._debug_entity_name,
                 "step": "step_3",
             },
-            response_payload={
-                "entity_name": self._debug_entity_name,
-                "step": "step_3",
-                "scene_traces": step_3_scene_traces,
-                "token_summary": self._token_summary_from_scene_traces(step_3_scene_traces),
-                "final_step_response": {"scene_packages": step_3_scene_packages},
-            },
+            response_payload={"scene_packages": step_3_scene_packages},
         )
         self._write_step_debug_files(
             step="step_4",
@@ -353,13 +347,7 @@ class NovelistOrchestrator:
                 "entity_name": self._debug_entity_name,
                 "step": "step_4",
             },
-            response_payload={
-                "entity_name": self._debug_entity_name,
-                "step": "step_4",
-                "scene_traces": step_4_scene_traces,
-                "token_summary": self._token_summary_from_scene_traces(step_4_scene_traces),
-                "final_step_response": {"scene_packages": step_4_scene_packages},
-            },
+            response_payload={"scene_packages": step_4_scene_packages},
         )
         self._write_step_debug_files(
             step="step_5",
@@ -367,24 +355,9 @@ class NovelistOrchestrator:
                 "entity_name": self._debug_entity_name,
                 "step": "step_5",
             },
-            response_payload={
-                "entity_name": self._debug_entity_name,
-                "step": "step_5",
-                "scene_traces": step_5_scene_traces,
-                "token_summary": self._token_summary_from_scene_traces(step_5_scene_traces),
-                "final_step_response": {
-                    "scene_paragraphs": [
-                        {
-                            "scene_id": str(scene.get("scene_id") or f"scene-{idx+1:03d}"),
-                            "paragraph": prose_paragraphs[idx],
-                        }
-                        for idx, scene in enumerate(step_4_scene_packages)
-                    ]
-                },
-            },
+            response_payload={"scene_packages": step_5_scene_packages},
         )
 
-        # Temporary debug mode: steps 1-5 are active; steps 6-7 are disabled.
         prose_by_scene: list[dict[str, Any]] = [
             {
                 "scene_id": str(scene.get("scene_id") or f"scene-{idx+1:03d}"),
@@ -394,9 +367,80 @@ class NovelistOrchestrator:
             }
             for idx, scene in enumerate(step_4_scene_packages)
         ]
-        critic: dict[str, Any] = {}
-        revision: dict[str, Any] = {}
-        final_html = "\n\n".join([p for p in prose_paragraphs if str(p).strip()]).strip()
+        critic_conversation_id = self._build_step_6_7_conversation_id(conversation_id)
+        self._debug_step_label = "step_6"
+        self._debug_prompt_calls = []
+        self._debug_response_calls = []
+        critic = await self._critic_scene_set(
+            scene_packages=scene_packages,
+            prose_by_scene=prose_by_scene,
+            language=language,
+            instructions=instructions,
+            conversation_id=critic_conversation_id,
+        )
+        self._write_step_debug_files(
+            step="step_6",
+            prompt_payload={
+                "entity_name": self._debug_entity_name,
+                "step": "step_6",
+                "llm_calls": self._debug_prompt_calls,
+            },
+            response_payload={
+                "entity_name": self._debug_entity_name,
+                "step": "step_6",
+                "llm_calls": self._debug_response_calls,
+                "critic_remarks": critic,
+            },
+        )
+        if stage_callback:
+            await stage_callback(
+                NovelistStage.CRITIC,
+                {
+                    "artifacts": artifacts,
+                    "critic_notes": critic,
+                },
+            )
+
+        self._debug_step_label = "step_7"
+        self._debug_prompt_calls = []
+        self._debug_response_calls = []
+        revision = await self._revise_scene_set(
+            scene_packages=scene_packages,
+            prose_by_scene=prose_by_scene,
+            critic=critic,
+            language=language,
+            instructions=instructions,
+            conversation_id=critic_conversation_id,
+        )
+        self._write_step_debug_files(
+            step="step_7",
+            prompt_payload={
+                "entity_name": self._debug_entity_name,
+                "step": "step_7",
+                "llm_calls": self._debug_prompt_calls,
+            },
+            response_payload={
+                "entity_name": self._debug_entity_name,
+                "step": "step_7",
+                "llm_calls": self._debug_response_calls,
+                "final_step_response": {
+                    "final_text_html": str(revision.get("final_text_html") or ""),
+                },
+            },
+        )
+        self._debug_step_label = None
+        if stage_callback:
+            await stage_callback(
+                NovelistStage.REVISION,
+                {
+                    "artifacts": artifacts,
+                },
+            )
+        final_html = str(revision.get("final_text_html") or "").strip()
+        if not final_html:
+            final_html = self._merge_revised_scene_html(
+                revision.get("scenes", []) if isinstance(revision, dict) else []
+            )
         artifacts["stages"]["merging"] = {
             "scene_count": len(step_4_scene_packages),
             "final_text": final_html,
@@ -458,12 +502,9 @@ class NovelistOrchestrator:
             )
 
         return {
-            "artifacts": artifacts,
-            "draft_text": final_html,
-            "critic_notes": json.dumps(critic, ensure_ascii=True),
-            "scene_results": scene_results,
-            "timing_summary": timing_summary,
-            "step_outputs": step_outputs,
+            "scene_packages": scene_packages,
+            "critic_remarks": critic,
+            "final_text_html": final_html,
         }
 
     @staticmethod
@@ -513,6 +554,12 @@ class NovelistOrchestrator:
             if name:
                 return self._sanitize_debug_component(name)
         return self._sanitize_debug_component(fallback)
+
+    def _build_step_6_7_conversation_id(self, conversation_id: str | None) -> str:
+        base = str(conversation_id or "").strip()
+        if base:
+            return f"{base}:step6_7"
+        return f"novelist_step6_7:{self._debug_run_date}:{self._debug_entity_name}"
 
     def _write_step_debug_files(
         self,
@@ -1051,21 +1098,29 @@ class NovelistOrchestrator:
         async def _fetch(scene_id: str, query: str) -> tuple[str, str, list[dict[str, Any]]]:
             async with semaphore:
                 started = time.monotonic()
+                queued_at = time.monotonic()
+                timeout_reason = ""
                 try:
                     async with self._elder_query_semaphore:
+                        entered_runner_at = time.monotonic()
                         raw_sources = await asyncio.wait_for(
                             self.elder_query_runner(agent, query),
-                            timeout=75.0,
+                            timeout=self._elder_query_timeout_s,
                         )
                 except TimeoutError:
+                    entered_runner_at = time.monotonic()
+                    timeout_reason = "timeout"
                     logger.warning(
-                        "scene_retrieval_timeout scene=%s query=%s timeout_s=75 elder_concurrency=%d",
+                        "scene_retrieval_timeout scene=%s query=%s timeout_s=%s elder_concurrency=%d",
                         scene_id,
                         query,
+                        self._elder_query_timeout_s,
                         self._elder_query_concurrency,
                     )
                     raw_sources = []
                 except Exception:
+                    entered_runner_at = time.monotonic()
+                    timeout_reason = "error"
                     logger.warning("scene_retrieval_failed scene=%s query=%s", scene_id, query, exc_info=True)
                     raw_sources = []
                 valid_sources = [s for s in raw_sources if isinstance(s, dict)]
@@ -1080,6 +1135,10 @@ class NovelistOrchestrator:
                         "query": query,
                         "mode": "context",
                         "elapsed_ms": round((time.monotonic() - started) * 1000, 2),
+                        "queue_wait_ms": round((entered_runner_at - queued_at) * 1000, 2),
+                        "retrieval_total_ms": round((time.monotonic() - started) * 1000, 2),
+                        "timeout_s": self._elder_query_timeout_s,
+                        "fallback_reason": timeout_reason or None,
                         "source_count": len(valid_sources),
                         "answer_text": " ".join(compact_answers[:3]).strip(),
                     }
@@ -1291,7 +1350,6 @@ class NovelistOrchestrator:
             debug_collector=debug_collector,
         )
         html = self._ensure_readable_html(raw)
-        html = self._limit_scene_prose_html(html, max_chars=self._scene_prose_max_chars)
         return html
 
     async def _draft_scene_intents(
@@ -1397,7 +1455,6 @@ class NovelistOrchestrator:
                     conversation_id=conversation_id,
                 )
                 html = self._ensure_readable_html(raw)
-                html = self._limit_scene_prose_html(html, max_chars=self._scene_prose_max_chars)
                 return {
                     "scene_id": scene_id,
                     "name": scene.get("name") or scene.get("scene_summary") or scene_id,
@@ -1427,19 +1484,18 @@ class NovelistOrchestrator:
         )
         merged_text = self._merge_scene_html(prose_by_scene)
         merged_text = self._clip_text(merged_text, max_chars=self._critic_input_max_chars)
-        user_payload = (
-            "Full draft text to critique:\n"
-            f"{merged_text}\n\n"
-            "Return only concise critique notes in JSON using the requested schema."
-        )
+        user_payload = merged_text
         raw, latency_ms, _ = await self._call_llm(
-            model=self.draft_model or self.model_policy.get_model(LLMTask.SYNTHESIS),
+            model=self.critic_model
+            or self.draft_model
+            or self.model_policy.get_model(LLMTask.SYNTHESIS),
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_payload},
             ],
             temperature=0.1,
             conversation_id=conversation_id,
+            use_conversation_memory=False,
         )
         parsed = self._parse_json_object(raw) or {}
         by_scene = parsed.get("by_scene") if isinstance(parsed, dict) else None
@@ -1447,9 +1503,9 @@ class NovelistOrchestrator:
             by_scene = {}
         normalized_by_scene: dict[str, dict[str, list[str]]] = {}
         for scene in scene_packages:
-            scene_id = str(scene.get("scene_id"))
-            row = by_scene.get(scene_id) if isinstance(by_scene.get(scene_id), dict) else {}
-            normalized_by_scene[scene_id] = {
+            scene_name = str(scene.get("name") or scene.get("scene_id") or "").strip()
+            row = by_scene.get(scene_name) if isinstance(by_scene.get(scene_name), dict) else {}
+            normalized_by_scene[scene_name] = {
                 "continuity_issues": self._normalize_text_list(row.get("continuity_issues", []), max_items=8),
                 "duplication": self._normalize_text_list(row.get("duplication", []), max_items=8),
                 "missing_transitions": self._normalize_text_list(row.get("missing_transitions", []), max_items=8),
@@ -1500,9 +1556,9 @@ class NovelistOrchestrator:
             ],
             temperature=0.2,
             conversation_id=conversation_id,
+            use_conversation_memory=True,
         )
         revised_html = self._ensure_readable_html(raw)
-        revised_html = self._limit_scene_prose_html(revised_html, max_chars=self._revision_input_max_chars)
         normalized_scenes = [
             {
                 "scene_id": "scene-rev-001",
@@ -1526,6 +1582,7 @@ class NovelistOrchestrator:
             "scenes": normalized_scenes,
             "lineage": lineage,
             "global_revision_notes": [],
+            "final_text_html": revised_html,
             "latency_ms": latency_ms,
         }
 
@@ -1876,8 +1933,9 @@ class NovelistOrchestrator:
         out: list[dict[str, Any]] = []
         for order, scene in enumerate(scene_packages, start=1):
             scene_id = str(scene.get("scene_id"))
+            scene_name = str(scene.get("name") or scene_id)
             prose = prose_map.get(scene_id, {})
-            critic_row = critic_by_scene.get(scene_id, {}) if isinstance(critic_by_scene, dict) else {}
+            critic_row = critic_by_scene.get(scene_name, {}) if isinstance(critic_by_scene, dict) else {}
             issue_count = sum(
                 len(values)
                 for values in critic_row.values()
@@ -2011,7 +2069,7 @@ class NovelistOrchestrator:
         for idx, item in enumerate(prose_by_scene, start=1):
             title = str(item.get("name") or item.get("scene_id") or f"Scene {idx}").strip()
             html = str(item.get("prose_html") or "").strip()
-            blocks.append(f"<h2>Scene {idx}: {title}</h2>\n{html}")
+            blocks.append(f"<h1>{title}</h1>\n{html}")
         return "\n\n".join(blocks).strip()
 
     @staticmethod
@@ -2020,7 +2078,7 @@ class NovelistOrchestrator:
         for idx, item in enumerate(revised_scenes, start=1):
             title = str(item.get("name") or item.get("scene_id") or f"Scene {idx}").strip()
             html = str(item.get("prose_html") or "").strip()
-            blocks.append(f"<h2>Scene {idx}: {title}</h2>\n{html}")
+            blocks.append(f"<h1>{title}</h1>\n{html}")
         return "\n\n".join(blocks).strip()
 
     @staticmethod

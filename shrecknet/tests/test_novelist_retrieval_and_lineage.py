@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from app.jobs.novelist.novelist import NovelistOrchestrator
 
 
@@ -88,3 +90,42 @@ def test_scene_result_lineage_uses_revision_actions() -> None:
     assert scene1["revision_action"] == "split"
     assert scene2["revision_action"] == "merged"
     assert scene1["critic_issue_count"] == 1
+
+
+def test_scene_retrieval_trace_contains_timeout_and_queue_metrics() -> None:
+    async def _slow_runner(_agent, _query):
+        await asyncio.sleep(0.05)
+        return []
+
+    orchestrator = NovelistOrchestrator(
+        llm_client=_DummyLLM(),
+        model_policy=_DummyPolicy(),
+        elder_query_runner=_slow_runner,
+        elder_query_concurrency=1,
+        elder_query_timeout_s=0.01,
+    )
+
+    scene_packages = [
+        {
+            "scene_id": "scene-001",
+            "open_questions_for_retrieval": ["Who is blocking the envoy?"],
+        }
+    ]
+
+    _enhanced, _grouped, traces = asyncio.run(
+        orchestrator._collect_scene_retrieval(
+            agent=object(),
+            scene_packages=scene_packages,
+            language="en",
+            instructions="",
+            conversation_id=None,
+        )
+    )
+
+    assert len(traces) == 1
+    trace = traces[0]
+    assert trace["fallback_reason"] == "timeout"
+    assert isinstance(trace["queue_wait_ms"], float)
+    assert trace["queue_wait_ms"] >= 0.0
+    assert isinstance(trace["retrieval_total_ms"], float)
+    assert trace["retrieval_total_ms"] >= 0.0

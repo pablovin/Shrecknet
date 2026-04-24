@@ -369,6 +369,8 @@ async def _execute_run(
                 llm_client=llm_client,
                 model_policy=model_policy,
                 max_concurrency=4,
+                elder_query_concurrency=settings.novelist_elder_query_concurrency,
+                elder_query_timeout_s=settings.novelist_elder_query_timeout_s,
                 elder_query_runner=elder_query_runner,
                 architect_scaffolding_runner=architect_scaffolding_runner,
             )
@@ -456,26 +458,25 @@ async def _execute_run(
                 stage_callback=stage_callback,
             )
             result_artifacts = result.get("artifacts")
-            if not isinstance(result_artifacts, dict):
-                result_artifacts = {}
-            inputs_artifact = result_artifacts.get("inputs")
-            if not isinstance(inputs_artifact, dict):
-                inputs_artifact = {}
-            inputs_artifact.setdefault(
-                "previous_session_id", request_payload.get("previous_session_id")
-            )
-            inputs_artifact["previous_session_lookup_status"] = previous_session_lookup_status
-            result_artifacts["inputs"] = inputs_artifact
-            result["artifacts"] = result_artifacts
+            update_kwargs: dict[str, Any] = {
+                "status": NovelistRunStatus.COMPLETED,
+                "stage": NovelistStage.DONE,
+                "draft_text": result.get("final_text_html"),
+                "critic_notes": json.dumps(result.get("critic_remarks", {}), ensure_ascii=True),
+            }
+            if isinstance(result_artifacts, dict):
+                inputs_artifact = result_artifacts.get("inputs")
+                if not isinstance(inputs_artifact, dict):
+                    inputs_artifact = {}
+                inputs_artifact.setdefault(
+                    "previous_session_id", request_payload.get("previous_session_id")
+                )
+                inputs_artifact["previous_session_lookup_status"] = previous_session_lookup_status
+                result_artifacts["inputs"] = inputs_artifact
+                result["artifacts"] = result_artifacts
+                update_kwargs["artifacts"] = result_artifacts
 
-            await repo.update_status(
-                run_id,
-                status=NovelistRunStatus.COMPLETED,
-                stage=NovelistStage.DONE,
-                artifacts=result_artifacts,
-                draft_text=result.get("draft_text"),
-                critic_notes=result.get("critic_notes"),
-            )
+            await repo.update_status(run_id, **update_kwargs)
             await session.commit()
             await update_job_progress(job_id, 1.0, {"status": "completed"})
             await mark_job_done(job_id, {"run_id": run_id, "status": "completed"})

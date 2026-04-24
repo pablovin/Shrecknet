@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import math
 import re
 import time
@@ -192,6 +193,12 @@ class RetrievalService:
 
         # Embed the query
         t_embed_start = time.monotonic()
+        logger = logging.getLogger(__name__)
+        logger.info(
+            "retrieval_embed_dispatched query='%s' ontology=%s",
+            query[:160],
+            str(ontology_id),
+        )
         loop = asyncio.get_event_loop()
         query_embedding = await loop.run_in_executor(
             None, self.embedding_service.embed_text, query
@@ -199,6 +206,12 @@ class RetrievalService:
         t_embed = time.monotonic() - t_embed_start
         print(
             f"[RETRIEVAL] step=embed_query duration_s={t_embed:.3f}"
+        )
+        logger.info(
+            "retrieval_embed_completed query='%s' ontology=%s embed_duration_ms=%.2f",
+            query[:160],
+            str(ontology_id),
+            round(t_embed * 1000, 2),
         )
 
         node_scope = (node_scope or "everything").strip().lower()
@@ -587,9 +600,6 @@ class RetrievalService:
         }
 
         try:
-            import logging
-
-            logger = logging.getLogger(__name__)
             logger.info(
                 "semantic_search_timing: embed=%.3fs query=%.3fs results=%d ontology=%s",
                 t_embed,
@@ -626,7 +636,7 @@ class RetrievalService:
             WHERE any(label IN labels(m) WHERE label IN ['EntityInstance', 'Scene', 'Milestone'])
         RETURN type(r) AS rel_type, 
                      coalesce(m['entity_instance_id'], m['id']) AS node_id,
-                     coalesce(m['name'], m['title'], m['alias'], m['entity_instance_id'], m['id']) AS name,
+                     coalesce(m['name'], m['alias'], m['entity_instance_id'], m['id']) AS name,
                CASE
                                      WHEN 'Scene' IN labels(m) THEN 'Scene'
                                      WHEN 'Milestone' IN labels(m) THEN 'Milestone'
@@ -676,7 +686,7 @@ class RetrievalService:
             WHERE any(label IN labels(m) WHERE label IN ['EntityInstance', 'Scene', 'Milestone'])
         WITH node_id, type(r) AS rel_type,
              coalesce(m['entity_instance_id'], m['id']) AS related_node_id,
-             coalesce(m['name'], m['title'], m['alias'], m['entity_instance_id'], m['id']) AS related_name,
+             coalesce(m['name'], m['alias'], m['entity_instance_id'], m['id']) AS related_name,
              CASE
                  WHEN 'Scene' IN labels(m) THEN 'Scene'
                  WHEN 'Milestone' IN labels(m) THEN 'Milestone'

@@ -7,6 +7,7 @@ import gc
 import json
 import logging
 import threading
+import time
 import uuid
 from typing import Any
 
@@ -23,6 +24,9 @@ logger = logging.getLogger(__name__)
 _model_lock = threading.Lock()
 _cached_model: SentenceTransformer | None = None
 _cached_model_key: tuple[str, str] | None = None
+_inference_semaphore_lock = threading.Lock()
+_inference_semaphore: threading.BoundedSemaphore | None = None
+_inference_semaphore_size: int | None = None
 
 
 def _current_model_key() -> tuple[str, str]:
@@ -61,6 +65,21 @@ def get_embedding_model() -> SentenceTransformer:
         _cached_model = SentenceTransformer(model_id, device=device)
         _cached_model_key = model_key
         return _cached_model
+
+
+def get_embedding_inference_semaphore() -> threading.BoundedSemaphore:
+    """Get process-wide semaphore limiting concurrent embedding inference."""
+    global _inference_semaphore, _inference_semaphore_size
+    configured = max(1, int(get_settings().elder_embedding_inference_concurrency))
+    if _inference_semaphore is not None and _inference_semaphore_size == configured:
+        return _inference_semaphore
+
+    with _inference_semaphore_lock:
+        if _inference_semaphore is not None and _inference_semaphore_size == configured:
+            return _inference_semaphore
+        _inference_semaphore = threading.BoundedSemaphore(value=configured)
+        _inference_semaphore_size = configured
+        return _inference_semaphore
 
 
 class EmbeddingService:
@@ -499,11 +518,27 @@ class EmbeddingService:
         global _cached_model, _cached_model_key
 
         model = get_embedding_model()
+        inference_gate = get_embedding_inference_semaphore()
         max_retries = 3
 
         for attempt in range(max_retries):
             try:
-                embeddings = model.encode(texts, normalize_embeddings=True)
+                queue_started = time.monotonic()
+                inference_gate.acquire()
+                queue_wait_ms = round((time.monotonic() - queue_started) * 1000, 2)
+                encode_started = time.monotonic()
+                try:
+                    embeddings = model.encode(texts, normalize_embeddings=True)
+                finally:
+                    inference_gate.release()
+                encode_ms = round((time.monotonic() - encode_started) * 1000, 2)
+                logger.info(
+                    "embedding_inference queue_wait_ms=%.2f encode_ms=%.2f batch_size=%d concurrency_limit=%d",
+                    queue_wait_ms,
+                    encode_ms,
+                    len(texts),
+                    max(1, int(get_settings().elder_embedding_inference_concurrency)),
+                )
 
                 # Convert to numpy array with C-contiguous memory layout
                 # This ensures a clean copy without buffer export locks

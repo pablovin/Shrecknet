@@ -139,8 +139,12 @@ class Settings(BaseSettings):
     embedding_model_id: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
     embedding_dimension: int = 384
     embedding_device: str = "cpu"
+    elder_embedding_inference_concurrency: int = 1
+    elder_embedding_warmup_on_worker_start: bool = True
     embedding_chunk_size: int = 900
     embedding_chunk_overlap: int = 150
+    novelist_elder_query_concurrency: int = 1
+    novelist_elder_query_timeout_s: int = 75
     event_publisher_mode: str = "logging"
     event_webhook_url: str | None = None
 

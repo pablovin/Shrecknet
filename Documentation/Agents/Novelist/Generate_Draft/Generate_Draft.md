@@ -1,212 +1,128 @@
 # Novelist Generate Draft Pipeline
 
-This document describes the generate-draft pipeline executed by Novelist runs.
+This document reflects the current pipeline implementation in:
 
-Main implementation path:
-
-- shrecknet/app/tasks/novelist.py
-- shrecknet/app/jobs/novelist/novelist.py
+- `shrecknet/app/tasks/novelist.py`
+- `shrecknet/app/jobs/novelist/novelist.py`
 
 ## Goal
 
-Given unstructured session narrative, produce a coherent revised chapter as HTML with full traceable scene-by-scene artifacts.
+Transform unstructured narrative/session text into:
+
+1. incrementally enriched per-scene packages,
+2. global editorial critic remarks,
+3. final rewritten chapter HTML.
 
 ## Runtime Flow
 
 ### Stage 0: ingest
 
-- Validates request payload and agent job type.
-- Resolves optional previous session context.
-- Builds continuity brief (compact context summary) used for consistency.
+- Validate payload and agent job type.
+- Resolve optional previous session context.
+- Prepare continuity support metadata in artifacts input fields.
 
-Artifacts:
+### Stage 1: scaffolding (`step_1`)
 
-- artifacts.inputs
+- Build normalized scene list (Architect-backed scaffolding path).
+- Output baseline scene structures used for all downstream steps.
 
-### Stage 1: scaffolding (step_1)
+### Stage 2: scene exploration (`step_2`)
 
-Purpose:
+- Build initial scene writing package.
+- Adds exploration fields (tone, goal, prior knowledge questions/answers).
 
-- Produce scene scaffolding with scene list, milestones, and related entities.
+### Stage 3: retrieval context (`step_3`)
 
-Important:
+- Retrieve scene-specific evidence/context via Elder integration.
+- Adds narrative context fields + retrieval query/answer traces into scene package fields.
 
-- This stage reuses Architect shared plumbing directly.
-- No separate Novelist-only extraction pipeline is intended.
+### Stage 4: intent drafting (`step_4`)
 
-Shared Architect functions used:
+- Adds intent fields to each scene package:
+  - `what_happens`
+  - `emotional_progression`
+  - `speaking_goals`
+  - `implied_history`
+  - `forbidden_contradictions`
 
-- _run_scene_chunking_phase
-- _run_entity_proposal_phase
-- _run_scene_proposal_phase
-- _run_milestone_proposal_phase
-- _load_existing_nodes
-- _format_ontology_definitions_from_entities
+### Stage 5: prose generation (`step_5`)
 
-Result shape:
+- Generates scene prose HTML and adds `prose_html` into each scene package.
+- Code no longer clips/limits paragraphs; full LLM response is retained after HTML normalization.
 
-- step_outputs.step_1.label = scene_scaffolding
-- step_outputs.step_1.scenes[]
+### Stage 6: critic (`step_6`)
 
-Each scene includes:
+- Runs after all scene threads complete.
+- Uses a dedicated step6_7 conversation lane.
+- Step 6 call is no-memory.
+- Input is only the concatenated full draft text.
+- Output JSON includes:
+  - `global_notes`
+  - `by_scene` keyed by scene title.
 
-- scene_id
-- name
-- scene_summary
-- milestones
-- related_entities
-- source_anchors
-- new_or_update
+### Stage 7: revision (`step_7`)
 
-### Stage 2: scene_package (step_2)
+- Runs in same dedicated step6_7 conversation id, with memory enabled.
+- Input includes draft text + step 6 critic summary.
+- Returns full revised HTML.
 
-Purpose:
+### Merging
 
-- Build complete per-scene writing package for downstream drafting.
+- Final HTML is assembled with scene-title separation using:
+  - `<h1>{scene_name}</h1>` + scene prose blocks.
 
-Result shape:
+## Debug Files
 
-- step_outputs.step_2.label = scene_writing_packages
-- step_outputs.step_2.scene_packages[]
+Step debug prompt/response files are written per run.
 
-Each package includes:
+Current response shapes:
 
-- scene_id
-- source_paragraphs
-- raw_scene_text
-- scene_summary
-- scene_goal
-- milestones
-- related_entities
-- temporal_position_hint
-- tone_hint
-- open_questions_for_retrieval
+- `step_1_response.json`: scenes payload.
+- `step_2_response.json`: `{ "scene_packages": [...] }`
+- `step_3_response.json`: `{ "scene_packages": [...] }`
+- `step_4_response.json`: `{ "scene_packages": [...] }`
+- `step_5_response.json`: `{ "scene_packages": [...] }`
 
-### Stage 3: retrieval (step_3)
+For steps 2-5, debug response files are intentionally scene-packages-only (no token summaries, no scene traces).
 
-Purpose:
+## Output Contracts
 
-- Retrieve scene-local narrative context via Elder agent stack.
+### Internal orchestrator contract (V2)
 
-Important:
+`NovelistOrchestrator.execute(...)` returns:
 
-- Novelist uses ElderOrchestrator and ElderQueryRequest directly.
-- Retrieval output is normalized into context buckets per scene.
+```json
+{
+  "scene_packages": [ ... ],
+  "critic_remarks": { ... },
+  "final_text_html": "..."
+}
+```
 
-Result shape:
+### Persisted run fields
 
-- step_outputs.step_3.label = scene_narrative_context
-- step_outputs.step_3.narrative_context_by_scene[]
+Celery/task layer persists:
 
-Each item includes:
+- `draft_text` from `final_text_html`
+- `critic_notes` from `critic_remarks` (JSON string)
 
-- scene_id
-- queries
-- narrative_context
+The run record still exposes `artifacts` and derived fields through `NovelistRunRead`.
 
-Narrative context buckets include:
+## Progress Mapping
 
-- prior_events
-- relationship_summaries
-- personality_reminders
-- unresolved_tensions
-- style_details
-- contradiction_warnings
+Job progress updates are emitted for:
 
-### Stage 4: intent_drafting (step_4)
-
-Purpose:
-
-- Produce intended scene draft plan before prose generation.
-
-Result shape:
-
-- step_outputs.step_4.label = scene_intended_draft_output
-- step_outputs.step_4.scene_intents[]
-
-Each scene intent includes:
-
-- scene_id
-- what_happens
-- emotional_progression
-- speaking_goals
-- implied_history
-- forbidden_contradictions
-
-### Stage 5: prose_generation (step_5)
-
-Purpose:
-
-- Generate prose per scene in HTML.
-
-Result shape:
-
-- step_outputs.step_5.label = scene_prose_output
-- step_outputs.step_5.scene_prose[]
-
-Each scene prose item includes:
-
-- scene_id
-- name
-- scene_summary
-- prose_html
-
-### Stage 6: critic (step_6)
-
-Purpose:
-
-- Critique scene set for continuity, pacing, duplication, transitions, and contradictions.
-
-Result shape:
-
-- step_outputs.step_6.label = critic_response
-- step_outputs.step_6.critic
-
-### Stage 7: revision + merging (step_7)
-
-Purpose:
-
-- Apply revision output and merge scene results into final chapter text.
-
-Result shape:
-
-- step_outputs.step_7.label = full_rewritten_text
-- step_outputs.step_7.final_rewritten_text
-- step_outputs.step_7.revised_scenes
-- step_outputs.step_7.lineage
-
-Final text fields:
-
-- Primary: step_outputs.step_7.final_rewritten_text
-- Compatibility: draft_text
-
-## Persisted Response Fields
-
-Beyond step outputs, NovelistRunRead also includes:
-
-- scene_results
-- timing_summary
-- stage_timings
-- scene_progress
-- critic_notes
-- artifacts
-
-## Progress Mapping (Job Tracking)
-
-Progress markers are emitted for:
-
-- scaffolding
-- scene_package
-- retrieval
-- intent_drafting
-- prose_generation
-- critic
-- revision
-- merging
-
-Each marker can include counts and timing summary details.
-
-## Notes
-
-- Pipeline fanout is bounded with max concurrency of 10 for scene-level parallel work.
-- Artifacts are persisted to keep each transformation auditable.
+- `scaffolding`
+- `scene_package`
+- `retrieval`
+- `intent_drafting`
+- `prose_generation`
+- `critic`
+- `revision`
+- `merging`
+
+## Key Notes
+
+- Scene fanout concurrency is bounded.
+- Steps 6-7 are serialized after scene fanout completion.
+- Scene package order is preserved through the pipeline.

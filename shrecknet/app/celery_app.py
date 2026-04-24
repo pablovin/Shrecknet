@@ -82,6 +82,30 @@ def _stale_reaper_loop() -> None:
         _run_stale_reaper_once()
 
 
+def _warmup_embedding_model_if_enabled() -> None:
+    settings = get_settings()
+    if not settings.elder_embedding_warmup_on_worker_start:
+        return
+
+    def _warmup() -> None:
+        try:
+            from app.graphrag.embedding_service import get_embedding_model
+
+            started = time.monotonic()
+            get_embedding_model()
+            elapsed_ms = round((time.monotonic() - started) * 1000, 2)
+            logger.info("Embedding model warmup complete duration_ms=%s", elapsed_ms)
+        except Exception:
+            logger.exception("Embedding model warmup failed")
+
+    thread = threading.Thread(
+        target=_warmup,
+        name="embedding-model-warmup",
+        daemon=True,
+    )
+    thread.start()
+
+
 @worker_ready.connect
 def _start_stale_reaper(sender=None, **_kwargs) -> None:  # pragma: no cover - startup hook
     global _stale_reaper_thread_started
@@ -91,6 +115,7 @@ def _start_stale_reaper(sender=None, **_kwargs) -> None:  # pragma: no cover - s
         reset_jobs_and_queues_on_startup()
     except Exception:  # pragma: no cover - defensive startup logic
         logger.exception("Startup job/queue reset failed")
+    _warmup_embedding_model_if_enabled()
     _run_stale_reaper_once()
     with _stale_reaper_lock:
         if _stale_reaper_thread_started:

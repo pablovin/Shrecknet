@@ -153,19 +153,32 @@ Strict rules:
 - Keep third-person perspective.
 - DO NOT output markdown, JSON, or commentary.
 - Output only the scene HTML.
+- Create a maximum of three paragraphs of text, nothing more than that!
 """
 
 # Step 6: full-draft critic pass.
 NOVELIST_SCENE_CRITIC_PROMPT = """You are a structural critic over one complete chapter draft.
 
 Task:
-- Inspect continuity, duplication, transitions, voice, pacing, contradictions, and exposition balance.
+- Inspect continuity, duplication, transitions, voice, pacing, contradictions, and exposition balance across the full chapter.
 - Do not rewrite prose.
+- Provide editorial feedback that can drive a full rewrite pass.
+- `by_scene` keys MUST be scene titles exactly as they appear in `<h1>...</h1>` blocks.
 
 Return ONLY valid JSON in this exact shape:
 {
   "global_notes": ["..."],
-  "by_scene": {}
+  "by_scene": {
+    "Scene Title": {
+      "continuity_issues": ["..."],
+      "duplication": ["..."],
+      "missing_transitions": ["..."],
+      "voice_drift": ["..."],
+      "pacing": ["..."],
+      "graph_contradictions": ["..."],
+      "exposition_problems": ["..."]
+    }
+  }
 }"""
 
 # Step 7: full-draft revision pass.
@@ -173,7 +186,10 @@ NOVELIST_SCENE_REVISION_PROMPT = """Revise the full draft using critic feedback.
 
 Strict rules:
 - Output only revised prose HTML.
-- Use only <p> and <blockquote>.
+- Use only <h1>, <p> and <blockquote>.
 - Keep continuity and voice consistent.
+- Preserve scene boundaries and keep each scene title in an <h1> block.
+- Rewrite the complete text using the critic notes.
+- Add dialogues when needed to enhance character dynamics.
 
 Return HTML only."""

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Sequence
 
+from sqlalchemy import bindparam, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.ontology import (
@@ -15,6 +17,7 @@ from app.repositories.ontology_repository import OntologyRepository
 from app.schemas.ontology import (
     OntologyCopyEntityResult,
     OntologyCopyResponse,
+    OntologyWorldStatsItem,
 )
 
 
@@ -315,6 +318,133 @@ class OntologyService:
         return OntologyCopyResponse(
             copied_entities=copied_entities, existing_entities=existing_entities
         )
+
+    async def get_world_stats(
+        self,
+        *,
+        ontology_ids: list[int] | None = None,
+        include_content_counts: bool = True,
+    ) -> list[OntologyWorldStatsItem]:
+        filter_clause = ""
+        params: dict[str, object] = {}
+        if ontology_ids:
+            filter_clause = "WHERE o.id IN :ontology_ids"
+            params["ontology_ids"] = list(ontology_ids)
+
+        if include_content_counts:
+            query = text(
+                f"""
+                WITH base AS (
+                    SELECT o.id AS ontology_id, o.updated_at AS ontology_updated_at
+                    FROM ontologies o
+                    {filter_clause}
+                ),
+                entity_type_counts AS (
+                    SELECT e.ontology_id, COUNT(*) AS entity_type_count
+                    FROM ontology_entities e
+                    GROUP BY e.ontology_id
+                ),
+                page_counts AS (
+                    SELECT oi.ontology_id, COUNT(*) AS page_count, MAX(oi.updated_at) AS content_updated_at
+                    FROM ontology_instances oi
+                    GROUP BY oi.ontology_id
+                ),
+                scene_counts AS (
+                    SELECT
+                        oi.ontology_id,
+                        SUM(
+                            CASE
+                                WHEN json_valid(oi.payload_json) = 1
+                                AND json_type(oi.payload_json, '$.scenes') = 'array'
+                                THEN json_array_length(oi.payload_json, '$.scenes')
+                                ELSE 0
+                            END
+                        ) AS scene_count
+                    FROM ontology_instances oi
+                    GROUP BY oi.ontology_id
+                ),
+                milestone_counts AS (
+                    SELECT
+                        oi.ontology_id,
+                        SUM(
+                            CASE
+                                WHEN json_type(scene.value, '$.milestones') = 'array'
+                                THEN json_array_length(scene.value, '$.milestones')
+                                ELSE 0
+                            END
+                        ) AS milestone_count
+                    FROM ontology_instances oi
+                    LEFT JOIN json_each(oi.payload_json, '$.scenes') AS scene
+                        ON json_valid(oi.payload_json) = 1
+                        AND json_type(oi.payload_json, '$.scenes') = 'array'
+                    GROUP BY oi.ontology_id
+                )
+                SELECT
+                    b.ontology_id,
+                    COALESCE(et.entity_type_count, 0) AS entity_type_count,
+                    COALESCE(pg.page_count, 0) AS page_count,
+                    COALESCE(sc.scene_count, 0) AS scene_count,
+                    COALESCE(ms.milestone_count, 0) AS milestone_count,
+                    COALESCE(pg.content_updated_at, b.ontology_updated_at) AS updated_at
+                FROM base b
+                LEFT JOIN entity_type_counts et ON et.ontology_id = b.ontology_id
+                LEFT JOIN page_counts pg ON pg.ontology_id = b.ontology_id
+                LEFT JOIN scene_counts sc ON sc.ontology_id = b.ontology_id
+                LEFT JOIN milestone_counts ms ON ms.ontology_id = b.ontology_id
+                ORDER BY b.ontology_id
+                """
+            )
+        else:
+            query = text(
+                f"""
+                WITH base AS (
+                    SELECT o.id AS ontology_id, o.updated_at AS ontology_updated_at
+                    FROM ontologies o
+                    {filter_clause}
+                ),
+                entity_type_counts AS (
+                    SELECT e.ontology_id, COUNT(*) AS entity_type_count
+                    FROM ontology_entities e
+                    GROUP BY e.ontology_id
+                )
+                SELECT
+                    b.ontology_id,
+                    COALESCE(et.entity_type_count, 0) AS entity_type_count,
+                    0 AS page_count,
+                    0 AS scene_count,
+                    0 AS milestone_count,
+                    b.ontology_updated_at AS updated_at
+                FROM base b
+                LEFT JOIN entity_type_counts et ON et.ontology_id = b.ontology_id
+                ORDER BY b.ontology_id
+                """
+            )
+
+        if ontology_ids:
+            query = query.bindparams(bindparam("ontology_ids", expanding=True))
+        result = await self.session.execute(query, params)
+        rows = result.mappings().all()
+
+        out: list[OntologyWorldStatsItem] = []
+        for row in rows:
+            updated_at = row["updated_at"]
+            if isinstance(updated_at, str):
+                updated_at = datetime.fromisoformat(updated_at.replace("Z", "+00:00"))
+            if not isinstance(updated_at, datetime):
+                updated_at = datetime.now(timezone.utc)
+            if updated_at.tzinfo is None:
+                updated_at = updated_at.replace(tzinfo=timezone.utc)
+            out.append(
+                OntologyWorldStatsItem(
+                    ontology_id=int(row["ontology_id"]),
+                    entity_type_count=int(row["entity_type_count"] or 0),
+                    page_count=int(row["page_count"] or 0),
+                    scene_count=int(row["scene_count"] or 0),
+                    milestone_count=int(row["milestone_count"] or 0),
+                    updated_at=updated_at,
+                )
+            )
+        return out
 
     # Helpers -----------------------------------------------------------
     def _ensure_author_defaults(

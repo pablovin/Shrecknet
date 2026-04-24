@@ -168,3 +168,16 @@ class OntologyCopyEntityResult(BaseModel):
 class OntologyCopyResponse(BaseModel):
     copied_entities: list[OntologyCopyEntityResult] = Field(default_factory=list)
     existing_entities: list[str] = Field(default_factory=list)
+
+
+class OntologyWorldStatsItem(BaseModel):
+    ontology_id: int
+    entity_type_count: int = 0
+    page_count: int = 0
+    scene_count: int = 0
+    milestone_count: int = 0
+    updated_at: datetime
+
+
+class OntologyWorldStatsResponse(BaseModel):
+    results: list[OntologyWorldStatsItem] = Field(default_factory=list)

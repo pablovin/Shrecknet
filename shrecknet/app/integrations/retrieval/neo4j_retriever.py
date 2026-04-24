@@ -105,6 +105,7 @@ class Neo4jGraphRetriever:
         self._search_lock = asyncio.Lock()
         self.last_errors: list[str] = []
         self.last_search_stats: list[dict[str, Any]] = []
+        self._has_ontology_entity_schema: bool | None = None
 
     @asynccontextmanager
     async def _acquire_session(self) -> AsyncIterator[AsyncNeo4jSession]:
@@ -443,12 +444,15 @@ class Neo4jGraphRetriever:
         limit: int = 500,
     ) -> list[dict[str, Any]]:
         """Stream entity aliases for a single ontology in deterministic batches."""
+        if not await self._ensure_ontology_entity_schema():
+            return []
+
         query = """
         MATCH (inst:OntologyInstance)-[:HAS_ENTITY]->(entity:EntityInstance)
-          WHERE toInteger(inst.ontology_id) = toInteger($ontology_id)
-              OR toInteger(entity.ontology_id) = toInteger($ontology_id)
-        RETURN entity.entity_instance_id AS node_id,
-               coalesce(entity.alias, entity.name, entity.entity_instance_id) AS alias,
+          WHERE toInteger(coalesce(inst['ontology_id'], -1)) = toInteger($ontology_id)
+              OR toInteger(coalesce(entity['ontology_id'], -1)) = toInteger($ontology_id)
+        RETURN coalesce(entity['entity_instance_id'], toString(id(entity))) AS node_id,
+               coalesce(entity['alias'], entity['name'], entity['entity_instance_id'], toString(id(entity))) AS alias,
                head(labels(entity)) AS ontology
         ORDER BY alias, node_id
         SKIP $skip
@@ -496,3 +500,39 @@ class Neo4jGraphRetriever:
             )
 
         return entities
+
+    async def _ensure_ontology_entity_schema(self) -> bool:
+        """Check if ontology entity labels/relationship exist before running strict label query."""
+        if self._has_ontology_entity_schema is not None:
+            return self._has_ontology_entity_schema
+
+        labels_query = "CALL db.labels() YIELD label RETURN collect(label) AS labels"
+        rels_query = "CALL db.relationshipTypes() YIELD relationshipType RETURN collect(relationshipType) AS rels"
+
+        try:
+            async with self._acquire_session() as session:
+                retrieval_service = RetrievalService(session)
+                if self._session_factory is None:
+                    async with self._search_lock:
+                        labels_res = await retrieval_service.graph_session.run(labels_query)
+                        labels_row = await labels_res.single()
+                        rels_res = await retrieval_service.graph_session.run(rels_query)
+                        rels_row = await rels_res.single()
+                else:
+                    labels_res = await retrieval_service.graph_session.run(labels_query)
+                    labels_row = await labels_res.single()
+                    rels_res = await retrieval_service.graph_session.run(rels_query)
+                    rels_row = await rels_res.single()
+
+            labels = set(labels_row.get("labels") or []) if labels_row else set()
+            rels = set(rels_row.get("rels") or []) if rels_row else set()
+            self._has_ontology_entity_schema = (
+                "OntologyInstance" in labels
+                and "EntityInstance" in labels
+                and "HAS_ENTITY" in rels
+            )
+        except Exception:
+            # If schema introspection is unavailable, don't block retrieval.
+            self._has_ontology_entity_schema = True
+
+        return self._has_ontology_entity_schema

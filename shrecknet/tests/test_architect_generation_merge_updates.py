@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from app.tasks.architect_generation import (
+    _collect_scene_linked_entity_ids,
     _canonicalize_entity_proposals,
     _canonicalize_milestone_groups,
     _canonicalize_scene_proposals,
     _extract_effective_entity_instance_id,
     _extract_merge_update,
+    _is_approved,
     _merge_ref_lists,
     _proposal_alias_keys,
     _resolve_related_target_entity_id,
@@ -246,6 +248,27 @@ def test_proposal_alias_keys_include_original_updated_and_canonical_names() -> N
 
     assert "lady tamura evrain" in keys
     assert "evrain" in keys
+
+
+def test_collect_scene_linked_entity_ids_unions_across_scenes() -> None:
+    linked = _collect_scene_linked_entity_ids(
+        {
+            "chunk_0_scene_1": {"entity-a", "entity-b"},
+            "chunk_0_scene_2": {"entity-b", "entity-c"},
+            "chunk_0_scene_3": set(),
+        }
+    )
+
+    assert linked == {"entity-a", "entity-b", "entity-c"}
+
+
+def test_is_approved_requires_explicit_approved_status() -> None:
+    assert _is_approved("approved")
+    assert _is_approved("approved_with_updates")
+    assert _is_approved("merged")
+    assert not _is_approved(None)
+    assert not _is_approved("")
+    assert not _is_approved("pending")
 
 
 def test_resolve_related_target_uses_original_alias_after_rename() -> None:

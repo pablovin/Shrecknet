@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import json
+from datetime import datetime, timedelta, timezone
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -34,6 +36,7 @@ from app.schemas.ontology import (
     OntologyRelationshipCreate,
     OntologyRelationshipRead,
     OntologyRelationshipUpdate,
+    OntologyWorldStatsResponse,
     OntologyUpdate,
     OntologyCopyRequest,
     OntologyCopyResponse,
@@ -44,10 +47,53 @@ from app.services.ontology_service import OntologyService
 from app.tasks.neo4j_embedding import embed_ontology
 
 router = APIRouter(prefix="/ontologies", tags=["ontologies"])
+_WORLD_STATS_CACHE_TTL_SECONDS = 60
+_world_stats_cache: dict[
+    tuple[tuple[int, ...] | None, bool], tuple[datetime, OntologyWorldStatsResponse]
+] = {}
+_world_stats_cache_lock = asyncio.Lock()
 
 
 def _sanitize_payload(data: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in data.items() if value is not None}
+
+
+def _parse_ontology_ids_csv(value: str | None) -> list[int] | None:
+    if value is None:
+        return None
+
+    parts = [item.strip() for item in value.split(",")]
+    clean_parts = [item for item in parts if item]
+    if not clean_parts:
+        return []
+
+    out: list[int] = []
+    for raw in clean_parts:
+        try:
+            parsed = int(raw)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Invalid ontology id '{raw}' in ontology_ids",
+            ) from exc
+        if parsed <= 0:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Invalid ontology id '{raw}' in ontology_ids",
+            )
+        out.append(parsed)
+
+    # Preserve order while removing duplicates.
+    deduped = list(dict.fromkeys(out))
+    return deduped
+
+
+def _world_stats_cache_key(
+    ontology_ids: list[int] | None, include_content_counts: bool
+) -> tuple[tuple[int, ...] | None, bool]:
+    if ontology_ids is None:
+        return (None, include_content_counts)
+    return (tuple(sorted(ontology_ids)), include_content_counts)
 
 
 async def _get_safe_ontology_embedding_stats(
@@ -217,6 +263,40 @@ async def list_ontologies(
         limit=limit,
     )
     return [OntologyRead.model_validate(o) for o in ontologies]
+
+
+@router.get("/world-stats", response_model=OntologyWorldStatsResponse)
+async def get_world_stats(
+    ontology_ids: str | None = None,
+    include_content_counts: bool = True,
+    service: OntologyService = Depends(get_ontology_service),
+    _: User = Depends(get_current_user),
+) -> OntologyWorldStatsResponse:
+    parsed_ontology_ids = _parse_ontology_ids_csv(ontology_ids)
+    if parsed_ontology_ids == []:
+        return OntologyWorldStatsResponse(results=[])
+    cache_key = _world_stats_cache_key(parsed_ontology_ids, include_content_counts)
+    now = datetime.now(timezone.utc)
+
+    cached = _world_stats_cache.get(cache_key)
+    if cached and cached[0] > now:
+        return cached[1]
+
+    async with _world_stats_cache_lock:
+        cached = _world_stats_cache.get(cache_key)
+        now = datetime.now(timezone.utc)
+        if cached and cached[0] > now:
+            return cached[1]
+
+        rows = await service.get_world_stats(
+            ontology_ids=parsed_ontology_ids,
+            include_content_counts=include_content_counts,
+        )
+        response = OntologyWorldStatsResponse(results=rows)
+
+        expires_at = now + timedelta(seconds=_WORLD_STATS_CACHE_TTL_SECONDS)
+        _world_stats_cache[cache_key] = (expires_at, response)
+        return response
 
 
 @router.get("/{ontology_id}", response_model=OntologyRead)

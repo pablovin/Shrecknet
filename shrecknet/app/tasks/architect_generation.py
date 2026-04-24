@@ -752,10 +752,16 @@ async def _execute_generation(
 
             await update_job_progress(job_id, 0.74, {"status": "Step 4/4: enriching and updating entities"})
             step4_started_at = perf_counter()
+            enrichment_target_entity_ids = sorted(
+                _collect_scene_linked_entity_ids(scene_ref_to_entities)
+            )
+            excluded_from_enrichment = len(set(impacted_entity_ids) - set(enrichment_target_entity_ids))
             logger.info(
-                "architect.generate run=%s step=4 start enrichment_targets=%d",
+                "architect.generate run=%s step=4 start impacted_entities=%d enrichment_targets=%d excluded_no_scene_or_milestone_link=%d",
                 run_id,
                 len(impacted_entity_ids),
+                len(enrichment_target_entity_ids),
+                excluded_from_enrichment,
             )
 
             refreshed_instance = await service.get_instance(run.ontology_instance_id)
@@ -804,7 +810,7 @@ async def _execute_generation(
                 enrichment_stats = await _apply_enrichment_updates(
                     graph_session=graph_session,
                     generator=generator,
-                    target_entity_ids=sorted(impacted_entity_ids),
+                    target_entity_ids=enrichment_target_entity_ids,
                     entity_definitions_map=entity_definitions_map,
                     existing_entities_map=current_entities_map,
                     alias_to_entity_id=alias_to_entity_id,
@@ -1736,3 +1742,10 @@ def _build_entity_definitions_map(entity_defs: list[Any]) -> dict[int, dict[str,
             "relationships": relationships,
         }
     return definitions
+
+
+def _collect_scene_linked_entity_ids(scene_ref_to_entities: dict[str, set[str]]) -> set[str]:
+    linked_ids: set[str] = set()
+    for entity_ids in scene_ref_to_entities.values():
+        linked_ids |= set(entity_ids or set())
+    return linked_ids

@@ -367,24 +367,15 @@ async def _execute_run(
             previous_session_text, previous_session_lookup_status = await _resolve_previous_session_text(
                 request_payload.get("previous_session_id")
             )
-            previous_session_summary = await orchestrator._build_continuity_brief(
-                previous_session_text=previous_session_text,
-                language=_clean_optional_text(request_payload.get("language")),
-                instructions=_clean_optional_text(request_payload.get("instructions")),
-                conversation_id=f"novelist_run:{run_id}:continuity",
-            )
             request_payload_enriched = dict(request_payload)
             if previous_session_text:
                 request_payload_enriched["previous_session_text"] = previous_session_text
-            if previous_session_summary:
-                request_payload_enriched["previous_session_summary"] = previous_session_summary
 
             await repo.update_status(
                 run_id,
                 artifacts={
                     "inputs": {
                         "previous_session_id": request_payload.get("previous_session_id"),
-                        "previous_session_summary": previous_session_summary or None,
                         "previous_session_lookup_status": previous_session_lookup_status,
                     }
                 },
@@ -455,9 +446,6 @@ async def _execute_run(
                 inputs_artifact = {}
             inputs_artifact.setdefault(
                 "previous_session_id", request_payload.get("previous_session_id")
-            )
-            inputs_artifact.setdefault(
-                "previous_session_summary", previous_session_summary or None
             )
             inputs_artifact["previous_session_lookup_status"] = previous_session_lookup_status
             result_artifacts["inputs"] = inputs_artifact

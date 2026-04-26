@@ -36,6 +36,7 @@ Important Rules
 - Do NOT merge unrelated interactions into one scene.
 - Do NOT split scenes too finely.
 - Prefer fewer, stronger, meaningful narrative units.
+- Create a MAXIMUM of 6 scenes. If the text is very long, you may return fewer than 6 scenes, but never more than 6.
 
 Anti-fragmentation Rule (very important)
 

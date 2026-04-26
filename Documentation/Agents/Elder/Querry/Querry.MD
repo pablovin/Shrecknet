@@ -7,7 +7,7 @@ Note: file name keeps `Querry` for compatibility with requested path.
 ## Endpoint
 
 - `POST /jobs/elder/{agent_id}/query`
-- Stream-compatible: `POST /jobs/elder/chat/messages/stream`
+- Stream-compatible: `POST /chat/messages/stream`
 
 ## Input Contract
 
@@ -19,6 +19,7 @@ Core fields:
 - `top_k`
 - `include_trace`
 - `fast`
+- `route` (`auto | fast | deep`)
 - `chat_id` (optional memory context)
 - `candidate_limit`
 - `rerank_limit`
@@ -37,13 +38,18 @@ The decomposition stage returns intent objects:
 
 ### Fast Mode Relation
 
-`fast` mode uses the same Elder response contract and downstream retrieval/synthesis stages, but changes query construction:
+`fast`/`route` use the same Elder response contract and downstream retrieval/synthesis stages, but change planning:
 
-- normal mode: decomposes into `1..10` intents
-- fast mode: creates exactly one intent
+- `route=fast`: creates exactly one intent
   - `subquery`: original user query
   - `target_data_type`: `mixed`
   - `reason`: `fast_mode`
+- `route=deep`: decompose first, then retrieve (bounded to top 3 intents in current code)
+- `route=auto`: fast-first pass, and expands to decomposition only when first-pass retrieval quality is low
+
+Backward compatibility in current implementation:
+
+- if `route=auto` and `fast=false`, request is treated as deep.
 
 This means fast mode is not a different API contract; it is a reduced planning path for lower latency.
 

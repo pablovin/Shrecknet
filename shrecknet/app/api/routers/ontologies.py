@@ -19,7 +19,7 @@ from app.api.deps import (
 )
 from app.db.session import AsyncSessionCompat, get_db_session
 from app.db.jobs_session import get_jobs_session
-from app.graph.neo4j import get_neo4j_session
+from app.graph.neo4j import get_neo4j_session, get_optional_neo4j_session
 from app.models.audit import AuditAction, AuditActorType, AuditEntityType
 from app.models.background_job import JobType
 from app.models.ontology_instance import OntologyInstance
@@ -270,6 +270,7 @@ async def get_world_stats(
     ontology_ids: str | None = None,
     include_content_counts: bool = True,
     service: OntologyService = Depends(get_ontology_service),
+    graph_session: Any | None = Depends(get_optional_neo4j_session),
     _: User = Depends(get_current_user),
 ) -> OntologyWorldStatsResponse:
     parsed_ontology_ids = _parse_ontology_ids_csv(ontology_ids)
@@ -291,6 +292,7 @@ async def get_world_stats(
         rows = await service.get_world_stats(
             ontology_ids=parsed_ontology_ids,
             include_content_counts=include_content_counts,
+            graph_session=graph_session,
         )
         response = OntologyWorldStatsResponse(results=rows)
 

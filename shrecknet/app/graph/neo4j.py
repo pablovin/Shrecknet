@@ -76,7 +76,11 @@ async def get_optional_neo4j_session() -> AsyncGenerator[AsyncSession | None, No
     try:
         driver = get_driver()
         settings = get_settings()
+        async with driver.session(database=settings.neo4j_database) as session:
+            yield session
     except Neo4jError:
+        yield None
+    except Exception:
         yield None
 
 
@@ -106,9 +110,3 @@ async def ensure_temporal_graph_constraints(session: AsyncSession) -> None:
     ]
     for statement in statements:
         await session.run(statement)
-        return
-    try:
-        async with driver.session(database=settings.neo4j_database) as session:
-            yield session
-    except Neo4jError:
-        yield None

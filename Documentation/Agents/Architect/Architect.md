@@ -46,7 +46,7 @@ High-level flow:
 8. Extract milestone proposals in parallel per scene.
 9. Prune scenes that have zero milestones.
 10. Build consolidated pipeline output payload and persist it in background job details.
-11. Write local analysis artifacts for inspection.
+11. Complete run status/progress updates.
 
 Detailed analyze docs:
 
@@ -83,8 +83,13 @@ High-level flow:
 2. Insert approved scenes and scene ordering links. Persist Scene → Entity RELATES_TO edges.
 3. Insert approved milestones grouped by scene. Persist Milestone → Entity RELATES_TO edges.
 4. Enrich and update validated entities with scene-bounded evidence (parallel LLM, max 10 concurrent).
-5. Trigger post-generation jobs (`link_instance`, `embed_nodes`, `embed_instance`).
+5. Trigger post-generation jobs (`link_instance`, `embed_reconciliation`).
 6. Sync proposal states and store final reconciliation payload in job details.
+
+Post-generation trigger behavior is currently:
+
+- `link_instance` (single instance link pass)
+- `embed_reconciliation` (coalesced embedding with one batched `node_ids` list)
 
 ### Step 4 Guarantees
 
@@ -109,17 +114,7 @@ Detailed generate doc:
 
 ## Runtime Artifacts
 
-Analyze artifacts are written under:
-
-- `local_tests/arhictect/Analyses/{run_id}/`
-
-Files:
-
-- `scene_chunk.json`
-- `entity_proposal.json`
-- `proposed_scenes.json`
-- `proposed_milestones.json`
-- `pipeline_output.json`
+Architect analyze currently has local artifact writing disabled in code (`_write_local_json_artifact` returns `None`), so JSON files are not emitted by default.
 
 ## Operational Notes
 

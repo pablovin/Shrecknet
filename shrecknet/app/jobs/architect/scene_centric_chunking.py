@@ -400,6 +400,7 @@ async def _run_scene_unifier(
         model=model,
         messages=[{"role": "user", "content": prompt}],
         temperature=0.1,
+        usage_tag="architect.scene_unifier",
     )
 
     payload = json.loads(_extract_json_object(response_text))
@@ -433,6 +434,7 @@ async def segment_chunk_into_scenes(
         model=model,
         messages=[{"role": "user", "content": prompt}],
         temperature=0.1,
+        usage_tag="architect.scene_discovery",
     )
 
     payload = json.loads(_extract_json_object(response_text))

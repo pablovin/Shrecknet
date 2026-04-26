@@ -173,7 +173,8 @@ class OntologyCopyResponse(BaseModel):
 class OntologyWorldStatsItem(BaseModel):
     ontology_id: int
     entity_type_count: int = 0
-    page_count: int = 0
+    entity_instance_count: int = 0
+    library_item_count: int = 0
     scene_count: int = 0
     milestone_count: int = 0
     updated_at: datetime

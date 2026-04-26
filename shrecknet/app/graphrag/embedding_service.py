@@ -27,6 +27,9 @@ _cached_model_key: tuple[str, str] | None = None
 _inference_semaphore_lock = threading.Lock()
 _inference_semaphore: threading.BoundedSemaphore | None = None
 _inference_semaphore_size: int | None = None
+_inference_queue_stats_lock = threading.Lock()
+_inference_waiting_count: int = 0
+_inference_inflight_count: int = 0
 
 
 def _current_model_key() -> tuple[str, str]:
@@ -44,7 +47,7 @@ def get_embedding_dimension() -> int:
     return get_settings().embedding_dimension
 
 
-def get_embedding_model() -> SentenceTransformer:
+def get_embedding_model(diagnostic_request_id: str | None = None) -> SentenceTransformer:
     """Get cached embedding model instance with thread-safe loading."""
     global _cached_model, _cached_model_key
     model_key = _current_model_key()
@@ -62,8 +65,30 @@ def get_embedding_model() -> SentenceTransformer:
         model_id, device = model_key
 
         # Load the model
+        load_started = time.monotonic()
+        logger.info(
+            "model_load_start request_id=%s model_id=%s device=%s",
+            diagnostic_request_id or "-",
+            model_id,
+            device,
+        )
+        print(
+            f"[EMBED_DIAG] step=model_load_start request_id={diagnostic_request_id or '-'} "
+            f"model_id={model_id} device={device}"
+        )
         _cached_model = SentenceTransformer(model_id, device=device)
         _cached_model_key = model_key
+        logger.info(
+            "model_load_end request_id=%s model_id=%s device=%s elapsed_ms=%.2f",
+            diagnostic_request_id or "-",
+            model_id,
+            device,
+            round((time.monotonic() - load_started) * 1000, 2),
+        )
+        print(
+            f"[EMBED_DIAG] step=model_load_end request_id={diagnostic_request_id or '-'} "
+            f"model_id={model_id} device={device} elapsed_ms={round((time.monotonic() - load_started) * 1000, 2):.2f}"
+        )
         return _cached_model
 
 
@@ -80,6 +105,34 @@ def get_embedding_inference_semaphore() -> threading.BoundedSemaphore:
         _inference_semaphore = threading.BoundedSemaphore(value=configured)
         _inference_semaphore_size = configured
         return _inference_semaphore
+
+
+def _queue_snapshot() -> tuple[int, int, int]:
+    with _inference_queue_stats_lock:
+        waiting = _inference_waiting_count
+        inflight = _inference_inflight_count
+    capacity = max(1, int(get_settings().elder_embedding_inference_concurrency))
+    return waiting, inflight, capacity
+
+
+def _queue_waiting_delta(delta: int) -> tuple[int, int, int]:
+    global _inference_waiting_count
+    with _inference_queue_stats_lock:
+        _inference_waiting_count = max(0, _inference_waiting_count + delta)
+        waiting = _inference_waiting_count
+        inflight = _inference_inflight_count
+    capacity = max(1, int(get_settings().elder_embedding_inference_concurrency))
+    return waiting, inflight, capacity
+
+
+def _queue_inflight_delta(delta: int) -> tuple[int, int, int]:
+    global _inference_inflight_count
+    with _inference_queue_stats_lock:
+        _inference_inflight_count = max(0, _inference_inflight_count + delta)
+        waiting = _inference_waiting_count
+        inflight = _inference_inflight_count
+    capacity = max(1, int(get_settings().elder_embedding_inference_concurrency))
+    return waiting, inflight, capacity
 
 
 class EmbeddingService:
@@ -505,7 +558,11 @@ class EmbeddingService:
             return
         await self._refresh_chunks(milestone_id, [("milestone_main", summary)])
 
-    def embed_texts(self, texts: list[str]) -> list[list[float]]:
+    def embed_texts(
+        self,
+        texts: list[str],
+        diagnostic_request_id: str | None = None,
+    ) -> list[list[float]]:
         """
         Embed a list of texts using the multilingual model.
 
@@ -517,21 +574,83 @@ class EmbeddingService:
         """
         global _cached_model, _cached_model_key
 
-        model = get_embedding_model()
+        model = get_embedding_model(diagnostic_request_id=diagnostic_request_id)
         inference_gate = get_embedding_inference_semaphore()
         max_retries = 3
 
         for attempt in range(max_retries):
             try:
                 queue_started = time.monotonic()
+                waiting, inflight, capacity = _queue_waiting_delta(+1)
+                logger.info(
+                    "inference_gate_wait_start request_id=%s attempt=%d batch_size=%d waiting=%d inflight=%d capacity=%d",
+                    diagnostic_request_id or "-",
+                    attempt + 1,
+                    len(texts),
+                    waiting,
+                    inflight,
+                    capacity,
+                )
+                print(
+                    f"[EMBED_DIAG] step=inference_gate_wait_start request_id={diagnostic_request_id or '-'} "
+                    f"attempt={attempt + 1} batch_size={len(texts)} "
+                    f"waiting={waiting} inflight={inflight} capacity={capacity}"
+                )
                 inference_gate.acquire()
                 queue_wait_ms = round((time.monotonic() - queue_started) * 1000, 2)
+                waiting, inflight, capacity = _queue_waiting_delta(-1)
+                waiting, inflight, capacity = _queue_inflight_delta(+1)
+                logger.info(
+                    "inference_gate_wait_end request_id=%s attempt=%d queue_wait_ms=%.2f waiting=%d inflight=%d capacity=%d",
+                    diagnostic_request_id or "-",
+                    attempt + 1,
+                    queue_wait_ms,
+                    waiting,
+                    inflight,
+                    capacity,
+                )
+                print(
+                    f"[EMBED_DIAG] step=inference_gate_wait_end request_id={diagnostic_request_id or '-'} "
+                    f"attempt={attempt + 1} queue_wait_ms={queue_wait_ms:.2f} "
+                    f"waiting={waiting} inflight={inflight} capacity={capacity}"
+                )
                 encode_started = time.monotonic()
+                waiting, inflight, capacity = _queue_snapshot()
+                logger.info(
+                    "encode_start request_id=%s attempt=%d batch_size=%d waiting=%d inflight=%d capacity=%d",
+                    diagnostic_request_id or "-",
+                    attempt + 1,
+                    len(texts),
+                    waiting,
+                    inflight,
+                    capacity,
+                )
+                print(
+                    f"[EMBED_DIAG] step=encode_start request_id={diagnostic_request_id or '-'} "
+                    f"attempt={attempt + 1} batch_size={len(texts)} "
+                    f"waiting={waiting} inflight={inflight} capacity={capacity}"
+                )
                 try:
                     embeddings = model.encode(texts, normalize_embeddings=True)
                 finally:
                     inference_gate.release()
+                    waiting, inflight, capacity = _queue_inflight_delta(-1)
                 encode_ms = round((time.monotonic() - encode_started) * 1000, 2)
+                logger.info(
+                    "encode_end request_id=%s attempt=%d encode_ms=%.2f batch_size=%d waiting=%d inflight=%d capacity=%d",
+                    diagnostic_request_id or "-",
+                    attempt + 1,
+                    encode_ms,
+                    len(texts),
+                    waiting,
+                    inflight,
+                    capacity,
+                )
+                print(
+                    f"[EMBED_DIAG] step=encode_end request_id={diagnostic_request_id or '-'} "
+                    f"attempt={attempt + 1} encode_ms={encode_ms:.2f} batch_size={len(texts)} "
+                    f"waiting={waiting} inflight={inflight} capacity={capacity}"
+                )
                 logger.info(
                     "embedding_inference queue_wait_ms=%.2f encode_ms=%.2f batch_size=%d concurrency_limit=%d",
                     queue_wait_ms,
@@ -573,6 +692,16 @@ class EmbeddingService:
                         max_retries,
                         exc,
                     )
+                    logger.info(
+                        "model_reload_start request_id=%s attempt=%d reason=%s",
+                        diagnostic_request_id or "-",
+                        attempt + 1,
+                        exc,
+                    )
+                    print(
+                        f"[EMBED_DIAG] step=model_reload_start request_id={diagnostic_request_id or '-'} "
+                        f"attempt={attempt + 1} reason={exc}"
+                    )
 
                     # Force garbage collection to release any lingering references
                     gc.collect()
@@ -582,7 +711,18 @@ class EmbeddingService:
                         _cached_model = None
                         _cached_model_key = None
 
-                    model = get_embedding_model()
+                    model = get_embedding_model(
+                        diagnostic_request_id=diagnostic_request_id
+                    )
+                    logger.info(
+                        "model_reload_end request_id=%s attempt=%d",
+                        diagnostic_request_id or "-",
+                        attempt + 1,
+                    )
+                    print(
+                        f"[EMBED_DIAG] step=model_reload_end request_id={diagnostic_request_id or '-'} "
+                        f"attempt={attempt + 1}"
+                    )
 
                     # On the last attempt, raise the exception
                     if attempt == max_retries - 1:
@@ -596,7 +736,11 @@ class EmbeddingService:
                     # Non-retryable error, raise immediately
                     raise
 
-    def embed_text(self, text: str) -> list[float]:
+    def embed_text(
+        self,
+        text: str,
+        diagnostic_request_id: str | None = None,
+    ) -> list[float]:
         """
         Embed a single text.
 
@@ -606,7 +750,7 @@ class EmbeddingService:
         Returns:
             Embedding vector
         """
-        return self.embed_texts([text])[0]
+        return self.embed_texts([text], diagnostic_request_id=diagnostic_request_id)[0]
 
     async def build_context_text(
         self,

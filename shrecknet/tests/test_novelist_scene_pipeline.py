@@ -12,7 +12,7 @@ from app.schemas.novelist import NovelistRunCreate
 
 class _FakeModelPolicy:
     model_novelist_draft = "draft-model"
-    model_novelist_critic = "critic-model"
+    model_novelist = "core-model"
 
     def get_model(self, _task):
         return "default-model"
@@ -311,38 +311,20 @@ class _CaptureLLM:
 async def test_prompt_payloads_do_not_include_debug_fields() -> None:
     llm = _CaptureLLM()
     orchestrator = NovelistOrchestrator(llm_client=llm, model_policy=_FakeModelPolicy())
-    scene_packages = [
-        {
-            "scene_id": "scene-001",
-            "name": "S1",
-            "scene_summary": "Summary",
-            "scene_goal": "Goal",
-            "milestones": ["M1"],
-            "related_entities": ["E1"],
-            "_raw_scene_package": "debug",
-            "raw_scene_text": "very long text",
-        }
-    ]
-    retrieval = {"scene-001": {"buckets": {"prior_events": ["Ref A"], "style_details": ["Ref B"]}}}
-    intents = {"scene-001": {"what_happens": ["X"]}}
-    prose = await orchestrator._generate_scene_prose(
-        agent=Agent(id="a", name="n", job="novelist", active=True),
-        scene_packages=scene_packages,
-        intents_by_scene=intents,
-        retrieval_by_scene=retrieval,
-        continuity_brief="brief",
+    prose_html = await orchestrator._generate_scene_paragraph_single(
+        scene_id="scene-001",
+        delta_input={
+            "what_happens": ["X"],
+        },
         language="en",
         instructions="",
         conversation_id="cid",
     )
-    assert prose[0]["prose_html"].startswith("<p>")
-    _, prose_user = llm.calls[-1]
-    assert "_raw_scene_package" not in prose_user
-    assert "raw_scene_text" not in prose_user
+    assert prose_html.startswith("<p>")
 
     await orchestrator._critic_scene_set(
-        scene_packages=scene_packages,
-        prose_by_scene=prose,
+        scene_packages=[{"scene_id": "scene-001", "name": "S1"}],
+        prose_by_scene=[{"scene_id": "scene-001", "name": "S1", "prose_html": prose_html}],
         language="en",
         instructions="",
         conversation_id="cid",

@@ -31,7 +31,7 @@ class LibrarianOrchestrator:
         pdf_embedding_service: PdfEmbeddingService,
         default_top_k: int = 10,
         answer_model: str = "gpt-4o",
-        style_model: str = "gpt-4o-mini",
+        style_model: str = "gpt-5-nano",
         fast_mode: bool = True,
         max_fast_chunks: int = 6,
     ):
@@ -175,6 +175,15 @@ class LibrarianOrchestrator:
             source_titles,
             final_answer,
         )
+        usage_summary_getter = getattr(self.llm_client, "get_usage_summary", None)
+        if callable(usage_summary_getter):
+            usage_summary = usage_summary_getter()
+            logger.info(
+                "librarian_llm_usage query=%s totals=%s by_model=%s",
+                request.query[:120],
+                usage_summary.get("totals"),
+                usage_summary.get("by_model"),
+            )
 
         # Return response based on mode
         return LibrarianQueryResponse(

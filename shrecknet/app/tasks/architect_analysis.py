@@ -50,6 +50,7 @@ SCENE_CHUNKING_TOKEN_LIMIT = 16_000
 SCENE_ENTITY_EXTRACTION_CONCURRENCY = 10
 MILESTONE_EXTRACTION_CONCURRENCY = 10
 MIN_TOKEN_OVERLAP_RATIO = 0.5
+MILESTONE_SCENE_TEXT_MAX_CHARS = 2_400
 
 
 def _resolve_local_tests_output_dir(job_name: str) -> Path:
@@ -108,6 +109,39 @@ def _extract_json_block(raw: str) -> str:
     if start == -1 or end == -1 or end <= start:
         raise ValueError("No JSON object found in LLM response")
     return raw[start : end + 1]
+
+
+def _format_step_usage_delta(
+    llm_client: OpenAIClient,
+    start_event_index: int,
+) -> dict[str, Any]:
+    return llm_client.get_usage_summary_since(start_event_index)
+
+
+def _log_step_usage(
+    *,
+    run_id: str,
+    step: str,
+    usage: dict[str, Any],
+) -> None:
+    logger.info(
+        "architect_analysis_llm_usage_step run_id=%s step=%s totals=%s by_model=%s",
+        run_id,
+        step,
+        usage.get("totals"),
+        usage.get("by_model"),
+    )
+
+
+def _compress_scene_text_for_milestone_prompt(scene_text: str, max_chars: int) -> str:
+    text = str(scene_text or "").strip()
+    if not text or len(text) <= max_chars:
+        return text
+
+    half = max(400, max_chars // 2)
+    head = text[:half].rstrip()
+    tail = text[-half:].lstrip()
+    return f"{head}\n...\n{tail}"
 
 
 def _parse_chunk_extraction(response_text: str, scene_ref: str) -> ChunkExtractionResponse:
@@ -346,6 +380,7 @@ async def _reconcile_with_existing(
             model=model,
             messages=[{"role": "user", "content": prompt}],
             temperature=0.1,
+            usage_tag="architect.entity_reconciliation",
         )
         parsed = _parse_reconciliation(response_text)
         valid_ids = {
@@ -753,6 +788,7 @@ async def _extract_scene_entities(
                     model=model,
                     messages=[{"role": "user", "content": prompt}],
                     temperature=0.1,
+                    usage_tag="architect.entity_extraction",
                 )
 
             parsed = _parse_chunk_extraction(response_text, scene_ref)
@@ -1320,7 +1356,10 @@ async def _run_milestone_proposal_phase(
                 scene_ref=scene_ref,
                 scene_name=_safe_json_text(scene.get("scene_name"), "Unnamed Scene"),
                 scene_description=_safe_json_text(scene.get("scene_description")),
-                scene_text=_safe_json_text(scene.get("scene_text")),
+                scene_text=_compress_scene_text_for_milestone_prompt(
+                    _safe_json_text(scene.get("scene_text")),
+                    MILESTONE_SCENE_TEXT_MAX_CHARS,
+                ),
                 scene_entities=json.dumps(aliases, ensure_ascii=False),
             )
             instructions_text = str(instructions or "").strip()
@@ -1335,6 +1374,7 @@ async def _run_milestone_proposal_phase(
                     model=model,
                     messages=[{"role": "user", "content": prompt}],
                     temperature=0.1,
+                    usage_tag="architect.milestone_proposal",
                 )
             except Exception as exc:
                 logger.warning(
@@ -1664,14 +1704,8 @@ async def _execute_architect_pipeline(
             await session.flush()
 
             model_policy = ModelPolicy(
-                decompose_model=settings.model_decompose,
-                subanswer_model=settings.model_subanswer,
-                synthesis_model=settings.model_synthesis,
-                validation_model=settings.model_validation,
-                style_model=settings.model_style,
-                architect_extract_model=getattr(
-                    settings, "model_architect_extract", settings.model_decompose
-                ),
+                default_model=settings.model_architect,
+                architect_extract_model=settings.model_architect,
             )
             llm_client = OpenAIClient(
                 api_key=settings.openai_api_key,
@@ -1705,12 +1739,25 @@ async def _execute_architect_pipeline(
                     ontology_instance_id=ontology_instance_id,
                     ontology_instance=ontology_instance,
                     llm_client=llm_client,
-                    model=model_policy.get_model(LLMTask.ARCHITECT_EXTRACT),
+                    scene_chunking_model=settings.model_architect_scene_chunking,
+                    architect_model=model_policy.get_model(LLMTask.ARCHITECT_EXTRACT),
                     ontology_definitions=ontology_definitions,
                     allowed_ontology_names=allowed_ontology_names,
                     existing_nodes=existing_nodes,
                     celery_task_id=analyze_instance.request.id,
                     author_id=agent_id,
+                )
+                usage_summary = llm_client.get_usage_summary()
+                logger.info(
+                    "architect_analysis_llm_usage run_id=%s totals=%s by_model=%s",
+                    run_id,
+                    usage_summary.get("totals"),
+                    usage_summary.get("by_model"),
+                )
+                logger.info(
+                    "architect_analysis_llm_usage_by_tag run_id=%s by_tag=%s",
+                    run_id,
+                    usage_summary.get("by_tag"),
                 )
             finally:
                 await llm_client.aclose()
@@ -1750,7 +1797,8 @@ async def _run_scene_centric_chunking_test(
     ontology_instance_id: str,
     ontology_instance: Any,
     llm_client: OpenAIClient,
-    model: str,
+    scene_chunking_model: str,
+    architect_model: str,
     ontology_definitions: str,
     allowed_ontology_names: dict[str, str],
     existing_nodes: list[dict[str, Any]],
@@ -1761,11 +1809,17 @@ async def _run_scene_centric_chunking_test(
     total_started = perf_counter()
     await update_job_progress(job_id, 0.25, {"status": "Scene-centric chunking"})
 
+    step_usage_start = llm_client.get_usage_event_count()
     chunking_phase = await _run_scene_chunking_phase(
         run_id=run_id,
         ontology_instance=ontology_instance,
         llm_client=llm_client,
-        model=model,
+        model=scene_chunking_model,
+    )
+    _log_step_usage(
+        run_id=run_id,
+        step="scene_chunking",
+        usage=_format_step_usage_delta(llm_client, step_usage_start),
     )
     all_chunk_results = chunking_phase["chunk_results"]
     total_chunks = chunking_phase["chunk_count"]
@@ -1774,14 +1828,20 @@ async def _run_scene_centric_chunking_test(
     scene_chunking_elapsed_seconds = chunking_phase["elapsed_seconds"]
 
     await update_job_progress(job_id, 0.7, {"status": "Scene entity discovery"})
+    step_usage_start = llm_client.get_usage_event_count()
     entity_phase = await _run_entity_proposal_phase(
         run_id=run_id,
         llm_client=llm_client,
-        model=model,
+        model=architect_model,
         ontology_definitions=ontology_definitions,
         allowed_ontology_names=allowed_ontology_names,
         existing_nodes=existing_nodes,
         chunk_results=all_chunk_results,
+    )
+    _log_step_usage(
+        run_id=run_id,
+        step="entity_discovery",
+        usage=_format_step_usage_delta(llm_client, step_usage_start),
     )
     scene_inputs = entity_phase["scene_inputs"]
     proposed_entities = entity_phase["proposed_entities"]
@@ -1801,12 +1861,18 @@ async def _run_scene_centric_chunking_test(
     scene_proposal_elapsed_seconds = scene_proposal_phase["elapsed_seconds"]
 
     await update_job_progress(job_id, 0.9, {"status": "Milestone proposal"})
+    step_usage_start = llm_client.get_usage_event_count()
     milestone_phase = await _run_milestone_proposal_phase(
         run_id=run_id,
         llm_client=llm_client,
-        model=model,
+        model=architect_model,
         proposed_scenes=proposed_scenes,
         author_id=author_id,
+    )
+    _log_step_usage(
+        run_id=run_id,
+        step="milestone_proposal",
+        usage=_format_step_usage_delta(llm_client, step_usage_start),
     )
     proposed_milestones = milestone_phase["proposed_milestones"]
     milestones_per_scene = milestone_phase["per_scene"]

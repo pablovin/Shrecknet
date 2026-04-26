@@ -45,7 +45,7 @@ def _truncate_text(text: Optional[str], limit: int = 200) -> Optional[str]:
 
 
 # NOTE: Legacy entry point kept for backwards compatibility. The v2 pipeline lives in
-# app/tasks/architect_generation_v2.py and should be used going forward.
+# app/tasks/architect_generation.py and should be used going forward.
 @celery_app.task(name="architect.generate_entities_legacy")
 def generate_entities(
     run_id: str,
@@ -323,14 +323,8 @@ async def _execute_entity_generation(
 
             # Initialize LLM client and generator
             model_policy = ModelPolicy(
-                decompose_model=settings.model_decompose,
-                subanswer_model=settings.model_subanswer,
-                synthesis_model=settings.model_synthesis,
-                validation_model=settings.model_validation,
-                style_model=settings.model_style,
-                architect_extract_model=getattr(
-                    settings, "model_architect_extract", settings.model_decompose
-                ),
+                default_model=settings.model_architect,
+                architect_extract_model=settings.model_architect,
             )
             llm_client = OpenAIClient(
                 api_key=settings.openai_api_key, timeout=60, max_retries=3,

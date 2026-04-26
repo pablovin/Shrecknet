@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db_session
 from app.core.config_store import get_settings, is_openai_configured
+from app.graphrag.embedding_runtime import EmbeddingRuntimeError
 from app.graph.neo4j import get_driver
 from app.integrations.llm.model_policy import ModelPolicy
 from app.integrations.llm.openai_client import OpenAIClient
@@ -53,16 +54,10 @@ async def get_model_policy() -> ModelPolicy:
     settings = get_settings()
 
     model_policy = ModelPolicy(
-        decompose_model=settings.model_decompose,
-        subanswer_model=settings.model_subanswer,
-        synthesis_model=settings.model_synthesis,
-        validation_model=settings.model_validation,
-        style_model=settings.model_style,
-        architect_extract_model=getattr(
-            settings, "model_architect_extract", settings.model_decompose
-        ),
+        default_model=settings.model_elder,
+        architect_extract_model=settings.model_architect,
     )
-    setattr(model_policy, "model_elder_query", settings.model_elder_query)
+    setattr(model_policy, "model_elder", settings.model_elder)
     return model_policy
 
 
@@ -258,6 +253,12 @@ async def query_elder(
         logger.info(f"Elder query completed for agent {agent_id}")
         return response
 
+    except EmbeddingRuntimeError as e:
+        logger.error(f"Elder embedding unavailable for agent {agent_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Elder embedding unavailable: {str(e)}",
+        )
     except Exception as e:
         logger.error(f"Elder query failed for agent {agent_id}: {e}", exc_info=True)
         raise HTTPException(

@@ -148,25 +148,24 @@ def test_config_store_overrides_non_bootstrap_env_but_not_bootstrap_env(
 ) -> None:
     env_db_url = f"sqlite:///{tmp_path / 'env.db'}"
     monkeypatch.setenv("SHRECKNET_DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("SHRECKNET_MODEL_STYLE", "env-style")
     monkeypatch.setenv("SHRECKNET_DATABASE_URL", env_db_url)
     _reset_runtime_state()
 
     initial = get_settings()
-    assert initial.model_style == "env-style"
+    assert initial.model_novelist == "gpt-5-nano"
     assert initial.database_url == env_db_url
 
     updated = update_settings(
         {
-            "model_style": "db-style",
+            "model_novelist": "db-model",
             "database_url": f"sqlite:///{tmp_path / 'db-value.db'}",
         }
     )
-    assert updated.model_style == "db-style"
+    assert updated.model_novelist == "db-model"
     assert updated.database_url == env_db_url
 
     reloaded = reload_settings()
-    assert reloaded.model_style == "db-style"
+    assert reloaded.model_novelist == "db-model"
     assert reloaded.database_url == env_db_url
 
 

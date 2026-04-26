@@ -116,6 +116,10 @@ class ElderQueryRequest(BaseModel):
         False,
         description="Fast mode: skip decomposition and use one mixed intent",
     )
+    route: Literal["auto", "fast", "deep"] = Field(
+        "auto",
+        description="Execution route: auto (fast-first), fast (single-pass), deep (always decompose before retrieval)",
+    )
     chat_id: Optional[str] = Field(
         None, description="Optional chat ID to use conversation history as context"
     )

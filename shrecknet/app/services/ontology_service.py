@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Sequence
+from typing import Any, Sequence
 
 from sqlalchemy import bindparam, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -324,6 +324,7 @@ class OntologyService:
         *,
         ontology_ids: list[int] | None = None,
         include_content_counts: bool = True,
+        graph_session: Any | None = None,
     ) -> list[OntologyWorldStatsItem]:
         filter_clause = ""
         params: dict[str, object] = {}
@@ -344,53 +345,25 @@ class OntologyService:
                     FROM ontology_entities e
                     GROUP BY e.ontology_id
                 ),
-                page_counts AS (
-                    SELECT oi.ontology_id, COUNT(*) AS page_count, MAX(oi.updated_at) AS content_updated_at
-                    FROM ontology_instances oi
-                    GROUP BY oi.ontology_id
-                ),
-                scene_counts AS (
-                    SELECT
-                        oi.ontology_id,
-                        SUM(
-                            CASE
-                                WHEN json_valid(oi.payload_json) = 1
-                                AND json_type(oi.payload_json, '$.scenes') = 'array'
-                                THEN json_array_length(oi.payload_json, '$.scenes')
-                                ELSE 0
-                            END
-                        ) AS scene_count
-                    FROM ontology_instances oi
-                    GROUP BY oi.ontology_id
-                ),
-                milestone_counts AS (
-                    SELECT
-                        oi.ontology_id,
-                        SUM(
-                            CASE
-                                WHEN json_type(scene.value, '$.milestones') = 'array'
-                                THEN json_array_length(scene.value, '$.milestones')
-                                ELSE 0
-                            END
-                        ) AS milestone_count
-                    FROM ontology_instances oi
-                    LEFT JOIN json_each(oi.payload_json, '$.scenes') AS scene
-                        ON json_valid(oi.payload_json) = 1
-                        AND json_type(oi.payload_json, '$.scenes') = 'array'
-                    GROUP BY oi.ontology_id
+                library_item_counts AS (
+                    SELECT li.ontology_id, COUNT(*) AS library_item_count, MAX(li.updated_at) AS library_updated_at
+                    FROM library_items li
+                    GROUP BY li.ontology_id
                 )
                 SELECT
                     b.ontology_id,
                     COALESCE(et.entity_type_count, 0) AS entity_type_count,
-                    COALESCE(pg.page_count, 0) AS page_count,
-                    COALESCE(sc.scene_count, 0) AS scene_count,
-                    COALESCE(ms.milestone_count, 0) AS milestone_count,
-                    COALESCE(pg.content_updated_at, b.ontology_updated_at) AS updated_at
+                    COALESCE(li.library_item_count, 0) AS library_item_count,
+                    0 AS entity_instance_count,
+                    0 AS scene_count,
+                    0 AS milestone_count,
+                    MAX(
+                        b.ontology_updated_at,
+                        COALESCE(li.library_updated_at, b.ontology_updated_at)
+                    ) AS updated_at
                 FROM base b
                 LEFT JOIN entity_type_counts et ON et.ontology_id = b.ontology_id
-                LEFT JOIN page_counts pg ON pg.ontology_id = b.ontology_id
-                LEFT JOIN scene_counts sc ON sc.ontology_id = b.ontology_id
-                LEFT JOIN milestone_counts ms ON ms.ontology_id = b.ontology_id
+                LEFT JOIN library_item_counts li ON li.ontology_id = b.ontology_id
                 ORDER BY b.ontology_id
                 """
             )
@@ -406,16 +379,23 @@ class OntologyService:
                     SELECT e.ontology_id, COUNT(*) AS entity_type_count
                     FROM ontology_entities e
                     GROUP BY e.ontology_id
+                ),
+                library_item_counts AS (
+                    SELECT li.ontology_id, COUNT(*) AS library_item_count
+                    FROM library_items li
+                    GROUP BY li.ontology_id
                 )
                 SELECT
                     b.ontology_id,
                     COALESCE(et.entity_type_count, 0) AS entity_type_count,
-                    0 AS page_count,
+                    0 AS entity_instance_count,
+                    COALESCE(li.library_item_count, 0) AS library_item_count,
                     0 AS scene_count,
                     0 AS milestone_count,
                     b.ontology_updated_at AS updated_at
                 FROM base b
                 LEFT JOIN entity_type_counts et ON et.ontology_id = b.ontology_id
+                LEFT JOIN library_item_counts li ON li.ontology_id = b.ontology_id
                 ORDER BY b.ontology_id
                 """
             )
@@ -424,6 +404,12 @@ class OntologyService:
             query = query.bindparams(bindparam("ontology_ids", expanding=True))
         result = await self.session.execute(query, params)
         rows = result.mappings().all()
+        graph_counts_by_ontology: dict[int, dict[str, int]] = {}
+        if include_content_counts:
+            graph_counts_by_ontology = await self._get_graph_world_counts(
+                graph_session=graph_session,
+                ontology_ids=ontology_ids,
+            )
 
         out: list[OntologyWorldStatsItem] = []
         for row in rows:
@@ -434,16 +420,56 @@ class OntologyService:
                 updated_at = datetime.now(timezone.utc)
             if updated_at.tzinfo is None:
                 updated_at = updated_at.replace(tzinfo=timezone.utc)
+            ontology_id = int(row["ontology_id"])
+            graph_counts = graph_counts_by_ontology.get(ontology_id, {})
             out.append(
                 OntologyWorldStatsItem(
-                    ontology_id=int(row["ontology_id"]),
+                    ontology_id=ontology_id,
                     entity_type_count=int(row["entity_type_count"] or 0),
-                    page_count=int(row["page_count"] or 0),
-                    scene_count=int(row["scene_count"] or 0),
-                    milestone_count=int(row["milestone_count"] or 0),
+                    entity_instance_count=int(graph_counts.get("entity_instance_count") or 0),
+                    library_item_count=int(row["library_item_count"] or 0),
+                    scene_count=int(graph_counts.get("scene_count") or 0),
+                    milestone_count=int(graph_counts.get("milestone_count") or 0),
                     updated_at=updated_at,
                 )
             )
+        return out
+
+    async def _get_graph_world_counts(
+        self,
+        *,
+        graph_session: Any | None,
+        ontology_ids: list[int] | None,
+    ) -> dict[int, dict[str, int]]:
+        if graph_session is None:
+            return {}
+        query = """
+        MATCH (n)
+        WHERE toInteger(n.ontology_id) IS NOT NULL
+          AND any(label IN labels(n) WHERE label IN ['EntityInstance', 'Scene', 'Milestone'])
+          AND ($ontology_ids IS NULL OR toInteger(n.ontology_id) IN $ontology_ids)
+        RETURN
+          toInteger(n.ontology_id) AS ontology_id,
+          sum(CASE WHEN 'EntityInstance' IN labels(n) THEN 1 ELSE 0 END) AS entity_instance_count,
+          sum(CASE WHEN 'Scene' IN labels(n) THEN 1 ELSE 0 END) AS scene_count,
+          sum(CASE WHEN 'Milestone' IN labels(n) THEN 1 ELSE 0 END) AS milestone_count
+        """
+        try:
+            result = await graph_session.run(query, ontology_ids=ontology_ids)
+            rows = await result.data()
+        except Exception:
+            return {}
+        out: dict[int, dict[str, int]] = {}
+        for row in rows:
+            raw_ontology_id = row.get("ontology_id")
+            if raw_ontology_id is None:
+                continue
+            oid = int(raw_ontology_id)
+            out[oid] = {
+                "entity_instance_count": int(row.get("entity_instance_count") or 0),
+                "scene_count": int(row.get("scene_count") or 0),
+                "milestone_count": int(row.get("milestone_count") or 0),
+            }
         return out
 
     # Helpers -----------------------------------------------------------

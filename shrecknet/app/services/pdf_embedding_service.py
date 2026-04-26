@@ -11,6 +11,7 @@ from typing import Any
 from neo4j import AsyncSession as AsyncNeo4jSession
 
 from app.core.config_store import get_settings
+from app.graphrag.embedding_runtime import get_ready_embedding_runtime
 from app.graphrag.embedding_service import EmbeddingService
 
 logger = logging.getLogger(__name__)
@@ -701,8 +702,12 @@ class PdfEmbeddingService:
         Returns:
             List of chunk dictionaries with text and metadata
         """
-        # Generate query embedding
-        query_embedding = self.embedding_service.embed_text(query_text)
+        # Generate query embedding through shared runtime for request-time stability.
+        runtime = await get_ready_embedding_runtime()
+        query_embedding = await runtime.embed_query(
+            query_text,
+            request_id=f"librarian:{ontology_id}:{abs(hash(query_text)) % 1000000}",
+        )
 
         # Build query
         item_filters: list[str] = []

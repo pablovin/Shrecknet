@@ -57,6 +57,7 @@ class OntologyInstanceRelationshipRead(BaseModel):
 
 class OntologyInstanceEntityCreate(BaseModel):
     model_config = ConfigDict(extra="ignore")
+    entity_instance_id: str | None = None
     definition_id: int
     alias: str
     text: str | None = None
@@ -79,6 +80,15 @@ class OntologyInstanceEntityCreate(BaseModel):
         if not value:
             raise ValueError(f"{info.field_name} cannot be empty")
         return value
+
+    @field_validator("entity_instance_id", mode="before")
+    def validate_optional_entity_instance_id(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = str(value).strip()
+        if not cleaned:
+            return None
+        return cleaned
 
 
 class OntologyInstanceEntityRead(BaseModel):

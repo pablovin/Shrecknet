@@ -42,6 +42,11 @@ from app.db.init_db import init_db_async
 from app.db.init_jobs_db import init_jobs_db
 from app.db.jobs_session import get_jobs_engine
 from app.graphrag.embedding_service import get_embedding_model
+from app.graphrag.embedding_runtime import (
+    get_embedding_runtime_status,
+    start_embedding_runtime_background,
+    stop_embedding_runtime,
+)
 from app.graph.neo4j import ensure_temporal_graph_constraints, get_driver
 
 
@@ -144,6 +149,12 @@ async def _run_embedding_prewarm() -> None:
     started = asyncio.get_running_loop().time()
     logger.info("embedding_prewarm_start")
     try:
+        settings = get_settings()
+        if settings.embedding_runtime_enabled:
+            start_embedding_runtime_background()
+            duration_s = asyncio.get_running_loop().time() - started
+            logger.info("embedding_prewarm_done duration_s=%.3f", duration_s)
+            return
         loop = asyncio.get_running_loop()
 
         def _warm() -> None:
@@ -183,15 +194,21 @@ async def lifespan(_: FastAPI):
         reset_jobs_and_queues_on_startup()
     except Exception:
         logger.exception("Unable to run startup Celery cleanup")
+    settings = get_settings()
     _start_embedding_prewarm()
     try:
-        settings = get_settings()
         driver = get_driver()
         async with driver.session(database=settings.neo4j_database) as neo4j_session:
             await ensure_temporal_graph_constraints(neo4j_session)
     except Exception:
         logger.exception("Unable to ensure temporal graph constraints during startup")
-    yield
+    try:
+        yield
+    finally:
+        try:
+            await stop_embedding_runtime()
+        except Exception:
+            logger.exception("Unable to stop embedding runtime during shutdown")
 
 
 app = FastAPI(title=get_settings().app_name, version="0.5.7", lifespan=lifespan)
@@ -258,5 +275,17 @@ app.include_router(setup.router)
 
 
 @app.get("/health")
-def health() -> dict[str, str]:
-    return {"status": "ok", "service": get_settings().app_name}
+def health() -> dict[str, str | None]:
+    settings = get_settings()
+    runtime = get_embedding_runtime_status()
+    runtime_status = str(runtime.get("status"))
+    fail_open = bool(settings.embedding_runtime_fail_open_health)
+    overall_status = "ok"
+    if runtime_status == "failed" and not fail_open:
+        overall_status = "failed"
+    return {
+        "status": overall_status,
+        "service": settings.app_name,
+        "embedding_runtime_status": runtime_status,
+        "embedding_runtime_reason": runtime.get("reason"),
+    }

@@ -7,7 +7,7 @@ from app.jobs.novelist.novelist import NovelistOrchestrator
 
 class _DummyPolicy:
     model_novelist_draft = "draft"
-    model_novelist_critic = "critic"
+    model_novelist = "core"
 
     def get_model(self, _task):
         return "default"
@@ -15,7 +15,17 @@ class _DummyPolicy:
 
 class _DummyLLM:
     async def chat(self, *args, **kwargs):
-        del args, kwargs
+        del args
+        if kwargs.get("return_metadata"):
+            return {
+                "text": "{}",
+                "usage": {
+                    "prompt_tokens": None,
+                    "completion_tokens": None,
+                    "total_tokens": None,
+                },
+                "response_metadata": {},
+            }
         return "{}"
 
 

@@ -14,6 +14,7 @@ from uuid import uuid4
 from app.integrations.llm.model_policy import LLMTask, ModelPolicy
 from app.integrations.llm.openai_client import OpenAIClient
 from app.integrations.retrieval.neo4j_retriever import GraphRetriever
+from app.graphrag.embedding_runtime import EmbeddingRuntimeError
 from app.jobs.elder.prompts import DECOMPOSE_PROMPT, SYNTHESIS_PROMPT
 from app.jobs.elder.schemas import (
     DecomposedIntent,
@@ -27,6 +28,56 @@ from app.jobs.elder.schemas import (
 from app.models.agent import Agent
 
 logger = logging.getLogger(__name__)
+
+
+def _llm_usage_event_count(llm_client: OpenAIClient) -> int:
+    getter = getattr(llm_client, "get_usage_event_count", None)
+    if callable(getter):
+        try:
+            return int(getter())
+        except Exception:
+            return 0
+    return 0
+
+
+def _llm_usage_since(llm_client: OpenAIClient, start_index: int) -> dict[str, Any]:
+    getter = getattr(llm_client, "get_usage_summary_since", None)
+    if callable(getter):
+        try:
+            return getter(start_index)
+        except Exception:
+            return {"totals": {}, "by_model": {}, "by_tag": {}}
+    return {"totals": {}, "by_model": {}, "by_tag": {}}
+
+
+def _usage_totals_view(usage_payload: dict[str, Any] | None) -> dict[str, Any]:
+    totals = (usage_payload or {}).get("totals") or {}
+    return {
+        "calls": int(totals.get("calls") or 0),
+        "input_tokens_est": int(totals.get("input_tokens_est") or 0),
+        "memory_tokens_est": int(totals.get("memory_tokens_est") or 0),
+        "output_tokens": int(totals.get("output_tokens") or 0),
+        "total_tokens": int(totals.get("total_tokens") or 0),
+        "estimated_cost_usd": round(float(totals.get("estimated_cost_usd") or 0.0), 6),
+    }
+
+
+def _usage_by_tag_view(usage_payload: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
+    by_tag = (usage_payload or {}).get("by_tag") or {}
+    out: dict[str, dict[str, Any]] = {}
+    for tag, row in by_tag.items():
+        if not str(tag).startswith("elder."):
+            continue
+        out[str(tag)] = {
+            "calls": int(row.get("calls") or 0),
+            "input_tokens_est": int(row.get("input_tokens_est") or 0),
+            "memory_tokens_est": int(row.get("memory_tokens_est") or 0),
+            "output_tokens": int(row.get("output_tokens") or 0),
+            "total_tokens": int(row.get("total_tokens") or 0),
+            "estimated_cost_usd": round(float(row.get("estimated_cost_usd") or 0.0), 6),
+            "by_model": row.get("by_model") or {},
+        }
+    return dict(sorted(out.items(), key=lambda kv: kv[0]))
 
 
 class ElderOrchestrator:
@@ -45,10 +96,12 @@ class ElderOrchestrator:
         self.default_top_k = default_top_k
         self.max_subqueries = 10
         self.max_concurrency = 10
+        self.fast_first_min_results = 3
+        self.fast_first_min_top_score = 0.42
         self.last_retrieval_debug: list[dict[str, Any]] = []
 
     def _query_model(self, fallback_task: LLMTask) -> str:
-        model = getattr(self.model_policy, "model_elder_query", None)
+        model = getattr(self.model_policy, "model_elder", None)
         if isinstance(model, str) and model.strip():
             return model.strip()
         return self.model_policy.get_model(fallback_task)
@@ -61,45 +114,103 @@ class ElderOrchestrator:
     ) -> ElderQueryResponse:
         trace: list[TraceStep] = [] if request.include_trace else []
         trace_id = str(uuid4())
+        route = (getattr(request, "route", "auto") or "auto").strip().lower()
+        # Backward compatibility: legacy clients only toggle `fast`.
+        # If route is omitted/auto and fast is explicitly false, treat it as deep.
+        if route == "auto" and request.fast is False:
+            route = "deep"
+        force_deep = route == "deep"
+        effective_fast = bool(request.fast or route == "fast")
+        mode_tag = "fast" if effective_fast else ("deep" if force_deep else "nonfast")
         timings: dict[str, float] = {}
         overall_start = time.monotonic()
+        run_usage_start = _llm_usage_event_count(self.llm_client)
+        step_usage_breakdown: dict[str, dict[str, Any]] = {}
         top_k = request.top_k or self.default_top_k
         ontology_ids = [ont.id for ont in agent.ontologies]
 
-        # Layer 1: query construction (decompose + memory summary)
+        # Layer 1: memory summary
         t0 = time.monotonic()
-        if request.fast:
-            intents = [
-                DecomposedIntent(
-                    subquery=request.query,
-                    target_data_type="mixed",
-                    reason="fast_mode",
-                )
-            ]
-        else:
-            intents = await self._decompose(
+        step_usage_start = _llm_usage_event_count(self.llm_client)
+        intents: list[DecomposedIntent] = [
+            DecomposedIntent(
+                subquery=request.query,
+                target_data_type="mixed",
+                reason="fast_first_primary" if not effective_fast else "fast_mode",
+            )
+        ]
+        should_expand_after_first_pass = False
+        if not effective_fast and not force_deep:
+            should_expand_after_first_pass = True
+        if effective_fast:
+            # Explicit fast mode keeps single-intent behavior.
+            should_expand_after_first_pass = False
+        if force_deep:
+            deep_usage_start = _llm_usage_event_count(self.llm_client)
+            decomposed_intents = await self._decompose(
                 request.query,
                 ontology_ids,
                 chat_history,
                 trace,
                 request.entities_hint,
+                usage_tag=f"elder.{mode_tag}.decompose_initial",
             )
-            if not intents:
-                intents = [
-                    DecomposedIntent(
-                        subquery=request.query,
-                        target_data_type="mixed",
-                        reason="fallback",
-                    )
-                ]
+            deep_usage = _llm_usage_since(self.llm_client, deep_usage_start)
+            step_usage_breakdown["decompose_initial"] = _usage_totals_view(deep_usage)
+            logger.info(
+                "elder_llm_usage_step trace_id=%s step=%s route=%s effective_fast=%s totals=%s by_model=%s by_tag=%s",
+                trace_id,
+                "decompose_initial",
+                route,
+                effective_fast,
+                deep_usage.get("totals"),
+                deep_usage.get("by_model"),
+                deep_usage.get("by_tag"),
+            )
+            if decomposed_intents:
+                intents = decomposed_intents[: min(3, self.max_subqueries)]
+        if not intents:
+            intents = [
+                DecomposedIntent(
+                    subquery=request.query,
+                    target_data_type="mixed",
+                    reason="fallback",
+                )
+            ]
         timings["decompose_ms"] = round((time.monotonic() - t0) * 1000, 2)
+        decompose_plan_usage = _llm_usage_since(self.llm_client, step_usage_start)
+        step_usage_breakdown["decompose_plan"] = _usage_totals_view(decompose_plan_usage)
+        logger.info(
+            "elder_llm_usage_step trace_id=%s step=%s route=%s effective_fast=%s totals=%s by_model=%s by_tag=%s",
+            trace_id,
+            "decompose_plan",
+            route,
+            effective_fast,
+            decompose_plan_usage.get("totals"),
+            decompose_plan_usage.get("by_model"),
+            decompose_plan_usage.get("by_tag"),
+        )
 
         t1 = time.monotonic()
+        step_usage_start = _llm_usage_event_count(self.llm_client)
         memory_summary = self._extract_memory_summary(chat_history)
         timings["memory_summary_ms"] = round((time.monotonic() - t1) * 1000, 2)
+        memory_usage = _llm_usage_since(self.llm_client, step_usage_start)
+        step_usage_breakdown["memory_summary"] = _usage_totals_view(memory_usage)
+        logger.info(
+            "elder_llm_usage_step trace_id=%s step=%s route=%s effective_fast=%s totals=%s by_model=%s by_tag=%s",
+            trace_id,
+            "memory_summary",
+            route,
+            effective_fast,
+            memory_usage.get("totals"),
+            memory_usage.get("by_model"),
+            memory_usage.get("by_tag"),
+        )
 
         # Layer 2: candidate generation
         t2 = time.monotonic()
+        step_usage_start = _llm_usage_event_count(self.llm_client)
         retrieval_results = await self._retrieve_intents(
             intents=intents,
             ontology_ids=ontology_ids,
@@ -107,16 +218,84 @@ class ElderOrchestrator:
             candidate_limit=request.candidate_limit,
             rerank_limit=request.rerank_limit,
         )
+
+        if should_expand_after_first_pass and self._should_expand_after_first_pass(
+            retrieval_results
+        ):
+            t_decompose_expand = time.monotonic()
+            expand_usage_start = _llm_usage_event_count(self.llm_client)
+            decomposed_intents = await self._decompose(
+                request.query,
+                ontology_ids,
+                chat_history,
+                trace,
+                request.entities_hint,
+                usage_tag=f"elder.{mode_tag}.decompose_expand",
+            )
+            expand_usage = _llm_usage_since(self.llm_client, expand_usage_start)
+            step_usage_breakdown["decompose_expand"] = _usage_totals_view(expand_usage)
+            logger.info(
+                "elder_llm_usage_step trace_id=%s step=%s route=%s effective_fast=%s totals=%s by_model=%s by_tag=%s",
+                trace_id,
+                "decompose_expand",
+                route,
+                effective_fast,
+                expand_usage.get("totals"),
+                expand_usage.get("by_model"),
+                expand_usage.get("by_tag"),
+            )
+            if decomposed_intents:
+                # Keep retrieval fan-out bounded for predictable latency.
+                expanded_intents = decomposed_intents[: min(3, self.max_subqueries)]
+                retrieval_results = await self._retrieve_intents(
+                    intents=expanded_intents,
+                    ontology_ids=ontology_ids,
+                    top_k=top_k,
+                    candidate_limit=request.candidate_limit,
+                    rerank_limit=request.rerank_limit,
+                )
+                intents = expanded_intents
+            timings["decompose_ms"] = round(
+                timings["decompose_ms"] + ((time.monotonic() - t_decompose_expand) * 1000),
+                2,
+            )
+
         intents = self._attach_intent_top_k(intents=intents, retrieval_results=retrieval_results)
         timings["retrieve_ms"] = round((time.monotonic() - t2) * 1000, 2)
+        retrieve_usage = _llm_usage_since(self.llm_client, step_usage_start)
+        step_usage_breakdown["retrieve"] = _usage_totals_view(retrieve_usage)
+        logger.info(
+            "elder_llm_usage_step trace_id=%s step=%s route=%s effective_fast=%s totals=%s by_model=%s by_tag=%s",
+            trace_id,
+            "retrieve",
+            route,
+            effective_fast,
+            retrieve_usage.get("totals"),
+            retrieve_usage.get("by_model"),
+            retrieve_usage.get("by_tag"),
+        )
 
         # Layer 3: candidate consolidation
         t3 = time.monotonic()
+        step_usage_start = _llm_usage_event_count(self.llm_client)
         consolidated_sources = self._consolidate_sources(retrieval_results)
         timings["consolidate_ms"] = round((time.monotonic() - t3) * 1000, 2)
+        consolidate_usage = _llm_usage_since(self.llm_client, step_usage_start)
+        step_usage_breakdown["consolidate"] = _usage_totals_view(consolidate_usage)
+        logger.info(
+            "elder_llm_usage_step trace_id=%s step=%s route=%s effective_fast=%s totals=%s by_model=%s by_tag=%s",
+            trace_id,
+            "consolidate",
+            route,
+            effective_fast,
+            consolidate_usage.get("totals"),
+            consolidate_usage.get("by_model"),
+            consolidate_usage.get("by_tag"),
+        )
 
         # Layer 4: reranking + memory priors
         t4 = time.monotonic()
+        step_usage_start = _llm_usage_event_count(self.llm_client)
         memory_priors_applied = self._apply_memory_priors(
             request_query=request.query,
             sources=consolidated_sources,
@@ -125,9 +304,22 @@ class ElderOrchestrator:
         consolidated_sources.sort(key=lambda s: s.score, reverse=True)
         consolidated_sources = consolidated_sources[: max(top_k, 1)]
         timings["rerank_ms"] = round((time.monotonic() - t4) * 1000, 2)
+        rerank_usage = _llm_usage_since(self.llm_client, step_usage_start)
+        step_usage_breakdown["rerank"] = _usage_totals_view(rerank_usage)
+        logger.info(
+            "elder_llm_usage_step trace_id=%s step=%s route=%s effective_fast=%s totals=%s by_model=%s by_tag=%s",
+            trace_id,
+            "rerank",
+            route,
+            effective_fast,
+            rerank_usage.get("totals"),
+            rerank_usage.get("by_model"),
+            rerank_usage.get("by_tag"),
+        )
 
         # Layer 5: grounded synthesis
         t5 = time.monotonic()
+        step_usage_start = _llm_usage_event_count(self.llm_client)
         if request.mode == "context":
             answer = ""
             timings["synthesize_ms"] = 0.0
@@ -136,8 +328,21 @@ class ElderOrchestrator:
                 agent=agent,
                 query=request.query,
                 sources=consolidated_sources,
+                usage_tag=f"elder.{mode_tag}.synthesize",
             )
             timings["synthesize_ms"] = round((time.monotonic() - t5) * 1000, 2)
+        synth_usage = _llm_usage_since(self.llm_client, step_usage_start)
+        step_usage_breakdown["synthesize"] = _usage_totals_view(synth_usage)
+        logger.info(
+            "elder_llm_usage_step trace_id=%s step=%s route=%s effective_fast=%s totals=%s by_model=%s by_tag=%s",
+            trace_id,
+            "synthesize",
+            route,
+            effective_fast,
+            synth_usage.get("totals"),
+            synth_usage.get("by_model"),
+            synth_usage.get("by_tag"),
+        )
 
         timings["total_ms"] = round((time.monotonic() - overall_start) * 1000, 2)
 
@@ -161,6 +366,40 @@ class ElderOrchestrator:
                     data={"trace_id": trace_id, "timings": timings},
                 )
             )
+        usage_summary_getter = getattr(self.llm_client, "get_usage_summary", None)
+        if callable(usage_summary_getter):
+            usage_summary = usage_summary_getter()
+            logger.info(
+                "elder_llm_usage trace_id=%s totals=%s by_model=%s",
+                trace_id,
+                usage_summary.get("totals"),
+                usage_summary.get("by_model"),
+            )
+            logger.info(
+                "elder_llm_usage_by_tag trace_id=%s by_tag=%s",
+                trace_id,
+                usage_summary.get("by_tag"),
+            )
+        run_usage = _llm_usage_since(self.llm_client, run_usage_start)
+        summary_totals = _usage_totals_view(run_usage)
+        summary_steps = step_usage_breakdown
+        summary_tags = _usage_by_tag_view(run_usage)
+        logger.info(
+            "elder_llm_cost_summary trace_id=%s route=%s effective_fast=%s totals=%s pipeline_step_usage=%s llm_runs_by_tag=%s",
+            trace_id,
+            route,
+            effective_fast,
+            summary_totals,
+            summary_steps,
+            summary_tags,
+        )
+        # Mirror critical cost telemetry to stdout because this deployment surfaces
+        # print-based diagnostics more reliably than module logger output.
+        print(
+            f"[ELDER_COST] trace_id={trace_id} route={route} effective_fast={effective_fast} "
+            f"totals={summary_totals} pipeline_step_usage={summary_steps} llm_runs_by_tag={summary_tags}",
+            flush=True,
+        )
 
         return ElderQueryResponse(
             agent_id=agent.id,
@@ -175,6 +414,18 @@ class ElderOrchestrator:
             retrieval_debug=self.last_retrieval_debug or None,
         )
 
+    def _should_expand_after_first_pass(
+        self, retrieval_results: list[dict[str, Any]]
+    ) -> bool:
+        if not retrieval_results:
+            return True
+        first = retrieval_results[0] or {}
+        chunks: list[RetrievedChunk] = first.get("chunks") or []
+        if len(chunks) < self.fast_first_min_results:
+            return True
+        top_score = max((float(chunk.score or 0.0) for chunk in chunks), default=0.0)
+        return top_score < self.fast_first_min_top_score
+
     async def _decompose(
         self,
         query: str,
@@ -182,6 +433,7 @@ class ElderOrchestrator:
         chat_history: Optional[list[dict[str, str]]],
         trace: list[TraceStep],
         entities_hint: Optional[str] = None,
+        usage_tag: str | None = None,
     ) -> list[DecomposedIntent]:
         model = self._query_model(LLMTask.DECOMPOSE)
 
@@ -214,6 +466,7 @@ class ElderOrchestrator:
                 model=model,
                 messages=messages,
                 temperature=0.2,
+                usage_tag=usage_tag or "elder.decompose",
             )
             payload = self._extract_json(response)
             raw_intents = payload.get("intents") if isinstance(payload, dict) else None
@@ -306,6 +559,8 @@ class ElderOrchestrator:
                             agg[key] += int(ds.get(key) or 0)
                     debug_stats = agg
                 except Exception as exc:
+                    if isinstance(exc, EmbeddingRuntimeError):
+                        raise
                     logger.error("Retrieval failed for intent '%s': %s", intent.subquery, exc)
 
                 duration_ms = round((time.monotonic() - started) * 1000, 2)
@@ -526,6 +781,7 @@ class ElderOrchestrator:
         agent: Agent,
         query: str,
         sources: list[SourceNode],
+        usage_tag: str | None = None,
     ) -> str:
         if not sources:
             return (
@@ -562,6 +818,7 @@ class ElderOrchestrator:
                 model=model,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.3,
+                usage_tag=usage_tag or "elder.synthesize",
             )
         except Exception as exc:
             logger.error("Synthesis failed: %s", exc)

@@ -12,7 +12,7 @@ Main endpoint:
 
 Chat stream-compatible endpoint:
 
-- `POST /jobs/elder/chat/messages/stream`
+- `POST /chat/messages/stream`
 
 ## Goal
 
@@ -26,13 +26,19 @@ The current Elder architecture is layered:
 4. Reranking (with structured memory priors)
 5. Grounded synthesis
 
+Current implementation is in:
+
+- `shrecknet/app/jobs/elder/elder.py`
+- `shrecknet/app/jobs/elder/schemas.py`
+- `shrecknet/app/api/routers/elder.py`
+
 ## Runtime Flow
 
 ### 1. Query Construction
 
 - Validates agent and ontology scope.
 - Optionally loads chat memory from `chat_id` (recent messages).
-- Decomposes the user query into retrieval intents (`1..10`).
+- Builds intents according to route mode (`auto`, `fast`, `deep`).
 
 Each intent contains:
 
@@ -50,15 +56,17 @@ Type guidance used by decomposition:
 - `milestone`: arc progression / when-how evolution
 - `mixed`: broad multi-type question
 
-### Fast Mode Relation
+### Route and Fast Behavior (Current)
 
-`fast` mode is a latency shortcut through the same Elder architecture, not a separate retrieval system.
+`fast` and `route` are both accepted on `ElderQueryRequest`.
 
-- In normal mode, Elder performs full decomposition (`1..10` intents).
-- In fast mode, Elder skips decomposition and uses a single intent:
-  - `subquery = original query`
-  - `target_data_type = mixed`
-  - `reason = fast_mode`
+- `route=fast`: single mixed intent (`subquery = original query`).
+- `route=deep`: decompose first, then retrieve (bounded to top 3 intents).
+- `route=auto`: fast-first pass, then expands to decomposition only if first pass is weak.
+
+Backward compatibility rule in code:
+
+- If `route` is omitted/`auto` and `fast=false`, the request is treated as `deep`.
 
 After that, both modes follow the same downstream stages:
 
@@ -70,7 +78,7 @@ After that, both modes follow the same downstream stages:
 Practical effect:
 
 - fast mode reduces latency and token usage
-- normal mode usually provides better coverage for multi-aspect questions
+- deep mode usually provides better coverage for multi-aspect questions
 
 ### 2. Candidate Generation
 
@@ -117,6 +125,10 @@ Output object is a `SourceNode` with:
 - Keeps answer aligned with retrieved nodes/chunks.
 - Returns `answer` + `sources` for frontend provenance.
 
+Legacy mode note:
+
+- `mode=context` skips synthesis and returns empty `answer` with populated `sources`.
+
 ## Response Contract (Current)
 
 `ElderQueryResponse` now returns:
@@ -161,6 +173,12 @@ Per-intent logging includes:
 - Memory is summarized from recent turns.
 - Memory does not directly rewrite user intent text.
 - Priors are explicit and traceable in response payload.
+
+When `chat_id` is provided, router-level persistence stores:
+
+- user message,
+- assistant answer,
+- assistant metadata (`sources`, `timings`, `memory_priors_applied`, `trace_id`, optional `trace`).
 
 ## Embedding/Reconciliation Relation
 

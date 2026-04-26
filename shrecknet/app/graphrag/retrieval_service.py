@@ -8,13 +8,22 @@ import logging
 import math
 import re
 import time
+from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any
+from uuid import uuid4
 
 from neo4j import AsyncSession as AsyncNeo4jSession
 from neo4j.time import Date, DateTime, Duration, Time
 
 from app.graphrag.embedding_service import EmbeddingService
+from app.graphrag.embedding_runtime import (
+    EmbeddingRuntimeError,
+    EmbeddingRuntimeQueueFull,
+    EmbeddingRuntimeRequestTimeout,
+    get_ready_embedding_runtime,
+)
+from app.core.config_store import get_settings
 
 
 def _normalize_value(value: Any) -> Any:
@@ -32,6 +41,12 @@ def _normalize_value(value: Any) -> Any:
     return value
 
 
+@dataclass(slots=True)
+class _EmbeddingDiagnosticsContext:
+    request_id: str
+    started_monotonic: float
+
+
 class RetrievalService:
     """Service for semantic retrieval from Neo4j."""
 
@@ -39,6 +54,150 @@ class RetrievalService:
         self.graph_session = graph_session
         self.embedding_service = EmbeddingService(graph_session)
         self.neighbor_parallelism_cap = 8
+
+    async def _lexical_fallback_search(
+        self,
+        *,
+        query: str,
+        ontology_id: int | None,
+        k: int,
+        score_threshold: float,
+        effective_allowed_labels: list[str],
+    ) -> list[dict[str, Any]]:
+        query_lower = (query or "").strip().lower()
+        if not query_lower:
+            return []
+
+        compact_query = re.sub(r"[^a-z0-9]+", "", query_lower)
+        query_terms = [term for term in re.findall(r"[a-z0-9]+", query_lower) if term]
+
+        # Lightweight lexical fallback to keep elder responses predictable when embedding stalls.
+        fallback_query = """
+        MATCH (parent)
+        WHERE any(label IN labels(parent) WHERE label IN $allowed_labels)
+          AND ($ontology_id IS NULL OR toInteger(parent['ontology_id']) = toInteger($ontology_id))
+        WITH parent,
+             toLower(coalesce(parent['alias'], '')) AS alias_lc,
+             toLower(coalesce(parent['name'], '')) AS name_lc,
+             toLower(replace(replace(replace(coalesce(parent['alias'], ''), ' ', ''), '-', ''), '_', '')) AS alias_compact,
+             toLower(replace(replace(replace(coalesce(parent['name'], ''), ' ', ''), '-', ''), '_', '')) AS name_compact
+        WHERE alias_lc CONTAINS $query_lower
+           OR name_lc CONTAINS $query_lower
+           OR alias_compact CONTAINS $compact_query
+           OR name_compact CONTAINS $compact_query
+        WITH parent,
+             (
+                 CASE WHEN alias_lc = $query_lower THEN 0.42 ELSE 0.0 END
+               + CASE WHEN name_lc = $query_lower THEN 0.38 ELSE 0.0 END
+               + CASE WHEN alias_lc STARTS WITH $query_lower THEN 0.18 ELSE 0.0 END
+               + CASE WHEN name_lc STARTS WITH $query_lower THEN 0.14 ELSE 0.0 END
+               + CASE WHEN alias_lc CONTAINS $query_lower THEN 0.10 ELSE 0.0 END
+               + CASE WHEN name_lc CONTAINS $query_lower THEN 0.08 ELSE 0.0 END
+             ) AS score_base
+        OPTIONAL MATCH (parent)<-[:HAS_CHUNK]-(chunk:EntityChunk)
+        WITH parent, score_base, collect(chunk)[..1] AS top_chunks
+        RETURN parent AS parent, top_chunks[0] AS chunk, score_base AS score
+        ORDER BY score DESC, coalesce(parent['name'], parent['alias'], parent['id']) ASC
+        LIMIT $k
+        """
+
+        result = await self.graph_session.run(
+            fallback_query,
+            query_lower=query_lower,
+            compact_query=compact_query,
+            ontology_id=ontology_id,
+            allowed_labels=effective_allowed_labels,
+            k=max(1, k),
+        )
+        records = await result.data()
+
+        grouped: dict[str, dict[str, Any]] = {}
+        query_term_set = set(query_terms)
+        for record in records:
+            chunk = record.get("chunk")
+            parent = record.get("parent")
+            score = float(record.get("score") or 0.0)
+            if score < score_threshold:
+                continue
+
+            try:
+                labels_list = list(parent.labels)
+            except Exception:
+                labels_list = []
+
+            try:
+                parent_props = dict(parent)
+            except Exception:
+                parent_props = {}
+
+            alias = parent_props.get("alias")
+            node_id = (
+                parent_props.get("entity_instance_id")
+                or parent_props.get("id")
+                or parent_props.get("instance_id")
+            )
+            primary_label = labels_list[0] if labels_list else "node"
+            dedup_key = f"{primary_label}::{node_id or parent_props.get('name') or 'unknown'}"
+
+            chunk_props: dict[str, Any] = {}
+            if chunk is not None:
+                try:
+                    chunk_props = dict(chunk)
+                except Exception:
+                    chunk_props = {}
+            context_text = str(chunk_props.get("text_chunk") or parent_props.get("text") or "")
+
+            searchable = " ".join(
+                [
+                    str(parent_props.get("name") or ""),
+                    str(alias or ""),
+                    context_text,
+                ]
+            ).lower()
+            overlap = 0.0
+            if query_term_set:
+                overlap = len([t for t in query_term_set if t in searchable]) / len(query_term_set)
+
+            entry = grouped.get(dedup_key)
+            if entry is None or score > float(entry.get("score") or 0.0):
+                node_score = max(0.0, min(1.0, score + min(0.12, overlap * 0.12)))
+                grouped[dedup_key] = {
+                    "node_id": node_id,
+                    "name": parent_props.get("name"),
+                    "alias": alias,
+                    "instance_id": parent_props.get("instance_id"),
+                    "labels": labels_list,
+                    "score": score,
+                    "chunk_score": score,
+                    "node_score": node_score,
+                    "importance_index": node_score,
+                    "context_text": context_text,
+                    "chunk_id": chunk_props.get("chunk_id"),
+                    "chunk_type": chunk_props.get("chunk_type"),
+                    "chunk_index": chunk_props.get("chunk_index"),
+                    "text": parent_props.get("text"),
+                    "autogenerated_text": parent_props.get("autogenerated_text"),
+                    "ontology_id": parent_props.get("ontology_id"),
+                    "properties": {
+                        k: _normalize_value(v) for k, v in parent_props.items()
+                    },
+                    "matched_chunk_count": 1 if context_text else 0,
+                    "score_breakdown": {
+                        "vector_best": 0.0,
+                        "chunk_coverage": 0.0,
+                        "top_avg": 0.0,
+                        "keyword_overlap": max(0.0, min(overlap, 1.0)),
+                        "exact_or_fuzzy": max(0.0, min(score, 1.0)),
+                        "node_type_prior": 0.0,
+                    },
+                }
+
+        nodes = sorted(
+            grouped.values(),
+            key=lambda item: float(item.get("importance_index") or item.get("score") or 0.0),
+            reverse=True,
+        )
+        return nodes[:k]
 
     @staticmethod
     def _is_temporal_query(query_terms: set[str]) -> bool:
@@ -173,8 +332,17 @@ class RetrievalService:
         allowed_labels: list[str] | None = None,
         candidate_limit: int | None = None,
         rerank_limit: int | None = None,
+        embedding_timeout_s: float | None = None,
     ) -> dict[str, Any]:
         t_total_start = time.monotonic()
+        logger = logging.getLogger(__name__)
+        diag = _EmbeddingDiagnosticsContext(
+            request_id=uuid4().hex[:12],
+            started_monotonic=t_total_start,
+        )
+        retrieval_mode = "vector"
+        embedding_timeout_count = 0
+        fallback_lexical_count = 0
         print(
             f"[RETRIEVAL] step=start query='{query[:120]}' ontology_id={ontology_id} "
             f"k={k} node_scope={node_scope} candidate_limit={candidate_limit} rerank_limit={rerank_limit}"
@@ -193,26 +361,147 @@ class RetrievalService:
 
         # Embed the query
         t_embed_start = time.monotonic()
-        logger = logging.getLogger(__name__)
         logger.info(
             "retrieval_embed_dispatched query='%s' ontology=%s",
             query[:160],
             str(ontology_id),
         )
-        loop = asyncio.get_event_loop()
-        query_embedding = await loop.run_in_executor(
-            None, self.embedding_service.embed_text, query
+        timeout_s_raw = (
+            float(embedding_timeout_s)
+            if embedding_timeout_s is not None
+            else float(get_settings().elder_query_embedding_timeout_s)
         )
-        t_embed = time.monotonic() - t_embed_start
+        timeout_s = max(10.0, timeout_s_raw)
         print(
-            f"[RETRIEVAL] step=embed_query duration_s={t_embed:.3f}"
+            f"[EMBED_DIAG] step=timeout_resolved request_id={diag.request_id} "
+            f"timeout_raw_s={timeout_s_raw:.2f} timeout_effective_s={timeout_s:.2f}"
         )
-        logger.info(
-            "retrieval_embed_completed query='%s' ontology=%s embed_duration_ms=%.2f",
-            query[:160],
-            str(ontology_id),
-            round(t_embed * 1000, 2),
-        )
+        query_embedding: list[float] | None = None
+        embed_error: str | None = None
+        try:
+            logger.info(
+                "embed_request_start request_id=%s ontology=%s timeout_s=%.2f query_chars=%d",
+                diag.request_id,
+                str(ontology_id),
+                timeout_s,
+                len(query or ""),
+            )
+            print(
+                f"[EMBED_DIAG] step=embed_request_start request_id={diag.request_id} "
+                f"ontology={ontology_id} timeout_s={timeout_s:.2f} query_chars={len(query or '')}"
+            )
+            settings = get_settings()
+            if settings.embedding_runtime_enabled:
+                runtime = await get_ready_embedding_runtime()
+                query_embedding = await runtime.embed_query(query, request_id=diag.request_id)
+            else:
+                loop = asyncio.get_event_loop()
+                query_embedding = await asyncio.wait_for(
+                    loop.run_in_executor(
+                        None,
+                        self.embedding_service.embed_text,
+                        query,
+                        diag.request_id,
+                    ),
+                    timeout=timeout_s,
+                )
+            t_embed = time.monotonic() - t_embed_start
+            print(
+                f"[RETRIEVAL] step=embed_query duration_s={t_embed:.3f}"
+            )
+            logger.info(
+                "retrieval_embed_completed query='%s' ontology=%s embed_duration_ms=%.2f",
+                query[:160],
+                str(ontology_id),
+                round(t_embed * 1000, 2),
+            )
+            logger.info(
+                "embed_request_end request_id=%s status=success ontology=%s elapsed_ms=%.2f",
+                diag.request_id,
+                str(ontology_id),
+                round((time.monotonic() - diag.started_monotonic) * 1000, 2),
+            )
+            print(
+                f"[EMBED_DIAG] step=embed_request_end request_id={diag.request_id} status=success "
+                f"ontology={ontology_id} elapsed_ms={round((time.monotonic() - diag.started_monotonic) * 1000, 2):.2f}"
+            )
+        except EmbeddingRuntimeQueueFull:
+            retrieval_mode = "queue_full"
+            embed_error = "embedding_queue_full"
+            print(
+                f"[EMBED_DIAG] step=queue_full request_id={diag.request_id} ontology={ontology_id}"
+            )
+            raise
+        except EmbeddingRuntimeRequestTimeout:
+            embedding_timeout_count += 1
+            retrieval_mode = "embed_timeout"
+            embed_error = f"embedding_timeout_{timeout_s:.2f}s"
+            logger.warning(
+                "retrieval_embed_timeout query='%s' ontology=%s timeout_s=%.2f",
+                query[:160],
+                str(ontology_id),
+                timeout_s,
+            )
+            print(
+                f"[EMBED_DIAG] step=embed_timeout request_id={diag.request_id} ontology={ontology_id} "
+                f"timeout_s={timeout_s:.2f} elapsed_ms={round((time.monotonic() - diag.started_monotonic) * 1000, 2):.2f}"
+            )
+            raise
+        except asyncio.TimeoutError:
+            embedding_timeout_count += 1
+            retrieval_mode = "embed_timeout"
+            embed_error = f"embedding_timeout_{timeout_s:.2f}s"
+            logger.warning(
+                "retrieval_embed_timeout query='%s' ontology=%s timeout_s=%.2f",
+                query[:160],
+                str(ontology_id),
+                timeout_s,
+            )
+            logger.warning(
+                "embed_timeout request_id=%s ontology=%s timeout_s=%.2f elapsed_ms=%.2f",
+                diag.request_id,
+                str(ontology_id),
+                timeout_s,
+                round((time.monotonic() - diag.started_monotonic) * 1000, 2),
+            )
+            print(
+                f"[EMBED_DIAG] step=embed_timeout request_id={diag.request_id} ontology={ontology_id} "
+                f"timeout_s={timeout_s:.2f} elapsed_ms={round((time.monotonic() - diag.started_monotonic) * 1000, 2):.2f}"
+            )
+            logger.info(
+                "embed_request_end request_id=%s status=timeout ontology=%s elapsed_ms=%.2f",
+                diag.request_id,
+                str(ontology_id),
+                round((time.monotonic() - diag.started_monotonic) * 1000, 2),
+            )
+            print(
+                f"[EMBED_DIAG] step=embed_request_end request_id={diag.request_id} status=timeout "
+                f"ontology={ontology_id} elapsed_ms={round((time.monotonic() - diag.started_monotonic) * 1000, 2):.2f}"
+            )
+            raise EmbeddingRuntimeRequestTimeout(embed_error)
+        except Exception as exc:
+            retrieval_mode = "embed_error"
+            embed_error = str(exc)
+            logger.warning(
+                "retrieval_embed_failed query='%s' ontology=%s error=%s",
+                query[:160],
+                str(ontology_id),
+                exc,
+            )
+            logger.info(
+                "embed_request_end request_id=%s status=error ontology=%s elapsed_ms=%.2f error=%s",
+                diag.request_id,
+                str(ontology_id),
+                round((time.monotonic() - diag.started_monotonic) * 1000, 2),
+                exc,
+            )
+            print(
+                f"[EMBED_DIAG] step=embed_request_end request_id={diag.request_id} status=error "
+                f"ontology={ontology_id} elapsed_ms={round((time.monotonic() - diag.started_monotonic) * 1000, 2):.2f} error={exc}"
+            )
+            if isinstance(exc, EmbeddingRuntimeError):
+                raise
+            raise EmbeddingRuntimeError(str(exc))
 
         node_scope = (node_scope or "everything").strip().lower()
         effective_allowed_labels = allowed_labels or [
@@ -228,38 +517,45 @@ class RetrievalService:
             elif node_scope == "milestone":
                 effective_allowed_labels = ["Milestone"]
 
-        candidate_k = max(k * 4, k)
-        if candidate_limit is not None:
-            candidate_k = max(k, candidate_limit)
+        records: list[dict[str, Any]] = []
+        nodes_from_fallback: list[dict[str, Any]] = []
+        if query_embedding is not None:
+            candidate_k = max(k * 4, k)
+            if candidate_limit is not None:
+                candidate_k = max(k, candidate_limit)
 
-        search_query = """
-        CALL db.index.vector.queryNodes('entity_chunk_vec_idx', $k, $query_embedding)
-        YIELD node, score
-        MATCH (node)<-[:HAS_CHUNK]-(parent)
-            WHERE any(label IN labels(parent) WHERE label IN $allowed_labels)
-          AND score >= $score_threshold
-          AND ($ontology_id IS NULL OR toInteger(node['ontology_id']) = toInteger($ontology_id))
-        RETURN node AS chunk, parent AS parent, score
-        ORDER BY score DESC
-        LIMIT $k
-        """
+            search_query = """
+            CALL db.index.vector.queryNodes('entity_chunk_vec_idx', $k, $query_embedding)
+            YIELD node, score
+            MATCH (node)<-[:HAS_CHUNK]-(parent)
+                WHERE any(label IN labels(parent) WHERE label IN $allowed_labels)
+              AND score >= $score_threshold
+              AND ($ontology_id IS NULL OR toInteger(node['ontology_id']) = toInteger($ontology_id))
+            RETURN node AS chunk, parent AS parent, score
+            ORDER BY score DESC
+            LIMIT $k
+            """
 
-        t_query_start = time.monotonic()
-        result = await self.graph_session.run(
-            search_query,
-            k=candidate_k,
-            query_embedding=query_embedding,
-            score_threshold=score_threshold,
-            ontology_id=ontology_id,
-            allowed_labels=effective_allowed_labels,
-        )
-        records = await result.data()
-        t_query = time.monotonic() - t_query_start
-        print(
-            f"[RETRIEVAL] step=vector_search chunk_candidates={len(records)} duration_s={t_query:.3f}"
-        )
+            t_query_start = time.monotonic()
+            result = await self.graph_session.run(
+                search_query,
+                k=candidate_k,
+                query_embedding=query_embedding,
+                score_threshold=score_threshold,
+                ontology_id=ontology_id,
+                allowed_labels=effective_allowed_labels,
+            )
+            records = await result.data()
+            t_query = time.monotonic() - t_query_start
+            print(
+                f"[RETRIEVAL] step=vector_search chunk_candidates={len(records)} duration_s={t_query:.3f}"
+            )
+        else:
+            print(
+                f"[RETRIEVAL] step=fallback_disabled reason={embed_error or 'embedding_unavailable'}"
+            )
 
-        if not records:
+        if not records and not nodes_from_fallback:
             t_total = time.monotonic() - t_total_start
             print(
                 "[RETRIEVAL] step=final results=0 chunks=0 context_chars=0 "
@@ -271,6 +567,47 @@ class RetrievalService:
                 "total": 0,
                 "ontology_id": ontology_id,
                 "node_scope": node_scope,
+                "debug_stats": {
+                    "retrieval_mode": retrieval_mode,
+                    "embedding_timeout_count": embedding_timeout_count,
+                    "fallback_lexical_count": fallback_lexical_count,
+                    "embed_error": embed_error,
+                    "allowed_labels": effective_allowed_labels,
+                },
+            }
+
+        if nodes_from_fallback:
+            t_total = time.monotonic() - t_total_start
+            total_context_chars = sum(
+                len(str(node_info.get("context_text") or "")) for node_info in nodes_from_fallback
+            )
+            logger.info(
+                "retrieval_complete retrieval_mode=%s embedding_timeout_count=%d fallback_lexical_count=%d total_retrieval_ms=%.2f",
+                retrieval_mode,
+                embedding_timeout_count,
+                fallback_lexical_count,
+                round(t_total * 1000, 2),
+            )
+            return {
+                "query": query,
+                "results": nodes_from_fallback,
+                "total": len(nodes_from_fallback),
+                "ontology_id": ontology_id,
+                "node_scope": node_scope,
+                "evidence_bundles": [],
+                "debug_stats": {
+                    "raw_candidates": 0,
+                    "after_parent_grouping": len(nodes_from_fallback),
+                    "after_dedup": len(nodes_from_fallback),
+                    "final_k": len(nodes_from_fallback),
+                    "allowed_labels": effective_allowed_labels,
+                    "retrieval_mode": retrieval_mode,
+                    "embedding_timeout_count": embedding_timeout_count,
+                    "fallback_lexical_count": fallback_lexical_count,
+                    "embed_error": embed_error,
+                    "total_retrieval_ms": round(t_total * 1000, 2),
+                    "context_chars": total_context_chars,
+                },
             }
 
         grouped: dict[str, dict[str, Any]] = {}
@@ -596,16 +933,26 @@ class RetrievalService:
                 "after_dedup": len(grouped_nodes),
                 "final_k": len(nodes_data),
                 "allowed_labels": effective_allowed_labels,
+                "retrieval_mode": retrieval_mode,
+                "embedding_timeout_count": embedding_timeout_count,
+                "fallback_lexical_count": fallback_lexical_count,
+                "embed_error": embed_error,
+                "total_retrieval_ms": round(t_total * 1000, 2),
+                "context_chars": total_context_chars,
             },
         }
 
         try:
             logger.info(
-                "semantic_search_timing: embed=%.3fs query=%.3fs results=%d ontology=%s",
+                "semantic_search_timing: retrieval_mode=%s embed=%.3fs query=%.3fs results=%d ontology=%s embedding_timeout_count=%d fallback_lexical_count=%d total_retrieval_ms=%.2f",
+                retrieval_mode,
                 t_embed,
                 t_query,
                 len(nodes_data),
                 str(ontology_id),
+                embedding_timeout_count,
+                fallback_lexical_count,
+                round(t_total * 1000, 2),
             )
         except Exception:
             pass

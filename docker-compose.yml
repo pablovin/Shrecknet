@@ -2,6 +2,10 @@ name: Shrecknet
 
 x-shrecknet-env: &shrecknet-env
   PYTHONUNBUFFERED: "1"
+  HF_HOME: /hf-cache
+  SENTENCE_TRANSFORMERS_HOME: /hf-cache/sentence_transformers
+  SHRECKNET_EMBEDDING_MODEL_ID: "${SHRECKNET_EMBEDDING_MODEL_ID:-sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2}"
+  SHRECKNET_EMBEDDING_DEVICE: "${SHRECKNET_EMBEDDING_DEVICE:-cpu}"
   SHRECKNET_DATA_DIR: /data
   SHRECKNET_MEDIA_ROOT: /app/media
   SHRECKNET_MEDIA_PUBLIC_URL: "${SHRECKNET_MEDIA_PUBLIC_URL:-http://localhost:8100/media}"
@@ -11,6 +15,211 @@ x-shrecknet-env: &shrecknet-env
   SHRECKNET_JWT_PUBLIC_KEY_PEM: "${SHRECKNET_JWT_PUBLIC_KEY_PEM:-}"
 
 services:
+  # One-shot model prefetch so API/worker do not depend on first-request internet download.
+  shrecknet_model_prefetch:
+    build:
+      context: ./shrecknet
+      dockerfile: Dockerfile
+    restart: "no"
+    init: true
+    user: "0:0"
+    environment: *shrecknet-env
+    volumes:
+      - hf-model-cache:/hf-cache
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        python -u - <<'PY'
+        import os
+        import pwd
+        import grp
+        import shutil
+        import sys
+        import threading
+        import time
+        from pathlib import Path
+
+        from huggingface_hub import HfApi
+        from huggingface_hub import snapshot_download
+        from huggingface_hub.errors import LocalEntryNotFoundError
+        from sentence_transformers import SentenceTransformer
+
+        model_id = os.getenv("SHRECKNET_EMBEDDING_MODEL_ID", "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
+        device = os.getenv("SHRECKNET_EMBEDDING_DEVICE", "cpu")
+        hf_home = Path(os.getenv("HF_HOME", "/hf-cache"))
+        hf_home.mkdir(parents=True, exist_ok=True)
+        target_uid = int(os.getenv("SHRECKNET_CONTAINER_UID", "1000"))
+        target_gid = int(os.getenv("SHRECKNET_CONTAINER_GID", "1000"))
+        os.chown(hf_home, target_uid, target_gid)
+        for p in hf_home.rglob("*"):
+            try:
+                os.chown(p, target_uid, target_gid)
+            except OSError:
+                pass
+
+        def dir_size_bytes(path: Path) -> int:
+            total = 0
+            for p in path.rglob("*"):
+                if p.is_file():
+                    try:
+                        total += p.stat().st_size
+                    except OSError:
+                        pass
+            return total
+
+        def verify_local_snapshot_complete(model_id: str, cache_dir: Path) -> tuple[bool, str]:
+            try:
+                snapshot_path = Path(
+                    snapshot_download(
+                        repo_id=model_id,
+                        cache_dir=str(cache_dir),
+                        local_files_only=True,
+                    )
+                )
+            except LocalEntryNotFoundError:
+                return False, "local snapshot not found"
+            except Exception as exc:
+                return False, f"local snapshot check failed: {exc}"
+
+            try:
+                info = HfApi().model_info(model_id)
+            except Exception as exc:
+                # If metadata cannot be fetched, keep the local cache when snapshot exists.
+                return True, f"metadata unavailable, trusting local snapshot ({exc})"
+
+            missing = []
+            size_mismatch = []
+            for sibling in info.siblings or []:
+                rel = getattr(sibling, "rfilename", None)
+                if not rel:
+                    continue
+                local_file = snapshot_path / rel
+                if not local_file.exists():
+                    missing.append(rel)
+                    continue
+                expected_size = getattr(sibling, "size", None)
+                if expected_size is not None:
+                    try:
+                        actual_size = local_file.stat().st_size
+                        if actual_size != expected_size:
+                            size_mismatch.append((rel, actual_size, expected_size))
+                    except OSError:
+                        size_mismatch.append((rel, -1, expected_size))
+
+            if missing:
+                return False, f"missing_files={len(missing)}"
+            if size_mismatch:
+                return False, f"size_mismatch_files={len(size_mismatch)}"
+            return True, "all expected files are present"
+
+        print(f"[MODEL_PREFETCH] model={model_id} device={device} cache={hf_home}")
+        print("[MODEL_PREFETCH] checking local cache...")
+        cached, cache_status = verify_local_snapshot_complete(model_id, hf_home)
+        repo_cache_dir = hf_home / f"models--{model_id.replace('/', '--')}"
+        if not cached:
+            print(f"[MODEL_PREFETCH] cache invalid -> {cache_status}")
+            if repo_cache_dir.exists():
+                stale_mb = dir_size_bytes(repo_cache_dir) / (1024 * 1024)
+                print(f"[MODEL_PREFETCH] removing stale model cache dir={repo_cache_dir} size_mb={stale_mb:.1f}")
+                shutil.rmtree(repo_cache_dir, ignore_errors=True)
+
+        if not cached:
+            print("[MODEL_PREFETCH] cache miss -> downloading model files")
+            state = {"done": False, "error": None}
+            start = time.monotonic()
+            blobs_dir = repo_cache_dir / "blobs"
+            expected_files = 0
+            expected_bytes = 0
+            try:
+                info = HfApi().model_info(model_id)
+                expected_files = len(info.siblings or [])
+                expected_bytes = sum((getattr(s, "size", 0) or 0) for s in (info.siblings or []))
+            except Exception:
+                expected_files = 0
+                expected_bytes = 0
+            print(
+                f"[MODEL_PREFETCH] expected_repo_files={expected_files or '?'} "
+                f"expected_repo_mb={(expected_bytes / (1024 * 1024)) if expected_bytes else 0.0:.1f}",
+                flush=True,
+            )
+
+            size_start_bytes = dir_size_bytes(repo_cache_dir)
+            prev_size_bytes = size_start_bytes
+            prev_tick = time.monotonic()
+
+            def _download():
+                try:
+                    snapshot_download(
+                        repo_id=model_id,
+                        cache_dir=str(hf_home),
+                    )
+                except Exception as exc:
+                    state["error"] = exc
+                finally:
+                    state["done"] = True
+
+            t = threading.Thread(target=_download, daemon=True)
+            t.start()
+
+            while True:
+                elapsed = time.monotonic() - start
+                size_bytes = dir_size_bytes(repo_cache_dir)
+                size_mb = size_bytes / (1024 * 1024)
+                downloaded_files = 0
+                if blobs_dir.exists():
+                    downloaded_files = sum(1 for p in blobs_dir.iterdir() if p.is_file())
+                pct = 0.0
+                if expected_files > 0:
+                    pct = min(100.0, (downloaded_files / expected_files) * 100.0)
+                downloaded_bytes = max(0, size_bytes - size_start_bytes)
+                byte_pct = 0.0
+                if expected_bytes > 0:
+                    byte_pct = min(100.0, (downloaded_bytes / expected_bytes) * 100.0)
+                byte_pct_text = f"{byte_pct:5.1f}%" if expected_bytes > 0 else "  n/a"
+
+                now = time.monotonic()
+                dt = max(1e-6, now - prev_tick)
+                speed_bps = max(0.0, (size_bytes - prev_size_bytes) / dt)
+                speed_mbps = speed_bps / (1024 * 1024)
+                prev_tick = now
+                prev_size_bytes = size_bytes
+
+                bar_width = 30
+                filled = int((pct / 100.0) * bar_width) if expected_files > 0 else 0
+                bar = ("#" * filled) + ("-" * (bar_width - filled))
+                print(
+                    f"[MODEL_PREFETCH] download_progress "
+                    f"[{bar}] files_pct={pct:5.1f}% files={downloaded_files}/{expected_files or '?'} "
+                    f"bytes_pct={byte_pct_text} speed_mb_s={speed_mbps:6.2f} "
+                    f"elapsed_s={elapsed:6.1f} model_cache_mb={size_mb:7.1f}",
+                    flush=True,
+                )
+                if state["done"]:
+                    break
+                time.sleep(10)
+            t.join()
+            if state["error"] is not None:
+                raise state["error"]
+            cached, cache_status = verify_local_snapshot_complete(model_id, hf_home)
+            if not cached:
+                raise RuntimeError(f"cache verification failed after download: {cache_status}")
+            elapsed = time.monotonic() - start
+            size_mb = dir_size_bytes(repo_cache_dir) / (1024 * 1024)
+            print(f"[MODEL_PREFETCH] download_done elapsed_s={elapsed:.1f} model_cache_mb={size_mb:.1f}")
+        else:
+            repo_cache_dir = hf_home / f"models--{model_id.replace('/', '--')}"
+            size_mb = dir_size_bytes(repo_cache_dir) / (1024 * 1024)
+            print(f"[MODEL_PREFETCH] cache hit model_cache_mb={size_mb:.1f} status='{cache_status}'")
+
+        print("[MODEL_PREFETCH] loading SentenceTransformer from cache...")
+        os.setgid(target_gid)
+        os.setuid(target_uid)
+        m = SentenceTransformer(model_id, device=device)
+        m.encode(["prefetch warmup"], normalize_embeddings=True)
+        print("[MODEL_PREFETCH] warmup_done")
+        PY
+
   shrecknet_permissions:
     image: alpine:3.20
     user: "0:0"
@@ -86,8 +295,11 @@ services:
     volumes:
       - ./shrecknet/databases:/data
       - ./shrecknet/media:/app/media
+      - hf-model-cache:/hf-cache
     depends_on:
       shrecknet_permissions:
+        condition: service_completed_successfully
+      shrecknet_model_prefetch:
         condition: service_completed_successfully
       redis:
         condition: service_healthy
@@ -104,7 +316,7 @@ services:
       retries: 5
       start_period: 60s
 
-  # Celery worker for background jobs (architect, novelist, librarian, embeddings, backups)
+  # Single Celery worker for all background jobs (simpler and easier to operate)
   shrecknet_worker:
     build:
       context: ./shrecknet
@@ -112,36 +324,16 @@ services:
     restart: unless-stopped
     init: true
     user: "${SHRECKNET_CONTAINER_UID:-1000}:${SHRECKNET_CONTAINER_GID:-1000}"
-    command: sh -c "celery -A app.celery_app:celery_app worker --loglevel=info --concurrency=${SHRECKNET_CELERY_CONCURRENCY:-2} -Q ontology_linking"
+    command: sh -c "celery -A app.celery_app:celery_app worker --loglevel=info --concurrency=${SHRECKNET_CELERY_CONCURRENCY:-2}"
     environment: *shrecknet-env
     volumes:
       - ./shrecknet/databases:/data
       - ./shrecknet/media:/app/media
+      - hf-model-cache:/hf-cache
     depends_on:
       shrecknet_permissions:
         condition: service_completed_successfully
-      redis:
-        condition: service_healthy
-      neo4j:
-        condition: service_healthy
-      shrecknet_api:
-        condition: service_started
-
-  # Dedicated worker for architect jobs to avoid queue starvation.
-  shrecknet_worker_architect:
-    build:
-      context: ./shrecknet
-      dockerfile: Dockerfile
-    restart: unless-stopped
-    init: true
-    user: "${SHRECKNET_CONTAINER_UID:-1000}:${SHRECKNET_CONTAINER_GID:-1000}"
-    command: sh -c "celery -A app.celery_app:celery_app worker --loglevel=info --concurrency=${SHRECKNET_CELERY_ARCHITECT_CONCURRENCY:-1} -Q architect"
-    environment: *shrecknet-env
-    volumes:
-      - ./shrecknet/databases:/data
-      - ./shrecknet/media:/app/media
-    depends_on:
-      shrecknet_permissions:
+      shrecknet_model_prefetch:
         condition: service_completed_successfully
       redis:
         condition: service_healthy
@@ -175,6 +367,7 @@ services:
 
 volumes:
   redis-data:
+  hf-model-cache:
   neo4j-data:
   neo4j-logs:
   neo4j-import:

@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db_session
 from app.core.config_store import get_settings, is_openai_configured
+from app.graphrag.embedding_runtime import EmbeddingRuntimeError
 from app.graph.neo4j import get_neo4j_session
 from app.integrations.llm.openai_client import OpenAIClient
 from app.jobs.librarian.librarian import LibrarianOrchestrator
@@ -60,8 +61,8 @@ async def get_librarian_orchestrator(
         llm_client=llm_client,
         pdf_embedding_service=pdf_embedding_service,
         default_top_k=settings.default_top_k,
-        answer_model=settings.model_synthesis,  # Reuse synthesis model for answers
-        style_model=settings.model_style,
+        answer_model=settings.model_librarian,
+        style_model=settings.model_librarian,
     )
 
 
@@ -119,6 +120,12 @@ async def query_librarian(
         logger.info(f"Librarian query completed for agent {agent_id}")
         return response
 
+    except EmbeddingRuntimeError as e:
+        logger.error(f"Librarian embedding unavailable for agent {agent_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Librarian embedding unavailable: {str(e)}",
+        )
     except Exception as e:
         logger.error(f"Librarian query failed for agent {agent_id}: {e}", exc_info=True)
         raise HTTPException(

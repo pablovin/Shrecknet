@@ -144,7 +144,6 @@ class NovelistRunRead(BaseModel):
             if data.get("previous_session_summary") is None:
                 data["previous_session_summary"] = (
                     inputs.get("previous_session_summary")
-                    or inputs.get("continuity_brief")
                     or payload.get("previous_session_summary")
                 )
             if data.get("previous_session_lookup_status") is None:
@@ -185,7 +184,6 @@ class NovelistRunRead(BaseModel):
             previous_session_summary = (
                 previous_session_summary
                 or inputs.get("previous_session_summary")
-                or inputs.get("continuity_brief")
             )
             previous_session_lookup_status = inputs.get("previous_session_lookup_status")
 

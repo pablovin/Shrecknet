@@ -6,6 +6,7 @@ import time
 
 from celery import Celery
 from celery.signals import before_task_publish, task_prerun, worker_ready
+from kombu import Queue
 
 from app.core.config_store import get_settings, reload_settings
 
@@ -19,6 +20,10 @@ def configure_celery_app() -> None:
     celery_app.conf.broker_url = settings.celery_broker_url
     celery_app.conf.result_backend = settings.celery_result_backend
     celery_app.conf.task_default_queue = "ontology_linking"
+    celery_app.conf.task_queues = (
+        Queue("ontology_linking"),
+        Queue("architect"),
+    )
     celery_app.conf.task_routes = {
         "architect.analyze_instance": {"queue": "architect"},
         "architect.generate_entities": {"queue": "architect"},

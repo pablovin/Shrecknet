@@ -10,6 +10,7 @@ from typing import Any, Protocol
 
 from neo4j import AsyncSession as AsyncNeo4jSession
 
+from app.graphrag.embedding_runtime import EmbeddingRuntimeError
 from app.graphrag.retrieval_service import RetrievalService
 from app.jobs.elder.schemas import RetrievedChunk
 
@@ -251,6 +252,8 @@ class Neo4jGraphRetriever:
                         len(nodes),
                     )
                 except Exception as e:
+                    if isinstance(e, EmbeddingRuntimeError):
+                        raise
                     msg = f"ontology {oid}: {e}"
                     logger.error(f"Error searching ontology {oid}: {e}")
                     self.last_errors.append(msg)

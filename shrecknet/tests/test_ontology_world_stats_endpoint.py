@@ -6,7 +6,33 @@ import pytest
 
 from app.api.routers.ontologies import _world_stats_cache
 from app.core.security import create_access_token
-from app.models import AuthorType, Ontology, OntologyEntity, OntologyInstance, User, UserRole
+from app.graph.neo4j import get_optional_neo4j_session
+from app.main import app
+from app.models import (
+    AuthorType,
+    LibraryItem,
+    Ontology,
+    OntologyEntity,
+    OntologyInstance,
+    User,
+    UserRole,
+)
+
+
+class _FakeGraphResult:
+    def __init__(self, rows):
+        self._rows = rows
+
+    async def data(self):
+        return self._rows
+
+
+class _FakeGraphSession:
+    def __init__(self, rows):
+        self._rows = rows
+
+    async def run(self, _query, **_kwargs):
+        return _FakeGraphResult(self._rows)
 
 
 async def _create_user(session_maker, role: UserRole) -> dict[str, str]:
@@ -31,12 +57,14 @@ async def _create_user(session_maker, role: UserRole) -> dict[str, str]:
 @pytest.mark.asyncio
 async def test_world_stats_aggregates_counts_per_ontology(client, session_maker) -> None:
     headers = await _create_user(session_maker, UserRole.ADMIN)
+    ontology_ids: tuple[int, int] | None = None
 
     async with session_maker() as session:
         ont1 = Ontology(name="World A")
         ont2 = Ontology(name="World B")
         session.add_all([ont1, ont2])
         await session.flush()
+        ontology_ids = (ont1.id, ont2.id)
 
         session.add_all(
             [
@@ -80,12 +108,14 @@ async def test_world_stats_aggregates_counts_per_ontology(client, session_maker)
         )
 
         payload_1 = {
+            "entities": [{"id": "e1"}, {"id": "e2"}],
             "scenes": [
                 {"milestones": [{"id": "m1"}, {"id": "m2"}]},
                 {"milestones": [{"id": "m3"}]},
             ]
         }
         payload_2 = {
+            "entities": [{"id": "e3"}],
             "scenes": [
                 {"milestones": []},
                 {"name": "Scene without milestones"},
@@ -107,11 +137,61 @@ async def test_world_stats_aggregates_counts_per_ontology(client, session_maker)
                 ),
             ]
         )
+        session.add_all(
+            [
+                LibraryItem(
+                    ontology_id=ont1.id,
+                    title="Book 1",
+                    authors="A",
+                    description=None,
+                    cover_url=None,
+                    pdf_path="library/1/book-1.pdf",
+                ),
+                LibraryItem(
+                    ontology_id=ont1.id,
+                    title="Book 2",
+                    authors="B",
+                    description=None,
+                    cover_url=None,
+                    pdf_path="library/1/book-2.pdf",
+                ),
+                LibraryItem(
+                    ontology_id=ont2.id,
+                    title="Book 3",
+                    authors="C",
+                    description=None,
+                    cover_url=None,
+                    pdf_path="library/2/book-3.pdf",
+                ),
+            ]
+        )
 
         await session.commit()
 
+    assert ontology_ids is not None
+
+    async def _get_graph_session_override():
+        yield _FakeGraphSession(
+            [
+                {
+                    "ontology_id": ontology_ids[0],
+                    "entity_instance_count": 3,
+                    "scene_count": 4,
+                    "milestone_count": 3,
+                },
+                {
+                    "ontology_id": ontology_ids[1],
+                    "entity_instance_count": 0,
+                    "scene_count": 0,
+                    "milestone_count": 0,
+                },
+            ]
+        )
+
+    app.dependency_overrides[get_optional_neo4j_session] = _get_graph_session_override
     _world_stats_cache.clear()
     response = await client.get("/ontologies/world-stats", headers=headers)
+    app.dependency_overrides.pop(get_optional_neo4j_session, None)
     assert response.status_code == 200, response.text
 
     body = response.json()
@@ -121,13 +201,15 @@ async def test_world_stats_aggregates_counts_per_ontology(client, session_maker)
     second = body["results"][1]
 
     assert first["entity_type_count"] == 2
-    assert first["page_count"] == 2
+    assert first["entity_instance_count"] == 3
+    assert first["library_item_count"] == 2
     assert first["scene_count"] == 4
     assert first["milestone_count"] == 3
     assert isinstance(first["updated_at"], str)
 
     assert second["entity_type_count"] == 1
-    assert second["page_count"] == 0
+    assert second["entity_instance_count"] == 0
+    assert second["library_item_count"] == 1
     assert second["scene_count"] == 0
     assert second["milestone_count"] == 0
 
@@ -179,7 +261,22 @@ async def test_world_stats_supports_csv_filter_and_disable_content_counts(
                 instance_id="inst-3",
                 ontology_id=ont2.id,
                 name="Page 3",
-                payload_json=json.dumps({"scenes": [{"milestones": [{"id": "m4"}]}]}),
+                payload_json=json.dumps(
+                    {
+                        "entities": [{"id": "e-1"}, {"id": "e-2"}],
+                        "scenes": [{"milestones": [{"id": "m4"}]}],
+                    }
+                ),
+            )
+        )
+        session.add(
+            LibraryItem(
+                ontology_id=ont2.id,
+                title="Book D",
+                authors="D",
+                description=None,
+                cover_url=None,
+                pdf_path="library/2/book-d.pdf",
             )
         )
         await session.commit()
@@ -201,6 +298,7 @@ async def test_world_stats_supports_csv_filter_and_disable_content_counts(
     item = body["results"][0]
     assert item["ontology_id"] == selected_ontology_id
     assert item["entity_type_count"] == 1
-    assert item["page_count"] == 0
+    assert item["entity_instance_count"] == 0
+    assert item["library_item_count"] == 1
     assert item["scene_count"] == 0
     assert item["milestone_count"] == 0

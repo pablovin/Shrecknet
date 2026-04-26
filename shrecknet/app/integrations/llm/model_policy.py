@@ -7,10 +7,7 @@ class LLMTask(str, Enum):
     """Enumeration of LLM task types."""
 
     DECOMPOSE = "decompose"
-    SUBANSWER = "subanswer"
     SYNTHESIS = "synthesis"
-    VALIDATION = "validation"
-    STYLE = "style"
     ARCHITECT_EXTRACT = "architect_extract"
 
 
@@ -19,22 +16,16 @@ class ModelPolicy:
 
     def __init__(
         self,
-        decompose_model: str = "gpt-4o-mini",
-        subanswer_model: str = "gpt-4o-mini",
-        synthesis_model: str = "gpt-4o",
-        validation_model: str = "gpt-4o-mini",
-        style_model: str = "gpt-4o-mini",
+        default_model: str = "gpt-5-nano",
         architect_extract_model: str = "gpt-5.4-nano",
     ):
+        self.default_model = default_model
         self.task_to_model = {
-            LLMTask.DECOMPOSE: decompose_model,
-            LLMTask.SUBANSWER: subanswer_model,
-            LLMTask.SYNTHESIS: synthesis_model,
-            LLMTask.VALIDATION: validation_model,
-            LLMTask.STYLE: style_model,
+            LLMTask.DECOMPOSE: default_model,
+            LLMTask.SYNTHESIS: default_model,
             LLMTask.ARCHITECT_EXTRACT: architect_extract_model,
         }
 
     def get_model(self, task: LLMTask) -> str:
         """Get the model name for a given task."""
-        return self.task_to_model.get(task, "gpt-4o-mini")
+        return self.task_to_model.get(task, self.default_model)

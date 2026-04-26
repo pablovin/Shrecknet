@@ -10,7 +10,7 @@ from typing import Any
 from app.celery_app import celery_app
 from app.core.config_store import get_settings, is_openai_configured
 from app.db.session import AsyncSessionMaker
-from app.integrations.llm.model_policy import LLMTask, ModelPolicy
+from app.integrations.llm.model_policy import ModelPolicy
 from app.integrations.llm.openai_client import OpenAIClient
 from app.integrations.retrieval.neo4j_retriever import Neo4jGraphRetriever
 from app.graph.neo4j import get_driver
@@ -150,29 +150,17 @@ async def _execute_run(
         try:
             await update_job_progress(job_id, 0.05, {"status": "preparing orchestrator"})
             model_policy = ModelPolicy(
-                decompose_model=settings.model_decompose,
-                subanswer_model=settings.model_subanswer,
-                synthesis_model=settings.model_synthesis,
-                validation_model=settings.model_validation,
-                style_model=settings.model_style,
-                architect_extract_model=getattr(
-                    settings, "model_architect_extract", settings.model_decompose
-                ),
+                default_model=settings.model_novelist,
+                architect_extract_model=settings.model_architect,
             )
             # Attach novelist-specific model preferences for orchestrator
             setattr(model_policy, "model_novelist_draft", settings.model_novelist_draft)
-            setattr(model_policy, "model_novelist_critic", settings.model_novelist_critic)
             setattr(
                 model_policy,
-                "model_novelist_scene_exploration",
-                settings.model_novelist_scene_exploration,
+                "model_novelist",
+                settings.model_novelist,
             )
-            setattr(
-                model_policy,
-                "model_novelist_scene_context_creation",
-                settings.model_novelist_scene_context_creation,
-            )
-            setattr(model_policy, "model_elder_query", settings.model_elder_query)
+            setattr(model_policy, "model_elder", settings.model_elder)
 
             async def elder_query_runner(agent: Agent, query: str) -> list[dict[str, Any]]:
                 # Elder context is an optional flavor-only layer: never plot authority.
@@ -197,6 +185,7 @@ async def _execute_run(
                                 top_k=6,
                                 include_trace=False,
                                 fast=True,
+                                route="fast",
                             ),
                         )
                 except Exception:
@@ -255,18 +244,19 @@ async def _execute_run(
                 )
                 pseudo_instance = SimpleNamespace(entities=[source_entity])
 
-                model = model_policy.get_model(LLMTask.ARCHITECT_EXTRACT)
+                scene_chunking_model = settings.model_architect_scene_chunking
+                architect_model = settings.model_architect
                 chunking_phase = await _run_scene_chunking_phase(
                     run_id=run_id,
                     ontology_instance=pseudo_instance,
                     llm_client=llm_client,
-                    model=model,
+                    model=scene_chunking_model,
                     instructions=instructions,
                 )
                 entity_phase = await _run_entity_proposal_phase(
                     run_id=run_id,
                     llm_client=llm_client,
-                    model=model,
+                    model=architect_model,
                     ontology_definitions=ontology_definitions,
                     allowed_ontology_names=_build_allowed_ontology_map(ontology_entities),
                     existing_nodes=existing_nodes,
@@ -282,7 +272,7 @@ async def _execute_run(
                 milestone_phase = await _run_milestone_proposal_phase(
                     run_id=run_id,
                     llm_client=llm_client,
-                    model=model,
+                    model=architect_model,
                     proposed_scenes=scene_phase["proposed_scenes"],
                     author_id=agent.id,
                     instructions=instructions,
@@ -346,7 +336,10 @@ async def _execute_run(
                     )
 
                 return {
-                    "model": model,
+                    "models": {
+                        "scene_chunking": scene_chunking_model,
+                        "architect": architect_model,
+                    },
                     "scene_count": len(scenes),
                     "scene_chunking": {
                         "chunk_count": chunking_phase.get("chunk_count", 0),
@@ -480,6 +473,13 @@ async def _execute_run(
             await session.commit()
             await update_job_progress(job_id, 1.0, {"status": "completed"})
             await mark_job_done(job_id, {"run_id": run_id, "status": "completed"})
+            usage_summary = llm_client.get_usage_summary()
+            logger.info(
+                "novelist_llm_usage run_id=%s totals=%s by_model=%s",
+                run_id,
+                usage_summary.get("totals"),
+                usage_summary.get("by_model"),
+            )
             return result
         except Exception as exc:
             logger.error("Novelist run %s failed: %s", run_id, exc, exc_info=True)

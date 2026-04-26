@@ -2,6 +2,12 @@
 
 This document describes the current Novelist implementation for chapter draft generation.
 
+Primary implementation:
+
+- `shrecknet/app/jobs/novelist/novelist.py`
+- `shrecknet/app/tasks/novelist.py`
+- `shrecknet/app/api/routers/novelist.py`
+
 ## Jobs Overview
 
 Main endpoints:
@@ -10,6 +16,11 @@ Main endpoints:
 - `POST /jobs/novelist/{agent_id}/runs/upload`
 - `GET /jobs/novelist/runs/{run_id}`
 - `GET /jobs/novelist/{agent_id}/runs`
+
+Upload route note:
+
+- `POST /jobs/novelist/{agent_id}/runs/upload` accepts `.txt` or `.pdf`.
+- PDF extraction normalizes lines into paragraph-like blocks before orchestration.
 
 ## Pipeline Runtime Stages
 
@@ -92,6 +103,7 @@ No trace/token payloads are emitted in those primary step response files.
 - `critic_notes` (JSON string)
 - `artifacts` (stage artifacts and timings)
 - derived fields like `timing_summary`, `scene_progress`, `step_outputs` when present in `artifacts`
+- continuity fields: `previous_session_id`, `previous_session_summary`, `previous_session_lookup_status`
 
 ## Shared Component Reuse
 
@@ -109,6 +121,7 @@ Architect reuse (scaffolding):
 Elder reuse (retrieval):
 
 - Scene retrieval runs via Elder query integration and is normalized into scene context buckets.
+- Elder calls are intentionally non-authoritative flavor/context support (fast context mode).
 
 ## Related Docs
 

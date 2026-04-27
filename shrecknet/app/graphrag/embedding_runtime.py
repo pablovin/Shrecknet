@@ -169,7 +169,13 @@ class EmbeddingRuntime:
             while len(self._cache) > self.cache_size:
                 self._cache.popitem(last=False)
 
-    async def embed_query(self, text: str, *, request_id: str) -> list[float]:
+    async def embed_query(
+        self,
+        text: str,
+        *,
+        request_id: str,
+        timeout_s: float | None = None,
+    ) -> list[float]:
         if self.status == "failed":
             raise EmbeddingRuntimeFailed(self.failure_reason or "embedding runtime failed")
         if self.status != "ready":
@@ -205,16 +211,21 @@ class EmbeddingRuntime:
         print(
             f"[EMBED_DIAG] step=enqueue request_id={request_id} queue_depth={self._queue.qsize()} inflight_batches={self._inflight_batches}"
         )
+        effective_timeout_s = (
+            max(0.1, float(timeout_s))
+            if timeout_s is not None
+            else self.request_timeout_s
+        )
         try:
-            vector = await asyncio.wait_for(fut, timeout=self.request_timeout_s)
+            vector = await asyncio.wait_for(fut, timeout=effective_timeout_s)
         except asyncio.TimeoutError as exc:
             print(
-                f"[EMBED_DIAG] step=request_timeout request_id={request_id} timeout_s={self.request_timeout_s:.2f}"
+                f"[EMBED_DIAG] step=request_timeout request_id={request_id} timeout_s={effective_timeout_s:.2f}"
             )
             if not fut.done():
                 fut.cancel()
             raise EmbeddingRuntimeRequestTimeout(
-                f"embedding request timed out after {self.request_timeout_s:.2f}s"
+                f"embedding request timed out after {effective_timeout_s:.2f}s"
             ) from exc
 
         total_ms = round((time.monotonic() - submitted) * 1000, 2)

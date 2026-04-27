@@ -393,7 +393,11 @@ class RetrievalService:
             settings = get_settings()
             if settings.embedding_runtime_enabled:
                 runtime = await get_ready_embedding_runtime()
-                query_embedding = await runtime.embed_query(query, request_id=diag.request_id)
+                query_embedding = await runtime.embed_query(
+                    query,
+                    request_id=diag.request_id,
+                    timeout_s=timeout_s,
+                )
             else:
                 loop = asyncio.get_event_loop()
                 query_embedding = await asyncio.wait_for(

@@ -24,6 +24,7 @@ x-shreckllm-env: &shreckllm-env
   SHRECKLLM_SHRECKNET_API_BASE_URL: "http://shrecknet_api:8100"
   SHRECKLLM_CORS_ALLOW_ORIGINS: '${SHRECKLLM_CORS_ALLOW_ORIGINS:-["http://localhost:3000","http://127.0.0.1:3000","http://localhost:5173","http://127.0.0.1:5173","http://localhost:8100"]}'
   SHRECKLLM_REDIS_URL: "${SHRECKLLM_REDIS_URL:-redis://redis:6379/2}"
+  SHRECKLLM_BOOTSTRAP_REQUEST_TIMEOUT_SECONDS: "${SHRECKLLM_BOOTSTRAP_REQUEST_TIMEOUT_SECONDS:-120}"
 
 services:
   # One-shot model prefetch so API/worker do not depend on first-request internet download.

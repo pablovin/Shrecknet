@@ -155,7 +155,7 @@ def main() -> int:
     parser.add_argument("--base-url", default="http://localhost:8110")
     parser.add_argument("--conversation-id", default="smoke-conversation")
     parser.add_argument("--parallel", type=int, default=6)
-    parser.add_argument("--provider-id", required=True, choices=["ollama", "openai"])
+    parser.add_argument("--provider-id", required=True, choices=["ollama", "openai", "anthropic"])
 
     parser.add_argument("--admin-token", default=None, help="Shrecknet admin/world_builder bearer token")
     parser.add_argument("--set-default-provider-id", default=None)

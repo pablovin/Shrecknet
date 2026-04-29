@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from pydantic import BaseModel, Field
 
 from app.auth import get_admin_or_world_builder
 from app.config_store import RuntimeConfigUpdate, ProviderDefaults, reload_runtime_config, update_runtime_config
@@ -14,6 +15,8 @@ from app.errors import (
     ProviderTimeoutError,
 )
 from app.schemas import (
+    AnthropicTokenUpdateRequest,
+    AnthropicValidationResponse,
     ChatRequest,
     ChatResponse,
     OpenAITokenUpdateRequest,
@@ -23,6 +26,10 @@ from app.schemas import (
 from app.service import ChatService
 
 router = APIRouter()
+
+
+class ProviderModelMutationRequest(BaseModel):
+    model: str = Field(min_length=1)
 
 
 def get_service(request: Request) -> ChatService:
@@ -125,10 +132,11 @@ async def put_openai_token(
     providers = config.provider_defaults.copy()
     openai_defaults = providers.get("openai")
     if openai_defaults is None:
-        openai_defaults = ProviderDefaults(default_model="gpt-5-nano", base_url=None, api_key=payload.api_key)
+        openai_defaults = ProviderDefaults(default_model="gpt-5-nano", models=["gpt-5-nano"], base_url=None, api_key=payload.api_key)
     else:
         openai_defaults = ProviderDefaults(
             default_model=openai_defaults.default_model,
+            models=openai_defaults.models,
             base_url=openai_defaults.base_url,
             api_key=payload.api_key,
         )
@@ -153,10 +161,11 @@ async def delete_openai_token(
     providers = config.provider_defaults.copy()
     openai_defaults = providers.get("openai")
     if openai_defaults is None:
-        openai_defaults = ProviderDefaults(default_model="gpt-5-nano", base_url=None, api_key="")
+        openai_defaults = ProviderDefaults(default_model="gpt-5-nano", models=["gpt-5-nano"], base_url=None, api_key="")
     else:
         openai_defaults = ProviderDefaults(
             default_model=openai_defaults.default_model,
+            models=openai_defaults.models,
             base_url=openai_defaults.base_url,
             api_key="",
         )
@@ -183,3 +192,153 @@ async def get_openai_validate(
 ) -> OpenAIValidationResponse:
     payload = await service.openai_validation_status()
     return OpenAIValidationResponse.model_validate(payload)
+
+
+@router.put("/config/anthropic-token", status_code=status.HTTP_200_OK)
+async def put_anthropic_token(
+    payload: AnthropicTokenUpdateRequest,
+    service: ChatService = Depends(get_service),
+    _user=Depends(get_admin_or_world_builder),
+) -> dict[str, object]:
+    config = service._runtime
+    providers = config.provider_defaults.copy()
+    current = providers.get("anthropic")
+    if current is None:
+        current = ProviderDefaults(
+            default_model="claude-3-haiku-20240307",
+            models=["claude-3-haiku-20240307", "claude-opus-4-1-20250805"],
+            base_url="https://api.anthropic.com",
+            api_key=payload.api_key,
+        )
+    else:
+        current = ProviderDefaults(
+            default_model=current.default_model,
+            models=current.models,
+            base_url=current.base_url,
+            api_key=payload.api_key,
+        )
+    providers["anthropic"] = current
+    update_runtime_config({"provider_defaults": providers})
+    reload_runtime_config()
+    await service.refresh_runtime()
+    validation = await service.anthropic_validation_status()
+    return {"stored": True, "anthropic": validation}
+
+
+@router.delete("/config/anthropic-token", status_code=status.HTTP_200_OK)
+async def delete_anthropic_token(
+    service: ChatService = Depends(get_service),
+    _user=Depends(get_admin_or_world_builder),
+) -> dict[str, object]:
+    config = service._runtime
+    providers = config.provider_defaults.copy()
+    current = providers.get("anthropic")
+    if current is None:
+        current = ProviderDefaults(
+            default_model="claude-3-haiku-20240307",
+            models=["claude-3-haiku-20240307", "claude-opus-4-1-20250805"],
+            base_url="https://api.anthropic.com",
+            api_key="",
+        )
+    else:
+        current = ProviderDefaults(
+            default_model=current.default_model,
+            models=current.models,
+            base_url=current.base_url,
+            api_key="",
+        )
+    providers["anthropic"] = current
+    update_runtime_config({"provider_defaults": providers})
+    reload_runtime_config()
+    await service.refresh_runtime()
+    validation = await service.anthropic_validation_status()
+    return {"stored": False, "anthropic": validation}
+
+
+@router.get(
+    "/providers/anthropic/validate",
+    response_model=AnthropicValidationResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def get_anthropic_validate(
+    service: ChatService = Depends(get_service),
+    _user=Depends(get_admin_or_world_builder),
+) -> AnthropicValidationResponse:
+    payload = await service.anthropic_validation_status()
+    return AnthropicValidationResponse.model_validate(payload)
+
+
+@router.post("/config/providers/{provider_id}/models", status_code=status.HTTP_200_OK)
+async def add_provider_model(
+    provider_id: str,
+    payload: ProviderModelMutationRequest,
+    service: ChatService = Depends(get_service),
+    _user=Depends(get_admin_or_world_builder),
+) -> dict[str, object]:
+    provider_key = provider_id.strip().lower()
+    model_id = payload.model.strip()
+    if not provider_key:
+        raise HTTPException(status_code=400, detail="provider_id is required")
+    if not model_id:
+        raise HTTPException(status_code=400, detail="model is required")
+
+    cfg = service._runtime
+    providers = cfg.provider_defaults.copy()
+    current = providers.get(provider_key)
+    if current is None:
+        current = ProviderDefaults(default_model=model_id, models=[model_id], base_url=None, api_key=None)
+    else:
+        updated_models = list(current.models)
+        if model_id not in updated_models:
+            updated_models.append(model_id)
+        current = ProviderDefaults(
+            default_model=current.default_model or model_id,
+            models=updated_models,
+            base_url=current.base_url,
+            api_key=current.api_key,
+        )
+    providers[provider_key] = current
+
+    update_runtime_config({"provider_defaults": providers})
+    reload_runtime_config()
+    await service.refresh_runtime()
+    return service.config_public_view()
+
+
+@router.delete("/config/providers/{provider_id}/models", status_code=status.HTTP_200_OK)
+async def remove_provider_model(
+    provider_id: str,
+    payload: ProviderModelMutationRequest,
+    service: ChatService = Depends(get_service),
+    _user=Depends(get_admin_or_world_builder),
+) -> dict[str, object]:
+    provider_key = provider_id.strip().lower()
+    model_id = payload.model.strip()
+    if not provider_key:
+        raise HTTPException(status_code=400, detail="provider_id is required")
+    if not model_id:
+        raise HTTPException(status_code=400, detail="model is required")
+
+    cfg = service._runtime
+    providers = cfg.provider_defaults.copy()
+    current = providers.get(provider_key)
+    if current is None:
+        raise HTTPException(status_code=404, detail=f"provider not found: {provider_key}")
+
+    remaining_models = [m for m in current.models if m != model_id]
+    if not remaining_models:
+        raise HTTPException(status_code=400, detail="cannot remove last configured model for provider")
+    default_model = current.default_model
+    if default_model == model_id:
+        default_model = remaining_models[0]
+    providers[provider_key] = ProviderDefaults(
+        default_model=default_model,
+        models=remaining_models,
+        base_url=current.base_url,
+        api_key=current.api_key,
+    )
+
+    update_runtime_config({"provider_defaults": providers})
+    reload_runtime_config()
+    await service.refresh_runtime()
+    return service.config_public_view()

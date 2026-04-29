@@ -11,7 +11,7 @@ Standalone LLM gateway service for Shrecknet-compatible chat semantics.
 
 ## Features
 - FastAPI API (`/health`, `/ready`, `/chat`, `/models`, `/status`, `/config`)
-- Multi-provider explicit routing via `provider_id` (`ollama`, `openai`)
+- Multi-provider explicit routing via `provider_id` (`ollama`, `openai`, `anthropic`)
 - Redis-backed conversation memory with TTL + trimming
 - Concurrent request support with queue wait timeout
 - Per-conversation in-process locking for ordering consistency
@@ -32,7 +32,7 @@ Response includes execution details:
 
 ## Runtime config model
 - `default_provider_id`
-- `provider_defaults` map keyed by provider id (`ollama`, `openai`)
+- `provider_defaults` map keyed by provider id (`ollama`, `openai`, `anthropic`)
 - runtime limits and timeouts
 
 ## Frontend config endpoints
@@ -42,6 +42,16 @@ Response includes execution details:
 - `PUT /config/openai-token` (requires bearer token; role `admin` or `world_builder`)
 - `DELETE /config/openai-token` (requires bearer token; role `admin` or `world_builder`)
 - `GET /providers/openai/validate` (requires bearer token; role `admin` or `world_builder`)
+- `PUT /config/anthropic-token` (requires bearer token; role `admin` or `world_builder`)
+- `DELETE /config/anthropic-token` (requires bearer token; role `admin` or `world_builder`)
+- `GET /providers/anthropic/validate` (requires bearer token; role `admin` or `world_builder`)
+
+## Anthropic defaults
+- Provider id: `anthropic`
+- Default model: `claude-3-haiku-20240307`
+- Preconfigured models:
+  - `claude-3-haiku-20240307`
+  - `claude-opus-4-1-20250805`
 
 When running with Docker compose, shreckLLM is exposed on `http://localhost:8111`.
 

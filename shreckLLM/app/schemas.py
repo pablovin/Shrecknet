@@ -64,3 +64,14 @@ class OpenAIValidationResponse(BaseModel):
     present: bool
     valid: bool | None
     error: str | None = None
+
+
+class AnthropicTokenUpdateRequest(BaseModel):
+    api_key: str = Field(min_length=1)
+
+
+class AnthropicValidationResponse(BaseModel):
+    configured: bool
+    present: bool
+    valid: bool | None
+    error: str | None = None

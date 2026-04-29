@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -21,6 +22,8 @@ async def lifespan(app: FastAPI):
 
 
 settings = get_settings()
+# Ensure application loggers (e.g. app.service) emit INFO lines to container stdout.
+logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(name)s: %(message)s")
 app = FastAPI(title="shreckLLM", version="0.1.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,

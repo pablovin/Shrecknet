@@ -13,6 +13,7 @@ from app.config_store import RuntimeConfig, get_runtime_config
 from app.errors import DependencyUnavailableError, InvalidModelError
 from app.locking import ConversationLockManager
 from app.memory import RedisConversationMemory
+from app.anthropic_client import AnthropicClient
 from app.ollama_client import OllamaClient
 from app.openai_client import OpenAIClient
 from app.provider_registry import ProviderRegistry
@@ -36,6 +37,7 @@ class ChatService:
         self.registry = ProviderRegistry()
         self._ollama: OllamaClient | None = None
         self._openai: OpenAIClient | None = None
+        self._anthropic: AnthropicClient | None = None
         self._bind_providers()
         self.limiter = RequestLimiter(max_concurrent=self._runtime.max_concurrent_requests)
 
@@ -64,12 +66,25 @@ class ChatService:
         else:
             self._openai = None
 
+        anthropic_cfg = provider_defaults.get("anthropic")
+        if anthropic_cfg is not None:
+            self._anthropic = AnthropicClient(
+                api_key=anthropic_cfg.api_key or "",
+                timeout_s=self._runtime.request_timeout_seconds,
+                base_url=anthropic_cfg.base_url,
+            )
+            self.registry.register(self._anthropic)
+        else:
+            self._anthropic = None
+
     async def aclose(self) -> None:
         closers = [self.redis.aclose()]
         if self._ollama is not None:
             closers.append(self._ollama.aclose())
         if self._openai is not None:
             closers.append(self._openai.aclose())
+        if self._anthropic is not None:
+            closers.append(self._anthropic.aclose())
         await asyncio.gather(*closers, return_exceptions=True)
 
     async def refresh_runtime(self) -> RuntimeConfig:
@@ -79,6 +94,8 @@ class ChatService:
             closers.append(self._ollama.aclose())
         if self._openai is not None:
             closers.append(self._openai.aclose())
+        if self._anthropic is not None:
+            closers.append(self._anthropic.aclose())
         if closers:
             await asyncio.gather(*closers, return_exceptions=True)
 
@@ -109,6 +126,9 @@ class ChatService:
             openai_cfg = providers.get("openai")
             if isinstance(openai_cfg, dict):
                 openai_cfg["api_key"] = self._mask_secret(openai_cfg.get("api_key"))
+            anthropic_cfg = providers.get("anthropic")
+            if isinstance(anthropic_cfg, dict):
+                anthropic_cfg["api_key"] = self._mask_secret(anthropic_cfg.get("api_key"))
         return payload
 
     async def openai_validation_status(self) -> dict[str, Any]:
@@ -120,6 +140,16 @@ class ChatService:
                 "error": "provider_not_registered",
             }
         return await self._openai.validate_api_key()
+
+    async def anthropic_validation_status(self) -> dict[str, Any]:
+        if self._anthropic is None:
+            return {
+                "configured": False,
+                "present": False,
+                "valid": None,
+                "error": "provider_not_registered",
+            }
+        return await self._anthropic.validate_api_key()
 
     async def health(self) -> dict[str, Any]:
         return {"ok": True, "service": "shreckLLM"}
@@ -163,12 +193,19 @@ class ChatService:
                 continue
             cfg = self._runtime.provider_defaults.get(provider_id)
             try:
-                models = await adapter.list_models()
+                discovered_models = await adapter.list_models()
             except Exception:
-                models = []
+                discovered_models = []
+            configured_models = list(cfg.models) if cfg else []
+            merged_models: list[str] = []
+            for model in [*configured_models, *discovered_models]:
+                if isinstance(model, str) and model and model not in merged_models:
+                    merged_models.append(model)
             providers_payload[provider_id] = {
                 "default_model": cfg.default_model if cfg else None,
-                "models": models,
+                "configured_models": configured_models,
+                "discovered_models": discovered_models,
+                "models": merged_models,
             }
 
         return {
@@ -258,17 +295,20 @@ class ChatService:
             raise InvalidModelError(f"no model configured for provider_id: {provider_id}")
 
         combined_messages = [*history, *request.messages]
+        provider_call_start = time.monotonic()
         payload = await adapter.chat(
             model=resolved_model,
             messages=combined_messages,
             temperature=request.temperature,
             max_tokens=request.max_tokens,
         )
+        provider_latency_s = time.monotonic() - provider_call_start
         self._log_backend_usage(
             provider_id=provider_id,
             resolved_model=resolved_model,
             requested_model=requested_model,
             payload=payload,
+            provider_latency_s=provider_latency_s,
         )
         return {
             "provider_id": provider_id,
@@ -284,6 +324,7 @@ class ChatService:
         resolved_model: str,
         requested_model: str | None,
         payload: dict[str, Any],
+        provider_latency_s: float,
     ) -> None:
         usage = payload.get("usage") if isinstance(payload, dict) else {}
         usage = usage if isinstance(usage, dict) else {}
@@ -291,8 +332,16 @@ class ChatService:
         total_tokens = usage.get("total_tokens")
         prompt_tokens = usage.get("prompt_tokens")
         provider_request_id = payload.get("provider_request_id") if isinstance(payload, dict) else None
+        completion_tok_per_s: float | None = None
+        if (
+            isinstance(completion_tokens, int)
+            and completion_tokens > 0
+            and isinstance(provider_latency_s, (int, float))
+            and provider_latency_s > 0
+        ):
+            completion_tok_per_s = float(completion_tokens) / float(provider_latency_s)
         logger.info(
-            "llm_backend provider=%s model=%s requested_model=%s request_id=%s prompt_tokens=%s completion_tokens=%s total_tokens=%s",
+            "[SHRECKLLM] provider=%s model=%s requested_model=%s request_id=%s prompt_tokens=%s completion_tokens=%s total_tokens=%s provider_latency_s=%.3f completion_tok_per_s=%s",
             provider_id,
             resolved_model,
             requested_model or "<default>",
@@ -300,6 +349,8 @@ class ChatService:
             prompt_tokens,
             completion_tokens,
             total_tokens,
+            provider_latency_s,
+            f"{completion_tok_per_s:.2f}" if completion_tok_per_s is not None else "n/a",
         )
 
         if provider_id != "ollama":
@@ -328,7 +379,7 @@ class ChatService:
             prompt_ms_per_token = (prompt_eval_duration_ns / 1_000_000.0) / float(prompt_eval_count)
 
         logger.info(
-            "ollama_timing model=%s prompt_tokens=%s completion_tokens=%s completion_ms_per_token=%s completion_tok_per_s=%s prompt_ms_per_token=%s",
+            "[SHRECKLLM] ollama_timing model=%s prompt_tokens=%s completion_tokens=%s completion_ms_per_token=%s completion_tok_per_s=%s prompt_ms_per_token=%s",
             resolved_model,
             prompt_eval_count,
             eval_count,

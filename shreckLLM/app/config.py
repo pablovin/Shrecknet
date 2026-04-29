@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
+from typing import Any
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -31,15 +32,23 @@ class Settings(BaseSettings):
     # Bootstrap defaults for runtime config (persisted in sqlite)
     bootstrap_default_provider_id: str = "ollama"
 
-    bootstrap_provider_defaults: dict[str, dict[str, str | None]] = {
+    bootstrap_provider_defaults: dict[str, dict[str, Any]] = {
         "ollama": {
             "default_model": "gemma3:4b",
-            "base_url": "http://localhost:11434",
+            "models": ["gemma3:4b"],
+            "base_url": "http://ollama:11434",
             "api_key": None,
         },
         "openai": {
             "default_model": "gpt-5-nano",
+            "models": ["gpt-5-nano", "gpt-5", "gpt-4o-mini"],
             "base_url": None,
+            "api_key": "",
+        },
+        "anthropic": {
+            "default_model": "claude-3-haiku-20240307",
+            "models": ["claude-3-haiku-20240307", "claude-opus-4-1-20250805"],
+            "base_url": "https://api.anthropic.com",
             "api_key": "",
         },
     }

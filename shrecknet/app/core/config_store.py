@@ -41,6 +41,7 @@ LLM_TARGET_FIELDS = (
     "model_novelist_draft",
     "model_librarian",
 )
+ALLOWED_OPENAI_MODELS = frozenset({"gpt-5", "gpt-5-nano", "gpt-4o-mini"})
 
 
 class LLMModelTarget(BaseModel):
@@ -148,7 +149,7 @@ class Settings(BaseSettings):
     # Deprecated: keep for backward compatibility with older deployments.
     openai_api_key: str = ""
     model_architect_scene_chunking: LLMModelTarget = Field(
-        default_factory=lambda: LLMModelTarget(provider="openai", name="gpt-5.1")
+        default_factory=lambda: LLMModelTarget(provider="openai", name="gpt-5")
     )
     model_architect: LLMModelTarget = Field(
         default_factory=lambda: LLMModelTarget(provider="openai", name="gpt-5-nano")
@@ -160,7 +161,7 @@ class Settings(BaseSettings):
         default_factory=lambda: LLMModelTarget(provider="openai", name="gpt-5-nano")
     )
     model_novelist_draft: LLMModelTarget = Field(
-        default_factory=lambda: LLMModelTarget(provider="openai", name="gpt-5.1")
+        default_factory=lambda: LLMModelTarget(provider="openai", name="gpt-5")
     )
     model_librarian: LLMModelTarget = Field(
         default_factory=lambda: LLMModelTarget(provider="openai", name="gpt-5-nano")
@@ -353,6 +354,18 @@ def _normalize_legacy_llm_targets(conn: sqlite3.Connection) -> None:
                 name=name or "gpt-5-nano",
             )
             updates[field_name] = normalized.model_dump()
+    for field_name in LLM_TARGET_FIELDS:
+        raw_value = current_values.get(field_name)
+        if not isinstance(raw_value, dict):
+            continue
+        provider = str(raw_value.get("provider") or "").strip() or "openai"
+        name = str(raw_value.get("name") or "").strip() or "gpt-5-nano"
+        normalized_name = name
+        if provider == "openai" and name not in ALLOWED_OPENAI_MODELS:
+            normalized_name = "gpt-5-nano"
+        normalized = LLMModelTarget(provider=provider, name=normalized_name).model_dump()
+        if raw_value != normalized:
+            updates[field_name] = normalized
 
     if updates:
         timestamp = _current_timestamp()
@@ -415,6 +428,8 @@ def update_settings(updates: dict[str, Any]) -> Settings:
             elif isinstance(raw_value, dict):
                 provider = str(raw_value.get("provider") or "").strip()
                 name = str(raw_value.get("name") or "").strip()
+                if (provider or "openai") == "openai" and (name or "gpt-5-nano") not in ALLOWED_OPENAI_MODELS:
+                    name = "gpt-5-nano"
                 settings_dict[field_name] = LLMModelTarget(
                     provider=provider or "openai",
                     name=name or "gpt-5-nano",

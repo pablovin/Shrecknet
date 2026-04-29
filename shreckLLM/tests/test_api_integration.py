@@ -23,6 +23,7 @@ class FakeService:
             "dependencies": {
                 "ollama": {"ok": True, "default_model_available": True},
                 "openai": {"ok": True, "default_model_available": True},
+                "anthropic": {"ok": True, "default_model_available": True},
                 "redis": {"ok": True},
             },
         }
@@ -33,6 +34,7 @@ class FakeService:
             "providers": {
                 "ollama": {"default_model": "gemma3:4b", "models": ["gemma3:4b"]},
                 "openai": {"default_model": "gpt-5-nano", "models": ["gpt-5-nano"]},
+                "anthropic": {"default_model": "claude-3-haiku-20240307", "models": ["claude-3-haiku-20240307"]},
             },
         }
 
@@ -50,6 +52,7 @@ class FakeService:
             dependencies={
                 "ollama": {"ok": True, "default_model_available": True},
                 "openai": {"ok": True, "default_model_available": True},
+                "anthropic": {"ok": True, "default_model_available": True},
                 "redis": {"ok": True},
             },
         )
@@ -78,6 +81,7 @@ class FakeService:
             "provider_defaults": {
                 "ollama": {"default_model": "gemma3:4b", "base_url": "http://ollama:11434", "api_key": None},
                 "openai": {"default_model": "gpt-5-nano", "base_url": None, "api_key": "sk-...mask"},
+                "anthropic": {"default_model": "claude-3-haiku-20240307", "base_url": "https://api.anthropic.com", "api_key": "sk-ant-...mask"},
             },
         }
 
@@ -85,6 +89,9 @@ class FakeService:
         return None
 
     async def openai_validation_status(self):
+        return {"configured": True, "present": True, "valid": True, "error": None}
+
+    async def anthropic_validation_status(self):
         return {"configured": True, "present": True, "valid": True, "error": None}
 
 

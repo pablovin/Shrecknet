@@ -13,7 +13,7 @@ import logging
 from typing import Any
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse
 
 from app.api.deps import get_current_admin_user
 from app.graph.neo4j import get_neo4j_session
@@ -21,7 +21,6 @@ from app.models.background_job import AuthorType, JobType
 from app.models.user import User
 from app.services.backup_service import BackupService
 from app.services.legacy_monolith_import_service import LegacyMonolithImportService
-from app.services.site_backup_service import SiteBackupService
 from app.tasks.backup_tasks import create_backup_task, import_legacy_backup_task, restore_backup_task
 from app.utils.async_helpers import run_async
 from app.utils.job_tracking import create_background_job
@@ -30,34 +29,6 @@ from neo4j import AsyncSession as AsyncNeo4jSession
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/backups", tags=["backups"])
-
-
-@router.get("/export")
-async def export_site_backup(
-    current_user: User = Depends(get_current_admin_user),
-) -> Response:
-    del current_user
-    filename, payload = SiteBackupService().build_backup_bytes()
-    return Response(
-        content=payload,
-        media_type="application/zip",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-    )
-
-
-@router.post("/import")
-async def import_site_backup(
-    file: UploadFile = File(...),
-    current_user: User = Depends(get_current_admin_user),
-) -> dict[str, Any]:
-    del current_user
-    if not file.filename or not file.filename.endswith(".zip"):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid file format. Expected a .zip backup file",
-        )
-    payload = await file.read()
-    return await SiteBackupService().restore_backup_bytes(payload)
 
 
 @router.post("/import-old-db", status_code=status.HTTP_202_ACCEPTED)

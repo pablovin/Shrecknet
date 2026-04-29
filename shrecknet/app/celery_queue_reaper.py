@@ -78,19 +78,6 @@ def _is_terminal_run_status(conn: sqlite3.Connection | None, table: str, run_id:
     return status in {"completed", "failed"}
 
 
-def _instance_exists(conn: sqlite3.Connection | None, instance_id: str) -> bool:
-    if conn is None:
-        return True
-    try:
-        row = conn.execute(
-            "SELECT 1 FROM ontology_instances WHERE instance_id = ? LIMIT 1",
-            (instance_id,),
-        ).fetchone()
-    except sqlite3.Error:
-        return True
-    return row is not None
-
-
 def reap_stale_celery_messages() -> dict[str, int]:
     settings = get_settings()
     redis_client = redis.Redis.from_url(settings.celery_broker_url, decode_responses=True)
@@ -135,10 +122,8 @@ def reap_stale_celery_messages() -> dict[str, int]:
                     if run_id:
                         stale = _is_terminal_run_status(app_conn, "novelist_runs", run_id)
 
-                if not stale and task_name in {"ontology.embed_reconciliation", "ontology.link_instance"}:
-                    instance_id = kwargs.get("instance_id")
-                    if isinstance(instance_id, str) and instance_id.strip():
-                        stale = not _instance_exists(app_conn, instance_id.strip())
+                # Instance existence is graph-sourced, not SQL-sourced.
+                # Keep messages unless they are stale by age or run-state checks above.
 
                 if stale:
                     removed += int(redis_client.lrem(queue, 1, raw_entry) or 0)

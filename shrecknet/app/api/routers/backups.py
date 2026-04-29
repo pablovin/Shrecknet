@@ -201,6 +201,28 @@ async def download_backup_compat(
     return await download_backup(filename=filename, current_user=current_user)
 
 
+@router.delete("/{filename}", status_code=status.HTTP_200_OK)
+async def delete_backup(
+    filename: str,
+    current_user: User = Depends(get_current_admin_user),
+) -> dict[str, Any]:
+    del current_user
+    try:
+        backup_service = BackupService()
+        return backup_service.delete_backup(filename)
+    except FileNotFoundError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Backup not found: {filename}",
+        )
+    except Exception as e:
+        logger.error(f"Failed to delete backup {filename}: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to delete backup: {str(e)}",
+        )
+
+
 @router.post("/restore", status_code=status.HTTP_202_ACCEPTED)
 async def restore_backup(
     file: UploadFile = File(...),

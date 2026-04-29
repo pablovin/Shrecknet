@@ -22,7 +22,6 @@ from app.db.jobs_session import get_jobs_session
 from app.graph.neo4j import get_neo4j_session, get_optional_neo4j_session
 from app.models.audit import AuditAction, AuditActorType, AuditEntityType
 from app.models.background_job import JobType
-from app.models.ontology_instance import OntologyInstance
 from app.models.user import User, UserRole
 from app.schemas.ontology import (
     OntologyCreate,
@@ -176,28 +175,6 @@ async def _count_ontology_nodes_by_type(graph_session: Any, ontology_id: int) ->
         if node_type in counts:
             counts[node_type] = int(row.get("count") or 0)
     return counts
-
-
-async def _get_sql_ontology_node_total(
-    session: AsyncSessionCompat, ontology_id: int
-) -> int:
-    result = await session.execute(
-        select(OntologyInstance.payload_json).where(
-            OntologyInstance.ontology_id == ontology_id
-        )
-    )
-    total = 0
-    for payload_json in result.scalars().all():
-        if not payload_json:
-            continue
-        try:
-            payload = json.loads(payload_json)
-        except json.JSONDecodeError:
-            continue
-        entities = payload.get("entities", [])
-        if isinstance(entities, list):
-            total += sum(1 for entity in entities if isinstance(entity, dict))
-    return total
 
 
 @router.post("/", response_model=OntologyRead, status_code=status.HTTP_201_CREATED)
@@ -796,7 +773,6 @@ class TriggerEmbeddingResponse(BaseModel):
 async def get_embedding_stats(
     ontology_id: int,
     graph_session: Annotated[Any, Depends(get_neo4j_session)],
-    db_session: Annotated[AsyncSessionCompat, Depends(get_db_session)],
     service: OntologyService = Depends(get_ontology_service),
     _: User = Depends(get_current_user),
 ) -> EmbeddingStatsResponse:
@@ -812,35 +788,7 @@ async def get_embedding_stats(
             status_code=status.HTTP_404_NOT_FOUND, detail="Ontology not found"
         )
 
-    sql_total = await _get_sql_ontology_node_total(db_session, ontology_id)
     stats = await _get_safe_ontology_embedding_stats(graph_session, ontology_id)
-
-    # The site currently stores ontology instance entities in SQL first.
-    # If Neo4j has not been populated yet, preserve the correct node total
-    # from SQL and treat the missing graph nodes as unembedded.
-    if stats["total"] == 0 and sql_total > 0:
-        stats = {
-            "total": sql_total,
-            "embedded": 0,
-            "unembedded": sql_total,
-            "outdated": 0,
-            "breakdown": {
-                "entities": {
-                    "total": sql_total,
-                    "embedded": 0,
-                    "unembedded": sql_total,
-                    "outdated": 0,
-                },
-                "scenes": {"total": 0, "embedded": 0, "unembedded": 0, "outdated": 0},
-                "milestones": {"total": 0, "embedded": 0, "unembedded": 0, "outdated": 0},
-            },
-        }
-    elif sql_total > stats["breakdown"]["entities"]["total"]:
-        missing_in_graph = sql_total - stats["breakdown"]["entities"]["total"]
-        stats["breakdown"]["entities"]["total"] = sql_total
-        stats["breakdown"]["entities"]["unembedded"] += missing_in_graph
-        stats["total"] += missing_in_graph
-        stats["unembedded"] += missing_in_graph
 
     return EmbeddingStatsResponse(
         ontology_id=ontology_id,

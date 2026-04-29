@@ -15,7 +15,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.config_store import get_settings
-from app.models.ontology_instance import OntologyInstance as SqlOntologyInstance
 from app.models.ontology import OntologyEntity
 from app.repositories.ontology_repository import OntologyRepository
 from app.schemas.ontology_instance import (
@@ -1374,16 +1373,6 @@ class OntologyInstanceService:
             await tx.commit()
             await tx.close()
 
-        sql_instances_deleted = 0
-        if empty_instance_ids:
-            delete_result = await self.sql_session.execute(
-                delete(SqlOntologyInstance).where(
-                    SqlOntologyInstance.instance_id.in_(empty_instance_ids)
-                )
-            )
-            await self.sql_session.commit()
-            sql_instances_deleted = int(delete_result.rowcount or 0)
-
         return {
             "ontology_id": ontology_id,
             "entity_definition_ids": sorted(normalized_ids),
@@ -1396,7 +1385,6 @@ class OntologyInstanceService:
             "chunks_deleted": chunk_count,
             "relationships_deleted": relationships_deleted,
             "instances_deleted": len(empty_instance_ids),
-            "sql_instances_deleted": sql_instances_deleted,
         }
 
     async def clear_timeline_events_and_orphans(

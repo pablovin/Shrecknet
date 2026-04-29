@@ -187,6 +187,7 @@ class BackupService:
                 package_root / "neo4j" / "graph.json",
                 package_root / "neo4j" / "schema.json",
             )
+            linkage_summary = await self._validate_sql_graph_linkage(neo4j_session)
 
             await self._report(progress_callback, "finalizing", 0.95, "Finalizing restore")
 
@@ -203,6 +204,7 @@ class BackupService:
                     "database_files": db_restore_summary,
                     "media_files": media_restore_summary,
                     "neo4j": neo4j_restore_summary,
+                    "linkage": linkage_summary,
                 },
             }
         finally:
@@ -645,6 +647,47 @@ class BackupService:
             "previous_relationships_removed": previous_relationships,
         }
 
+    async def _validate_sql_graph_linkage(self, session: Neo4jSession) -> dict[str, int]:
+        """Validate graph-level ontology-instance linkage after restore."""
+        graph_instances_result = await session.run(
+            "MATCH (inst:OntologyInstance) RETURN inst.instance_id AS instance_id"
+        )
+        graph_instances_rows = await graph_instances_result.data()
+        instance_ids = [
+            str(row.get("instance_id") or "").strip()
+            for row in graph_instances_rows
+            if str(row.get("instance_id") or "").strip()
+        ]
+
+        if not instance_ids:
+            return {"graph_instances": 0, "missing_entity_links": 0}
+
+        entity_links_result = await session.run(
+            """
+            UNWIND $instance_ids AS instance_id
+            OPTIONAL MATCH (inst:OntologyInstance {instance_id: instance_id})-[:HAS_ENTITY]->(:EntityInstance)
+            RETURN instance_id, count(*) AS linked_entities
+            """,
+            instance_ids=instance_ids,
+        )
+        entity_links_rows = await entity_links_result.data()
+        missing_entity_links = [
+            row["instance_id"]
+            for row in entity_links_rows
+            if int(row.get("linked_entities", 0)) == 0
+        ]
+
+        if missing_entity_links:
+            raise ValueError(
+                "Graph linkage validation failed after restore. "
+                f"Instances without HAS_ENTITY links: {len(missing_entity_links)}"
+            )
+
+        return {
+            "graph_instances": len(instance_ids),
+            "missing_entity_links": len(missing_entity_links),
+        }
+
     def get_uploaded_backup_path(self, filename: str) -> Path:
         safe_name = Path(filename).name
         return self.uploaded_backup_dir / safe_name
@@ -675,3 +718,16 @@ class BackupService:
         if not backup_path.exists():
             raise FileNotFoundError(f"Backup not found: {filename}")
         return backup_path
+
+    def delete_backup(self, filename: str) -> dict[str, Any]:
+        backup_path = self.download_backup_dir / Path(filename).name
+        if not backup_path.exists():
+            raise FileNotFoundError(f"Backup not found: {filename}")
+        size_bytes = backup_path.stat().st_size
+        backup_path.unlink()
+        return {
+            "status": "deleted",
+            "backup_kind": "full_system",
+            "filename": backup_path.name,
+            "size_bytes": size_bytes,
+        }

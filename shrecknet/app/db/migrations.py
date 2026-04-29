@@ -141,6 +141,47 @@ def migrate_agents_table(sync_conn) -> None:
     finally:
         sync_conn.execute(text("PRAGMA foreign_keys=ON"))
 
+
+def migrate_deprecate_sql_ontology_instances(sync_conn) -> None:
+    """Drop deprecated SQL ontology-instance tables after favorites are migrated."""
+    inspector = inspect(sync_conn)
+    table_names = set(inspector.get_table_names())
+
+    if "favorite_ontology_instances_v2" not in table_names:
+        sync_conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS favorite_ontology_instances_v2 (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    instance_id VARCHAR(64) NOT NULL,
+                    ontology_id INTEGER NOT NULL,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(user_id, instance_id)
+                )
+                """
+            )
+        )
+
+    if "favorite_ontology_instances" in table_names:
+        sync_conn.execute(
+            text(
+                """
+                INSERT OR IGNORE INTO favorite_ontology_instances_v2
+                    (id, user_id, instance_id, ontology_id, created_at)
+                SELECT id, user_id, instance_id, ontology_id, created_at
+                FROM favorite_ontology_instances
+                """
+            )
+        )
+
+    sync_conn.execute(text("PRAGMA foreign_keys=OFF"))
+    try:
+        sync_conn.execute(text("DROP TABLE IF EXISTS favorite_ontology_instances"))
+        sync_conn.execute(text("DROP TABLE IF EXISTS ontology_instances"))
+    finally:
+        sync_conn.execute(text("PRAGMA foreign_keys=ON"))
+
 async def migrate_novelist_runs(engine: AsyncEngine) -> None:
     """Ensure novelist_runs table exists when upgrading."""
     async with engine.begin() as conn:

@@ -229,12 +229,16 @@ class ChatService:
 
     async def prewarm_local_llm(self) -> None:
         if not self.settings.ollama_prewarm_on_startup:
+            print("[SHRECKLLM_PREWARM] step=skipped reason=disabled")
             return
         if self._ollama is None:
+            print("[SHRECKLLM_PREWARM] step=skipped reason=ollama_provider_not_bound")
             return
         cfg = self._runtime.provider_defaults.get("ollama")
         if cfg is None or not cfg.default_model:
+            print("[SHRECKLLM_PREWARM] step=skipped reason=missing_default_model")
             return
+        print(f"[SHRECKLLM_PREWARM] step=start model={cfg.default_model} keep_alive={self.settings.ollama_keep_alive}")
         try:
             await self._ollama.chat(
                 model=cfg.default_model,
@@ -242,8 +246,10 @@ class ChatService:
                 temperature=0.0,
                 max_tokens=1,
             )
+            print(f"[SHRECKLLM_PREWARM] step=done model={cfg.default_model} keep_alive={self.settings.ollama_keep_alive}")
             logger.info("[SHRECKLLM] ollama_prewarm_done model=%s keep_alive=%s", cfg.default_model, self.settings.ollama_keep_alive)
         except Exception as exc:
+            print(f"[SHRECKLLM_PREWARM] step=failed model={cfg.default_model} error={exc}")
             logger.warning("[SHRECKLLM] ollama_prewarm_failed model=%s error=%s", cfg.default_model, exc)
 
     async def chat(self, request: ChatRequest) -> ChatResponse:

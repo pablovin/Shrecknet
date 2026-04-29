@@ -15,9 +15,10 @@ from app.schemas import ChatMessage
 
 class OllamaClient:
     provider_id = "ollama"
-    def __init__(self, *, base_url: str, timeout_s: float) -> None:
+    def __init__(self, *, base_url: str, timeout_s: float, keep_alive: str | None = None) -> None:
         self.base_url = base_url.rstrip("/")
         self.timeout_s = float(timeout_s)
+        self.keep_alive = keep_alive.strip() if isinstance(keep_alive, str) and keep_alive.strip() else None
         self._client = httpx.AsyncClient(base_url=self.base_url, timeout=self.timeout_s)
 
     async def aclose(self) -> None:
@@ -66,6 +67,8 @@ class OllamaClient:
             "stream": False,
             "options": options,
         }
+        if self.keep_alive is not None:
+            payload["keep_alive"] = self.keep_alive
         data = await self._chat_request(payload)
         if not isinstance(data, dict):
             raise DependencyUnavailableError("invalid response from ollama")
@@ -109,6 +112,9 @@ class OllamaClient:
             "stream": False,
             "options": payload.get("options") or {},
         }
+        keep_alive = payload.get("keep_alive")
+        if isinstance(keep_alive, str) and keep_alive.strip():
+            generate_payload["keep_alive"] = keep_alive.strip()
         data = await self._request_json("POST", "/api/generate", json=generate_payload)
         if not isinstance(data, dict):
             raise DependencyUnavailableError("invalid response from ollama")

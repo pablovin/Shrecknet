@@ -58,6 +58,8 @@ class Settings(BaseSettings):
     bootstrap_max_concurrent_requests: int = 8
     bootstrap_request_timeout_seconds: float = 45.0
     bootstrap_max_queue_wait_seconds: float = 10.0
+    ollama_keep_alive: str = "30m"
+    ollama_prewarm_on_startup: bool = True
 
 
 @lru_cache(maxsize=1)

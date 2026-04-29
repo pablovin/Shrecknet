@@ -16,6 +16,7 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
     app.state.chat_service = ChatService(settings)
     try:
+        await app.state.chat_service.prewarm_local_llm()
         yield
     finally:
         await app.state.chat_service.aclose()

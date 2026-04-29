@@ -50,6 +50,7 @@ class ChatService:
             self._ollama = OllamaClient(
                 base_url=ollama_cfg.base_url or "http://localhost:11434",
                 timeout_s=self._runtime.request_timeout_seconds,
+                keep_alive=self.settings.ollama_keep_alive,
             )
             self.registry.register(self._ollama)
         else:
@@ -225,6 +226,25 @@ class ChatService:
             max_queue_wait_seconds=self._runtime.max_queue_wait_seconds,
             dependencies=ready_payload["dependencies"],
         )
+
+    async def prewarm_local_llm(self) -> None:
+        if not self.settings.ollama_prewarm_on_startup:
+            return
+        if self._ollama is None:
+            return
+        cfg = self._runtime.provider_defaults.get("ollama")
+        if cfg is None or not cfg.default_model:
+            return
+        try:
+            await self._ollama.chat(
+                model=cfg.default_model,
+                messages=[ChatMessage(role="user", content="ping")],
+                temperature=0.0,
+                max_tokens=1,
+            )
+            logger.info("[SHRECKLLM] ollama_prewarm_done model=%s keep_alive=%s", cfg.default_model, self.settings.ollama_keep_alive)
+        except Exception as exc:
+            logger.warning("[SHRECKLLM] ollama_prewarm_failed model=%s error=%s", cfg.default_model, exc)
 
     async def chat(self, request: ChatRequest) -> ChatResponse:
         start = time.monotonic()

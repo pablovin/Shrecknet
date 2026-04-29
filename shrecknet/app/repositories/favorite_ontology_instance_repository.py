@@ -30,16 +30,27 @@ class FavoriteOntologyInstanceRepository:
                 """
             )
         )
-        await self.session.execute(
+        old_table_exists = await self.session.execute(
             text(
                 """
-                INSERT OR IGNORE INTO favorite_ontology_instances_v2
-                    (id, user_id, instance_id, ontology_id, created_at)
-                SELECT id, user_id, instance_id, ontology_id, created_at
-                FROM favorite_ontology_instances
+                SELECT 1
+                FROM sqlite_master
+                WHERE type = 'table' AND name = 'favorite_ontology_instances'
+                LIMIT 1
                 """
             )
         )
+        if old_table_exists.first() is not None:
+            await self.session.execute(
+                text(
+                    """
+                    INSERT OR IGNORE INTO favorite_ontology_instances_v2
+                        (id, user_id, instance_id, ontology_id, created_at)
+                    SELECT id, user_id, instance_id, ontology_id, created_at
+                    FROM favorite_ontology_instances
+                    """
+                )
+            )
         self._table_ready = True
 
     async def add_favorite(

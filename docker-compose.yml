@@ -283,9 +283,31 @@ services:
       - /bin/sh
       - -ec
       - |
-        sleep 5
-        curl -sS -X POST http://ollama:11434/api/pull \
-          -d '{"name":"'"${SHRECKLLM_BOOTSTRAP_LOCAL_DEFAULT_MODEL:-gemma3:4b}"'"}'
+        MODEL="${SHRECKLLM_BOOTSTRAP_LOCAL_DEFAULT_MODEL:-gemma3:4b}"
+        echo "[ollama_model_pull] Waiting for Ollama API..."
+        until curl -fsS http://ollama:11434/api/tags >/dev/null 2>&1; do
+          sleep 2
+        done
+
+        echo "[ollama_model_pull] Pulling model: ${MODEL}"
+        curl -sS -N -X POST http://ollama:11434/api/pull \
+          -H 'Content-Type: application/json' \
+          -d '{"name":"'"${MODEL}"'"}' | while IFS= read -r line; do
+            status=$(echo "$line" | sed -n 's/.*"status":"\([^"]*\)".*/\1/p')
+            completed=$(echo "$line" | sed -n 's/.*"completed":\([0-9][0-9]*\).*/\1/p')
+            total=$(echo "$line" | sed -n 's/.*"total":\([0-9][0-9]*\).*/\1/p')
+
+            if [ -n "$completed" ] && [ -n "$total" ] && [ "$total" -gt 0 ]; then
+              pct=$((completed * 100 / total))
+              done_mb=$((completed / 1024 / 1024))
+              total_mb=$((total / 1024 / 1024))
+              echo "[ollama_model_pull] ${status:-downloading} ${done_mb}MB/${total_mb}MB (${pct}%)"
+            elif [ -n "$status" ]; then
+              echo "[ollama_model_pull] ${status}"
+            else
+              echo "[ollama_model_pull] ${line}"
+            fi
+          done
 
   # Neo4j graph store used by GraphRAG and ontology features
   neo4j:

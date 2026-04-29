@@ -6,7 +6,8 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.integrations.llm.openai_client import OpenAIClient
+from app.core.config_store import LLMModelTarget
+from app.integrations.llm.shreckllm_client import ShreckLLMClient
 from app.jobs.librarian.prompts import SIMPLIFIED_ANSWER_STYLE_PROMPT
 from app.jobs.librarian.schemas import (
     LibrarianQueryRequest,
@@ -27,11 +28,11 @@ class LibrarianOrchestrator:
 
     def __init__(
         self,
-        llm_client: OpenAIClient,
+        llm_client: ShreckLLMClient,
         pdf_embedding_service: PdfEmbeddingService,
         default_top_k: int = 10,
-        answer_model: str = "gpt-4o",
-        style_model: str = "gpt-5-nano",
+        answer_model: LLMModelTarget | str = "gpt-4o",
+        style_model: LLMModelTarget | str = "gpt-5-nano",
         fast_mode: bool = True,
         max_fast_chunks: int = 6,
     ):

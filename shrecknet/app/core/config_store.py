@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 DEFAULT_DATABASE_FILENAME = "shrecknet.db"
@@ -32,6 +32,25 @@ _settings_cache: "Settings | None" = None
 _settings_lock = threading.Lock()
 _data_dir_cache: Path | None = None
 logger = logging.getLogger(__name__)
+
+LLM_TARGET_FIELDS = (
+    "model_architect_scene_chunking",
+    "model_architect",
+    "model_elder",
+    "model_novelist",
+    "model_novelist_draft",
+    "model_librarian",
+)
+
+
+class LLMModelTarget(BaseModel):
+    provider: str = "openai"
+    name: str = "gpt-5-nano"
+
+    @classmethod
+    def from_legacy(cls, model_name: str) -> "LLMModelTarget":
+        normalized = str(model_name or "").strip() or "gpt-5-nano"
+        return cls(provider="openai", name=normalized)
 
 
 def _can_write_directory(path: Path) -> bool:
@@ -123,13 +142,29 @@ class Settings(BaseSettings):
     celery_stale_reaper_interval_seconds: int = 300
     celery_stale_reaper_max_task_age_seconds: int = 7200
 
+    shreckllm_base_url: str = "http://shreckllm:8110"
+    shreckllm_request_timeout_s: float = 60.0
+    shreckllm_max_retries: int = 2
+    # Deprecated: keep for backward compatibility with older deployments.
     openai_api_key: str = ""
-    model_architect_scene_chunking: str = "gpt-5.1"
-    model_architect: str = "gpt-5-nano"
-    model_elder: str = "gpt-5-nano"
-    model_novelist: str = "gpt-5-nano"
-    model_novelist_draft: str = "gpt-5.1"
-    model_librarian: str = "gpt-5-nano"
+    model_architect_scene_chunking: LLMModelTarget = Field(
+        default_factory=lambda: LLMModelTarget(provider="openai", name="gpt-5.1")
+    )
+    model_architect: LLMModelTarget = Field(
+        default_factory=lambda: LLMModelTarget(provider="openai", name="gpt-5-nano")
+    )
+    model_elder: LLMModelTarget = Field(
+        default_factory=lambda: LLMModelTarget(provider="openai", name="gpt-5-nano")
+    )
+    model_novelist: LLMModelTarget = Field(
+        default_factory=lambda: LLMModelTarget(provider="openai", name="gpt-5-nano")
+    )
+    model_novelist_draft: LLMModelTarget = Field(
+        default_factory=lambda: LLMModelTarget(provider="openai", name="gpt-5.1")
+    )
+    model_librarian: LLMModelTarget = Field(
+        default_factory=lambda: LLMModelTarget(provider="openai", name="gpt-5-nano")
+    )
     default_top_k: int = 8
     embedding_model_id: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
     embedding_dimension: int = 384
@@ -300,11 +335,49 @@ def _normalize_legacy_database_urls(conn: sqlite3.Connection) -> None:
         conn.commit()
 
 
+def _normalize_legacy_llm_targets(conn: sqlite3.Connection) -> None:
+    current_values = _load_settings_from_db(conn)
+    updates: dict[str, dict[str, str]] = {}
+    for field_name in LLM_TARGET_FIELDS:
+        raw_value = current_values.get(field_name)
+        if isinstance(raw_value, str):
+            updates[field_name] = LLMModelTarget.from_legacy(raw_value).model_dump()
+            continue
+        if isinstance(raw_value, dict):
+            provider = str(raw_value.get("provider") or "").strip()
+            name = str(raw_value.get("name") or "").strip()
+            if provider and name:
+                continue
+            normalized = LLMModelTarget(
+                provider=provider or "openai",
+                name=name or "gpt-5-nano",
+            )
+            updates[field_name] = normalized.model_dump()
+
+    if updates:
+        timestamp = _current_timestamp()
+        conn.executemany(
+            f"""
+            INSERT INTO {CONFIG_TABLE} (key, value, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(key) DO UPDATE SET
+                value=excluded.value,
+                updated_at=excluded.updated_at
+            """,
+            [
+                (key, _serialize_value(value), timestamp)
+                for key, value in updates.items()
+            ],
+        )
+        conn.commit()
+
+
 def load_settings() -> Settings:
     conn = _connect()
     try:
         _ensure_schema(conn)
         _normalize_legacy_database_urls(conn)
+        _normalize_legacy_llm_targets(conn)
         merged = _seed_defaults_if_needed(conn)
     finally:
         conn.close()
@@ -333,6 +406,19 @@ def update_settings(updates: dict[str, Any]) -> Settings:
         current = _settings_cache or load_settings()
         settings_dict = current.model_dump()
         settings_dict.update(updates)
+        for field_name in LLM_TARGET_FIELDS:
+            if field_name not in settings_dict:
+                continue
+            raw_value = settings_dict.get(field_name)
+            if isinstance(raw_value, str):
+                settings_dict[field_name] = LLMModelTarget.from_legacy(raw_value).model_dump()
+            elif isinstance(raw_value, dict):
+                provider = str(raw_value.get("provider") or "").strip()
+                name = str(raw_value.get("name") or "").strip()
+                settings_dict[field_name] = LLMModelTarget(
+                    provider=provider or "openai",
+                    name=name or "gpt-5-nano",
+                ).model_dump()
         updated = Settings(**settings_dict).model_dump()
         conn = _connect()
         try:
@@ -368,3 +454,8 @@ def is_openai_configured(current: Settings | None = None) -> bool:
     s = current or get_settings()
     raw_key = (s.openai_api_key or "").strip()
     return bool(raw_key and raw_key.lower() != "openaikey")
+
+
+def is_shreckllm_configured(current: Settings | None = None) -> bool:
+    s = current or get_settings()
+    return bool(str(s.shreckllm_base_url or "").strip())

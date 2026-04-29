@@ -12,10 +12,10 @@ from typing import Any
 from uuid import uuid4
 
 from app.celery_app import celery_app
-from app.core.config_store import get_settings, is_openai_configured
+from app.core.config_store import get_settings, is_shreckllm_configured
 from app.graph.neo4j import get_driver
 from app.integrations.llm.model_policy import LLMTask, ModelPolicy
-from app.integrations.llm.openai_client import OpenAIClient
+from app.integrations.llm.shreckllm_client import ShreckLLMClient
 from app.integrations.retrieval.neo4j_retriever import Neo4jGraphRetriever
 from app.jobs.architect.prompts import (
     ARCHITECT_ENTITY_PROPOSAL_PROMPT,
@@ -112,7 +112,7 @@ def _extract_json_block(raw: str) -> str:
 
 
 def _format_step_usage_delta(
-    llm_client: OpenAIClient,
+    llm_client: ShreckLLMClient,
     start_event_index: int,
 ) -> dict[str, Any]:
     return llm_client.get_usage_summary_since(start_event_index)
@@ -318,7 +318,7 @@ def _parse_reconciliation(response_text: str) -> ReconciliationResponse:
 
 async def _reconcile_with_existing(
     *,
-    llm_client: OpenAIClient,
+    llm_client: ShreckLLMClient,
     model: str,
     deduped: dict[str, dict[str, Any]],
     existing_nodes: list[dict[str, Any]],
@@ -449,7 +449,7 @@ async def _reconcile_with_existing(
 
 async def _classify_entities_with_reconciliation(
     *,
-    llm_client: OpenAIClient,
+    llm_client: ShreckLLMClient,
     model: str,
     scene_results: list[dict[str, Any]],
     existing_nodes: list[dict[str, Any]],
@@ -753,7 +753,7 @@ def _flatten_scene_inputs(chunk_results: list[dict[str, Any]]) -> list[dict[str,
 async def _extract_scene_entities(
     *,
     run_id: str,
-    llm_client: OpenAIClient,
+    llm_client: ShreckLLMClient,
     model: str,
     ontology_definitions: str,
     allowed_ontology_names: dict[str, str],
@@ -921,7 +921,7 @@ async def _run_scene_chunking_phase(
     *,
     run_id: str,
     ontology_instance: Any,
-    llm_client: OpenAIClient,
+    llm_client: ShreckLLMClient,
     model: str,
     instructions: str | None = None,
 ) -> dict[str, Any]:
@@ -1033,7 +1033,7 @@ async def _run_scene_chunking_phase(
 async def _run_entity_proposal_phase(
     *,
     run_id: str,
-    llm_client: OpenAIClient,
+    llm_client: ShreckLLMClient,
     model: str,
     ontology_definitions: str,
     allowed_ontology_names: dict[str, str],
@@ -1323,7 +1323,7 @@ def _parse_milestone_extraction(response_text: str, scene_ref: str) -> list[dict
 async def _run_milestone_proposal_phase(
     *,
     run_id: str,
-    llm_client: OpenAIClient,
+    llm_client: ShreckLLMClient,
     model: str,
     proposed_scenes: list[dict[str, Any]],
     author_id: str,
@@ -1668,8 +1668,8 @@ async def _execute_architect_pipeline(
     job_id: int,
 ) -> dict[str, Any]:
     settings = get_settings()
-    if not is_openai_configured(settings):
-        raise RuntimeError("OpenAI API key not configured")
+    if not is_shreckllm_configured(settings):
+        raise RuntimeError("shreckLLM is not configured")
     async with AsyncSessionMaker() as session:
         repo = ArchitectRepository(session)
         agent_repo = AgentRepository(session)
@@ -1707,11 +1707,7 @@ async def _execute_architect_pipeline(
                 default_model=settings.model_architect,
                 architect_extract_model=settings.model_architect,
             )
-            llm_client = OpenAIClient(
-                api_key=settings.openai_api_key,
-                timeout=60,
-                max_retries=3,
-            )
+            llm_client = ShreckLLMClient(base_url=settings.shreckllm_base_url, timeout=settings.shreckllm_request_timeout_s, max_retries=settings.shreckllm_max_retries)
 
             existing_nodes = _existing_nodes_from_instance(ontology_instance)
             # Always merge with graph catalogue so reconciliation sees persisted entities
@@ -1796,7 +1792,7 @@ async def _run_scene_centric_chunking_test(
     job_id: int,
     ontology_instance_id: str,
     ontology_instance: Any,
-    llm_client: OpenAIClient,
+    llm_client: ShreckLLMClient,
     scene_chunking_model: str,
     architect_model: str,
     ontology_definitions: str,

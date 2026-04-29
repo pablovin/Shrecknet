@@ -11,8 +11,9 @@ from collections import defaultdict
 from typing import Any, Optional
 from uuid import uuid4
 
+from app.core.config_store import LLMModelTarget
 from app.integrations.llm.model_policy import LLMTask, ModelPolicy
-from app.integrations.llm.openai_client import OpenAIClient
+from app.integrations.llm.shreckllm_client import ShreckLLMClient
 from app.integrations.retrieval.neo4j_retriever import GraphRetriever
 from app.graphrag.embedding_runtime import EmbeddingRuntimeError
 from app.jobs.elder.prompts import DECOMPOSE_PROMPT, SYNTHESIS_PROMPT
@@ -30,7 +31,7 @@ from app.models.agent import Agent
 logger = logging.getLogger(__name__)
 
 
-def _llm_usage_event_count(llm_client: OpenAIClient) -> int:
+def _llm_usage_event_count(llm_client: ShreckLLMClient) -> int:
     getter = getattr(llm_client, "get_usage_event_count", None)
     if callable(getter):
         try:
@@ -40,7 +41,7 @@ def _llm_usage_event_count(llm_client: OpenAIClient) -> int:
     return 0
 
 
-def _llm_usage_since(llm_client: OpenAIClient, start_index: int) -> dict[str, Any]:
+def _llm_usage_since(llm_client: ShreckLLMClient, start_index: int) -> dict[str, Any]:
     getter = getattr(llm_client, "get_usage_summary_since", None)
     if callable(getter):
         try:
@@ -85,7 +86,7 @@ class ElderOrchestrator:
 
     def __init__(
         self,
-        llm_client: OpenAIClient,
+        llm_client: ShreckLLMClient,
         model_policy: ModelPolicy,
         graph_retriever: GraphRetriever,
         default_top_k: int = 8,
@@ -100,10 +101,12 @@ class ElderOrchestrator:
         self.fast_first_min_top_score = 0.42
         self.last_retrieval_debug: list[dict[str, Any]] = []
 
-    def _query_model(self, fallback_task: LLMTask) -> str:
+    def _query_model(self, fallback_task: LLMTask) -> LLMModelTarget:
         model = getattr(self.model_policy, "model_elder", None)
+        if isinstance(model, LLMModelTarget):
+            return model
         if isinstance(model, str) and model.strip():
-            return model.strip()
+            return LLMModelTarget(provider="openai", name=model.strip())
         return self.model_policy.get_model(fallback_task)
 
     async def execute(

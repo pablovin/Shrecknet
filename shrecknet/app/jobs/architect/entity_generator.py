@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from app.integrations.llm.model_policy import LLMTask, ModelPolicy
-from app.integrations.llm.openai_client import OpenAIClient
+from app.integrations.llm.shreckllm_client import ShreckLLMClient
 from app.jobs.architect.prompts import (
     ARCHITECT_PROPERTY_EXTRACTION_PROMPT,
     ARCHITECT_PROPERTY_UPDATE_PROMPT,
@@ -38,7 +38,7 @@ class EntityGenerator:
 
     def __init__(
         self,
-        llm_client: OpenAIClient,
+        llm_client: ShreckLLMClient,
         model_policy: ModelPolicy,
         *,
         concurrent_extractions: int = 4,

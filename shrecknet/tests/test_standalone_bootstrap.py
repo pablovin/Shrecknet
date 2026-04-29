@@ -3,7 +3,12 @@ import pytest
 from sqlalchemy import select
 
 from app.core import config_store
-from app.core.config_store import get_settings, reload_settings, update_settings
+from app.core.config_store import (
+    LLMModelTarget,
+    get_settings,
+    reload_settings,
+    update_settings,
+)
 from app.api.routers.graphrag import ensure_index
 from app.graphrag import embedding_service
 from app.db import jobs_session, session as db_session
@@ -152,21 +157,32 @@ def test_config_store_overrides_non_bootstrap_env_but_not_bootstrap_env(
     _reset_runtime_state()
 
     initial = get_settings()
-    assert initial.model_novelist == "gpt-5-nano"
+    assert initial.model_novelist == LLMModelTarget(provider="openai", name="gpt-5-nano")
     assert initial.database_url == env_db_url
 
     updated = update_settings(
         {
-            "model_novelist": "db-model",
+            "model_novelist": {"provider": "openai", "name": "db-model"},
             "database_url": f"sqlite:///{tmp_path / 'db-value.db'}",
         }
     )
-    assert updated.model_novelist == "db-model"
+    assert updated.model_novelist == LLMModelTarget(provider="openai", name="db-model")
     assert updated.database_url == env_db_url
 
     reloaded = reload_settings()
-    assert reloaded.model_novelist == "db-model"
+    assert reloaded.model_novelist == LLMModelTarget(provider="openai", name="db-model")
     assert reloaded.database_url == env_db_url
+
+
+def test_config_store_accepts_legacy_string_model_updates(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("SHRECKNET_DATA_DIR", str(tmp_path))
+    _reset_runtime_state()
+
+    updated = update_settings({"model_elder": "legacy-elder-model"})
+    assert updated.model_elder == LLMModelTarget(provider="openai", name="legacy-elder-model")
+
+    reloaded = reload_settings()
+    assert reloaded.model_elder == LLMModelTarget(provider="openai", name="legacy-elder-model")
 
 
 @pytest.mark.asyncio

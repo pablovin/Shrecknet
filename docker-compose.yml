@@ -13,6 +13,17 @@ x-shrecknet-env: &shrecknet-env
   SHRECKNET_NEO4J_PASSWORD: "${SHRECKNET_NEO4J_PASSWORD:-VeryStrongPass123}"
   SHRECKNET_JWT_PRIVATE_KEY_PEM: "${SHRECKNET_JWT_PRIVATE_KEY_PEM:-}"
   SHRECKNET_JWT_PUBLIC_KEY_PEM: "${SHRECKNET_JWT_PUBLIC_KEY_PEM:-}"
+  SHRECKNET_SHRECKLLM_BASE_URL: "${SHRECKNET_SHRECKLLM_BASE_URL:-http://shreckllm:8110}"
+  SHRECKNET_SHRECKLLM_REQUEST_TIMEOUT_S: "${SHRECKNET_SHRECKLLM_REQUEST_TIMEOUT_S:-60}"
+  SHRECKNET_SHRECKLLM_MAX_RETRIES: "${SHRECKNET_SHRECKLLM_MAX_RETRIES:-2}"
+
+x-shreckllm-env: &shreckllm-env
+  PYTHONUNBUFFERED: "1"
+  SHRECKLLM_HOST: 0.0.0.0
+  SHRECKLLM_PORT: 8110
+  SHRECKLLM_SHRECKNET_API_BASE_URL: "http://shrecknet_api:8100"
+  SHRECKLLM_CORS_ALLOW_ORIGINS: '${SHRECKLLM_CORS_ALLOW_ORIGINS:-["http://localhost:3000","http://127.0.0.1:3000","http://localhost:5173","http://127.0.0.1:5173","http://localhost:8100"]}'
+  SHRECKLLM_REDIS_URL: "${SHRECKLLM_REDIS_URL:-redis://redis:6379/2}"
 
 services:
   # One-shot model prefetch so API/worker do not depend on first-request internet download.
@@ -253,6 +264,29 @@ services:
       timeout: 3s
       retries: 5
 
+  # Local LLM runtime for shreckLLM
+  ollama:
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+
+  ollama_model_pull:
+    image: curlimages/curl:8.8.0
+    restart: "no"
+    depends_on:
+      ollama:
+        condition: service_started
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        sleep 5
+        curl -sS -X POST http://ollama:11434/api/pull \
+          -d '{"name":"'"${SHRECKLLM_BOOTSTRAP_LOCAL_DEFAULT_MODEL:-gemma3:4b}"'"}'
+
   # Neo4j graph store used by GraphRAG and ontology features
   neo4j:
     image: neo4j:5-community
@@ -342,6 +376,36 @@ services:
       shrecknet_api:
         condition: service_started
 
+  # Standalone local-LLM service (uses shared Redis + Ollama)
+  shreckllm:
+    build:
+      context: ./shreckLLM
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    init: true
+    environment: *shreckllm-env
+    ports:
+      - "8111:8110"
+    volumes:
+      - ./shreckLLM/databases:/app/databases
+    depends_on:
+      redis:
+        condition: service_healthy
+      ollama:
+        condition: service_started
+      ollama_model_pull:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8110/health', timeout=5).read()"
+          || exit 1
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
   shrecknet_ready:
     image: alpine:3.20
     depends_on:
@@ -350,6 +414,8 @@ services:
       neo4j:
         condition: service_healthy
       shrecknet_api:
+        condition: service_healthy
+      shreckllm:
         condition: service_healthy
     command:
       - /bin/sh
@@ -360,14 +426,19 @@ services:
         echo "   • Swagger docs:  http://localhost:8100/docs"
         echo "   • OpenAPI JSON:  http://localhost:8100/openapi.json"
         echo "   • Shared Redis:  redis://host.docker.internal:6380/0"
+        echo "🤖 shreckLLM is ready at http://localhost:8111"
+        echo "   • LLM config API: http://localhost:8111/config"
+        echo "   • Internal URL:  http://shreckllm:8110"
+        echo "   • Ollama API:    http://localhost:11434"
         echo "   • Neo4j browser: http://localhost:7475"
         echo "   • Neo4j bolt:    bolt://localhost:7688"
-        echo "✅ Shrecknet is running on port: 8100"
+        echo "✅ Shrecknet + shreckLLM stack is running"
     restart: "no"
 
 volumes:
   redis-data:
   hf-model-cache:
+  ollama-data:
   neo4j-data:
   neo4j-logs:
   neo4j-import:

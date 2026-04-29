@@ -8,7 +8,7 @@ from html import unescape
 from html.parser import HTMLParser
 from typing import Any
 
-from app.integrations.llm.openai_client import OpenAIClient
+from app.integrations.llm.shreckllm_client import ShreckLLMClient
 from app.jobs.architect import prompts as architect_prompts
 
 
@@ -381,7 +381,7 @@ def _serialize_scenes_for_unifier(scenes: list[dict[str, Any]]) -> str:
 
 async def _run_scene_unifier(
     *,
-    llm_client: OpenAIClient,
+    llm_client: ShreckLLMClient,
     model: str,
     scenes: list[dict[str, Any]],
     paragraph_count: int,
@@ -414,7 +414,7 @@ async def _run_scene_unifier(
 
 async def segment_chunk_into_scenes(
     *,
-    llm_client: OpenAIClient,
+    llm_client: ShreckLLMClient,
     model: str,
     marked_paragraphs: str,
     paragraph_count: int,

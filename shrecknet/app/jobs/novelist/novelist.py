@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable
 
 from app.integrations.llm.model_policy import LLMTask, ModelPolicy
-from app.integrations.llm.openai_client import OpenAIClient
+from app.integrations.llm.shreckllm_client import ShreckLLMClient
 from app.jobs.architect.prompts import (
     ARCHITECT_ENTITY_PROPOSAL_PROMPT,
     ARECHITECT_MILESTONE_PROPOSAL_PROMPT,
@@ -56,7 +56,7 @@ class NovelistOrchestrator:
     def __init__(
         self,
         *,
-        llm_client: OpenAIClient,
+        llm_client: ShreckLLMClient,
         model_policy: ModelPolicy,
         max_concurrency: int = 10,
         elder_query_concurrency: int = 1,

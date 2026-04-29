@@ -7,11 +7,11 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db_session
-from app.core.config_store import get_settings, is_openai_configured
+from app.core.config_store import get_settings, is_shreckllm_configured
 from app.graphrag.embedding_runtime import EmbeddingRuntimeError
 from app.graph.neo4j import get_driver
 from app.integrations.llm.model_policy import ModelPolicy
-from app.integrations.llm.openai_client import OpenAIClient
+from app.integrations.llm.shreckllm_client import ShreckLLMClient
 from app.integrations.retrieval.neo4j_retriever import Neo4jGraphRetriever
 from app.jobs.elder.elder import ElderOrchestrator
 from app.jobs.elder.schemas import ElderQueryRequest, ElderQueryResponse
@@ -32,16 +32,16 @@ async def get_llm_client():
     """Dependency to get LLM client."""
     settings = get_settings()
 
-    if not is_openai_configured(settings):
+    if not is_shreckllm_configured(settings):
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="OpenAI API key not configured",
+            detail="shreckLLM is not configured",
         )
 
-    client = OpenAIClient(
-        api_key=settings.openai_api_key,
-        timeout=15,
-        max_retries=2,
+    client = ShreckLLMClient(
+        base_url=settings.shreckllm_base_url,
+        timeout=settings.shreckllm_request_timeout_s,
+        max_retries=settings.shreckllm_max_retries,
     )
     try:
         yield client
@@ -75,7 +75,7 @@ async def get_graph_retriever() -> Neo4jGraphRetriever:
 
 
 async def get_elder_orchestrator(
-    llm_client: OpenAIClient = Depends(get_llm_client),
+    llm_client: ShreckLLMClient = Depends(get_llm_client),
     model_policy: ModelPolicy = Depends(get_model_policy),
     graph_retriever: Neo4jGraphRetriever = Depends(get_graph_retriever),
 ) -> ElderOrchestrator:

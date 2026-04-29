@@ -8,10 +8,10 @@ from types import SimpleNamespace
 from typing import Any
 
 from app.celery_app import celery_app
-from app.core.config_store import get_settings, is_openai_configured
+from app.core.config_store import get_settings, is_shreckllm_configured
 from app.db.session import AsyncSessionMaker
 from app.integrations.llm.model_policy import ModelPolicy
-from app.integrations.llm.openai_client import OpenAIClient
+from app.integrations.llm.shreckllm_client import ShreckLLMClient
 from app.integrations.retrieval.neo4j_retriever import Neo4jGraphRetriever
 from app.graph.neo4j import get_driver
 from app.jobs.elder.elder import ElderOrchestrator
@@ -128,8 +128,8 @@ async def _execute_run(
     job_id: int,
 ) -> dict[str, Any]:
     settings = get_settings()
-    if not is_openai_configured(settings):
-        raise RuntimeError("OpenAI API key not configured")
+    if not is_shreckllm_configured(settings):
+        raise RuntimeError("shreckLLM is not configured")
     async with AsyncSessionMaker() as session:
         repo = NovelistRepository(session)
         agent_repo = AgentRepository(session)
@@ -142,11 +142,7 @@ async def _execute_run(
         if not novelist_agent:
             raise ValueError("Agent not found")
 
-        llm_client = OpenAIClient(
-            api_key=settings.openai_api_key,
-            timeout=180,
-            max_retries=3,
-        )
+        llm_client = ShreckLLMClient(base_url=settings.shreckllm_base_url, timeout=settings.shreckllm_request_timeout_s, max_retries=settings.shreckllm_max_retries)
         try:
             await update_job_progress(job_id, 0.05, {"status": "preparing orchestrator"})
             model_policy = ModelPolicy(

@@ -7,10 +7,10 @@ from neo4j import AsyncSession as AsyncNeo4jSession
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db_session
-from app.core.config_store import get_settings, is_openai_configured
+from app.core.config_store import get_settings, is_shreckllm_configured
 from app.graphrag.embedding_runtime import EmbeddingRuntimeError
 from app.graph.neo4j import get_neo4j_session
-from app.integrations.llm.openai_client import OpenAIClient
+from app.integrations.llm.shreckllm_client import ShreckLLMClient
 from app.jobs.librarian.librarian import LibrarianOrchestrator
 from app.jobs.librarian.schemas import LibrarianQueryRequest, LibrarianQueryResponse
 from app.models.user import User
@@ -26,16 +26,16 @@ async def get_llm_client():
     """Dependency to get LLM client."""
     settings = get_settings()
 
-    if not is_openai_configured(settings):
+    if not is_shreckllm_configured(settings):
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="OpenAI API key not configured",
+            detail="shreckLLM is not configured",
         )
 
-    client = OpenAIClient(
-        api_key=settings.openai_api_key,
-        timeout=60,
-        max_retries=3,
+    client = ShreckLLMClient(
+        base_url=settings.shreckllm_base_url,
+        timeout=settings.shreckllm_request_timeout_s,
+        max_retries=settings.shreckllm_max_retries,
     )
     try:
         yield client
@@ -51,7 +51,7 @@ async def get_pdf_embedding_service(
 
 
 async def get_librarian_orchestrator(
-    llm_client: OpenAIClient = Depends(get_llm_client),
+    llm_client: ShreckLLMClient = Depends(get_llm_client),
     pdf_embedding_service: PdfEmbeddingService = Depends(get_pdf_embedding_service),
 ) -> LibrarianOrchestrator:
     """Dependency to get Librarian orchestrator."""

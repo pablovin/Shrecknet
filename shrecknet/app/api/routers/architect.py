@@ -14,7 +14,7 @@ from app.api.deps import (
     get_current_user,
     get_db_session,
 )
-from app.core.config_store import get_settings, is_openai_configured
+from app.core.config_store import get_settings, is_shreckllm_configured
 from app.models.agent import Agent
 from app.models.architect import ArchitectProposal, ArchitectProposalStatus, ArchitectProposalType
 from app.models.user import User
@@ -93,10 +93,10 @@ async def request_architect_analysis(
     service: ArchitectService = Depends(get_architect_service),
 ) -> ArchitectAnalysisRunRead:
     settings = get_settings()
-    if not is_openai_configured(settings):
+    if not is_shreckllm_configured(settings):
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="OpenAI API key not configured",
+            detail="shreckLLM is not configured",
         )
     agent_repo = AgentRepository(session)
     agent = await agent_repo.get_by_id(agent_id)

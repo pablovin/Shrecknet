@@ -1,0 +1,63 @@
+name: shreckLLM
+
+services:
+  shreckllm_redis:
+    image: redis:7.2-alpine
+    restart: unless-stopped
+    ports:
+      - "6381:6379"
+    command: redis-server --save 60 1 --loglevel warning
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  ollama:
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+
+  ollama_model_pull:
+    image: curlimages/curl:8.8.0
+    depends_on:
+      - ollama
+    restart: "no"
+    command:
+      - sh
+      - -ec
+      - |
+        sleep 5
+        curl -sS -X POST http://ollama:11434/api/pull -d '{"name":"'"${SHRECKLLM_DEFAULT_MODEL:-gemma3:4b}"'"}'
+
+  shreckllm:
+    build:
+      context: ./shreckLLM
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      SHRECKLLM_HOST: 0.0.0.0
+      SHRECKLLM_PORT: 8110
+      SHRECKLLM_DEFAULT_MODEL: ${SHRECKLLM_DEFAULT_MODEL:-gemma3:4b}
+      SHRECKLLM_OLLAMA_BASE_URL: http://ollama:11434
+      SHRECKLLM_REDIS_URL: redis://shreckllm_redis:6379/2
+      SHRECKLLM_MEMORY_TTL_SECONDS: ${SHRECKLLM_MEMORY_TTL_SECONDS:-3600}
+      SHRECKLLM_MEMORY_MAX_MESSAGES: ${SHRECKLLM_MEMORY_MAX_MESSAGES:-24}
+      SHRECKLLM_MAX_CONCURRENT_REQUESTS: ${SHRECKLLM_MAX_CONCURRENT_REQUESTS:-8}
+      SHRECKLLM_REQUEST_TIMEOUT_SECONDS: ${SHRECKLLM_REQUEST_TIMEOUT_SECONDS:-45}
+      SHRECKLLM_MAX_QUEUE_WAIT_SECONDS: ${SHRECKLLM_MAX_QUEUE_WAIT_SECONDS:-10}
+    ports:
+      - "8110:8110"
+    depends_on:
+      shreckllm_redis:
+        condition: service_healthy
+      ollama:
+        condition: service_started
+      ollama_model_pull:
+        condition: service_completed_successfully
+
+volumes:
+  ollama-data:

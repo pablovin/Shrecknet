@@ -13,11 +13,11 @@ from typing import Any
 from uuid import uuid4
 
 from app.celery_app import celery_app
-from app.core.config_store import get_settings, is_openai_configured
+from app.core.config_store import get_settings, is_shreckllm_configured
 from app.db.session import AsyncSessionMaker
 from app.graph.neo4j import get_driver
 from app.integrations.llm.model_policy import ModelPolicy
-from app.integrations.llm.openai_client import OpenAIClient
+from app.integrations.llm.shreckllm_client import ShreckLLMClient
 from app.jobs.architect.entity_generator import EntityGenerator
 from app.models.ontology import AuthorType as OntologyAuthorType
 from app.models.architect import ArchitectProposalStatus, ArchitectProposalType
@@ -114,8 +114,8 @@ async def _execute_generation(
 ) -> dict[str, Any]:
     total_started_at = perf_counter()
     settings = get_settings()
-    if not is_openai_configured(settings):
-        raise RuntimeError("OpenAI API key not configured")
+    if not is_shreckllm_configured(settings):
+        raise RuntimeError("shreckLLM is not configured")
 
 
     outputs = reviewed_pipeline_output.get("outputs") or {}
@@ -792,11 +792,7 @@ async def _execute_generation(
                 default_model=settings.model_architect,
                 architect_extract_model=settings.model_architect,
             )
-            llm_client = OpenAIClient(
-                api_key=settings.openai_api_key,
-                timeout=60,
-                max_retries=3,
-            )
+            llm_client = ShreckLLMClient(base_url=settings.shreckllm_base_url, timeout=settings.shreckllm_request_timeout_s, max_retries=settings.shreckllm_max_retries)
             generator = EntityGenerator(llm_client, model_policy)
             entity_scene_refs: dict[str, set[str]] = defaultdict(set)
             for scene_ref, related_ids in scene_ref_to_entities.items():

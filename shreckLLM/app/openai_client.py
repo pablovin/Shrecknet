@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from openai import APIConnectionError, APITimeoutError, AsyncOpenAI, RateLimitError
@@ -7,10 +8,15 @@ from openai import APIConnectionError, APITimeoutError, AsyncOpenAI, RateLimitEr
 from app.errors import (
     DependencyUnavailableError,
     InvalidModelError,
+    ProviderAuthenticationError,
+    ProviderBadRequestError,
     ProviderOverloadedError,
+    ProviderPermissionError,
     ProviderTimeoutError,
 )
 from app.schemas import ChatMessage
+
+logger = logging.getLogger(__name__)
 
 
 class OpenAIClient:
@@ -170,8 +176,12 @@ class OpenAIClient:
         kwargs: dict[str, Any] = {
             "model": model,
             "messages": [m.model_dump() for m in messages],
-            "temperature": float(temperature),
         }
+        # GPT-5-family chat models may reject non-default temperature values.
+        # Omit the parameter entirely for those models so the provider default is used.
+        normalized_model = (model or "").strip().lower()
+        if not normalized_model.startswith("gpt-5"):
+            kwargs["temperature"] = float(temperature)
         if max_tokens is not None:
             kwargs["max_tokens"] = int(max_tokens)
 
@@ -184,10 +194,23 @@ class OpenAIClient:
         except APIConnectionError as exc:
             raise DependencyUnavailableError("openai is unreachable") from exc
         except Exception as exc:
-            # Keep error surface simple and consistent for API consumers.
+            status_code = getattr(exc, "status_code", None)
             text = str(exc).lower()
-            if "model" in text and "not" in text and "found" in text:
+            logger.exception(
+                "openai chat request failed status_code=%s error_type=%s",
+                status_code,
+                type(exc).__name__,
+            )
+            if status_code == 400 or ("model" in text and "not" in text and "found" in text):
                 raise InvalidModelError("model not found") from exc
+            if status_code == 401:
+                raise ProviderAuthenticationError("openai authentication failed") from exc
+            if status_code == 403:
+                raise ProviderPermissionError("openai permission denied") from exc
+            if status_code == 429:
+                raise ProviderOverloadedError("openai rate limited") from exc
+            if status_code == 400:
+                raise ProviderBadRequestError("openai rejected request") from exc
             raise DependencyUnavailableError("openai request failed") from exc
 
         text = ""

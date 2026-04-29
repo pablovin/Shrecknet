@@ -19,3 +19,15 @@ class ProviderTimeoutError(ShreckLLMError):
 
 class ProviderOverloadedError(ShreckLLMError):
     """Raised when local service is overloaded."""
+
+
+class ProviderAuthenticationError(ShreckLLMError):
+    """Raised when provider credentials are missing/invalid."""
+
+
+class ProviderPermissionError(ShreckLLMError):
+    """Raised when provider denies access due to permissions."""
+
+
+class ProviderBadRequestError(ShreckLLMError):
+    """Raised when provider rejects request as invalid."""

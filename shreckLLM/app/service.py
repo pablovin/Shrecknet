@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from typing import Any
 
@@ -16,6 +17,8 @@ from app.ollama_client import OllamaClient
 from app.openai_client import OpenAIClient
 from app.provider_registry import ProviderRegistry
 from app.schemas import ChatMessage, ChatRequest, ChatResponse, ChatUsage, ServiceStatusResponse
+
+logger = logging.getLogger(__name__)
 
 
 class ChatService:
@@ -261,9 +264,75 @@ class ChatService:
             temperature=request.temperature,
             max_tokens=request.max_tokens,
         )
+        self._log_backend_usage(
+            provider_id=provider_id,
+            resolved_model=resolved_model,
+            requested_model=requested_model,
+            payload=payload,
+        )
         return {
             "provider_id": provider_id,
             "requested_model": requested_model,
             "resolved_model": resolved_model,
             "result": payload,
         }
+
+    def _log_backend_usage(
+        self,
+        *,
+        provider_id: str,
+        resolved_model: str,
+        requested_model: str | None,
+        payload: dict[str, Any],
+    ) -> None:
+        usage = payload.get("usage") if isinstance(payload, dict) else {}
+        usage = usage if isinstance(usage, dict) else {}
+        completion_tokens = usage.get("completion_tokens")
+        total_tokens = usage.get("total_tokens")
+        prompt_tokens = usage.get("prompt_tokens")
+        provider_request_id = payload.get("provider_request_id") if isinstance(payload, dict) else None
+        logger.info(
+            "llm_backend provider=%s model=%s requested_model=%s request_id=%s prompt_tokens=%s completion_tokens=%s total_tokens=%s",
+            provider_id,
+            resolved_model,
+            requested_model or "<default>",
+            provider_request_id,
+            prompt_tokens,
+            completion_tokens,
+            total_tokens,
+        )
+
+        if provider_id != "ollama":
+            return
+        raw = payload.get("raw") if isinstance(payload, dict) else None
+        raw = raw if isinstance(raw, dict) else {}
+        eval_count = raw.get("eval_count")
+        eval_duration_ns = raw.get("eval_duration")
+        prompt_eval_count = raw.get("prompt_eval_count")
+        prompt_eval_duration_ns = raw.get("prompt_eval_duration")
+
+        # Ollama reports durations in nanoseconds; derive practical timing values when possible.
+        ms_per_token = None
+        tok_per_s = None
+        if isinstance(eval_count, int) and eval_count > 0 and isinstance(eval_duration_ns, int) and eval_duration_ns > 0:
+            eval_duration_ms = eval_duration_ns / 1_000_000.0
+            ms_per_token = eval_duration_ms / float(eval_count)
+            tok_per_s = float(eval_count) / (eval_duration_ns / 1_000_000_000.0)
+        prompt_ms_per_token = None
+        if (
+            isinstance(prompt_eval_count, int)
+            and prompt_eval_count > 0
+            and isinstance(prompt_eval_duration_ns, int)
+            and prompt_eval_duration_ns > 0
+        ):
+            prompt_ms_per_token = (prompt_eval_duration_ns / 1_000_000.0) / float(prompt_eval_count)
+
+        logger.info(
+            "ollama_timing model=%s prompt_tokens=%s completion_tokens=%s completion_ms_per_token=%s completion_tok_per_s=%s prompt_ms_per_token=%s",
+            resolved_model,
+            prompt_eval_count,
+            eval_count,
+            f"{ms_per_token:.2f}" if ms_per_token is not None else "n/a",
+            f"{tok_per_s:.2f}" if tok_per_s is not None else "n/a",
+            f"{prompt_ms_per_token:.2f}" if prompt_ms_per_token is not None else "n/a",
+        )

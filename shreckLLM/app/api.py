@@ -7,7 +7,10 @@ from app.config_store import RuntimeConfigUpdate, ProviderDefaults, reload_runti
 from app.errors import (
     DependencyUnavailableError,
     InvalidModelError,
+    ProviderAuthenticationError,
+    ProviderBadRequestError,
     ProviderOverloadedError,
+    ProviderPermissionError,
     ProviderTimeoutError,
 )
 from app.schemas import (
@@ -55,6 +58,12 @@ async def chat(payload: ChatRequest, service: ChatService = Depends(get_service)
         return await service.chat(payload)
     except InvalidModelError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ProviderBadRequestError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ProviderAuthenticationError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    except ProviderPermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     except ProviderOverloadedError as exc:
         raise HTTPException(status_code=429, detail=str(exc)) from exc
     except ProviderTimeoutError as exc:

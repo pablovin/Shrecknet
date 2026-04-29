@@ -10,13 +10,19 @@ Provides endpoints to:
 """
 
 import logging
+import hashlib
+import hmac
+import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from urllib.parse import urlencode
 from typing import Any
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse, StreamingResponse
 
 from app.api.deps import get_current_admin_user
+from app.core.config import get_settings
 from app.graph.neo4j import get_neo4j_session
 from app.models.background_job import AuthorType, JobType
 from app.models.user import User
@@ -39,6 +45,20 @@ def _iter_file_chunks(path: Path, chunk_size: int = 1024 * 1024):
             if not chunk:
                 break
             yield chunk
+
+
+SIGNED_DOWNLOAD_TTL_SECONDS = 120
+
+
+def _download_signature_secret() -> bytes:
+    settings = get_settings()
+    base = settings.jwt_public_key_pem or settings.jwt_private_key_pem or settings.app_name
+    return base.encode("utf-8")
+
+
+def _build_download_signature(filename: str, expires_at: int, user_id: str) -> str:
+    payload = f"{filename}:{expires_at}:{user_id}".encode("utf-8")
+    return hmac.new(_download_signature_secret(), payload, hashlib.sha256).hexdigest()
 
 
 @router.post("/import-old-db", status_code=status.HTTP_202_ACCEPTED)
@@ -204,6 +224,48 @@ async def download_backup(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to download backup: {str(e)}",
         )
+
+
+@router.post("/{filename}/download-link")
+async def create_signed_download_link(
+    filename: str,
+    current_user: User = Depends(get_current_admin_user),
+) -> dict[str, Any]:
+    backup_service = BackupService()
+    backup_service.get_backup_path(filename)
+    expires_at = int((datetime.now(timezone.utc) + timedelta(seconds=SIGNED_DOWNLOAD_TTL_SECONDS)).timestamp())
+    user_id = str(current_user.id)
+    sig = _build_download_signature(filename, expires_at, user_id)
+    query = urlencode({"filename": filename, "expires": str(expires_at), "user_id": user_id, "sig": sig})
+    return {
+        "url": f"/backups/download-signed?{query}",
+        "expires_at": datetime.fromtimestamp(expires_at, tz=timezone.utc).isoformat(),
+        "ttl_seconds": SIGNED_DOWNLOAD_TTL_SECONDS,
+    }
+
+
+@router.get("/download-signed")
+async def download_backup_signed(
+    filename: str,
+    expires: int,
+    user_id: str,
+    sig: str,
+) -> StreamingResponse:
+    if datetime.now(timezone.utc).timestamp() > expires:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Signed URL expired")
+    expected_sig = _build_download_signature(filename, expires, user_id)
+    if not hmac.compare_digest(sig, expected_sig):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid signed URL")
+    backup_service = BackupService()
+    backup_path = backup_service.get_backup_path(filename)
+    headers = {
+        "Content-Disposition": f'attachment; filename="{filename}"',
+    }
+    return StreamingResponse(
+        _iter_file_chunks(backup_path),
+        media_type="application/gzip",
+        headers=headers,
+    )
 
 
 @router.get("/{filename}")

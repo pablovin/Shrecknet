@@ -36,6 +36,35 @@ async def test_ollama_chat_parses_response() -> None:
 
 
 @pytest.mark.asyncio
+async def test_ollama_chat_falls_back_to_generate() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/chat":
+            return httpx.Response(404, json={"error": "not found"})
+        if request.url.path == "/api/generate":
+            return httpx.Response(
+                200,
+                json={
+                    "response": "pong-generate",
+                    "prompt_eval_count": 8,
+                    "eval_count": 4,
+                },
+            )
+        return httpx.Response(404)
+
+    client = OllamaClient(base_url="http://test", timeout_s=10)
+    client._client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="http://test")
+
+    out = await client.chat(
+        model="m",
+        messages=[ChatMessage(role="user", content="ping")],
+        temperature=0.7,
+        max_tokens=100,
+    )
+    assert out["text"] == "pong-generate"
+    assert out["usage"]["total_tokens"] == 12
+
+
+@pytest.mark.asyncio
 async def test_ollama_maps_404_to_invalid_model() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         del request

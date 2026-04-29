@@ -132,13 +132,13 @@ class ElderQueryRequest(BaseModel):
         description="Legacy retrieval scope. Decomposition target_data_type is preferred.",
     )
     candidate_limit: Optional[int] = Field(
-        40,
+        120,
         ge=5,
         le=200,
         description="Max chunk candidates before node-level reranking",
     )
     rerank_limit: Optional[int] = Field(
-        20,
+        50,
         ge=1,
         le=100,
         description="Max node candidates after reranking before final top-k",

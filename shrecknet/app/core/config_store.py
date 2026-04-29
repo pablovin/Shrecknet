@@ -166,7 +166,7 @@ class Settings(BaseSettings):
     model_librarian: LLMModelTarget = Field(
         default_factory=lambda: LLMModelTarget(provider="openai", name="gpt-5-nano")
     )
-    default_top_k: int = 8
+    default_top_k: int = 20
     embedding_model_id: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
     embedding_dimension: int = 384
     embedding_device: str = "cpu"

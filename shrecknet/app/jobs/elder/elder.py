@@ -89,7 +89,7 @@ class ElderOrchestrator:
         llm_client: ShreckLLMClient,
         model_policy: ModelPolicy,
         graph_retriever: GraphRetriever,
-        default_top_k: int = 8,
+        default_top_k: int = 20,
     ):
         self.llm_client = llm_client
         self.model_policy = model_policy
@@ -130,6 +130,12 @@ class ElderOrchestrator:
         run_usage_start = _llm_usage_event_count(self.llm_client)
         step_usage_breakdown: dict[str, dict[str, Any]] = {}
         top_k = request.top_k or self.default_top_k
+        effective_candidate_limit = (
+            request.candidate_limit if request.candidate_limit is not None else 120
+        )
+        effective_rerank_limit = (
+            request.rerank_limit if request.rerank_limit is not None else 50
+        )
         ontology_ids = [ont.id for ont in agent.ontologies]
 
         # Layer 1: memory summary
@@ -218,8 +224,8 @@ class ElderOrchestrator:
             intents=intents,
             ontology_ids=ontology_ids,
             top_k=top_k,
-            candidate_limit=request.candidate_limit,
-            rerank_limit=request.rerank_limit,
+            candidate_limit=effective_candidate_limit,
+            rerank_limit=effective_rerank_limit,
         )
 
         if should_expand_after_first_pass and self._should_expand_after_first_pass(
@@ -254,8 +260,8 @@ class ElderOrchestrator:
                     intents=expanded_intents,
                     ontology_ids=ontology_ids,
                     top_k=top_k,
-                    candidate_limit=request.candidate_limit,
-                    rerank_limit=request.rerank_limit,
+                    candidate_limit=effective_candidate_limit,
+                    rerank_limit=effective_rerank_limit,
                 )
                 intents = expanded_intents
             timings["decompose_ms"] = round(
@@ -591,7 +597,17 @@ class ElderOrchestrator:
                 "target_data_type": r["intent"].target_data_type,
                 "duration_ms": r["duration_ms"],
                 "counters": r["debug_stats"],
-                "top_node_ids": [c.node_id for c in r["chunks"][:5]],
+                "top_nodes": [
+                    {
+                        "node_id": c.node_id,
+                        "node_label": c.node_label,
+                        "score": c.score,
+                        "node_score": c.node_score,
+                        "chunk_type": c.chunk_type,
+                        "score_breakdown": c.score_breakdown,
+                    }
+                    for c in r["chunks"][:5]
+                ],
             }
             for r in results
         ]

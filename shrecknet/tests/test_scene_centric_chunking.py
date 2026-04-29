@@ -147,11 +147,10 @@ def test_normalize_scene_ranges_repairs_gaps_in_tolerant_mode() -> None:
 
 
 @pytest.mark.asyncio
-async def test_segment_chunk_into_scenes_applies_unifier_merge() -> None:
+async def test_segment_chunk_into_scenes_returns_scene_milestones_in_single_call() -> None:
     client = _FakeLLMClient(
         responses=[
-            '{"scenes":[{"scene_id":0,"name":"A","description":"A","start_paragraph":1,"end_paragraph":1},{"scene_id":1,"name":"B","description":"B","start_paragraph":2,"end_paragraph":2},{"scene_id":2,"name":"C","description":"C","start_paragraph":3,"end_paragraph":3}]}',
-            '{"scenes":[{"scene_id":0,"name":"AB","description":"Merged","start_paragraph":1,"end_paragraph":2},{"scene_id":1,"name":"C","description":"C","start_paragraph":3,"end_paragraph":3}]}',
+            '{"scenes":[{"scene_id":0,"name":"A","description":"A","start_paragraph":1,"end_paragraph":2,"milestones":[{"title":"Open","description":"Opens","boundary_type":"begin"},{"title":"Close","description":"Closes","boundary_type":"end"}]},{"scene_id":1,"name":"B","description":"B","start_paragraph":3,"end_paragraph":3,"milestones":[{"title":"Turn","description":"Turns","boundary_type":"begin"},{"title":"End","description":"Ends","boundary_type":"end"}]}]}',
         ]
     )
 
@@ -168,15 +167,15 @@ async def test_segment_chunk_into_scenes_applies_unifier_merge() -> None:
     assert scenes[0]["start_paragraph"] == 1
     assert scenes[0]["end_paragraph"] == 2
     assert "[P2] two" in scenes[0]["text"]
-    assert "Scenes to refine:" in client.prompts[1]
+    assert len(client.prompts) == 1
+    assert len(scenes[0]["milestones"]) == 2
 
 
 @pytest.mark.asyncio
-async def test_segment_chunk_into_scenes_falls_back_when_unifier_invalid() -> None:
+async def test_segment_chunk_into_scenes_scene_without_milestones_defaults_to_empty() -> None:
     client = _FakeLLMClient(
         responses=[
-            '{"scenes":[{"scene_id":0,"name":"A","description":"A","start_paragraph":1,"end_paragraph":1},{"scene_id":1,"name":"B","description":"B","start_paragraph":2,"end_paragraph":3}]}',
-            '{"scenes":[{"scene_id":0,"name":"Broken","description":"Bad coverage","start_paragraph":2,"end_paragraph":3}]}',
+            '{"scenes":[{"scene_id":0,"name":"A","description":"A","start_paragraph":1,"end_paragraph":1},{"scene_id":1,"name":"B","description":"B","start_paragraph":2,"end_paragraph":3,"milestones":[{"title":"Close","description":"Closes","boundary_type":"end"}]}]}',
         ]
     )
 
@@ -190,7 +189,5 @@ async def test_segment_chunk_into_scenes_falls_back_when_unifier_invalid() -> No
     )
 
     assert len(scenes) == 2
-    assert scenes[0]["start_paragraph"] == 1
-    assert scenes[0]["end_paragraph"] == 1
-    assert scenes[1]["start_paragraph"] == 2
-    assert scenes[1]["end_paragraph"] == 3
+    assert scenes[0]["milestones"] == []
+    assert len(scenes[1]["milestones"]) == 1

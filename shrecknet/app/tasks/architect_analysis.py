@@ -20,7 +20,6 @@ from app.integrations.retrieval.neo4j_retriever import Neo4jGraphRetriever
 from app.jobs.architect.prompts import (
     ARCHITECT_ENTITY_PROPOSAL_PROMPT,
     ARCHITECT_ENTITY_RECONCILATION_PROMPT,
-    ARECHITECT_MILESTONE_PROPOSAL_PROMPT,
 )
 from app.jobs.architect.schemas import ChunkExtractionResponse, ReconciliationResponse
 from app.jobs.architect.scene_centric_chunking import (
@@ -745,9 +744,79 @@ def _flatten_scene_inputs(chunk_results: list[dict[str, Any]]) -> list[dict[str,
                     "scene_name": scene.get("name") or "",
                     "scene_description": scene.get("description") or "",
                     "scene_text": scene.get("text") or "",
+                    "scene_milestones": scene.get("milestones") or [],
                 }
             )
     return scenes
+
+
+def _build_milestones_from_scene_inputs(
+    *,
+    scene_inputs: list[dict[str, Any]],
+    scene_id_by_ref: dict[str, str],
+    source_entity_by_ref: dict[str, str | None],
+    author_id: str,
+) -> dict[str, Any]:
+    by_scene: list[dict[str, Any]] = []
+    all_milestones: list[dict[str, Any]] = []
+
+    for scene in scene_inputs:
+        scene_ref = str(scene.get("scene_ref") or "")
+        scene_id = scene_id_by_ref.get(scene_ref) or str(scene.get("scene_id") or "")
+        source_entity_instance_id = source_entity_by_ref.get(scene_ref)
+        raw_items = scene.get("scene_milestones")
+        raw_items = raw_items if isinstance(raw_items, list) else []
+        milestones: list[dict[str, Any]] = []
+
+        for raw_idx, item in enumerate(raw_items, start=1):
+            if not isinstance(item, dict):
+                continue
+            description = _safe_json_text(item.get("description"), "")
+            boundary_type = _normalize_boundary_type(item.get("boundary_type"))
+            title = _coerce_milestone_title(
+                raw_title=item.get("title") or item.get("name") or item.get("label"),
+                description=description,
+                boundary_type=boundary_type,
+                index=raw_idx,
+            )
+            mentions = item.get("mentions") if isinstance(item.get("mentions"), list) else []
+            mentions = [str(value).strip() for value in mentions if str(value).strip()]
+            adjacent_to = item.get("adjacent_to") if isinstance(item.get("adjacent_to"), list) else []
+            adjacent_to = [str(value).strip() for value in adjacent_to if str(value).strip()]
+            milestones.append(
+                {
+                    "milestone_ref": f"milestone-{uuid4()}",
+                    "scene_ref": scene_ref,
+                    "scene_id": scene_id,
+                    "title": title,
+                    "label": title,
+                    "description": description,
+                    "boundary_type": boundary_type,
+                    "mentions": mentions,
+                    "adjacent_to": adjacent_to,
+                    "related_to": [],
+                    "milestone_order": raw_idx,
+                    "author": {
+                        "created_by_type": "agent",
+                        "created_by_author": author_id,
+                    },
+                    "derived_from": {
+                        "entity_instance_id": source_entity_instance_id,
+                    },
+                }
+            )
+
+        milestones = _ensure_scene_milestone_boundaries(
+            milestones,
+            scene_ref=scene_ref,
+            scene_id=scene_id,
+            source_entity_instance_id=source_entity_instance_id,
+            author_id=author_id,
+        )
+        by_scene.append({"scene_ref": scene_ref, "scene_id": scene_id, "milestones": milestones})
+        all_milestones.extend(milestones)
+
+    return {"proposed_milestones": all_milestones, "per_scene": by_scene}
 
 
 async def _extract_scene_entities(
@@ -1857,24 +1926,26 @@ async def _run_scene_centric_chunking_test(
     scene_proposal_elapsed_seconds = scene_proposal_phase["elapsed_seconds"]
 
     await update_job_progress(job_id, 0.9, {"status": "Milestone proposal"})
-    step_usage_start = llm_client.get_usage_event_count()
-    milestone_phase = await _run_milestone_proposal_phase(
-        run_id=run_id,
-        llm_client=llm_client,
-        model=architect_model,
-        proposed_scenes=proposed_scenes,
+    milestone_started = perf_counter()
+    scene_id_by_ref = {
+        str(scene.get("scene_ref") or ""): str(scene.get("scene_id") or "")
+        for scene in proposed_scenes
+    }
+    source_entity_by_ref = {
+        str(scene.get("scene_ref") or ""): scene.get("source_entity_instance_id")
+        for scene in proposed_scenes
+    }
+    milestone_phase = _build_milestones_from_scene_inputs(
+        scene_inputs=scene_inputs,
+        scene_id_by_ref=scene_id_by_ref,
+        source_entity_by_ref=source_entity_by_ref,
         author_id=author_id,
-    )
-    _log_step_usage(
-        run_id=run_id,
-        step="milestone_proposal",
-        usage=_format_step_usage_delta(llm_client, step_usage_start),
     )
     proposed_milestones = milestone_phase["proposed_milestones"]
     milestones_per_scene = milestone_phase["per_scene"]
-    removed_scene_refs = milestone_phase["removed_scene_refs"]
-    removed_scene_count = milestone_phase["removed_scene_count"]
-    milestone_proposal_elapsed_seconds = milestone_phase["elapsed_seconds"]
+    removed_scene_refs: list[str] = []
+    removed_scene_count = 0
+    milestone_proposal_elapsed_seconds = round(perf_counter() - milestone_started, 3)
 
     pipeline_output_payload = {
         "run_id": run_id,

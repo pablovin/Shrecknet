@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 
 from app.tasks.architect_analysis import (
+    _build_milestones_from_scene_inputs,
     _build_scene_proposals,
     _classify_entities,
     _classify_entities_with_reconciliation,
@@ -488,3 +489,27 @@ def test_build_scene_proposals_related_to_targets_deduped_entities() -> None:
     assert related[1]["proposal_index"] == 1
     assert related[1]["canonical"] == "londinium"
     assert related[1]["entity_instance_id"] == "node-2"
+
+
+def test_build_milestones_from_scene_inputs_uses_embedded_scene_milestones() -> None:
+    result = _build_milestones_from_scene_inputs(
+        scene_inputs=[
+            {
+                "scene_ref": "chunk_0_scene_0",
+                "scene_milestones": [
+                    {"title": "Opening", "description": "Opens", "boundary_type": "begin"},
+                    {"title": "Closing", "description": "Closes", "boundary_type": "end"},
+                ],
+            }
+        ],
+        scene_id_by_ref={"chunk_0_scene_0": "scene-uuid-1"},
+        source_entity_by_ref={"chunk_0_scene_0": "entity-1"},
+        author_id="author-1",
+    )
+
+    assert len(result["per_scene"]) == 1
+    milestones = result["per_scene"][0]["milestones"]
+    assert len(milestones) == 2
+    assert milestones[0]["scene_id"] == "scene-uuid-1"
+    assert milestones[0]["boundary_type"] == "begin"
+    assert milestones[1]["boundary_type"] == "end"

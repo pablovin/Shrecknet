@@ -365,53 +365,6 @@ def attach_scene_text(
     return enriched
 
 
-def _serialize_scenes_for_unifier(scenes: list[dict[str, Any]]) -> str:
-    payload = [
-        {
-            "scene_id": int(scene.get("scene_id", idx)),
-            "name": str(scene.get("name", "")).strip(),
-            "description": str(scene.get("description", "")).strip(),
-            "start_paragraph": int(scene.get("start_paragraph", -1)),
-            "end_paragraph": int(scene.get("end_paragraph", -1)),
-        }
-        for idx, scene in enumerate(scenes)
-    ]
-    return json.dumps(payload, ensure_ascii=False, indent=2)
-
-
-async def _run_scene_unifier(
-    *,
-    llm_client: ShreckLLMClient,
-    model: str,
-    scenes: list[dict[str, Any]],
-    paragraph_count: int,
-    instructions: str | None = None,
-) -> list[dict[str, Any]]:
-    prompt = architect_prompts.ARCHITECT_SCENE_UNIFIER_PROMPT.format(
-        scene_list=_serialize_scenes_for_unifier(scenes)
-    )
-    instructions_text = str(instructions or "").strip()
-    if instructions_text:
-        prompt = (
-            f"{prompt}\n\nFrontend instructions (authoritative constraints):\n"
-            f"{instructions_text}"
-        )
-    response_text = await llm_client.chat(
-        model=model,
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.1,
-        usage_tag="architect.scene_unifier",
-    )
-
-    payload = json.loads(_extract_json_object(response_text))
-    unified_scenes = payload.get("scenes") or []
-    if not isinstance(unified_scenes, list):
-        raise ValueError("Invalid scene unifier payload: 'scenes' must be a list")
-
-    # Strict mode guarantees no coverage loss after refinement.
-    return _normalize_scene_ranges(unified_scenes, paragraph_count, strict=True)
-
-
 async def segment_chunk_into_scenes(
     *,
     llm_client: ShreckLLMClient,
@@ -443,29 +396,8 @@ async def segment_chunk_into_scenes(
         raise ValueError("Invalid scene segmentation payload: 'scenes' must be a list")
 
     normalized = _normalize_scene_ranges(scenes, paragraph_count, strict=False)
-    unified = normalized
-    unifier_status = "applied"
-    try:
-        unified = await _run_scene_unifier(
-            llm_client=llm_client,
-            model=model,
-            scenes=normalized,
-            paragraph_count=paragraph_count,
-            instructions=instructions,
-        )
-    except Exception as exc:
-        unifier_status = "fallback_original"
-        logger.warning("scene_unifier_failed_using_original: error=%s", exc)
-
-    logger.info(
-        (
-            "scene_unifier_result: status=%s initial_scene_count=%d "
-            "kept_scene_count=%d merged_scene_count=%d"
-        ),
-        unifier_status,
-        len(normalized),
-        len(unified),
-        max(0, len(normalized) - len(unified)),
-    )
-
-    return attach_scene_text(unified, paragraphs)
+    for idx, scene in enumerate(normalized):
+        raw_scene = scenes[idx] if idx < len(scenes) and isinstance(scenes[idx], dict) else {}
+        milestones = raw_scene.get("milestones")
+        scene["milestones"] = milestones if isinstance(milestones, list) else []
+    return attach_scene_text(normalized, paragraphs)

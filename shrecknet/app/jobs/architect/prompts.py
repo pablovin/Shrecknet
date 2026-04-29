@@ -1,4 +1,4 @@
-ARCHITECT_SCENE_CENTRIC_CHUNKING_PROMPT = """You are an expert narrative analyst. Your task is to segment a text into coherent narrative scenes.
+ARCHITECT_SCENE_CENTRIC_CHUNKING_PROMPT = """You are an expert narrative analyst. Your task is to segment a text into coherent narrative scenes and extract graph-worthy milestones per scene.
 
 ----------------
 Input
@@ -12,7 +12,7 @@ You will receive a text divided into numbered paragraphs. Each paragraph is pref
 
 Task
 
-Segment the text into a sequence of scenes.
+Segment the text into a sequence of scenes, then extract milestones for each scene.
 
 A scene is defined as:
 - a contiguous span of paragraphs
@@ -60,6 +60,18 @@ For each scene, output:
 - "description": 1–2 sentence summary of what happens in the scene
 - "start_paragraph": index of first paragraph in the scene
 - "end_paragraph": index of last paragraph in the scene (inclusive)
+- "milestones": list of milestone objects for this scene
+
+Milestone rules:
+- Always return at least 2 milestones per scene.
+- Include at least one "begin" and one "end" boundary milestone.
+- Return 2-4 milestones for normal scenes; up to 6 only for clearly event-dense scenes.
+- Each milestone must be concrete, observable, and grounded in the scene text.
+- "title" must be short (max 6 words), descriptive, and never a numbered placeholder.
+- "description" must describe a concrete action/state change in present tense, a short sentence grounded in the text.
+- "boundary_type" must be one of: begin, end, none.
+- "mentions" is optional and may list aliases explicitly involved in that milestone.
+- "related_to" is optional and may contain relationship hints.
 
 Output Format
 
@@ -72,7 +84,22 @@ Return ONLY valid JSON in the following format:
       "name": "...",
       "description": "...",
       "start_paragraph": 1,
-      "end_paragraph": 4
+      "end_paragraph": 4,
+      "milestones": [
+        {{
+          "title": "short descriptive title",
+          "description": "concrete scene beat in present tense",
+          "boundary_type": "begin|end|none",
+          "mentions": ["optional alias"],
+          "related_to": [
+            {{
+              "entity": "alias",
+              "relationship_label": "verb-like label",
+              "relationship_description": "short phrase"
+            }}
+          ]
+        }}
+      ]
     }}
   ]
 }}
@@ -94,62 +121,6 @@ Make sure:
 
 Paragraphs:
 {marked_paragraphs}
-"""
-
-# Step 1b: Scene refinement and adjacent-scene unification
-ARCHITECT_SCENE_UNIFIER_PROMPT = """You are refining a scene segmentation for a narrative text.
-
-You will receive a list of already extracted scenes. Your task is to merge adjacent scenes when they are actually part of the same continuous narrative unit.
-
-A merge is appropriate when:
-- the scenes occur in the same location or no meaningful location change is present
-- the same interaction, conflict, or event is still unfolding
-- the second scene is a direct continuation, escalation, or immediate consequence of the first
-- there is no meaningful time break
-- the narrative purpose remains the same
-
-Do NOT merge scenes if:
-- a new major event begins
-- a clear location shift occurs
-- a different conflict becomes central
-- a different participant group becomes dominant
-- the narrative purpose clearly changes
-
-Guidelines
-- Prefer fewer, stronger scenes.
-- Preserve chronological order.
-- Preserve full paragraph coverage.
-- Do NOT lose any content.
-- Merge only adjacent scenes.
-
-For each final scene, output:
-- "scene_id": sequential integer starting from 0
-- "name": short, descriptive label (max 6 words)
-- "description": 1-2 sentence summary
-- "start_paragraph": first paragraph index
-- "end_paragraph": last paragraph index
-
-Return ONLY valid JSON in the following format:
-
-{{
-  "scenes": [
-    {{
-      "scene_id": 0,
-      "name": "...",
-      "description": "...",
-      "start_paragraph": 1,
-      "end_paragraph": 10
-    }}
-  ]
-}}
-
-Final check before answering
-Make sure:
-- no adjacent scenes still look mergeable
-- no final scene became too broad or incoherent
-
-Scenes to refine:
-{scene_list}
 """
 
 # Step 2: Scene-level entity extraction

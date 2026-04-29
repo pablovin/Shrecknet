@@ -13,6 +13,7 @@ Uploaded archives are stored in media/backups/upload.
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 import logging
 import shutil
@@ -210,8 +211,13 @@ class BackupService:
 
     async def _prepare_sqlite_restore(self) -> None:
         """Close shared SQLAlchemy engines so SQLite files can be replaced safely."""
-        await get_engine().dispose()
-        await get_jobs_engine().dispose()
+        main_dispose = get_engine().dispose()
+        if inspect.isawaitable(main_dispose):
+            await main_dispose
+
+        jobs_dispose = get_jobs_engine().dispose()
+        if inspect.isawaitable(jobs_dispose):
+            await jobs_dispose
 
     async def _report(
         self,
@@ -256,7 +262,7 @@ class BackupService:
         nodes_result = await session.run(
             """
             MATCH (n)
-            RETURN id(n) AS id, labels(n) AS labels, properties(n) AS properties
+            RETURN elementId(n) AS id, labels(n) AS labels, properties(n) AS properties
             """
         )
         nodes = await nodes_result.data()
@@ -264,9 +270,9 @@ class BackupService:
         rels_result = await session.run(
             """
             MATCH (a)-[r]->(b)
-            RETURN id(r) AS id,
-                   id(a) AS start_node_id,
-                   id(b) AS end_node_id,
+            RETURN elementId(r) AS id,
+                   elementId(a) AS start_node_id,
+                   elementId(b) AS end_node_id,
                    type(r) AS type,
                    properties(r) AS properties
             """
@@ -536,24 +542,28 @@ class BackupService:
 
         clear_summary = await self._wipe_neo4j_graph(session)
 
-        id_mapping: dict[int, int] = {}
+        id_mapping: dict[str, str] = {}
         for node in graph_data.get("nodes", []):
             labels = [lbl for lbl in node.get("labels", []) if isinstance(lbl, str)]
             valid_labels = [lbl for lbl in labels if all(c.isalnum() or c == "_" for c in lbl)]
             if not valid_labels:
                 continue
 
-            query = f"CREATE (n:{':'.join(valid_labels)}) SET n = $properties RETURN id(n) AS new_id"
+            query = f"CREATE (n:{':'.join(valid_labels)}) SET n = $properties RETURN elementId(n) AS new_id"
             result = await session.run(query, properties=node.get("properties", {}))
             rec = await result.single()
             if rec is None:
                 continue
-            id_mapping[int(node.get("id"))] = int(rec["new_id"])
+            old_id = node.get("id")
+            if isinstance(old_id, str):
+                id_mapping[old_id] = str(rec["new_id"])
 
         restored_rels = 0
         for rel in graph_data.get("relationships", []):
-            start_id = id_mapping.get(int(rel.get("start_node_id", -1)))
-            end_id = id_mapping.get(int(rel.get("end_node_id", -1)))
+            start_raw = rel.get("start_node_id")
+            end_raw = rel.get("end_node_id")
+            start_id = id_mapping.get(start_raw) if isinstance(start_raw, str) else None
+            end_id = id_mapping.get(end_raw) if isinstance(end_raw, str) else None
             rel_type = rel.get("type")
             if start_id is None or end_id is None or not isinstance(rel_type, str):
                 continue
@@ -562,8 +572,8 @@ class BackupService:
 
             await session.run(
                 f"""
-                MATCH (a), (b)
-                WHERE id(a) = $start_id AND id(b) = $end_id
+                MATCH (a) WHERE elementId(a) = $start_id
+                MATCH (b) WHERE elementId(b) = $end_id
                 CREATE (a)-[r:{rel_type}]->(b)
                 SET r = $properties
                 """,

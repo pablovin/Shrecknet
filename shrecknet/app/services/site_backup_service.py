@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import inspect
 import shutil
 import tempfile
 import zipfile
@@ -33,8 +34,13 @@ class SiteBackupService:
         return filename, buffer.getvalue()
 
     async def restore_backup_bytes(self, payload: bytes) -> dict[str, object]:
-        await get_engine().dispose()
-        await get_jobs_engine().dispose()
+        main_dispose = get_engine().dispose()
+        if inspect.isawaitable(main_dispose):
+            await main_dispose
+
+        jobs_dispose = get_jobs_engine().dispose()
+        if inspect.isawaitable(jobs_dispose):
+            await jobs_dispose
 
         with tempfile.TemporaryDirectory(prefix="shrecknet_restore_") as tmp_dir:
             extract_root = Path(tmp_dir)

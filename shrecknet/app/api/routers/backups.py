@@ -10,10 +10,11 @@ Provides endpoints to:
 """
 
 import logging
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 
 from app.api.deps import get_current_admin_user
 from app.graph.neo4j import get_neo4j_session
@@ -29,6 +30,15 @@ from neo4j import AsyncSession as AsyncNeo4jSession
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/backups", tags=["backups"])
+
+
+def _iter_file_chunks(path: Path, chunk_size: int = 1024 * 1024):
+    with open(path, "rb") as f:
+        while True:
+            chunk = f.read(chunk_size)
+            if not chunk:
+                break
+            yield chunk
 
 
 @router.post("/import-old-db", status_code=status.HTTP_202_ACCEPTED)
@@ -159,7 +169,7 @@ async def list_backups(
 async def download_backup(
     filename: str,
     current_user: User = Depends(get_current_admin_user),
-) -> FileResponse:
+) -> StreamingResponse:
     """
     Download a backup file.
 
@@ -175,10 +185,13 @@ async def download_backup(
         backup_service = BackupService()
         backup_path = backup_service.get_backup_path(filename)
 
-        return FileResponse(
-            path=str(backup_path),
-            filename=filename,
+        headers = {
+            "Content-Disposition": f'attachment; filename="{filename}"',
+        }
+        return StreamingResponse(
+            _iter_file_chunks(backup_path),
             media_type="application/gzip",
+            headers=headers,
         )
     except FileNotFoundError:
         raise HTTPException(
@@ -197,7 +210,7 @@ async def download_backup(
 async def download_backup_compat(
     filename: str,
     current_user: User = Depends(get_current_admin_user),
-) -> FileResponse:
+) -> StreamingResponse:
     return await download_backup(filename=filename, current_user=current_user)
 
 

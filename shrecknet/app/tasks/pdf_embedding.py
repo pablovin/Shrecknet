@@ -148,6 +148,19 @@ def embed_pdf_book(
                     job_id,
                 )
                 await service.ensure_vector_index()
+                index_info = await service.ensure_vector_index()
+                model_mismatch = index_info.get("embedding_model") != service.embedding_service.model_id
+                dim_mismatch = int(index_info.get("embedding_dim", 0)) != int(service.embedding_service.embed_dim)
+                if model_mismatch or dim_mismatch:
+                    logger.warning(
+                        "pdf_embedding_task stage=index_diagnostic library_item_id=%s job_id=%s index_model=%s service_model=%s index_dim=%s service_dim=%s",
+                        library_item_id,
+                        job_id,
+                        index_info.get("embedding_model"),
+                        service.embedding_service.model_id,
+                        index_info.get("embedding_dim"),
+                        service.embedding_service.embed_dim,
+                    )
 
                 # Embed the book
                 await update_job_progress(
@@ -187,12 +200,14 @@ def embed_pdf_book(
                     "result": result,
                     "deleted_old_chunks": deleted_old,
                     "duplicate_chunk_keys": duplicate_keys,
+                    "index_info": index_info,
                 }
 
         embed_payload = run_async(embed_pdf())
         result = embed_payload["result"]
         deleted_old_chunks = int(embed_payload.get("deleted_old_chunks", 0))
         duplicate_chunk_keys = int(embed_payload.get("duplicate_chunk_keys", 0))
+        index_info = embed_payload.get("index_info", {})
         logger.info(
             "pdf_embedding_task stage=embed_complete library_item_id=%s job_id=%s total_pages=%s embedded_pages=%s missing_pages=%s chunks_created=%s chunks_failed=%s deleted_old_chunks=%s duplicate_chunk_keys=%s status=%s",
             library_item_id,
@@ -211,6 +226,10 @@ def embed_pdf_book(
             raise ValueError(
                 "No text could be extracted from the PDF. "
                 "If this is a scanned/image PDF, OCR support is required."
+            )
+        if duplicate_chunk_keys > 0:
+            raise ValueError(
+                f"Duplicate chunk keys detected for library item {library_item_id}: {duplicate_chunk_keys}"
             )
 
         # Update library item to mark as vectorized
@@ -243,6 +262,7 @@ def embed_pdf_book(
                 {
                     "deleted_old_chunks": deleted_old_chunks,
                     "duplicate_chunk_keys": duplicate_chunk_keys,
+                    "index_info": index_info,
                     "chunks_created": result.get("chunks_created", 0),
                     "chunks_failed": result.get("chunks_failed", 0),
                     "total_pages": result.get("total_pages", 0),

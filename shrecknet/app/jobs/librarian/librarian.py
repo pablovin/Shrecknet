@@ -3,6 +3,9 @@
 import logging
 import re
 from typing import Any
+import httpx
+import time
+import asyncio
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -53,6 +56,10 @@ class LibrarianOrchestrator:
         self.style_model = style_model
         self.fast_mode = fast_mode
         self.max_fast_chunks = max_fast_chunks
+        self.max_answer_chunks = 6
+        self.max_chars_per_chunk_for_answer = 1200
+        self._prewarm_cache_ttl_s = 300.0
+        self._last_model_prewarm_at: dict[str, float] = {}
 
     async def execute(
         self,
@@ -98,6 +105,10 @@ class LibrarianOrchestrator:
                 top_k=top_k,
                 trace=trace,
                 score_threshold=request.score_threshold if request.score_threshold is not None else 0.3,
+                candidate_limit=request.candidate_limit,
+                hybrid_rerank=request.hybrid_rerank,
+                max_chunks_per_item=request.max_chunks_per_item,
+                dynamic_score_floor=request.dynamic_score_floor,
             )
             all_chunks.extend(chunks)
 
@@ -146,7 +157,7 @@ class LibrarianOrchestrator:
                 # Generate answer with proper citations
                 answer = await self._generate_answer_with_style(
                     query=request.query,
-                    chunks=retrieved_chunks,
+                    chunks=retrieved_chunks[: self.max_answer_chunks],
                     writing_style=agent.writing_style,
                     trace=trace,
                 )
@@ -208,6 +219,10 @@ class LibrarianOrchestrator:
         top_k: int,
         trace: list[dict[str, Any]],
         score_threshold: float | None = None,
+        candidate_limit: int | None = None,
+        hybrid_rerank: bool = True,
+        max_chunks_per_item: int | None = None,
+        dynamic_score_floor: bool = False,
     ) -> list[dict[str, Any]]:
         """
         Retrieve relevant chunks from PDFs.
@@ -229,6 +244,10 @@ class LibrarianOrchestrator:
             active_library_item_ids=active_library_item_ids,
             top_k=top_k,
             score_threshold=score_threshold if score_threshold is not None else 0.3,
+            candidate_limit=candidate_limit,
+            hybrid_rerank=hybrid_rerank,
+            max_chunks_per_item=max_chunks_per_item,
+            dynamic_score_floor=dynamic_score_floor,
         )
 
         # Enrich chunks with neighbor pages to improve context quality
@@ -247,6 +266,16 @@ class LibrarianOrchestrator:
                         "active_library_item_ids": active_library_item_ids,
                         "chunks_found": len(chunks),
                         "top_k": top_k,
+                        "candidate_count": max(50, top_k * 8) if candidate_limit is None else candidate_limit,
+                        "post_filter_count": len(chunks),
+                        "post_rerank_count": len(chunks),
+                        "best_vector_score": max((float(ch.get("vector_score", 0.0)) for ch in chunks), default=0.0),
+                        "best_lexical_score": max((float(ch.get("lexical_score", 0.0)) for ch in chunks), default=0.0),
+                        "final_score_range": {
+                            "min": min((float(ch.get("score", 0.0)) for ch in chunks), default=0.0),
+                            "max": max((float(ch.get("score", 0.0)) for ch in chunks), default=0.0),
+                        },
+                        "items_covered": len({int(ch.get("library_item_id", 0)) for ch in chunks}),
                     },
                 }
             )
@@ -344,10 +373,13 @@ class LibrarianOrchestrator:
         chunks_text = ""
         for i, chunk in enumerate(chunks, 1):
             book_title = chunk.book_title or f"Book #{chunk.library_item_id}"
+            chunk_text = (chunk.text or "").strip()
+            if len(chunk_text) > self.max_chars_per_chunk_for_answer:
+                chunk_text = chunk_text[: self.max_chars_per_chunk_for_answer].rstrip() + " ..."
             chunks_text += (
                 f"\n--- Source {i}: {book_title}, Page {chunk.page_number} "
                 f"(library_item_id={chunk.library_item_id}) ---\n"
-                f"{chunk.text}\n"
+                f"{chunk_text}\n"
             )
 
         # Use simplified prompt without subqueries section
@@ -364,15 +396,27 @@ class LibrarianOrchestrator:
             '[text]{cite library_item_id=ID library_item_name="TITLE" page=PAGE}. '
             "Apply the writing style while preserving all facts."
         )
+        await self._maybe_prewarm_model(self.answer_model)
 
-        answer = await self.llm_client.chat(
-            model=self.answer_model,
-            messages=[
-                {"role": "system", "content": system_msg},
-                {"role": "user", "content": prompt},
-            ],
-            temperature=0.3,
-        )
+        try:
+            answer = await self.llm_client.chat(
+                model=self.answer_model,
+                messages=[
+                    {"role": "system", "content": system_msg},
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=0.2,
+                max_tokens=700,
+                usage_tag="librarian_answer",
+            )
+        except Exception as exc:
+            if isinstance(exc, httpx.TimeoutException) or "504" in str(exc):
+                logger.warning("librarian_answer_timeout_fallback: %s", exc)
+                return (
+                    "I found relevant excerpts, but answer generation timed out. "
+                    "Please try again with a narrower question or lower top_k."
+                )
+            raise
 
         if trace is not None:
             trace.append(
@@ -389,6 +433,38 @@ class LibrarianOrchestrator:
             )
 
         return answer
+
+    async def _maybe_prewarm_model(self, model: LLMModelTarget | str) -> None:
+        target = model
+        if isinstance(model, LLMModelTarget):
+            cache_key = f"{model.provider}:{model.name}"
+            provider = model.provider
+            model_name = model.name
+        else:
+            cache_key = str(model)
+            provider = "openai"
+            model_name = str(model)
+        if provider != "ollama":
+            return
+        now = time.monotonic()
+        last_at = self._last_model_prewarm_at.get(cache_key, 0.0)
+        if now - last_at < self._prewarm_cache_ttl_s:
+            return
+        try:
+            await asyncio.wait_for(
+                self.llm_client.chat(
+                    model=target,
+                    messages=[{"role": "user", "content": "ping"}],
+                    temperature=0.0,
+                    max_tokens=1,
+                    usage_tag="librarian_model_prewarm",
+                ),
+                timeout=8.0,
+            )
+            self._last_model_prewarm_at[cache_key] = time.monotonic()
+            logger.info("librarian_model_prewarm_done model=%s", cache_key)
+        except Exception as exc:
+            logger.warning("librarian_model_prewarm_failed model=%s error=%s", cache_key, exc)
 
     def _extract_sources_from_answer(
         self, answer: str, all_chunks: list[RetrievedChunk]

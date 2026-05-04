@@ -35,6 +35,26 @@ class LibrarianQueryRequest(BaseModel):
         le=1.0,
         description="Optional override for similarity score threshold",
     )
+    candidate_limit: int | None = Field(
+        default=None,
+        ge=1,
+        le=500,
+        description="Internal vector candidate pool size before filtering/reranking",
+    )
+    hybrid_rerank: bool = Field(
+        default=True,
+        description="Enable hybrid reranking (vector + lexical)",
+    )
+    max_chunks_per_item: int | None = Field(
+        default=None,
+        ge=1,
+        le=20,
+        description="Optional cap of returned chunks per library item",
+    )
+    dynamic_score_floor: bool = Field(
+        default=False,
+        description="Apply a relative score floor based on best candidate",
+    )
 
 
 class RetrievedChunk(BaseModel):

@@ -34,13 +34,36 @@ class _FakeEmbeddingService:
 
 
 class _FakeResult:
+    def __init__(self, record: dict[str, int] | None = None) -> None:
+        self._record = record or {"count": 1}
+
     async def single(self) -> dict[str, int]:
-        return {"count": 1}
+        return self._record
+
+    def __aiter__(self):
+        async def _empty():
+            if False:
+                yield None
+        return _empty()
 
 
 class _FakeGraphSession:
+    def __init__(self, rows: list[dict[str, object]] | None = None) -> None:
+        self.rows = rows or []
+
     async def run(self, *_args, **_kwargs) -> _FakeResult:
-        return _FakeResult()
+        class _IterResult(_FakeResult):
+            def __init__(self, rows):
+                super().__init__({"count": 1})
+                self._rows = rows
+
+            def __aiter__(self):
+                async def _gen():
+                    for row in self._rows:
+                        yield row
+                return _gen()
+
+        return _IterResult(self.rows)
 
 
 class _ProbePdfEmbeddingService(PdfEmbeddingService):
@@ -154,3 +177,25 @@ async def test_embed_pdf_book_marks_low_text_documents_as_needing_ocr(
     assert result["status"] == "needs_ocr"
     assert result["pages_extracted"] == 0
     assert service.embedded_chunks == []
+
+
+def test_rerank_hybrid_promotes_lexical_match_and_applies_diversity_cap() -> None:
+    service = PdfEmbeddingService(_FakeGraphSession(), embedding_service=_FakeEmbeddingService())
+    chunks = [
+        {"library_item_id": 1, "chunk_index": 1, "text": "alpha beta lore", "vector_score": 0.70, "page_number": 1},
+        {"library_item_id": 1, "chunk_index": 2, "text": "irrelevant text", "vector_score": 0.80, "page_number": 2},
+        {"library_item_id": 2, "chunk_index": 1, "text": "alpha beta alpha", "vector_score": 0.69, "page_number": 8},
+    ]
+    out = service._rerank_and_select_chunks(
+        query_text="alpha beta",
+        chunks=chunks,
+        top_k=2,
+        score_threshold=0.0,
+        hybrid_rerank=True,
+        max_chunks_per_item=1,
+        dynamic_score_floor=False,
+    )
+    assert len(out) == 2
+    assert out[0]["library_item_id"] in (1, 2)
+    assert out[1]["library_item_id"] in (1, 2)
+    assert out[0]["library_item_id"] != out[1]["library_item_id"]

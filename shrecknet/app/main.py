@@ -37,6 +37,7 @@ from app.api.routers import (
     worlds,
 )
 from app.core.config_store import get_settings
+from app.core.config_store import LLMModelTarget
 from app.celery_queue_reaper import reset_jobs_and_queues_on_startup
 from app.db.init_db import init_db_async
 from app.db.init_jobs_db import init_jobs_db
@@ -48,10 +49,12 @@ from app.graphrag.embedding_runtime import (
     stop_embedding_runtime,
 )
 from app.graph.neo4j import ensure_temporal_graph_constraints, get_driver
+from app.integrations.llm.shreckllm_client import ShreckLLMClient
 
 
 logger = logging.getLogger(__name__)
 _embedding_prewarm_task: asyncio.Task | None = None
+_llm_prewarm_task: asyncio.Task | None = None
 
 
 def _effective_cors_origins(origins: list[str]) -> list[str]:
@@ -185,6 +188,64 @@ def _start_embedding_prewarm() -> asyncio.Task | None:
     return _embedding_prewarm_task
 
 
+def _target_key(target: LLMModelTarget | str) -> str:
+    if isinstance(target, LLMModelTarget):
+        return f"{target.provider}:{target.name}"
+    return f"openai:{target}"
+
+
+async def _run_llm_prewarm() -> None:
+    started = asyncio.get_running_loop().time()
+    settings = get_settings()
+    targets: list[LLMModelTarget] = [
+        settings.model_elder,
+        settings.model_librarian,
+    ]
+    unique: dict[str, LLMModelTarget] = {}
+    for target in targets:
+        unique[_target_key(target)] = target
+    if not unique:
+        return
+    logger.info("llm_prewarm_start models=%s", list(unique.keys()))
+    client = ShreckLLMClient(
+        base_url=settings.shreckllm_base_url,
+        timeout=max(12.0, settings.shreckllm_request_timeout_s),
+        max_retries=0,
+    )
+    try:
+        for key, target in unique.items():
+            try:
+                await asyncio.wait_for(
+                    client.chat(
+                        model=target,
+                        messages=[{"role": "user", "content": "ping"}],
+                        temperature=0.0,
+                        max_tokens=1,
+                        usage_tag="startup_model_prewarm",
+                    ),
+                    timeout=12.0,
+                )
+                logger.info("llm_prewarm_done model=%s", key)
+            except Exception as exc:
+                logger.warning("llm_prewarm_failed model=%s error=%s", key, exc)
+    finally:
+        await client.aclose()
+    duration_s = asyncio.get_running_loop().time() - started
+    logger.info("llm_prewarm_finished duration_s=%.3f", duration_s)
+
+
+def _start_llm_prewarm() -> asyncio.Task | None:
+    global _llm_prewarm_task
+    if _llm_prewarm_task is not None and not _llm_prewarm_task.done():
+        return _llm_prewarm_task
+    try:
+        _llm_prewarm_task = asyncio.create_task(_run_llm_prewarm())
+    except RuntimeError:
+        logger.warning("llm_prewarm_failed error=no_running_event_loop")
+        _llm_prewarm_task = None
+    return _llm_prewarm_task
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     _log_storage_diagnostics(get_settings())
@@ -196,6 +257,7 @@ async def lifespan(_: FastAPI):
         logger.exception("Unable to run startup Celery cleanup")
     settings = get_settings()
     _start_embedding_prewarm()
+    _start_llm_prewarm()
     try:
         driver = get_driver()
         async with driver.session(database=settings.neo4j_database) as neo4j_session:

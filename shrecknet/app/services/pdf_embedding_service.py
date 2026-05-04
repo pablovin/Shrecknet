@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import re
 from collections import Counter
 from pathlib import Path
@@ -688,6 +689,10 @@ class PdfEmbeddingService:
         active_library_item_ids: list[int] | None = None,
         top_k: int = 10,
         score_threshold: float = 0.5,
+        candidate_limit: int | None = None,
+        hybrid_rerank: bool = True,
+        max_chunks_per_item: int | None = None,
+        dynamic_score_floor: bool = False,
     ) -> list[dict[str, Any]]:
         """
         Search PDF chunks by semantic similarity.
@@ -709,16 +714,6 @@ class PdfEmbeddingService:
             request_id=f"librarian:{ontology_id}:{abs(hash(query_text)) % 1000000}",
         )
 
-        # Build query
-        item_filters: list[str] = []
-        if library_item_ids:
-            item_filters.append("c.library_item_id IN $library_item_ids")
-        if active_library_item_ids is not None:
-            if not active_library_item_ids:
-                return []
-            item_filters.append("c.library_item_id IN $active_library_item_ids")
-        item_filter = f"AND {' AND '.join(item_filters)}" if item_filters else ""
-
         query = f"""
         CALL db.index.vector.queryNodes(
             'pdf_chunk_text_vec_idx',
@@ -726,56 +721,172 @@ class PdfEmbeddingService:
             $query_embedding
         )
         YIELD node as c, score
-        WHERE c.ontology_id = $ontology_id {item_filter}
-            AND score >= $score_threshold
-        RETURN c.library_item_id as library_item_id,
-               c.chunk_index as chunk_index,
-               coalesce(c.primary_page_number, c.page_number) as page_number,
-               c.start_page_number as start_page_number,
-               c.end_page_number as end_page_number,
-               c.page_numbers as page_numbers,
-               c.text as text,
-               score
+        RETURN properties(c) as props, score
         ORDER BY score DESC
         """
 
+        internal_candidate_limit = candidate_limit or max(50, top_k * 8)
         result = await self.graph_session.run(
             query,
             query_embedding=query_embedding,
-            top_k=top_k * 2,  # Fetch more to account for filtering
+            top_k=internal_candidate_limit,
             ontology_id=ontology_id,
             library_item_ids=library_item_ids,
             active_library_item_ids=active_library_item_ids,
-            score_threshold=score_threshold,
+            score_threshold=0.0,
         )
 
         chunks = []
+        requested_ids = set(library_item_ids or [])
+        active_ids = set(active_library_item_ids or [])
+        if active_library_item_ids is not None and not active_ids:
+            logger.info(
+                "librarian_retrieval_no_hits reason=no_active_vectorized_items ontology_id=%s",
+                ontology_id,
+            )
+            return []
         base_url = (
             self.settings.media_public_url.rstrip("/")
             if self.settings.media_public_url
             else self.settings.media_base_url.rstrip("/")
         )
         async for record in result:
-            li = record["library_item_id"]
-            page = record["page_number"]
+            props = record.get("props") or {}
+            li_raw = props.get("library_item_id")
+            if li_raw is None:
+                continue
+            try:
+                li = int(li_raw)
+            except (TypeError, ValueError):
+                continue
+            if requested_ids and li not in requested_ids:
+                continue
+            if active_ids and li not in active_ids:
+                continue
+            node_ontology = props.get("ontology_id")
+            if node_ontology is not None:
+                try:
+                    if int(node_ontology) != int(ontology_id):
+                        continue
+                except (TypeError, ValueError):
+                    continue
+            page = int(
+                props.get("primary_page_number")
+                or props.get("page_number")
+                or props.get("start_page_number")
+                or 1
+            )
+            page_numbers = props.get("page_numbers")
+            if not isinstance(page_numbers, list) or not page_numbers:
+                page_numbers = [page]
+            chunk_index = int(props.get("chunk_index") or 0)
             pdf_url = f"{base_url}/library/{ontology_id}/{li}/content.pdf"
             page_url = f"{pdf_url}#page={page}"
             chunks.append(
                 {
                     "library_item_id": li,
-                    "chunk_index": record["chunk_index"],
+                    "chunk_index": chunk_index,
                     "page_number": page,
-                    "start_page_number": record.get("start_page_number"),
-                    "end_page_number": record.get("end_page_number"),
-                    "page_numbers": record.get("page_numbers") or [page],
-                    "text": record["text"],
-                    "score": record["score"],
+                    "start_page_number": props.get("start_page_number") or page,
+                    "end_page_number": props.get("end_page_number") or page,
+                    "page_numbers": page_numbers,
+                    "text": props.get("text") or "",
+                    "vector_score": float(record["score"]),
+                    "score": float(record["score"]),
                     "pdf_url": pdf_url,
                     "page_url": page_url,
                 }
             )
+        if not chunks:
+            logger.info(
+                "librarian_retrieval_no_hits reason=no_chunk_candidates_after_property_compat_filter ontology_id=%s requested_item_ids=%s active_item_ids_count=%s",
+                ontology_id,
+                sorted(requested_ids) if requested_ids else None,
+                len(active_ids),
+            )
+        return self._rerank_and_select_chunks(
+            query_text=query_text,
+            chunks=chunks,
+            top_k=top_k,
+            score_threshold=score_threshold,
+            hybrid_rerank=hybrid_rerank,
+            max_chunks_per_item=max_chunks_per_item,
+            dynamic_score_floor=dynamic_score_floor,
+        )
 
-        return chunks[:top_k]
+    def _tokenize(self, text: str) -> list[str]:
+        return re.findall(r"[A-Za-z0-9_]+", (text or "").lower())
+
+    def _lexical_score(self, query_text: str, chunk_text: str) -> float:
+        query_tokens = self._tokenize(query_text)
+        if not query_tokens:
+            return 0.0
+        chunk_tokens = self._tokenize(chunk_text)
+        if not chunk_tokens:
+            return 0.0
+        chunk_set = set(chunk_tokens)
+        overlap = sum(1 for tok in query_tokens if tok in chunk_set)
+        density = overlap / max(1, len(query_tokens))
+        tf_bonus = min(1.0, sum(chunk_tokens.count(tok) for tok in set(query_tokens)) / 10.0)
+        return min(1.0, 0.8 * density + 0.2 * tf_bonus)
+
+    def _rerank_and_select_chunks(
+        self,
+        *,
+        query_text: str,
+        chunks: list[dict[str, Any]],
+        top_k: int,
+        score_threshold: float,
+        hybrid_rerank: bool,
+        max_chunks_per_item: int | None,
+        dynamic_score_floor: bool,
+    ) -> list[dict[str, Any]]:
+        if not chunks:
+            return []
+        best_vector = max(float(ch.get("vector_score", 0.0)) for ch in chunks)
+        threshold = float(score_threshold)
+        if dynamic_score_floor:
+            threshold = max(threshold, best_vector * 0.75)
+
+        scored: list[dict[str, Any]] = []
+        for chunk in chunks:
+            vector_score = float(chunk.get("vector_score", chunk.get("score", 0.0)))
+            lexical = self._lexical_score(query_text, chunk.get("text", "")) if hybrid_rerank else 0.0
+            page_span = max(
+                1,
+                int(chunk.get("end_page_number") or chunk.get("page_number") or 1)
+                - int(chunk.get("start_page_number") or chunk.get("page_number") or 1)
+                + 1,
+            )
+            span_penalty = min(0.10, max(0.0, (page_span - 2) * 0.02))
+            final_score = (0.75 * vector_score + 0.25 * lexical if hybrid_rerank else vector_score) - span_penalty
+            if final_score >= threshold:
+                scored_chunk = dict(chunk)
+                scored_chunk["lexical_score"] = lexical
+                scored_chunk["score"] = final_score
+                scored.append(scored_chunk)
+
+        scored.sort(
+            key=lambda ch: (
+                -float(ch.get("score", 0.0)),
+                int(ch.get("library_item_id", 0)),
+                int(ch.get("chunk_index", 0)),
+            )
+        )
+        if max_chunks_per_item is None:
+            return scored[:top_k]
+
+        selected: list[dict[str, Any]] = []
+        per_item: dict[int, int] = {}
+        for ch in scored:
+            item_id = int(ch.get("library_item_id", 0))
+            if per_item.get(item_id, 0) >= max_chunks_per_item:
+                continue
+            per_item[item_id] = per_item.get(item_id, 0) + 1
+            selected.append(ch)
+            if len(selected) >= top_k:
+                break
+        return selected
 
     async def fetch_neighbor_text(
         self, library_item_id: int, page_number: int

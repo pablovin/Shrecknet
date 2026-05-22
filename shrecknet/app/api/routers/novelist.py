@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Upload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db_session
+from app.api.agent_feature_gate import require_ai_agents_enabled
 from app.core.config_store import get_settings, is_shreckllm_configured
 from app.graph.neo4j import get_driver
 from app.models.agent import Agent
@@ -156,6 +157,7 @@ async def start_novelist_run(
     session: AsyncSession = Depends(get_db_session),
     service: NovelistService = Depends(get_novelist_service),
 ) -> NovelistRunRead:
+    require_ai_agents_enabled()
     settings = get_settings()
     if not is_shreckllm_configured(settings):
         raise HTTPException(
@@ -187,6 +189,7 @@ async def start_novelist_run_from_upload(
     session: AsyncSession = Depends(get_db_session),
     service: NovelistService = Depends(get_novelist_service),
 ) -> NovelistRunRead:
+    require_ai_agents_enabled()
     settings = get_settings()
     if not is_shreckllm_configured(settings):
         raise HTTPException(

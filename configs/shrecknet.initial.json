@@ -35,6 +35,7 @@
   "shreckllm_base_url": "http://shreckllm:8110",
   "shreckllm_request_timeout_s": 60.0,
   "shreckllm_max_retries": 2,
+  "enable_ai_agents": true,
   "model_architect_scene_chunking": {
     "provider": "ollama",
     "name": "gemma3:4b"

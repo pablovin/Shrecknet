@@ -14,7 +14,6 @@
   "cors_allow_headers": ["*"],
   "cors_allow_credentials": true,
   "data_dir": "/app/databases",
-  "bootstrap_default_provider_id": "ollama",
   "bootstrap_provider_defaults": {
     "ollama": {
       "default_model": "gemma3:4b",

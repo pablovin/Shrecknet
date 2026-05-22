@@ -108,10 +108,7 @@ def _bootstrap_defaults(settings: Settings) -> RuntimeConfig:
             api_key=raw.get("api_key") if isinstance(raw.get("api_key"), str) or raw.get("api_key") is None else None,
         )
 
-    if settings.bootstrap_default_provider_id not in provider_defaults and provider_defaults:
-        default_provider_id = next(iter(provider_defaults.keys()))
-    else:
-        default_provider_id = settings.bootstrap_default_provider_id
+    default_provider_id = next(iter(provider_defaults.keys()), "ollama")
 
     return RuntimeConfig(
         default_provider_id=default_provider_id,

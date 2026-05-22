@@ -7,6 +7,7 @@ from neo4j import AsyncSession as AsyncNeo4jSession
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db_session
+from app.api.agent_feature_gate import require_ai_agents_enabled
 from app.core.config_store import get_settings, is_shreckllm_configured
 from app.graphrag.embedding_runtime import EmbeddingRuntimeError
 from app.graph.neo4j import get_neo4j_session
@@ -26,6 +27,7 @@ async def get_llm_client():
     """Dependency to get LLM client."""
     settings = get_settings()
 
+    require_ai_agents_enabled()
     if not is_shreckllm_configured(settings):
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -74,6 +76,7 @@ async def query_librarian(
     db_session: AsyncSession = Depends(get_db_session),
     orchestrator: LibrarianOrchestrator = Depends(get_librarian_orchestrator),
 ) -> LibrarianQueryResponse:
+    require_ai_agents_enabled()
     """
     Execute a Librarian query through an agent.
 

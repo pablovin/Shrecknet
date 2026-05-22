@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db_session
+from app.api.agent_feature_gate import require_ai_agents_enabled
 from app.jobs.elder.chat_schemas import (
     ElderChatCreate,
     ElderChatListResponse,
@@ -27,6 +28,7 @@ async def create_chat(
     current_user: User = Depends(get_current_user),
     db_session: AsyncSession = Depends(get_db_session),
 ) -> ElderChatResponse:
+    require_ai_agents_enabled()
     """
     Create a new chat with an elder agent.
 

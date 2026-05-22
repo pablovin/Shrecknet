@@ -14,6 +14,7 @@ from app.api.deps import (
     get_current_user,
     get_db_session,
 )
+from app.api.agent_feature_gate import require_ai_agents_enabled
 from app.core.config_store import get_settings, is_shreckllm_configured
 from app.models.agent import Agent
 from app.models.architect import ArchitectProposal, ArchitectProposalStatus, ArchitectProposalType
@@ -92,6 +93,7 @@ async def request_architect_analysis(
     session: AsyncSession = Depends(get_db_session),
     service: ArchitectService = Depends(get_architect_service),
 ) -> ArchitectAnalysisRunRead:
+    require_ai_agents_enabled()
     settings = get_settings()
     if not is_shreckllm_configured(settings):
         raise HTTPException(

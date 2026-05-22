@@ -33,9 +33,6 @@ class Settings(BaseSettings):
 
     data_dir: str = str(Path(__file__).resolve().parents[1] / "databases")
 
-    # Bootstrap defaults for runtime config (persisted in sqlite)
-    bootstrap_default_provider_id: str = "ollama"
-
     bootstrap_provider_defaults: dict[str, dict[str, Any]] = {
         "ollama": {
             "default_model": "gemma3:4b",

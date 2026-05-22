@@ -174,3 +174,290 @@ class LLMReadinessReport(BaseModel):
     providers: list[ProviderStatus] = Field(default_factory=list)
     ready: bool
     reasons: list[str] = Field(default_factory=list)
+
+
+class BackgroundJobRecord(BaseModel):
+    id: int
+    job_type: str
+    status: str
+    author_type: str | None = None
+    author_id: str | None = None
+    ontology_id: int | None = None
+    description: str = ""
+    details: dict[str, Any] | str | None = None
+    progress: float = 0.0
+    error_message: str | None = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    duration_seconds: float | None = None
+    updated_at: datetime | None = None
+    raw: dict[str, Any] = Field(default_factory=dict)
+
+    @property
+    def is_terminal(self) -> bool:
+        return self.status in {"done", "failed"}
+
+    @property
+    def failed(self) -> bool:
+        return self.status == "failed"
+
+
+class EmbeddingStats(BaseModel):
+    ontology_id: int
+    total_nodes: int
+    embedded_nodes: int
+    unembedded_nodes: int
+    outdated_nodes: int
+    entities: dict[str, int]
+    scenes: dict[str, int]
+    milestones: dict[str, int]
+
+
+class EmbeddingTriggerResponse(BaseModel):
+    job_id: str
+    ontology_id: int
+    message: str
+    requested_entities: int
+    requested_scenes: int
+    requested_milestones: int
+
+
+class GraphRAGEmbedNodeResult(BaseModel):
+    node_id: str
+    context_text: str
+    embedding_model: str
+    embedding_dim: int
+
+
+class GraphRAGEmbedOntologyResult(BaseModel):
+    ontology_id: int
+    nodes_processed: int
+    nodes_failed: int
+
+
+class GraphRAGIndexStatus(BaseModel):
+    index_name: str
+    exists: bool
+    embedding_model: str
+    embedding_dim: int
+
+
+class GraphRAGResetEmbeddingsResult(BaseModel):
+    ontology_id: int
+    nodes_reset: int
+    orphans_deleted: int
+    chunks_deleted: int
+
+
+class EmbeddingLifecycleReport(BaseModel):
+    ontology_id: int
+    stats_available: bool
+    total_nodes: int = 0
+    embedded_nodes: int = 0
+    unembedded_nodes: int = 0
+    outdated_nodes: int = 0
+    entities: dict[str, int] = Field(default_factory=dict)
+    scenes: dict[str, int] = Field(default_factory=dict)
+    milestones: dict[str, int] = Field(default_factory=dict)
+
+
+class ElderQueryRequest(BaseModel):
+    query: str
+    mode: str = "both"
+    top_k: int | None = None
+    include_trace: bool = False
+    fast: bool = False
+    route: str = "auto"
+    chat_id: str | None = None
+    entities_hint: str | None = None
+    node_scope: str = "everything"
+    candidate_limit: int | None = 120
+    rerank_limit: int | None = 50
+
+
+class ElderSourceEvidenceChunk(BaseModel):
+    chunk_id: str | None = None
+    chunk_type: str | None = None
+    score: float = 0.0
+    text: str | None = None
+
+
+class ElderSourceNode(BaseModel):
+    node_id: str
+    node_label: str | None = None
+    node_name: str | None = None
+    score: float = 0.0
+    evidence_chunks: list[ElderSourceEvidenceChunk] = Field(default_factory=list)
+
+
+class ElderQueryResponse(BaseModel):
+    agent_id: str
+    query: str
+    answer: str
+    timings: dict[str, float] = Field(default_factory=dict)
+    intents: list[dict[str, Any]] = Field(default_factory=list)
+    sources: list[ElderSourceNode] = Field(default_factory=list)
+    memory_priors_applied: list[dict[str, Any]] = Field(default_factory=list)
+    trace_id: str
+    trace: list[dict[str, Any]] | None = None
+    retrieval_debug: list[dict[str, Any]] | None = None
+
+
+class ElderChatCreate(BaseModel):
+    agent_id: str
+    name: str
+    color: str | None = None
+
+
+class ElderChatUpdate(BaseModel):
+    name: str | None = None
+    color: str | None = None
+
+
+class ElderChatHistoryEntry(BaseModel):
+    id: int
+    chat_id: str
+    role: str
+    content: str
+    created_at: datetime
+    metadata: dict[str, Any] | None = None
+
+
+class ElderChatRead(BaseModel):
+    id: str
+    user_id: int
+    agent_id: str
+    name: str
+    color: str | None = None
+    created_at: datetime
+    updated_at: datetime
+    message_count: int | None = None
+
+
+class ElderChatWithHistory(ElderChatRead):
+    history: list[ElderChatHistoryEntry] = Field(default_factory=list)
+
+
+class ElderChatsList(BaseModel):
+    chats: list[ElderChatRead] = Field(default_factory=list)
+    total: int
+    limit: int
+    offset: int
+
+
+class ElderPreflightReport(BaseModel):
+    ready: bool
+    reasons: list[str] = Field(default_factory=list)
+    llm_ready: bool
+    agent_ready: bool
+    embedding_ready: bool
+    provider_checks: dict[str, bool] = Field(default_factory=dict)
+
+
+class ArchitectAnalysisRequest(BaseModel):
+    ontology_instance_id: str
+    ontology_id: int | None = None
+    max_chunks: int | None = None
+    chunk_size: int | None = None
+
+
+class ArchitectProposalRead(BaseModel):
+    id: str
+    proposal_type: str
+    status: str
+    entity_definition_id: int | None = None
+    entity_instance_id: str | None = None
+    alias: str | None = None
+    confidence: float | None = None
+    justification: str | None = None
+    evidence: list[dict[str, Any]] | None = None
+    metadata: dict[str, Any] | None = None
+    chunks: list[str] | None = None
+    merged_into_proposal_id: str | None = None
+    corrected_alias: str | None = None
+    corrected_entity_definition_id: int | None = None
+    corrected_proposal_type: str | None = None
+    corrected_entity_instance_id: str | None = None
+    generated_entity_instance_id: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class ArchitectRunRead(BaseModel):
+    id: str
+    agent_id: str | None = None
+    background_job_id: int | None = None
+    generation_job_id: int | None = None
+    ontology_id: int | None = None
+    ontology_instance_id: str
+    status: str
+    input_chunk_count: int | None = None
+    settings: dict[str, Any] | None = None
+    created_at: datetime
+    updated_at: datetime
+    proposals: list[ArchitectProposalRead] = Field(default_factory=list)
+
+
+class ArchitectRunSummary(BaseModel):
+    id: str
+    agent_id: str | None = None
+    background_job_id: int | None = None
+    generation_job_id: int | None = None
+    ontology_id: int | None = None
+    ontology_instance_id: str
+    status: str
+    input_chunk_count: int | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class ArchitectProposalCreate(BaseModel):
+    proposal_type: str
+    status: str
+    entity_definition_id: int | None = None
+    entity_instance_id: str | None = None
+    alias: str | None = None
+    confidence: float | None = None
+    justification: str | None = None
+    evidence: list[dict[str, Any]] | None = None
+    metadata: dict[str, Any] | None = None
+    chunks: list[str] | None = None
+
+
+class ArchitectProposalUpdate(BaseModel):
+    proposal_type: str | None = None
+    status: str | None = None
+    entity_definition_id: int | None = None
+    entity_instance_id: str | None = None
+    alias: str | None = None
+    confidence: float | None = None
+    justification: str | None = None
+    evidence: list[dict[str, Any]] | None = None
+    metadata: dict[str, Any] | None = None
+    chunks: list[str] | None = None
+    merged_into_proposal_id: str | None = None
+    corrected_alias: str | None = None
+    corrected_entity_definition_id: int | None = None
+    corrected_proposal_type: str | None = None
+    corrected_entity_instance_id: str | None = None
+    generated_entity_instance_id: str | None = None
+
+
+class ArchitectProposalStatusUpdate(BaseModel):
+    proposal_ids: list[str]
+    status: str
+
+
+class ArchitectGenerationRequest(BaseModel):
+    run_id: str
+    reviewed_pipeline_output: dict[str, Any]
+    author_type: str = "user"
+    author_id: str
+
+
+class ArchitectPreflightReport(BaseModel):
+    ready: bool
+    reasons: list[str] = Field(default_factory=list)
+    llm_ready: bool
+    agent_ready: bool
+    provider_checks: dict[str, bool] = Field(default_factory=dict)

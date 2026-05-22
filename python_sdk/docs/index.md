@@ -2,29 +2,38 @@
 
 Official documentation for the async Shrecknet Python SDK.
 
-## Sections
+## Getting Started
 
-- [Getting Started](./getting-started.md)
-- [Auth and Bootstrap](./auth-and-bootstrap.md)
-- Core workflows:
-- [Worlds and Ontologies](./workflows/worlds-and-ontologies.md)
-- [Ontology Content Creation](./workflows/ontology-content-creation.md)
-- [Search and Listing](./workflows/search-and-listing.md)
-- [Resolve Entities and Scene Counts](./workflows/resolve-entities-and-scene-counts.md)
+- [Getting Started](./getting_started/getting-started.md)
+- [Auth and Bootstrap](./getting_started/auth-and-bootstrap.md)
+
+## Core Workflows
+
+- [Worlds and Ontologies](./core_workflows/worlds-and-ontologies.md)
+- [Ontology Content Creation](./core_workflows/ontology-content-creation.md)
+- [Search and Listing](./core_workflows/search-and-listing.md)
+- [Resolve Entities and Scene Counts](./core_workflows/resolve-entities-and-scene-counts.md)
+
+## Configuration
+
+- [Agents and Types](./configuration/agents-and-types.md)
+- [shreckLLM Configuration](./configuration/shreckllm-configuration.md)
+- [Providers Status and Readiness](./configuration/providers-status-and-readiness.md)
+
+## Elder
+
+- [Elder Embeddings Lifecycle](./elder/embeddings-lifecycle.md)
+- [Elder Query Lifecycle](./elder/query-lifecycle.md)
+
+## Architect
+
+- [Analyze and Review Lifecycle](./architect/analyze-review-lifecycle.md)
+- [Generate Lifecycle](./architect/generate-lifecycle.md)
+
+## Operations
+
+- [Troubleshooting](./operations/troubleshooting.md)
+
+## API Reference
+
 - [API Reference (Generated)](./reference/index.md)
-- [Troubleshooting](./troubleshooting.md)
-
-## V1 Limits
-
-- No AI agent endpoints.
-- No background job orchestration.
-- Use `raw_request(...)` for uncovered endpoints.
-
-
-## AI Configuration Foundation
-
-- [Agents and Types](./agents-and-types.md)
-- [shreckLLM Configuration](./shreckllm-configuration.md)
-- [Providers Status and Readiness](./providers-status-and-readiness.md)
-
-Elder integration is deferred to next phase.

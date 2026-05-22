@@ -32,7 +32,7 @@ class RuntimeConfig(BaseModel):
     memory_ttl_seconds: int = 3600
     memory_max_messages: int = 24
     max_concurrent_requests: int = 8
-    request_timeout_seconds: float = 45.0
+    request_timeout_seconds: float = 180.0
     max_queue_wait_seconds: float = 10.0
 
 

@@ -1,4 +1,4 @@
-ARCHITECT_SCENE_CENTRIC_CHUNKING_PROMPT = """You are an expert narrative analyst. Your task is to segment a text into coherent narrative scenes and extract graph-worthy milestones per scene.
+ARCHITECT_SCENE_CENTRIC_CHUNKING_PROMPT = """You are an expert narrative analyst. Your task is to extract candidate narrative scenes from a local paragraph bundle and extract graph-worthy milestones per candidate scene.
 
 ----------------
 Input
@@ -12,7 +12,7 @@ You will receive a text divided into numbered paragraphs. Each paragraph is pref
 
 Task
 
-Segment the text into a sequence of scenes, then extract milestones for each scene.
+Extract candidate scenes from THIS local paragraph bundle only, then extract milestones for each candidate scene.
 
 A scene is defined as:
 - a contiguous span of paragraphs
@@ -29,14 +29,14 @@ A new scene should begin only when there is a meaningful shift in:
 
 Important Rules
 
-- Every paragraph must belong to exactly one scene.
-- Scenes must be non-overlapping and must cover the entire text.
-- Scenes must be returned in strict chronological order.
-- Do NOT skip any part of the text.
+- Candidate scenes must be local to this bundle.
+- Candidate scenes may overlap.
+- Candidate scenes do NOT need to cover the whole bundle.
+- Candidate scenes must be returned in chronological order.
 - Do NOT merge unrelated interactions into one scene.
 - Do NOT split scenes too finely.
 - Prefer fewer, stronger, meaningful narrative units.
-- Create a MAXIMUM of 6 scenes. If the text is very long, you may return fewer than 6 scenes, but never more than 6.
+- Return a MAXIMUM of 3 candidate scenes for this bundle.
 
 Anti-fragmentation Rule (very important)
 
@@ -54,12 +54,12 @@ Examples of things that should usually stay in one scene:
 - a confrontation that directly turns into a duel declaration
 - a battle and its immediate tactical turning point
 
-For each scene, output:
+For each candidate scene, output:
 - "scene_id": sequential integer starting from 0
 - "name": short, descriptive label (max 6 words)
 - "description": 1–2 sentence summary of what happens in the scene
-- "start_paragraph": index of first paragraph in the scene
-- "end_paragraph": index of last paragraph in the scene (inclusive)
+- "start_paragraph": local index of first paragraph in the candidate scene
+- "end_paragraph": local index of last paragraph in the candidate scene (inclusive)
 - "milestones": list of milestone objects for this scene
 
 Milestone rules:
@@ -78,7 +78,7 @@ Output Format
 Return ONLY valid JSON in the following format:
 
 {{
-  "scenes": [
+  "candidate_scenes": [
     {{
       "scene_id": 0,
       "name": "...",
@@ -115,9 +115,9 @@ Constraints
 Final check before answering
 
 Make sure:
-- no adjacent scenes could be naturally merged without losing clarity
-- no continuous interaction has been artificially split
-- no scene is just a tiny fragment of a larger ongoing event
+- candidate scenes are meaningful local proposals for this bundle
+- no candidate scene is an empty fragment
+- you returned at most 3 candidate scenes
 
 Paragraphs:
 {marked_paragraphs}
@@ -143,6 +143,10 @@ Return ONLY entities that clearly satisfy ALL of the following:
 1. They are explicitly named or clearly referred to in the text.
 2. They are uniquely identifiable as the same entity beyond this scene.
 3. They are meaningful enough to persist in the world model.
+
+Additionally, return milestone-to-entity links for this scene.
+Each link must connect one scene milestone to one explicitly involved entity alias.
+Do not link every scene entity to every milestone.
 
 Important:
 - Returning an empty list is correct if the scene does not contain clear persistent entities.
@@ -184,6 +188,15 @@ Return ONLY valid JSON in this exact format:
       "ontology": "Character",
       "confidence": 0.85,
       "why": "Clearly named and directly involved in the scene."
+    }}
+  ],
+  "milestone_entity_links": [
+    {{
+      "milestone_title": "short milestone title",
+      "entity": "Entity Alias",
+      "relationship_label": "verb-like label",
+      "relationship_description": "short phrase",
+      "confidence": 0.75
     }}
   ]
 }}

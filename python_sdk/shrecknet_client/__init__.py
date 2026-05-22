@@ -1,6 +1,6 @@
 from .client import AsyncShrecknetClient
 from .models import *
-from .resources import AgentsAPI, OntologiesAPI, OntologyInstancesAPI, ShreckLLMAPI, WorldsAPI
+from .resources import AgentsAPI, ArchitectAPI, ElderAPI, EmbeddingsAPI, JobsAPI, OntologiesAPI, OntologyEmbeddingsAPI, OntologyInstancesAPI, ShreckLLMAPI, WorldsAPI
 
 
 class Shrecknet:
@@ -19,6 +19,11 @@ class Shrecknet:
         self.ontology_instances = OntologyInstancesAPI(self.client)
         self.agents = AgentsAPI(self.client)
         self.shreckllm = ShreckLLMAPI(self.client, base_url=shreckllm_base_url, timeout=timeout)
+        self.jobs = JobsAPI(self.client)
+        self.ontology_embeddings = OntologyEmbeddingsAPI(self.client, self.jobs)
+        self.embeddings = EmbeddingsAPI(self.client, self.ontology_embeddings)
+        self.elder = ElderAPI(self.client, self.shreckllm, self.agents, self.embeddings)
+        self.architect = ArchitectAPI(self.client, self.shreckllm, self.agents, self.jobs)
 
     async def __aenter__(self) -> "Shrecknet":
         await self.client.__aenter__()

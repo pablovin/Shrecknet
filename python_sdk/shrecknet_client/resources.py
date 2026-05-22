@@ -1,12 +1,41 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Awaitable, Callable
 
+import asyncio
+import json
+import random
+import time
 import httpx
 
 from .client import AsyncShrecknetClient
-from .errors import ConfigurationReadinessError
+from .errors import ArchitectPreflightError, ConfigurationReadinessError, ElderPreflightError, JobFailedError, JobTimeoutError
 from .models import (
+    BackgroundJobRecord,
+    ArchitectAnalysisRequest,
+    ArchitectGenerationRequest,
+    ArchitectPreflightReport,
+    ArchitectProposalCreate,
+    ArchitectProposalRead,
+    ArchitectProposalStatusUpdate,
+    ArchitectProposalUpdate,
+    ArchitectRunRead,
+    ArchitectRunSummary,
+    EmbeddingStats,
+    EmbeddingTriggerResponse,
+    EmbeddingLifecycleReport,
+    ElderChatCreate,
+    ElderChatRead,
+    ElderChatsList,
+    ElderChatUpdate,
+    ElderChatWithHistory,
+    ElderPreflightReport,
+    ElderQueryRequest,
+    ElderQueryResponse,
+    GraphRAGEmbedNodeResult,
+    GraphRAGEmbedOntologyResult,
+    GraphRAGIndexStatus,
+    GraphRAGResetEmbeddingsResult,
     AgentCreate,
     AgentRead,
     AgentUpdate,
@@ -350,4 +379,421 @@ class ShreckLLMAPI:
         )
         if strict and not report.ready:
             raise ConfigurationReadinessError(reasons)
+        return report
+
+
+def _parse_job_details(details: Any) -> dict[str, Any] | str | None:
+    if details is None:
+        return None
+    if isinstance(details, dict):
+        return details
+    if isinstance(details, str):
+        try:
+            parsed = json.loads(details)
+            if isinstance(parsed, dict):
+                return parsed
+        except Exception:
+            return details
+        return details
+    return str(details)
+
+
+def _normalize_job(payload: dict[str, Any]) -> BackgroundJobRecord:
+    job_id_raw = payload.get("id") or payload.get("job_id")
+    job_id = int(job_id_raw)
+    job_type = str(payload.get("job_type") or payload.get("kind") or "unknown")
+    status = str(payload.get("status") or "queued")
+    return BackgroundJobRecord(
+        id=job_id,
+        job_type=job_type,
+        status=status,
+        author_type=payload.get("author_type"),
+        author_id=payload.get("author_id"),
+        ontology_id=payload.get("ontology_id"),
+        description=str(payload.get("description") or ""),
+        details=_parse_job_details(payload.get("details")),
+        progress=float(payload.get("progress") or 0.0),
+        error_message=payload.get("error_message"),
+        started_at=payload.get("started_at"),
+        completed_at=payload.get("completed_at"),
+        duration_seconds=payload.get("duration_seconds"),
+        updated_at=payload.get("updated_at"),
+        raw=payload,
+    )
+
+
+class JobsAPI:
+    """Generic background jobs API with async wait helpers."""
+
+    def __init__(self, client: AsyncShrecknetClient):
+        self._client = client
+
+    async def list(self, **filters: Any) -> list[BackgroundJobRecord]:
+        data = await self._client.raw_request("GET", "/jobs/", params=filters or None)
+        return [_normalize_job(item) for item in data]
+
+    async def get(self, job_id: int) -> BackgroundJobRecord:
+        data = await self._client.raw_request("GET", f"/jobs/{job_id}")
+        return _normalize_job(data)
+
+    async def delete_many(self, jobs: list[BackgroundJobRecord]) -> int:
+        payload = {"jobs": [{"kind": j.job_type, "job_id": str(j.id)} for j in jobs]}
+        data = await self._client.raw_request("DELETE", "/jobs/", json=payload)
+        return int(data.get("deleted_count", 0))
+
+    async def delete_if_terminal(self, jobs: list[BackgroundJobRecord]) -> int:
+        terminal = [j for j in jobs if j.is_terminal]
+        if not terminal:
+            return 0
+        return await self.delete_many(terminal)
+
+    async def wait(
+        self,
+        job_id: int,
+        *,
+        timeout_s: float = 300,
+        poll_interval_s: float = 0.5,
+        backoff: float = 1.3,
+        max_interval_s: float = 5.0,
+        jitter: float = 0.1,
+        on_update: Callable[[BackgroundJobRecord | None, BackgroundJobRecord, float], Awaitable[None] | None] | None = None,
+        strict: bool = True,
+    ) -> BackgroundJobRecord:
+        started = time.monotonic()
+        interval = poll_interval_s
+        prev: BackgroundJobRecord | None = None
+
+        while True:
+            current = await self.get(job_id)
+            elapsed = time.monotonic() - started
+
+            if on_update is not None:
+                maybe = on_update(prev, current, elapsed)
+                if asyncio.iscoroutine(maybe):
+                    await maybe
+
+            if current.is_terminal:
+                if strict and current.failed:
+                    raise JobFailedError(current.id, current.error_message, current.details)
+                return current
+
+            if elapsed >= timeout_s:
+                raise JobTimeoutError(job_id, timeout_s)
+
+            sleep_for = min(interval, max_interval_s)
+            if jitter > 0:
+                sleep_for = max(0.05, sleep_for + random.uniform(-jitter, jitter))
+            await asyncio.sleep(sleep_for)
+            interval = min(interval * backoff, max_interval_s)
+            prev = current
+
+    async def wait_many(self, job_ids: list[int], *, concurrency: int = 5, **wait_kwargs: Any) -> list[BackgroundJobRecord]:
+        sem = asyncio.Semaphore(max(1, concurrency))
+
+        async def _one(jid: int) -> BackgroundJobRecord:
+            async with sem:
+                return await self.wait(jid, **wait_kwargs)
+
+        return await asyncio.gather(*[_one(j) for j in job_ids])
+
+
+class JobHandle:
+    """Typed handle around one background job."""
+
+    def __init__(self, jobs_api: JobsAPI, job: BackgroundJobRecord):
+        self._jobs = jobs_api
+        self.job = job
+
+    @property
+    def job_id(self) -> int:
+        return self.job.id
+
+    @property
+    def job_type(self) -> str:
+        return self.job.job_type
+
+    @property
+    def author_type(self) -> str | None:
+        return self.job.author_type
+
+    @property
+    def author_id(self) -> str | None:
+        return self.job.author_id
+
+    @property
+    def ontology_id(self) -> int | None:
+        return self.job.ontology_id
+
+    @property
+    def status(self) -> str:
+        return self.job.status
+
+    async def refresh(self) -> BackgroundJobRecord:
+        self.job = await self._jobs.get(self.job.id)
+        return self.job
+
+    async def wait(self, **kwargs: Any) -> BackgroundJobRecord:
+        self.job = await self._jobs.wait(self.job.id, **kwargs)
+        return self.job
+
+    def is_terminal(self) -> bool:
+        return self.job.is_terminal
+
+    def raise_if_failed(self) -> None:
+        if self.job.failed:
+            raise JobFailedError(self.job.id, self.job.error_message, self.job.details)
+
+
+class OntologyEmbeddingsAPI:
+    """Embedding-focused helper API built on generic jobs."""
+
+    def __init__(self, client: AsyncShrecknetClient, jobs_api: JobsAPI):
+        self._client = client
+        self._jobs = jobs_api
+
+    async def stats(self, ontology_id: int) -> EmbeddingStats:
+        data = await self._client.raw_request("GET", f"/ontologies/{ontology_id}/embedding-stats")
+        return EmbeddingStats.model_validate(data)
+
+    async def recent_jobs(self, ontology_id: int, limit: int = 10) -> list[BackgroundJobRecord]:
+        data = await self._client.raw_request("GET", f"/ontologies/{ontology_id}/embedding-jobs", params={"limit": limit})
+        return [_normalize_job(item) for item in data]
+
+    async def trigger(self, ontology_id: int, batch_size: int | None = None) -> JobHandle:
+        payload = {} if batch_size is None else {"batch_size": batch_size}
+        triggered = EmbeddingTriggerResponse.model_validate(
+            await self._client.raw_request("POST", f"/ontologies/{ontology_id}/trigger-embedding", json=payload)
+        )
+        # Celery task id returned by trigger endpoint; map to concrete background job via recent jobs.
+        recent = await self.recent_jobs(ontology_id, limit=10)
+        match = next((j for j in recent if j.raw.get("celery_task_id") == triggered.job_id), None)
+        if match is None and recent:
+            match = recent[0]
+        if match is None:
+            # fallback pseudo-handle that can refresh only when real record exists later
+            match = BackgroundJobRecord(id=-1, job_type="neo4j_embedding", status="queued", ontology_id=ontology_id, raw={"celery_task_id": triggered.job_id})
+        return JobHandle(self._jobs, match)
+
+
+class EmbeddingsAPI:
+    """Full embeddings lifecycle API (ontology + GraphRAG)."""
+
+    def __init__(self, client: AsyncShrecknetClient, ontology_embeddings: OntologyEmbeddingsAPI):
+        self._client = client
+        self._ontology = ontology_embeddings
+
+    async def stats(self, ontology_id: int) -> EmbeddingStats:
+        return await self._ontology.stats(ontology_id)
+
+    async def trigger(self, ontology_id: int, batch_size: int | None = None) -> JobHandle:
+        return await self._ontology.trigger(ontology_id, batch_size=batch_size)
+
+    async def recent_jobs(self, ontology_id: int, limit: int = 10) -> list[BackgroundJobRecord]:
+        return await self._ontology.recent_jobs(ontology_id, limit=limit)
+
+    async def embed_node(self, node_id: str, ontology_id: int | None = None) -> GraphRAGEmbedNodeResult:
+        data = await self._client.raw_request("POST", "/graphrag/embed/node", json={"node_id": node_id, "ontology_id": ontology_id})
+        return GraphRAGEmbedNodeResult.model_validate(data)
+
+    async def embed_ontology(self, ontology_id: int, batch_size: int = 50) -> GraphRAGEmbedOntologyResult:
+        data = await self._client.raw_request("POST", "/graphrag/embed/ontology", json={"ontology_id": ontology_id, "batch_size": batch_size})
+        return GraphRAGEmbedOntologyResult.model_validate(data)
+
+    async def backfill_chunks(self, ontology_id: int, batch_size: int = 50) -> GraphRAGEmbedOntologyResult:
+        data = await self._client.raw_request("POST", "/graphrag/embed/ontology/backfill-chunks", json={"ontology_id": ontology_id, "batch_size": batch_size})
+        return GraphRAGEmbedOntologyResult.model_validate(data)
+
+    async def reset_ontology_embeddings(self, ontology_id: int) -> GraphRAGResetEmbeddingsResult:
+        data = await self._client.raw_request("POST", "/graphrag/embed/ontology/reset", json={"ontology_id": ontology_id})
+        return GraphRAGResetEmbeddingsResult.model_validate(data)
+
+    async def ensure_index(self) -> GraphRAGIndexStatus:
+        data = await self._client.raw_request("POST", "/graphrag/index/ensure")
+        return GraphRAGIndexStatus.model_validate(data)
+
+    async def lifecycle_report(self, ontology_id: int) -> EmbeddingLifecycleReport:
+        stats = await self.stats(ontology_id)
+        return EmbeddingLifecycleReport(
+            ontology_id=ontology_id,
+            stats_available=True,
+            total_nodes=stats.total_nodes,
+            embedded_nodes=stats.embedded_nodes,
+            unembedded_nodes=stats.unembedded_nodes,
+            outdated_nodes=stats.outdated_nodes,
+            entities=stats.entities,
+            scenes=stats.scenes,
+            milestones=stats.milestones,
+        )
+
+
+class ElderAPI:
+    """Elder query and chat lifecycle endpoints."""
+
+    def __init__(self, client: AsyncShrecknetClient, shreckllm: ShreckLLMAPI, agents: AgentsAPI, embeddings: EmbeddingsAPI):
+        self._client = client
+        self._shreckllm = shreckllm
+        self._agents = agents
+        self._embeddings = embeddings
+
+    async def query(self, agent_id: str, request: ElderQueryRequest) -> ElderQueryResponse:
+        data = await self._client.raw_request("POST", f"/jobs/elder/{agent_id}/query", json=request.model_dump(exclude_none=True))
+        return ElderQueryResponse.model_validate(data)
+
+    async def create_chat(self, payload: ElderChatCreate) -> ElderChatRead:
+        data = await self._client.raw_request("POST", "/jobs/elder/chats/", json=payload.model_dump(exclude_none=True))
+        return ElderChatRead.model_validate(data)
+
+    async def list_chats(self, agent_id: str | None = None, limit: int = 100, offset: int = 0) -> ElderChatsList:
+        params = {"limit": limit, "offset": offset}
+        if agent_id is not None:
+            params["agent_id"] = agent_id
+        data = await self._client.raw_request("GET", "/jobs/elder/chats/", params=params)
+        return ElderChatsList.model_validate(data)
+
+    async def get_chat(self, chat_id: str, include_history: bool = False) -> ElderChatWithHistory:
+        data = await self._client.raw_request("GET", f"/jobs/elder/chats/{chat_id}", params={"include_history": include_history})
+        return ElderChatWithHistory.model_validate(data)
+
+    async def update_chat(self, chat_id: str, payload: ElderChatUpdate) -> ElderChatRead:
+        data = await self._client.raw_request("PATCH", f"/jobs/elder/chats/{chat_id}", json=payload.model_dump(exclude_none=True))
+        return ElderChatRead.model_validate(data)
+
+    async def delete_chat(self, chat_id: str) -> None:
+        await self._client.raw_request("DELETE", f"/jobs/elder/chats/{chat_id}")
+
+    async def get_chat_file(self, chat_id: str) -> dict[str, Any]:
+        return await self._client.raw_request("GET", f"/jobs/elder/chats/{chat_id}/file")
+
+    async def preflight(self, *, agent_id: str, ontology_id: int, strict: bool = False) -> ElderPreflightReport:
+        reasons: list[str] = []
+
+        llm_report = await self._shreckllm.preflight_agents_llm_ready(strict=False)
+        llm_ready = llm_report.ready
+        if not llm_ready:
+            reasons.extend(llm_report.reasons)
+
+        agent_ready = False
+        try:
+            agent = await self._agents.get(agent_id)
+            if not agent.active:
+                reasons.append("Agent is inactive")
+            if agent.job != "elder":
+                reasons.append(f"Agent job type is '{agent.job}', expected 'elder'")
+            agent_ready = agent.active and agent.job == "elder"
+        except Exception as exc:
+            reasons.append(f"Agent lookup failed: {exc}")
+
+        embedding_ready = False
+        try:
+            _ = await self._embeddings.lifecycle_report(ontology_id)
+            embedding_ready = True
+        except Exception as exc:
+            reasons.append(f"Embedding readiness check failed: {exc}")
+
+        report = ElderPreflightReport(
+            ready=llm_ready and agent_ready and embedding_ready,
+            reasons=reasons,
+            llm_ready=llm_ready,
+            agent_ready=agent_ready,
+            embedding_ready=embedding_ready,
+            provider_checks=llm_report.checks,
+        )
+        if strict and not report.ready:
+            raise ElderPreflightError(reasons)
+        return report
+
+
+class ArchitectAPI:
+    """Architect analyze/review/generate lifecycle endpoints."""
+
+    def __init__(self, client: AsyncShrecknetClient, shreckllm: ShreckLLMAPI, agents: AgentsAPI, jobs: JobsAPI):
+        self._client = client
+        self._shreckllm = shreckllm
+        self._agents = agents
+        self._jobs = jobs
+
+    async def analyze(self, agent_id: str, payload: ArchitectAnalysisRequest) -> ArchitectRunRead:
+        data = await self._client.raw_request("POST", f"/jobs/architect/{agent_id}/analyze", json=payload.model_dump(exclude_none=True))
+        return ArchitectRunRead.model_validate(data)
+
+    async def get_run(self, run_id: str) -> ArchitectRunRead:
+        data = await self._client.raw_request("GET", f"/jobs/architect/runs/{run_id}")
+        return ArchitectRunRead.model_validate(data)
+
+    async def list_runs(self, agent_id: str, limit: int = 20, offset: int = 0) -> list[ArchitectRunSummary]:
+        data = await self._client.raw_request("GET", f"/jobs/architect/{agent_id}/runs", params={"limit": limit, "offset": offset})
+        return [ArchitectRunSummary.model_validate(item) for item in data]
+
+    async def delete_run(self, agent_id: str, run_id: str) -> dict[str, int]:
+        return await self._client.raw_request("DELETE", f"/jobs/architect/{agent_id}/runs/{run_id}")
+
+    async def delete_runs(self, agent_id: str) -> dict[str, int]:
+        return await self._client.raw_request("DELETE", f"/jobs/architect/{agent_id}/runs")
+
+    async def update_proposal_statuses(self, run_id: str, payload: ArchitectProposalStatusUpdate) -> dict[str, int]:
+        return await self._client.raw_request("PATCH", f"/jobs/architect/runs/{run_id}/proposals/status", json=payload.model_dump(exclude_none=True))
+
+    async def create_proposal(self, run_id: str, payload: ArchitectProposalCreate) -> ArchitectProposalRead:
+        data = await self._client.raw_request("POST", f"/jobs/architect/runs/{run_id}/proposals", json=payload.model_dump(exclude_none=True))
+        return ArchitectProposalRead.model_validate(data)
+
+    async def patch_proposal(self, run_id: str, proposal_id: str, payload: ArchitectProposalUpdate) -> ArchitectProposalRead:
+        data = await self._client.raw_request("PATCH", f"/jobs/architect/runs/{run_id}/proposals/{proposal_id}", json=payload.model_dump(exclude_none=True))
+        return ArchitectProposalRead.model_validate(data)
+
+    async def put_proposal(self, run_id: str, proposal_id: str, payload: ArchitectProposalUpdate) -> ArchitectProposalRead:
+        data = await self._client.raw_request("PUT", f"/jobs/architect/runs/{run_id}/proposals/{proposal_id}", json=payload.model_dump(exclude_none=True))
+        return ArchitectProposalRead.model_validate(data)
+
+    async def generate(self, run_id: str, payload: ArchitectGenerationRequest) -> dict[str, Any]:
+        return await self._client.raw_request("POST", f"/jobs/architect/runs/{run_id}/generate", json=payload.model_dump(exclude_none=True))
+
+    async def wait_for_analysis(self, run_id: str, *, timeout_s: float = 600, poll_interval_s: float = 1.0, strict: bool = True) -> BackgroundJobRecord:
+        started = time.monotonic()
+        while True:
+            run = await self.get_run(run_id)
+            if run.background_job_id is not None:
+                return await self._jobs.wait(run.background_job_id, timeout_s=max(1.0, timeout_s - (time.monotonic() - started)), poll_interval_s=poll_interval_s, strict=strict)
+            if time.monotonic() - started >= timeout_s:
+                raise JobTimeoutError(-1, timeout_s)
+            await asyncio.sleep(poll_interval_s)
+
+    async def wait_for_generation(self, run_id: str, *, timeout_s: float = 900, poll_interval_s: float = 1.0, strict: bool = True) -> BackgroundJobRecord:
+        started = time.monotonic()
+        while True:
+            run = await self.get_run(run_id)
+            if run.generation_job_id is not None:
+                return await self._jobs.wait(run.generation_job_id, timeout_s=max(1.0, timeout_s - (time.monotonic() - started)), poll_interval_s=poll_interval_s, strict=strict)
+            if time.monotonic() - started >= timeout_s:
+                raise JobTimeoutError(-1, timeout_s)
+            await asyncio.sleep(poll_interval_s)
+
+    async def preflight(self, agent_id: str, *, strict: bool = False) -> ArchitectPreflightReport:
+        reasons: list[str] = []
+
+        llm_report = await self._shreckllm.preflight_agents_llm_ready(strict=False)
+        llm_ready = llm_report.ready
+        if not llm_ready:
+            reasons.extend(llm_report.reasons)
+
+        agent_ready = False
+        try:
+            agent = await self._agents.get(agent_id)
+            if not agent.active:
+                reasons.append("Agent is inactive")
+            if agent.job != "architect":
+                reasons.append(f"Agent job type is '{agent.job}', expected 'architect'")
+            agent_ready = agent.active and agent.job == "architect"
+        except Exception as exc:
+            reasons.append(f"Agent lookup failed: {exc}")
+
+        report = ArchitectPreflightReport(
+            ready=llm_ready and agent_ready,
+            reasons=reasons,
+            llm_ready=llm_ready,
+            agent_ready=agent_ready,
+            provider_checks=llm_report.checks,
+        )
+        if strict and not report.ready:
+            raise ArchitectPreflightError(reasons)
         return report

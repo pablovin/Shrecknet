@@ -59,10 +59,21 @@ class ChunkEntityProposal(BaseModel):
     why: str = Field(..., description="Brief justification")
 
 
+class MilestoneEntityLinkProposal(BaseModel):
+    """Milestone-to-entity link proposed in a scene-level extraction pass."""
+
+    milestone_title: str = Field(..., min_length=1)
+    entity: str = Field(..., min_length=1)
+    relationship_label: str = Field(..., min_length=1)
+    relationship_description: str | None = None
+    confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+
+
 class ChunkExtractionResponse(BaseModel):
     """Response from LLM for chunk-level entity extraction (Step 1)."""
 
     entities: list[ChunkEntityProposal] = Field(default_factory=list)
+    milestone_entity_links: list[MilestoneEntityLinkProposal] = Field(default_factory=list)
 
 
 class DedupedEntityProposal(BaseModel):

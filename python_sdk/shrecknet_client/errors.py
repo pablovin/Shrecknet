@@ -38,6 +38,33 @@ class ConfigurationReadinessError(ShrecknetError):
         super().__init__("; ".join(reasons) if reasons else "Configuration is not ready")
 
 
+class JobFailedError(ShrecknetError):
+    def __init__(self, job_id: int, error_message: str | None = None, details: object | None = None):
+        self.job_id = job_id
+        self.error_message = error_message
+        self.details = details
+        super().__init__(f"Job {job_id} failed: {error_message or 'unknown error'}")
+
+
+class ElderPreflightError(ShrecknetError):
+    def __init__(self, reasons: list[str]):
+        self.reasons = reasons
+        super().__init__("; ".join(reasons) if reasons else "Elder preflight failed")
+
+
+class ArchitectPreflightError(ShrecknetError):
+    def __init__(self, reasons: list[str]):
+        self.reasons = reasons
+        super().__init__("; ".join(reasons) if reasons else "Architect preflight failed")
+
+
+class JobTimeoutError(ShrecknetError):
+    def __init__(self, job_id: int, timeout_s: float):
+        self.job_id = job_id
+        self.timeout_s = timeout_s
+        super().__init__(f"Job {job_id} did not complete within {timeout_s}s")
+
+
 def raise_for_status(status_code: int, detail: str | None) -> None:
     if status_code < 400:
         return

@@ -34,3 +34,9 @@ async def main() -> None:
 
 asyncio.run(main())
 ```
+
+
+## Elder Examples
+
+- `python python_sdk/examples/07_elder/01_embeddings_lifecycle.py`
+- `python python_sdk/examples/07_elder/02_elder_query_lifecycle.py`

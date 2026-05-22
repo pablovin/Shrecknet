@@ -26,6 +26,9 @@ class ElderChatHistoryResponse(ElderChatHistoryBase):
     id: int = Field(..., description="History entry ID")
     chat_id: str = Field(..., description="Chat ID")
     created_at: datetime = Field(..., description="Creation timestamp")
+    metadata: dict | None = Field(
+        None, description="Optional assistant metadata (sources, timings, trace, etc.)"
+    )
 
     model_config = {"from_attributes": True}
 

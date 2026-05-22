@@ -1,6 +1,7 @@
 """Service layer for Elder chat business logic."""
 
 import logging
+from datetime import datetime, timezone
 from typing import Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -122,10 +123,7 @@ class ElderChatService:
 
         Validates that the chat belongs to the user.
         """
-        if include_history:
-            chat = await self.chat_repo.get_by_id_with_history(chat_id)
-        else:
-            chat = await self.chat_repo.get_by_id(chat_id)
+        chat = await self.chat_repo.get_by_id(chat_id)
 
         if not chat:
             return None
@@ -135,12 +133,42 @@ class ElderChatService:
             return None
 
         if include_history:
-            return ElderChatWithHistoryResponse.model_validate(chat)
-        else:
-            count = await self.chat_repo.count_chat_history(chat.id)
-            response = ElderChatResponse.model_validate(chat)
-            response.message_count = count
-            return response
+            file_data = read_chat(user_id, chat.agent_id, chat_id) or {}
+            messages = file_data.get("messages", [])
+            parsed_history = []
+            for idx, msg in enumerate(messages, start=1):
+                ts_raw = msg.get("ts")
+                try:
+                    created_at = (
+                        datetime.fromisoformat(ts_raw.replace("Z", "+00:00"))
+                        if isinstance(ts_raw, str)
+                        else datetime.now(timezone.utc)
+                    )
+                except Exception:
+                    created_at = datetime.now(timezone.utc)
+                parsed_history.append(
+                    {
+                        "id": idx,
+                        "chat_id": chat_id,
+                        "role": msg.get("role", "assistant"),
+                        "content": msg.get("content", ""),
+                        "created_at": created_at,
+                        "metadata": msg.get("meta"),
+                    }
+                )
+
+            payload = ElderChatWithHistoryResponse.model_validate(chat)
+            payload.history = parsed_history
+            payload.message_count = len(parsed_history)
+            return payload
+
+        count = await self.chat_repo.count_chat_history(chat.id)
+        if count == 0:
+            file_data = read_chat(user_id, chat.agent_id, chat_id) or {}
+            count = len(file_data.get("messages", []))
+        response = ElderChatResponse.model_validate(chat)
+        response.message_count = count
+        return response
 
     async def update_chat(
         self, chat_id: str, user_id: int, chat_update: ElderChatUpdate

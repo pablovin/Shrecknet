@@ -4,7 +4,7 @@ Shrecknet bootstrap rule: the first registered user becomes admin.
 
 ## Canonical helper
 
-Use [0_user_registration.py](../../python_sdk/examples/01_login_and_user_creation/00_user_registration.py) for reusable bootstrap+login logic.
+Use [0_user_registration.py](../../../python_sdk/examples/01_login_and_user_creation/00_user_registration.py) for reusable bootstrap+login logic.
 
 The helper does:
 1. `GET /users/bootstrap` to check whether users exist.
@@ -14,7 +14,7 @@ The helper does:
 
 ## Canonical registration-first example
 
-Use [01_register_and_login.py](../../python_sdk/examples/01_login_and_user_creation/02_register_and_login.py) before other workflows.
+Use [01_register_and_login.py](../../../python_sdk/examples/01_login_and_user_creation/02_register_and_login.py) before other workflows.
 
 ## Deprecated naming note
 

@@ -186,6 +186,7 @@ class BackupService:
                 neo4j_session,
                 package_root / "neo4j" / "graph.json",
                 package_root / "neo4j" / "schema.json",
+                progress_callback=progress_callback,
             )
             linkage_summary = await self._validate_sql_graph_linkage(neo4j_session)
 
@@ -525,6 +526,7 @@ class BackupService:
         session: Neo4jSession,
         graph_path: Path,
         schema_path: Path,
+        progress_callback: ProgressCallback | None = None,
     ) -> dict[str, int]:
         if not graph_path.exists():
             raise ValueError("Invalid backup archive: missing neo4j/graph.json")
@@ -542,25 +544,62 @@ class BackupService:
                         "indexes": list(raw_schema.get("indexes", [])),
                     }
 
+        await self._report(progress_callback, "neo4j_import", 0.76, "Neo4j restore: clearing existing graph")
         clear_summary = await self._wipe_neo4j_graph(session)
+        logger.info(
+            "Neo4j restore: cleared graph (removed %d nodes, %d relationships)",
+            clear_summary["previous_nodes_removed"],
+            clear_summary["previous_relationships_removed"],
+        )
 
         id_mapping: dict[str, str] = {}
+        nodes_by_labels: dict[tuple[str, ...], list[dict[str, Any]]] = {}
         for node in graph_data.get("nodes", []):
             labels = [lbl for lbl in node.get("labels", []) if isinstance(lbl, str)]
             valid_labels = [lbl for lbl in labels if all(c.isalnum() or c == "_" for c in lbl)]
-            if not valid_labels:
-                continue
-
-            query = f"CREATE (n:{':'.join(valid_labels)}) SET n = $properties RETURN elementId(n) AS new_id"
-            result = await session.run(query, properties=node.get("properties", {}))
-            rec = await result.single()
-            if rec is None:
-                continue
             old_id = node.get("id")
-            if isinstance(old_id, str):
-                id_mapping[old_id] = str(rec["new_id"])
+            if not valid_labels or not isinstance(old_id, str):
+                continue
+            label_key = tuple(valid_labels)
+            nodes_by_labels.setdefault(label_key, []).append(
+                {"old_id": old_id, "properties": node.get("properties", {})}
+            )
+
+        total_nodes = sum(len(rows) for rows in nodes_by_labels.values())
+        restored_nodes = 0
+        node_batch_size = 1_000
+        nodes_started = datetime.now(timezone.utc)
+        await self._report(
+            progress_callback,
+            "neo4j_import",
+            0.78,
+            f"Neo4j restore: restoring {total_nodes} nodes",
+        )
+        for labels, rows in nodes_by_labels.items():
+            query = f"""
+                UNWIND $rows AS row
+                CREATE (n:{':'.join(labels)})
+                SET n = row.properties
+                RETURN row.old_id AS old_id, elementId(n) AS new_id
+            """
+            for offset in range(0, len(rows), node_batch_size):
+                batch = rows[offset : offset + node_batch_size]
+                result = await session.run(query, rows=batch)
+                for rec in await result.data():
+                    id_mapping[str(rec["old_id"])] = str(rec["new_id"])
+                restored_nodes += len(batch)
+                node_progress = restored_nodes / total_nodes if total_nodes else 1.0
+                progress = 0.78 + (0.09 * node_progress)
+                elapsed = (datetime.now(timezone.utc) - nodes_started).total_seconds()
+                status = (
+                    f"Neo4j restore: nodes {restored_nodes}/{total_nodes} "
+                    f"({node_progress * 100:.1f}%) in {elapsed:.1f}s"
+                )
+                await self._report(progress_callback, "neo4j_import", progress, status)
+                logger.info(status)
 
         restored_rels = 0
+        rels_by_type: dict[str, list[dict[str, Any]]] = {}
         for rel in graph_data.get("relationships", []):
             start_raw = rel.get("start_node_id")
             end_raw = rel.get("end_node_id")
@@ -571,20 +610,46 @@ class BackupService:
                 continue
             if not all(c.isalnum() or c == "_" for c in rel_type):
                 continue
-
-            await session.run(
-                f"""
-                MATCH (a) WHERE elementId(a) = $start_id
-                MATCH (b) WHERE elementId(b) = $end_id
-                CREATE (a)-[r:{rel_type}]->(b)
-                SET r = $properties
-                """,
-                start_id=start_id,
-                end_id=end_id,
-                properties=rel.get("properties", {}),
+            rels_by_type.setdefault(rel_type, []).append(
+                {"start_id": start_id, "end_id": end_id, "properties": rel.get("properties", {})}
             )
-            restored_rels += 1
 
+        total_rels = sum(len(rows) for rows in rels_by_type.values())
+        restored_rel_rows = 0
+        rel_batch_size = 5_000
+        rels_started = datetime.now(timezone.utc)
+        await self._report(
+            progress_callback,
+            "neo4j_import",
+            0.87,
+            f"Neo4j restore: restoring {total_rels} relationships",
+        )
+        for rel_type, rows in rels_by_type.items():
+            query = f"""
+                UNWIND $rows AS row
+                MATCH (a) WHERE elementId(a) = row.start_id
+                MATCH (b) WHERE elementId(b) = row.end_id
+                CREATE (a)-[r:{rel_type}]->(b)
+                SET r = row.properties
+                RETURN count(r) AS created
+            """
+            for offset in range(0, len(rows), rel_batch_size):
+                batch = rows[offset : offset + rel_batch_size]
+                result = await session.run(query, rows=batch)
+                rec = await result.single()
+                restored_rels += int(rec["created"]) if rec is not None else 0
+                restored_rel_rows += len(batch)
+                rel_progress = restored_rel_rows / total_rels if total_rels else 1.0
+                progress = 0.87 + (0.06 * rel_progress)
+                elapsed = (datetime.now(timezone.utc) - rels_started).total_seconds()
+                status = (
+                    f"Neo4j restore: relationships {restored_rel_rows}/{total_rels} "
+                    f"({rel_progress * 100:.1f}%) in {elapsed:.1f}s"
+                )
+                await self._report(progress_callback, "neo4j_import", progress, status)
+                logger.info(status)
+
+        await self._report(progress_callback, "neo4j_import", 0.93, "Neo4j restore: restoring schema")
         restored_constraints = 0
         for statement in schema_data.get("constraints", []):
             try:
@@ -600,6 +665,14 @@ class BackupService:
                 restored_indexes += 1
             except Exception:
                 logger.warning("Skipping failing Neo4j index statement: %s", statement)
+        await self._report(progress_callback, "neo4j_import", 0.94, "Neo4j restore: schema restoration complete")
+        logger.info(
+            "Neo4j restore complete: %d nodes, %d relationships, %d constraints, %d indexes",
+            len(id_mapping),
+            restored_rels,
+            restored_constraints,
+            restored_indexes,
+        )
 
         return {
             "previous_nodes_removed": clear_summary["previous_nodes_removed"],

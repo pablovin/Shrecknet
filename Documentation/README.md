@@ -86,6 +86,7 @@ Historical implementation notes and summaries (archived for reference)
 ## 🔍 Quick Links
 
 - **Main Project README**: [../README.md](../README.md)
+- **Python SDK Docs**: [../python_sdk/docs/index.md](../python_sdk/docs/index.md)
 - **License**: [../LICENSE](../LICENSE)
 
 ## 📖 Documentation Guidelines

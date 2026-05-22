@@ -7,399 +7,158 @@
 ![License](https://img.shields.io/badge/license-GPLv3-blue)
 ![Version](https://img.shields.io/badge/version-0.5.7-orange)
 
-Shrecknet is a scene-centric memory engine for storytelling. It incrementally builds longitudinal episodic memory through an agentic architecture where scenes and milestones are first-class narrative records and structure can evolve over time.
+Shrecknet is a scene-centric memory engine for storytelling systems. It builds longitudinal narrative memory where scenes, milestones, ontology structure, and retrieval context evolve together instead of living as disconnected text fragments.
 
-## Introducing Shrecknet
+## What Shrecknet Is
 
-Shrecknet is an agentic architecture for incremental construction of longitudinal episodic memory under controlled ontology evolution. Its core principle is explicit separation and coordinated co-evolution of three representational layers: Ontology, Graph, and Knowledge.
+Shrecknet is designed for teams building story-aware assistants, campaign memory systems, or world models that must preserve chronology and narrative causality.
 
-Instead of treating memory as plain text or a frozen knowledge base, Shrecknet models memory as a dynamic system: every new observation can update entity state, append new scenes and milestones, and, when needed, evolve the schema itself.
+Core value:
+- Scene and milestone memory as first-class temporal records.
+- Structured ontology + graph state + retrieval-ready knowledge in one system.
+- Agent workflows (Elder, Librarian, Architect, Novelist) over the same canonical memory.
 
-Architecture diagram:
+Architecture overview:
+- [Documentation/Architecture/SHRECKNET_ARCHITECTURE.md](Documentation/Architecture/SHRECKNET_ARCHITECTURE.md)
+- [Documentation/Architecture/assets/shrecknet-architecture.png](Documentation/Architecture/assets/shrecknet-architecture.png)
 
-![Shrecknet Architecture](Documentation/Architecture/assets/shrecknet-architecture.png)
+## How It Thinks (Scene-Centric)
 
-Detailed architecture note: [Documentation/Architecture/SHRECKNET_ARCHITECTURE.md](Documentation/Architecture/SHRECKNET_ARCHITECTURE.md)
+Shrecknet uses Scene and Milestone as the canonical temporal write model:
+- Scene: bounded narrative unit in an ontology instance.
+- Milestone: timeline anchor and progression marker within and across scenes.
+- Provenance links connect scene evidence back to ontology entities and relationships.
 
-## Scene-Centric Canonical Temporal Model
+Start here:
+- [Documentation/SceneCentricMemory/Data Structure/Data Structure.md](Documentation/SceneCentricMemory/Data Structure/Data Structure.md)
+- [Documentation/SceneCentricMemory/Data Structure/Data Structure - ENDPOINTS.md](Documentation/SceneCentricMemory/Data Structure/Data Structure - ENDPOINTS.md)
+- [Documentation/SceneCentricMemory/Retrieval/Retrieval.md](Documentation/SceneCentricMemory/Retrieval/Retrieval.md)
+- [Documentation/SceneCentricMemory/Retrieval/Retrieval - Endpoints.md](Documentation/SceneCentricMemory/Retrieval/Retrieval - Endpoints.md)
+- [Documentation/SceneCentricMemory/Embedding/SCENE_EMBEDDING.md](Documentation/SceneCentricMemory/Embedding/SCENE_EMBEDDING.md)
+- [Documentation/SceneCentricMemory/Embedding/FRONTEND_ENDPOINTS_JOBS_SUMMARY.md](Documentation/SceneCentricMemory/Embedding/FRONTEND_ENDPOINTS_JOBS_SUMMARY.md)
 
-Shrecknet now treats Scene and Milestone as the canonical write model for temporal memory.
-
-- Scene captures a bounded narrative unit in one ontology instance.
-- Milestones capture timeline anchors and progression inside the scene.
-- Scene and milestone provenance is anchored to ontology entities through derived_from links.
-
-Scene-centric memory documentation:
-- [Documentation/SceneCentricMemory/README.md](Documentation/SceneCentricMemory/README.md)
-- [Documentation/SceneCentricMemory/SCENE_MILESTONE_ENDPOINTS.md](Documentation/SceneCentricMemory/SCENE_MILESTONE_ENDPOINTS.md)
-
-Scene and milestone endpoints are the canonical temporal write and read flows.
-
-## Scene-Centric Mental Model
-
-Shrecknet is built around scene-centric memory. The core question is not only what exists, but what changed in each scene and how milestones connect narrative progression.
-
-### The Triad: Ontology, Graph, Knowledge
-
-1. Ontology layer
-   Defines the world grammar: entity types, properties, and relationships.
-   Example: Character, Location, Faction, Session, CombatEncounter.
-
-2. Graph layer
-    Stores world state and scene/milestone topology in connected form.
-    Scene and milestone nodes are linked with entities, enabling causal and temporal traversals.
-
-3. Knowledge layer
-   Contains narrative text, chunks, summaries, and embeddings used by retrieval and generation agents.
-
-### Ontologies and Narrative Structure
-
-In Shrecknet, an ontology is the schema for a world. It includes:
-
-- Entity definitions: what kinds of things can exist.
-- Property definitions: what attributes those entities can carry.
-- Relationship definitions: how entities can connect.
-
-Narrative structure is represented through ontology definitions plus scenes and milestones, so it can evolve with the world. As campaigns change, new scene-level relation patterns can be introduced without destroying historical memory.
-
-### Why This Matters for Storytelling
-
-- You preserve chronology, not just snippets.
-- You can recover causes, consequences, and continuity.
-- Agents can reason over both structure and narrative evidence.
-
-## Agents
+## Agents at a Glance
 
 ### Elder
-
-Conversational memory agent. Elder answers questions by retrieving context from graph and embedded knowledge, then synthesizing grounded responses with optional trace/context modes.
+Conversational memory and retrieval orchestrator. Elder decomposes questions, retrieves graph and knowledge context, and returns grounded answers.
+- [Documentation/Agents/Elder/Elder.md](Documentation/Agents/Elder/Elder.md)
 
 ### Librarian
-
-Document intelligence agent. Librarian searches embedded PDF/library content and returns contextual answers with chunk-level source metadata for rulebooks and canon material.
+Document intelligence and citation-oriented retrieval over library/PDF embeddings.
+- [Documentation/Agents/Librarian/Librarian.MD](Documentation/Agents/Librarian/Librarian.MD)
 
 ### Architect
-
-Ontology and structure evolution agent. Architect analyzes existing instances, scenes, and milestones and proposes additions, updates, and merges to keep ontology and world state coherent as memory grows.
-
-Current Architect analysis includes a scene-centric chunking mode that:
-- Merges `text` and `autogenerated_text` inputs per entity
-- Extracts narrative paragraphs from HTML and plain text
-- Packs chunks to a 16k token ceiling
-- Segments each chunk into full-coverage scenes using the Architect extract model
-- Stores chunking artifacts for local inspection
-
-See: [Documentation/Agents/Architect/Scene Chunking.md](Documentation/Agents/Architect/Scene%20Chunking.md)
+Ontology and narrative-structure evolution agent for keeping world schema and memory coherent over time.
+- [Documentation/Agents/Architect/Architect.md](Documentation/Agents/Architect/Architect.md)
+- [Documentation/Agents/Architect/Architect - Endpoints.md](Documentation/Agents/Architect/Architect - Endpoints.md)
+- [Documentation/Agents/Architect/Analyse/Scene Chunking.md](Documentation/Agents/Architect/Analyse/Scene Chunking.md)
 
 ### Novelist
+Narrative generation agent for converting notes/session material into polished story output.
+- [Documentation/Agents/Novelist/Novelist.md](Documentation/Agents/Novelist/Novelist.md)
+- [Documentation/Agents/Novelist.md](Documentation/Agents/Novelist.md)
 
-Narrative generation agent. Novelist turns unstructured notes or session text into polished prose.
-
-## Functionalities by Group
-
-### Core memory and world modeling
-
-- Ontology CRUD with entities, properties, and relationships
-- Ontology instances with entity-level state
-- Scene and milestone creation, update, retrieval, and relation linking
-- Event emission endpoint for event-driven integration flows
-
-### Retrieval and reasoning
-
-- GraphRAG semantic retrieval over Neo4j
-- Embedding workflows for ontology and library assets
-- Context-first query modes for explainable responses
-
-### Agentic workflows
-
-- Elder query orchestration with chat continuity
-- Librarian retrieval over embedded library items
-- Architect async analysis and proposal validation loops
-- Novelist async draft generation
-
-### Platform and operations
-
-- JWT-based authentication
-- Role-based permissions (admin, world_builder, writer, player)
-- Background jobs with Celery + Redis
-- Backup/export/import endpoints
-- Media serving and upload validation
-
-## Run Shrecknet Step by Step
+## Quick Start (Compose Only)
 
 ### 1. Prerequisites
-
 - Docker Engine with Docker Compose v2
-- Optional: OpenAI API key for LLM-powered agent features
 
-### 2. Configure environment variables
+### 2. Review first-start config
 
-Create a .env file in the repository root.
+Initial configuration lives in the root `configs/` folder:
+- [configs/shrecknet.initial.json](configs/shrecknet.initial.json): Shrecknet first-start settings.
+- [configs/shreckllm.initial.json](configs/shreckllm.initial.json): shreckLLM first-start settings.
+- [configs/neo4j.env](configs/neo4j.env): Neo4j startup settings that must exist before the API can boot.
+- [configs/compose.env](configs/compose.env): Docker Compose operational settings.
 
-```env
-# Required in practice for stable local runs
-SHRECKNET_NEO4J_PASSWORD=ChangeMeStrong123
+Credentials are intentionally empty in the JSON seed files. API keys and provider credentials should be configured after startup through the config APIs so they are stored in the runtime config database.
 
-# Required for Elder/Librarian/Architect/Novelist LLM workflows
-SHRECKNET_OPENAI_API_KEY=sk-...
-
-# Strongly recommended for production-like auth
-SHRECKNET_JWT_PRIVATE_KEY_PEM=
-SHRECKNET_JWT_PUBLIC_KEY_PEM=
-
-# Optional overrides (defaults exist, shown for clarity)
-SHRECKNET_MEDIA_PUBLIC_URL=http://localhost:8100/media
-SHRECKNET_CORS_ALLOW_ORIGINS=["http://localhost:3000","http://127.0.0.1:3000","http://localhost:5173","http://127.0.0.1:5173","http://localhost:8100","http://127.0.0.1:8100"]
-SHRECKNET_CONTAINER_UID=1000
-SHRECKNET_CONTAINER_GID=1000
-```
-
-Parameter explanation:
-
-- SHRECKNET_NEO4J_PASSWORD: password used by Neo4j and API graph connectivity.
-- SHRECKNET_OPENAI_API_KEY: enables agent jobs that call LLMs.
-- SHRECKNET_JWT_PRIVATE_KEY_PEM / SHRECKNET_JWT_PUBLIC_KEY_PEM: optional in dev, recommended for controlled signing and verification.
-- SHRECKNET_MEDIA_PUBLIC_URL: absolute URL returned in media payloads.
-- SHRECKNET_CORS_ALLOW_ORIGINS: JSON array of allowed browser origins.
-- SHRECKNET_CONTAINER_UID / SHRECKNET_CONTAINER_GID: keeps mounted file permissions aligned with host user.
-
-### 3. Build and start
+### 3. Start all services
 
 ```bash
-docker compose up --build
+docker compose --env-file configs/compose.env --env-file configs/neo4j.env up --build
 ```
 
-### 4. Verify health and docs
+### 4. Verify
 
 ```bash
 curl -s http://localhost:8100/health
 curl -s http://localhost:8100/openapi.json | head
 ```
 
-Expected:
+Open in browser:
+- API docs: `http://localhost:8100/docs`
+- Neo4j Browser: `http://localhost:7475`
+- Neo4j Bolt: `bolt://localhost:7688`
 
-- Health returns status ok
-- OpenAPI document is reachable
-- Swagger UI loads at http://localhost:8100/docs
-- Neo4j browser is reachable at http://localhost:7475
+## What to Expect After Startup
 
-## Service Lifecycle: From Zero to Scene-Centric Story Memory
+Immediately available:
+- API and OpenAPI docs on port `8100`.
+- Scene-centric data model endpoints and CRUD flows.
+- Neo4j + Redis + worker-backed background jobs.
 
-Below is a practical sequence to initialize and use Shrecknet through the API.
+Requires additional setup:
+- LLM provider credentials should be added through the config APIs after startup.
+- The initial JSON files seed only missing config DB values. Once `shrecknet_config.db` or `shreckllm_config.db` exists, those databases are the runtime source of truth.
+- Delete the relevant config DB only when you intentionally want to reseed from `configs/*.initial.json`.
+- `configs/neo4j.env` is the initial Neo4j source of truth for both the Neo4j container and Shrecknet's graph connection. It ships with a local password; change it before first run for non-local use.
+- OpenAI and Anthropic credentials belong to shreckLLM provider config, not Shrecknet. Add them through shreckLLM `/config/openai-token` and `/config/anthropic-token` after startup.
 
-### 1. Set up users
+Primary references:
+- [Documentation/README.md](Documentation/README.md)
+- [Documentation/Architecture/SHRECKNET_ARCHITECTURE.md](Documentation/Architecture/SHRECKNET_ARCHITECTURE.md)
 
-First registered user becomes admin automatically.
+## Documentation Map
 
-```python
-import requests
+General index:
+- [Documentation/README.md](Documentation/README.md)
 
-BASE = "http://localhost:8100"
+Architecture:
+- [Documentation/Architecture/SHRECKNET_ARCHITECTURE.md](Documentation/Architecture/SHRECKNET_ARCHITECTURE.md)
 
-# Register first user (auto-admin if database is empty)
-admin = requests.post(
-    f"{BASE}/users/",
-    json={
-        "username": "keeper",
-        "full_name": "World Keeper",
-        "email": "keeper@example.com",
-        "timezone": "UTC",
-        "role": "admin",
-        "password": "change-me-strong",
-        "entity_ids": [],
-    },
-)
-admin.raise_for_status()
+Scene-centric memory:
+- [Documentation/SceneCentricMemory/Data Structure/Data Structure.md](Documentation/SceneCentricMemory/Data Structure/Data Structure.md)
+- [Documentation/SceneCentricMemory/Data Structure/Data Structure - ENDPOINTS.md](Documentation/SceneCentricMemory/Data Structure/Data Structure - ENDPOINTS.md)
+- [Documentation/SceneCentricMemory/Retrieval/Retrieval.md](Documentation/SceneCentricMemory/Retrieval/Retrieval.md)
+- [Documentation/SceneCentricMemory/Retrieval/Retrieval - Endpoints.md](Documentation/SceneCentricMemory/Retrieval/Retrieval - Endpoints.md)
+- [Documentation/SceneCentricMemory/Embedding/SCENE_EMBEDDING.md](Documentation/SceneCentricMemory/Embedding/SCENE_EMBEDDING.md)
+- [Documentation/SceneCentricMemory/Embedding/FRONTEND_ENDPOINTS_JOBS_SUMMARY.md](Documentation/SceneCentricMemory/Embedding/FRONTEND_ENDPOINTS_JOBS_SUMMARY.md)
 
-# Login and get bearer token
-token_resp = requests.post(
-    f"{BASE}/auth/token",
-    json={"username": "keeper", "password": "change-me-strong"},
-)
-token_resp.raise_for_status()
-token = token_resp.json()["access_token"]
-headers = {"Authorization": f"Bearer {token}"}
+Agents:
+- [Documentation/Agents/Elder/Elder.md](Documentation/Agents/Elder/Elder.md)
+- [Documentation/Agents/Librarian/Librarian.MD](Documentation/Agents/Librarian/Librarian.MD)
+- [Documentation/Agents/Architect/Architect.md](Documentation/Agents/Architect/Architect.md)
+- [Documentation/Agents/Architect/Architect - Endpoints.md](Documentation/Agents/Architect/Architect - Endpoints.md)
+- [Documentation/Agents/Architect/Analyse/Scene Chunking.md](Documentation/Agents/Architect/Analyse/Scene Chunking.md)
+- [Documentation/Agents/Novelist/Novelist.md](Documentation/Agents/Novelist/Novelist.md)
+- [Documentation/Agents/Novelist.md](Documentation/Agents/Novelist.md)
+
+## Examples
+
+README keeps only a smoke test. For full workflows, use canonical docs above.
+
+### Smoke test (health + auth reachability)
+
+```bash
+# Health
+curl -s http://localhost:8100/health
+
+# Register first user (becomes admin if DB is empty)
+curl -s -X POST http://localhost:8100/users/ \
+  -H "Content-Type: application/json" \
+  -d '{
+    "username":"keeper",
+    "full_name":"World Keeper",
+    "email":"keeper@example.com",
+    "timezone":"UTC",
+    "role":"admin",
+    "password":"change-me-strong",
+    "entity_ids":[]
+  }'
+
+# Login
+curl -s -X POST http://localhost:8100/auth/token \
+  -H "Content-Type: application/json" \
+  -d '{"username":"keeper","password":"change-me-strong"}'
 ```
-
-### 2. Set up ontologies
-
-Create ontology, then evolve it with entities/properties/relationships as your narrative model matures.
-
-```python
-# Create ontology
-ontology = requests.post(
-    f"{BASE}/ontologies/",
-    headers=headers,
-    json={
-        "name": "Chronicles of Marshfall",
-        "description": "Scene-centric ontology for campaign memory",
-        "image_url": None,
-    },
-)
-ontology.raise_for_status()
-ontology_id = ontology.json()["id"]
-
-# Optional: bootstrap default worlds
-default_worlds = requests.post(
-    f"{BASE}/setup/default-worlds",
-    headers=headers,
-    json={"worlds": ["fantasy"]},
-)
-default_worlds.raise_for_status()
-```
-
-### 3. Set up agents
-
-Create one agent per job and attach ontologies they should reason over.
-
-```python
-def create_agent(name, job, ontology_ids):
-    resp = requests.post(
-        f"{BASE}/agents/",
-        headers=headers,
-        json={
-            "name": name,
-            "avatar_url": None,
-            "description": f"{job} specialist",
-            "writing_style": "Clear, grounded, and lore-consistent",
-            "job": job,
-            "active": True,
-            "ontology_ids": ontology_ids,
-        },
-    )
-    resp.raise_for_status()
-    return resp.json()["id"]
-
-elder_id = create_agent("Elder One", "elder", [ontology_id])
-librarian_id = create_agent("Librarian One", "librarian", [ontology_id])
-architect_id = create_agent("Architect One", "architect", [ontology_id])
-novelist_id = create_agent("Novelist One", "novelist", [ontology_id])
-```
-
-### 4. Build scene-centric memory with ontology instances, scenes, and milestones
-
-```python
-# Create ontology instance with initial entities
-instance_resp = requests.post(
-    f"{BASE}/ontology-instances/",
-    headers=headers,
-    json={
-        "name": "Session 01 - The Broken Oath",
-        "ontology_id": ontology_id,
-        "entities": [
-            {
-                "definition_id": 1,
-                "alias": "Arin",
-                "text": "A ranger tracking marsh anomalies.",
-                "author_type": "human",
-                "author_id": "1",
-                "properties": [],
-                "relationships": [],
-            }
-        ],
-        "events": [],
-        "scenes": [],
-    },
-)
-instance_resp.raise_for_status()
-instance_id = instance_resp.json()["instance_id"]
-
-# Add a scene
-scene_resp = requests.post(
-    f"{BASE}/ontology-instances/{instance_id}/scenes",
-    headers=headers,
-    json={
-        "name": "Ambush At Reed Bridge",
-        "description": "Arin discovers a staged ambush tied to the Black Lantern guild.",
-        "created_by_type": "human",
-        "created_by_author": "1",
-        "derived_from": {"entity_instance_id": "entity-arin"},
-    },
-)
-scene_resp.raise_for_status()
-scene_id = scene_resp.json()["id"]
-
-# Add milestone to the scene
-milestone_resp = requests.post(
-    f"{BASE}/ontology-instances/{instance_id}/scenes/{scene_id}/milestones",
-    headers=headers,
-    json={
-        "name": "Ambush Is Revealed",
-        "description": "Arin identifies the ambush trap and its sponsor.",
-        "created_by_type": "human",
-        "created_by_author": "1",
-        "boundary_type": "begin",
-        "derived_from": {"entity_instance_id": "entity-arin"},
-    },
-)
-milestone_resp.raise_for_status()
-milestone_id = milestone_resp.json()["id"]
-
-# Emit integration event for external consumers/webhooks
-emit = requests.post(
-    f"{BASE}/events/emit",
-    headers=headers,
-    json={
-        "event_type": "story.event.created",
-        "payload": {"instance_id": instance_id, "scene_id": scene_id, "milestone_id": milestone_id},
-    },
-)
-emit.raise_for_status()
-```
-
-### 5. Use each agent
-
-```python
-# Elder: memory-grounded Q&A
-elder = requests.post(
-    f"{BASE}/jobs/elder/{elder_id}/query",
-    headers=headers,
-    json={"query": "What changed after the Reed Bridge ambush?", "mode": "both"},
-)
-elder.raise_for_status()
-
-# Librarian: PDF/library grounded Q&A
-librarian = requests.post(
-    f"{BASE}/jobs/librarian/{librarian_id}/query",
-    headers=headers,
-    json={"query": "Summarize stealth rules for marsh terrain.", "mode": "both"},
-)
-librarian.raise_for_status()
-
-# Architect: propose ontology/entity evolution from an instance
-architect = requests.post(
-    f"{BASE}/jobs/architect/{architect_id}/analyze",
-    headers=headers,
-    json={"ontology_instance_id": instance_id, "max_chunks": 40},
-)
-architect.raise_for_status()
-architect_run_id = architect.json()["id"]
-
-# Novelist: generate prose from raw notes
-novelist = requests.post(
-    f"{BASE}/jobs/novelist/{novelist_id}/runs",
-    headers=headers,
-    json={
-        "unstructured_text": "Arin reached Reed Bridge at dusk. An ambush unfolded...",
-        "language": "en",
-        "instructions": "Write in close third person with tense pacing.",
-    },
-)
-novelist.raise_for_status()
-novelist_run_id = novelist.json()["id"]
-```
-
-Tip: use http://localhost:8100/docs to inspect exact payloads and all endpoint variants in your running version.
-
-## Project Scope as a Single Product
-
-Shrecknet is presented and operated as one product: one API surface, one memory model, one scene-centric architecture, and one set of agents orchestrated through shared ontology and graph state.
-
-## Documentation
-
-- Main docs index: [Documentation/README.md](Documentation/README.md)
-- Architecture diagram page: [Documentation/Architecture/SHRECKNET_ARCHITECTURE.md](Documentation/Architecture/SHRECKNET_ARCHITECTURE.md)
-
-## License
-
-This project is licensed under GPLv3. See [LICENSE](LICENSE).

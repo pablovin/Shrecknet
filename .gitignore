@@ -38,6 +38,7 @@ data/
 .data/
 databases/
 *.json
+!configs/*.json
 
 # Deployment
 .vercel

@@ -4,27 +4,11 @@ x-shrecknet-env: &shrecknet-env
   PYTHONUNBUFFERED: "1"
   HF_HOME: /hf-cache
   SENTENCE_TRANSFORMERS_HOME: /hf-cache/sentence_transformers
-  SHRECKNET_EMBEDDING_MODEL_ID: "${SHRECKNET_EMBEDDING_MODEL_ID:-sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2}"
-  SHRECKNET_EMBEDDING_DEVICE: "${SHRECKNET_EMBEDDING_DEVICE:-cpu}"
-  SHRECKNET_DATA_DIR: /data
-  SHRECKNET_MEDIA_ROOT: /app/media
-  SHRECKNET_MEDIA_PUBLIC_URL: "${SHRECKNET_MEDIA_PUBLIC_URL:-http://localhost:8100/media}"
-  SHRECKNET_CORS_ALLOW_ORIGINS: '${SHRECKNET_CORS_ALLOW_ORIGINS:-["http://localhost:3000","http://127.0.0.1:3000","http://localhost:5173","http://127.0.0.1:5173","http://localhost:8100","http://127.0.0.1:8100"]}'
-  SHRECKNET_NEO4J_PASSWORD: "${SHRECKNET_NEO4J_PASSWORD:-VeryStrongPass123}"
-  SHRECKNET_JWT_PRIVATE_KEY_PEM: "${SHRECKNET_JWT_PRIVATE_KEY_PEM:-}"
-  SHRECKNET_JWT_PUBLIC_KEY_PEM: "${SHRECKNET_JWT_PUBLIC_KEY_PEM:-}"
-  SHRECKNET_SHRECKLLM_BASE_URL: "${SHRECKNET_SHRECKLLM_BASE_URL:-http://shreckllm:8110}"
-  SHRECKNET_SHRECKLLM_REQUEST_TIMEOUT_S: "${SHRECKNET_SHRECKLLM_REQUEST_TIMEOUT_S:-60}"
-  SHRECKNET_SHRECKLLM_MAX_RETRIES: "${SHRECKNET_SHRECKLLM_MAX_RETRIES:-2}"
+  SHRECKNET_CONFIG_SEED_FILE: /configs/shrecknet.initial.json
 
 x-shreckllm-env: &shreckllm-env
   PYTHONUNBUFFERED: "1"
-  SHRECKLLM_HOST: 0.0.0.0
-  SHRECKLLM_PORT: 8110
-  SHRECKLLM_SHRECKNET_API_BASE_URL: "http://shrecknet_api:8100"
-  SHRECKLLM_CORS_ALLOW_ORIGINS: '${SHRECKLLM_CORS_ALLOW_ORIGINS:-["http://localhost:3000","http://127.0.0.1:3000","http://localhost:5173","http://127.0.0.1:5173","http://localhost:8100"]}'
-  SHRECKLLM_REDIS_URL: "${SHRECKLLM_REDIS_URL:-redis://redis:6379/2}"
-  SHRECKLLM_BOOTSTRAP_REQUEST_TIMEOUT_SECONDS: "${SHRECKLLM_BOOTSTRAP_REQUEST_TIMEOUT_SECONDS:-120}"
+  SHRECKLLM_CONFIG_SEED_FILE: /configs/shreckllm.initial.json
 
 services:
   # One-shot model prefetch so API/worker do not depend on first-request internet download.
@@ -36,8 +20,12 @@ services:
     init: true
     user: "0:0"
     environment: *shrecknet-env
+    env_file:
+      - ./configs/compose.env
+      - ./configs/neo4j.env
     volumes:
       - hf-model-cache:/hf-cache
+      - ./configs:/configs:ro
     command:
       - /bin/sh
       - -ec
@@ -235,6 +223,8 @@ services:
   shrecknet_permissions:
     image: alpine:3.20
     user: "0:0"
+    env_file:
+      - ./configs/compose.env
     volumes:
       - ./shrecknet/databases:/data
       - ./shrecknet/media:/media
@@ -277,6 +267,8 @@ services:
   ollama_model_pull:
     image: curlimages/curl:8.8.0
     restart: "no"
+    env_file:
+      - ./configs/compose.env
     depends_on:
       ollama:
         condition: service_started
@@ -322,16 +314,12 @@ services:
       - neo4j-logs:/logs
       - neo4j-import:/var/lib/neo4j/import
       - neo4j-plugins:/plugins
+    env_file:
+      - ./configs/neo4j.env
     environment:
-      NEO4J_AUTH: "neo4j/${SHRECKNET_NEO4J_PASSWORD:-VeryStrongPass123}"
-      NEO4J_PLUGINS: '["apoc"]'
-      NEO4J_dbms_memory_pagecache_size: ${SHRECKNET_NEO4J_PAGECACHE_SIZE:-1G}
-      NEO4J_dbms_memory_heap_initial__size: ${SHRECKNET_NEO4J_HEAP_INITIAL_SIZE:-1G}
-      NEO4J_dbms_memory_heap_max__size: ${SHRECKNET_NEO4J_HEAP_MAX_SIZE:-6G}
-      NEO4J_dbms_memory_transaction_total_max: ${SHRECKNET_NEO4J_TX_TOTAL_MAX:-4G}
-      NEO4J_dbms_jvm_additional: -XX:+UseG1GC
+      NEO4J_AUTH: "${SHRECKNET_NEO4J_USER:-neo4j}/${SHRECKNET_NEO4J_PASSWORD:-VeryStrongPass123}"
     healthcheck:
-      test: ["CMD", "cypher-shell", "-u", "neo4j", "-p", "${SHRECKNET_NEO4J_PASSWORD:-VeryStrongPass123}", "RETURN 1"]
+      test: ["CMD-SHELL", "cypher-shell -u neo4j -p \"$${SHRECKNET_NEO4J_PASSWORD:-VeryStrongPass123}\" 'RETURN 1'"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -347,12 +335,16 @@ services:
     user: "${SHRECKNET_CONTAINER_UID:-1000}:${SHRECKNET_CONTAINER_GID:-1000}"
     command: uvicorn app.main:app --host 0.0.0.0 --port 8100
     environment: *shrecknet-env
+    env_file:
+      - ./configs/compose.env
+      - ./configs/neo4j.env
     ports:
       - "8100:8100" # API, /docs, /openapi.json, /health
     volumes:
       - ./shrecknet/databases:/data
       - ./shrecknet/media:/app/media
       - hf-model-cache:/hf-cache
+      - ./configs:/configs:ro
     depends_on:
       shrecknet_permissions:
         condition: service_completed_successfully
@@ -383,10 +375,14 @@ services:
     user: "${SHRECKNET_CONTAINER_UID:-1000}:${SHRECKNET_CONTAINER_GID:-1000}"
     command: sh -c "celery -A app.celery_app:celery_app worker --loglevel=info --concurrency=${SHRECKNET_CELERY_CONCURRENCY:-2}"
     environment: *shrecknet-env
+    env_file:
+      - ./configs/compose.env
+      - ./configs/neo4j.env
     volumes:
       - ./shrecknet/databases:/data
       - ./shrecknet/media:/app/media
       - hf-model-cache:/hf-cache
+      - ./configs:/configs:ro
     depends_on:
       shrecknet_permissions:
         condition: service_completed_successfully
@@ -407,10 +403,13 @@ services:
     restart: unless-stopped
     init: true
     environment: *shreckllm-env
+    env_file:
+      - ./configs/compose.env
     ports:
       - "8111:8110"
     volumes:
       - ./shreckLLM/databases:/app/databases
+      - ./configs:/configs:ro
     depends_on:
       redis:
         condition: service_healthy

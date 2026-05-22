@@ -1,0 +1,45 @@
+{
+  "host": "0.0.0.0",
+  "port": 8110,
+  "redis_url": "redis://redis:6379/2",
+  "shrecknet_api_base_url": "http://shrecknet_api:8100",
+  "cors_allow_origins": [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:8100"
+  ],
+  "cors_allow_methods": ["*"],
+  "cors_allow_headers": ["*"],
+  "cors_allow_credentials": true,
+  "data_dir": "/app/databases",
+  "bootstrap_default_provider_id": "ollama",
+  "bootstrap_provider_defaults": {
+    "ollama": {
+      "default_model": "gemma3:4b",
+      "models": ["gemma3:4b"],
+      "base_url": "http://ollama:11434",
+      "api_key": null
+    },
+    "openai": {
+      "default_model": "gpt-5-nano",
+      "models": ["gpt-5-nano", "gpt-5", "gpt-4o-mini"],
+      "base_url": null,
+      "api_key": ""
+    },
+    "anthropic": {
+      "default_model": "claude-3-haiku-20240307",
+      "models": ["claude-3-haiku-20240307", "claude-opus-4-1-20250805"],
+      "base_url": "https://api.anthropic.com",
+      "api_key": ""
+    }
+  },
+  "bootstrap_memory_ttl_seconds": 3600,
+  "bootstrap_memory_max_messages": 24,
+  "bootstrap_max_concurrent_requests": 8,
+  "bootstrap_request_timeout_seconds": 45.0,
+  "bootstrap_max_queue_wait_seconds": 10.0,
+  "ollama_keep_alive": "30m",
+  "ollama_prewarm_on_startup": true
+}

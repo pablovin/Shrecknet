@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import json
+import os
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+DEFAULT_CONFIG_SEED_FILE = Path("/configs/shreckllm.initial.json")
 
 
 class Settings(BaseSettings):
@@ -62,6 +66,39 @@ class Settings(BaseSettings):
     ollama_prewarm_on_startup: bool = True
 
 
+def _repo_config_seed_file() -> Path:
+    return Path(__file__).resolve().parents[2] / "configs" / "shreckllm.initial.json"
+
+
+def _config_seed_file_candidates() -> list[Path]:
+    configured = os.getenv("SHRECKLLM_CONFIG_SEED_FILE")
+    candidates: list[Path] = []
+    if configured:
+        candidates.append(Path(configured))
+    candidates.extend([DEFAULT_CONFIG_SEED_FILE, _repo_config_seed_file()])
+    return candidates
+
+
+def _load_initial_settings_file() -> dict[str, Any]:
+    for path in _config_seed_file_candidates():
+        if not path.exists():
+            continue
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"Invalid shreckLLM config seed file '{path}': {exc}") from exc
+        if not isinstance(payload, dict):
+            raise ValueError(f"Invalid shreckLLM config seed file '{path}': expected JSON object")
+        allowed = set(Settings.model_fields)
+        unknown = sorted(set(payload) - allowed)
+        if unknown:
+            raise ValueError(
+                f"Invalid shreckLLM config seed file '{path}': unknown keys {', '.join(unknown)}"
+            )
+        return payload
+    return {}
+
+
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
-    return Settings()
+    return Settings(**_load_initial_settings_file())

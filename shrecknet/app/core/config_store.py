@@ -17,6 +17,7 @@ DEFAULT_JOBS_DATABASE_FILENAME = "shrecknet_jobs.db"
 CONFIG_DB_FILENAME = "shrecknet_config.db"
 LEGACY_CONFIG_DB_FILENAME = "configs.db"
 CONFIG_TABLE = "config_settings"
+DEFAULT_CONFIG_SEED_FILE = Path("/configs/shrecknet.initial.json")
 BOOTSTRAP_ENV_FIELDS = frozenset(
     {
         "database_url",
@@ -25,6 +26,10 @@ BOOTSTRAP_ENV_FIELDS = frozenset(
         "celery_result_backend",
         "jwt_private_key_pem",
         "jwt_public_key_pem",
+        "neo4j_uri",
+        "neo4j_user",
+        "neo4j_password",
+        "neo4j_database",
     }
 )
 
@@ -250,8 +255,44 @@ def _deserialize_value(raw: str) -> Any:
     return json.loads(raw)
 
 
+def _repo_config_seed_file() -> Path:
+    return Path(__file__).resolve().parents[3] / "configs" / "shrecknet.initial.json"
+
+
+def _config_seed_file_candidates() -> list[Path]:
+    configured = os.getenv("SHRECKNET_CONFIG_SEED_FILE")
+    candidates: list[Path] = []
+    if configured:
+        candidates.append(Path(configured))
+    candidates.extend([DEFAULT_CONFIG_SEED_FILE, _repo_config_seed_file()])
+    return candidates
+
+
+def _load_initial_settings_file() -> dict[str, Any]:
+    for path in _config_seed_file_candidates():
+        if not path.exists():
+            continue
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"Invalid Shrecknet config seed file '{path}': {exc}") from exc
+        if not isinstance(payload, dict):
+            raise ValueError(f"Invalid Shrecknet config seed file '{path}': expected JSON object")
+        allowed = set(Settings.model_fields)
+        unknown = sorted(set(payload) - allowed)
+        if unknown:
+            raise ValueError(
+                f"Invalid Shrecknet config seed file '{path}': unknown keys {', '.join(unknown)}"
+            )
+        logger.info("Loaded Shrecknet config seed file: %s", path)
+        return payload
+    return {}
+
+
 def _default_settings_dict() -> dict[str, Any]:
-    return Settings().model_dump()
+    defaults = Settings().model_dump()
+    defaults.update(_load_initial_settings_file())
+    return Settings(**defaults).model_dump()
 
 
 def _explicit_env_overrides() -> dict[str, Any]:

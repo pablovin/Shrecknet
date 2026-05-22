@@ -36,28 +36,28 @@
   "shreckllm_request_timeout_s": 60.0,
   "shreckllm_max_retries": 2,
   "model_architect_scene_chunking": {
-    "provider": "openai",
-    "name": "gpt-5"
+    "provider": "ollama",
+    "name": "gemma3:4b"
   },
   "model_architect": {
-    "provider": "openai",
-    "name": "gpt-5-nano"
+    "provider": "ollama",
+    "name": "gemma3:4b"
   },
   "model_elder": {
-    "provider": "openai",
-    "name": "gpt-5-nano"
+    "provider": "ollama",
+    "name": "gemma3:4b"
   },
   "model_novelist": {
-    "provider": "openai",
-    "name": "gpt-5-nano"
+    "provider": "ollama",
+    "name": "gemma3:4b"
   },
   "model_novelist_draft": {
-    "provider": "openai",
-    "name": "gpt-5"
+    "provider": "ollama",
+    "name": "gemma3:4b"
   },
   "model_librarian": {
-    "provider": "openai",
-    "name": "gpt-5-nano"
+    "provider": "ollama",
+    "name": "gemma3:4b"
   },
   "default_top_k": 20,
   "embedding_model_id": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",

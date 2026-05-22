@@ -9,6 +9,7 @@ from html import unescape
 from html.parser import HTMLParser
 from typing import Any
 
+from app.core.config_store import LLMModelTarget
 from app.integrations.llm.shreckllm_client import ShreckLLMClient
 from app.jobs.architect import prompts as architect_prompts
 
@@ -607,7 +608,7 @@ def _merge_candidate_scenes(candidate_scenes: list[dict[str, Any]]) -> list[dict
 async def segment_chunk_into_scenes(
     *,
     llm_client: ShreckLLMClient,
-    model: str,
+    model: str | LLMModelTarget,
     marked_paragraphs: str,
     paragraph_count: int,
     paragraphs: list[str],

@@ -20,6 +20,7 @@ Scene proposal links ordered scene outputs with deduplicated entity proposals an
 4. Add sequence links:
    - `preceded_by`
    - `followed_by`
+5. Defensively guard duplicate `scene_ref` values (append deterministic `__dup_N` suffix and log warning).
 
 ## Scene Output Shape
 
@@ -79,7 +80,7 @@ Payload fields:
 ## Notes
 
 - This phase is deterministic and in-memory (no graph writes).
-- Scenes may be pruned later by milestone phase if they produce zero milestones.
+- Scenes are not pruned for empty milestones in the active path; begin/end placeholders are injected when needed.
 
 ## See Also
 

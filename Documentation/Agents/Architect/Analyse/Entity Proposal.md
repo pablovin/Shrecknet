@@ -4,11 +4,12 @@ This document describes the current entity proposal phase in the Architect analy
 
 ## Scope
 
-Entity proposal runs after scene chunking and before scene/milestone proposal.
+Entity proposal runs after final scene merge/dedup and before scene proposal/milestone assembly.
 
 Current goals:
 
 - Extract candidate entities from each detected scene.
+- Extract milestone-to-entity links for scene milestones.
 - Deduplicate aliases across scenes using canonical and alias-equivalence logic.
 - Reconcile deduplicated entities against existing graph candidates.
 - Classify each proposal as `updated` (matched existing entity) or `new`.
@@ -23,6 +24,7 @@ Current goals:
   - `scene_name`
   - `scene_description`
   - `scene_text`
+  - `scene_milestones` (final scene milestone hints)
 - Ontology definitions (auto-generatable entity names and descriptions)
 - Existing node catalogue loaded through retrieval (`node_id`, `alias`, `ontology`)
 
@@ -30,14 +32,21 @@ Current goals:
 
 - Extraction prompt: `ARCHITECT_ENTITY_PROPOSAL_PROMPT`
 - Reconciliation prompt: `ARCHITECT_ENTITY_RECONCILATION_PROMPT`
-- Model: `LLMTask.ARCHITECT_EXTRACT` selected by `ModelPolicy`
+- Model: configured architect model (`settings.model_architect`)
 
-LLM extraction parses to `ChunkExtractionResponse` and expects `entities[]` with:
+LLM extraction parses to `ChunkExtractionResponse` and expects:
 
-- `name`
-- `ontology`
-- `confidence`
-- `why`
+- `entities[]` with:
+  - `name`
+  - `ontology`
+  - `confidence`
+  - `why`
+- `milestone_entity_links[]` with:
+  - `milestone_title`
+  - `entity` (alias)
+  - `relationship_label`
+  - `relationship_description`
+  - `confidence`
 
 ## Parallel Execution
 
@@ -59,6 +68,10 @@ After scene-level extraction:
 5. Proposals are finalized as:
    - `updated` when matched to existing node
    - `new` when unmatched
+6. Milestone links are resolved against reconciled entities per scene:
+  - alias/canonical matching
+  - `proposal_index` mapping
+  - `entity_instance_id` attached when matched to existing node
 
 Final proposal fields include:
 
@@ -114,4 +127,5 @@ Contains:
 
 - This phase is active in `architect.analyze_instance`.
 - Analysis does not write entities to the graph.
+- Milestone links here are proposal-time hints, not graph edges.
 - Frontend reads consolidated output from `background_jobs.details.pipeline_output` after job status is `done`.

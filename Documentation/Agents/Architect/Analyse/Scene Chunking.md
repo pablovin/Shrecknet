@@ -4,7 +4,7 @@ This document describes the active scene chunking flow used by Architect analysi
 
 ## Purpose
 
-Segment narrative text into coherent scenes with full paragraph coverage, then attach scene text spans for downstream entity and milestone proposal.
+Extract local candidate scenes from overlapping paragraph bundles, then merge and deduplicate those candidates into final scenes with milestone hints for downstream phases.
 
 ## Inputs
 
@@ -49,18 +49,21 @@ Each chunk stores:
 - `token_count`
 - `marked_paragraphs`
 
-## Scene Segmentation and Unification
+## Local Bundle Candidate Extraction
 
-Two-pass flow per chunk:
+Within each token chunk, scene discovery runs over local paragraph bundles:
 
-1. Segment with `ARCHITECT_SCENE_CENTRIC_CHUNKING_PROMPT`
-2. Refine with `ARCHITECT_SCENE_UNIFIER_PROMPT`
+- Bundle size: `12` paragraphs
+- Overlap: `2` paragraphs
+- Max candidates per bundle: `3`
+
+Each bundle calls `ARCHITECT_SCENE_CENTRIC_CHUNKING_PROMPT` and expects candidate output.
 
 Expected model JSON shape:
 
 ```json
 {
-  "scenes": [
+  "candidate_scenes": [
     {
       "scene_id": 0,
       "name": "...",
@@ -72,6 +75,34 @@ Expected model JSON shape:
 }
 ```
 
+Compatibility note:
+
+- Parser accepts `candidate_scenes` (preferred) and `scenes` (legacy fallback).
+
+Milestone fields are preserved as raw scene-local hints:
+
+- `title`
+- `description`
+- `boundary_type`
+- `mentions`
+- `related_to` (alias-level hints)
+
+## Candidate Merge and Dedup
+
+After all bundle calls complete, candidates are merged programmatically.
+
+Scenes are merged when any of the following is true:
+
+- paragraph ranges overlap strongly
+- name + description similarity is high
+- milestone similarity is high
+
+Merge behavior:
+
+- expand paragraph range
+- union and deduplicate milestones
+- union `mentions` and `related_to` milestone hints
+
 ## Range Normalization and Validation
 
 Normalization behavior:
@@ -80,19 +111,7 @@ Normalization behavior:
 - Converts to one-based internal representation.
 - Enforces bounds and ordering.
 
-Validation mode per pass:
-
-- Initial segmentation: tolerant normalization and repair (`strict=False`).
-- Unifier pass: strict validation (`strict=True`).
-
-If unifier fails validation or parse, analysis logs a warning and falls back to initial normalized scenes.
-
-The unifier result log always reports:
-
-- `initial_scene_count`
-- `kept_scene_count`
-- `merged_scene_count`
-- `status` (`applied` or `fallback_original`)
+Final merged scenes are normalized with tolerant repair mode (`strict=False`) before text attachment.
 
 ## Scene Text Attachment
 
@@ -123,7 +142,6 @@ Key logs:
 - `scene_chunking_chunk_start`
 - `scene_chunking_chunk_done`
 - `scene_chunking_chunk_error`
-- `scene_unifier_result`
 - `scene_chunking_total`
 
 ## Current Runtime Behavior

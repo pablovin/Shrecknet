@@ -13,7 +13,7 @@ from typing import Any
 from uuid import uuid4
 
 from app.celery_app import celery_app
-from app.core.config_store import get_settings, is_shreckllm_configured
+from app.core.config_store import LLMModelTarget, get_settings, is_shreckllm_configured
 from app.graph.neo4j import get_driver
 from app.integrations.llm.shreckllm_client import ShreckLLMClient
 from app.integrations.retrieval.neo4j_retriever import Neo4jGraphRetriever
@@ -315,7 +315,7 @@ def _parse_reconciliation(response_text: str) -> ReconciliationResponse:
 async def _reconcile_with_existing(
     *,
     llm_client: ShreckLLMClient,
-    model: str,
+    model: str | LLMModelTarget,
     deduped: dict[str, dict[str, Any]],
     existing_nodes: list[dict[str, Any]],
     ontology_definitions: str,
@@ -456,7 +456,7 @@ async def _reconcile_with_existing(
 async def _classify_entities_with_reconciliation(
     *,
     llm_client: ShreckLLMClient,
-    model: str,
+    model: str | LLMModelTarget,
     scene_results: list[dict[str, Any]],
     existing_nodes: list[dict[str, Any]],
     ontology_definitions: str,
@@ -989,7 +989,7 @@ async def _extract_scene_entities(
     *,
     run_id: str,
     llm_client: ShreckLLMClient,
-    model: str,
+    model: str | LLMModelTarget,
     ontology_definitions: str,
     allowed_ontology_names: dict[str, str],
     scenes: list[dict[str, Any]],
@@ -1208,7 +1208,7 @@ async def _run_scene_chunking_phase(
     run_id: str,
     ontology_instance: Any,
     llm_client: ShreckLLMClient,
-    model: str,
+    model: str | LLMModelTarget,
     instructions: str | None = None,
 ) -> dict[str, Any]:
     started = perf_counter()
@@ -1320,7 +1320,7 @@ async def _run_entity_proposal_phase(
     *,
     run_id: str,
     llm_client: ShreckLLMClient,
-    model: str,
+    model: str | LLMModelTarget,
     ontology_definitions: str,
     allowed_ontology_names: dict[str, str],
     existing_nodes: list[dict[str, Any]],
@@ -1691,7 +1691,7 @@ async def _run_milestone_proposal_phase(
     *,
     run_id: str,
     llm_client: ShreckLLMClient,
-    model: str,
+    model: str | LLMModelTarget,
     proposed_scenes: list[dict[str, Any]],
     author_id: str,
     instructions: str | None = None,
@@ -2110,8 +2110,8 @@ async def _execute_architect_pipeline(
                     ontology_instance_id=ontology_instance_id,
                     ontology_instance=ontology_instance,
                     llm_client=llm_client,
-                    scene_chunking_model=str(settings.model_architect_scene_chunking),
-                    architect_model=str(settings.model_architect),
+                    scene_chunking_model=settings.model_architect_scene_chunking,
+                    architect_model=settings.model_architect,
                     ontology_definitions=ontology_definitions,
                     allowed_ontology_names=allowed_ontology_names,
                     existing_nodes=existing_nodes,
@@ -2168,8 +2168,8 @@ async def _run_scene_centric_chunking_test(
     ontology_instance_id: str,
     ontology_instance: Any,
     llm_client: ShreckLLMClient,
-    scene_chunking_model: str,
-    architect_model: str,
+    scene_chunking_model: str | LLMModelTarget,
+    architect_model: str | LLMModelTarget,
     ontology_definitions: str,
     allowed_ontology_names: dict[str, str],
     existing_nodes: list[dict[str, Any]],

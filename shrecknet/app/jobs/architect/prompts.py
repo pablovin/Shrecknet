@@ -1,44 +1,29 @@
 ARCHITECT_SCENE_SEGMENTATION_PROMPT = """You are an expert narrative analyst. Your roll is to segment a source text chunk into meaningful narrative scenes based on continuity in time, place, interaction focus, and narrative purpose.
 
-Your task is to segment a source text chunk into coherent narrative scenes.
-
-Input:
-The text is divided into numbered paragraphs:
-
-[P1] ...
-[P2] ...
-...
+Segment the text into coherent narrative scenes.
 
 A Scene is a continuous narrative situation.
-
 A scene is closer to a continuous camera shot than to a topic cluster.
 
-A scene usually remains the same while:
-- the same characters continue interacting
-- the same action or conversation continues
-- the location remains stable
-- there is no major time jump
-- the ongoing interaction has not meaningfully reset
+Keep conversations, confrontations, planning, arguments, and immediate consequences together while the interaction continues.
 
-Do NOT split scenes simply because:
-- the conversation topic evolves
-- emotions escalate
-- strategies change
-- new information is revealed
-- the tension increases
-
-Keep setup, confrontation, escalation, and immediate consequences together when they occur continuously.
-
-Create a new scene ONLY when there is a clear and meaningful change in:
+Create a new scene ONLY when there is a meaningful change in:
 - time
 - location
 - dominant participating characters
 - ongoing interaction or activity
 
-Avoid fragmentation.
-Prefer fewer, larger, stronger scenes.
+Do NOT split scenes because:
+- the conversation topic evolves
+- emotions escalate
+- strategies change
+- new information is revealed
+- tension increases
 
-The scene description must capture:
+Prefer fewer, larger, stronger scenes.
+Avoid fragmentation.
+
+Scene descriptions must capture:
 - the central dramatic situation
 - the active tension or pressure
 - important social, emotional, or political dynamics
@@ -46,36 +31,49 @@ The scene description must capture:
 
 Do NOT write generic plot summaries.
 
-Focus on the dramatic core of the scene, not only the surface actions.
+Prefer explicit character and entity names over vague references.
+
+Avoid:
+- the group
+- the party
+- the foreigners
+- they
+- the item
+- the city
+- the place
+
+when the involved entities are known.
+
+Scene descriptions should preserve important entity names for retrieval and graph memory purposes.
+
+Scene titles should identify the specific dramatic event, pressure, conflict, or decision of the scene.
+
+Avoid abstract or thematic titles like:
+- Observation and Preparation
+- Strategic Discussion
+- Rising Tension
+- The Conversation
+- Planning the Attack
+
+Titles should feel like memorable narrative beats, not chapter categories.
+
+Weak title:
+"Observation and Preparation"
+
+Strong title:
+"Tamura Organizes Surveillance"
+
+Weak description:
+"The group discusses their next move."
+
+Strong description:
+"Tamura, Evrain, Lynelle, and Everin discuss surveillance, allies, and timing while preparing for a prolonged political struggle in the city of Salt."
 
 Weak description:
 "King Leodogr issues warnings to the foreigners."
 
 Strong description:
-"King Leodogr publicly restrains his anger toward the foreigners while imposing strict conditions on their stay, revealing the fragile political protection granted by Arthur."
-
-Rules:
-- Scenes must be chronological.
-- Scenes must not overlap.
-- Scenes must cover the entire chunk.
-- Use only paragraph indexes from the provided chunk.
-- Do not invent entities not present in the text.
-
-For each scene return:
-- scene_id
-- name
-- description
-- start_paragraph
-- end_paragraph
-
-Scene title rules:
-- short and descriptive
-- max 6 words
-- reflect the dramatic core of the scene
-- avoid generic titles like:
-  - "The Conversation"
-  - "Planning"
-  - "The Discussion"
+"King Leodogr restrains his anger toward Tamura, Evrain, Lynelle, and Everin while imposing strict conditions on their stay, revealing Arthur’s political protection over them."
 
 Return ONLY valid JSON:
 

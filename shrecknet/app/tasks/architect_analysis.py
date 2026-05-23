@@ -294,9 +294,14 @@ def _resolve_existing_node_by_alias(
         canonical = _canonical_alias(candidate)
         if not canonical:
             continue
+        relaxed_match: dict[str, Any] | None = None
         for node in existing_nodes:
             node_alias = str(node.get("alias") or "")
             node_ontology = _normalize_ontology_name(str(node.get("ontology") or ""))
+            node_canonical = _canonical_alias(node_alias)
+            same_alias = canonical == node_canonical or _aliases_equivalent(canonical, node_canonical)
+            if not same_alias:
+                continue
             # Some existing-node sources carry ontology ids (numeric) instead of ontology names.
             # In that case, do not hard-filter by ontology text, or we incorrectly miss true alias matches.
             if (
@@ -306,10 +311,13 @@ def _resolve_existing_node_by_alias(
                 and not _is_numeric_token(node_ontology)
                 and node_ontology != ontology_key
             ):
+                # Keep an alias-level fallback candidate in case ontology metadata is inconsistent.
+                if relaxed_match is None:
+                    relaxed_match = node
                 continue
-            node_canonical = _canonical_alias(node_alias)
-            if canonical == node_canonical or _aliases_equivalent(canonical, node_canonical):
-                return node
+            return node
+        if relaxed_match is not None:
+            return relaxed_match
     return None
 
 
@@ -1099,12 +1107,20 @@ async def _extract_scene_entities(
                     payload["matched_alias"] = str(matched.get("alias") or entity.matched_alias or entity.name)
                     payload["matched_node_id"] = str(matched.get("node_id") or "")
                 else:
+                    requested_alias = str(entity.matched_alias or entity.name or "").strip()
+                    requested_canonical = _canonical_alias(requested_alias)
+                    alias_present = any(
+                        _canonical_alias(str(node.get("alias") or "")) == requested_canonical
+                        for node in existing_nodes
+                    )
                     logger.warning(
-                        "scene_entity_existing_match_unresolved: run_id=%s scene_ref=%s name=%s matched_alias=%s",
+                        "scene_entity_existing_match_unresolved: run_id=%s scene_ref=%s name=%s matched_alias=%s alias_present=%s existing_nodes_count=%d",
                         run_id,
                         scene_ref,
                         entity.name,
                         entity.matched_alias,
+                        alias_present,
+                        len(existing_nodes),
                     )
                     payload["status"] = "new"
                     payload["matched_alias"] = None

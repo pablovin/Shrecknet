@@ -464,6 +464,43 @@ def _extract_json_object(raw: str) -> str:
     return raw[start : end + 1]
 
 
+def _parse_scene_payload_with_repair(response_text: str) -> dict[str, Any]:
+    """Parse model payload, attempting lightweight JSON repairs on malformed output."""
+    candidate = _extract_json_object(response_text)
+    try:
+        return json.loads(candidate)
+    except json.JSONDecodeError:
+        repaired = candidate
+        # Normalize common model formatting artifacts.
+        repaired = repaired.replace("“", "\"").replace("”", "\"").replace("’", "'")
+        # Remove trailing commas before closing object/array.
+        repaired = re.sub(r",(\s*[}\]])", r"\1", repaired)
+        # Quote bare keys: { scenes: [...] } -> {"scenes":[...]}
+        repaired = re.sub(r'([{,]\s*)([A-Za-z_][A-Za-z0-9_]*)(\s*:)', r'\1"\2"\3', repaired)
+        return json.loads(repaired)
+
+
+async def _retry_scene_payload_via_llm_json_repair(
+    *,
+    llm_client: ShreckLLMClient,
+    model: str | LLMModelTarget,
+    malformed_text: str,
+) -> dict[str, Any]:
+    repair_template = getattr(
+        architect_prompts,
+        "ARCHITECT_SCENE_SEGMENTATION_JSON_REPAIR_PROMPT",
+        "",
+    )
+    prompt = str(repair_template).format(malformed_json=malformed_text)
+    response_text = await llm_client.chat(
+        model=model,
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.0,
+        usage_tag="architect.scene_discovery.json_repair",
+    )
+    return _parse_scene_payload_with_repair(response_text)
+
+
 def _normalize_scene_ranges(
     scenes: list[dict[str, Any]],
     paragraph_count: int,
@@ -559,7 +596,33 @@ async def segment_chunk_into_scenes(
         usage_tag="architect.scene_discovery",
     )
 
-    payload = json.loads(_extract_json_object(response_text))
+    try:
+        payload = _parse_scene_payload_with_repair(response_text)
+    except Exception as exc:
+        logger.warning("scene_chunk_parse_error_retry_json_repair: error=%s", exc)
+        try:
+            payload = await _retry_scene_payload_via_llm_json_repair(
+                llm_client=llm_client,
+                model=model,
+                malformed_text=response_text,
+            )
+        except Exception as retry_exc:
+            logger.warning(
+                "scene_chunk_parse_error_fallback_single_scene: initial_error=%s retry_error=%s",
+                exc,
+                retry_exc,
+            )
+            fallback = {
+                "scene_id": 0,
+                "raw_scene_order": 0,
+                "name": "Scene",
+                "description": "",
+                "start_paragraph": 1,
+                "end_paragraph": paragraph_count,
+                "raw_start_paragraph": 1,
+                "raw_end_paragraph": paragraph_count,
+            }
+            return attach_scene_text([fallback], paragraphs)
     raw_scenes = payload.get("scenes")
     if not isinstance(raw_scenes, list):
         logger.warning("scene_chunk_invalid_payload: keys=%s", list(payload.keys()))

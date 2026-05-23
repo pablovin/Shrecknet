@@ -5,7 +5,9 @@ Segment the text into coherent narrative scenes.
 A Scene is a continuous narrative situation.
 A scene is closer to a continuous camera shot than to a topic cluster.
 
-Keep conversations, confrontations, planning, arguments, and immediate consequences together while the interaction continues.
+A scene remains unified while the same core interaction, conflict, conversation, or strategic objective continues evolving.
+
+Keep conversations, confrontations, planning, arguments, tactical refinement, and immediate consequences together while the interaction continues.
 
 Create a new scene ONLY when there is a meaningful change in:
 - time
@@ -13,27 +15,33 @@ Create a new scene ONLY when there is a meaningful change in:
 - dominant participating characters
 - ongoing interaction or activity
 
-Do NOT split scenes because:
-- the conversation topic evolves
-- emotions escalate
-- strategies change
-- new information is revealed
-- tension increases
+Do NOT create new scenes for:
+- planning progression
+- tactical refinement
+- new proposals within the same discussion
+- escalation within the same interaction
+- continuation of the same strategic objective
+- emotional escalation within the same interaction
+- new information revealed during the same continuous exchange
 
 Prefer fewer, larger, stronger scenes.
 Avoid fragmentation.
 
+Before creating a scene title or description, identify the single dominant dramatic situation connecting the ENTIRE scene.
+
 Scene descriptions must capture:
-- the central dramatic situation
+- the dominant dramatic situation
 - the active tension or pressure
-- important social, emotional, or political dynamics
+- important social, emotional, strategic, or political dynamics
 - the meaningful state change produced by the scene
+
+Descriptions should preserve the enduring narrative situation of the scene, not summarize individual conversational beats.
 
 Do NOT write generic plot summaries.
 
 Prefer explicit character and entity names over vague references.
 
-Avoid:
+Avoid vague references like:
 - the group
 - the party
 - the foreigners
@@ -44,18 +52,27 @@ Avoid:
 
 when the involved entities are known.
 
-Scene descriptions should preserve important entity names for retrieval and graph memory purposes.
+Preserve important entity names for retrieval and graph memory purposes.
 
-Scene titles should identify the specific dramatic event, pressure, conflict, or decision of the scene.
+Scene titles must reflect the dominant dramatic situation of the ENTIRE scene.
 
-Avoid abstract or thematic titles like:
+Titles should feel like memorable narrative beats, not topic labels or chapter categories.
+
+Avoid vague or thematic titles like:
 - Observation and Preparation
 - Strategic Discussion
 - Rising Tension
-- The Conversation
 - Planning the Attack
+- The Conversation
+- Calculated Defiance
 
-Titles should feel like memorable narrative beats, not chapter categories.
+Prefer titles tied to:
+- named characters
+- concrete conflict
+- political pressure
+- strategic intent
+- revelations
+- meaningful decisions
 
 Weak title:
 "Observation and Preparation"
@@ -67,7 +84,7 @@ Weak description:
 "The group discusses their next move."
 
 Strong description:
-"Tamura, Evrain, Lynelle, and Everin discuss surveillance, allies, and timing while preparing for a prolonged political struggle in the city of Salt."
+"Tamura, Evrain, Lynelle, and Everin discuss surveillance, allies, and timing while preparing for a prolonged political struggle in Salt."
 
 Weak description:
 "King Leodogr issues warnings to the foreigners."
@@ -92,9 +109,45 @@ Return ONLY valid JSON:
 Constraints:
 - Do NOT include text outside JSON.
 - Do NOT invent entities not present in the text.
+- Output must be strict RFC8259 JSON.
+- Use double quotes for all keys and string values.
+- Do not use trailing commas.
+- Do not include markdown fences.
+- Ensure start_paragraph and end_paragraph are integers (not strings).
 
 Paragraphs:
 {marked_paragraphs}
+"""
+
+
+ARCHITECT_SCENE_SEGMENTATION_JSON_REPAIR_PROMPT = """You are a strict JSON repair assistant.
+
+Task:
+Repair the following malformed JSON output so it becomes valid strict RFC8259 JSON.
+Do not change semantic content unless required for JSON validity.
+
+Required final schema:
+{
+  "scenes": [
+    {
+      "scene_id": 0,
+      "name": "...",
+      "description": "...",
+      "start_paragraph": 1,
+      "end_paragraph": 4
+    }
+  ]
+}
+
+Rules:
+- Return ONLY JSON.
+- Use double quotes.
+- No trailing commas.
+- scene_id/start_paragraph/end_paragraph must be integers.
+- Do not add markdown or explanations.
+
+Malformed JSON:
+{malformed_json}
 """
 
 

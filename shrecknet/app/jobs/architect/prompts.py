@@ -172,14 +172,16 @@ Task:
 For each scene, return ONLY entities that clearly satisfy ALL of the following:
 1. They are explicitly named or clearly referred to in the text.
 2. They are uniquely identifiable as the same entity beyond this scene.
-3. They are meaningful enough to persist in the world model.
+3. They are meaningful enough to the scene story to persist in the world model.
 
 For each returned entity:
 - Set "status" to "existing" only when it clearly matches one of the Existing Entities by alias/name and ontology.
 - Similar names like: Lady Anastasia and Anastasia should be considered a clear match if the scene context supports it, even if the shorter alias is not an exact match in the Existing Entities list. In this case, set "matched_alias" to the exact alias string from Existing Entities that it matches.
 - Typos like King Leodrgance and King Leodogrance should be considered a clear match if the scene context supports it. In this case, set "matched_alias" to the exact alias string from Existing Entities that it matches.
 - Set "status" to "new" when no listed Existing Entity is a clear match.
-- For existing matches, set "matched_alias" to the exact alias string from Existing Entities.
+- For existing matches, set "matched_alias" to the exact alias string from Existing Entities. Also set the "ontology" to the ontology associated with that exact "matched_alias" in Existing Entities, even if the scene text suggests a different ontology. This is to enforce graph-truth and avoid mixing ontologies for the same entity.
+- If "status" is "existing", the "ontology" MUST be the ontology associated with that exact "matched_alias" in Existing Entities.
+- Never mix an existing alias with a different ontology; if you are not sure, always trust the ontology provided on the Existing Entities list.
 - Do not invent existing aliases.
 - Do not output ids. Existing entity ids are not part of this task.
 
@@ -205,7 +207,7 @@ Good candidates:
 - unique, clearly identified items with persistent story identity
 
 Bad candidates:
-- "the sword", "the stone", "the road", "the cathedral", "john`s horse"
+- "the sword", "the stone", "the road", "the cathedral", "john`s horse", "The servant", "the mask", "the city"
 - one-off background elements
 - broad symbolic references unless clearly established as a concrete ontology entity
 

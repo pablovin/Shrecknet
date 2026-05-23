@@ -68,6 +68,8 @@ Constraints:
 - Do not use trailing commas.
 - Do not include markdown fences.
 - Ensure start_paragraph and end_paragraph are integers (not strings).
+- `start_paragraph` and `end_paragraph` MUST be global paragraph ids taken directly from the `[P<number>]` markers shown in the input.
+- Do NOT return chunk-local paragraph positions.
 
 Paragraphs:
 {marked_paragraphs}

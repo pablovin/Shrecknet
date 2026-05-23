@@ -501,59 +501,6 @@ async def _retry_scene_payload_via_llm_json_repair(
     return _parse_scene_payload_with_repair(response_text)
 
 
-def _normalize_scene_ranges(
-    scenes: list[dict[str, Any]],
-    paragraph_count: int,
-) -> list[dict[str, Any]]:
-    if not scenes:
-        raise ValueError("Model returned no scenes")
-
-    def _parse_int(value: Any) -> int | None:
-        try:
-            return int(value)
-        except (TypeError, ValueError):
-            return None
-
-    parsed_starts = [_parse_int(scene.get("start_paragraph")) for scene in scenes]
-    parsed_ends = [_parse_int(scene.get("end_paragraph")) for scene in scenes]
-    zero_based = any(value == 0 for value in [*parsed_starts, *parsed_ends] if value is not None)
-
-    normalized: list[dict[str, Any]] = []
-    for idx, scene in enumerate(scenes):
-        raw_start = _parse_int(scene.get("start_paragraph"))
-        raw_end = _parse_int(scene.get("end_paragraph"))
-        adjusted_start = (raw_start + 1) if (zero_based and raw_start is not None) else raw_start
-        adjusted_end = (raw_end + 1) if (zero_based and raw_end is not None) else raw_end
-        start_value = adjusted_start if adjusted_start is not None else 1
-        end_value = adjusted_end if adjusted_end is not None else start_value
-        clipped_start = max(1, min(start_value, paragraph_count))
-        clipped_end = max(clipped_start, min(end_value, paragraph_count))
-        if clipped_start != start_value or clipped_end != end_value:
-            logger.warning(
-                "scene_range_out_of_bounds_clipped: scene_order=%s raw_start=%s raw_end=%s clipped_start=%s clipped_end=%s paragraph_count=%s",
-                idx,
-                start_value,
-                end_value,
-                clipped_start,
-                clipped_end,
-                paragraph_count,
-            )
-        normalized.append(
-            {
-                "scene_id": int(scene.get("scene_id", len(normalized))),
-                "raw_scene_order": idx,
-                "name": str(scene.get("name", "")).strip(),
-                "description": str(scene.get("description", "")).strip(),
-                "start_paragraph": clipped_start,
-                "end_paragraph": clipped_end,
-                "raw_start_paragraph": start_value,
-                "raw_end_paragraph": end_value,
-            }
-        )
-
-    return normalized
-
-
 def attach_scene_text(
     scenes: list[dict[str, Any]],
     paragraphs: list[str],
@@ -578,6 +525,69 @@ def _normalize_text_key(value: Any) -> str:
     return text
 
 
+def _parse_marked_paragraphs(marked_paragraphs: str) -> tuple[list[int], dict[int, str]]:
+    ids: list[int] = []
+    by_id: dict[int, str] = {}
+    for line in str(marked_paragraphs or "").splitlines():
+        match = PARAGRAPH_MARKER_PATTERN.match(line.strip())
+        if not match:
+            continue
+        pid = int(match.group(1))
+        ids.append(pid)
+        by_id[pid] = match.group(2).strip()
+    return sorted(set(ids)), by_id
+
+
+def _normalize_scene_ranges_global(
+    scenes: list[dict[str, Any]],
+    allowed_ids: list[int],
+) -> list[dict[str, Any]]:
+    if not scenes:
+        raise ValueError("Model returned no scenes")
+    if not allowed_ids:
+        raise ValueError("No allowed paragraph ids found")
+
+    min_id = min(allowed_ids)
+    max_id = max(allowed_ids)
+
+    def _parse_int(value: Any) -> int | None:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    normalized: list[dict[str, Any]] = []
+    for idx, scene in enumerate(scenes):
+        raw_start = _parse_int(scene.get("start_paragraph"))
+        raw_end = _parse_int(scene.get("end_paragraph"))
+        start_value = raw_start if raw_start is not None else min_id
+        end_value = raw_end if raw_end is not None else start_value
+        if start_value > end_value:
+            start_value, end_value = end_value, start_value
+
+        clipped_start = min(max(start_value, min_id), max_id)
+        clipped_end = min(max(end_value, min_id), max_id)
+        span_ids = [pid for pid in allowed_ids if clipped_start <= pid <= clipped_end]
+        if not span_ids:
+            nearest = min(allowed_ids, key=lambda pid: abs(pid - clipped_start))
+            span_ids = [nearest]
+
+        normalized.append(
+            {
+                "scene_id": int(scene.get("scene_id", len(normalized))),
+                "raw_scene_order": idx,
+                "name": str(scene.get("name", "")).strip(),
+                "description": str(scene.get("description", "")).strip(),
+                "start_paragraph": span_ids[0],
+                "end_paragraph": span_ids[-1],
+                "source_paragraphs_absolute": span_ids,
+                "raw_start_paragraph": start_value,
+                "raw_end_paragraph": end_value,
+            }
+        )
+    return normalized
+
+
 
 async def segment_chunk_into_scenes(
     *,
@@ -589,7 +599,11 @@ async def segment_chunk_into_scenes(
     instructions: str | None = None,
     debug_rows: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
-    if paragraph_count <= 0 or not paragraphs:
+    del paragraph_count
+    if not paragraphs:
+        return []
+    allowed_ids, paragraph_by_id = _parse_marked_paragraphs(marked_paragraphs)
+    if not allowed_ids:
         return []
 
     instructions_text = str(instructions or "").strip()
@@ -635,17 +649,19 @@ async def segment_chunk_into_scenes(
                 "raw_scene_order": 0,
                 "name": "Scene",
                 "description": "",
-                "start_paragraph": 1,
-                "end_paragraph": paragraph_count,
-                "raw_start_paragraph": 1,
-                "raw_end_paragraph": paragraph_count,
+                "start_paragraph": allowed_ids[0],
+                "end_paragraph": allowed_ids[-1],
+                "source_paragraphs_absolute": list(allowed_ids),
+                "raw_start_paragraph": allowed_ids[0],
+                "raw_end_paragraph": allowed_ids[-1],
+                "text": "\n".join(f"[P{pid}] {paragraph_by_id.get(pid, '')}" for pid in allowed_ids),
             }
             fallback_used = True
-            normalized = attach_scene_text([fallback], paragraphs)
+            normalized = [fallback]
             if debug_rows is not None:
                 debug_rows.append(
                     {
-                        "paragraph_count": paragraph_count,
+                        "paragraph_count": len(allowed_ids),
                         "marked_paragraphs": marked_paragraphs,
                         "raw_llm_response": str(response_text),
                         "parsed_payload": None,
@@ -668,15 +684,17 @@ async def segment_chunk_into_scenes(
             "scene_id": 0,
             "name": "Scene",
             "description": "",
-            "start_paragraph": 1,
-            "end_paragraph": paragraph_count,
+            "start_paragraph": allowed_ids[0],
+            "end_paragraph": allowed_ids[-1],
+            "source_paragraphs_absolute": list(allowed_ids),
+            "text": "\n".join(f"[P{pid}] {paragraph_by_id.get(pid, '')}" for pid in allowed_ids),
         }
         fallback_used = True
-        normalized = attach_scene_text([fallback], paragraphs)
+        normalized = [fallback]
         if debug_rows is not None:
             debug_rows.append(
                 {
-                    "paragraph_count": paragraph_count,
+                    "paragraph_count": len(allowed_ids),
                     "marked_paragraphs": marked_paragraphs,
                     "raw_llm_response": str(response_text),
                     "parsed_payload": payload,
@@ -688,16 +706,22 @@ async def segment_chunk_into_scenes(
             )
         return normalized
 
-    normalized_final = _normalize_scene_ranges(scene_items, paragraph_count)
+    normalized_final = _normalize_scene_ranges_global(scene_items, allowed_ids)
     for scene in normalized_final:
         scene.pop("milestones", None)
         scene.pop("mentions", None)
         scene.pop("related_to", None)
-    normalized = attach_scene_text(normalized_final, paragraphs)
+        span_ids = list(scene.get("source_paragraphs_absolute") or [])
+        scene["text"] = "\n".join(
+            f"[P{pid}] {paragraph_by_id.get(pid, '')}"
+            for pid in span_ids
+            if pid in paragraph_by_id
+        )
+    normalized = normalized_final
     if debug_rows is not None:
         debug_rows.append(
             {
-                "paragraph_count": paragraph_count,
+                "paragraph_count": len(allowed_ids),
                 "marked_paragraphs": marked_paragraphs,
                 "raw_llm_response": str(response_text),
                 "parsed_payload": payload,

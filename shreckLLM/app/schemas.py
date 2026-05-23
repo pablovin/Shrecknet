@@ -15,7 +15,6 @@ class ChatRequest(BaseModel):
     model: str | None = None
     messages: list[ChatMessage] = Field(min_length=1)
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)
-    max_tokens: int | None = Field(default=None, ge=1, le=8192)
     conversation_id: str | None = None
     use_conversation_memory: bool = False
     metadata: dict[str, Any] | None = None

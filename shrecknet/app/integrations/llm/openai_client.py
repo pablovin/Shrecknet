@@ -85,7 +85,6 @@ class OpenAIClient:
         model: str,
         messages: List[Dict[str, str]],
         temperature: float = 0.7,
-        max_tokens: Optional[int] = None,
         conversation_id: Optional[str] = None,
         use_conversation_memory: bool = False,
         usage_tag: Optional[str] = None,
@@ -98,7 +97,6 @@ class OpenAIClient:
             model: e.g. "gpt-5", "gpt-5-mini", "gpt-5-nano"
             messages: [{"role": "system"|"user"|"assistant", "content": "..."}, ...]
             temperature: sampling temperature
-            max_tokens: cap on output tokens (mapped to max_output_tokens)
 
         Returns:
             str: model text
@@ -126,7 +124,6 @@ class OpenAIClient:
                 llm = self._get_langchain_model(
                     model=model,
                     temperature=temperature,
-                    max_tokens=max_tokens,
                 )
                 resp = await llm.ainvoke(input_messages)
                 text = self._extract_text_from_langchain_response(resp)
@@ -418,7 +415,6 @@ class OpenAIClient:
         *,
         model: str,
         temperature: float,
-        max_tokens: Optional[int],
     ) -> ChatOpenAI:
         key = (model, temperature)
         cached = self._lc_models.get(key)
@@ -430,7 +426,6 @@ class OpenAIClient:
             temperature=temperature,
             timeout=self.timeout,
             max_retries=self.max_retries,
-            max_tokens=max_tokens,
         )
         self._lc_models[key] = llm
         return llm

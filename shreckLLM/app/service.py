@@ -244,7 +244,6 @@ class ChatService:
                 model=cfg.default_model,
                 messages=[ChatMessage(role="user", content="ping")],
                 temperature=0.0,
-                max_tokens=1,
             )
             print(f"[SHRECKLLM_PREWARM] step=done model={cfg.default_model} keep_alive={self.settings.ollama_keep_alive}")
             logger.info("[SHRECKLLM] ollama_prewarm_done model=%s keep_alive=%s", cfg.default_model, self.settings.ollama_keep_alive)
@@ -326,7 +325,6 @@ class ChatService:
             model=resolved_model,
             messages=combined_messages,
             temperature=request.temperature,
-            max_tokens=request.max_tokens,
         )
         provider_latency_s = time.monotonic() - provider_call_start
         self._log_backend_usage(

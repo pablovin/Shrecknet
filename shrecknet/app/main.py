@@ -220,7 +220,6 @@ async def _run_llm_prewarm() -> None:
                         model=target,
                         messages=[{"role": "user", "content": "ping"}],
                         temperature=0.0,
-                        max_tokens=1,
                         usage_tag="startup_model_prewarm",
                     ),
                     timeout=12.0,

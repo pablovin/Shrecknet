@@ -261,6 +261,8 @@ services:
     restart: unless-stopped
     ports:
       - "11434:11434"
+    environment:
+      OLLAMA_CONTEXT_LENGTH: "${SHRECKLLM_OLLAMA_CONTEXT_LENGTH:-8192}"
     volumes:
       - ollama-data:/root/.ollama
 
@@ -354,6 +356,8 @@ services:
         condition: service_healthy
       neo4j:
         condition: service_healthy
+      shreckllm:
+        condition: service_healthy
     healthcheck:
       test:
         - CMD-SHELL
@@ -394,6 +398,8 @@ services:
         condition: service_healthy
       shrecknet_api:
         condition: service_started
+      shreckllm:
+        condition: service_healthy
 
   # Standalone local-LLM service (uses shared Redis + Ollama)
   shreckllm:

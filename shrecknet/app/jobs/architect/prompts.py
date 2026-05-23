@@ -29,6 +29,14 @@ Anti-fragmentation rules:
 - Keep setup, escalation, and immediate consequence together when they happen without a meaningful break.
 - Do NOT create scenes for mood, description, or minor action alone.
 - Continuous conversations or confrontations should usually remain within the same scene unless there is a clear interruption or transition.
+- Avoid one-paragraph micro-scenes unless there is an explicit hard transition (clear time jump, location jump, or cast reset).
+- Prefer scenes with at least 2-3 paragraphs when possible.
+
+Scene count guidance (soft targets, not rigid):
+- 1-15 paragraphs: usually 1-3 scenes
+- 16-30 paragraphs: usually 2-5 scenes
+- 31+ paragraphs: usually 3-6 scenes
+- Do not exceed 8 scenes for a chunk unless the text contains many explicit hard transitions.
 
 Coverage rules:
 - Scenes must be chronological.
@@ -73,9 +81,16 @@ Paragraphs:
 
 ARCHITECT_SCENE_DEDUP_PROMPT = """You are merging scene segmentation metadata for one source entity.
 
-Input scenes are already ordered and include only metadata, not source prose. Your task is to merge duplicate or over-split scenes based on title/description similarity and paragraph overlap or adjacency.
+Input scenes are already ordered and include only metadata, not source prose. Your task is to merge only clear duplicates or obvious over-splits.
 
 Merge scenes only when they clearly describe the same continuous time/place/goal/participant situation. Keep unrelated scenes separate.
+
+Conservative merge policy:
+- Prefer under-merging rather than over-merging.
+- Do NOT merge scenes that are only topically similar.
+- Do NOT merge solely because two scenes are adjacent.
+- Merge adjacent scenes only if they are clearly the same ongoing event with no meaningful transition.
+- If uncertain, keep scenes separate.
 
 Return ONLY valid JSON in this exact format:
 
@@ -94,6 +109,7 @@ Rules:
 - Preserve chronological order.
 - Do not invent new scene_refs.
 - Do not include source text.
+- Keep scene boundaries unless there is strong evidence they represent the same event.
 
 Scene metadata:
 {scene_metadata}
@@ -136,6 +152,11 @@ Important:
 - Use only the provided ontology definitions for the ontology field.
 - The ontology value MUST exactly match one of the provided ontology definition names.
 - NEVER output placeholders like "Unknown", "Other", or inferred ontology types not present in the provided list.
+
+Practical guardrails:
+- If a scene clearly contains at least one named character, named location, named faction, or named organization, return at least one entity.
+- Use an empty list only when no clearly named persistent candidate exists in the scene text.
+- Prefer obvious named entities over aggressive filtering.
 
 Good candidates:
 - named characters

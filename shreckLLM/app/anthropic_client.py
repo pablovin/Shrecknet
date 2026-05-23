@@ -110,7 +110,6 @@ class AnthropicClient:
         model: str,
         messages: list[ChatMessage],
         temperature: float,
-        max_tokens: int | None,
     ) -> dict[str, Any]:
         if self._client is None:
             raise DependencyUnavailableError("anthropic is not configured")
@@ -119,7 +118,7 @@ class AnthropicClient:
             "model": model,
             "messages": [{"role": m.role, "content": m.content} for m in messages],
             "temperature": float(temperature),
-            "max_tokens": int(max_tokens) if max_tokens is not None else 1024,
+            "max_tokens": 1024,
         }
 
         try:

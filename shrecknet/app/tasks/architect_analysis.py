@@ -45,7 +45,8 @@ from app.db.session import AsyncSessionMaker
 logger = logging.getLogger(__name__)
 
 SCENE_ENTITY_EXTRACTION_CONCURRENCY = 10
-ENTITY_PROPOSAL_BATCH_SIZE = 5
+ENTITY_PROPOSAL_BATCH_SIZE = 3
+ENTITY_SCENE_TEXT_MAX_CHARS = 1_400
 MILESTONE_EXTRACTION_CONCURRENCY = 10
 MILESTONE_BATCH_SIZE = 5
 MILESTONE_SCENE_TEXT_MAX_CHARS = 2_400
@@ -1080,10 +1081,20 @@ async def _extract_scene_entities(
                 "scene_ref": scene.get("scene_ref"),
                 "scene_name": scene.get("scene_name"),
                 "scene_description": scene.get("scene_description"),
-                "scene_text": scene.get("scene_text"),
+                "scene_text": _compress_scene_text_for_milestone_prompt(
+                    _safe_json_text(scene.get("scene_text")),
+                    ENTITY_SCENE_TEXT_MAX_CHARS,
+                ),
             }
             for scene in batch
         ]
+        logger.info(
+            "scene_entity_extraction_batch_payload: run_id=%s batch_size=%d scene_refs=%s total_scene_text_chars=%d",
+            run_id,
+            len(batch),
+            [scene.get("scene_ref") for scene in batch],
+            sum(len(str(row.get("scene_text") or "")) for row in scenes_payload),
+        )
         try:
             async with semaphore:
                 entity_prompt_template = getattr(

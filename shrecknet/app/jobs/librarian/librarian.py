@@ -406,7 +406,6 @@ class LibrarianOrchestrator:
                     {"role": "user", "content": prompt},
                 ],
                 temperature=0.2,
-                max_tokens=700,
                 usage_tag="librarian_answer",
             )
         except Exception as exc:
@@ -456,7 +455,6 @@ class LibrarianOrchestrator:
                     model=target,
                     messages=[{"role": "user", "content": "ping"}],
                     temperature=0.0,
-                    max_tokens=1,
                     usage_tag="librarian_model_prewarm",
                 ),
                 timeout=8.0,

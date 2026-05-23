@@ -1,107 +1,58 @@
-ARCHITECT_SCENE_SEGMENTATION_PROMPT = """You are an expert narrative analyst. Your roll is to segment a source text chunk into meaningful narrative scenes based on continuity in time, place, interaction focus, and narrative purpose.
+ARCHITECT_SCENE_SEGMENTATION_PROMPT = """You are an expert narrative analyst.
 
 Segment the text into coherent narrative scenes.
 
-A Scene is a continuous narrative situation, composed of narrative elements begining, climax and ending.
+A Scene is a continuous narrative situation with a beginning, escalation, and outcome.
 A scene is closer to a continuous camera shot than to a topic cluster.
 
-A scene remains unified while the same core characters, interaction, conflict, conversation, or strategic objective continues evolving.
-
-Keep conversations, confrontations, planning, arguments, tactical refinement, and immediate consequences in the same scene while the interaction continues.
+Keep interactions unified while the same characters continue the same conversation, conflict, plan, or strategic objective.
 
 Create a new scene ONLY when there is a meaningful change in:
 - time
 - location
 - dominant participating characters
 
-
-Do NOT create new scenes for:
+Do NOT split scenes for:
 - planning progression
 - tactical refinement
 - new proposals within the same discussion
-- escalation within the same interaction
-- continuation of the same strategic objective
 - emotional escalation within the same interaction
-- new information revealed during the same continuous exchange
-- new conversational dialogue within the same interaction with the same characters
+- continuation of the same strategic objective
+- ongoing dialogue between the same characters
 
 Prefer fewer, larger, stronger scenes.
-Keep it concise and meaningful. More broad than narrow, in terms of nomes de scenes.
 Avoid fragmentation.
 
-Before creating a scene title or description, identify the single dominant dramatic situation connecting the ENTIRE scene.
-Describe them using narrative techniques: begining, climax and ending of the scene.
+Scene titles and descriptions must reflect the dominant dramatic situation of the ENTIRE scene, not individual conversational beats.
 
-Scene descriptions must capture:
-- the begining, climax and ending of the scene
-- the dominant dramatic situation
-- the active tension or pressure
-- important social, emotional, strategic, or political dynamics
-- the meaningful state change produced by the scene
+Titles must:
+- be concrete and descriptive
+- capture conflict, pressure, decisions, or strategic intent
+- avoid vague labels like:
+  - Strategic Discussion
+  - Rising Tension
+  - Observation and Preparation
 
-Descriptions should preserve the enduring narrative situation of the scene, not summarize individual conversational beats.
+Descriptions must:
+- describe the beginning, escalation, and outcome of the scene
+- preserve the core tension and meaningful state change
+- use explicit entity names whenever known
 
-Do NOT write generic plot summaries.
-
-Prefer explicit character and entity names over vague references.
-
-Avoid vague references like:
+NEVER use vague references like:
 - the group
 - the party
 - the foreigners
 - they
-- the item
-- the city
-- the place
 
-when the involved entities are known, cite them by name in the description. The same for all important entities: characters, locations, factions, organizations, items, and any entity with a persistent story identity that is important to the scene.
+when named entities are available.
 
-Preserve important entity names for retrieval and graph memory purposes.
+Weak:
+"The foreigners discuss their next move."
 
-Scene titles must reflect the dominant dramatic situation of the ENTIRE scene.
-Create the scene titles using narrative techniques, not topic labeling. They should capture the core narrative beat, not just the topic or setting.
-They should not be poetic, but descriptive and directing related to the narrative content.
+Strong:
+"Tamura, Evrain, Lynelle, and Everin discuss how to manipulate Hold’s expectations while maintaining leverage over Leodogr and the bishop."
 
-Avoid vague or thematic titles like:
-- Observation and Preparation
-- Strategic Discussion
-- Rising Tension
-- Planning the Attack
-- The Conversation
-- Calculated Defiance
-
-Prefer titles tied to:
-- named characters
-- concrete conflict
-- political pressure
-- strategic intent
-- revelations
-- meaningful decisions
-
-Weak title:
-"Observation and Preparation"
-
-Strong title:
-"Tamura Organizes Surveillance"
-
-Weak description:
-"The group discusses their next move."
-
-Strong description:
-"Tamura, Evrain, Lynelle, and Everin discuss surveillance, allies, and timing while preparing for a prolonged political struggle in Salt."
-
-Weak description:
-"King Leodogr issues warnings to the foreigners."
-
-Strong description:
-"King Leodogr restrains his anger toward Tamura, Evrain, Lynelle, and Everin while imposing strict conditions on their stay, revealing Arthur’s political protection over them."
-
-
-Apply the title and description rules to all the scenes you proposed. If a scene does not follow this rule, do not add it to the list. Enforce this strictly.
-
-Create fewer scenes, and if you see that scenes share the same situation, merge them into one scene with a title and description that captures the entire situation.
-
-Return ONLY valid JSON:
+Return ONLY valid RFC8259 JSON.
 
 {{
   "scenes": [

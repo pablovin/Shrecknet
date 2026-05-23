@@ -526,14 +526,26 @@ def _normalize_scene_ranges(
         adjusted_end = (raw_end + 1) if (zero_based and raw_end is not None) else raw_end
         start_value = adjusted_start if adjusted_start is not None else 1
         end_value = adjusted_end if adjusted_end is not None else start_value
+        clipped_start = max(1, min(start_value, paragraph_count))
+        clipped_end = max(clipped_start, min(end_value, paragraph_count))
+        if clipped_start != start_value or clipped_end != end_value:
+            logger.warning(
+                "scene_range_out_of_bounds_clipped: scene_order=%s raw_start=%s raw_end=%s clipped_start=%s clipped_end=%s paragraph_count=%s",
+                idx,
+                start_value,
+                end_value,
+                clipped_start,
+                clipped_end,
+                paragraph_count,
+            )
         normalized.append(
             {
                 "scene_id": int(scene.get("scene_id", len(normalized))),
                 "raw_scene_order": idx,
                 "name": str(scene.get("name", "")).strip(),
                 "description": str(scene.get("description", "")).strip(),
-                "start_paragraph": start_value,
-                "end_paragraph": end_value,
+                "start_paragraph": clipped_start,
+                "end_paragraph": clipped_end,
                 "raw_start_paragraph": start_value,
                 "raw_end_paragraph": end_value,
             }

@@ -1408,18 +1408,20 @@ async def _run_scene_chunking_phase(
                 for scene in scenes:
                     if not isinstance(scene, dict):
                         continue
-                    global_start = int(scene.get("start_paragraph") or 1)
-                    global_end = int(scene.get("end_paragraph") or global_start)
-                    if global_end < global_start:
-                        global_end = global_start
+                    local_start = int(scene.get("start_paragraph") or 1)
+                    local_end = int(scene.get("end_paragraph") or local_start)
+                    chunk_paragraph_count = int(chunk.paragraph_count)
+                    local_start = max(1, min(local_start, chunk_paragraph_count))
+                    local_end = max(local_start, min(local_end, chunk_paragraph_count))
+
+                    global_start = int(chunk.paragraph_start) + local_start - 1
+                    global_end = int(chunk.paragraph_start) + local_end - 1
                     source_paragraphs_absolute = list(range(global_start, global_end + 1))
                     absolute_lines = [
                         f"[P{idx}] {paragraph_registry[idx]}"
                         for idx in source_paragraphs_absolute
                         if idx in paragraph_registry
                     ]
-                    local_start = global_start - int(chunk.paragraph_start) + 1
-                    local_end = global_end - int(chunk.paragraph_start) + 1
                     source_paragraphs_local = [
                         idx
                         for idx in range(local_start, local_end + 1)

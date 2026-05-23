@@ -169,7 +169,6 @@ class SceneMilestoneProposal(BaseModel):
     )
     description: str = Field(..., min_length=1)
     boundary_type: str = Field(default="none")
-    mentions: list[str] = Field(default_factory=list)
 
     @field_validator("title", mode="before")
     def validate_title(cls, value: str) -> str:
@@ -189,7 +188,6 @@ class SceneProposal(BaseModel):
 
     name: str = Field(..., min_length=1)
     description: str = Field(..., min_length=1)
-    mentions: list[str] = Field(default_factory=list)
     milestones: list[SceneMilestoneProposal] = Field(default_factory=list)
 
 

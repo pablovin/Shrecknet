@@ -701,364 +701,12 @@ def _flatten_scene_inputs(chunk_results: list[dict[str, Any]]) -> list[dict[str,
                     "scene_name": scene.get("name") or "",
                     "scene_description": scene.get("description") or "",
                     "scene_text": scene.get("text") or "",
-                    "scene_text_local": scene.get("text_local") or "",
-                    "scene_text_absolute": scene.get("text_absolute") or "",
-                    "chunk_start_paragraph": scene.get("chunk_start_paragraph"),
-                    "chunk_end_paragraph": scene.get("chunk_end_paragraph"),
                     "start_paragraph": scene.get("start_paragraph"),
                     "end_paragraph": scene.get("end_paragraph"),
-                    "absolute_start_paragraph": scene.get("absolute_start_paragraph"),
-                    "absolute_end_paragraph": scene.get("absolute_end_paragraph"),
-                    "source_paragraphs_local": scene.get("source_paragraphs_local") or [],
-                    "source_paragraphs_absolute": scene.get("source_paragraphs_absolute") or [],
                     "scene_milestones": scene.get("milestones") or [],
                 }
             )
     return scenes
-
-
-def _scene_merge_input_ref(chunk: dict[str, Any], scene: dict[str, Any], idx: int) -> str:
-    return (
-        f"chunk_{chunk.get('chunk_index', 0)}"
-        f"_scene_{scene.get('scene_id', idx)}"
-    )
-
-
-def _merge_scene_group(
-    *,
-    scene_refs: list[str],
-    scene_by_ref: dict[str, dict[str, Any]],
-    name: str | None = None,
-    description: str | None = None,
-) -> dict[str, Any] | None:
-    selected = [scene_by_ref[ref] for ref in scene_refs if ref in scene_by_ref]
-    if not selected:
-        return None
-
-    selected.sort(
-        key=lambda item: (
-            item.get("_absolute_start_paragraph", item.get("start_paragraph", 0)),
-            item.get("_chunk_index", 0),
-            item.get("start_paragraph", 0),
-        )
-    )
-    first = selected[0]
-    merged_text = "\n".join(
-        str(item.get("text") or "").strip()
-        for item in selected
-        if str(item.get("text") or "").strip()
-    )
-    best_name = str(name or "").strip() or max(
-        (str(item.get("name") or "").strip() for item in selected),
-        key=len,
-        default="Scene",
-    )
-    best_description = str(description or "").strip() or max(
-        (str(item.get("description") or "").strip() for item in selected),
-        key=len,
-        default="",
-    )
-
-    source_paragraphs = sorted(
-        {
-            idx
-            for item in selected
-            for idx in range(
-                int(item.get("_absolute_start_paragraph") or item.get("start_paragraph") or 1),
-                int(item.get("_absolute_end_paragraph") or item.get("end_paragraph") or 1) + 1,
-            )
-        }
-    )
-
-    return {
-        "scene_id": first.get("scene_id", 0),
-        "name": best_name or "Scene",
-        "description": best_description,
-        "start_paragraph": min(
-            int(item.get("_absolute_start_paragraph") or item.get("start_paragraph") or 1)
-            for item in selected
-        ),
-        "end_paragraph": max(
-            int(item.get("_absolute_end_paragraph") or item.get("end_paragraph") or 1)
-            for item in selected
-        ),
-        "source_scene_refs": list(scene_refs),
-        "source_paragraphs": source_paragraphs,
-        "text": merged_text,
-    }
-
-
-def _merge_overlapping_scene_rows(scenes: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Deterministically collapse overlapping canonical scenes after LLM dedup."""
-    if not scenes:
-        return []
-
-    ordered = sorted(
-        scenes,
-        key=lambda item: (
-            int(item.get("start_paragraph") or 1),
-            int(item.get("end_paragraph") or 1),
-        ),
-    )
-    merged: list[dict[str, Any]] = []
-    for scene in ordered:
-        if not merged:
-            merged.append(scene)
-            continue
-
-        previous = merged[-1]
-        prev_end = int(previous.get("end_paragraph") or 1)
-        scene_start = int(scene.get("start_paragraph") or 1)
-        if scene_start > prev_end:
-            merged.append(scene)
-            continue
-
-        previous["end_paragraph"] = max(prev_end, int(scene.get("end_paragraph") or prev_end))
-        previous["name"] = max(
-            [str(previous.get("name") or ""), str(scene.get("name") or "")],
-            key=len,
-        ) or "Scene"
-        descriptions = [
-            str(previous.get("description") or "").strip(),
-            str(scene.get("description") or "").strip(),
-        ]
-        previous["description"] = " ".join(
-            part for part in descriptions if part
-        ).strip()
-        previous["text"] = "\n".join(
-            part
-            for part in [
-                str(previous.get("text") or "").strip(),
-                str(scene.get("text") or "").strip(),
-            ]
-            if part
-        )
-        refs = list(previous.get("source_scene_refs") or [])
-        refs.extend(ref for ref in list(scene.get("source_scene_refs") or []) if ref not in refs)
-        previous["source_scene_refs"] = refs
-        prior_paragraphs = [int(v) for v in (previous.get("source_paragraphs") or [])]
-        new_paragraphs = [int(v) for v in (scene.get("source_paragraphs") or [])]
-        previous["source_paragraphs"] = sorted(set(prior_paragraphs + new_paragraphs))
-
-    return merged
-
-
-def _fallback_merge_entity_scenes(chunk_results: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Keep segmentation output if the metadata merge pass fails."""
-    merged_results: list[dict[str, Any]] = []
-    for chunk in chunk_results:
-        if chunk.get("status") != "ok":
-            merged_results.append(chunk)
-            continue
-        merged_scenes = [
-            {
-                **scene,
-            }
-            for scene in chunk.get("scenes", [])
-            if isinstance(scene, dict)
-        ]
-        for idx, scene in enumerate(merged_scenes):
-            scene["scene_id"] = idx
-            scene.pop("milestones", None)
-            scene.pop("mentions", None)
-            scene.pop("related_to", None)
-        merged_results.append({**chunk, "scenes": merged_scenes})
-    return merged_results
-
-
-async def _run_scene_merge_phase(
-    *,
-    run_id: str,
-    llm_client: ShreckLLMClient,
-    model: str | LLMModelTarget,
-    chunk_results: list[dict[str, Any]],
-    instructions: str | None = None,
-) -> dict[str, Any]:
-    started = perf_counter()
-    by_entity: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    passthrough: list[dict[str, Any]] = []
-
-    for chunk in chunk_results:
-        if chunk.get("status") != "ok":
-            passthrough.append(chunk)
-            continue
-        entity_id = str(chunk.get("entity_instance_id") or "")
-        by_entity[entity_id].append(chunk)
-
-    merged_results: list[dict[str, Any]] = list(passthrough)
-    merge_calls = 0
-
-    for entity_id, entity_chunks in by_entity.items():
-        scene_by_ref: dict[str, dict[str, Any]] = {}
-        metadata: list[dict[str, Any]] = []
-        pre_dedup_titles: list[str] = []
-        for chunk in sorted(entity_chunks, key=lambda item: int(item.get("chunk_index") or 0)):
-            for idx, scene in enumerate(chunk.get("scenes", [])):
-                if not isinstance(scene, dict):
-                    continue
-                ref = _scene_merge_input_ref(chunk, scene, idx)
-                chunk_paragraph_start = int(chunk.get("paragraph_start") or 1)
-                local_start = int(scene.get("start_paragraph") or 1)
-                local_end = int(scene.get("end_paragraph") or local_start)
-                absolute_start = chunk_paragraph_start + local_start - 1
-                absolute_end = chunk_paragraph_start + local_end - 1
-                scene_by_ref[ref] = {
-                    **scene,
-                    "_chunk_index": int(chunk.get("chunk_index") or 0),
-                    "_absolute_start_paragraph": absolute_start,
-                    "_absolute_end_paragraph": absolute_end,
-                }
-                metadata.append(
-                    {
-                        "scene_ref": ref,
-                        "chunk_index": chunk.get("chunk_index"),
-                        "start_paragraph": absolute_start,
-                        "end_paragraph": absolute_end,
-                        "name": scene.get("name"),
-                        "description": scene.get("description"),
-                        "source_paragraphs": list(range(absolute_start, absolute_end + 1)),
-                        "scene_text": scene.get("text"),
-                    }
-                )
-                pre_dedup_titles.append(_safe_scene_title(scene, idx))
-
-        if not metadata:
-            merged_results.extend(entity_chunks)
-            continue
-
-        prompt_template = getattr(architect_prompts, "ARCHITECT_SCENE_DEDUP_PROMPT", "")
-        prompt = str(prompt_template).format(
-            scene_metadata=json.dumps(metadata, ensure_ascii=False)
-        )
-        instructions_text = str(instructions or "").strip()
-        if instructions_text:
-            prompt = (
-                f"{prompt}\n\nFrontend instructions (authoritative constraints):\n"
-                f"{instructions_text}"
-            )
-
-        try:
-            merge_calls += 1
-            response_text = await llm_client.chat(
-                model=model,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.1,
-                usage_tag="architect.scene_merge",
-            )
-            payload = json.loads(_extract_json_block(str(response_text)))
-            raw_groups = payload.get("merged_scenes")
-            if not isinstance(raw_groups, list):
-                raise ValueError("merged_scenes missing")
-        except Exception as exc:
-            logger.warning(
-                "scene_merge_entity_error: run_id=%s entity_id=%s error=%s",
-                run_id,
-                entity_id,
-                exc,
-            )
-            merged_results.extend(_fallback_merge_entity_scenes(entity_chunks))
-            continue
-
-        seen_refs: set[str] = set()
-        merged_scenes: list[dict[str, Any]] = []
-        for group in raw_groups:
-            if not isinstance(group, dict):
-                continue
-            refs = group.get("scene_refs")
-            if not isinstance(refs, list):
-                continue
-            clean_refs = [str(ref).strip() for ref in refs if str(ref).strip() in scene_by_ref]
-            clean_refs = [ref for ref in clean_refs if ref not in seen_refs]
-            if not clean_refs:
-                continue
-            seen_refs.update(clean_refs)
-            merged = _merge_scene_group(
-                scene_refs=clean_refs,
-                scene_by_ref=scene_by_ref,
-                name=str(group.get("name") or "").strip(),
-                description=str(group.get("description") or "").strip(),
-            )
-            if merged:
-                provided_source_paragraphs = group.get("source_paragraphs")
-                if isinstance(provided_source_paragraphs, list):
-                    normalized_paragraphs = sorted(
-                        {
-                            int(value)
-                            for value in provided_source_paragraphs
-                            if str(value).strip().isdigit()
-                        }
-                    )
-                    if normalized_paragraphs:
-                        merged["source_paragraphs"] = normalized_paragraphs
-                        merged["start_paragraph"] = normalized_paragraphs[0]
-                        merged["end_paragraph"] = normalized_paragraphs[-1]
-                merged_scenes.append(merged)
-
-        for ref in scene_by_ref:
-            if ref not in seen_refs:
-                merged = _merge_scene_group(scene_refs=[ref], scene_by_ref=scene_by_ref)
-                if merged:
-                    merged_scenes.append(merged)
-
-        merged_scenes = _merge_overlapping_scene_rows(merged_scenes)
-        merged_scenes.sort(key=lambda item: (item.get("start_paragraph", 0), item.get("end_paragraph", 0)))
-        for idx, scene in enumerate(merged_scenes):
-            scene["scene_id"] = idx
-
-        merged_titles = [
-            _safe_scene_title(scene, idx)
-            for idx, scene in enumerate(merged_scenes)
-            if isinstance(scene, dict)
-        ]
-        logger.info(
-            "scene_merge_entity_summary: run_id=%s entity_id=%s scenes_before_dedup=%d scenes_after_dedup=%d merged_scene_titles=%s",
-            run_id,
-            entity_id,
-            len(pre_dedup_titles),
-            len(merged_scenes),
-            json.dumps(merged_titles, ensure_ascii=False),
-        )
-
-        first_chunk = min(entity_chunks, key=lambda item: int(item.get("chunk_index") or 0))
-        merged_results.append(
-            {
-                **first_chunk,
-                "chunk_index": first_chunk.get("chunk_index", 0),
-                "paragraph_count": sum(int(chunk.get("paragraph_count") or 0) for chunk in entity_chunks),
-                "token_count": sum(int(chunk.get("token_count") or 0) for chunk in entity_chunks),
-                "paragraph_start": min(int(chunk.get("paragraph_start") or 1) for chunk in entity_chunks),
-                "paragraph_end": max(int(chunk.get("paragraph_end") or 1) for chunk in entity_chunks),
-                "marked_paragraphs": "\n".join(
-                    str(chunk.get("marked_paragraphs") or "")
-                    for chunk in entity_chunks
-                    if str(chunk.get("marked_paragraphs") or "")
-                ),
-                "scenes": merged_scenes,
-            }
-        )
-
-    merged_results.sort(
-        key=lambda item: (
-            str(item.get("entity_instance_id") or ""),
-            int(item.get("chunk_index") or 0),
-        )
-    )
-    scene_count = sum(len(item.get("scenes") or []) for item in merged_results if item.get("status") == "ok")
-    elapsed_seconds = round(perf_counter() - started, 3)
-    logger.info(
-        "scene_merge_total: run_id=%s entity_count=%d merge_calls=%d scene_count=%d elapsed_seconds=%.3f",
-        run_id,
-        len(by_entity),
-        merge_calls,
-        scene_count,
-        elapsed_seconds,
-    )
-    return {
-        "chunk_results": merged_results,
-        "scene_count": scene_count,
-        "elapsed_seconds": elapsed_seconds,
-    }
-
 
 
 async def _extract_scene_entities(
@@ -1294,15 +942,8 @@ def _build_scene_proposals(
                 "scene_name": scene.get("scene_name") or "",
                 "scene_description": scene.get("scene_description") or "",
                 "scene_text": scene.get("scene_text") or "",
-                "scene_text_local": scene.get("scene_text_local") or "",
-                "scene_text_absolute": scene.get("scene_text_absolute") or "",
-                "chunk_start_paragraph": scene.get("chunk_start_paragraph"),
-                "chunk_end_paragraph": scene.get("chunk_end_paragraph"),
                 "start_paragraph": scene.get("start_paragraph"),
                 "end_paragraph": scene.get("end_paragraph"),
-                "absolute_start_paragraph": scene.get("absolute_start_paragraph"),
-                "absolute_end_paragraph": scene.get("absolute_end_paragraph"),
-                "source_paragraphs_local": list(scene.get("source_paragraphs_local") or []),
                 "source_paragraphs_absolute": list(scene.get("source_paragraphs_absolute") or []),
                 "related_to": scene_entity_index.get(scene_ref, []),
                 "author": {
@@ -1422,29 +1063,12 @@ async def _run_scene_chunking_phase(
                         for idx in source_paragraphs_absolute
                         if idx in paragraph_registry
                     ]
-                    source_paragraphs_local = [
-                        idx
-                        for idx in range(local_start, local_end + 1)
-                        if 1 <= idx <= int(chunk.paragraph_count)
-                    ]
-                    local_lines = [
-                        f"[P{idx}] {chunk.paragraphs[idx - 1]}"
-                        for idx in source_paragraphs_local
-                    ]
                     enriched_scenes.append(
                         {
                             **scene,
                             "start_paragraph": global_start,
                             "end_paragraph": global_end,
-                            # Canonical scene text for downstream/UI is absolute-marked so range and text are aligned.
                             "text": "\n".join(absolute_lines),
-                            "text_local": "\n".join(local_lines),
-                            "text_absolute": "\n".join(absolute_lines),
-                            "chunk_start_paragraph": int(chunk.paragraph_start),
-                            "chunk_end_paragraph": int(chunk.paragraph_end),
-                            "absolute_start_paragraph": global_start,
-                            "absolute_end_paragraph": global_end,
-                            "source_paragraphs_local": source_paragraphs_local,
                             "source_paragraphs_absolute": source_paragraphs_absolute,
                         }
                     )
@@ -1719,37 +1343,6 @@ def _normalize_related_to_items(
     return normalized
 
 
-def _related_to_from_mentions(
-    mentions: list[str],
-    scene_entities: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    alias_by_key: dict[str, str] = {}
-    for item in scene_entities:
-        alias = _safe_json_text(item.get("alias"))
-        canonical = _safe_json_text(item.get("canonical"))
-        for candidate in (alias, canonical):
-            key = _canonical_alias(candidate)
-            if key and key not in alias_by_key:
-                alias_by_key[key] = alias or canonical
-
-    related: list[dict[str, Any]] = []
-    seen_aliases: set[str] = set()
-    for mention in mentions:
-        key = _canonical_alias(mention)
-        alias = alias_by_key.get(key)
-        if not alias or alias in seen_aliases:
-            continue
-        seen_aliases.add(alias)
-        related.append(
-            {
-                "entity": alias,
-                "relationship_label": "mentioned",
-                "relationship_description": "Mentioned in milestone",
-            }
-        )
-    return related
-
-
 def _milestone_signature(item: dict[str, Any]) -> str:
     title_key = _canonical_alias(item.get("title") or item.get("label"))
     description_key = _canonical_alias(item.get("description"))
@@ -1818,7 +1411,6 @@ def _ensure_scene_milestone_boundaries(
                 "label": "Scene begins",
                 "description": "The scene begins.",
                 "boundary_type": "begin",
-                "mentions": [],
                 "adjacent_to": [],
                 "related_to": [],
                 "milestone_order": 1,
@@ -1838,7 +1430,6 @@ def _ensure_scene_milestone_boundaries(
                 "label": "Scene ends",
                 "description": "The scene ends.",
                 "boundary_type": "end",
-                "mentions": [],
                 "adjacent_to": [],
                 "related_to": [],
                 "milestone_order": 2,
@@ -1967,17 +1558,11 @@ async def _run_milestone_proposal_phase(
                 index=raw_idx,
             )
 
-            raw_mentions = item.get("mentions")
-            mentions = raw_mentions if isinstance(raw_mentions, list) else []
-            mentions = [str(value).strip() for value in mentions if str(value).strip()]
-
             raw_adjacent_to = item.get("adjacent_to")
             adjacent_to = raw_adjacent_to if isinstance(raw_adjacent_to, list) else []
             adjacent_to = [str(value).strip() for value in adjacent_to if str(value).strip()]
 
             related_to = _normalize_related_to_items(item.get("related_to"), scene_entities)
-            if not related_to and mentions:
-                related_to = _related_to_from_mentions(mentions, scene_entities)
 
             milestones.append(
                 {
@@ -1988,7 +1573,6 @@ async def _run_milestone_proposal_phase(
                     "label": title,
                     "description": description,
                     "boundary_type": boundary_type,
-                    "mentions": mentions,
                     "adjacent_to": adjacent_to,
                     "related_to": related_to,
                     "milestone_order": raw_idx,

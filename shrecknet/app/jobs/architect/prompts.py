@@ -3,7 +3,7 @@ ARCHITECT_SCENE_SEGMENTATION_PROMPT = """You are an expert narrative analyst.
 Segment the text into coherent narrative scenes.
 
 A Scene is a continuous narrative situation with a beginning, escalation, and outcome.
-A scene is closer to a continuous camera shot than to a topic cluster.
+A scene is closer to a continuous camera shot than to a topic cluster.  A scene always refer to named entities, and must always reference them.
 
 Keep interactions unified while the same characters continue the same conversation, conflict, plan, or strategic objective.
 
@@ -28,6 +28,7 @@ Scene titles and descriptions must reflect the dominant dramatic situation of th
 Titles must:
 - be concrete and descriptive
 - capture conflict, pressure, decisions, or strategic intent
+- always use named entities on the title
 - avoid vague labels like:
   - Strategic Discussion
   - Rising Tension
@@ -36,15 +37,8 @@ Titles must:
 Descriptions must:
 - describe the beginning, escalation, and outcome of the scene
 - preserve the core tension and meaningful state change
-- use explicit entity names whenever known
+- always use named entities instead of "they", "the city", "the group", "the foreigners", "they", "the party", etc.
 
-NEVER use vague references like:
-- the group
-- the party
-- the foreigners
-- they
-
-when named entities are available.
 
 Weak:
 "The foreigners discuss their next move."
@@ -203,64 +197,50 @@ Return ONLY valid JSON in this exact format:
 # Step 3: Milestone extraction from proposed scene
 ARCHITECT_MILESTONE_BATCH_PROMPT = """You are the Architect Agent.
 
-Extract graph-worthy milestones from narrative scenes.
+Extract meaningful milestones from narrative scenes.
 
 Scenes payload:
 {scenes_payload}
 
-A milestone is a concrete and meaningful narrative beat within a scene that changes the active situation, tension, knowledge, relationships, goals, or strategic position of the involved entities, and remains important enough to matter independently when retrieved later.
+A milestone is a concrete narrative beat that meaningfully changes the situation, tension, goals, knowledge, relationships, or strategic position within a scene.
 
+Keep continuous interactions unified.
+Do NOT fragment milestones for conversational progression, tactical refinement, or multiple proposals within the same ongoing interaction.
 
 Extract milestones involving:
 - decisions
+- commitments
 - revelations
 - threats
 - confrontations
-- commitments
 - discoveries
-- emotional or relationship shifts
 - strategic turns
 - meaningful consequences
 
 Do NOT extract:
-- routine movement
 - filler dialogue
 - atmosphere
+- routine movement
 - generic conversation
 - minor actions
 
-Keep continuous interactions unified.
-Do NOT fragment milestones for tactical refinement or conversational progression.
-
-Each scene must contain:
-- one "begin" milestone
-- one "end" milestone
-
-Most scenes should contain 2-6 milestones. Be strict!
+Scenes usually contain 2-5 meaningful milestones. Every scene must have at least 2 milestones. Always. Enforce that.
 
 Use ONLY entities provided for the scene.
-Prefer explicit entity names over vague references.
-Add entity names in the milestone description to preserve them for retrieval and graph memory purposes.
-
-Milestone titles must be:
-- short
-- concrete
-- conflict-driven
-- tied to meaningful actions or pressure
-- include entity names if they are mentioned
-
-Avoid vague titles like:
-- Strategic Discussion
-- Rising Tension
-- Planning the Attack
+Descriptions and titles must always refer to entities by their exact provided name, never by vague references like "they", "the group", "the foreigners", "the party", etc.
 
 Weak:
 "The group discusses their next move."
 
 Strong:
-"Tamura, Lynelle, Evrain and Cwenhild Submit Cautiously"
+"Tamura, Lynelle and Cwenhild Commits to Restraint"
 
-Return STRICT RFC8259 JSON:
+Milestones are related to entities. We are giving you a list of entities for each scene. 
+For every Milestone, mention all the entities that are important and related to it. All of them!
+Only use the entities provided for the scene. Do not invent entities. Do not refer to entities by vague references like "they", "the group", "the foreigners", "the party", etc.
+
+
+Return STRICT RFC8259 JSON.
 
 {{
   "scenes": [
@@ -270,8 +250,7 @@ Return STRICT RFC8259 JSON:
         {{
           "title": "short descriptive title",
           "description": "max 2 concise sentences",
-          "boundary_type": "begin|end|none",
-          "mentions": ["entity alias from this scene"],
+          "boundary_type": "begin|end|none",          
           "adjacent_to": ["optional nearby milestone title"],
           "related_to": [
             {{

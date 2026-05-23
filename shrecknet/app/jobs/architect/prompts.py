@@ -257,7 +257,8 @@ Extract graph-worthy milestones from narrative scenes.
 Scenes payload:
 {scenes_payload}
 
-A milestone is a meaningful narrative state change.
+A milestone is a concrete and meaningful narrative beat within a scene that changes the active situation, tension, knowledge, relationships, goals, or strategic position of the involved entities, and remains important enough to matter independently when retrieved later.
+
 
 Extract milestones involving:
 - decisions
@@ -284,16 +285,18 @@ Each scene must contain:
 - one "begin" milestone
 - one "end" milestone
 
-Most scenes should contain 2-4 milestones.
+Most scenes should contain 2-6 milestones. Be strict!
 
 Use ONLY entities provided for the scene.
 Prefer explicit entity names over vague references.
+Add entity names in the milestone description to preserve them for retrieval and graph memory purposes.
 
 Milestone titles must be:
 - short
 - concrete
 - conflict-driven
 - tied to meaningful actions or pressure
+- include entity names if they are mentioned
 
 Avoid vague titles like:
 - Strategic Discussion
@@ -304,7 +307,7 @@ Weak:
 "The group discusses their next move."
 
 Strong:
-"Tamura proposes manipulating Hold’s expectations to maintain leverage over Leodogr and the bishop."
+"Tamura, Lynelle, Evrain and Cwenhild Submit Cautiously"
 
 Return STRICT RFC8259 JSON:
 

@@ -20,6 +20,9 @@ _lock = threading.Lock()
 
 
 class ProviderDefaults(BaseModel):
+    kind: str = "cloud"
+    auth_strategy: str = "none"
+    healthcheck_path: str | None = None
     default_model: str
     models: list[str] = Field(default_factory=list)
     base_url: str | None = None
@@ -102,6 +105,9 @@ def _bootstrap_defaults(settings: Settings) -> RuntimeConfig:
             models.insert(0, default_model)
 
         provider_defaults[provider_id] = ProviderDefaults(
+            kind=str(raw.get("kind") or "").strip() or ("local" if provider_id == "ollama" else "cloud"),
+            auth_strategy=str(raw.get("auth_strategy") or "").strip() or ("none" if provider_id == "ollama" else "api_key"),
+            healthcheck_path=raw.get("healthcheck_path") if isinstance(raw.get("healthcheck_path"), str) or raw.get("healthcheck_path") is None else None,
             default_model=default_model,
             models=models,
             base_url=raw.get("base_url") if isinstance(raw.get("base_url"), str) or raw.get("base_url") is None else None,
@@ -165,6 +171,9 @@ def load_runtime_config() -> RuntimeConfig:
                     if incoming_default:
                         migrated_providers[provider_id] = ProviderDefaults(
                             default_model=incoming_default,
+                            kind=str(bootstrap_defaults.get("kind") or "").strip() or ("local" if provider_id == "ollama" else "cloud"),
+                            auth_strategy=str(bootstrap_defaults.get("auth_strategy") or "").strip() or ("none" if provider_id == "ollama" else "api_key"),
+                            healthcheck_path=bootstrap_defaults.get("healthcheck_path") if isinstance(bootstrap_defaults.get("healthcheck_path"), str) or bootstrap_defaults.get("healthcheck_path") is None else None,
                             models=incoming_models_list or [incoming_default],
                             base_url=bootstrap_defaults.get("base_url"),
                             api_key=bootstrap_defaults.get("api_key"),
@@ -184,6 +193,9 @@ def load_runtime_config() -> RuntimeConfig:
                 if updated_models != cfg.models:
                     migrated_providers[provider_id] = ProviderDefaults(
                         default_model=cfg.default_model,
+                        kind=cfg.kind,
+                        auth_strategy=cfg.auth_strategy,
+                        healthcheck_path=cfg.healthcheck_path,
                         models=updated_models,
                         base_url=cfg.base_url,
                         api_key=cfg.api_key,
@@ -245,6 +257,9 @@ def load_runtime_config() -> RuntimeConfig:
                 if filtered_models != openai_cfg.models or default_model != openai_cfg.default_model:
                     providers["openai"] = ProviderDefaults(
                         default_model=default_model,
+                        kind=openai_cfg.kind,
+                        auth_strategy=openai_cfg.auth_strategy,
+                        healthcheck_path=openai_cfg.healthcheck_path,
                         models=filtered_models,
                         base_url=openai_cfg.base_url,
                         api_key=openai_cfg.api_key,

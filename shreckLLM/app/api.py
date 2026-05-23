@@ -32,6 +32,15 @@ class ProviderModelMutationRequest(BaseModel):
     model: str = Field(min_length=1)
 
 
+class ProviderMetadataUpdateRequest(BaseModel):
+    kind: str | None = None
+    auth_strategy: str | None = None
+    healthcheck_path: str | None = None
+    base_url: str | None = None
+    default_model: str | None = None
+    models: list[str] | None = None
+
+
 def get_service(request: Request) -> ChatService:
     return request.app.state.chat_service
 
@@ -132,9 +141,19 @@ async def put_openai_token(
     providers = config.provider_defaults.copy()
     openai_defaults = providers.get("openai")
     if openai_defaults is None:
-        openai_defaults = ProviderDefaults(default_model="gpt-5-nano", models=["gpt-5-nano"], base_url=None, api_key=payload.api_key)
+        openai_defaults = ProviderDefaults(
+            kind="cloud",
+            auth_strategy="api_key",
+            default_model="gpt-5-nano",
+            models=["gpt-5-nano"],
+            base_url=None,
+            api_key=payload.api_key,
+        )
     else:
         openai_defaults = ProviderDefaults(
+            kind=openai_defaults.kind,
+            auth_strategy=openai_defaults.auth_strategy,
+            healthcheck_path=openai_defaults.healthcheck_path,
             default_model=openai_defaults.default_model,
             models=openai_defaults.models,
             base_url=openai_defaults.base_url,
@@ -161,9 +180,19 @@ async def delete_openai_token(
     providers = config.provider_defaults.copy()
     openai_defaults = providers.get("openai")
     if openai_defaults is None:
-        openai_defaults = ProviderDefaults(default_model="gpt-5-nano", models=["gpt-5-nano"], base_url=None, api_key="")
+        openai_defaults = ProviderDefaults(
+            kind="cloud",
+            auth_strategy="api_key",
+            default_model="gpt-5-nano",
+            models=["gpt-5-nano"],
+            base_url=None,
+            api_key="",
+        )
     else:
         openai_defaults = ProviderDefaults(
+            kind=openai_defaults.kind,
+            auth_strategy=openai_defaults.auth_strategy,
+            healthcheck_path=openai_defaults.healthcheck_path,
             default_model=openai_defaults.default_model,
             models=openai_defaults.models,
             base_url=openai_defaults.base_url,
@@ -205,6 +234,8 @@ async def put_anthropic_token(
     current = providers.get("anthropic")
     if current is None:
         current = ProviderDefaults(
+            kind="cloud",
+            auth_strategy="api_key",
             default_model="claude-3-haiku-20240307",
             models=["claude-3-haiku-20240307", "claude-opus-4-1-20250805"],
             base_url="https://api.anthropic.com",
@@ -212,6 +243,9 @@ async def put_anthropic_token(
         )
     else:
         current = ProviderDefaults(
+            kind=current.kind,
+            auth_strategy=current.auth_strategy,
+            healthcheck_path=current.healthcheck_path,
             default_model=current.default_model,
             models=current.models,
             base_url=current.base_url,
@@ -235,6 +269,8 @@ async def delete_anthropic_token(
     current = providers.get("anthropic")
     if current is None:
         current = ProviderDefaults(
+            kind="cloud",
+            auth_strategy="api_key",
             default_model="claude-3-haiku-20240307",
             models=["claude-3-haiku-20240307", "claude-opus-4-1-20250805"],
             base_url="https://api.anthropic.com",
@@ -242,6 +278,9 @@ async def delete_anthropic_token(
         )
     else:
         current = ProviderDefaults(
+            kind=current.kind,
+            auth_strategy=current.auth_strategy,
+            healthcheck_path=current.healthcheck_path,
             default_model=current.default_model,
             models=current.models,
             base_url=current.base_url,
@@ -268,6 +307,51 @@ async def get_anthropic_validate(
     return AnthropicValidationResponse.model_validate(payload)
 
 
+@router.get("/providers/validate", status_code=status.HTTP_200_OK)
+async def get_providers_validate(
+    service: ChatService = Depends(get_service),
+    _user=Depends(get_admin_or_world_builder),
+) -> dict[str, object]:
+    return await service.all_provider_validation_statuses()
+
+
+@router.get("/providers/{provider_id}/validate", status_code=status.HTTP_200_OK)
+async def get_provider_validate(
+    provider_id: str,
+    service: ChatService = Depends(get_service),
+    _user=Depends(get_admin_or_world_builder),
+) -> dict[str, object]:
+    return await service.provider_validation_status(provider_id)
+
+
+@router.put("/config/providers/{provider_id}", status_code=status.HTTP_200_OK)
+async def update_provider_metadata(
+    provider_id: str,
+    payload: ProviderMetadataUpdateRequest,
+    service: ChatService = Depends(get_service),
+    _user=Depends(get_admin_or_world_builder),
+) -> dict[str, object]:
+    provider_key = provider_id.strip().lower()
+    current = service._runtime.provider_defaults.get(provider_key)
+    if current is None:
+        raise HTTPException(status_code=404, detail=f"provider not found: {provider_key}")
+    updates = payload.model_dump(exclude_none=True)
+    providers = service._runtime.provider_defaults.copy()
+    providers[provider_key] = ProviderDefaults(
+        kind=str(updates.get("kind", current.kind)).strip() or current.kind,
+        auth_strategy=str(updates.get("auth_strategy", current.auth_strategy)).strip() or current.auth_strategy,
+        healthcheck_path=updates.get("healthcheck_path", current.healthcheck_path),
+        default_model=str(updates.get("default_model", current.default_model)).strip() or current.default_model,
+        models=updates.get("models", current.models),
+        base_url=updates.get("base_url", current.base_url),
+        api_key=current.api_key,
+    )
+    update_runtime_config({"provider_defaults": providers})
+    reload_runtime_config()
+    await service.refresh_runtime()
+    return service.config_public_view()
+
+
 @router.post("/config/providers/{provider_id}/models", status_code=status.HTTP_200_OK)
 async def add_provider_model(
     provider_id: str,
@@ -286,17 +370,19 @@ async def add_provider_model(
     providers = cfg.provider_defaults.copy()
     current = providers.get(provider_key)
     if current is None:
-        current = ProviderDefaults(default_model=model_id, models=[model_id], base_url=None, api_key=None)
-    else:
-        updated_models = list(current.models)
-        if model_id not in updated_models:
-            updated_models.append(model_id)
-        current = ProviderDefaults(
-            default_model=current.default_model or model_id,
-            models=updated_models,
-            base_url=current.base_url,
-            api_key=current.api_key,
-        )
+        raise HTTPException(status_code=404, detail=f"provider not found: {provider_key}")
+    updated_models = list(current.models)
+    if model_id not in updated_models:
+        updated_models.append(model_id)
+    current = ProviderDefaults(
+        kind=current.kind,
+        auth_strategy=current.auth_strategy,
+        healthcheck_path=current.healthcheck_path,
+        default_model=current.default_model or model_id,
+        models=updated_models,
+        base_url=current.base_url,
+        api_key=current.api_key,
+    )
     providers[provider_key] = current
 
     update_runtime_config({"provider_defaults": providers})
@@ -332,6 +418,9 @@ async def remove_provider_model(
     if default_model == model_id:
         default_model = remaining_models[0]
     providers[provider_key] = ProviderDefaults(
+        kind=current.kind,
+        auth_strategy=current.auth_strategy,
+        healthcheck_path=current.healthcheck_path,
         default_model=default_model,
         models=remaining_models,
         base_url=current.base_url,

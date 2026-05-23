@@ -52,3 +52,19 @@ async def get_provider_validation(settings: Settings, provider_id: str) -> dict[
             }
     except Exception:
         return {"provider_id": provider_id, "valid": None, "error": "validation_unavailable"}
+
+
+async def get_all_provider_validations(settings: Settings) -> dict[str, Any]:
+    base_url = str(settings.shreckllm_base_url or "").rstrip("/")
+    timeout = float(settings.shreckllm_request_timeout_s or 10.0)
+    try:
+        async with httpx.AsyncClient(base_url=base_url, timeout=timeout) as client:
+            response = await client.get("/providers/validate")
+            response.raise_for_status()
+            payload = response.json() if response.content else {}
+            providers = payload.get("providers") if isinstance(payload, dict) else {}
+            if not isinstance(providers, dict):
+                providers = {}
+            return {"providers": providers, "error": None}
+    except Exception:
+        return {"providers": {}, "error": "validation_unavailable"}

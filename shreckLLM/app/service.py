@@ -5,6 +5,7 @@ import logging
 import time
 from typing import Any
 
+import httpx
 from redis.asyncio import Redis
 
 from app.concurrency import RequestLimiter
@@ -124,12 +125,9 @@ class ChatService:
         payload = self._runtime.model_dump()
         providers = payload.get("provider_defaults") or {}
         if isinstance(providers, dict):
-            openai_cfg = providers.get("openai")
-            if isinstance(openai_cfg, dict):
-                openai_cfg["api_key"] = self._mask_secret(openai_cfg.get("api_key"))
-            anthropic_cfg = providers.get("anthropic")
-            if isinstance(anthropic_cfg, dict):
-                anthropic_cfg["api_key"] = self._mask_secret(anthropic_cfg.get("api_key"))
+            for provider_cfg in providers.values():
+                if isinstance(provider_cfg, dict):
+                    provider_cfg["api_key"] = self._mask_secret(provider_cfg.get("api_key"))
         return payload
 
     async def openai_validation_status(self) -> dict[str, Any]:
@@ -151,6 +149,97 @@ class ChatService:
                 "error": "provider_not_registered",
             }
         return await self._anthropic.validate_api_key()
+
+    async def provider_validation_status(self, provider_id: str) -> dict[str, Any]:
+        provider_key = provider_id.strip().lower()
+        cfg = self._runtime.provider_defaults.get(provider_key)
+        if cfg is None:
+            return {"provider_id": provider_key, "configured": False, "valid": False, "reason": "provider_not_configured"}
+
+        adapter = self.registry.get(provider_key)
+        discovered_models: list[str] = []
+        reachable: bool | None = None
+        auth_valid: bool | None = None
+        reason: str | None = None
+
+        if cfg.kind == "local":
+            base_url = (cfg.base_url or "").rstrip("/")
+            path = cfg.healthcheck_path or "/health"
+            if not base_url:
+                reachable = False
+                reason = "missing_base_url"
+            else:
+                try:
+                    async with httpx.AsyncClient(base_url=base_url, timeout=self._runtime.request_timeout_seconds) as client:
+                        resp = await client.get(path)
+                        reachable = resp.status_code < 500
+                except Exception:
+                    reachable = False
+                if reachable is False:
+                    reason = "unreachable"
+            auth_valid = True
+        else:
+            api_key_present = bool((cfg.api_key or "").strip()) if cfg.auth_strategy == "api_key" else True
+            if not api_key_present:
+                auth_valid = False
+                reason = "missing_api_key"
+            else:
+                auth_valid = True
+                if provider_key == "openai" and self._openai is not None:
+                    probe = await self._openai.validate_api_key()
+                    auth_valid = probe.get("valid")
+                    reason = probe.get("error")
+                elif provider_key == "anthropic" and self._anthropic is not None:
+                    probe = await self._anthropic.validate_api_key()
+                    auth_valid = probe.get("valid")
+                    reason = probe.get("error")
+            reachable = True
+
+        if adapter is not None:
+            try:
+                discovered_models = await adapter.list_models()
+            except Exception:
+                discovered_models = []
+
+        configured_models = list(cfg.models)
+        model_statuses: list[dict[str, Any]] = []
+        discovered_set = set(discovered_models)
+        for model in configured_models:
+            available = True if not discovered_models else model in discovered_set
+            model_statuses.append(
+                {
+                    "model": model,
+                    "configured": True,
+                    "available": available,
+                    "valid": bool(available) and auth_valid is not False and reachable is not False,
+                    "reason": None if available else "model_unavailable",
+                }
+            )
+
+        valid = bool(reachable is not False and auth_valid is not False)
+        if valid and model_statuses and not all(m["valid"] for m in model_statuses):
+            valid = False
+            reason = reason or "model_unavailable"
+
+        return {
+            "provider_id": provider_key,
+            "kind": cfg.kind,
+            "auth_strategy": cfg.auth_strategy,
+            "configured": True,
+            "reachable": reachable,
+            "auth_configured": bool((cfg.api_key or "").strip()) if cfg.auth_strategy == "api_key" else True,
+            "auth_valid": auth_valid,
+            "valid": valid,
+            "reason": reason,
+            "default_model": cfg.default_model,
+            "models": model_statuses,
+        }
+
+    async def all_provider_validation_statuses(self) -> dict[str, Any]:
+        providers: dict[str, Any] = {}
+        for provider_id in sorted(self._runtime.provider_defaults.keys()):
+            providers[provider_id] = await self.provider_validation_status(provider_id)
+        return {"providers": providers}
 
     async def health(self) -> dict[str, Any]:
         return {"ok": True, "service": "shreckLLM"}

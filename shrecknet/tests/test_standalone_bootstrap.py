@@ -174,15 +174,12 @@ def test_config_store_overrides_non_bootstrap_env_but_not_bootstrap_env(
     assert reloaded.database_url == env_db_url
 
 
-def test_config_store_accepts_legacy_string_model_updates(monkeypatch, tmp_path) -> None:
+def test_config_store_rejects_legacy_string_model_updates(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("SHRECKNET_DATA_DIR", str(tmp_path))
     _reset_runtime_state()
 
-    updated = update_settings({"model_elder": "legacy-elder-model"})
-    assert updated.model_elder == LLMModelTarget(provider="openai", name="legacy-elder-model")
-
-    reloaded = reload_settings()
-    assert reloaded.model_elder == LLMModelTarget(provider="openai", name="legacy-elder-model")
+    with pytest.raises(ValueError, match="must be an object with provider/name"):
+        update_settings({"model_elder": "legacy-elder-model"})
 
 
 @pytest.mark.asyncio

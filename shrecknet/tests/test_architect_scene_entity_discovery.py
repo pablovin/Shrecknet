@@ -15,6 +15,7 @@ from app.tasks.architect_analysis import (
     _run_scene_merge_phase,
     _run_milestone_proposal_phase,
 )
+from app.schemas.architect import FrontendSceneProposal
 
 
 def test_resolve_analysis_output_dir_uses_required_layout(
@@ -45,6 +46,14 @@ def test_flatten_scene_inputs_preserves_scene_fields() -> None:
                     "name": "Arrival",
                     "description": "The group enters the city.",
                     "text": "[P1] They arrive at dawn.",
+                    "chunk_start_paragraph": 1,
+                    "chunk_end_paragraph": 15,
+                    "start_paragraph": 1,
+                    "end_paragraph": 3,
+                    "absolute_start_paragraph": 1,
+                    "absolute_end_paragraph": 3,
+                    "source_paragraphs_local": [1, 2, 3],
+                    "source_paragraphs_absolute": [1, 2, 3],
                 }
             ],
         },
@@ -62,6 +71,49 @@ def test_flatten_scene_inputs_preserves_scene_fields() -> None:
     assert flattened[0]["scene_name"] == "Arrival"
     assert flattened[0]["scene_description"] == "The group enters the city."
     assert flattened[0]["scene_text"] == "[P1] They arrive at dawn."
+    assert flattened[0]["chunk_start_paragraph"] == 1
+    assert flattened[0]["chunk_end_paragraph"] == 15
+    assert flattened[0]["source_paragraphs_local"] == [1, 2, 3]
+    assert flattened[0]["source_paragraphs_absolute"] == [1, 2, 3]
+
+
+def test_build_scene_proposals_keeps_additive_paragraph_metadata_and_schema_compat() -> None:
+    scenes = [
+        {
+            "scene_ref": "chunk_2_scene_1",
+            "chunk_index": 2,
+            "source_entity_instance_id": "source-1",
+            "source_entity_alias": "Narrator",
+            "scene_id": 1,
+            "scene_name": "Debate",
+            "scene_description": "A tense exchange.",
+            "scene_text": "[P4] They argue.",
+            "chunk_start_paragraph": 1,
+            "chunk_end_paragraph": 15,
+            "start_paragraph": 4,
+            "end_paragraph": 6,
+            "absolute_start_paragraph": 34,
+            "absolute_end_paragraph": 36,
+            "source_paragraphs_local": [4, 5, 6],
+            "source_paragraphs_absolute": [34, 35, 36],
+        }
+    ]
+
+    proposals = _build_scene_proposals(scenes, [], author_id="agent-1")
+
+    assert proposals[0]["chunk_start_paragraph"] == 1
+    assert proposals[0]["chunk_end_paragraph"] == 15
+    assert proposals[0]["start_paragraph"] == 4
+    assert proposals[0]["end_paragraph"] == 6
+    assert proposals[0]["absolute_start_paragraph"] == 34
+    assert proposals[0]["absolute_end_paragraph"] == 36
+    assert proposals[0]["source_paragraphs_local"] == [4, 5, 6]
+    assert proposals[0]["source_paragraphs_absolute"] == [34, 35, 36]
+
+    parsed = FrontendSceneProposal.model_validate(
+        {**proposals[0], "status": "approved"}
+    )
+    assert parsed.scene_ref == "chunk_2_scene_1"
 
 
 def test_run_scene_merge_phase_merges_metadata_without_scene_text_in_prompt() -> None:

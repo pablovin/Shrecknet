@@ -692,6 +692,14 @@ def _flatten_scene_inputs(chunk_results: list[dict[str, Any]]) -> list[dict[str,
                     "scene_name": scene.get("name") or "",
                     "scene_description": scene.get("description") or "",
                     "scene_text": scene.get("text") or "",
+                    "chunk_start_paragraph": scene.get("chunk_start_paragraph"),
+                    "chunk_end_paragraph": scene.get("chunk_end_paragraph"),
+                    "start_paragraph": scene.get("start_paragraph"),
+                    "end_paragraph": scene.get("end_paragraph"),
+                    "absolute_start_paragraph": scene.get("absolute_start_paragraph"),
+                    "absolute_end_paragraph": scene.get("absolute_end_paragraph"),
+                    "source_paragraphs_local": scene.get("source_paragraphs_local") or [],
+                    "source_paragraphs_absolute": scene.get("source_paragraphs_absolute") or [],
                     "scene_milestones": scene.get("milestones") or [],
                 }
             )
@@ -1267,6 +1275,14 @@ def _build_scene_proposals(
                 "scene_name": scene.get("scene_name") or "",
                 "scene_description": scene.get("scene_description") or "",
                 "scene_text": scene.get("scene_text") or "",
+                "chunk_start_paragraph": scene.get("chunk_start_paragraph"),
+                "chunk_end_paragraph": scene.get("chunk_end_paragraph"),
+                "start_paragraph": scene.get("start_paragraph"),
+                "end_paragraph": scene.get("end_paragraph"),
+                "absolute_start_paragraph": scene.get("absolute_start_paragraph"),
+                "absolute_end_paragraph": scene.get("absolute_end_paragraph"),
+                "source_paragraphs_local": list(scene.get("source_paragraphs_local") or []),
+                "source_paragraphs_absolute": list(scene.get("source_paragraphs_absolute") or []),
                 "related_to": scene_entity_index.get(scene_ref, []),
                 "author": {
                     "created_by_type": "agent",
@@ -1361,6 +1377,28 @@ async def _run_scene_chunking_phase(
                     paragraphs=chunk.paragraphs,
                     instructions=instructions,
                 )
+                enriched_scenes: list[dict[str, Any]] = []
+                for scene in scenes:
+                    if not isinstance(scene, dict):
+                        continue
+                    local_start = int(scene.get("start_paragraph") or 1)
+                    local_end = int(scene.get("end_paragraph") or local_start)
+                    absolute_start = int(chunk.paragraph_start) + local_start - 1
+                    absolute_end = int(chunk.paragraph_start) + local_end - 1
+                    enriched_scenes.append(
+                        {
+                            **scene,
+                            "chunk_start_paragraph": int(chunk.paragraph_start),
+                            "chunk_end_paragraph": int(chunk.paragraph_end),
+                            "absolute_start_paragraph": absolute_start,
+                            "absolute_end_paragraph": absolute_end,
+                            "source_paragraphs_local": list(range(local_start, local_end + 1)),
+                            "source_paragraphs_absolute": list(
+                                range(absolute_start, absolute_end + 1)
+                            ),
+                        }
+                    )
+                scenes = enriched_scenes
                 total_scenes += len(scenes)
                 discovered_scene_titles = [
                     _safe_scene_title(scene, idx)
@@ -1414,15 +1452,26 @@ async def _run_scene_chunking_phase(
                     }
                 )
 
-    merge_phase = await _run_scene_merge_phase(
-        run_id=run_id,
-        llm_client=llm_client,
-        model=merge_model or model,
-        chunk_results=all_chunk_results,
-        instructions=instructions,
-    )
-    all_chunk_results = merge_phase["chunk_results"]
-    total_scenes = int(merge_phase["scene_count"])
+    dedup_enabled = False
+    if dedup_enabled:
+        merge_phase = await _run_scene_merge_phase(
+            run_id=run_id,
+            llm_client=llm_client,
+            model=merge_model or model,
+            chunk_results=all_chunk_results,
+            instructions=instructions,
+        )
+        all_chunk_results = merge_phase["chunk_results"]
+        total_scenes = int(merge_phase["scene_count"])
+    else:
+        total_scenes = sum(
+            len(item.get("scenes") or []) for item in all_chunk_results if item.get("status") == "ok"
+        )
+        logger.info(
+            "scene_merge_skipped_pre_dedup_mode: run_id=%s scene_count=%d",
+            run_id,
+            total_scenes,
+        )
 
     elapsed_seconds = round(perf_counter() - started, 3)
     logger.info(
@@ -1440,6 +1489,7 @@ async def _run_scene_chunking_phase(
         "paragraph_count": total_paragraphs,
         "scene_count": total_scenes,
         "elapsed_seconds": elapsed_seconds,
+        "scene_dedup_applied": dedup_enabled,
     }
 
 
@@ -2318,6 +2368,7 @@ async def _execute_architect_pipeline(
             "pipeline_version": result.get("pipeline_version", "scene-centric-job-details-v1"),
             "pipeline_output_transport": "background_job_details",
             "pipeline_output_format": "json",
+            "scene_dedup_applied": bool(result.get("scene_dedup_applied", True)),
         }
         await session.commit()
 
@@ -2370,6 +2421,7 @@ async def _run_scene_centric_chunking_test(
     total_chunks = chunking_phase["chunk_count"]
     total_paragraphs = chunking_phase["paragraph_count"]
     total_scenes = chunking_phase["scene_count"]
+    scene_dedup_applied = bool(chunking_phase.get("scene_dedup_applied", True))
     scene_chunking_elapsed_seconds = chunking_phase["elapsed_seconds"]
 
     await update_job_progress(job_id, 0.7, {"status": "Scene entity discovery"})
@@ -2437,6 +2489,7 @@ async def _run_scene_centric_chunking_test(
             "paragraph_count": total_paragraphs,
             "scene_count": len(proposed_scenes),
             "milestone_count": len(proposed_milestones),
+            "scene_dedup_applied": scene_dedup_applied,
             "deduped_boundary_count": deduped_boundary_count,
             "removed_scene_count": removed_scene_count,
             "removed_scene_refs": removed_scene_refs,
@@ -2478,6 +2531,7 @@ async def _run_scene_centric_chunking_test(
         "chunk_count": total_chunks,
         "paragraph_count": total_paragraphs,
         "scene_count": total_scenes,
+        "scene_dedup_applied": scene_dedup_applied,
         "elapsed_seconds": scene_chunking_elapsed_seconds,
         "chunks": all_chunk_results,
     }
@@ -2576,6 +2630,7 @@ async def _run_scene_centric_chunking_test(
         "chunk_count": total_chunks,
         "scene_count": len(proposed_scenes),
         "paragraph_count": total_paragraphs,
+        "scene_dedup_applied": scene_dedup_applied,
         "pipeline_output": pipeline_output_payload,
         "local_output_dir": str(output_dir),
         "local_artifacts": local_artifacts,

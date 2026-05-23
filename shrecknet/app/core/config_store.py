@@ -468,7 +468,9 @@ def update_settings(updates: dict[str, Any]) -> Settings:
                 continue
             raw_value = settings_dict.get(field_name)
             if isinstance(raw_value, str):
-                settings_dict[field_name] = LLMModelTarget.from_legacy(raw_value).model_dump()
+                raise ValueError(
+                    f"{field_name} must be an object with provider/name; legacy string values are not accepted"
+                )
             elif isinstance(raw_value, dict):
                 provider = str(raw_value.get("provider") or "").strip()
                 name = str(raw_value.get("name") or "").strip()

@@ -692,6 +692,8 @@ def _flatten_scene_inputs(chunk_results: list[dict[str, Any]]) -> list[dict[str,
                     "scene_name": scene.get("name") or "",
                     "scene_description": scene.get("description") or "",
                     "scene_text": scene.get("text") or "",
+                    "scene_text_local": scene.get("text_local") or "",
+                    "scene_text_absolute": scene.get("text_absolute") or "",
                     "chunk_start_paragraph": scene.get("chunk_start_paragraph"),
                     "chunk_end_paragraph": scene.get("chunk_end_paragraph"),
                     "start_paragraph": scene.get("start_paragraph"),
@@ -1275,6 +1277,8 @@ def _build_scene_proposals(
                 "scene_name": scene.get("scene_name") or "",
                 "scene_description": scene.get("scene_description") or "",
                 "scene_text": scene.get("scene_text") or "",
+                "scene_text_local": scene.get("scene_text_local") or "",
+                "scene_text_absolute": scene.get("scene_text_absolute") or "",
                 "chunk_start_paragraph": scene.get("chunk_start_paragraph"),
                 "chunk_end_paragraph": scene.get("chunk_end_paragraph"),
                 "start_paragraph": scene.get("start_paragraph"),
@@ -1381,13 +1385,30 @@ async def _run_scene_chunking_phase(
                 for scene in scenes:
                     if not isinstance(scene, dict):
                         continue
+                    paragraph_count = max(1, int(chunk.paragraph_count))
                     local_start = int(scene.get("start_paragraph") or 1)
                     local_end = int(scene.get("end_paragraph") or local_start)
+                    local_start = max(1, min(local_start, paragraph_count))
+                    local_end = max(local_start, min(local_end, paragraph_count))
                     absolute_start = int(chunk.paragraph_start) + local_start - 1
                     absolute_end = int(chunk.paragraph_start) + local_end - 1
+                    local_lines = [
+                        f"[P{idx}] {chunk.paragraphs[idx - 1]}"
+                        for idx in range(local_start, local_end + 1)
+                    ]
+                    absolute_lines = [
+                        f"[P{int(chunk.paragraph_start) + idx - 1}] {chunk.paragraphs[idx - 1]}"
+                        for idx in range(local_start, local_end + 1)
+                    ]
                     enriched_scenes.append(
                         {
                             **scene,
+                            "start_paragraph": local_start,
+                            "end_paragraph": local_end,
+                            # Canonical scene text for downstream/UI is absolute-marked so range and text are aligned.
+                            "text": "\n".join(absolute_lines),
+                            "text_local": "\n".join(local_lines),
+                            "text_absolute": "\n".join(absolute_lines),
                             "chunk_start_paragraph": int(chunk.paragraph_start),
                             "chunk_end_paragraph": int(chunk.paragraph_end),
                             "absolute_start_paragraph": absolute_start,

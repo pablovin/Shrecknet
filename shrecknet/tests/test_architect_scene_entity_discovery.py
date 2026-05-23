@@ -77,6 +77,32 @@ def test_flatten_scene_inputs_preserves_scene_fields() -> None:
     assert flattened[0]["source_paragraphs_absolute"] == [1, 2, 3]
 
 
+def test_flatten_scene_inputs_keeps_local_and_absolute_scene_text_variants() -> None:
+    chunk_results = [
+        {
+            "status": "ok",
+            "chunk_index": 0,
+            "entity_instance_id": "ent-1",
+            "entity_alias": "Narrator",
+            "scenes": [
+                {
+                    "scene_id": 0,
+                    "name": "Arrival",
+                    "description": "The group enters the city.",
+                    "text": "[P10] They arrive at dawn.",
+                    "text_local": "[P1] They arrive at dawn.",
+                    "text_absolute": "[P10] They arrive at dawn.",
+                }
+            ],
+        }
+    ]
+
+    flattened = _flatten_scene_inputs(chunk_results)
+    assert flattened[0]["scene_text"] == "[P10] They arrive at dawn."
+    assert flattened[0]["scene_text_local"] == "[P1] They arrive at dawn."
+    assert flattened[0]["scene_text_absolute"] == "[P10] They arrive at dawn."
+
+
 def test_build_scene_proposals_keeps_additive_paragraph_metadata_and_schema_compat() -> None:
     scenes = [
         {

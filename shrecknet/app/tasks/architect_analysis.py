@@ -94,24 +94,20 @@ def _write_local_json_artifact(
     payload: dict[str, Any],
 ) -> str | None:
     """Write a JSON artifact to local_tests, returning path on success."""
-    # Debug artifact writing is intentionally disabled for architect/analyse.
-    # Keep the implementation below commented for quick re-enable when needed.
-    return None
-
-    # output_path = output_dir / filename
-    # try:
-    #     output_path.write_text(
-    #         json.dumps(payload, ensure_ascii=False, indent=2),
-    #         encoding="utf-8",
-    #     )
-    #     return str(output_path)
-    # except OSError as exc:
-    #     logger.warning(
-    #         "analysis_local_artifact_write_error: file=%s error=%s",
-    #         output_path,
-    #         exc,
-    #     )
-    #     return None
+    output_path = output_dir / filename
+    try:
+        output_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        return str(output_path)
+    except OSError as exc:
+        logger.warning(
+            "analysis_local_artifact_write_error: file=%s error=%s",
+            output_path,
+            exc,
+        )
+        return None
 
 
 def _extract_json_block(raw: str) -> str:
@@ -992,6 +988,7 @@ async def _run_scene_chunking_phase(
     total_chunks = 0
     total_paragraphs = 0
     total_scenes = 0
+    llm_scene_chunk_debug: list[dict[str, Any]] = []
 
     for entity in ontology_instance.entities:
         global_paragraphs = extract_paragraphs_from_sources(
@@ -1044,6 +1041,7 @@ async def _run_scene_chunking_phase(
                     paragraph_count=chunk.paragraph_count,
                     paragraphs=chunk.paragraphs,
                     instructions=instructions,
+                    debug_rows=llm_scene_chunk_debug,
                 )
                 enriched_scenes: list[dict[str, Any]] = []
                 for scene in scenes:
@@ -1152,6 +1150,7 @@ async def _run_scene_chunking_phase(
         "scene_count": total_scenes,
         "elapsed_seconds": elapsed_seconds,
         "scene_dedup_applied": False,
+        "llm_scene_chunk_debug": llm_scene_chunk_debug,
     }
 
 
@@ -2035,6 +2034,7 @@ async def _run_scene_centric_chunking_test(
     total_scenes = chunking_phase["scene_count"]
     scene_dedup_applied = bool(chunking_phase.get("scene_dedup_applied", True))
     scene_chunking_elapsed_seconds = chunking_phase["elapsed_seconds"]
+    llm_scene_chunk_debug = list(chunking_phase.get("llm_scene_chunk_debug") or [])
 
     await update_job_progress(job_id, 0.7, {"status": "Scene entity discovery"})
     step_usage_start = llm_client.get_usage_event_count()
@@ -2146,6 +2146,7 @@ async def _run_scene_centric_chunking_test(
         "scene_dedup_applied": scene_dedup_applied,
         "elapsed_seconds": scene_chunking_elapsed_seconds,
         "chunks": all_chunk_results,
+        "llm_scene_chunk_debug": llm_scene_chunk_debug,
     }
     entity_proposal_payload = {
         "run_id": run_id,
@@ -2189,6 +2190,15 @@ async def _run_scene_centric_chunking_test(
             output_dir=output_dir,
             filename="scene_chunk.json",
             payload=scene_chunk_payload,
+        ),
+        "scene_chunk_llm_debug": _write_local_json_artifact(
+            output_dir=output_dir,
+            filename="scene_chunk_llm_debug.json",
+            payload={
+                "run_id": run_id,
+                "chunk_count": total_chunks,
+                "records": llm_scene_chunk_debug,
+            },
         ),
         "entity_proposal": _write_local_json_artifact(
             output_dir=output_dir,

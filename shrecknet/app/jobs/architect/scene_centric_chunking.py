@@ -587,6 +587,7 @@ async def segment_chunk_into_scenes(
     paragraph_count: int,
     paragraphs: list[str],
     instructions: str | None = None,
+    debug_rows: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     if paragraph_count <= 0 or not paragraphs:
         return []
@@ -608,9 +609,13 @@ async def segment_chunk_into_scenes(
         usage_tag="architect.scene_discovery",
     )
 
+    used_json_repair = False
+    fallback_used = False
+    parse_error: str | None = None
     try:
         payload = _parse_scene_payload_with_repair(response_text)
     except Exception as exc:
+        parse_error = str(exc)
         logger.warning("scene_chunk_parse_error_retry_json_repair: error=%s", exc)
         try:
             payload = await _retry_scene_payload_via_llm_json_repair(
@@ -618,6 +623,7 @@ async def segment_chunk_into_scenes(
                 model=model,
                 malformed_text=response_text,
             )
+            used_json_repair = True
         except Exception as retry_exc:
             logger.warning(
                 "scene_chunk_parse_error_fallback_single_scene: initial_error=%s retry_error=%s",
@@ -634,7 +640,23 @@ async def segment_chunk_into_scenes(
                 "raw_start_paragraph": 1,
                 "raw_end_paragraph": paragraph_count,
             }
-            return attach_scene_text([fallback], paragraphs)
+            fallback_used = True
+            normalized = attach_scene_text([fallback], paragraphs)
+            if debug_rows is not None:
+                debug_rows.append(
+                    {
+                        "paragraph_count": paragraph_count,
+                        "marked_paragraphs": marked_paragraphs,
+                        "raw_llm_response": str(response_text),
+                        "parsed_payload": None,
+                        "normalized_scenes": normalized,
+                        "used_json_repair": used_json_repair,
+                        "fallback_used": fallback_used,
+                        "parse_error": parse_error,
+                        "retry_error": str(retry_exc),
+                    }
+                )
+            return normalized
     raw_scenes = payload.get("scenes")
     if not isinstance(raw_scenes, list):
         logger.warning("scene_chunk_invalid_payload: keys=%s", list(payload.keys()))
@@ -649,11 +671,40 @@ async def segment_chunk_into_scenes(
             "start_paragraph": 1,
             "end_paragraph": paragraph_count,
         }
-        return attach_scene_text([fallback], paragraphs)
+        fallback_used = True
+        normalized = attach_scene_text([fallback], paragraphs)
+        if debug_rows is not None:
+            debug_rows.append(
+                {
+                    "paragraph_count": paragraph_count,
+                    "marked_paragraphs": marked_paragraphs,
+                    "raw_llm_response": str(response_text),
+                    "parsed_payload": payload,
+                    "normalized_scenes": normalized,
+                    "used_json_repair": used_json_repair,
+                    "fallback_used": fallback_used,
+                    "parse_error": parse_error,
+                }
+            )
+        return normalized
 
     normalized_final = _normalize_scene_ranges(scene_items, paragraph_count)
     for scene in normalized_final:
         scene.pop("milestones", None)
         scene.pop("mentions", None)
         scene.pop("related_to", None)
-    return attach_scene_text(normalized_final, paragraphs)
+    normalized = attach_scene_text(normalized_final, paragraphs)
+    if debug_rows is not None:
+        debug_rows.append(
+            {
+                "paragraph_count": paragraph_count,
+                "marked_paragraphs": marked_paragraphs,
+                "raw_llm_response": str(response_text),
+                "parsed_payload": payload,
+                "normalized_scenes": normalized,
+                "used_json_repair": used_json_repair,
+                "fallback_used": fallback_used,
+                "parse_error": parse_error,
+            }
+        )
+    return normalized

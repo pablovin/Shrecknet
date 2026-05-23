@@ -20,6 +20,8 @@ logger = logging.getLogger(__name__)
 PARAGRAPH_MARKER_PATTERN = re.compile(r"^\[P(\d+)\]\s*(.*)$")
 _BULLET_OR_NUMBERED_START = re.compile(r"^\s*(?:[●•\-\*]\s+|\d+[.)]\s+)")
 _TIMESTAMP_MARKER = re.compile(r"\(\d{1,2}:\d{2}:\d{2}\)")
+PARAGRAPH_CHUNK_SIZE = 30
+MIN_HEADING_PARAGRAPHS = 5
 LOCAL_SCENE_BUNDLE_SIZE = 12
 LOCAL_SCENE_BUNDLE_OVERLAP = 2
 MAX_CANDIDATE_SCENES_PER_BUNDLE = 3
@@ -114,6 +116,97 @@ class _NarrativeHTMLParagraphParser(HTMLParser):
         self._paragraphs.append(paragraph_text)
 
 
+class _NarrativeHTMLHeadingSectionParser(HTMLParser):
+    """Extract heading-scoped paragraph sections from HTML content."""
+
+    _PARAGRAPH_TAGS = {"p", "li", "blockquote"}
+    _HEADING_TAGS = {"h1", "h2", "h3", "h4", "h5", "h6"}
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._tag_stack: list[str] = []
+        self._paragraph_buffer: list[str] = []
+        self._heading_buffer: list[str] = []
+        self._current_heading: str | None = None
+        self._current_paragraphs: list[str] = []
+        self._sections: list[dict[str, Any]] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        del attrs
+        self._tag_stack.append(tag.lower())
+
+    def handle_endtag(self, tag: str) -> None:
+        normalized = tag.lower()
+        if self._tag_stack:
+            for idx in range(len(self._tag_stack) - 1, -1, -1):
+                if self._tag_stack[idx] == normalized:
+                    del self._tag_stack[idx]
+                    break
+
+        if normalized in self._PARAGRAPH_TAGS:
+            self._flush_paragraph()
+            return
+
+        if normalized in self._HEADING_TAGS:
+            heading_text = " ".join(self._heading_buffer).strip()
+            self._heading_buffer = []
+            self._start_new_section(heading_text or None)
+
+    def handle_data(self, data: str) -> None:
+        cleaned = " ".join(unescape(data).split())
+        if not cleaned:
+            return
+
+        current_tag = self._tag_stack[-1] if self._tag_stack else ""
+        if current_tag in self._PARAGRAPH_TAGS:
+            self._paragraph_buffer.append(cleaned)
+            return
+        if current_tag in self._HEADING_TAGS:
+            self._heading_buffer.append(cleaned)
+
+    def close(self) -> None:
+        super().close()
+        self._flush_paragraph()
+        self._flush_section()
+
+    @property
+    def sections(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "heading": section.get("heading"),
+                "paragraphs": [p for p in section.get("paragraphs", []) if p],
+            }
+            for section in self._sections
+            if section.get("paragraphs")
+        ]
+
+    def _flush_paragraph(self) -> None:
+        if not self._paragraph_buffer:
+            return
+        paragraph_text = " ".join(self._paragraph_buffer)
+        self._paragraph_buffer = []
+        if paragraph_text:
+            self._current_paragraphs.append(paragraph_text)
+
+    def _flush_section(self) -> None:
+        if not self._current_paragraphs:
+            self._current_heading = None
+            return
+        self._sections.append(
+            {
+                "heading": self._current_heading,
+                "paragraphs": list(self._current_paragraphs),
+            }
+        )
+        self._current_paragraphs = []
+        self._current_heading = None
+
+    def _start_new_section(self, heading: str | None) -> None:
+        self._flush_paragraph()
+        self._flush_section()
+        self._current_heading = heading
+
+
 def _looks_like_html(value: str) -> bool:
     return bool(re.search(r"<[^>]+>", value))
 
@@ -172,6 +265,134 @@ def extract_paragraphs_from_sources(
             paragraphs.extend(_extract_non_html_paragraphs(source))
 
     return [p for p in paragraphs if p]
+
+
+def _extract_heading_sections_from_html(source: str) -> list[list[str]]:
+    parser = _NarrativeHTMLHeadingSectionParser()
+    parser.feed(source)
+    parser.close()
+    sections = parser.sections
+    return [section.get("paragraphs", []) for section in sections if section.get("paragraphs")]
+
+
+def _count_tokens_for_marked_text(marked_paragraphs: str, encoding_name: str = "cl100k_base") -> int:
+    try:
+        import tiktoken  # type: ignore
+
+        encoder = tiktoken.get_encoding(encoding_name)
+        return len(encoder.encode(marked_paragraphs))
+    except Exception:
+        return len(marked_paragraphs.split())
+
+
+def _build_scene_chunk(
+    *,
+    chunk_index: int,
+    paragraph_start: int,
+    paragraphs: list[str],
+    encoding_name: str,
+) -> SceneChunk:
+    marked = "\n".join(
+        f"[P{position}] {paragraph}" for position, paragraph in enumerate(paragraphs, start=1)
+    )
+    return SceneChunk(
+        chunk_index=chunk_index,
+        paragraph_start=paragraph_start,
+        paragraph_end=paragraph_start + len(paragraphs) - 1,
+        paragraph_count=len(paragraphs),
+        token_count=_count_tokens_for_marked_text(marked, encoding_name=encoding_name),
+        paragraphs=paragraphs,
+        marked_paragraphs=marked,
+    )
+
+
+def build_scene_chunks_from_sources(
+    text: str | None,
+    autogenerated_text: str | None,
+    *,
+    encoding_name: str = "cl100k_base",
+) -> list[SceneChunk]:
+    """Build chunk windows using heading-aware sections or paragraph-size fallback."""
+    section_entries: list[dict[str, Any]] = []
+
+    for source in (text, autogenerated_text):
+        if not source:
+            continue
+
+        if _looks_like_html(source):
+            heading_sections = _extract_heading_sections_from_html(source)
+            if heading_sections:
+                for section in heading_sections:
+                    normalized = [p for p in section if p]
+                    if normalized:
+                        section_entries.append({"is_heading": True, "paragraphs": normalized})
+                continue
+
+        paragraphs = _extract_non_html_paragraphs(source)
+        if paragraphs:
+            section_entries.append({"is_heading": False, "paragraphs": paragraphs})
+
+    if not section_entries:
+        return []
+
+    chunks: list[SceneChunk] = []
+    chunk_index = 0
+    paragraph_cursor = 1
+    idx = 0
+
+    while idx < len(section_entries):
+        entry = section_entries[idx]
+        is_heading = bool(entry.get("is_heading"))
+        paragraphs = [p for p in entry.get("paragraphs", []) if p]
+        if not paragraphs:
+            idx += 1
+            continue
+
+        if not is_heading:
+            start = 0
+            while start < len(paragraphs):
+                end = min(len(paragraphs), start + PARAGRAPH_CHUNK_SIZE)
+                current = paragraphs[start:end]
+                chunks.append(
+                    _build_scene_chunk(
+                        chunk_index=chunk_index,
+                        paragraph_start=paragraph_cursor,
+                        paragraphs=current,
+                        encoding_name=encoding_name,
+                    )
+                )
+                chunk_index += 1
+                paragraph_cursor += len(current)
+                start = end
+            idx += 1
+            continue
+
+        merged = list(paragraphs)
+        consume_until = idx
+        if len(merged) < MIN_HEADING_PARAGRAPHS:
+            next_idx = idx + 1
+            while next_idx < len(section_entries) and len(merged) < PARAGRAPH_CHUNK_SIZE:
+                next_entry = section_entries[next_idx]
+                if not bool(next_entry.get("is_heading")):
+                    break
+                next_paragraphs = [p for p in next_entry.get("paragraphs", []) if p]
+                merged.extend(next_paragraphs)
+                consume_until = next_idx
+                next_idx += 1
+
+        chunks.append(
+            _build_scene_chunk(
+                chunk_index=chunk_index,
+                paragraph_start=paragraph_cursor,
+                paragraphs=merged,
+                encoding_name=encoding_name,
+            )
+        )
+        chunk_index += 1
+        paragraph_cursor += len(merged)
+        idx = consume_until + 1
+
+    return chunks
 
 
 def build_scene_chunks(

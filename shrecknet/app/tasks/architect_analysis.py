@@ -1956,7 +1956,7 @@ async def _run_milestone_proposal_phase(
         milestones: list[dict[str, Any]] = []
 
         for raw_idx, item in enumerate(raw_items, start=1):
-            description = _limit_to_two_sentences(_safe_json_text(item.get("description"), ""))
+            description = _safe_json_text(item.get("description"), "")
             boundary_type = _normalize_boundary_type(item.get("boundary_type"))
             title = _coerce_milestone_title(
                 raw_title=item.get("title") or item.get("name") or item.get("label"),
@@ -2000,13 +2000,7 @@ async def _run_milestone_proposal_phase(
                 }
             )
 
-        return _ensure_scene_milestone_boundaries(
-            milestones,
-            scene_ref=scene_ref,
-            scene_id=scene_id,
-            source_entity_instance_id=scene.get("source_entity_instance_id"),
-            author_id=author_id,
-        )
+        return milestones
 
     async def _process_batch(batch: list[dict[str, Any]]) -> list[dict[str, Any]]:
         async with semaphore:
@@ -2015,10 +2009,7 @@ async def _run_milestone_proposal_phase(
                     "scene_ref": scene.get("scene_ref"),
                     "scene_name": scene.get("scene_name"),
                     "scene_description": scene.get("scene_description"),
-                    "scene_text": _compress_scene_text_for_milestone_prompt(
-                        _safe_json_text(scene.get("scene_text")),
-                        MILESTONE_SCENE_TEXT_MAX_CHARS,
-                    ),
+                    "scene_text": _safe_json_text(scene.get("scene_text")),
                     "entities": _scene_entity_aliases(scene),
                 }
                 for scene in batch

@@ -252,240 +252,61 @@ Return ONLY valid JSON in this exact format:
 # Step 3: Milestone extraction from proposed scene
 ARCHITECT_MILESTONE_BATCH_PROMPT = """You are the Architect Agent.
 
-Your task is to extract graph-worthy milestones for a batch of finalized narrative scenes.
+Extract graph-worthy milestones from narrative scenes.
 
 Scenes payload:
 {scenes_payload}
 
-----------------
-Core Concept
+A milestone is a meaningful narrative state change.
 
-A milestone is a persistent narrative state transition.
-
-A milestone captures a meaningful change that affects:
-- goals
-- knowledge
-- danger
-- relationships
-- trust
-- emotional state
-- authority
-- conflict
-- commitments
-- future narrative direction
-
-A good milestone creates narrative pressure or meaningful consequences.
-
-A milestone should still matter if retrieved independently later.
-
-----------------
-Narrative Pressure
-
-Prefer milestones involving:
-- revelations
-- confrontations
+Extract milestones involving:
 - decisions
-- commitments
-- refusals
-- discoveries
-- betrayals
-- victories
-- failures
+- revelations
 - threats
-- escalations
-- emotional shifts
-- relationship changes
-- changes in control or authority
-- transitions in objectives or danger
-- irreversible or difficult-to-reverse actions
+- confrontations
+- commitments
+- discoveries
+- emotional or relationship shifts
+- strategic turns
+- meaningful consequences
 
-Each milestone should imply a BEFORE and AFTER state.
+Do NOT extract:
+- routine movement
+- filler dialogue
+- atmosphere
+- generic conversation
+- minor actions
 
-If nothing meaningfully changed after the event,
-it is probably not graph-worthy.
+Keep continuous interactions unified.
+Do NOT fragment milestones for tactical refinement or conversational progression.
 
-----------------
-What NOT To Extract
-
-A milestone is NOT:
-- mere presence of a character
-- passive atmosphere
-- generic movement
-- entering or leaving locations
-- idle dialogue
-- low-impact narration
-- generic observation
-- scene setup with no consequence
-- travel unless something important changes during it
-- filler interaction
-
-Avoid milestones that only describe:
-- characters arriving somewhere
-- characters looking around
-- characters speaking without consequence
-- routine actions
-- environmental description
-
-Unless the action creates a meaningful narrative change.
-
-----------------
-Compression Rules
-
-Do NOT extract every action separately.
-
-Combine tightly related exchanges and actions into a single milestone
-when they form one coherent narrative beat.
-
-Focus on turning points and meaningful transitions.
-
-----------------
-Scene Boundary Rules
-
-Every scene must include:
+Each scene must contain:
 - one "begin" milestone
 - one "end" milestone
 
-The "begin" milestone should establish:
-- the initiating pressure
-- the core goal
-- the interruption
-- the conflict
-- the immediate narrative tension
+Most scenes should contain 2-4 milestones.
 
-The "end" milestone should capture:
-- the resulting state change
-- the decision reached
-- the unresolved tension
-- the consequence
-- the transition caused by the scene
+Use ONLY entities provided for the scene.
+Prefer explicit entity names over vague references.
 
-Boundary milestones must still represent meaningful state changes.
-Do NOT create filler milestones just to satisfy boundaries.
-
-----------------
-Milestone Count Rules
-
-- Most scenes should contain 2-4 milestones.
-- Dense or highly dynamic scenes may contain 5-6 milestones.
-- Never return more than 6 milestones per scene.
-- Never extract filler milestones to increase count.
-
-Quality is more important than quantity.
-
-----------------
-Entity Rules
-
-Each scene payload contains allowed entities.
-
-Rules:
-- Use ONLY entities allowed for that scene.
-- mentions must contain only entities explicitly involved in the milestone.
-- related_to must contain only entities directly participating in the milestone.
-- Do not infer entities not supported by the scene text.
-- Prefer explicit entity mentions in descriptions when available.
-
-relationship_label:
-- must be short
-- reusable
-- verb-like
-- graph-friendly
-
-Good examples:
-- reveals
-- threatens
-- confronts
-- protects
-- rejects
-- discovers
-- attacks
-- assists
-- suspects
-- commands
-- deceives
-- follows
-- escapes
-
-Avoid vague labels like:
-- interacts_with
-- is_with
-- talks_to
-- exists_near
-
-relationship_description:
-- one short phrase
+Milestone titles must be:
+- short
 - concrete
-- contextual
+- conflict-driven
+- tied to meaningful actions or pressure
 
-----------------
-Writing Rules
+Avoid vague titles like:
+- Strategic Discussion
+- Rising Tension
+- Planning the Attack
 
-title:
-- short descriptive title
-- max 6 words
-- concrete and specific
+Weak:
+"The group discusses their next move."
 
-description:
-- concise
-- concrete
-- present tense
-- max 2 sentences
-- describe what meaningfully changes
-- identify key involved entities when appropriate
+Strong:
+"Tamura proposes manipulating Hold’s expectations to maintain leverage over Leodogr and the bishop."
 
-Descriptions should focus on:
-- what changed
-- what was decided
-- what was revealed
-- what escalated
-- what consequence emerged
-
-----------------
-Priority Rules
-
-Prioritize:
-1. revelations and decisions
-2. confrontations and commitments
-3. emotional or relational changes
-4. consequential actions
-5. environmental transitions only if consequential
-
-----------------
-Examples
-
-Weak milestone:
-- "The group enters the castle."
-
-Strong milestone:
-- "The castle guards deny the party entry and demand proof of royal authority."
-
-Weak milestone:
-- "Maria talks to John."
-
-Strong milestone:
-- "Maria admits she betrayed the resistance to protect her brother."
-
-Weak milestone:
-- "The group leaves town."
-
-Strong milestone:
-- "The party abandons the town after realizing the plague has already spread beyond containment."
-
-----------------
-Graph Utility
-
-Milestones should be independently useful for:
-- retrieval
-- temporal reasoning
-- memory reconstruction
-- relationship tracking
-- narrative continuation
-
-Prefer milestones that would remain meaningful if retrieved alone.
-
-----------------
-Return Format
-
-Return STRICT JSON only in this format:
+Return STRICT RFC8259 JSON:
 
 {{
   "scenes": [

@@ -50,6 +50,17 @@ MILESTONE_EXTRACTION_CONCURRENCY = 10
 MILESTONE_BATCH_SIZE = 5
 MILESTONE_SCENE_TEXT_MAX_CHARS = 2_400
 
+def _safe_scene_title(scene: dict[str, Any], fallback_index: int) -> str:
+    title = str(scene.get("name") or "").strip()
+    return title or f"Scene {fallback_index + 1}"
+
+
+def _format_exception_message(exc: Exception) -> str:
+    raw = str(exc).strip()
+    if raw:
+        return f"{type(exc).__name__}: {raw}"
+    return f"{type(exc).__name__}: <empty_message>"
+
 
 def _resolve_local_tests_output_dir(job_name: str) -> Path:
     """Resolve writable local_tests path for analysis artifact dumps."""
@@ -834,6 +845,7 @@ async def _run_scene_merge_phase(
     for entity_id, entity_chunks in by_entity.items():
         scene_by_ref: dict[str, dict[str, Any]] = {}
         metadata: list[dict[str, Any]] = []
+        pre_dedup_titles: list[str] = []
         for chunk in sorted(entity_chunks, key=lambda item: int(item.get("chunk_index") or 0)):
             for idx, scene in enumerate(chunk.get("scenes", [])):
                 if not isinstance(scene, dict):
@@ -860,6 +872,7 @@ async def _run_scene_merge_phase(
                         "description": scene.get("description"),
                     }
                 )
+                pre_dedup_titles.append(_safe_scene_title(scene, idx))
 
         if not metadata:
             merged_results.extend(entity_chunks)
@@ -930,6 +943,20 @@ async def _run_scene_merge_phase(
         merged_scenes.sort(key=lambda item: (item.get("start_paragraph", 0), item.get("end_paragraph", 0)))
         for idx, scene in enumerate(merged_scenes):
             scene["scene_id"] = idx
+
+        merged_titles = [
+            _safe_scene_title(scene, idx)
+            for idx, scene in enumerate(merged_scenes)
+            if isinstance(scene, dict)
+        ]
+        logger.info(
+            "scene_merge_entity_summary: run_id=%s entity_id=%s scenes_before_dedup=%d scenes_after_dedup=%d merged_scene_titles=%s",
+            run_id,
+            entity_id,
+            len(pre_dedup_titles),
+            len(merged_scenes),
+            json.dumps(merged_titles, ensure_ascii=False),
+        )
 
         first_chunk = min(entity_chunks, key=lambda item: int(item.get("chunk_index") or 0))
         merged_results.append(
@@ -1228,6 +1255,7 @@ async def _run_scene_chunking_phase(
     ontology_instance: Any,
     llm_client: ShreckLLMClient,
     model: str | LLMModelTarget,
+    merge_model: str | LLMModelTarget | None = None,
     instructions: str | None = None,
 ) -> dict[str, Any]:
     started = perf_counter()
@@ -1243,6 +1271,22 @@ async def _run_scene_chunking_phase(
         )
         if not chunks:
             continue
+
+        chunk_metrics = [
+            {
+                "chunk_index": chunk.chunk_index,
+                "paragraph_count": chunk.paragraph_count,
+                "token_count": chunk.token_count,
+            }
+            for chunk in chunks
+        ]
+        logger.info(
+            "scene_chunking_entity_summary: run_id=%s entity_id=%s chunk_count=%d chunk_metrics=%s",
+            run_id,
+            getattr(entity, "entity_instance_id", ""),
+            len(chunks),
+            json.dumps(chunk_metrics, ensure_ascii=False),
+        )
 
         for chunk in chunks:
             logger.info(
@@ -1266,12 +1310,18 @@ async def _run_scene_chunking_phase(
                     instructions=instructions,
                 )
                 total_scenes += len(scenes)
+                discovered_scene_titles = [
+                    _safe_scene_title(scene, idx)
+                    for idx, scene in enumerate(scenes)
+                    if isinstance(scene, dict)
+                ]
                 logger.info(
-                    "scene_chunking_chunk_done: run_id=%s entity_id=%s chunk_index=%d scenes_found=%d",
+                    "scene_chunking_chunk_done: run_id=%s entity_id=%s chunk_index=%d scenes_found=%d scene_titles=%s",
                     run_id,
                     getattr(entity, "entity_instance_id", ""),
                     chunk.chunk_index,
                     len(scenes),
+                    json.dumps(discovered_scene_titles, ensure_ascii=False),
                 )
                 all_chunk_results.append(
                     {
@@ -1288,17 +1338,18 @@ async def _run_scene_chunking_phase(
                     }
                 )
             except Exception as exc:
+                formatted_error = _format_exception_message(exc)
                 logger.warning(
                     "scene_chunking_chunk_error: run_id=%s entity_id=%s chunk_index=%d error=%s",
                     run_id,
                     getattr(entity, "entity_instance_id", ""),
                     chunk.chunk_index,
-                    exc,
+                    formatted_error,
                 )
                 all_chunk_results.append(
                     {
                         "status": "error",
-                        "error": str(exc),
+                        "error": formatted_error,
                         "entity_instance_id": getattr(entity, "entity_instance_id", None),
                         "entity_alias": getattr(entity, "alias", None),
                         "chunk_index": chunk.chunk_index,
@@ -1314,7 +1365,7 @@ async def _run_scene_chunking_phase(
     merge_phase = await _run_scene_merge_phase(
         run_id=run_id,
         llm_client=llm_client,
-        model=model,
+        model=merge_model or model,
         chunk_results=all_chunk_results,
         instructions=instructions,
     )
@@ -2165,6 +2216,13 @@ async def _execute_architect_pipeline(
                     merged_nodes[node_id] = node
                 existing_nodes = list(merged_nodes.values())
 
+            logger.info(
+                "architect_analysis_llm_client_config: run_id=%s timeout_s=%.3f max_retries=%d base_url=%s",
+                run_id,
+                float(settings.shreckllm_request_timeout_s),
+                int(settings.shreckllm_max_retries),
+                settings.shreckllm_base_url,
+            )
             try:
                 result = await _run_scene_centric_chunking_test(
                     run_id=run_id,
@@ -2249,6 +2307,7 @@ async def _run_scene_centric_chunking_test(
         ontology_instance=ontology_instance,
         llm_client=llm_client,
         model=scene_chunking_model,
+        merge_model=architect_model,
     )
     _log_step_usage(
         run_id=run_id,

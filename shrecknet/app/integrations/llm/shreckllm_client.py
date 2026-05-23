@@ -89,11 +89,16 @@ class ShreckLLMClient:
                 return text
             except Exception as exc:
                 if not self._is_retryable_exception(exc) or attempt >= attempts:
+                    error_text = str(exc).strip()
+                    if not error_text:
+                        error_text = "<empty_message>"
                     logger.error(
-                        "shreckllm chat failed provider=%s model=%s: %s",
+                        "shreckllm chat failed provider=%s model=%s error_type=%s error=%s",
                         target.provider,
                         target.name,
-                        exc,
+                        type(exc).__name__,
+                        error_text,
+                        exc_info=True,
                     )
                     raise
                 await asyncio.sleep(min(8.0, (2 ** (attempt - 1)) + random.uniform(0.1, 0.6)))

@@ -79,6 +79,19 @@ Credentials are intentionally empty in the JSON seed files. API keys and provide
 docker compose --env-file configs/compose.env --env-file configs/neo4j.env up --build
 ```
 
+Shortcut launchers with automatic Ollama GPU fallback:
+
+- `./run.sh` (Linux/macOS)
+- `run.bat` (Windows)
+
+Both launchers inspect host GPU availability and include `docker-compose.gpu.yml` automatically when an NVIDIA GPU is detected. If no GPU is detected, Ollama runs on CPU.
+
+You can force behavior with `SHRECKNET_OLLAMA_GPU_MODE` in `configs/compose.env`:
+
+- `auto` (default): use GPU when available, otherwise CPU
+- `on`: always request GPU for Ollama
+- `off`: always run Ollama on CPU
+
 ### 4. Verify
 
 ```bash

@@ -24,6 +24,8 @@ BOOTSTRAP_ENV_FIELDS = frozenset(
         "jobs_database_url",
         "celery_broker_url",
         "celery_result_backend",
+        "shreckllm_request_timeout_s",
+        "shreckllm_max_retries",
         "jwt_private_key_pem",
         "jwt_public_key_pem",
         "neo4j_uri",

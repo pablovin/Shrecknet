@@ -98,7 +98,7 @@ def test_normalize_scene_ranges_accepts_zero_based_model_output() -> None:
     assert normalized[1]["end_paragraph"] == 3
 
 
-def test_normalize_scene_ranges_rejects_gaps() -> None:
+def test_normalize_scene_ranges_annotates_gaps_without_repair() -> None:
     scenes = [
         {
             "scene_id": 0,
@@ -116,11 +116,13 @@ def test_normalize_scene_ranges_rejects_gaps() -> None:
         },
     ]
 
-    with pytest.raises(ValueError, match="coverage"):
-        _normalize_scene_ranges(scenes, paragraph_count=3)
+    normalized = _normalize_scene_ranges(scenes, paragraph_count=3)
+    assert normalized[0]["range_valid"] is True
+    assert normalized[1]["range_valid"] is False
+    assert "gap_from_previous" in normalized[1]["range_invalid_reasons"]
 
 
-def test_normalize_scene_ranges_repairs_gaps_in_tolerant_mode() -> None:
+def test_normalize_scene_ranges_does_not_repair_gaps() -> None:
     scenes = [
         {
             "scene_id": 0,
@@ -138,12 +140,34 @@ def test_normalize_scene_ranges_repairs_gaps_in_tolerant_mode() -> None:
         },
     ]
 
-    normalized = _normalize_scene_ranges(scenes, paragraph_count=26, strict=False)
-
+    normalized = _normalize_scene_ranges(scenes, paragraph_count=26)
     assert normalized[0]["start_paragraph"] == 1
-    assert normalized[0]["end_paragraph"] >= 1
-    assert normalized[1]["start_paragraph"] == normalized[0]["end_paragraph"] + 1
-    assert normalized[-1]["end_paragraph"] == 26
+    assert normalized[0]["end_paragraph"] == 14
+    assert normalized[1]["start_paragraph"] == 15
+    assert normalized[1]["end_paragraph"] == 18
+
+
+@pytest.mark.asyncio
+async def test_segment_chunk_into_scenes_annotates_invalid_out_of_bounds_range() -> None:
+    client = _FakeLLMClient(
+        responses=[
+            '{"scenes":[{"scene_id":0,"name":"A","description":"A desc","start_paragraph":57,"end_paragraph":100}]}',
+        ]
+    )
+    scenes = await segment_chunk_into_scenes(
+        llm_client=client,
+        model="test-model",
+        marked_paragraphs="[P1] one\\n[P2] two\\n[P3] three",
+        paragraph_count=3,
+        paragraphs=["one", "two", "three"],
+    )
+    assert len(scenes) == 1
+    assert scenes[0]["start_paragraph"] == 57
+    assert scenes[0]["end_paragraph"] == 100
+    assert scenes[0]["range_valid"] is False
+    assert "out_of_bounds" in scenes[0]["range_invalid_reasons"]
+    assert scenes[0]["description"].startswith("[RANGE_INVALID")
+    assert scenes[0]["text"].startswith("[RANGE_INVALID")
 
 
 @pytest.mark.asyncio

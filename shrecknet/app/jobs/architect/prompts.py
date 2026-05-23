@@ -1,59 +1,59 @@
-ARCHITECT_SCENE_SEGMENTATION_PROMPT = """You are an expert narrative analyst. Segment this full paragraph chunk into final narrative scenes.
+ARCHITECT_SCENE_SEGMENTATION_PROMPT = """You are an expert narrative analyst. Your roll is to segment a source text chunk into meaningful narrative scenes based on continuity in time, place, interaction focus, and narrative purpose.
 
-Input
+Your task is to segment a source text chunk into coherent narrative scenes.
 
-You will receive one source chunk divided into numbered paragraphs:
+Input:
+The text is divided into numbered paragraphs:
 
 [P1] ...
 [P2] ...
-[P3] ...
 ...
 
-Task
+A Scene is a continuous narrative situation.
 
-Return the final scene segmentation for THIS ENTIRE CHUNK in one pass. Do not create local candidates. Do not extract milestones.
+A scene usually remains the same while:
+- the same characters are interacting
+- the conversation or action continues
+- the location remains the same
+- there is no major time jump
 
-A scene is a contiguous span of paragraphs with continuity in time, place, interaction focus, and narrative purpose.
+Do NOT split scenes simply because:
+- the topic changes
+- the emotional tone changes
+- the strategy changes
+- the conversation evolves
+- a new detail is revealed
 
-Create a new scene only when there is a clear, meaningful shift in one or more of:
+Keep conversations, confrontations, planning, and immediate consequences together whenever they occur continuously.
+
+Create a new scene ONLY when there is a clear change in:
 - time
 - location
-- dominant participants
-- goal or conflict
+- dominant participating characters
+- ongoing interaction or activity
 
+Avoid fragmentation.
+Prefer fewer, larger, stronger scenes.
 
+Important:
+- Continuous dialogue is usually ONE scene.
+- Continuous action is usually ONE scene.
+- Setup + escalation + immediate consequence usually belong to the SAME scene.
 
-Anti-fragmentation rules:
-- Prefer fewer, stronger scenes.
-- Do NOT split a scene while the same interaction, conflict, or event is still unfolding.
-- Keep setup, escalation, and immediate consequence together when they happen without a meaningful break.
-- Do NOT create scenes for mood, description, or minor action alone.
-- Continuous conversations or confrontations should usually remain within the same scene unless there is a clear interruption or transition.
-- Avoid one-paragraph micro-scenes unless there is an explicit hard transition (clear time jump, location jump, or cast reset).
-- Prefer scenes with at least 2-3 paragraphs when possible.
-- Narrative purpose alone is NOT sufficient to split a scene unless accompanied by a meaningful shift in time, location, or interaction focus.
-
-Scene count guidance (soft targets, not rigid):
-- 1-15 paragraphs: usually 1-3 scenes
-- 16-30 paragraphs: usually 2-5 scenes
-- 31+ paragraphs: usually 3-6 scenes
-- Do not exceed 8 scenes for a chunk unless the text contains many explicit hard transitions.
-
-Coverage rules:
+Rules:
 - Scenes must be chronological.
-- Scenes must cover the whole chunk without gaps.
 - Scenes must not overlap.
-- Each scene must use paragraph indexes from this chunk.
-- Do not infer unseen transitions between paragraphs unless explicitly supported by the text.
+- Scenes must cover the entire chunk.
+- Use only paragraph indexes from the provided chunk.
 
-For each scene, output:
-- "scene_id": sequential integer starting from 0
-- "name": short descriptive title, max 6 words
-- "description": 3-6 concise sentences describing what happens with the related people, places, objects and important nouns on it.
-- "start_paragraph": first paragraph index, inclusive
-- "end_paragraph": last paragraph index, inclusive
+For each scene return:
+- scene_id
+- name
+- description
+- start_paragraph
+- end_paragraph
 
-Return ONLY valid JSON in this exact format:
+Return ONLY valid JSON:
 
 {{
   "scenes": [

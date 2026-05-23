@@ -467,108 +467,75 @@ def _extract_json_object(raw: str) -> str:
 def _normalize_scene_ranges(
     scenes: list[dict[str, Any]],
     paragraph_count: int,
-    *,
-    strict: bool = True,
 ) -> list[dict[str, Any]]:
     if not scenes:
         raise ValueError("Model returned no scenes")
 
-    # Accept model output as either zero-based or one-based indices.
-    starts = [int(scene.get("start_paragraph", -1)) for scene in scenes]
-    ends = [int(scene.get("end_paragraph", -1)) for scene in scenes]
-    zero_based = any(value == 0 for value in starts + ends)
+    def _parse_int(value: Any) -> int | None:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    parsed_starts = [_parse_int(scene.get("start_paragraph")) for scene in scenes]
+    parsed_ends = [_parse_int(scene.get("end_paragraph")) for scene in scenes]
+    zero_based = any(value == 0 for value in [*parsed_starts, *parsed_ends] if value is not None)
 
     normalized: list[dict[str, Any]] = []
-    for scene in scenes:
-        start = int(scene.get("start_paragraph", -1))
-        end = int(scene.get("end_paragraph", -1))
-        if zero_based:
-            start += 1
-            end += 1
-        if strict and (start < 1 or end < 1 or start > end or end > paragraph_count):
-            raise ValueError(
-                f"Invalid scene range start={start} end={end} for paragraph_count={paragraph_count}"
+    prev_end: int | None = None
+    for idx, scene in enumerate(scenes):
+        raw_start = _parse_int(scene.get("start_paragraph"))
+        raw_end = _parse_int(scene.get("end_paragraph"))
+        adjusted_start = (raw_start + 1) if (zero_based and raw_start is not None) else raw_start
+        adjusted_end = (raw_end + 1) if (zero_based and raw_end is not None) else raw_end
+
+        reasons: list[str] = []
+        if adjusted_start is None or adjusted_end is None:
+            reasons.append("non_numeric")
+        else:
+            if adjusted_start < 1 or adjusted_end < 1:
+                reasons.append("below_one")
+            if adjusted_start > adjusted_end:
+                reasons.append("start_gt_end")
+            if adjusted_start > paragraph_count or adjusted_end > paragraph_count:
+                reasons.append("out_of_bounds")
+            if prev_end is not None:
+                if adjusted_start > prev_end + 1:
+                    reasons.append("gap_from_previous")
+                elif adjusted_start <= prev_end:
+                    reasons.append("overlap_with_previous")
+
+        range_valid = not reasons
+        if adjusted_end is not None:
+            prev_end = adjusted_end
+
+        raw_start_text = "null" if adjusted_start is None else str(adjusted_start)
+        raw_end_text = "null" if adjusted_end is None else str(adjusted_end)
+        warning = ""
+        if not range_valid:
+            warning = (
+                f"[RANGE_INVALID raw={raw_start_text}-{raw_end_text} "
+                f"chunk=1-{paragraph_count} reasons={','.join(reasons)}]"
             )
 
-        # In tolerant mode we clamp and repair invalid model output.
-        if not strict:
-            start = max(1, min(start, paragraph_count))
-            end = max(1, min(end, paragraph_count))
-            if end < start:
-                end = start
-
+        description = str(scene.get("description", "")).strip()
         normalized.append(
             {
                 "scene_id": int(scene.get("scene_id", len(normalized))),
+                "raw_scene_order": idx,
                 "name": str(scene.get("name", "")).strip(),
-                "description": str(scene.get("description", "")).strip(),
-                "start_paragraph": start,
-                "end_paragraph": end,
+                "description": f"{warning} {description}".strip() if warning else description,
+                "start_paragraph": adjusted_start,
+                "end_paragraph": adjusted_end,
+                "raw_start_paragraph": adjusted_start,
+                "raw_end_paragraph": adjusted_end,
+                "raw_range": f"{raw_start_text}-{raw_end_text}",
+                "range_valid": range_valid,
+                "range_invalid_reasons": reasons,
+                "validated_start_paragraph": adjusted_start,
+                "validated_end_paragraph": adjusted_end,
+                "text_annotation": warning if warning else "",
             }
-        )
-
-    normalized.sort(key=lambda item: (item["start_paragraph"], item["end_paragraph"]))
-
-    if not strict:
-        repaired: list[dict[str, Any]] = []
-        expected = 1
-        total = len(normalized)
-
-        for idx, item in enumerate(normalized):
-            if expected > paragraph_count:
-                break
-
-            start = expected
-            raw_end = item["end_paragraph"]
-            end = max(start, min(raw_end, paragraph_count))
-
-            # Keep at least one paragraph available for remaining scenes.
-            remaining = total - idx - 1
-            max_end_for_item = max(start, paragraph_count - remaining)
-            if end > max_end_for_item:
-                end = max_end_for_item
-
-            repaired.append(
-                {
-                    **item,
-                    "start_paragraph": start,
-                    "end_paragraph": end,
-                }
-            )
-            expected = end + 1
-
-        if not repaired:
-            repaired = [
-                {
-                    "scene_id": 0,
-                    "name": "Scene 0",
-                    "description": "",
-                    "start_paragraph": 1,
-                    "end_paragraph": paragraph_count,
-                }
-            ]
-        elif repaired[-1]["end_paragraph"] < paragraph_count:
-            repaired[-1]["end_paragraph"] = paragraph_count
-
-        if repaired != normalized:
-            logger.warning(
-                "scene_range_repair_applied: scene_count=%d paragraph_count=%d",
-                len(normalized),
-                paragraph_count,
-            )
-        return repaired
-
-    expected = 1
-    for item in normalized:
-        if item["start_paragraph"] != expected:
-            raise ValueError(
-                f"Scene coverage gap/overlap near paragraph {expected}; got start={item['start_paragraph']}"
-            )
-        expected = item["end_paragraph"] + 1
-
-    if expected != paragraph_count + 1:
-        raise ValueError(
-            f"Scene coverage incomplete, expected paragraph {paragraph_count}, got up to {expected - 1}"
         )
 
     return normalized
@@ -580,11 +547,31 @@ def attach_scene_text(
 ) -> list[dict[str, Any]]:
     enriched: list[dict[str, Any]] = []
     for scene in scenes:
-        start = scene["start_paragraph"]
-        end = scene["end_paragraph"]
-        marked_lines = [
-            f"[P{idx}] {paragraphs[idx - 1]}" for idx in range(start, end + 1)
-        ]
+        start = scene.get("start_paragraph")
+        end = scene.get("end_paragraph")
+        reasons = list(scene.get("range_invalid_reasons") or [])
+        annotation = str(scene.get("text_annotation") or "").strip()
+        is_valid = bool(scene.get("range_valid"))
+
+        marked_lines: list[str] = []
+        if isinstance(start, int) and isinstance(end, int):
+            clipped_start = max(1, min(start, len(paragraphs)))
+            clipped_end = max(1, min(end, len(paragraphs)))
+            if clipped_end >= clipped_start:
+                marked_lines = [
+                    f"[P{idx}] {paragraphs[idx - 1]}"
+                    for idx in range(clipped_start, clipped_end + 1)
+                ]
+
+        if not is_valid:
+            header = annotation or (
+                f"[RANGE_INVALID raw={scene.get('raw_range')} chunk=1-{len(paragraphs)} "
+                f"reasons={','.join(reasons)}]"
+            )
+            text = header if not marked_lines else f"{header}\n" + "\n".join(marked_lines)
+            enriched.append({**scene, "text": text})
+            continue
+
         enriched.append({**scene, "text": "\n".join(marked_lines)})
     return enriched
 
@@ -642,7 +629,7 @@ async def segment_chunk_into_scenes(
         }
         return attach_scene_text([fallback], paragraphs)
 
-    normalized_final = _normalize_scene_ranges(scene_items, paragraph_count, strict=False)
+    normalized_final = _normalize_scene_ranges(scene_items, paragraph_count)
     for scene in normalized_final:
         scene.pop("milestones", None)
         scene.pop("mentions", None)

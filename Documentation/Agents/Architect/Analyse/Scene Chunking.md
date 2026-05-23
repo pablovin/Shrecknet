@@ -4,7 +4,7 @@ This document describes the active scene chunking flow used by Architect analysi
 
 ## Purpose
 
-Extract local candidate scenes from overlapping paragraph bundles, then merge and deduplicate those candidates into final scenes with milestone hints for downstream phases.
+Segment each source chunk with one LLM call, merge scene metadata per source entity, then defer entity and milestone extraction to later pipeline stages.
 
 ## Inputs
 
@@ -19,26 +19,44 @@ Both sources are transformed into paragraph units.
 
 Paragraph extraction supports HTML and non-HTML input.
 
-### HTML input
+### HTML Input
+
+The active source-based chunk builder first tries to preserve heading structure.
+
+- Heading sections are extracted from HTML using `h1` to `h6` boundaries.
+- Paragraph-like tags (`p`, `li`, `blockquote`) are treated as paragraph units inside each section.
+- If heading sections are found, each heading section becomes a candidate section for chunk building.
+- If heading extraction does not produce sections, the source falls back to non-HTML paragraph extraction.
+
+A separate paragraph parser also supports heading text buffering for direct paragraph extraction:
 
 - Paragraph-like tags (`p`, `li`, `blockquote`) are treated as paragraph boundaries.
 - Heading-like tags (`h1` to `h6`, `title`) and other non-paragraph text are buffered.
 - Buffered text is prepended to the next paragraph.
 - Remaining buffered text at end is emitted as a final paragraph.
 
-### Non-HTML input
+### Non-HTML Input
 
 - Split by blank lines.
 - Normalize internal whitespace.
+- If blank-line splitting produces only one paragraph, fall back to transcript-style splitting on bullet, numbered-list, or timestamp markers.
 
-## Chunk Building
+## Source Chunk Building
 
-Paragraphs are packed into token-bounded chunks.
+The active Architect analysis path uses `build_scene_chunks_from_sources`, not the older token-limit chunker.
 
-- Tokenizer: `tiktoken` (`cl100k_base`)
-- Token limit: `16_000`
-- Marking format inside each chunk: `[P1]`, `[P2]`, ...
-- Oversized single paragraph is emitted alone to preserve forward progress.
+Runtime chunking constants:
+
+- `PARAGRAPH_CHUNK_SIZE`: `30`
+- `MIN_HEADING_PARAGRAPHS`: `5`
+
+Chunk behavior:
+
+- HTML heading sections are kept as chunks when possible.
+- Heading sections shorter than `5` paragraphs may be merged with following heading sections until they reach useful size or approach the `30` paragraph chunk cap.
+- Non-heading paragraphs are split into fixed windows of up to `30` paragraphs.
+- Each chunk marks paragraphs locally as `[P1]`, `[P2]`, etc.
+- `token_count` is still recorded using `tiktoken` `cl100k_base` when available, with a word-count fallback, but token count is metadata in this path and does not currently determine chunk boundaries.
 
 Each chunk stores:
 
@@ -47,75 +65,119 @@ Each chunk stores:
 - `paragraph_end`
 - `paragraph_count`
 - `token_count`
+- `paragraphs`
 - `marked_paragraphs`
 
-## Local Bundle Candidate Extraction
+## Legacy Token Chunker
 
-Within each token chunk, scene discovery runs over local paragraph bundles:
+`build_scene_chunks` still exists as a lower-level utility for token-bounded paragraph packing.
 
-- Bundle size: `12` paragraphs
-- Overlap: `2` paragraphs
-- Max candidates per bundle: `3`
+- Tokenizer: `tiktoken` (`cl100k_base`)
+- Caller-provided `token_limit`
+- Marking format inside each chunk: `[P1]`, `[P2]`, ...
+- Oversized single paragraph is emitted alone to preserve forward progress.
 
-Each bundle calls `ARCHITECT_SCENE_CENTRIC_CHUNKING_PROMPT` and expects candidate output.
+This is not the active path used by `_run_scene_chunking_phase`, which calls `build_scene_chunks_from_sources`.
+
+## Full-Chunk Scene Segmentation
+
+Within each source chunk, scene discovery now runs once over the full chunk. There is no 12-paragraph bundle split and no bundle overlap.
+
+`segment_chunk_into_scenes` calls `ARCHITECT_SCENE_SEGMENTATION_PROMPT` with the chunk-level `marked_paragraphs` and expects final scenes directly.
 
 Expected model JSON shape:
 
 ```json
 {
-  "candidate_scenes": [
+  "scenes": [
     {
       "scene_id": 0,
       "name": "...",
       "description": "...",
-      "start_paragraph": 0,
+      "start_paragraph": 1,
       "end_paragraph": 4
     }
   ]
 }
 ```
 
+Scene segmentation rules:
+
+- Create scenes only on clear time, place, goal, participant, conflict, or narrative-purpose shifts.
+- Prefer fewer, stronger scenes.
+- Cover the full chunk without gaps.
+- Do not extract milestones, `mentions`, or `related_to` during segmentation.
+
 Compatibility note:
 
-- Parser accepts `candidate_scenes` (preferred) and `scenes` (legacy fallback).
+## Per-Entity Scene Merge
 
-Milestone fields are preserved as raw scene-local hints:
+After chunk segmentation, `_run_scene_merge_phase` performs a lightweight merge pass per source entity.
 
-- `title`
-- `description`
-- `boundary_type`
-- `mentions`
-- `related_to` (alias-level hints)
+Merge input is metadata only:
 
-## Candidate Merge and Dedup
+- temporary scene ref
+- chunk index
+- start/end paragraph
+- title
+- description
 
-After all bundle calls complete, candidates are merged programmatically.
+`ARCHITECT_SCENE_DEDUP_PROMPT` does not include full scene text. It asks the model to group duplicate or over-split scenes by title/description similarity and paragraph overlap or adjacency. Each input scene ref must appear exactly once.
 
-Scenes are merged when any of the following is true:
+Merge output shape:
 
-- paragraph ranges overlap strongly
-- name + description similarity is high
-- milestone similarity is high
+```json
+{
+  "merged_scenes": [
+    {
+      "scene_refs": ["chunk_0_scene_0", "chunk_1_scene_0"],
+      "name": "...",
+      "description": "..."
+    }
+  ]
+}
+```
 
-Merge behavior:
+Merged scenes concatenate source scene text internally, but only metadata is sent to the merge LLM.
 
-- expand paragraph range
-- union and deduplicate milestones
-- union `mentions` and `related_to` milestone hints
+## Candidate Range Handling
+
+Model paragraph ranges are interpreted as chunk-local ranges.
+
+- Ranges may be zero-based or one-based.
+- Final ranges are normalized with tolerant repair mode.
+- If segmentation returns no usable scenes, the chunk falls back to one scene covering the whole chunk.
 
 ## Range Normalization and Validation
 
-Normalization behavior:
-
-- Accepts zero-based or one-based ranges.
-- Converts to one-based internal representation.
-- Enforces bounds and ordering.
-
 Final merged scenes are normalized with tolerant repair mode (`strict=False`) before text attachment.
+
+Tolerant repair behavior:
+
+- Clamps scene ranges to chunk bounds.
+- Orders scenes by paragraph range.
+- Repairs gaps and overlaps into sequential scene coverage.
+- Ensures the final scene reaches the final paragraph of the chunk.
+- Falls back to one scene covering the whole chunk if no candidate scenes survived.
 
 ## Scene Text Attachment
 
 After final ranges are chosen, each scene receives a `text` field containing exact marked paragraph lines for its inclusive span.
+
+## Runtime Sequence
+
+1. `_run_scene_centric_chunking_test` starts the scene-centric pipeline and calls `_run_scene_chunking_phase`.
+2. `_run_scene_chunking_phase` loops over every ontology instance entity.
+3. For each entity, `build_scene_chunks_from_sources(entity.text, entity.autogenerated_text)` builds heading-aware or 30-paragraph chunks.
+4. Each chunk is logged and passed to `segment_chunk_into_scenes`.
+5. `segment_chunk_into_scenes` sends the full chunk to the scene chunking LLM once.
+6. The response JSON is parsed as final scene spans, with no milestones.
+7. Final chunk-local ranges are repaired in tolerant mode and source text is attached.
+8. `_run_scene_merge_phase` runs one metadata-only merge call per source entity.
+9. Merged chunk results feed entity discovery per final scene.
+10. Scene proposals are built with `related_to` entities.
+11. `ARCHITECT_MILESTONE_BATCH_PROMPT` runs after entity discovery, max 5 scenes per LLM call.
+12. Debug `chunk_results` are included in the final pipeline output.
 
 ## Artifacts
 
@@ -148,6 +210,8 @@ Key logs:
 
 - Scene chunking is active inside `architect.analyze_instance`.
 - Output is included in consolidated `background_jobs.details.pipeline_output` and debug chunk data.
+- The configured scene chunking and merge model comes from `model_architect_scene_chunking`.
+- Milestones are generated later by batched milestone proposal after scene entity discovery.
 
 ## Code References
 

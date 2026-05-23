@@ -18,7 +18,10 @@ from app.graph.neo4j import get_driver
 from app.integrations.llm.shreckllm_client import ShreckLLMClient
 from app.integrations.retrieval.neo4j_retriever import Neo4jGraphRetriever
 from app.jobs.architect import prompts as architect_prompts
-from app.jobs.architect.schemas import ChunkExtractionResponse, ReconciliationResponse
+from app.jobs.architect.schemas import (
+    ChunkExtractionResponse,
+    SceneEntityBatchExtractionResponse,
+)
 from app.jobs.architect.scene_centric_chunking import (
     build_scene_chunks_from_sources,
     segment_chunk_into_scenes,
@@ -42,8 +45,9 @@ from app.db.session import AsyncSessionMaker
 logger = logging.getLogger(__name__)
 
 SCENE_ENTITY_EXTRACTION_CONCURRENCY = 10
+ENTITY_PROPOSAL_BATCH_SIZE = 5
 MILESTONE_EXTRACTION_CONCURRENCY = 10
-MIN_TOKEN_OVERLAP_RATIO = 0.5
+MILESTONE_BATCH_SIZE = 5
 MILESTONE_SCENE_TEXT_MAX_CHARS = 2_400
 
 
@@ -151,6 +155,24 @@ def _parse_chunk_extraction(response_text: str, scene_ref: str) -> ChunkExtracti
         return ChunkExtractionResponse(entities=[])
 
 
+def _parse_scene_entity_batch_extraction(
+    response_text: str,
+) -> SceneEntityBatchExtractionResponse:
+    try:
+        payload = json.loads(_extract_json_block(response_text))
+        if isinstance(payload.get("scenes"), list):
+            return SceneEntityBatchExtractionResponse.model_validate(payload)
+
+        # Backward-compatible single-scene shape for model drift in tests.
+        if isinstance(payload.get("entities"), list):
+            return SceneEntityBatchExtractionResponse.model_validate(
+                {"scenes": [{"scene_ref": "", "entities": payload["entities"]}]}
+            )
+    except Exception as exc:
+        logger.warning("scene_entity_batch_parse_error: error=%s", exc)
+    return SceneEntityBatchExtractionResponse(scenes=[])
+
+
 def _normalize_ontology_name(value: str | None) -> str:
     raw = str(value or "").strip().lower()
     return re.sub(r"\s+", " ", raw)
@@ -223,6 +245,50 @@ def _find_existing_match(
     return None
 
 
+def _build_existing_entity_prompt_catalogue(
+    existing_nodes: list[dict[str, Any]],
+) -> list[dict[str, str]]:
+    """Expose only natural-language identity fields to the LLM."""
+    rows: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for node in existing_nodes:
+        alias = str(node.get("alias") or "").strip()
+        ontology = str(node.get("ontology") or "").strip()
+        if not alias:
+            continue
+        key = (_canonical_alias(alias), _normalize_ontology_name(ontology))
+        if key in seen:
+            continue
+        seen.add(key)
+        rows.append({"alias": alias, "ontology": ontology})
+    rows.sort(key=lambda item: (item["ontology"].lower(), item["alias"].lower()))
+    return rows
+
+
+def _resolve_existing_node_by_alias(
+    *,
+    name: str | None,
+    matched_alias: str | None,
+    ontology: str | None,
+    existing_nodes: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    ontology_key = _normalize_ontology_name(ontology)
+    candidates = [matched_alias, name]
+    for candidate in candidates:
+        canonical = _canonical_alias(candidate)
+        if not canonical:
+            continue
+        for node in existing_nodes:
+            node_alias = str(node.get("alias") or "")
+            node_ontology = _normalize_ontology_name(str(node.get("ontology") or ""))
+            if ontology_key and node_ontology and node_ontology != ontology_key:
+                continue
+            node_canonical = _canonical_alias(node_alias)
+            if canonical == node_canonical or _aliases_equivalent(canonical, node_canonical):
+                return node
+    return None
+
+
 def _find_matching_canonical_key(
     canonical_name: str,
     deduped: dict[str, dict[str, Any]],
@@ -233,222 +299,6 @@ def _find_matching_canonical_key(
         if _aliases_equivalent(canonical_name, existing_key):
             return existing_key
     return None
-
-
-def _prefilter_node_catalogue(
-    deduped: dict[str, dict[str, Any]],
-    existing_nodes: list[dict[str, Any]],
-) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
-    if not deduped or not existing_nodes:
-        return [], {}
-
-    existing_by_canonical: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for node in existing_nodes:
-        canonical = _canonical_alias(node.get("alias"))
-        if canonical:
-            existing_by_canonical[canonical].append(node)
-
-    filtered_nodes: dict[str, dict[str, Any]] = {}
-    exact_matches: dict[str, dict[str, Any]] = {}
-
-    for canonical_proposed in deduped.keys():
-        matched_this_entity = False
-
-        if canonical_proposed in existing_by_canonical:
-            for node in existing_by_canonical[canonical_proposed]:
-                node_id = str(node.get("node_id") or "")
-                if node_id:
-                    filtered_nodes[node_id] = node
-                    if canonical_proposed not in exact_matches:
-                        exact_matches[canonical_proposed] = node
-                    matched_this_entity = True
-
-        proposed_tokens = set(canonical_proposed.split())
-        for existing_canonical, nodes in existing_by_canonical.items():
-            if _aliases_equivalent(canonical_proposed, existing_canonical):
-                for node in nodes:
-                    node_id = str(node.get("node_id") or "")
-                    if node_id:
-                        filtered_nodes[node_id] = node
-                continue
-
-            existing_tokens = set(existing_canonical.split())
-            shared_tokens = proposed_tokens & existing_tokens
-            if not shared_tokens:
-                continue
-
-            min_tokens = min(len(proposed_tokens), len(existing_tokens))
-            if min_tokens <= 0:
-                continue
-
-            overlap_ratio = len(shared_tokens) / min_tokens
-            if overlap_ratio >= MIN_TOKEN_OVERLAP_RATIO:
-                for node in nodes:
-                    node_id = str(node.get("node_id") or "")
-                    if node_id:
-                        filtered_nodes[node_id] = node
-
-        if matched_this_entity:
-            continue
-
-    logger.info(
-        "scene_entity_prefilter: proposed=%d catalogue=%d filtered=%d exact=%d",
-        len(deduped),
-        len(existing_nodes),
-        len(filtered_nodes),
-        len(exact_matches),
-    )
-    return list(filtered_nodes.values()), exact_matches
-
-
-def _parse_reconciliation(response_text: str) -> ReconciliationResponse:
-    try:
-        payload = json.loads(_extract_json_block(response_text))
-        return ReconciliationResponse.model_validate(payload)
-    except Exception as exc:
-        logger.warning("scene_entity_reconciliation_parse_error: %s", exc)
-        return ReconciliationResponse(existing=[], new=[])
-
-
-async def _reconcile_with_existing(
-    *,
-    llm_client: ShreckLLMClient,
-    model: str | LLMModelTarget,
-    deduped: dict[str, dict[str, Any]],
-    existing_nodes: list[dict[str, Any]],
-    ontology_definitions: str,
-    allowed_ontology_names: dict[str, str],
-) -> dict[str, Any]:
-    if not deduped:
-        return {"existing": [], "new": []}
-
-    filtered_catalogue, exact_matches = _prefilter_node_catalogue(deduped, existing_nodes)
-
-    existing_results: list[dict[str, Any]] = []
-    entities_needing_llm: list[dict[str, str]] = []
-
-    for canonical, entry in deduped.items():
-        if canonical in exact_matches:
-            matched = exact_matches[canonical]
-            existing_results.append(
-                {
-                    "proposed_name": entry.get("name") or "",
-                    "matched_node_id": matched.get("node_id"),
-                    "ontology": entry.get("ontology") or "",
-                }
-            )
-        else:
-            entities_needing_llm.append(
-                {
-                    "name": entry.get("name") or "",
-                    "ontology": entry.get("ontology") or "",
-                }
-            )
-
-    if not entities_needing_llm:
-        return {"existing": existing_results, "new": []}
-
-    if not filtered_catalogue:
-        return {
-            "existing": existing_results,
-            "new": entities_needing_llm,
-        }
-
-    existing_list = [
-        {
-            "node_id": str(node.get("node_id") or ""),
-            "alias": str(node.get("alias") or ""),
-            "ontology": str(node.get("ontology") or ""),
-        }
-        for node in filtered_catalogue
-    ]
-
-    reconciliation_prompt_template = getattr(
-        architect_prompts,
-        "ARCHITECT_ENTITY_RECONCILATION_PROMPT",
-        "",
-    )
-    prompt = str(reconciliation_prompt_template).format(
-        ontology_definitions=ontology_definitions,
-        proposed_entities=json.dumps(entities_needing_llm, indent=2),
-        existing_entities=json.dumps(existing_list, indent=2),
-    )
-
-    try:
-        response_text = await llm_client.chat(
-            model=model,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.1,
-            usage_tag="architect.entity_reconciliation",
-        )
-        response_payload = (
-            response_text
-            if isinstance(response_text, str)
-            else json.dumps(response_text, ensure_ascii=False)
-        )
-        parsed = _parse_reconciliation(response_payload)
-        valid_ids = {
-            str(node.get("node_id") or "")
-            for node in filtered_catalogue
-            if str(node.get("node_id") or "")
-        }
-        deduped_by_canonical = {
-            _canonical_alias(entry.get("name")): entry for entry in entities_needing_llm
-        }
-
-        for entry in parsed.existing:
-            if entry.matched_node_id and entry.matched_node_id in valid_ids:
-                canonical = _canonical_alias(entry.proposed_name)
-                fallback_ontology = (
-                    (deduped_by_canonical.get(canonical) or {}).get("ontology") or ""
-                )
-                selected_ontology = entry.ontology or fallback_ontology
-                mapped = allowed_ontology_names.get(
-                    _normalize_ontology_name(selected_ontology)
-                )
-                if not mapped:
-                    logger.warning(
-                        "scene_entity_reconcile_invalid_ontology_existing: proposed=%s ontology=%s",
-                        entry.proposed_name,
-                        selected_ontology,
-                    )
-                    continue
-                existing_results.append(
-                    {
-                        "proposed_name": entry.proposed_name,
-                        "matched_node_id": entry.matched_node_id,
-                        "ontology": mapped,
-                    }
-                )
-            else:
-                logger.warning(
-                    "scene_entity_reconcile_invalid_match: proposed=%s matched_id=%s",
-                    entry.proposed_name,
-                    entry.matched_node_id,
-                )
-
-        new_results: list[dict[str, Any]] = []
-        for item in parsed.new:
-            mapped = allowed_ontology_names.get(_normalize_ontology_name(item.ontology))
-            if not mapped:
-                logger.warning(
-                    "scene_entity_reconcile_invalid_ontology_new: name=%s ontology=%s",
-                    item.name,
-                    item.ontology,
-                )
-                continue
-            new_results.append({"name": item.name, "ontology": mapped})
-
-        return {
-            "existing": existing_results,
-            "new": new_results,
-        }
-    except Exception as exc:
-        logger.warning("scene_entity_reconcile_fallback_new: %s", exc)
-        return {
-            "existing": existing_results,
-            "new": entities_needing_llm,
-        }
 
 
 async def _classify_entities_with_reconciliation(
@@ -485,6 +335,8 @@ async def _classify_entities_with_reconciliation(
                     "canonical": dedup_key,
                     "name": entity.get("name") or "",
                     "ontology": mapped_ontology,
+                    "matched_node_id": None,
+                    "matched_alias": None,
                     "confidence_values": [],
                     "whys": [],
                     "scene_refs": [],
@@ -496,6 +348,23 @@ async def _classify_entities_with_reconciliation(
             if len(name) > len(entry["name"]):
                 entry["name"] = name
             entry["ontology"] = mapped_ontology
+            if (
+                str(entity.get("status") or "").strip().lower() == "existing"
+            ):
+                matched_node_id = str(entity.get("matched_node_id") or "").strip()
+                matched_alias = str(entity.get("matched_alias") or entity.get("name") or "").strip()
+                if not matched_node_id:
+                    matched = _resolve_existing_node_by_alias(
+                        name=entity.get("name"),
+                        matched_alias=matched_alias,
+                        ontology=mapped_ontology,
+                        existing_nodes=existing_nodes,
+                    )
+                    matched_node_id = str((matched or {}).get("node_id") or "").strip()
+                    matched_alias = str((matched or {}).get("alias") or matched_alias).strip()
+                if matched_node_id:
+                    entry["matched_node_id"] = matched_node_id
+                    entry["matched_alias"] = matched_alias
 
             confidence = entity.get("confidence")
             if isinstance(confidence, (int, float)):
@@ -513,27 +382,19 @@ async def _classify_entities_with_reconciliation(
             if isinstance(chunk_index, int) and chunk_index not in entry["chunk_indices"]:
                 entry["chunk_indices"].append(chunk_index)
 
-    reconciled = await _reconcile_with_existing(
-        llm_client=llm_client,
-        model=model,
-        deduped=deduped,
-        existing_nodes=existing_nodes,
-        ontology_definitions=ontology_definitions,
-        allowed_ontology_names=allowed_ontology_names,
-    )
-
     existing_map: dict[str, dict[str, Any]] = {}
-    for item in reconciled.get("existing", []):
-        key = _canonical_alias(item.get("proposed_name"))
-        matched_id = item.get("matched_node_id")
-        if key and matched_id:
-            existing_map[key] = item
-
-    new_set = {
-        _canonical_alias(item.get("name"))
-        for item in reconciled.get("new", [])
-        if _canonical_alias(item.get("name"))
-    }
+    new_set: set[str] = set()
+    for canonical, entry in deduped.items():
+        matched_id = entry.get("matched_node_id")
+        if canonical and matched_id:
+            existing_map[canonical] = {
+                "proposed_name": entry.get("name"),
+                "matched_node_id": matched_id,
+                "matched_alias": entry.get("matched_alias"),
+                "ontology": entry.get("ontology"),
+            }
+        else:
+            new_set.add(canonical)
 
     proposed_entities: list[dict[str, Any]] = []
     status_by_canonical: dict[str, dict[str, Any]] = {}
@@ -630,50 +491,6 @@ async def _classify_entities_with_reconciliation(
             )
         scene["entities"] = enriched_entities
 
-        raw_links = scene.get("milestone_entity_links")
-        raw_links = raw_links if isinstance(raw_links, list) else []
-        resolved_links: list[dict[str, Any]] = []
-        for raw_link in raw_links:
-            if not isinstance(raw_link, dict):
-                continue
-            milestone_title = str(raw_link.get("milestone_title") or "").strip()
-            alias = str(raw_link.get("entity") or "").strip()
-            if not milestone_title or not alias:
-                continue
-
-            canonical, resolved = _resolve_status_entry(alias)
-            if not resolved or not canonical:
-                continue
-
-            relationship_label = (
-                str(raw_link.get("relationship_label") or "related")
-                .strip()
-                .lower()
-            )
-            relationship_description = str(
-                raw_link.get("relationship_description") or ""
-            ).strip()
-            confidence = raw_link.get("confidence")
-            confidence_value = (
-                float(confidence)
-                if isinstance(confidence, (int, float))
-                else None
-            )
-
-            resolved_links.append(
-                {
-                    "milestone_title": milestone_title,
-                    "entity": resolved.get("name") or alias,
-                    "canonical": canonical,
-                    "proposal_index": proposal_index_by_canonical.get(canonical),
-                    "entity_instance_id": resolved.get("matched_node_id"),
-                    "relationship_label": relationship_label,
-                    "relationship_description": relationship_description,
-                    "confidence": confidence_value,
-                    "status": resolved.get("status"),
-                }
-            )
-        scene["milestone_entity_links"] = resolved_links
 
     return {
         "proposed_entities": proposed_entities,
@@ -858,129 +675,302 @@ def _flatten_scene_inputs(chunk_results: list[dict[str, Any]]) -> list[dict[str,
     return scenes
 
 
-def _build_milestones_from_scene_inputs(
+def _scene_merge_input_ref(chunk: dict[str, Any], scene: dict[str, Any], idx: int) -> str:
+    return (
+        f"chunk_{chunk.get('chunk_index', 0)}"
+        f"_scene_{scene.get('scene_id', idx)}"
+    )
+
+
+def _merge_scene_group(
     *,
-    scene_inputs: list[dict[str, Any]],
-    scene_id_by_ref: dict[str, str],
-    source_entity_by_ref: dict[str, str | None],
-    scene_related_to_by_ref: dict[str, list[dict[str, Any]]],
-    scene_milestone_links_by_ref: dict[str, list[dict[str, Any]]],
-    author_id: str,
-) -> dict[str, Any]:
-    by_scene: list[dict[str, Any]] = []
+    scene_refs: list[str],
+    scene_by_ref: dict[str, dict[str, Any]],
+    name: str | None = None,
+    description: str | None = None,
+) -> dict[str, Any] | None:
+    selected = [scene_by_ref[ref] for ref in scene_refs if ref in scene_by_ref]
+    if not selected:
+        return None
 
-    for scene in scene_inputs:
-        scene_ref = str(scene.get("scene_ref") or "")
-        scene_id = scene_id_by_ref.get(scene_ref) or str(scene.get("scene_id") or "")
-        source_entity_instance_id = source_entity_by_ref.get(scene_ref)
-        scene_entities = scene_related_to_by_ref.get(scene_ref, [])
-        scene_milestone_links = scene_milestone_links_by_ref.get(scene_ref, [])
-        raw_items = scene.get("scene_milestones")
-        raw_items = raw_items if isinstance(raw_items, list) else []
-        milestones: list[dict[str, Any]] = []
-
-        for raw_idx, item in enumerate(raw_items, start=1):
-            if not isinstance(item, dict):
-                continue
-            description = _safe_json_text(item.get("description"), "")
-            boundary_type = _normalize_boundary_type(item.get("boundary_type"))
-            title = _coerce_milestone_title(
-                raw_title=item.get("title") or item.get("name") or item.get("label"),
-                description=description,
-                boundary_type=boundary_type,
-                index=raw_idx,
-            )
-            raw_mentions = item.get("mentions")
-            mentions = raw_mentions if isinstance(raw_mentions, list) else []
-            mentions = [str(value).strip() for value in mentions if str(value).strip()]
-            raw_adjacent_to = item.get("adjacent_to")
-            adjacent_to = raw_adjacent_to if isinstance(raw_adjacent_to, list) else []
-            adjacent_to = [str(value).strip() for value in adjacent_to if str(value).strip()]
-            related_to = _normalize_related_to_items(item.get("related_to"), scene_entities)
-            if not related_to and mentions:
-                related_to = _related_to_from_mentions(mentions, scene_entities)
-
-            milestone_key = _canonical_alias(title)
-            for link in scene_milestone_links:
-                if not isinstance(link, dict):
-                    continue
-                link_title_key = _canonical_alias(link.get("milestone_title"))
-                if not milestone_key or not link_title_key:
-                    continue
-                if not _aliases_equivalent(milestone_key, link_title_key) and milestone_key != link_title_key:
-                    continue
-
-                linked_alias = str(link.get("entity") or "").strip()
-                link_rel = {
-                    "entity": linked_alias,
-                    "canonical": link.get("canonical"),
-                    "proposal_index": link.get("proposal_index"),
-                    "entity_instance_id": link.get("entity_instance_id"),
-                    "relationship_label": str(
-                        link.get("relationship_label") or "related"
-                    ).strip().lower(),
-                    "relationship_description": str(
-                        link.get("relationship_description") or ""
-                    ).strip(),
-                    "confidence": link.get("confidence"),
-                }
-                rel_key = (
-                    _canonical_alias(linked_alias),
-                    str(link_rel.get("relationship_label") or "related"),
-                )
-                existing_keys = {
-                    (
-                        _canonical_alias(rel.get("entity")),
-                        str(rel.get("relationship_label") or "related"),
-                    )
-                    for rel in related_to
-                    if isinstance(rel, dict)
-                }
-                if rel_key[0] and rel_key not in existing_keys:
-                    related_to.append(link_rel)
-            milestones.append(
-                {
-                    "milestone_ref": f"milestone-{uuid4()}",
-                    "scene_ref": scene_ref,
-                    "scene_id": scene_id,
-                    "title": title,
-                    "label": title,
-                    "description": description,
-                    "boundary_type": boundary_type,
-                    "mentions": mentions,
-                    "adjacent_to": adjacent_to,
-                    "related_to": related_to,
-                    "milestone_order": raw_idx,
-                    "author": {
-                        "created_by_type": "agent",
-                        "created_by_author": author_id,
-                    },
-                    "derived_from": {
-                        "entity_instance_id": source_entity_instance_id,
-                    },
-                }
-            )
-
-        milestones = _ensure_scene_milestone_boundaries(
-            milestones,
-            scene_ref=scene_ref,
-            scene_id=scene_id,
-            source_entity_instance_id=source_entity_instance_id,
-            author_id=author_id,
+    selected.sort(
+        key=lambda item: (
+            item.get("_absolute_start_paragraph", item.get("start_paragraph", 0)),
+            item.get("_chunk_index", 0),
+            item.get("start_paragraph", 0),
         )
-        by_scene.append({"scene_ref": scene_ref, "scene_id": scene_id, "milestones": milestones})
-
-    deduped_boundary_count = _dedupe_adjacent_boundary_milestones(by_scene)
-
-    all_milestones: list[dict[str, Any]] = []
-    for scene_row in by_scene:
-        all_milestones.extend(scene_row.get("milestones", []))
+    )
+    first = selected[0]
+    merged_text = "\n".join(
+        str(item.get("text") or "").strip()
+        for item in selected
+        if str(item.get("text") or "").strip()
+    )
+    best_name = str(name or "").strip() or max(
+        (str(item.get("name") or "").strip() for item in selected),
+        key=len,
+        default="Scene",
+    )
+    best_description = str(description or "").strip() or max(
+        (str(item.get("description") or "").strip() for item in selected),
+        key=len,
+        default="",
+    )
 
     return {
-        "proposed_milestones": all_milestones,
-        "per_scene": by_scene,
-        "deduped_boundary_count": deduped_boundary_count,
+        "scene_id": first.get("scene_id", 0),
+        "name": best_name or "Scene",
+        "description": best_description,
+        "start_paragraph": min(
+            int(item.get("_absolute_start_paragraph") or item.get("start_paragraph") or 1)
+            for item in selected
+        ),
+        "end_paragraph": max(
+            int(item.get("_absolute_end_paragraph") or item.get("end_paragraph") or 1)
+            for item in selected
+        ),
+        "source_scene_refs": list(scene_refs),
+        "text": merged_text,
     }
+
+
+def _merge_overlapping_scene_rows(scenes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Deterministically collapse overlapping canonical scenes after LLM dedup."""
+    if not scenes:
+        return []
+
+    ordered = sorted(
+        scenes,
+        key=lambda item: (
+            int(item.get("start_paragraph") or 1),
+            int(item.get("end_paragraph") or 1),
+        ),
+    )
+    merged: list[dict[str, Any]] = []
+    for scene in ordered:
+        if not merged:
+            merged.append(scene)
+            continue
+
+        previous = merged[-1]
+        prev_end = int(previous.get("end_paragraph") or 1)
+        scene_start = int(scene.get("start_paragraph") or 1)
+        if scene_start > prev_end:
+            merged.append(scene)
+            continue
+
+        previous["end_paragraph"] = max(prev_end, int(scene.get("end_paragraph") or prev_end))
+        previous["name"] = max(
+            [str(previous.get("name") or ""), str(scene.get("name") or "")],
+            key=len,
+        ) or "Scene"
+        descriptions = [
+            str(previous.get("description") or "").strip(),
+            str(scene.get("description") or "").strip(),
+        ]
+        previous["description"] = " ".join(
+            part for part in descriptions if part
+        ).strip()
+        previous["text"] = "\n".join(
+            part
+            for part in [
+                str(previous.get("text") or "").strip(),
+                str(scene.get("text") or "").strip(),
+            ]
+            if part
+        )
+        refs = list(previous.get("source_scene_refs") or [])
+        refs.extend(ref for ref in list(scene.get("source_scene_refs") or []) if ref not in refs)
+        previous["source_scene_refs"] = refs
+
+    return merged
+
+
+def _fallback_merge_entity_scenes(chunk_results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep segmentation output if the metadata merge pass fails."""
+    merged_results: list[dict[str, Any]] = []
+    for chunk in chunk_results:
+        if chunk.get("status") != "ok":
+            merged_results.append(chunk)
+            continue
+        merged_scenes = [
+            {
+                **scene,
+            }
+            for scene in chunk.get("scenes", [])
+            if isinstance(scene, dict)
+        ]
+        for idx, scene in enumerate(merged_scenes):
+            scene["scene_id"] = idx
+            scene.pop("milestones", None)
+            scene.pop("mentions", None)
+            scene.pop("related_to", None)
+        merged_results.append({**chunk, "scenes": merged_scenes})
+    return merged_results
+
+
+async def _run_scene_merge_phase(
+    *,
+    run_id: str,
+    llm_client: ShreckLLMClient,
+    model: str | LLMModelTarget,
+    chunk_results: list[dict[str, Any]],
+    instructions: str | None = None,
+) -> dict[str, Any]:
+    started = perf_counter()
+    by_entity: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    passthrough: list[dict[str, Any]] = []
+
+    for chunk in chunk_results:
+        if chunk.get("status") != "ok":
+            passthrough.append(chunk)
+            continue
+        entity_id = str(chunk.get("entity_instance_id") or "")
+        by_entity[entity_id].append(chunk)
+
+    merged_results: list[dict[str, Any]] = list(passthrough)
+    merge_calls = 0
+
+    for entity_id, entity_chunks in by_entity.items():
+        scene_by_ref: dict[str, dict[str, Any]] = {}
+        metadata: list[dict[str, Any]] = []
+        for chunk in sorted(entity_chunks, key=lambda item: int(item.get("chunk_index") or 0)):
+            for idx, scene in enumerate(chunk.get("scenes", [])):
+                if not isinstance(scene, dict):
+                    continue
+                ref = _scene_merge_input_ref(chunk, scene, idx)
+                chunk_paragraph_start = int(chunk.get("paragraph_start") or 1)
+                local_start = int(scene.get("start_paragraph") or 1)
+                local_end = int(scene.get("end_paragraph") or local_start)
+                absolute_start = chunk_paragraph_start + local_start - 1
+                absolute_end = chunk_paragraph_start + local_end - 1
+                scene_by_ref[ref] = {
+                    **scene,
+                    "_chunk_index": int(chunk.get("chunk_index") or 0),
+                    "_absolute_start_paragraph": absolute_start,
+                    "_absolute_end_paragraph": absolute_end,
+                }
+                metadata.append(
+                    {
+                        "scene_ref": ref,
+                        "chunk_index": chunk.get("chunk_index"),
+                        "start_paragraph": absolute_start,
+                        "end_paragraph": absolute_end,
+                        "name": scene.get("name"),
+                        "description": scene.get("description"),
+                    }
+                )
+
+        if not metadata:
+            merged_results.extend(entity_chunks)
+            continue
+
+        prompt_template = getattr(architect_prompts, "ARCHITECT_SCENE_DEDUP_PROMPT", "")
+        prompt = str(prompt_template).format(
+            scene_metadata=json.dumps(metadata, ensure_ascii=False)
+        )
+        instructions_text = str(instructions or "").strip()
+        if instructions_text:
+            prompt = (
+                f"{prompt}\n\nFrontend instructions (authoritative constraints):\n"
+                f"{instructions_text}"
+            )
+
+        try:
+            merge_calls += 1
+            response_text = await llm_client.chat(
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.1,
+                usage_tag="architect.scene_merge",
+            )
+            payload = json.loads(_extract_json_block(str(response_text)))
+            raw_groups = payload.get("merged_scenes")
+            if not isinstance(raw_groups, list):
+                raise ValueError("merged_scenes missing")
+        except Exception as exc:
+            logger.warning(
+                "scene_merge_entity_error: run_id=%s entity_id=%s error=%s",
+                run_id,
+                entity_id,
+                exc,
+            )
+            merged_results.extend(_fallback_merge_entity_scenes(entity_chunks))
+            continue
+
+        seen_refs: set[str] = set()
+        merged_scenes: list[dict[str, Any]] = []
+        for group in raw_groups:
+            if not isinstance(group, dict):
+                continue
+            refs = group.get("scene_refs")
+            if not isinstance(refs, list):
+                continue
+            clean_refs = [str(ref).strip() for ref in refs if str(ref).strip() in scene_by_ref]
+            clean_refs = [ref for ref in clean_refs if ref not in seen_refs]
+            if not clean_refs:
+                continue
+            seen_refs.update(clean_refs)
+            merged = _merge_scene_group(
+                scene_refs=clean_refs,
+                scene_by_ref=scene_by_ref,
+                name=str(group.get("name") or "").strip(),
+                description=str(group.get("description") or "").strip(),
+            )
+            if merged:
+                merged_scenes.append(merged)
+
+        for ref in scene_by_ref:
+            if ref not in seen_refs:
+                merged = _merge_scene_group(scene_refs=[ref], scene_by_ref=scene_by_ref)
+                if merged:
+                    merged_scenes.append(merged)
+
+        merged_scenes = _merge_overlapping_scene_rows(merged_scenes)
+        merged_scenes.sort(key=lambda item: (item.get("start_paragraph", 0), item.get("end_paragraph", 0)))
+        for idx, scene in enumerate(merged_scenes):
+            scene["scene_id"] = idx
+
+        first_chunk = min(entity_chunks, key=lambda item: int(item.get("chunk_index") or 0))
+        merged_results.append(
+            {
+                **first_chunk,
+                "chunk_index": first_chunk.get("chunk_index", 0),
+                "paragraph_count": sum(int(chunk.get("paragraph_count") or 0) for chunk in entity_chunks),
+                "token_count": sum(int(chunk.get("token_count") or 0) for chunk in entity_chunks),
+                "paragraph_start": min(int(chunk.get("paragraph_start") or 1) for chunk in entity_chunks),
+                "paragraph_end": max(int(chunk.get("paragraph_end") or 1) for chunk in entity_chunks),
+                "marked_paragraphs": "\n".join(
+                    str(chunk.get("marked_paragraphs") or "")
+                    for chunk in entity_chunks
+                    if str(chunk.get("marked_paragraphs") or "")
+                ),
+                "scenes": merged_scenes,
+            }
+        )
+
+    merged_results.sort(
+        key=lambda item: (
+            str(item.get("entity_instance_id") or ""),
+            int(item.get("chunk_index") or 0),
+        )
+    )
+    scene_count = sum(len(item.get("scenes") or []) for item in merged_results if item.get("status") == "ok")
+    elapsed_seconds = round(perf_counter() - started, 3)
+    logger.info(
+        "scene_merge_total: run_id=%s entity_count=%d merge_calls=%d scene_count=%d elapsed_seconds=%.3f",
+        run_id,
+        len(by_entity),
+        merge_calls,
+        scene_count,
+        elapsed_seconds,
+    )
+    return {
+        "chunk_results": merged_results,
+        "scene_count": scene_count,
+        "elapsed_seconds": elapsed_seconds,
+    }
+
 
 
 async def _extract_scene_entities(
@@ -990,19 +980,83 @@ async def _extract_scene_entities(
     model: str | LLMModelTarget,
     ontology_definitions: str,
     allowed_ontology_names: dict[str, str],
+    existing_nodes: list[dict[str, Any]],
     scenes: list[dict[str, Any]],
     instructions: str | None = None,
 ) -> list[dict[str, Any]]:
     semaphore = asyncio.Semaphore(SCENE_ENTITY_EXTRACTION_CONCURRENCY)
+    existing_catalogue = _build_existing_entity_prompt_catalogue(existing_nodes)
 
-    async def _process_scene(scene_input: dict[str, Any]) -> dict[str, Any]:
-        scene_ref = scene_input["scene_ref"]
-        scene_name = scene_input.get("scene_name", "")
-        scene_description = scene_input.get("scene_description", "")
-        scene_text = scene_input.get("scene_text", "")
-        scene_milestones = scene_input.get("scene_milestones")
-        scene_milestones = scene_milestones if isinstance(scene_milestones, list) else []
+    def _normalize_entities_for_scene(
+        scene_input: dict[str, Any],
+        raw_entities: list[Any],
+    ) -> dict[str, Any]:
+        scene_ref = str(scene_input.get("scene_ref") or "")
+        entities: list[dict[str, Any]] = []
+        for entity in raw_entities:
+            mapped = allowed_ontology_names.get(_normalize_ontology_name(entity.ontology))
+            if not mapped:
+                logger.warning(
+                    "scene_entity_invalid_ontology_dropped: run_id=%s scene_ref=%s name=%s ontology=%s",
+                    run_id,
+                    scene_ref,
+                    entity.name,
+                    entity.ontology,
+                )
+                continue
+            status = str(entity.status or "new").strip().lower()
+            payload = entity.model_dump()
+            payload["ontology"] = mapped
+            payload["status"] = "existing" if status == "existing" else "new"
+            if payload["status"] == "existing":
+                matched = _resolve_existing_node_by_alias(
+                    name=entity.name,
+                    matched_alias=entity.matched_alias,
+                    ontology=mapped,
+                    existing_nodes=existing_nodes,
+                )
+                if matched:
+                    payload["matched_alias"] = str(matched.get("alias") or entity.matched_alias or entity.name)
+                    payload["matched_node_id"] = str(matched.get("node_id") or "")
+                else:
+                    logger.warning(
+                        "scene_entity_existing_match_unresolved: run_id=%s scene_ref=%s name=%s matched_alias=%s",
+                        run_id,
+                        scene_ref,
+                        entity.name,
+                        entity.matched_alias,
+                    )
+                    payload["status"] = "new"
+                    payload["matched_alias"] = None
+                    payload["matched_node_id"] = None
+            else:
+                payload["matched_alias"] = None
+                payload["matched_node_id"] = None
+            entities.append(payload)
 
+        logger.info(
+            "scene_entity_extraction_scene_done: run_id=%s scene_ref=%s entity_count=%d",
+            run_id,
+            scene_ref,
+            len(entities),
+        )
+        return {
+            **scene_input,
+            "status": "ok",
+            "entities": entities,
+        }
+
+    async def _process_batch(batch: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        scene_by_ref = {str(scene.get("scene_ref") or ""): scene for scene in batch}
+        scenes_payload = [
+            {
+                "scene_ref": scene.get("scene_ref"),
+                "scene_name": scene.get("scene_name"),
+                "scene_description": scene.get("scene_description"),
+                "scene_text": scene.get("scene_text"),
+            }
+            for scene in batch
+        ]
         try:
             async with semaphore:
                 entity_prompt_template = getattr(
@@ -1012,22 +1066,19 @@ async def _extract_scene_entities(
                 )
                 prompt = str(entity_prompt_template).format(
                     ontology_definitions=ontology_definitions,
-                    scene_name=scene_name,
-                    scene_description=scene_description,
-                    scene_text=scene_text,
-                    # Backward compatibility if the template still references {chunk_text}.
-                    chunk_text=scene_text,
+                    existing_entities=json.dumps(existing_catalogue, ensure_ascii=False),
+                    scenes_payload=json.dumps(scenes_payload, ensure_ascii=False),
+                    # Backward compatibility for old templates during partial deploys.
+                    scene_name=batch[0].get("scene_name", "") if batch else "",
+                    scene_description=batch[0].get("scene_description", "") if batch else "",
+                    scene_text=batch[0].get("scene_text", "") if batch else "",
+                    chunk_text=batch[0].get("scene_text", "") if batch else "",
                 )
                 instructions_text = str(instructions or "").strip()
                 if instructions_text:
                     prompt = (
                         f"{prompt}\n\nFrontend instructions (authoritative constraints):\n"
                         f"{instructions_text}"
-                    )
-                if scene_milestones:
-                    prompt = (
-                        f"{prompt}\n\nScene milestones to link (final scene milestones):\n"
-                        f"{json.dumps(scene_milestones, ensure_ascii=False)}"
                     )
                 response_text = await llm_client.chat(
                     model=model,
@@ -1041,72 +1092,42 @@ async def _extract_scene_entities(
                 if isinstance(response_text, str)
                 else json.dumps(response_text, ensure_ascii=False)
             )
-            parsed = _parse_chunk_extraction(response_payload, scene_ref)
-            entities: list[dict[str, Any]] = []
-            for entity in parsed.entities:
-                mapped = allowed_ontology_names.get(
-                    _normalize_ontology_name(entity.ontology)
-                )
-                if not mapped:
-                    logger.warning(
-                        "scene_entity_invalid_ontology_dropped: run_id=%s scene_ref=%s name=%s ontology=%s",
-                        run_id,
-                        scene_ref,
-                        entity.name,
-                        entity.ontology,
-                    )
-                    continue
-                payload = entity.model_dump()
-                payload["ontology"] = mapped
-                entities.append(payload)
-
-            milestone_entity_links: list[dict[str, Any]] = []
-            for link in getattr(parsed, "milestone_entity_links", []):
-                milestone_title = str(link.milestone_title or "").strip()
-                entity_alias = str(link.entity or "").strip()
-                if not milestone_title or not entity_alias:
-                    continue
-                relationship_label = str(link.relationship_label or "related").strip().lower()
-                milestone_entity_links.append(
-                    {
-                        "milestone_title": milestone_title,
-                        "entity": entity_alias,
-                        "relationship_label": relationship_label,
-                        "relationship_description": str(
-                            link.relationship_description or ""
-                        ).strip(),
-                        "confidence": link.confidence,
-                    }
-                )
-            logger.info(
-                "scene_entity_extraction_scene_done: run_id=%s scene_ref=%s entity_count=%d milestone_links=%d",
-                run_id,
-                scene_ref,
-                len(entities),
-                len(milestone_entity_links),
-            )
-            return {
-                **scene_input,
-                "status": "ok",
-                "entities": entities,
-                "milestone_entity_links": milestone_entity_links,
+            parsed = _parse_scene_entity_batch_extraction(response_payload)
+            rows_by_ref = {
+                str(row.scene_ref or "").strip(): row.entities
+                for row in parsed.scenes
+                if str(row.scene_ref or "").strip()
             }
+            if not rows_by_ref and len(batch) == 1 and parsed.scenes:
+                rows_by_ref[str(batch[0].get("scene_ref") or "")] = parsed.scenes[0].entities
+
+            return [
+                _normalize_entities_for_scene(scene, rows_by_ref.get(str(scene.get("scene_ref") or ""), []))
+                for scene in batch
+            ]
         except Exception as exc:
             logger.warning(
-                "scene_entity_extraction_scene_error: run_id=%s scene_ref=%s error=%s",
+                "scene_entity_extraction_batch_error: run_id=%s scene_refs=%s error=%s",
                 run_id,
-                scene_ref,
+                [scene.get("scene_ref") for scene in batch],
                 exc,
             )
-            return {
-                **scene_input,
-                "status": "error",
-                "error": str(exc),
-                "entities": [],
-                "milestone_entity_links": [],
-            }
+            return [
+                {
+                    **scene,
+                    "status": "error",
+                    "error": str(exc),
+                    "entities": [],
+                }
+                for scene in batch
+            ]
 
-    return await asyncio.gather(*(_process_scene(scene) for scene in scenes))
+    batches = [
+        scenes[idx : idx + ENTITY_PROPOSAL_BATCH_SIZE]
+        for idx in range(0, len(scenes), ENTITY_PROPOSAL_BATCH_SIZE)
+    ]
+    batch_results = await asyncio.gather(*(_process_batch(batch) for batch in batches))
+    return [row for batch in batch_results for row in batch]
 
 
 def _build_scene_entity_index(
@@ -1290,6 +1311,16 @@ async def _run_scene_chunking_phase(
                     }
                 )
 
+    merge_phase = await _run_scene_merge_phase(
+        run_id=run_id,
+        llm_client=llm_client,
+        model=model,
+        chunk_results=all_chunk_results,
+        instructions=instructions,
+    )
+    all_chunk_results = merge_phase["chunk_results"]
+    total_scenes = int(merge_phase["scene_count"])
+
     elapsed_seconds = round(perf_counter() - started, 3)
     logger.info(
         "scene_chunking_total: run_id=%s chunk_count=%d paragraph_count=%d scene_count=%d elapsed_seconds=%.3f",
@@ -1335,6 +1366,7 @@ async def _run_entity_proposal_phase(
         model=model,
         ontology_definitions=ontology_definitions,
         allowed_ontology_names=allowed_ontology_names,
+        existing_nodes=existing_nodes,
         scenes=scene_inputs,
         instructions=instructions,
     )
@@ -1665,19 +1697,37 @@ def _ensure_scene_milestone_boundaries(
     return milestones
 
 
-def _parse_milestone_extraction(response_text: str, scene_ref: str) -> list[dict[str, Any]]:
+def _limit_to_two_sentences(text: str) -> str:
+    cleaned = " ".join(str(text or "").split())
+    if not cleaned:
+        return ""
+    sentences = re.split(r"(?<=[.!?])\s+", cleaned)
+    return " ".join(sentence for sentence in sentences[:2] if sentence).strip()
+
+
+def _parse_batched_milestone_extraction(response_text: str) -> dict[str, list[dict[str, Any]]]:
     try:
         payload = json.loads(_extract_json_block(response_text))
+        scenes = payload.get("scenes")
+        if isinstance(scenes, list):
+            by_ref: dict[str, list[dict[str, Any]]] = {}
+            for row in scenes:
+                if not isinstance(row, dict):
+                    continue
+                scene_ref = str(row.get("scene_ref") or "").strip()
+                milestones = row.get("milestones")
+                if scene_ref and isinstance(milestones, list):
+                    by_ref[scene_ref] = [item for item in milestones if isinstance(item, dict)]
+            return by_ref
+
+        # Legacy single-scene shape retained for old tests and partial model drift.
         milestones = payload.get("milestones")
-        if isinstance(milestones, list):
-            return [item for item in milestones if isinstance(item, dict)]
+        scene_ref = str(payload.get("scene_ref") or "").strip()
+        if scene_ref and isinstance(milestones, list):
+            return {scene_ref: [item for item in milestones if isinstance(item, dict)]}
     except Exception as exc:
-        logger.warning(
-            "milestone_parse_error: scene_ref=%s error=%s",
-            scene_ref,
-            exc,
-        )
-    return []
+        logger.warning("milestone_batch_parse_error: error=%s", exc)
+    return {}
 
 
 async def _run_milestone_proposal_phase(
@@ -1693,39 +1743,104 @@ async def _run_milestone_proposal_phase(
     semaphore = asyncio.Semaphore(MILESTONE_EXTRACTION_CONCURRENCY)
 
     logger.info(
-        "milestone_proposal_start: run_id=%s scene_count=%d concurrency=%d",
+        "milestone_proposal_start: run_id=%s scene_count=%d batch_size=%d concurrency=%d",
         run_id,
         len(proposed_scenes),
+        MILESTONE_BATCH_SIZE,
         MILESTONE_EXTRACTION_CONCURRENCY,
     )
 
-    async def _process_scene(scene: dict[str, Any]) -> dict[str, Any]:
+    def _scene_entity_aliases(scene: dict[str, Any]) -> list[str]:
+        aliases = []
+        for item in list(scene.get("related_to") or []):
+            if not isinstance(item, dict):
+                continue
+            alias = str(item.get("alias") or item.get("canonical") or "").strip()
+            if alias:
+                aliases.append(alias)
+        return sorted(set(aliases))
+
+    def _normalize_raw_milestones(scene: dict[str, Any], raw_items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        scene_ref = str(scene.get("scene_ref") or "")
+        scene_id = str(scene.get("scene_id") or "")
+        scene_entities = list(scene.get("related_to") or [])
+        milestones: list[dict[str, Any]] = []
+
+        for raw_idx, item in enumerate(raw_items, start=1):
+            description = _limit_to_two_sentences(_safe_json_text(item.get("description"), ""))
+            boundary_type = _normalize_boundary_type(item.get("boundary_type"))
+            title = _coerce_milestone_title(
+                raw_title=item.get("title") or item.get("name") or item.get("label"),
+                description=description,
+                boundary_type=boundary_type,
+                index=raw_idx,
+            )
+
+            raw_mentions = item.get("mentions")
+            mentions = raw_mentions if isinstance(raw_mentions, list) else []
+            mentions = [str(value).strip() for value in mentions if str(value).strip()]
+
+            raw_adjacent_to = item.get("adjacent_to")
+            adjacent_to = raw_adjacent_to if isinstance(raw_adjacent_to, list) else []
+            adjacent_to = [str(value).strip() for value in adjacent_to if str(value).strip()]
+
+            related_to = _normalize_related_to_items(item.get("related_to"), scene_entities)
+            if not related_to and mentions:
+                related_to = _related_to_from_mentions(mentions, scene_entities)
+
+            milestones.append(
+                {
+                    "milestone_ref": f"milestone-{uuid4()}",
+                    "scene_ref": scene_ref,
+                    "scene_id": scene_id,
+                    "title": title,
+                    "label": title,
+                    "description": description,
+                    "boundary_type": boundary_type,
+                    "mentions": mentions,
+                    "adjacent_to": adjacent_to,
+                    "related_to": related_to,
+                    "milestone_order": raw_idx,
+                    "author": {
+                        "created_by_type": "agent",
+                        "created_by_author": author_id,
+                    },
+                    "derived_from": {
+                        "entity_instance_id": scene.get("source_entity_instance_id"),
+                    },
+                }
+            )
+
+        return _ensure_scene_milestone_boundaries(
+            milestones,
+            scene_ref=scene_ref,
+            scene_id=scene_id,
+            source_entity_instance_id=scene.get("source_entity_instance_id"),
+            author_id=author_id,
+        )
+
+    async def _process_batch(batch: list[dict[str, Any]]) -> list[dict[str, Any]]:
         async with semaphore:
-            scene_ref = str(scene.get("scene_ref") or "")
-            scene_id = str(scene.get("scene_id") or "")
-            scene_entities = list(scene.get("related_to") or [])
-
-            aliases = [
-                item.get("alias") or item.get("canonical")
-                for item in scene_entities
-                if isinstance(item, dict)
+            scenes_payload = [
+                {
+                    "scene_ref": scene.get("scene_ref"),
+                    "scene_name": scene.get("scene_name"),
+                    "scene_description": scene.get("scene_description"),
+                    "scene_text": _compress_scene_text_for_milestone_prompt(
+                        _safe_json_text(scene.get("scene_text")),
+                        MILESTONE_SCENE_TEXT_MAX_CHARS,
+                    ),
+                    "entities": _scene_entity_aliases(scene),
+                }
+                for scene in batch
             ]
-            aliases = [alias for alias in aliases if alias]
-
             milestone_prompt_template = getattr(
                 architect_prompts,
-                "ARECHITECT_MILESTONE_PROPOSAL_PROMPT",
+                "ARCHITECT_MILESTONE_BATCH_PROMPT",
                 "",
             )
             prompt = str(milestone_prompt_template).format(
-                scene_ref=scene_ref,
-                scene_name=_safe_json_text(scene.get("scene_name"), "Unnamed Scene"),
-                scene_description=_safe_json_text(scene.get("scene_description")),
-                scene_text=_compress_scene_text_for_milestone_prompt(
-                    _safe_json_text(scene.get("scene_text")),
-                    MILESTONE_SCENE_TEXT_MAX_CHARS,
-                ),
-                scene_entities=json.dumps(aliases, ensure_ascii=False),
+                scenes_payload=json.dumps(scenes_payload, ensure_ascii=False)
             )
             instructions_text = str(instructions or "").strip()
             if instructions_text:
@@ -1741,89 +1856,44 @@ async def _run_milestone_proposal_phase(
                     temperature=0.1,
                     usage_tag="architect.milestone_proposal",
                 )
+                response_payload = response if isinstance(response, str) else json.dumps(response, ensure_ascii=False)
+                raw_by_ref = _parse_batched_milestone_extraction(response_payload)
             except Exception as exc:
                 logger.warning(
-                    "milestone_proposal_scene_error: run_id=%s scene_ref=%s error=%s",
+                    "milestone_proposal_batch_error: run_id=%s scene_refs=%s error=%s",
                     run_id,
-                    scene_ref,
+                    [scene.get("scene_ref") for scene in batch],
                     exc,
                 )
-                response = "{}"
+                raw_by_ref = {}
 
-            response_payload = (
-                response
-                if isinstance(response, str)
-                else json.dumps(response, ensure_ascii=False)
-            )
-            raw_items = _parse_milestone_extraction(response_payload, scene_ref)
-            milestones: list[dict[str, Any]] = []
-
-            for raw_idx, item in enumerate(raw_items, start=1):
-                description = _safe_json_text(item.get("description"), "")
-                boundary_type = _normalize_boundary_type(item.get("boundary_type"))
-                title = _coerce_milestone_title(
-                    raw_title=item.get("title") or item.get("name") or item.get("label"),
-                    description=description,
-                    boundary_type=boundary_type,
-                    index=raw_idx,
+            rows: list[dict[str, Any]] = []
+            for scene in batch:
+                scene_ref = str(scene.get("scene_ref") or "")
+                milestones = _normalize_raw_milestones(scene, raw_by_ref.get(scene_ref, []))
+                logger.info(
+                    "milestone_proposal_scene_total: run_id=%s scene_ref=%s milestone_count=%d",
+                    run_id,
+                    scene_ref,
+                    len(milestones),
                 )
-
-                raw_mentions = item.get("mentions")
-                mentions = raw_mentions if isinstance(raw_mentions, list) else []
-                mentions = [str(value).strip() for value in mentions if str(value).strip()]
-
-                raw_adjacent_to = item.get("adjacent_to")
-                adjacent_to = raw_adjacent_to if isinstance(raw_adjacent_to, list) else []
-                adjacent_to = [str(value).strip() for value in adjacent_to if str(value).strip()]
-
-                related_to = _normalize_related_to_items(item.get("related_to"), scene_entities)
-
-                milestones.append(
+                rows.append(
                     {
-                        "milestone_ref": f"milestone-{uuid4()}",
                         "scene_ref": scene_ref,
-                        "scene_id": scene_id,
-                        "title": title,
-                        "label": title,
-                        "description": description,
-                        "boundary_type": boundary_type,
-                        "mentions": mentions,
-                        "adjacent_to": adjacent_to,
-                        "related_to": related_to,
-                        "milestone_order": raw_idx,
-                        "author": {
-                            "created_by_type": "agent",
-                            "created_by_author": author_id,
-                        },
-                        "derived_from": {
-                            "entity_instance_id": scene.get("source_entity_instance_id"),
-                        },
+                        "scene_id": str(scene.get("scene_id") or ""),
+                        "milestones": milestones,
                     }
                 )
+            return rows
 
-            milestones = _ensure_scene_milestone_boundaries(
-                milestones,
-                scene_ref=scene_ref,
-                scene_id=scene_id,
-                source_entity_instance_id=scene.get("source_entity_instance_id"),
-                author_id=author_id,
-            )
+    batches = [
+        proposed_scenes[idx : idx + MILESTONE_BATCH_SIZE]
+        for idx in range(0, len(proposed_scenes), MILESTONE_BATCH_SIZE)
+    ]
+    batch_results = await asyncio.gather(*(_process_batch(batch) for batch in batches))
+    by_scene = [row for batch in batch_results for row in batch]
+    deduped_boundary_count = _dedupe_adjacent_boundary_milestones(by_scene)
 
-            logger.info(
-                "milestone_proposal_scene_total: run_id=%s scene_ref=%s milestone_count=%d",
-                run_id,
-                scene_ref,
-                len(milestones),
-            )
-
-            return {
-                "scene_ref": scene_ref,
-                "scene_id": scene_id,
-                "milestones": milestones,
-            }
-
-    by_scene = await asyncio.gather(*(_process_scene(scene) for scene in proposed_scenes))
-    # Milestones are always coerced to at least begin/end per scene.
     removed_scene_refs: list[str] = []
     kept_scene_refs = [row.get("scene_ref") for row in by_scene if row.get("scene_ref")]
 
@@ -1845,9 +1915,9 @@ async def _run_milestone_proposal_phase(
         "scene_refs_with_milestones": kept_scene_refs,
         "removed_scene_refs": removed_scene_refs,
         "removed_scene_count": len(removed_scene_refs),
+        "deduped_boundary_count": deduped_boundary_count,
         "elapsed_seconds": elapsed_seconds,
     }
-
 
 def _classify_entities(
     scene_results: list[dict[str, Any]],
@@ -2225,38 +2295,25 @@ async def _run_scene_centric_chunking_test(
     scene_proposal_elapsed_seconds = scene_proposal_phase["elapsed_seconds"]
 
     await update_job_progress(job_id, 0.9, {"status": "Milestone proposal"})
-    milestone_started = perf_counter()
-    scene_id_by_ref = {
-        str(scene.get("scene_ref") or ""): str(scene.get("scene_id") or "")
-        for scene in proposed_scenes
-    }
-    source_entity_by_ref = {
-        str(scene.get("scene_ref") or ""): scene.get("source_entity_instance_id")
-        for scene in proposed_scenes
-    }
-    scene_related_to_by_ref = {
-        str(scene.get("scene_ref") or ""): list(scene.get("related_to") or [])
-        for scene in proposed_scenes
-    }
-    scene_milestone_links_by_ref = {
-        str(scene.get("scene_ref") or ""): list(scene.get("milestone_entity_links") or [])
-        for scene in entity_phase.get("scene_entity_results", [])
-        if isinstance(scene, dict)
-    }
-    milestone_phase = _build_milestones_from_scene_inputs(
-        scene_inputs=scene_inputs,
-        scene_id_by_ref=scene_id_by_ref,
-        source_entity_by_ref=source_entity_by_ref,
-        scene_related_to_by_ref=scene_related_to_by_ref,
-        scene_milestone_links_by_ref=scene_milestone_links_by_ref,
+    step_usage_start = llm_client.get_usage_event_count()
+    milestone_phase = await _run_milestone_proposal_phase(
+        run_id=run_id,
+        llm_client=llm_client,
+        model=architect_model,
+        proposed_scenes=proposed_scenes,
         author_id=author_id,
+    )
+    _log_step_usage(
+        run_id=run_id,
+        step="milestone_proposal",
+        usage=_format_step_usage_delta(llm_client, step_usage_start),
     )
     proposed_milestones = milestone_phase["proposed_milestones"]
     milestones_per_scene = milestone_phase["per_scene"]
     deduped_boundary_count = int(milestone_phase.get("deduped_boundary_count") or 0)
-    removed_scene_refs: list[str] = []
-    removed_scene_count = 0
-    milestone_proposal_elapsed_seconds = round(perf_counter() - milestone_started, 3)
+    removed_scene_refs = list(milestone_phase.get("removed_scene_refs") or [])
+    removed_scene_count = int(milestone_phase.get("removed_scene_count") or 0)
+    milestone_proposal_elapsed_seconds = float(milestone_phase.get("elapsed_seconds") or 0)
 
     pipeline_output_payload = {
         "run_id": run_id,

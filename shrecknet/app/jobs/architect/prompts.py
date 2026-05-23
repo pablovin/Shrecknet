@@ -1,9 +1,8 @@
-ARCHITECT_SCENE_CENTRIC_CHUNKING_PROMPT = """You are an expert narrative analyst. Your task is to extract candidate narrative scenes from a local paragraph bundle and extract graph-worthy milestones per candidate scene.
+ARCHITECT_SCENE_SEGMENTATION_PROMPT = """You are an expert narrative analyst. Segment this full paragraph chunk into final narrative scenes.
 
-----------------
 Input
 
-You will receive a text divided into numbered paragraphs. Each paragraph is prefixed with an index in the format:
+You will receive one source chunk divided into numbered paragraphs:
 
 [P1] ...
 [P2] ...
@@ -12,141 +11,121 @@ You will receive a text divided into numbered paragraphs. Each paragraph is pref
 
 Task
 
-Extract candidate scenes from THIS local paragraph bundle only, then extract milestones for each candidate scene.
+Return the final scene segmentation for THIS ENTIRE CHUNK in one pass. Do not create local candidates. Do not extract milestones.
 
-A scene is defined as:
-- a contiguous span of paragraphs
-- with continuity in time, place, and interaction focus
-- centered around a specific situation, interaction, or narrative purpose
-- it may contain multiple dialogue exchanges, actions, escalations, or immediate consequences
+A scene is a contiguous span of paragraphs with continuity in time, place, interaction focus, and narrative purpose.
 
-A new scene should begin only when there is a meaningful shift in:
-- location
+Create a new scene only when there is a clear, meaningful shift in one or more of:
 - time
+- location
 - dominant participants
 - goal or conflict
-- narrative purpose
+- Narrative purpose alone is NOT sufficient to split a scene unless accompanied by a meaningful shift in time, location, or interaction focus.
 
-Important Rules
 
-- Candidate scenes must be local to this bundle.
-- Candidate scenes may overlap.
-- Candidate scenes do NOT need to cover the whole bundle.
-- Candidate scenes must be returned in chronological order.
-- Do NOT merge unrelated interactions into one scene.
-- Do NOT split scenes too finely.
-- Prefer fewer, stronger, meaningful narrative units.
-- Return a MAXIMUM of 3 candidate scenes for this bundle.
+Anti-fragmentation rules:
+- Prefer fewer, stronger scenes.
+- Do NOT split a scene while the same interaction, conflict, or event is still unfolding.
+- Keep setup, escalation, and immediate consequence together when they happen without a meaningful break.
+- Do NOT create scenes for mood, description, or minor action alone.
+- Continuous conversations or confrontations should usually remain within the same scene unless there is a clear interruption or transition.
 
-Anti-fragmentation Rule (very important)
+Coverage rules:
+- Scenes must be chronological.
+- Scenes must cover the whole chunk without gaps.
+- Scenes must not overlap.
+- Each scene must use paragraph indexes from this chunk.
+- Do not infer unseen transitions between paragraphs unless explicitly supported by the text.
 
-Do NOT split a scene if the same interaction, conflict, or event is still unfolding continuously.
-
-Keep setup, escalation, and immediate consequence in the SAME scene when:
-- they happen in the same place
-- they happen without a meaningful time break
-- they involve mostly the same participants
-- they serve the same narrative purpose
-
-Examples of things that should usually stay in one scene:
-- a quarrel that escalates into a fall or injury
-- an omen followed immediately by a revelation
-- a confrontation that directly turns into a duel declaration
-- a battle and its immediate tactical turning point
-
-For each candidate scene, output:
+For each scene, output:
 - "scene_id": sequential integer starting from 0
-- "name": short, descriptive label (max 6 words)
-- "description": 1–2 sentence summary of what happens in the scene
-- "start_paragraph": local index of first paragraph in the candidate scene
-- "end_paragraph": local index of last paragraph in the candidate scene (inclusive)
-- "milestones": list of milestone objects for this scene
+- "name": short descriptive title, max 6 words
+- "description": 1-3 concise sentences describing what happens. Do not perform entity extraction or add entity relationship details.
+- "start_paragraph": first paragraph index, inclusive
+- "end_paragraph": last paragraph index, inclusive
 
-Milestone rules:
-- Always return at least 2 milestones per scene.
-- Include at least one "begin" and one "end" boundary milestone.
-- Return 2-4 milestones for normal scenes; up to 6 only for clearly event-dense scenes.
-- Each milestone must be concrete, observable, and grounded in the scene text.
-- "title" must be short (max 6 words), descriptive, and never a numbered placeholder.
-- "description" must describe a concrete action/state change in present tense, a short sentence grounded in the text.
-- "boundary_type" must be one of: begin, end, none.
-- "mentions" is optional and may list aliases explicitly involved in that milestone.
-- "related_to" is optional and may contain relationship hints.
-
-Output Format
-
-Return ONLY valid JSON in the following format:
+Return ONLY valid JSON in this exact format:
 
 {{
-  "candidate_scenes": [
+  "scenes": [
     {{
       "scene_id": 0,
       "name": "...",
       "description": "...",
       "start_paragraph": 1,
-      "end_paragraph": 4,
-      "milestones": [
-        {{
-          "title": "short descriptive title",
-          "description": "concrete scene beat in present tense",
-          "boundary_type": "begin|end|none",
-          "mentions": ["optional alias"],
-          "related_to": [
-            {{
-              "entity": "alias",
-              "relationship_label": "verb-like label",
-              "relationship_description": "short phrase"
-            }}
-          ]
-        }}
-      ]
+      "end_paragraph": 4
     }}
   ]
 }}
 
-Constraints
-
-- Do NOT include any text outside JSON.
-- Do NOT repeat the original text.
-- Do NOT invent characters not present in the text.
-- Scene names must be concise and concrete.
-- Descriptions must be grounded in the text.
-
-Final check before answering
-
-Make sure:
-- candidate scenes are meaningful local proposals for this bundle
-- no candidate scene is an empty fragment
-- you returned at most 3 candidate scenes
+Constraints:
+- Do NOT include milestones.
+- Do NOT include entity lists.
+- Do NOT include mentions or related_to.
+- Do NOT include text outside JSON.
+- Do NOT repeat the source text.
+- Do NOT invent entities not present in the text.
 
 Paragraphs:
 {marked_paragraphs}
 """
 
-# Step 2: Scene-level entity extraction
-ARCHITECT_ENTITY_PROPOSAL_PROMPT = """You are reviewing a single scene span and deciding which entities, if any, should be added to the persistent world graph.
+
+ARCHITECT_SCENE_DEDUP_PROMPT = """You are merging scene segmentation metadata for one source entity.
+
+Input scenes are already ordered and include only metadata, not source prose. Your task is to merge duplicate or over-split scenes based on title/description similarity and paragraph overlap or adjacency.
+
+Merge scenes only when they clearly describe the same continuous time/place/goal/participant situation. Keep unrelated scenes separate.
+
+Return ONLY valid JSON in this exact format:
+
+{{
+  "merged_scenes": [
+    {{
+      "scene_refs": ["input-scene-ref-1", "input-scene-ref-2"],
+      "name": "short merged title",
+      "description": "1-3 concise sentences describing what happens. Do not perform entity extraction or add entity relationship details."
+    }}
+  ]
+}}
+
+Rules:
+- Every input scene_ref must appear exactly once in merged_scenes.
+- Preserve chronological order.
+- Do not invent new scene_refs.
+- Do not include source text.
+
+Scene metadata:
+{scene_metadata}
+"""
+
+
+# Step 2: Batched scene-level entity extraction and reconciliation
+ARCHITECT_ENTITY_PROPOSAL_PROMPT = """You are reviewing final scene spans and deciding which entities should be added to or matched against the persistent world graph.
 
 Use ONLY the provided ontology definitions.
 
 Ontology Definitions:
 {ontology_definitions}
 
-Scene Information:
-- Scene Name: {scene_name}
-- Scene Description: {scene_description}
+Existing Entities:
+{existing_entities}
 
-Scene Text:
-\"\"\"{scene_text}\"\"\"
+Scenes payload:
+{scenes_payload}
 
 Task:
-Return ONLY entities that clearly satisfy ALL of the following:
+For each scene, return ONLY entities that clearly satisfy ALL of the following:
 1. They are explicitly named or clearly referred to in the text.
 2. They are uniquely identifiable as the same entity beyond this scene.
 3. They are meaningful enough to persist in the world model.
 
-Additionally, return milestone-to-entity links for this scene.
-Each link must connect one scene milestone to one explicitly involved entity alias.
-Do not link every scene entity to every milestone.
+For each returned entity:
+- Set "status" to "existing" only when it clearly matches one of the Existing Entities by alias/name and ontology.
+- Set "status" to "new" when no listed Existing Entity is a clear match.
+- For existing matches, set "matched_alias" to the exact alias string from Existing Entities.
+- Do not invent existing aliases.
+- Do not output ids. Existing entity ids are not part of this task.
 
 Important:
 - Returning an empty list is correct if the scene does not contain clear persistent entities.
@@ -182,84 +161,32 @@ If no, exclude it.
 
 Return ONLY valid JSON in this exact format:
 {{
-  "entities": [
+  "scenes": [
     {{
-      "name": "Entity Name",
-      "ontology": "Character",
-      "confidence": 0.85,
-      "why": "Clearly named and directly involved in the scene."
-    }}
-  ],
-  "milestone_entity_links": [
-    {{
-      "milestone_title": "short milestone title",
-      "entity": "Entity Alias",
-      "relationship_label": "verb-like label",
-      "relationship_description": "short phrase",
-      "confidence": 0.75
+      "scene_ref": "scene ref from input",
+      "entities": [
+        {{
+          "name": "Entity Name",
+          "ontology": "Character",
+          "status": "existing|new",
+          "matched_alias": "Exact Existing Entity Alias or null",
+          "confidence": 0.85,
+          "why": "Clearly named and directly involved in the scene."
+        }}
+      ]
     }}
   ]
 }}
 """
 
 
-# Step 3: Reconciliation with existing graph nodes
-ARCHITECT_ENTITY_RECONCILATION_PROMPT = """You are reconciling extracted entities with an existing knowledge graph.
+# Step 3: Milestone extraction from proposed scene
+ARCHITECT_MILESTONE_BATCH_PROMPT = """You are the Architect Agent.
 
-Ontology Definitions:
-{ontology_definitions}
+Your task is to extract graph-worthy milestones for a batch of final scenes.
 
-Proposed Entities (extracted from text):
-{proposed_entities}
-
-Existing Entities (from knowledge graph):
-{existing_entities}
-
-Your task:
-- For each proposed entity, decide if it is the same as an existing entity.
-- Prefer matches to existing entities even if the name is slightly different.
-- If a proposed entity is "Jessie" and the existing entity has alias "Jessie Williams", treat them as the SAME entity.
-- If a proposed entity is "Mithras (god)" and there is an existing "Mithras", treat them as the SAME entity. Ignore parenthesis.
-- The ontology field may be updated if the proposed entity has a more accurate ontology type than the existing one.
-
-Output ONLY JSON with two arrays: existing and new.
-- In existing, include proposed_name, matched_node_id, and ontology (updated if needed).
-- In new, include name and ontology.
-
-Return JSON in this exact format:
-{{
-  "existing": [
-    {{
-      "proposed_name": "Jessie Williams",
-      "matched_node_id": "char_001",
-      "ontology": "Character"
-    }}
-  ],
-  "new": [
-    {{
-      "name": "Baron Jackie",
-      "ontology": "Character"
-    }}
-  ]
-}}
-"""
-
-
-# Step 4: Milestone extraction from proposed scene
-ARECHITECT_MILESTONE_PROPOSAL_PROMPT = """You are the Architect Agent.
-
-Your task is to extract only graph-worthy milestones for a single scene.
-
-Scene context:
-- scene_ref: {scene_ref}
-- scene_name: {scene_name}
-- scene_description: {scene_description}
-
-Entities present in this scene (you must only use these for milestone relations):
-{scene_entities}
-
-Scene text:
-\"\"\"{scene_text}\"\"\"
+Scenes payload:
+{scenes_payload}
 
 Milestone definition:
 A milestone is a concrete, important, graph-worthy action, decision, confrontation, transition, or state change that matters to the narrative beyond a single sentence.
@@ -271,55 +198,47 @@ A milestone is NOT:
 - generic movement or observation unless it has clear story importance
 - low-impact narration that would not matter later
 
-Core rule:
-Always return at least 2 milestones per scene.
-If the scene has fewer than 2 strongly meaningful beats, still return:
-- one "begin" opening beat grounded in the scene
-- one "end" closing beat grounded in the scene
-Never return an empty milestone list.
+Core rules:
+- Return milestones grouped by scene_ref.
+- Always return at least 2 milestones per scene.
+- Include one "begin" opening beat and one "end" closing beat per scene.
+- For normal scenes, return 2-4 milestones.
+- Only clearly event-dense scenes may return 5-6 milestones.
+- Never return more than 6 milestones per scene.
 
-Output size rules:
-- A valid scene must have at least 2 milestones.
-- For normal scenes, return exactly 2-4 milestones:
-  - one with boundary_type "begin"
-  - one with boundary_type "end"
-- Only if the scene is clearly event-dense or contains multiple important turning points, you may return 5 to 6 milestones total.
-- Never return more than 6 milestones.
-
-Hard rules:
-- Each milestone must be observable, specific, and written in present tense.
-- title must be a short descriptive title (max 6 words) and never a generic placeholder.
-- Never use titles like "Milestone 1", "Milestone 2", or similar numbering-only labels.
-- Each milestone must describe something that actually happens or changes in the scene.
-- The "begin" milestone should mark the meaningful opening state/action of the scene.
-- The "end" milestone should mark the meaningful closing state/action of the scene.
-- Additional milestones with boundary_type "none" are allowed only if they are clearly important.
-- Do NOT create filler milestones just to increase the count.
-- Do NOT create milestones for description alone.
-- If only 1 clearly meaningful beat exists, pair it with a grounded opening or closing beat so output still has begin/end.
-- Do NOT create relationships to entities not listed in scene_entities.
-- relationship_label must be a single reusable word.
+Entity rules:
+- Each scene payload includes allowed entities for that scene.
+- Use only those entities in mentions and related_to.
+- Milestone descriptions should mention involved entities by name when supported by the scene text.
+- related_to must include only entities actually involved in that milestone.
+- relationship_label must be a reusable verb-like label.
 - relationship_description must be one short phrase.
-- mentions must include only entities actually involved in that milestone.
 
-Quality filter:
-Before including a milestone, ask:
-"Would this milestone help retrieve, explain, or connect important events in the world graph later?"
-If NO, exclude it.
+Writing rules:
+- title must be a short descriptive title, max 6 words.
+- description must be concise, concrete, present tense, and max 2 sentences.
+- Each description must explain what happens or changes and identify key involved entities when available.
+- Do NOT create filler milestones just to increase the count.
 
 Return STRICT JSON only in this format:
 {{
-  "milestones": [
+  "scenes": [
     {{
-      "title": "short descriptive title (max 6 words)",
-      "description": "single concrete action or state change in present tense",
-      "boundary_type": "begin|end|none",
-      "adjacent_to": ["optional nearby milestone title"],
-      "related_to": [
+      "scene_ref": "scene ref from input",
+      "milestones": [
         {{
-          "entity": "entity alias from scene_entities",
-          "relationship_label": "max two words with hyphen label for the relationship, usually a verb",
-          "relationship_description": "short one-phrase explanation"
+          "title": "short descriptive title",
+          "description": "max 2 concise sentences",
+          "boundary_type": "begin|end|none",
+          "mentions": ["entity alias from this scene"],
+          "adjacent_to": ["optional nearby milestone title"],
+          "related_to": [
+            {{
+              "entity": "entity alias from this scene",
+              "relationship_label": "verb-like label",
+              "relationship_description": "short one-phrase explanation"
+            }}
+          ]
         }}
       ]
     }}

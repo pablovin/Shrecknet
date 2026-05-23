@@ -55,25 +55,29 @@ class ChunkEntityProposal(BaseModel):
 
     name: str = Field(..., min_length=1)
     ontology: str = Field(..., description="Ontology type name")
+    status: str | None = Field(default=None, description="'existing' or 'new'")
+    matched_alias: str | None = None
     confidence: float = Field(..., ge=0.0, le=1.0)
     why: str = Field(..., description="Brief justification")
 
 
-class MilestoneEntityLinkProposal(BaseModel):
-    """Milestone-to-entity link proposed in a scene-level extraction pass."""
-
-    milestone_title: str = Field(..., min_length=1)
-    entity: str = Field(..., min_length=1)
-    relationship_label: str = Field(..., min_length=1)
-    relationship_description: str | None = None
-    confidence: float | None = Field(default=None, ge=0.0, le=1.0)
-
-
 class ChunkExtractionResponse(BaseModel):
-    """Response from LLM for chunk-level entity extraction (Step 1)."""
+    """Response from LLM for scene-level entity extraction."""
 
     entities: list[ChunkEntityProposal] = Field(default_factory=list)
-    milestone_entity_links: list[MilestoneEntityLinkProposal] = Field(default_factory=list)
+
+
+class SceneEntityExtractionRow(BaseModel):
+    """Batched scene-level entity extraction row."""
+
+    scene_ref: str = Field(..., min_length=1)
+    entities: list[ChunkEntityProposal] = Field(default_factory=list)
+
+
+class SceneEntityBatchExtractionResponse(BaseModel):
+    """Batched entity extraction response grouped by scene."""
+
+    scenes: list[SceneEntityExtractionRow] = Field(default_factory=list)
 
 
 class DedupedEntityProposal(BaseModel):
@@ -92,28 +96,6 @@ class ExistingNodeInfo(BaseModel):
     node_id: str
     alias: str
     ontology: str
-
-
-class ReconciledExistingEntity(BaseModel):
-    """An entity matched to an existing node."""
-
-    proposed_name: str
-    matched_node_id: str | None = None
-    ontology: str
-
-
-class ReconciledNewEntity(BaseModel):
-    """A new entity not matched to any existing node."""
-
-    name: str
-    ontology: str
-
-
-class ReconciliationResponse(BaseModel):
-    """Response from LLM for reconciliation with existing entities (Step 3)."""
-
-    existing: list[ReconciledExistingEntity] = Field(default_factory=list)
-    new: list[ReconciledNewEntity] = Field(default_factory=list)
 
 
 class FinalEntityProposal(BaseModel):

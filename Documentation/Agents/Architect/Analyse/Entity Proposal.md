@@ -8,10 +8,11 @@ Entity proposal runs after final scene merge/dedup and before scene proposal/mil
 
 Current goals:
 
-- Extract candidate entities from each detected scene.
-- Extract milestone-to-entity links for scene milestones.
+- Extract candidate entities from final deduped scenes in batches of up to 5 scenes.
+- Let the LLM classify each extracted entity as `existing` or `new` using existing entity aliases and ontology names only.
+- Keep graph ids out of the LLM prompt.
+- Resolve `existing` matches back to internal node ids deterministically by alias and ontology after the LLM response.
 - Deduplicate aliases across scenes using canonical and alias-equivalence logic.
-- Reconcile deduplicated entities against existing graph candidates.
 - Classify each proposal as `updated` (matched existing entity) or `new`.
 - Emit auditable artifact output (no graph writes in analysis).
 
@@ -24,54 +25,53 @@ Current goals:
   - `scene_name`
   - `scene_description`
   - `scene_text`
-  - `scene_milestones` (final scene milestone hints)
 - Ontology definitions (auto-generatable entity names and descriptions)
-- Existing node catalogue loaded through retrieval (`node_id`, `alias`, `ontology`)
+- Existing entity prompt catalogue:
+  - `alias`
+  - `ontology`
+
+The internal existing-node catalogue still includes `node_id`, but `node_id` is never sent to the LLM.
 
 ## Prompt and Model
 
-- Extraction prompt: `ARCHITECT_ENTITY_PROPOSAL_PROMPT`
-- Reconciliation prompt: `ARCHITECT_ENTITY_RECONCILATION_PROMPT`
+- Extraction and reconciliation prompt: `ARCHITECT_ENTITY_PROPOSAL_PROMPT`
 - Model: configured architect model (`settings.model_architect`)
+- Batch size: `ENTITY_PROPOSAL_BATCH_SIZE = 5`
 
-LLM extraction parses to `ChunkExtractionResponse` and expects:
+LLM extraction parses to `SceneEntityBatchExtractionResponse` and expects:
 
-- `entities[]` with:
+- `scenes[]` with:
+  - `scene_ref`
+  - `entities[]`
+- each entity includes:
   - `name`
   - `ontology`
+  - `status` (`existing` or `new`)
+  - `matched_alias` (exact existing alias when `status=existing`, otherwise null)
   - `confidence`
   - `why`
-- `milestone_entity_links[]` with:
-  - `milestone_title`
-  - `entity` (alias)
-  - `relationship_label`
-  - `relationship_description`
-  - `confidence`
+
+The entity extraction prompt does not ask for milestones, milestone links, mentions, or scene relationships. Milestones are generated later after scene proposals have `related_to` entities.
 
 ## Parallel Execution
 
 - Concurrency cap: `10`
+- Batch size: `5` scenes per LLM call
 - Mechanism: `asyncio.Semaphore(10)` plus `asyncio.gather(...)`
-- Failure isolation: scene-level failures produce empty entities for that scene and continue
+- Failure isolation: batch-level failures produce empty entities for affected scenes and continue
 
 ## Deduplication and Reconciliation
 
-After scene-level extraction:
+After batched scene-level extraction:
 
-1. Aliases are canonicalized (case, spacing, parenthetical cleanup).
-2. Dedup uses canonical keys with alias-equivalence matching.
-3. Existing catalogue is prefiltered using:
-   - exact canonical match
-   - alias-equivalence match
-   - token overlap threshold (`MIN_TOKEN_OVERLAP_RATIO = 0.5`)
-4. Reconciliation is run against filtered candidates.
-5. Proposals are finalized as:
-   - `updated` when matched to existing node
+1. Ontology names are validated against allowed ontology definitions.
+2. `existing` matches are resolved by matching `matched_alias` or `name` against the internal existing-node catalogue.
+3. Invalid or unresolved `existing` matches are downgraded to `new`.
+4. Aliases are canonicalized (case, spacing, parenthetical cleanup).
+5. Dedup uses canonical keys with alias-equivalence matching across all scenes.
+6. Proposals are finalized as:
+   - `updated` when a valid existing node id was resolved after the LLM response
    - `new` when unmatched
-6. Milestone links are resolved against reconciled entities per scene:
-  - alias/canonical matching
-  - `proposal_index` mapping
-  - `entity_instance_id` attached when matched to existing node
 
 Final proposal fields include:
 
@@ -97,7 +97,7 @@ Key logs:
 
 - `scene_entity_extraction_start`
 - `scene_entity_extraction_scene_done`
-- `scene_entity_extraction_scene_error`
+- `scene_entity_extraction_batch_error`
 - `scene_entity_extraction_total`
 - `scene_entity_discovery_summary`
 
@@ -127,5 +127,5 @@ Contains:
 
 - This phase is active in `architect.analyze_instance`.
 - Analysis does not write entities to the graph.
-- Milestone links here are proposal-time hints, not graph edges.
+- Milestone extraction runs after this phase and can only relate milestones to entities already present in the scene.
 - Frontend reads consolidated output from `background_jobs.details.pipeline_output` after job status is `done`.

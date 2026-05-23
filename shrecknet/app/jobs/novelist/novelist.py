@@ -16,7 +16,7 @@ from app.integrations.llm.model_policy import LLMTask, ModelPolicy
 from app.integrations.llm.shreckllm_client import ShreckLLMClient
 from app.jobs.architect.prompts import (
     ARCHITECT_ENTITY_PROPOSAL_PROMPT,
-    ARECHITECT_MILESTONE_PROPOSAL_PROMPT,
+    ARCHITECT_MILESTONE_BATCH_PROMPT,
 )
 from app.jobs.architect.scene_centric_chunking import (
     build_scene_chunks,
@@ -971,12 +971,20 @@ class NovelistOrchestrator:
                 entity_payload = self._parse_json_object(entity_raw) or {}
                 entities = self._parse_architect_entities(entity_payload)
 
-                milestone_prompt = ARECHITECT_MILESTONE_PROPOSAL_PROMPT.format(
-                    scene_ref=scene.get("scene_id", "scene"),
-                    scene_name=scene_name,
-                    scene_description=scene_summary or "(no description)",
-                    scene_entities="\n".join(f"- {name}" for name in entities) or "(none)",
-                    scene_text=raw_scene_text or "(no text)",
+                scene_ref = str(scene.get("scene_id") or "scene")
+                milestone_prompt = ARCHITECT_MILESTONE_BATCH_PROMPT.format(
+                    scenes_payload=json.dumps(
+                        [
+                            {
+                                "scene_ref": scene_ref,
+                                "scene_name": scene_name,
+                                "scene_description": scene_summary or "(no description)",
+                                "scene_text": raw_scene_text or "(no text)",
+                                "entities": entities,
+                            }
+                        ],
+                        ensure_ascii=False,
+                    )
                 )
                 milestone_raw, _, _ = await self._call_llm(
                     model=model,
@@ -985,7 +993,20 @@ class NovelistOrchestrator:
                     conversation_id=conversation_id,
                 )
                 milestone_payload = self._parse_json_object(milestone_raw) or {}
-                milestones = self._parse_milestones(milestone_payload)
+                milestone_scenes = milestone_payload.get("scenes")
+                if isinstance(milestone_scenes, list):
+                    scene_payload = next(
+                        (
+                            item
+                            for item in milestone_scenes
+                            if isinstance(item, dict)
+                            and str(item.get("scene_ref") or "") == scene_ref
+                        ),
+                        {},
+                    )
+                    milestones = self._parse_milestones(scene_payload)
+                else:
+                    milestones = self._parse_milestones(milestone_payload)
 
                 return {
                     **scene,

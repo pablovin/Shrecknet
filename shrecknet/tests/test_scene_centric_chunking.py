@@ -14,8 +14,8 @@ class _FakeLLMClient:
         self._responses = list(responses)
         self.prompts: list[str] = []
 
-    async def chat(self, *, model: str, messages: list[dict[str, str]], temperature: float) -> str:
-        del model, temperature
+    async def chat(self, *, model: str, messages: list[dict[str, str]], temperature: float, **kwargs: object) -> str:
+        del model, temperature, kwargs
         self.prompts.append(messages[0]["content"])
         if not self._responses:
             raise RuntimeError("No fake responses left")
@@ -147,10 +147,10 @@ def test_normalize_scene_ranges_repairs_gaps_in_tolerant_mode() -> None:
 
 
 @pytest.mark.asyncio
-async def test_segment_chunk_into_scenes_returns_scene_milestones_in_single_call() -> None:
+async def test_segment_chunk_into_scenes_uses_single_scene_only_call() -> None:
     client = _FakeLLMClient(
         responses=[
-            '{"scenes":[{"scene_id":0,"name":"A","description":"A","start_paragraph":1,"end_paragraph":2,"milestones":[{"title":"Open","description":"Opens","boundary_type":"begin"},{"title":"Close","description":"Closes","boundary_type":"end"}]},{"scene_id":1,"name":"B","description":"B","start_paragraph":3,"end_paragraph":3,"milestones":[{"title":"Turn","description":"Turns","boundary_type":"begin"},{"title":"End","description":"Ends","boundary_type":"end"}]}]}',
+            '{"scenes":[{"scene_id":0,"name":"A","description":"A","start_paragraph":1,"end_paragraph":2},{"scene_id":1,"name":"B","description":"B","start_paragraph":3,"end_paragraph":3}]}',
         ]
     )
 
@@ -168,11 +168,12 @@ async def test_segment_chunk_into_scenes_returns_scene_milestones_in_single_call
     assert scenes[0]["end_paragraph"] == 2
     assert "[P2] two" in scenes[0]["text"]
     assert len(client.prompts) == 1
-    assert len(scenes[0]["milestones"]) == 2
+    assert "milestones" not in scenes[0]
+    assert "extract graph-worthy milestones" not in client.prompts[0].lower()
 
 
 @pytest.mark.asyncio
-async def test_segment_chunk_into_scenes_scene_without_milestones_defaults_to_empty() -> None:
+async def test_segment_chunk_into_scenes_discards_milestone_fields() -> None:
     client = _FakeLLMClient(
         responses=[
             '{"scenes":[{"scene_id":0,"name":"A","description":"A","start_paragraph":1,"end_paragraph":1},{"scene_id":1,"name":"B","description":"B","start_paragraph":2,"end_paragraph":3,"milestones":[{"title":"Close","description":"Closes","boundary_type":"end"}]}]}',
@@ -189,5 +190,5 @@ async def test_segment_chunk_into_scenes_scene_without_milestones_defaults_to_em
     )
 
     assert len(scenes) == 2
-    assert scenes[0]["milestones"] == []
-    assert len(scenes[1]["milestones"]) == 1
+    assert "milestones" not in scenes[0]
+    assert "milestones" not in scenes[1]

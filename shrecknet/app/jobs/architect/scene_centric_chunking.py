@@ -4,7 +4,6 @@ import json
 import logging
 import re
 from dataclasses import dataclass
-from difflib import SequenceMatcher
 from html import unescape
 from html.parser import HTMLParser
 from typing import Any
@@ -22,9 +21,6 @@ _BULLET_OR_NUMBERED_START = re.compile(r"^\s*(?:[●•\-\*]\s+|\d+[.)]\s+)")
 _TIMESTAMP_MARKER = re.compile(r"\(\d{1,2}:\d{2}:\d{2}\)")
 PARAGRAPH_CHUNK_SIZE = 30
 MIN_HEADING_PARAGRAPHS = 5
-LOCAL_SCENE_BUNDLE_SIZE = 12
-LOCAL_SCENE_BUNDLE_OVERLAP = 2
-MAX_CANDIDATE_SCENES_PER_BUNDLE = 3
 
 
 @dataclass
@@ -597,234 +593,6 @@ def _normalize_text_key(value: Any) -> str:
     return text
 
 
-def _milestone_signature(item: dict[str, Any]) -> str:
-    title = _normalize_text_key(item.get("title") or item.get("label"))
-    description = _normalize_text_key(item.get("description"))
-    if not title and not description:
-        return ""
-    return f"{title}|{description}"
-
-
-def _scene_similarity(left: dict[str, Any], right: dict[str, Any]) -> float:
-    left_text = f"{left.get('name', '')} {left.get('description', '')}".strip()
-    right_text = f"{right.get('name', '')} {right.get('description', '')}".strip()
-    if not left_text and not right_text:
-        return 0.0
-    return SequenceMatcher(
-        None,
-        _normalize_text_key(left_text),
-        _normalize_text_key(right_text),
-    ).ratio()
-
-
-def _milestone_jaccard(left: dict[str, Any], right: dict[str, Any]) -> float:
-    left_set = {
-        _milestone_signature(item)
-        for item in (left.get("milestones") or [])
-        if isinstance(item, dict) and _milestone_signature(item)
-    }
-    right_set = {
-        _milestone_signature(item)
-        for item in (right.get("milestones") or [])
-        if isinstance(item, dict) and _milestone_signature(item)
-    }
-    if not left_set or not right_set:
-        return 0.0
-    intersection = len(left_set & right_set)
-    union = len(left_set | right_set)
-    if union <= 0:
-        return 0.0
-    return intersection / union
-
-
-def _ranges_overlap_strongly(left: dict[str, Any], right: dict[str, Any]) -> bool:
-    left_start = int(left.get("start_paragraph") or 0)
-    left_end = int(left.get("end_paragraph") or 0)
-    right_start = int(right.get("start_paragraph") or 0)
-    right_end = int(right.get("end_paragraph") or 0)
-
-    overlap = max(0, min(left_end, right_end) - max(left_start, right_start) + 1)
-    left_len = max(1, left_end - left_start + 1)
-    right_len = max(1, right_end - right_start + 1)
-    min_len = min(left_len, right_len)
-    return overlap / min_len >= 0.6
-
-
-def _should_merge_scenes(left: dict[str, Any], right: dict[str, Any]) -> bool:
-    if _ranges_overlap_strongly(left, right):
-        return True
-    if _scene_similarity(left, right) >= 0.85:
-        return True
-    return _milestone_jaccard(left, right) >= 0.5
-
-
-def _dedupe_milestones(raw_milestones: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    deduped: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    for item in raw_milestones:
-        signature = _milestone_signature(item)
-        if not signature or signature in seen:
-            continue
-        seen.add(signature)
-
-        mentions = item.get("mentions") if isinstance(item.get("mentions"), list) else []
-        mentions = sorted({str(value).strip() for value in mentions if str(value).strip()})
-
-        related_to = item.get("related_to") if isinstance(item.get("related_to"), list) else []
-        related_to_dedup: list[dict[str, Any]] = []
-        related_seen: set[tuple[str, str]] = set()
-        for rel in related_to:
-            if not isinstance(rel, dict):
-                continue
-            entity = str(rel.get("entity") or "").strip()
-            label = str(rel.get("relationship_label") or "related").strip().lower()
-            key = (_normalize_text_key(entity), label)
-            if not key[0] or key in related_seen:
-                continue
-            related_seen.add(key)
-            related_to_dedup.append(
-                {
-                    "entity": entity,
-                    "relationship_label": label,
-                    "relationship_description": str(
-                        rel.get("relationship_description") or ""
-                    ).strip(),
-                }
-            )
-
-        deduped.append(
-            {
-                "title": str(item.get("title") or item.get("label") or "").strip(),
-                "description": str(item.get("description") or "").strip(),
-                "boundary_type": str(item.get("boundary_type") or "none").strip().lower(),
-                "mentions": mentions,
-                "related_to": related_to_dedup,
-            }
-        )
-    return deduped
-
-
-def _merge_scene_pair(base: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]:
-    merged = dict(base)
-    merged["start_paragraph"] = min(
-        int(base.get("start_paragraph") or 1),
-        int(incoming.get("start_paragraph") or 1),
-    )
-    merged["end_paragraph"] = max(
-        int(base.get("end_paragraph") or 1),
-        int(incoming.get("end_paragraph") or 1),
-    )
-
-    if len(str(incoming.get("description") or "")) > len(str(base.get("description") or "")):
-        merged["description"] = str(incoming.get("description") or "").strip()
-    if len(str(incoming.get("name") or "")) > len(str(base.get("name") or "")):
-        merged["name"] = str(incoming.get("name") or "").strip()
-
-    merged_milestones = [
-        item
-        for item in (base.get("milestones") or [])
-        if isinstance(item, dict)
-    ] + [
-        item
-        for item in (incoming.get("milestones") or [])
-        if isinstance(item, dict)
-    ]
-    merged["milestones"] = _dedupe_milestones(merged_milestones)
-    return merged
-
-
-def _build_local_paragraph_bundles(paragraphs: list[str]) -> list[dict[str, Any]]:
-    if not paragraphs:
-        return []
-
-    bundles: list[dict[str, Any]] = []
-    step = max(1, LOCAL_SCENE_BUNDLE_SIZE - LOCAL_SCENE_BUNDLE_OVERLAP)
-    start = 0
-    bundle_index = 0
-    total = len(paragraphs)
-
-    while start < total:
-        end = min(total, start + LOCAL_SCENE_BUNDLE_SIZE)
-        local_paragraphs = paragraphs[start:end]
-        marked = "\n".join(
-            f"[P{idx}] {paragraph}"
-            for idx, paragraph in enumerate(local_paragraphs, start=1)
-        )
-        bundles.append(
-            {
-                "bundle_index": bundle_index,
-                "start_offset": start,
-                "paragraphs": local_paragraphs,
-                "marked_paragraphs": marked,
-            }
-        )
-        if end >= total:
-            break
-        start += step
-        bundle_index += 1
-
-    return bundles
-
-
-def _normalize_candidate_scene_ranges(
-    candidate_scenes: list[dict[str, Any]],
-    paragraph_count: int,
-) -> list[dict[str, Any]]:
-    normalized: list[dict[str, Any]] = []
-    for idx, scene in enumerate(candidate_scenes):
-        start = int(scene.get("start_paragraph", idx + 1))
-        end = int(scene.get("end_paragraph", start))
-        start = max(1, min(start, paragraph_count))
-        end = max(1, min(end, paragraph_count))
-        if end < start:
-            end = start
-        normalized.append(
-            {
-                "scene_id": int(scene.get("scene_id", idx)),
-                "name": str(scene.get("name", "")).strip() or f"Candidate {idx}",
-                "description": str(scene.get("description", "")).strip(),
-                "start_paragraph": start,
-                "end_paragraph": end,
-                "milestones": (
-                    scene.get("milestones")
-                    if isinstance(scene.get("milestones"), list)
-                    else []
-                ),
-            }
-        )
-    normalized.sort(key=lambda item: (item["start_paragraph"], item["end_paragraph"]))
-    return normalized
-
-
-def _merge_candidate_scenes(candidate_scenes: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    merged: list[dict[str, Any]] = []
-    for candidate in sorted(
-        candidate_scenes,
-        key=lambda item: (item.get("start_paragraph", 0), item.get("end_paragraph", 0)),
-    ):
-        matched_index: int | None = None
-        for idx, current in enumerate(merged):
-            if _should_merge_scenes(current, candidate):
-                matched_index = idx
-                break
-        if matched_index is None:
-            merged.append(
-                {
-                    **candidate,
-                    "milestones": _dedupe_milestones(
-                        [item for item in (candidate.get("milestones") or []) if isinstance(item, dict)]
-                    ),
-                }
-            )
-        else:
-            merged[matched_index] = _merge_scene_pair(merged[matched_index], candidate)
-
-    for idx, scene in enumerate(merged):
-        scene["scene_id"] = idx
-
-    merged.sort(key=lambda item: (item["start_paragraph"], item["end_paragraph"]))
-    return merged
-
 
 async def segment_chunk_into_scenes(
     *,
@@ -835,90 +603,46 @@ async def segment_chunk_into_scenes(
     paragraphs: list[str],
     instructions: str | None = None,
 ) -> list[dict[str, Any]]:
-    del marked_paragraphs
     if paragraph_count <= 0 or not paragraphs:
         return []
 
     instructions_text = str(instructions or "").strip()
-    bundles = _build_local_paragraph_bundles(paragraphs)
-    candidate_scenes_global: list[dict[str, Any]] = []
-
-    for bundle in bundles:
-        prompt = architect_prompts.ARCHITECT_SCENE_CENTRIC_CHUNKING_PROMPT.format(
-            marked_paragraphs=bundle["marked_paragraphs"]
-        )
-        if instructions_text:
-            prompt = (
-                f"{prompt}\n\nFrontend instructions (authoritative constraints):\n"
-                f"{instructions_text}"
-            )
-
-        response_text = await llm_client.chat(
-            model=model,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.1,
-            usage_tag="architect.scene_discovery",
+    prompt = architect_prompts.ARCHITECT_SCENE_SEGMENTATION_PROMPT.format(
+        marked_paragraphs=marked_paragraphs
+    )
+    if instructions_text:
+        prompt = (
+            f"{prompt}\n\nFrontend instructions (authoritative constraints):\n"
+            f"{instructions_text}"
         )
 
-        payload = json.loads(_extract_json_object(response_text))
-        bundle_candidates = payload.get("candidate_scenes")
-        if not isinstance(bundle_candidates, list):
-            bundle_candidates = payload.get("scenes")
-        if not isinstance(bundle_candidates, list):
-            logger.warning(
-                "scene_bundle_invalid_payload: bundle_index=%s keys=%s",
-                bundle.get("bundle_index"),
-                list(payload.keys()),
-            )
-            continue
+    response_text = await llm_client.chat(
+        model=model,
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.1,
+        usage_tag="architect.scene_discovery",
+    )
 
-        bundle_candidates = bundle_candidates[:MAX_CANDIDATE_SCENES_PER_BUNDLE]
-        normalized_bundle = _normalize_candidate_scene_ranges(
-            [item for item in bundle_candidates if isinstance(item, dict)],
-            len(bundle["paragraphs"]),
-        )
+    payload = json.loads(_extract_json_object(response_text))
+    raw_scenes = payload.get("scenes")
+    if not isinstance(raw_scenes, list):
+        logger.warning("scene_chunk_invalid_payload: keys=%s", list(payload.keys()))
+        raw_scenes = []
 
-        start_offset = int(bundle["start_offset"])
-        for item in normalized_bundle:
-            candidate_scenes_global.append(
-                {
-                    **item,
-                    "start_paragraph": int(item["start_paragraph"]) + start_offset,
-                    "end_paragraph": int(item["end_paragraph"]) + start_offset,
-                }
-            )
-
-    if not candidate_scenes_global:
+    scene_items = [item for item in raw_scenes if isinstance(item, dict)]
+    if not scene_items:
         fallback = {
             "scene_id": 0,
             "name": "Scene",
             "description": "",
             "start_paragraph": 1,
             "end_paragraph": paragraph_count,
-            "milestones": [],
         }
         return attach_scene_text([fallback], paragraphs)
 
-    merged_scenes = _merge_candidate_scenes(candidate_scenes_global)
-    normalized_final = _normalize_scene_ranges(merged_scenes, paragraph_count, strict=False)
-
-    milestone_by_signature: dict[str, list[dict[str, Any]]] = {}
-    for scene in merged_scenes:
-        signature = (
-            int(scene.get("start_paragraph") or 0),
-            int(scene.get("end_paragraph") or 0),
-            _normalize_text_key(scene.get("name")),
-        )
-        milestone_by_signature[str(signature)] = _dedupe_milestones(
-            [item for item in (scene.get("milestones") or []) if isinstance(item, dict)]
-        )
-
+    normalized_final = _normalize_scene_ranges(scene_items, paragraph_count, strict=False)
     for scene in normalized_final:
-        signature = (
-            int(scene.get("start_paragraph") or 0),
-            int(scene.get("end_paragraph") or 0),
-            _normalize_text_key(scene.get("name")),
-        )
-        scene["milestones"] = milestone_by_signature.get(str(signature), [])
-
+        scene.pop("milestones", None)
+        scene.pop("mentions", None)
+        scene.pop("related_to", None)
     return attach_scene_text(normalized_final, paragraphs)

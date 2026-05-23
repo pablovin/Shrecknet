@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
 
 from app.tasks.architect_analysis import (
-    _build_milestones_from_scene_inputs,
     _build_scene_proposals,
     _classify_entities,
     _classify_entities_with_reconciliation,
@@ -12,6 +12,7 @@ from app.tasks.architect_analysis import (
     _flatten_scene_inputs,
     _format_ontology_definitions_from_entities,
     _resolve_local_tests_output_dir,
+    _run_scene_merge_phase,
     _run_milestone_proposal_phase,
 )
 
@@ -57,10 +58,206 @@ def test_flatten_scene_inputs_preserves_scene_fields() -> None:
     flattened = _flatten_scene_inputs(chunk_results)
 
     assert len(flattened) == 1
-    assert flattened[0]["scene_ref"] == "chunk_2_scene_0"
+    assert flattened[0]["scene_ref"] == "entity_ent_1_chunk_2_scene_0"
     assert flattened[0]["scene_name"] == "Arrival"
     assert flattened[0]["scene_description"] == "The group enters the city."
     assert flattened[0]["scene_text"] == "[P1] They arrive at dawn."
+
+
+def test_run_scene_merge_phase_merges_metadata_without_scene_text_in_prompt() -> None:
+    class _FakeLLMClient:
+        def __init__(self) -> None:
+            self.prompts: list[str] = []
+
+        async def chat(self, *, model, messages, temperature, **kwargs):  # type: ignore[no-untyped-def]
+            del model, temperature, kwargs
+            prompt = str(messages[0].get("content") or "")
+            self.prompts.append(prompt)
+            return (
+                '{"merged_scenes":['
+                '{"scene_refs":["chunk_0_scene_0","chunk_1_scene_0"],"name":"Arrival","description":"Arthur arrives in Londinium."},'
+                '{"scene_refs":["chunk_1_scene_1"],"name":"Separate","description":"A separate conflict begins."}'
+                ']}'
+            )
+
+    client = _FakeLLMClient()
+    result = asyncio.run(
+        _run_scene_merge_phase(
+            run_id="run-1",
+            llm_client=client,
+            model="test-model",
+            chunk_results=[
+                {
+                    "status": "ok",
+                    "entity_instance_id": "entity-1",
+                    "entity_alias": "Source",
+                    "chunk_index": 0,
+                    "paragraph_count": 2,
+                    "token_count": 10,
+                    "paragraph_start": 1,
+                    "paragraph_end": 2,
+                    "marked_paragraphs": "[P1] Arthur arrives",
+                    "scenes": [
+                        {
+                            "scene_id": 0,
+                            "name": "Arrival",
+                            "description": "Arthur arrives.",
+                            "start_paragraph": 1,
+                            "end_paragraph": 2,
+                            "text": "[P1] Arthur arrives.",
+                        }
+                    ],
+                },
+                {
+                    "status": "ok",
+                    "entity_instance_id": "entity-1",
+                    "entity_alias": "Source",
+                    "chunk_index": 1,
+                    "paragraph_count": 3,
+                    "token_count": 12,
+                    "paragraph_start": 3,
+                    "paragraph_end": 5,
+                    "marked_paragraphs": "[P1] Arthur enters Londinium",
+                    "scenes": [
+                        {
+                            "scene_id": 0,
+                            "name": "City arrival",
+                            "description": "Arthur enters Londinium.",
+                            "start_paragraph": 1,
+                            "end_paragraph": 1,
+                            "text": "[P1] Arthur enters Londinium.",
+                        },
+                        {
+                            "scene_id": 1,
+                            "name": "Separate",
+                            "description": "A separate conflict begins.",
+                            "start_paragraph": 2,
+                            "end_paragraph": 3,
+                            "text": "[P2] A separate conflict begins.",
+                        },
+                    ],
+                },
+            ],
+        )
+    )
+
+    assert len(client.prompts) == 1
+    assert "[P1] Arthur arrives." not in client.prompts[0]
+    merged_scenes = result["chunk_results"][0]["scenes"]
+    assert len(merged_scenes) == 2
+    assert "Arthur arrives." in merged_scenes[0]["text"]
+    assert "Arthur enters Londinium." in merged_scenes[0]["text"]
+    assert merged_scenes[0]["start_paragraph"] == 1
+    assert merged_scenes[0]["end_paragraph"] == 3
+
+
+def test_run_scene_merge_phase_receives_all_chunk_metadata_and_repairs_overlap() -> None:
+    class _FakeLLMClient:
+        def __init__(self) -> None:
+            self.prompts: list[str] = []
+
+        async def chat(self, *, model, messages, temperature, **kwargs):  # type: ignore[no-untyped-def]
+            del model, temperature, kwargs
+            prompt = str(messages[0].get("content") or "")
+            self.prompts.append(prompt)
+            return (
+                '{"merged_scenes":['
+                '{"scene_refs":["chunk_0_scene_0"],"name":"Opening","description":"The opening continues."},'
+                '{"scene_refs":["chunk_1_scene_0"],"name":"Opening Again","description":"The same opening overlaps."},'
+                '{"scene_refs":["chunk_2_scene_0"],"name":"Later","description":"A later scene remains separate."}'
+                ']}'
+            )
+
+    client = _FakeLLMClient()
+    result = asyncio.run(
+        _run_scene_merge_phase(
+            run_id="run-1",
+            llm_client=client,
+            model="test-model",
+            chunk_results=[
+                {
+                    "status": "ok",
+                    "entity_instance_id": "entity-1",
+                    "entity_alias": "Source",
+                    "chunk_index": 0,
+                    "paragraph_count": 30,
+                    "token_count": 10,
+                    "paragraph_start": 1,
+                    "paragraph_end": 30,
+                    "marked_paragraphs": "[P1] A",
+                    "scenes": [
+                        {
+                            "scene_id": 0,
+                            "name": "Opening",
+                            "description": "The opening starts.",
+                            "start_paragraph": 20,
+                            "end_paragraph": 30,
+                            "text": "[P20] A",
+                        }
+                    ],
+                },
+                {
+                    "status": "ok",
+                    "entity_instance_id": "entity-1",
+                    "entity_alias": "Source",
+                    "chunk_index": 1,
+                    "paragraph_count": 30,
+                    "token_count": 10,
+                    "paragraph_start": 25,
+                    "paragraph_end": 54,
+                    "marked_paragraphs": "[P1] B",
+                    "scenes": [
+                        {
+                            "scene_id": 0,
+                            "name": "Opening Again",
+                            "description": "The opening overlaps.",
+                            "start_paragraph": 1,
+                            "end_paragraph": 12,
+                            "text": "[P1] B",
+                        }
+                    ],
+                },
+                {
+                    "status": "ok",
+                    "entity_instance_id": "entity-1",
+                    "entity_alias": "Source",
+                    "chunk_index": 2,
+                    "paragraph_count": 30,
+                    "token_count": 10,
+                    "paragraph_start": 55,
+                    "paragraph_end": 84,
+                    "marked_paragraphs": "[P1] C",
+                    "scenes": [
+                        {
+                            "scene_id": 0,
+                            "name": "Later",
+                            "description": "A later scene.",
+                            "start_paragraph": 1,
+                            "end_paragraph": 5,
+                            "text": "[P1] C",
+                        }
+                    ],
+                },
+            ],
+        )
+    )
+
+    prompt = client.prompts[0]
+    assert "[P20] A" not in prompt
+    assert "chunk_0_scene_0" in prompt
+    assert "chunk_1_scene_0" in prompt
+    assert "chunk_2_scene_0" in prompt
+    assert '"start_paragraph": 25' in prompt
+    assert '"end_paragraph": 36' in prompt
+
+    merged_scenes = result["chunk_results"][0]["scenes"]
+    assert len(merged_scenes) == 2
+    assert merged_scenes[0]["start_paragraph"] == 20
+    assert merged_scenes[0]["end_paragraph"] == 36
+    assert set(merged_scenes[0]["source_scene_refs"]) == {
+        "chunk_0_scene_0",
+        "chunk_1_scene_0",
+    }
 
 
 def test_classify_entities_splits_new_and_updated() -> None:
@@ -116,20 +313,30 @@ def test_format_ontology_definitions_only_auto_generatable() -> None:
 
 def test_extract_scene_entities_uses_scene_prompt_fields() -> None:
     class _FakeLLMClient:
-        async def chat(self, *, model, messages, temperature):  # type: ignore[no-untyped-def]
-            del model, messages, temperature
-            return '{"entities": []}'
+        def __init__(self) -> None:
+            self.prompts: list[str] = []
 
+        async def chat(self, *, model, messages, temperature, **kwargs):  # type: ignore[no-untyped-def]
+            del model, temperature, kwargs
+            self.prompts.append(str(messages[0].get("content") or ""))
+            return '{"scenes": [{"scene_ref": "chunk_0_scene_0", "entities": []}]}'
+
+    client = _FakeLLMClient()
     scene_results = asyncio.run(
         _extract_scene_entities(
             run_id="run-1",
-            llm_client=_FakeLLMClient(),
+            llm_client=client,
             model="test-model",
             ontology_definitions="- Players: Playable characters",
             allowed_ontology_names={"players": "Players"},
+            existing_nodes=[
+                {"node_id": "node-1", "alias": "Arthur", "ontology": "Players"}
+            ],
             scenes=[
                 {
                     "scene_ref": "chunk_0_scene_0",
+                    "scene_name": "Arrival",
+                    "scene_description": "Arthur arrives.",
                     "scene_text": "[P1] Arthur arrives.",
                 }
             ],
@@ -139,11 +346,14 @@ def test_extract_scene_entities_uses_scene_prompt_fields() -> None:
     assert len(scene_results) == 1
     assert scene_results[0]["status"] == "ok"
     assert scene_results[0]["entities"] == []
+    assert "node-1" not in client.prompts[0]
+    assert '"alias": "Arthur"' in client.prompts[0]
+    assert '"ontology": "Players"' in client.prompts[0]
 
 
 def test_scene_reconcile_dedups_alias_equivalents_without_graph_candidates() -> None:
     class _FakeLLMClient:
-        async def chat(self, *, model, messages, temperature):  # type: ignore[no-untyped-def]
+        async def chat(self, *, model, messages, temperature, **kwargs):  # type: ignore[no-untyped-def]
             del model, messages, temperature
             return '{"existing": [], "new": []}'
 
@@ -193,10 +403,10 @@ def test_scene_reconcile_dedups_alias_equivalents_without_graph_candidates() -> 
     assert entity["proposal_metadata"]["mention_count"] == 2
 
 
-def test_scene_reconcile_llm_match_adds_update_metadata() -> None:
+def test_scene_reconcile_matched_alias_adds_update_metadata() -> None:
     class _FakeLLMClient:
-        async def chat(self, *, model, messages, temperature):  # type: ignore[no-untyped-def]
-            del model, temperature
+        async def chat(self, *, model, messages, temperature, **kwargs):  # type: ignore[no-untyped-def]
+            del model, temperature, kwargs
             prompt = messages[0]["content"]
             assert "Jessie" in prompt
             return (
@@ -212,6 +422,9 @@ def test_scene_reconcile_llm_match_adds_update_metadata() -> None:
                 {
                     "name": "Jessie",
                     "ontology": "Players",
+                    "status": "existing",
+                    "matched_alias": "Jessie Williams",
+                    "matched_node_id": "node-1",
                     "confidence": 0.9,
                     "why": "Acts in scene",
                 }
@@ -243,12 +456,13 @@ def test_scene_reconcile_llm_match_adds_update_metadata() -> None:
 
 def test_extract_scene_entities_drops_unknown_ontology_values() -> None:
     class _FakeLLMClient:
-        async def chat(self, *, model, messages, temperature):  # type: ignore[no-untyped-def]
+        async def chat(self, *, model, messages, temperature, **kwargs):  # type: ignore[no-untyped-def]
             del model, messages, temperature
             return (
-                '{"entities":[{"name":"Arthur","ontology":"Unknown","confidence":0.9,'
+                '{"scenes":[{"scene_ref":"chunk_0_scene_0","entities":['
+                '{"name":"Arthur","ontology":"Unknown","status":"new","confidence":0.9,'
                 '"why":"Named in scene"},{"name":"Kay","ontology":"Players",'
-                '"confidence":0.8,"why":"Named in scene"}]}'
+                '"status":"new","confidence":0.8,"why":"Named in scene"}]}]}'
             )
 
     scene_results = asyncio.run(
@@ -258,6 +472,7 @@ def test_extract_scene_entities_drops_unknown_ontology_values() -> None:
             model="test-model",
             ontology_definitions="- Players: Playable characters",
             allowed_ontology_names={"players": "Players"},
+            existing_nodes=[],
             scenes=[
                 {
                     "scene_ref": "chunk_0_scene_0",
@@ -393,19 +608,29 @@ def test_ensure_scene_milestone_boundaries_forces_missing_begin_end() -> None:
 
 def test_run_milestone_proposal_phase_keeps_all_scenes_and_coerces_boundaries() -> None:
     class _FakeLLMClient:
-        async def chat(self, *, model, messages, temperature):  # type: ignore[no-untyped-def]
-            del model, temperature
-            prompt = str(messages[0].get("content") or "")
-            if "scene_ref: scene-1" in prompt:
-                return '{"milestones":[]}'
-            if "scene_ref: scene-2" in prompt:
-                return '{"milestones":[{"title":"Middle beat","description":"Something happens","boundary_type":"none"}]}'
-            return '{"milestones":[{"title":"","description":"Opens","boundary_type":"start"},{"title":"","description":"Closes","boundary_type":"finish"}]}'
+        def __init__(self) -> None:
+            self.prompts: list[str] = []
 
+        async def chat(self, *, model, messages, temperature, **kwargs):  # type: ignore[no-untyped-def]
+            del model, temperature, kwargs
+            prompt = str(messages[0].get("content") or "")
+            self.prompts.append(prompt)
+            return (
+                '{"scenes":['
+                '{"scene_ref":"scene-1","milestones":[]},'
+                '{"scene_ref":"scene-2","milestones":[{"title":"Middle beat","description":"Something happens. Extra detail. Third sentence should be removed.","boundary_type":"none"}]},'
+                '{"scene_ref":"scene-3","milestones":[{"title":"","description":"Opens","boundary_type":"start"},{"title":"","description":"Closes","boundary_type":"finish"}]},'
+                '{"scene_ref":"scene-4","milestones":[]},'
+                '{"scene_ref":"scene-5","milestones":[]},'
+                '{"scene_ref":"scene-6","milestones":[]}'
+                ']}'
+            )
+
+    client = _FakeLLMClient()
     result = asyncio.run(
         _run_milestone_proposal_phase(
             run_id="run-1",
-            llm_client=_FakeLLMClient(),
+            llm_client=client,
             model="test-model",
             proposed_scenes=[
                 {
@@ -432,6 +657,30 @@ def test_run_milestone_proposal_phase_keeps_all_scenes_and_coerces_boundaries() 
                     "scene_text": "Text three",
                     "related_to": [],
                 },
+                {
+                    "scene_ref": "scene-4",
+                    "scene_id": "s4",
+                    "scene_name": "Scene Four",
+                    "scene_description": "Desc four",
+                    "scene_text": "Text four",
+                    "related_to": [],
+                },
+                {
+                    "scene_ref": "scene-5",
+                    "scene_id": "s5",
+                    "scene_name": "Scene Five",
+                    "scene_description": "Desc five",
+                    "scene_text": "Text five",
+                    "related_to": [],
+                },
+                {
+                    "scene_ref": "scene-6",
+                    "scene_id": "s6",
+                    "scene_name": "Scene Six",
+                    "scene_description": "Desc six",
+                    "scene_text": "Text six",
+                    "related_to": [],
+                },
             ],
             author_id="author-1",
         )
@@ -439,13 +688,66 @@ def test_run_milestone_proposal_phase_keeps_all_scenes_and_coerces_boundaries() 
 
     assert result["removed_scene_count"] == 0
     assert result["removed_scene_refs"] == []
-    assert len(result["per_scene"]) == 3
+    assert len(result["per_scene"]) == 6
+    assert len(client.prompts) == 2
     for row in result["per_scene"]:
         milestones = row["milestones"]
         assert len(milestones) >= 2
         boundaries = {m["boundary_type"] for m in milestones}
         assert "begin" in boundaries
         assert "end" in boundaries
+    scene_2 = next(row for row in result["per_scene"] if row["scene_ref"] == "scene-2")
+    assert scene_2["milestones"][0]["description"].count(".") <= 2
+
+
+def test_run_milestone_proposal_phase_sends_only_scene_linked_entities() -> None:
+    class _FakeLLMClient:
+        def __init__(self) -> None:
+            self.payloads: list[list[dict[str, object]]] = []
+
+        async def chat(self, *, model, messages, temperature, **kwargs):  # type: ignore[no-untyped-def]
+            del model, temperature, kwargs
+            prompt = str(messages[0].get("content") or "")
+            marker = "Scenes payload:\n"
+            payload_text = prompt.split(marker, 1)[1].split("\n\nMilestone definition:", 1)[0]
+            self.payloads.append(json.loads(payload_text))
+            return (
+                '{"scenes":[{"scene_ref":"scene-1","milestones":['
+                '{"title":"Arthur acts","description":"Arthur makes a decision.",'
+                '"boundary_type":"begin","mentions":["Arthur"],'
+                '"related_to":[{"entity":"Arthur","relationship_label":"decides",'
+                '"relationship_description":"makes the decision"},'
+                '{"entity":"Morgana","relationship_label":"observes",'
+                '"relationship_description":"is not in this scene"}]},'
+                '{"title":"Arthur leaves","description":"Arthur leaves.",'
+                '"boundary_type":"end","mentions":["Arthur"],"related_to":[]}]}]}'
+            )
+
+    client = _FakeLLMClient()
+    result = asyncio.run(
+        _run_milestone_proposal_phase(
+            run_id="run-1",
+            llm_client=client,
+            model="test-model",
+            proposed_scenes=[
+                {
+                    "scene_ref": "scene-1",
+                    "scene_id": "s1",
+                    "scene_name": "Decision",
+                    "scene_description": "Arthur decides what to do.",
+                    "scene_text": "Arthur decides.",
+                    "related_to": [
+                        {"alias": "Arthur", "canonical": "arthur"},
+                    ],
+                }
+            ],
+            author_id="author-1",
+        )
+    )
+
+    assert client.payloads[0][0]["entities"] == ["Arthur"]
+    related = result["per_scene"][0]["milestones"][0]["related_to"]
+    assert [item["entity"] for item in related] == ["Arthur"]
 
 
 def test_build_scene_proposals_related_to_targets_deduped_entities() -> None:
@@ -489,27 +791,3 @@ def test_build_scene_proposals_related_to_targets_deduped_entities() -> None:
     assert related[1]["proposal_index"] == 1
     assert related[1]["canonical"] == "londinium"
     assert related[1]["entity_instance_id"] == "node-2"
-
-
-def test_build_milestones_from_scene_inputs_uses_embedded_scene_milestones() -> None:
-    result = _build_milestones_from_scene_inputs(
-        scene_inputs=[
-            {
-                "scene_ref": "chunk_0_scene_0",
-                "scene_milestones": [
-                    {"title": "Opening", "description": "Opens", "boundary_type": "begin"},
-                    {"title": "Closing", "description": "Closes", "boundary_type": "end"},
-                ],
-            }
-        ],
-        scene_id_by_ref={"chunk_0_scene_0": "scene-uuid-1"},
-        source_entity_by_ref={"chunk_0_scene_0": "entity-1"},
-        author_id="author-1",
-    )
-
-    assert len(result["per_scene"]) == 1
-    milestones = result["per_scene"][0]["milestones"]
-    assert len(milestones) == 2
-    assert milestones[0]["scene_id"] == "scene-uuid-1"
-    assert milestones[0]["boundary_type"] == "begin"
-    assert milestones[1]["boundary_type"] == "end"

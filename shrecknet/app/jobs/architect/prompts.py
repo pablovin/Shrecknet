@@ -92,6 +92,9 @@ Weak description:
 Strong description:
 "King Leodogr restrains his anger toward Tamura, Evrain, Lynelle, and Everin while imposing strict conditions on their stay, revealing Arthur’s political protection over them."
 
+
+Apply the title and description rules to all the scenes you proposed. If a scene does not follow this rule, do not add it.
+
 Return ONLY valid JSON:
 
 {{
@@ -148,44 +151,6 @@ Rules:
 
 Malformed JSON:
 {malformed_json}
-"""
-
-
-ARCHITECT_SCENE_DEDUP_PROMPT = """You are merging scene segmentation metadata for one source entity.
-
-Input scenes are already ordered and include metadata + source paragraph text. Your task is to merge only clear duplicates or obvious over-splits.
-
-Merge scenes only when they clearly describe the same continuous time/place/goal/participant situation. Keep unrelated scenes separate.
-
-Conservative merge policy:
-- Prefer under-merging rather than over-merging.
-- Do NOT merge scenes that are only topically similar.
-- Do NOT merge solely because two scenes are adjacent.
-- If uncertain, keep scenes separate.
-
-Return ONLY valid JSON in this exact format:
-
-{{
-  "merged_scenes": [
-    {{
-      "scene_refs": ["input-scene-ref-1", "input-scene-ref-2"],
-      "name": "short merged title",
-      "description": "1-3 concise sentences describing what happens. Do not perform entity extraction or add entity relationship details.",
-      "source_paragraphs": [12, 13, 14, 15]
-    }}
-  ]
-}}
-
-Rules:
-- Every input scene_ref must appear exactly once in merged_scenes.
-- Preserve chronological order.
-- Do not invent new scene_refs.
-- name/description must be rewritten for the merged scene (do not just copy one original scene unchanged when multiple scenes are merged).
-- source_paragraphs must be the merged unique paragraph indexes across all scene_refs in that merged scene, sorted ascending.
-- Keep scene boundaries unless there is strong evidence they represent the same event.
-
-Scene metadata:
-{scene_metadata}
 """
 
 

@@ -4,7 +4,7 @@ This document describes the active scene chunking flow used by Architect analysi
 
 ## Purpose
 
-Segment each source chunk with one LLM call, merge scene metadata per source entity, then defer entity and milestone extraction to later pipeline stages.
+Segment each source chunk with one LLM call and emit raw scene ranges as authoritative global paragraph ids for downstream entity and milestone stages.
 
 ## Inputs
 
@@ -55,7 +55,7 @@ Chunk behavior:
 - HTML heading sections are kept as chunks when possible.
 - Heading sections shorter than `5` paragraphs may be merged with following heading sections until they reach useful size or approach the `30` paragraph chunk cap.
 - Non-heading paragraphs are split into fixed windows of up to `30` paragraphs.
-- Each chunk marks paragraphs locally as `[P1]`, `[P2]`, etc.
+- Each chunk marks paragraphs using global ids (`paragraph_start..paragraph_end`), for example `[P31]`, `[P32]`, ...
 - `token_count` is still recorded using `tiktoken` `cl100k_base` when available, with a word-count fallback, but token count is metadata in this path and does not currently determine chunk boundaries.
 
 Each chunk stores:
@@ -109,60 +109,25 @@ Scene segmentation rules:
 - Do not extract milestones, `mentions`, or `related_to` during segmentation.
 
 Compatibility note:
+## JSON Parsing and Fallback
 
-## Per-Entity Scene Merge
+Scene segmentation expects strict JSON. Runtime handling is:
 
-After chunk segmentation, `_run_scene_merge_phase` performs a lightweight merge pass per source entity.
-
-Merge input is metadata only:
-
-- temporary scene ref
-- chunk index
-- start/end paragraph
-- title
-- description
-
-`ARCHITECT_SCENE_DEDUP_PROMPT` does not include full scene text. It asks the model to group duplicate or over-split scenes by title/description similarity and paragraph overlap or adjacency. Each input scene ref must appear exactly once.
-
-Merge output shape:
-
-```json
-{
-  "merged_scenes": [
-    {
-      "scene_refs": ["chunk_0_scene_0", "chunk_1_scene_0"],
-      "name": "...",
-      "description": "..."
-    }
-  ]
-}
-```
-
-Merged scenes concatenate source scene text internally, but only metadata is sent to the merge LLM.
+1. Parse model response as JSON.
+2. If parsing fails, run one JSON-repair retry prompt and parse again.
+3. If retry still fails, fallback to one scene covering the full chunk.
 
 ## Candidate Range Handling
 
-Model paragraph ranges are interpreted as chunk-local ranges.
+Model paragraph ranges are interpreted as global paragraph ids.
 
-- Ranges may be zero-based or one-based.
-- Final ranges are normalized with tolerant repair mode.
-- If segmentation returns no usable scenes, the chunk falls back to one scene covering the whole chunk.
-
-## Range Normalization and Validation
-
-Final merged scenes are normalized with tolerant repair mode (`strict=False`) before text attachment.
-
-Tolerant repair behavior:
-
-- Clamps scene ranges to chunk bounds.
-- Orders scenes by paragraph range.
-- Repairs gaps and overlaps into sequential scene coverage.
-- Ensures the final scene reaches the final paragraph of the chunk.
-- Falls back to one scene covering the whole chunk if no candidate scenes survived.
+- Zero-based ranges are shifted to one-based.
+- No scene range repair/dedup is applied.
+- Scene `start_paragraph` and `end_paragraph` are preserved as raw authoritative values.
 
 ## Scene Text Attachment
 
-After final ranges are chosen, each scene receives a `text` field containing exact marked paragraph lines for its inclusive span.
+Each scene receives a `text` field reconstructed from the per-entity global paragraph registry using the returned global range. Best-effort clipping is applied only when a requested paragraph id is missing.
 
 ## Runtime Sequence
 
@@ -172,9 +137,9 @@ After final ranges are chosen, each scene receives a `text` field containing exa
 4. Each chunk is logged and passed to `segment_chunk_into_scenes`.
 5. `segment_chunk_into_scenes` sends the full chunk to the scene chunking LLM once.
 6. The response JSON is parsed as final scene spans, with no milestones.
-7. Final chunk-local ranges are repaired in tolerant mode and source text is attached.
-8. `_run_scene_merge_phase` runs one metadata-only merge call per source entity.
-9. Merged chunk results feed entity discovery per final scene.
+7. Scene ranges are kept as raw global ids and source text is rebuilt from the global paragraph registry.
+8. Scene merge/dedup is not part of the active pipeline.
+9. Chunk results feed entity discovery per final scene.
 10. Scene proposals are built with `related_to` entities.
 11. `ARCHITECT_MILESTONE_BATCH_PROMPT` runs after entity discovery, max 5 scenes per LLM call.
 12. Debug `chunk_results` are included in the final pipeline output.
@@ -210,7 +175,7 @@ Key logs:
 
 - Scene chunking is active inside `architect.analyze_instance`.
 - Output is included in consolidated `background_jobs.details.pipeline_output` and debug chunk data.
-- The configured scene chunking and merge model comes from `model_architect_scene_chunking`.
+- The configured scene chunking model comes from `model_architect_scene_chunking`.
 - Milestones are generated later by batched milestone proposal after scene entity discovery.
 
 ## Code References

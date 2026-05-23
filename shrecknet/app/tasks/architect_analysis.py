@@ -1149,19 +1149,19 @@ async def _extract_scene_entities(
                 "scene_ref": scene.get("scene_ref"),
                 "scene_name": scene.get("scene_name"),
                 "scene_description": scene.get("scene_description"),
-                "scene_text": _compress_scene_text_for_milestone_prompt(
-                    _safe_json_text(scene.get("scene_text")),
-                    ENTITY_SCENE_TEXT_MAX_CHARS,
-                ),
+                "scene_text": _safe_json_text(scene.get("scene_text")),
             }
             for scene in batch
         ]
+        scene_text_lengths = [len(str(row.get("scene_text") or "")) for row in scenes_payload]
         logger.info(
-            "scene_entity_extraction_batch_payload: run_id=%s batch_size=%d scene_refs=%s total_scene_text_chars=%d",
+            "scene_entity_extraction_batch_payload: run_id=%s batch_size=%d scene_refs=%s total_scene_text_chars=%d max_scene_text_chars=%d oversized_scene_count=%d",
             run_id,
             len(batch),
             [scene.get("scene_ref") for scene in batch],
-            sum(len(str(row.get("scene_text") or "")) for row in scenes_payload),
+            sum(scene_text_lengths),
+            max(scene_text_lengths, default=0),
+            sum(1 for length in scene_text_lengths if length > ENTITY_SCENE_TEXT_MAX_CHARS),
         )
         try:
             async with semaphore:
@@ -1344,7 +1344,6 @@ async def _run_scene_chunking_phase(
     ontology_instance: Any,
     llm_client: ShreckLLMClient,
     model: str | LLMModelTarget,
-    merge_model: str | LLMModelTarget | None = None,
     instructions: str | None = None,
 ) -> dict[str, Any]:
     started = perf_counter()
@@ -1501,26 +1500,14 @@ async def _run_scene_chunking_phase(
                     }
                 )
 
-    dedup_enabled = False
-    if dedup_enabled:
-        merge_phase = await _run_scene_merge_phase(
-            run_id=run_id,
-            llm_client=llm_client,
-            model=merge_model or model,
-            chunk_results=all_chunk_results,
-            instructions=instructions,
-        )
-        all_chunk_results = merge_phase["chunk_results"]
-        total_scenes = int(merge_phase["scene_count"])
-    else:
-        total_scenes = sum(
-            len(item.get("scenes") or []) for item in all_chunk_results if item.get("status") == "ok"
-        )
-        logger.info(
-            "scene_merge_skipped_pre_dedup_mode: run_id=%s scene_count=%d",
-            run_id,
-            total_scenes,
-        )
+    total_scenes = sum(
+        len(item.get("scenes") or []) for item in all_chunk_results if item.get("status") == "ok"
+    )
+    logger.info(
+        "scene_merge_removed_pipeline_mode: run_id=%s scene_count=%d",
+        run_id,
+        total_scenes,
+    )
 
     elapsed_seconds = round(perf_counter() - started, 3)
     logger.info(
@@ -1538,7 +1525,7 @@ async def _run_scene_chunking_phase(
         "paragraph_count": total_paragraphs,
         "scene_count": total_scenes,
         "elapsed_seconds": elapsed_seconds,
-        "scene_dedup_applied": dedup_enabled,
+        "scene_dedup_applied": False,
     }
 
 
@@ -2459,7 +2446,6 @@ async def _run_scene_centric_chunking_test(
         ontology_instance=ontology_instance,
         llm_client=llm_client,
         model=scene_chunking_model,
-        merge_model=architect_model,
     )
     _log_step_usage(
         run_id=run_id,

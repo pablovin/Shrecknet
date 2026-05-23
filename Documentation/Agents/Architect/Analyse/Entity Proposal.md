@@ -4,11 +4,11 @@ This document describes the current entity proposal phase in the Architect analy
 
 ## Scope
 
-Entity proposal runs after final scene merge/dedup and before scene proposal/milestone assembly.
+Entity proposal runs after scene chunking output is finalized and before scene proposal/milestone assembly.
 
 Current goals:
 
-- Extract candidate entities from final deduped scenes in batches of up to 5 scenes.
+- Extract candidate entities from final scene outputs in batches of up to 5 scenes.
 - Let the LLM classify each extracted entity as `existing` or `new` using existing entity aliases and ontology names only.
 - Keep graph ids out of the LLM prompt.
 - Resolve `existing` matches back to internal node ids deterministically by alias and ontology after the LLM response.

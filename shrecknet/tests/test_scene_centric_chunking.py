@@ -98,7 +98,7 @@ def test_normalize_scene_ranges_accepts_zero_based_model_output() -> None:
     assert normalized[1]["end_paragraph"] == 3
 
 
-def test_normalize_scene_ranges_annotates_gaps_without_repair() -> None:
+def test_normalize_scene_ranges_preserves_gaps_without_repair() -> None:
     scenes = [
         {
             "scene_id": 0,
@@ -117,9 +117,10 @@ def test_normalize_scene_ranges_annotates_gaps_without_repair() -> None:
     ]
 
     normalized = _normalize_scene_ranges(scenes, paragraph_count=3)
-    assert normalized[0]["range_valid"] is True
-    assert normalized[1]["range_valid"] is False
-    assert "gap_from_previous" in normalized[1]["range_invalid_reasons"]
+    assert normalized[0]["start_paragraph"] == 1
+    assert normalized[0]["end_paragraph"] == 1
+    assert normalized[1]["start_paragraph"] == 3
+    assert normalized[1]["end_paragraph"] == 3
 
 
 def test_normalize_scene_ranges_does_not_repair_gaps() -> None:
@@ -148,7 +149,7 @@ def test_normalize_scene_ranges_does_not_repair_gaps() -> None:
 
 
 @pytest.mark.asyncio
-async def test_segment_chunk_into_scenes_annotates_invalid_out_of_bounds_range() -> None:
+async def test_segment_chunk_into_scenes_preserves_out_of_bounds_without_annotation() -> None:
     client = _FakeLLMClient(
         responses=[
             '{"scenes":[{"scene_id":0,"name":"A","description":"A desc","start_paragraph":57,"end_paragraph":100}]}',
@@ -164,10 +165,8 @@ async def test_segment_chunk_into_scenes_annotates_invalid_out_of_bounds_range()
     assert len(scenes) == 1
     assert scenes[0]["start_paragraph"] == 57
     assert scenes[0]["end_paragraph"] == 100
-    assert scenes[0]["range_valid"] is False
-    assert "out_of_bounds" in scenes[0]["range_invalid_reasons"]
-    assert scenes[0]["description"].startswith("[RANGE_INVALID")
-    assert scenes[0]["text"].startswith("[RANGE_INVALID")
+    assert scenes[0]["description"] == "A desc"
+    assert scenes[0]["text"] == "[P3] three"
 
 
 @pytest.mark.asyncio

@@ -11,22 +11,25 @@ The text is divided into numbered paragraphs:
 
 A Scene is a continuous narrative situation.
 
+A scene is closer to a continuous camera shot than to a topic cluster.
+
 A scene usually remains the same while:
-- the same characters are interacting
-- the conversation or action continues
-- the location remains the same
+- the same characters continue interacting
+- the same action or conversation continues
+- the location remains stable
 - there is no major time jump
+- the ongoing interaction has not meaningfully reset
 
 Do NOT split scenes simply because:
-- the topic changes
-- the emotional tone changes
-- the strategy changes
-- the conversation evolves
-- a new detail is revealed
+- the conversation topic evolves
+- emotions escalate
+- strategies change
+- new information is revealed
+- the tension increases
 
-Keep conversations, confrontations, planning, and immediate consequences together whenever they occur continuously.
+Keep setup, confrontation, escalation, and immediate consequences together when they occur continuously.
 
-Create a new scene ONLY when there is a clear change in:
+Create a new scene ONLY when there is a clear and meaningful change in:
 - time
 - location
 - dominant participating characters
@@ -35,16 +38,28 @@ Create a new scene ONLY when there is a clear change in:
 Avoid fragmentation.
 Prefer fewer, larger, stronger scenes.
 
-Important:
-- Continuous dialogue is usually ONE scene.
-- Continuous action is usually ONE scene.
-- Setup + escalation + immediate consequence usually belong to the SAME scene.
+The scene description must capture:
+- the central dramatic situation
+- the active tension or pressure
+- important social, emotional, or political dynamics
+- the meaningful state change produced by the scene
+
+Do NOT write generic plot summaries.
+
+Focus on the dramatic core of the scene, not only the surface actions.
+
+Weak description:
+"King Leodogr issues warnings to the foreigners."
+
+Strong description:
+"King Leodogr publicly restrains his anger toward the foreigners while imposing strict conditions on their stay, revealing the fragile political protection granted by Arthur."
 
 Rules:
 - Scenes must be chronological.
 - Scenes must not overlap.
 - Scenes must cover the entire chunk.
 - Use only paragraph indexes from the provided chunk.
+- Do not invent entities not present in the text.
 
 For each scene return:
 - scene_id
@@ -52,6 +67,15 @@ For each scene return:
 - description
 - start_paragraph
 - end_paragraph
+
+Scene title rules:
+- short and descriptive
+- max 6 words
+- reflect the dramatic core of the scene
+- avoid generic titles like:
+  - "The Conversation"
+  - "Planning"
+  - "The Discussion"
 
 Return ONLY valid JSON:
 

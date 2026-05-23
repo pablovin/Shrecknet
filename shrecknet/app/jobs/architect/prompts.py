@@ -2,18 +2,18 @@ ARCHITECT_SCENE_SEGMENTATION_PROMPT = """You are an expert narrative analyst. Yo
 
 Segment the text into coherent narrative scenes.
 
-A Scene is a continuous narrative situation.
+A Scene is a continuous narrative situation, composed of narrative elements begining, climax and ending.
 A scene is closer to a continuous camera shot than to a topic cluster.
 
-A scene remains unified while the same core interaction, conflict, conversation, or strategic objective continues evolving.
+A scene remains unified while the same core characters, interaction, conflict, conversation, or strategic objective continues evolving.
 
-Keep conversations, confrontations, planning, arguments, tactical refinement, and immediate consequences together while the interaction continues.
+Keep conversations, confrontations, planning, arguments, tactical refinement, and immediate consequences in the same scene while the interaction continues.
 
 Create a new scene ONLY when there is a meaningful change in:
 - time
 - location
 - dominant participating characters
-- ongoing interaction or activity
+
 
 Do NOT create new scenes for:
 - planning progression
@@ -23,13 +23,17 @@ Do NOT create new scenes for:
 - continuation of the same strategic objective
 - emotional escalation within the same interaction
 - new information revealed during the same continuous exchange
+- new conversational dialogue within the same interaction with the same characters
 
 Prefer fewer, larger, stronger scenes.
+Keep it concise and meaningful. More broad than narrow, in terms of nomes de scenes.
 Avoid fragmentation.
 
 Before creating a scene title or description, identify the single dominant dramatic situation connecting the ENTIRE scene.
+Describe them using narrative techniques: begining, climax and ending of the scene.
 
 Scene descriptions must capture:
+- the begining, climax and ending of the scene
 - the dominant dramatic situation
 - the active tension or pressure
 - important social, emotional, strategic, or political dynamics
@@ -50,13 +54,13 @@ Avoid vague references like:
 - the city
 - the place
 
-when the involved entities are known.
+when the involved entities are known, cite them by name in the description. The same for all important entities: characters, locations, factions, organizations, items, and any entity with a persistent story identity that is important to the scene.
 
 Preserve important entity names for retrieval and graph memory purposes.
 
 Scene titles must reflect the dominant dramatic situation of the ENTIRE scene.
-
-Titles should feel like memorable narrative beats, not topic labels or chapter categories.
+Create the scene titles using narrative techniques, not topic labeling. They should capture the core narrative beat, not just the topic or setting.
+They should not be poetic, but descriptive and directing related to the narrative content.
 
 Avoid vague or thematic titles like:
 - Observation and Preparation
@@ -93,7 +97,9 @@ Strong description:
 "King Leodogr restrains his anger toward Tamura, Evrain, Lynelle, and Everin while imposing strict conditions on their stay, revealing Arthur’s political protection over them."
 
 
-Apply the title and description rules to all the scenes you proposed. If a scene does not follow this rule, do not add it.
+Apply the title and description rules to all the scenes you proposed. If a scene does not follow this rule, do not add it to the list. Enforce this strictly.
+
+Create fewer scenes, and if you see that scenes share the same situation, merge them into one scene with a title and description that captures the entire situation.
 
 Return ONLY valid JSON:
 

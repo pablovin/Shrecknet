@@ -284,6 +284,9 @@ def _resolve_existing_node_by_alias(
     ontology: str | None,
     existing_nodes: list[dict[str, Any]],
 ) -> dict[str, Any] | None:
+    def _is_numeric_token(value: str) -> bool:
+        return bool(value) and value.isdigit()
+
     ontology_key = _normalize_ontology_name(ontology)
     candidates = [matched_alias, name]
     for candidate in candidates:
@@ -293,7 +296,15 @@ def _resolve_existing_node_by_alias(
         for node in existing_nodes:
             node_alias = str(node.get("alias") or "")
             node_ontology = _normalize_ontology_name(str(node.get("ontology") or ""))
-            if ontology_key and node_ontology and node_ontology != ontology_key:
+            # Some existing-node sources carry ontology ids (numeric) instead of ontology names.
+            # In that case, do not hard-filter by ontology text, or we incorrectly miss true alias matches.
+            if (
+                ontology_key
+                and node_ontology
+                and not _is_numeric_token(ontology_key)
+                and not _is_numeric_token(node_ontology)
+                and node_ontology != ontology_key
+            ):
                 continue
             node_canonical = _canonical_alias(node_alias)
             if canonical == node_canonical or _aliases_equivalent(canonical, node_canonical):
@@ -729,6 +740,17 @@ def _merge_scene_group(
         default="",
     )
 
+    source_paragraphs = sorted(
+        {
+            idx
+            for item in selected
+            for idx in range(
+                int(item.get("_absolute_start_paragraph") or item.get("start_paragraph") or 1),
+                int(item.get("_absolute_end_paragraph") or item.get("end_paragraph") or 1) + 1,
+            )
+        }
+    )
+
     return {
         "scene_id": first.get("scene_id", 0),
         "name": best_name or "Scene",
@@ -742,6 +764,7 @@ def _merge_scene_group(
             for item in selected
         ),
         "source_scene_refs": list(scene_refs),
+        "source_paragraphs": source_paragraphs,
         "text": merged_text,
     }
 
@@ -794,6 +817,9 @@ def _merge_overlapping_scene_rows(scenes: list[dict[str, Any]]) -> list[dict[str
         refs = list(previous.get("source_scene_refs") or [])
         refs.extend(ref for ref in list(scene.get("source_scene_refs") or []) if ref not in refs)
         previous["source_scene_refs"] = refs
+        prior_paragraphs = [int(v) for v in (previous.get("source_paragraphs") or [])]
+        new_paragraphs = [int(v) for v in (scene.get("source_paragraphs") or [])]
+        previous["source_paragraphs"] = sorted(set(prior_paragraphs + new_paragraphs))
 
     return merged
 
@@ -871,6 +897,8 @@ async def _run_scene_merge_phase(
                         "end_paragraph": absolute_end,
                         "name": scene.get("name"),
                         "description": scene.get("description"),
+                        "source_paragraphs": list(range(absolute_start, absolute_end + 1)),
+                        "scene_text": scene.get("text"),
                     }
                 )
                 pre_dedup_titles.append(_safe_scene_title(scene, idx))
@@ -932,6 +960,19 @@ async def _run_scene_merge_phase(
                 description=str(group.get("description") or "").strip(),
             )
             if merged:
+                provided_source_paragraphs = group.get("source_paragraphs")
+                if isinstance(provided_source_paragraphs, list):
+                    normalized_paragraphs = sorted(
+                        {
+                            int(value)
+                            for value in provided_source_paragraphs
+                            if str(value).strip().isdigit()
+                        }
+                    )
+                    if normalized_paragraphs:
+                        merged["source_paragraphs"] = normalized_paragraphs
+                        merged["start_paragraph"] = normalized_paragraphs[0]
+                        merged["end_paragraph"] = normalized_paragraphs[-1]
                 merged_scenes.append(merged)
 
         for ref in scene_by_ref:

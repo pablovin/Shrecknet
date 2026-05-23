@@ -289,7 +289,8 @@ def _build_scene_chunk(
     encoding_name: str,
 ) -> SceneChunk:
     marked = "\n".join(
-        f"[P{position}] {paragraph}" for position, paragraph in enumerate(paragraphs, start=1)
+        f"[P{position}] {paragraph}"
+        for position, paragraph in enumerate(paragraphs, start=paragraph_start)
     )
     return SceneChunk(
         chunk_index=chunk_index,
@@ -420,7 +421,7 @@ def build_scene_chunks(
         start_idx = index
 
         while index < paragraph_total:
-            marker = f"[P{len(current) + 1}] {paragraphs[index]}"
+            marker = f"[P{start_idx + len(current) + 1}] {paragraphs[index]}"
             marker_tokens = len(encoder.encode(marker))
             if current and current_tokens + marker_tokens > token_limit:
                 break
@@ -436,7 +437,8 @@ def build_scene_chunks(
             index += 1
 
         marked = "\n".join(
-            f"[P{position}] {paragraph}" for position, paragraph in enumerate(current, start=1)
+            f"[P{position}] {paragraph}"
+            for position, paragraph in enumerate(current, start=start_idx + 1)
         )
         chunks.append(
             SceneChunk(

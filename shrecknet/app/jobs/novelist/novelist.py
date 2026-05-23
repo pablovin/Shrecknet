@@ -870,20 +870,22 @@ class NovelistOrchestrator:
                         "scene_id": 0,
                         "name": f"Scene {chunk.chunk_index + 1}",
                         "description": "",
-                        "start_paragraph": 1,
-                        "end_paragraph": chunk.paragraph_count,
+                        "start_paragraph": chunk.paragraph_start,
+                        "end_paragraph": chunk.paragraph_end,
                         "text": "\n".join(
                             [
                                 f"[P{idx}] {paragraph}"
-                                for idx, paragraph in enumerate(chunk.paragraphs, start=1)
+                                for idx, paragraph in enumerate(
+                                    chunk.paragraphs, start=chunk.paragraph_start
+                                )
                             ]
                         ),
                     }
                 ]
 
             for local_scene in scenes:
-                abs_start = chunk.paragraph_start + int(local_scene.get("start_paragraph", 1)) - 1
-                abs_end = chunk.paragraph_start + int(local_scene.get("end_paragraph", 1)) - 1
+                abs_start = int(local_scene.get("start_paragraph", chunk.paragraph_start))
+                abs_end = int(local_scene.get("end_paragraph", chunk.paragraph_end))
                 segmented_scenes.append(
                     {
                         "scene_id": "",

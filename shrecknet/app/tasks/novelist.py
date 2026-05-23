@@ -8,7 +8,7 @@ from types import SimpleNamespace
 from typing import Any
 
 from app.celery_app import celery_app
-from app.core.config_store import get_settings, is_shreckllm_configured
+from app.core.config_store import LLMModelTarget, get_settings, is_shreckllm_configured
 from app.db.session import AsyncSessionMaker
 from app.integrations.llm.model_policy import ModelPolicy
 from app.integrations.llm.shreckllm_client import ShreckLLMClient
@@ -43,6 +43,23 @@ from app.utils.job_tracking import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _json_safe(value: Any) -> Any:
+    if isinstance(value, LLMModelTarget):
+        return value.model_dump()
+    if isinstance(value, dict):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, tuple):
+        return [_json_safe(item) for item in value]
+    if hasattr(value, "model_dump"):
+        try:
+            return _json_safe(value.model_dump())
+        except Exception:
+            return str(value)
+    return value
 
 
 def _clean_optional_text(value: Any) -> str:
@@ -381,12 +398,12 @@ async def _execute_run(
 
             await repo.update_status(
                 run_id,
-                artifacts={
+                artifacts=_json_safe({
                     "inputs": {
                         "previous_session_id": request_payload.get("previous_session_id"),
                         "previous_session_lookup_status": previous_session_lookup_status,
                     }
-                },
+                }),
             )
             await session.commit()
 
@@ -407,7 +424,7 @@ async def _execute_run(
                 payload = payload or {}
                 update_kwargs: dict[str, Any] = {"stage": stage}
                 if "artifacts" in payload:
-                    update_kwargs["artifacts"] = payload["artifacts"]
+                    update_kwargs["artifacts"] = _json_safe(payload["artifacts"])
                 if "draft_text" in payload:
                     update_kwargs["draft_text"] = payload["draft_text"]
                 if "critic_notes" in payload:
@@ -463,7 +480,7 @@ async def _execute_run(
                 inputs_artifact["previous_session_lookup_status"] = previous_session_lookup_status
                 result_artifacts["inputs"] = inputs_artifact
                 result["artifacts"] = result_artifacts
-                update_kwargs["artifacts"] = result_artifacts
+                update_kwargs["artifacts"] = _json_safe(result_artifacts)
 
             await repo.update_status(run_id, **update_kwargs)
             await session.commit()

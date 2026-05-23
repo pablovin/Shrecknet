@@ -37,6 +37,7 @@ from app.models.novelist import NovelistStage
 from app.schemas.novelist import NovelistRunCreate
 
 logger = logging.getLogger(__name__)
+SCENE_PIPELINE_BATCH_SIZE = 10
 
 StageCallback = Callable[[NovelistStage, dict[str, Any]], Awaitable[None]]
 ElderQueryRunner = Callable[[Agent, str], Awaitable[list[dict[str, Any]]]]
@@ -261,9 +262,37 @@ class NovelistOrchestrator:
                         )
                 return result
 
-        worker_results = await asyncio.gather(
-            *[asyncio.create_task(_worker(idx, scene)) for idx, scene in enumerate(step_1_scenes)]
-        )
+        worker_results: list[
+            tuple[
+                int,
+                dict[str, Any],
+                dict[str, Any],
+                dict[str, Any],
+                dict[str, Any],
+                list[dict[str, Any]],
+                dict[str, Any],
+                dict[str, Any],
+                str,
+                dict[str, Any],
+                list[dict[str, Any]],
+            ]
+        ] = []
+        total_scene_count = len(step_1_scenes)
+        for batch_start in range(0, total_scene_count, SCENE_PIPELINE_BATCH_SIZE):
+            batch = step_1_scenes[batch_start : batch_start + SCENE_PIPELINE_BATCH_SIZE]
+            logger.info(
+                "novelist_scene_pipeline_batch_start batch_start=%d batch_size=%d total_scenes=%d",
+                batch_start,
+                len(batch),
+                total_scene_count,
+            )
+            batch_results = await asyncio.gather(
+                *[
+                    asyncio.create_task(_worker(batch_start + idx, scene))
+                    for idx, scene in enumerate(batch)
+                ]
+            )
+            worker_results.extend(batch_results)
         worker_results.sort(key=lambda item: item[0])
 
         step_2_scene_packages = [item[1] for item in worker_results]

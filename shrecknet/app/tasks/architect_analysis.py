@@ -45,12 +45,28 @@ from app.db.session import AsyncSessionMaker
 
 logger = logging.getLogger(__name__)
 
-SCENE_ENTITY_EXTRACTION_CONCURRENCY = 10
+SCENE_ENTITY_EXTRACTION_CONCURRENCY = 8
 ENTITY_PROPOSAL_BATCH_SIZE = 3
 ENTITY_SCENE_TEXT_MAX_CHARS = 1_400
-MILESTONE_EXTRACTION_CONCURRENCY = 10
+MILESTONE_EXTRACTION_CONCURRENCY = 8
 MILESTONE_BATCH_SIZE = 5
 MILESTONE_SCENE_TEXT_MAX_CHARS = 2_400
+
+
+def _scene_entity_extraction_concurrency() -> int:
+    try:
+        configured = int(get_settings().architect_scene_entity_extraction_concurrency)
+    except Exception:
+        configured = SCENE_ENTITY_EXTRACTION_CONCURRENCY
+    return max(1, configured)
+
+
+def _milestone_extraction_concurrency() -> int:
+    try:
+        configured = int(get_settings().architect_milestone_extraction_concurrency)
+    except Exception:
+        configured = MILESTONE_EXTRACTION_CONCURRENCY
+    return max(1, configured)
 
 def _safe_scene_title(scene: dict[str, Any], fallback_index: int) -> str:
     title = str(scene.get("name") or "").strip()
@@ -716,7 +732,8 @@ async def _extract_scene_entities(
     scenes: list[dict[str, Any]],
     instructions: str | None = None,
 ) -> list[dict[str, Any]]:
-    semaphore = asyncio.Semaphore(SCENE_ENTITY_EXTRACTION_CONCURRENCY)
+    concurrency = _scene_entity_extraction_concurrency()
+    semaphore = asyncio.Semaphore(concurrency)
     existing_catalogue = _build_existing_entity_prompt_catalogue(existing_nodes)
 
     def _normalize_entities_for_scene(
@@ -1166,7 +1183,7 @@ async def _run_entity_proposal_phase(
         "scene_entity_extraction_start: run_id=%s scene_count=%d concurrency=%d",
         run_id,
         len(scene_inputs),
-        SCENE_ENTITY_EXTRACTION_CONCURRENCY,
+        _scene_entity_extraction_concurrency(),
     )
 
     started = perf_counter()
@@ -1517,14 +1534,15 @@ async def _run_milestone_proposal_phase(
     instructions: str | None = None,
 ) -> dict[str, Any]:
     started = perf_counter()
-    semaphore = asyncio.Semaphore(MILESTONE_EXTRACTION_CONCURRENCY)
+    concurrency = _milestone_extraction_concurrency()
+    semaphore = asyncio.Semaphore(concurrency)
 
     logger.info(
         "milestone_proposal_start: run_id=%s scene_count=%d batch_size=%d concurrency=%d",
         run_id,
         len(proposed_scenes),
         MILESTONE_BATCH_SIZE,
-        MILESTONE_EXTRACTION_CONCURRENCY,
+        concurrency,
     )
 
     def _scene_entity_aliases(scene: dict[str, Any]) -> list[str]:

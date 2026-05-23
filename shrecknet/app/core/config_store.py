@@ -153,6 +153,8 @@ class Settings(BaseSettings):
     shreckllm_base_url: str = "http://shreckllm:8110"
     shreckllm_request_timeout_s: float = 60.0
     shreckllm_max_retries: int = 2
+    architect_scene_entity_extraction_concurrency: int = 8
+    architect_milestone_extraction_concurrency: int = 8
     enable_ai_agents: bool = True
     # Deprecated: keep for backward compatibility with older deployments.
     openai_api_key: str = ""

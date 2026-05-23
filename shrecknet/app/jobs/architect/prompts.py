@@ -35,9 +35,9 @@ Titles must:
   - Observation and Preparation
 
 Descriptions must:
-- describe the beginning, escalation, and outcome of the scene
+- describe the beginning, escalation, and outcome of the scene. Make a long paragraph that captures the whole scene story in a concise way, and name all entities.
 - preserve the core tension and meaningful state change
-- always use named entities instead of "they", "the city", "the group", "the foreigners", "they", "the party", etc.
+- always use named entitie. NEVER use collectives as "they", "the city", "the group", "the foreigners", "they", "the party", etc.
 
 
 Weak:
@@ -216,17 +216,15 @@ Extract milestones involving:
 - threats
 - confrontations
 - discoveries
-- strategic turns
-- meaningful consequences
 
 Do NOT extract:
 - filler dialogue
 - atmosphere
 - routine movement
-- generic conversation
 - minor actions
 
-Scenes usually contain 2-5 meaningful milestones. Every scene must have at least 2 milestones. Always. Enforce that.
+Scenes must contain 2-5 meaningful milestones.
+Every scene must have at least 2 milestones. Always. Enforce that. If a scene has fewer than 2 milestones, extract more aggressively until you reach at least 2. If a scene has more than 5 milestones, prioritize the most meaningful ones and discard the rest until you have at most 5.
 
 Use ONLY entities provided for the scene.
 Descriptions and titles must always refer to entities by their exact provided name, never by vague references like "they", "the group", "the foreigners", "the party", etc.

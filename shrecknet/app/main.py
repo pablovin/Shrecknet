@@ -198,15 +198,24 @@ async def _run_llm_prewarm() -> None:
     started = asyncio.get_running_loop().time()
     settings = get_settings()
     targets: list[LLMModelTarget] = [
+        settings.model_architect_scene_chunking,
+        settings.model_architect,
         settings.model_elder,
         settings.model_librarian,
+        settings.model_novelist,
+        settings.model_novelist_draft,
     ]
     unique: dict[str, LLMModelTarget] = {}
     for target in targets:
         unique[_target_key(target)] = target
     if not unique:
         return
-    logger.info("llm_prewarm_start models=%s", list(unique.keys()))
+    logger.info(
+        "llm_prewarm_start configured_targets=%d unique_targets=%d models=%s",
+        len(targets),
+        len(unique),
+        list(unique.keys()),
+    )
     client = ShreckLLMClient(
         base_url=settings.shreckllm_base_url,
         timeout=max(12.0, settings.shreckllm_request_timeout_s),

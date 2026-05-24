@@ -21,6 +21,12 @@
       "base_url": "http://ollama:11434",
       "api_key": null
     },
+    "ollama_cloud": {
+      "default_model": "gemma4:31b-cloud",
+      "models": ["gemma4:31b-cloud"],
+      "base_url": "https://ollama.com",
+      "api_key": ""
+    },
     "openai": {
       "default_model": "gpt-5-nano",
       "models": ["gpt-5-nano", "gpt-5", "gpt-4o-mini"],

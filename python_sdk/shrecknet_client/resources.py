@@ -313,6 +313,17 @@ class ShreckLLMAPI:
     async def validate_anthropic(self) -> ProviderValidation:
         return ProviderValidation.model_validate(await self._llm_request("GET", "/providers/anthropic/validate"))
 
+    async def validate_ollama(self) -> ProviderValidation:
+        return ProviderValidation.model_validate(await self._llm_request("GET", "/providers/ollama/validate"))
+
+    async def validate_ollama_cloud(self) -> ProviderValidation:
+        return ProviderValidation.model_validate(await self._llm_request("GET", "/providers/ollama_cloud/validate"))
+
+    async def validate_provider(self, provider_id: str) -> ProviderValidation:
+        return ProviderValidation.model_validate(
+            await self._llm_request("GET", f"/providers/{provider_id}/validate")
+        )
+
     async def add_provider_model(self, provider_id: str, model: str) -> dict[str, Any]:
         return await self._llm_request("POST", f"/config/providers/{provider_id}/models", json={"model": model})
 
@@ -330,14 +341,15 @@ class ShreckLLMAPI:
         statuses: list[ProviderStatus] = []
         models_payload = await self.models()
         provider_models = models_payload.get("providers", {}) if isinstance(models_payload, dict) else {}
+        if not isinstance(provider_models, dict):
+            provider_models = {}
 
-        for provider_id in ("openai", "anthropic"):
-            validator = getattr(self, f"validate_{provider_id}")
-            info = await validator()
-            models = provider_models.get(provider_id, {}).get("models", []) if isinstance(provider_models, dict) else []
+        for provider_id in provider_models.keys():
+            info = await self.validate_provider(str(provider_id))
+            models = provider_models.get(provider_id, {}).get("models", [])
             statuses.append(
                 ProviderStatus(
-                    provider_id=provider_id,
+                    provider_id=str(provider_id),
                     enabled=bool(info.valid),
                     valid=info.valid,
                     configured=info.configured,

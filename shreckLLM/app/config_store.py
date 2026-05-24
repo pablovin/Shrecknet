@@ -14,6 +14,7 @@ from app.config import Settings, get_settings
 CONFIG_TABLE = "config_settings"
 MIGRATION_MODELS_V1_KEY = "migration_provider_models_v1_applied"
 MIGRATION_OPENAI_MODELS_V2_KEY = "migration_openai_models_v2_applied"
+MIGRATION_BOOTSTRAP_PROVIDERS_V3_KEY = "migration_bootstrap_providers_v3_applied"
 
 _cache: "RuntimeConfig | None" = None
 _lock = threading.Lock()
@@ -300,6 +301,70 @@ def load_runtime_config() -> RuntimeConfig:
             )
             conn.commit()
             merged = {**updated_payload, MIGRATION_OPENAI_MODELS_V2_KEY: True}
+
+        bootstrap_providers_migration_applied = bool(current.get(MIGRATION_BOOTSTRAP_PROVIDERS_V3_KEY))
+        if not bootstrap_providers_migration_applied:
+            runtime = RuntimeConfig(**merged)
+            providers = dict(runtime.provider_defaults)
+            changed = False
+
+            for provider_id, bootstrap_defaults in defaults.get("provider_defaults", {}).items():
+                if provider_id in providers or not isinstance(bootstrap_defaults, dict):
+                    continue
+                incoming_default = str(bootstrap_defaults.get("default_model") or "").strip()
+                incoming_models = bootstrap_defaults.get("models")
+                incoming_models_list = (
+                    [m for m in incoming_models if isinstance(m, str) and m.strip()]
+                    if isinstance(incoming_models, list)
+                    else []
+                )
+                if not incoming_default:
+                    continue
+                providers[provider_id] = ProviderDefaults(
+                    default_model=incoming_default,
+                    kind=str(bootstrap_defaults.get("kind") or "").strip() or ("local" if provider_id == "ollama" else "cloud"),
+                    auth_strategy=str(bootstrap_defaults.get("auth_strategy") or "").strip() or ("none" if provider_id == "ollama" else "api_key"),
+                    healthcheck_path=bootstrap_defaults.get("healthcheck_path") if isinstance(bootstrap_defaults.get("healthcheck_path"), str) or bootstrap_defaults.get("healthcheck_path") is None else None,
+                    models=incoming_models_list or [incoming_default],
+                    base_url=bootstrap_defaults.get("base_url"),
+                    api_key=bootstrap_defaults.get("api_key"),
+                )
+                changed = True
+
+            updated_payload = RuntimeConfig(
+                default_provider_id=runtime.default_provider_id,
+                provider_defaults=providers,
+                memory_ttl_seconds=runtime.memory_ttl_seconds,
+                memory_max_messages=runtime.memory_max_messages,
+                max_concurrent_requests=runtime.max_concurrent_requests,
+                request_timeout_seconds=runtime.request_timeout_seconds,
+                max_queue_wait_seconds=runtime.max_queue_wait_seconds,
+            ).model_dump()
+
+            ts = _now()
+            if changed:
+                conn.executemany(
+                    f"""
+                    INSERT INTO {CONFIG_TABLE} (key, value, updated_at)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(key) DO UPDATE SET
+                      value=excluded.value,
+                      updated_at=excluded.updated_at
+                    """,
+                    [(k, _serialize(v), ts) for k, v in updated_payload.items()],
+                )
+            conn.execute(
+                f"""
+                INSERT INTO {CONFIG_TABLE} (key, value, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(key) DO UPDATE SET
+                  value=excluded.value,
+                  updated_at=excluded.updated_at
+                """,
+                (MIGRATION_BOOTSTRAP_PROVIDERS_V3_KEY, _serialize(True), ts),
+            )
+            conn.commit()
+            merged = {**updated_payload, MIGRATION_BOOTSTRAP_PROVIDERS_V3_KEY: True}
     finally:
         conn.close()
 

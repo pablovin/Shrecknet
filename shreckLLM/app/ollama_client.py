@@ -15,7 +15,8 @@ from app.schemas import ChatMessage
 
 class OllamaClient:
     provider_id = "ollama"
-    def __init__(self, *, base_url: str, timeout_s: float, keep_alive: str | None = None) -> None:
+    def __init__(self, *, base_url: str, timeout_s: float, keep_alive: str | None = None, provider_id: str = "ollama") -> None:
+        self.provider_id = provider_id.strip() or "ollama"
         self.base_url = base_url.rstrip("/")
         self.timeout_s = float(timeout_s)
         self.keep_alive = keep_alive.strip() if isinstance(keep_alive, str) and keep_alive.strip() else None

@@ -37,6 +37,7 @@ class ChatService:
         )
         self.registry = ProviderRegistry()
         self._ollama: OllamaClient | None = None
+        self._ollama_cloud: OllamaClient | None = None
         self._openai: OpenAIClient | None = None
         self._anthropic: AnthropicClient | None = None
         self._bind_providers()
@@ -56,6 +57,18 @@ class ChatService:
             self.registry.register(self._ollama)
         else:
             self._ollama = None
+
+        ollama_cloud_cfg = provider_defaults.get("ollama_cloud")
+        if ollama_cloud_cfg is not None:
+            self._ollama_cloud = OllamaClient(
+                base_url=ollama_cloud_cfg.base_url or "https://ollama.com",
+                timeout_s=self._runtime.request_timeout_seconds,
+                keep_alive=None,
+                provider_id="ollama_cloud",
+            )
+            self.registry.register(self._ollama_cloud)
+        else:
+            self._ollama_cloud = None
 
         openai_cfg = provider_defaults.get("openai")
         if openai_cfg is not None:
@@ -83,6 +96,8 @@ class ChatService:
         closers = [self.redis.aclose()]
         if self._ollama is not None:
             closers.append(self._ollama.aclose())
+        if self._ollama_cloud is not None:
+            closers.append(self._ollama_cloud.aclose())
         if self._openai is not None:
             closers.append(self._openai.aclose())
         if self._anthropic is not None:
@@ -94,6 +109,8 @@ class ChatService:
         closers = []
         if self._ollama is not None:
             closers.append(self._ollama.aclose())
+        if self._ollama_cloud is not None:
+            closers.append(self._ollama_cloud.aclose())
         if self._openai is not None:
             closers.append(self._openai.aclose())
         if self._anthropic is not None:

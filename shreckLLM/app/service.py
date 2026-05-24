@@ -23,6 +23,18 @@ from app.schemas import ChatMessage, ChatRequest, ChatResponse, ChatUsage, Servi
 logger = logging.getLogger(__name__)
 
 
+def _ollama_cloud_model_variants(model: str) -> set[str]:
+    cleaned = model.strip()
+    if not cleaned:
+        return set()
+    variants = {cleaned}
+    if cleaned.endswith("-cloud"):
+        variants.add(cleaned.removesuffix("-cloud"))
+    else:
+        variants.add(f"{cleaned}-cloud")
+    return variants
+
+
 class ChatService:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
@@ -222,7 +234,12 @@ class ChatService:
         model_statuses: list[dict[str, Any]] = []
         discovered_set = set(discovered_models)
         for model in configured_models:
-            available = True if not discovered_models else model in discovered_set
+            if not discovered_models:
+                available = True
+            elif provider_key == "ollama_cloud":
+                available = any(variant in discovered_set for variant in _ollama_cloud_model_variants(model))
+            else:
+                available = model in discovered_set
             model_statuses.append(
                 {
                     "model": model,

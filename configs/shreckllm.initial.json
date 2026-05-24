@@ -22,8 +22,8 @@
       "api_key": null
     },
     "ollama_cloud": {
-      "default_model": "gemma4:31b-cloud",
-      "models": ["gemma4:31b-cloud"],
+      "default_model": "gemma4:31b",
+      "models": ["gemma4:31b"],
       "base_url": "https://ollama.com",
       "api_key": ""
     },

@@ -16,8 +16,8 @@
   "data_dir": "/app/databases",
   "bootstrap_provider_defaults": {
     "ollama": {
-      "default_model": "gemma4:e4b",
-      "models": ["gemma4:e4b"],
+      "default_model": "gemma4:e2b",
+      "models": ["gemma4:e2b"],
       "base_url": "http://ollama:11434",
       "api_key": null
     },

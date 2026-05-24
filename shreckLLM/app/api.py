@@ -294,6 +294,77 @@ async def delete_anthropic_token(
     return {"stored": False, "anthropic": validation}
 
 
+@router.put("/config/ollama-cloud-token", status_code=status.HTTP_200_OK)
+async def put_ollama_cloud_token(
+    payload: OpenAITokenUpdateRequest,
+    service: ChatService = Depends(get_service),
+    _user=Depends(get_admin_or_world_builder),
+) -> dict[str, object]:
+    config = service._runtime
+    providers = config.provider_defaults.copy()
+    current = providers.get("ollama_cloud")
+    if current is None:
+        current = ProviderDefaults(
+            kind="cloud",
+            auth_strategy="api_key",
+            default_model="gemma4:31b-cloud",
+            models=["gemma4:31b-cloud"],
+            base_url="https://ollama.com",
+            api_key=payload.api_key,
+        )
+    else:
+        current = ProviderDefaults(
+            kind=current.kind,
+            auth_strategy=current.auth_strategy,
+            healthcheck_path=current.healthcheck_path,
+            default_model=current.default_model,
+            models=current.models,
+            base_url=current.base_url,
+            api_key=payload.api_key,
+        )
+    providers["ollama_cloud"] = current
+    update_runtime_config({"provider_defaults": providers})
+    reload_runtime_config()
+    await service.refresh_runtime()
+    validation = await service.provider_validation_status("ollama_cloud")
+    return {"stored": True, "ollama_cloud": validation}
+
+
+@router.delete("/config/ollama-cloud-token", status_code=status.HTTP_200_OK)
+async def delete_ollama_cloud_token(
+    service: ChatService = Depends(get_service),
+    _user=Depends(get_admin_or_world_builder),
+) -> dict[str, object]:
+    config = service._runtime
+    providers = config.provider_defaults.copy()
+    current = providers.get("ollama_cloud")
+    if current is None:
+        current = ProviderDefaults(
+            kind="cloud",
+            auth_strategy="api_key",
+            default_model="gemma4:31b-cloud",
+            models=["gemma4:31b-cloud"],
+            base_url="https://ollama.com",
+            api_key="",
+        )
+    else:
+        current = ProviderDefaults(
+            kind=current.kind,
+            auth_strategy=current.auth_strategy,
+            healthcheck_path=current.healthcheck_path,
+            default_model=current.default_model,
+            models=current.models,
+            base_url=current.base_url,
+            api_key="",
+        )
+    providers["ollama_cloud"] = current
+    update_runtime_config({"provider_defaults": providers})
+    reload_runtime_config()
+    await service.refresh_runtime()
+    validation = await service.provider_validation_status("ollama_cloud")
+    return {"stored": False, "ollama_cloud": validation}
+
+
 @router.get(
     "/providers/anthropic/validate",
     response_model=AnthropicValidationResponse,

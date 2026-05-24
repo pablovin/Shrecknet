@@ -65,6 +65,7 @@ class ChatService:
                 base_url=ollama_cfg.base_url or "http://localhost:11434",
                 timeout_s=self._runtime.request_timeout_seconds,
                 keep_alive=self.settings.ollama_keep_alive,
+                api_key=ollama_cfg.api_key,
             )
             self.registry.register(self._ollama)
         else:
@@ -77,6 +78,7 @@ class ChatService:
                 timeout_s=self._runtime.request_timeout_seconds,
                 keep_alive=None,
                 provider_id="ollama_cloud",
+                api_key=ollama_cloud_cfg.api_key,
             )
             self.registry.register(self._ollama_cloud)
         else:

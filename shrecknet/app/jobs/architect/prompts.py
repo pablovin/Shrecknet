@@ -25,6 +25,13 @@ Avoid fragmentation.
 
 Scene titles and descriptions must reflect the dominant dramatic situation of the ENTIRE scene, not individual conversational beats.
 
+For each scene:
+- start_paragraph MUST be copied from a [P<number>] marker in the input.
+- end_paragraph MUST be copied from a [P<number>] marker in the input.
+- Do NOT use chunk-local paragraph numbers.
+- Do NOT omit paragraph fields.
+- Do NOT invent entities.
+
 Titles must:
 - be concrete and descriptive
 - capture conflict, pressure, decisions, or strategic intent
@@ -45,6 +52,18 @@ Weak:
 
 Strong:
 "Tamura, Evrain, Lynelle, and Everin discuss how to manipulate Hold’s expectations while maintaining leverage over Leodogr and the bishop."
+
+
+CRITICAL OUTPUT RULE:
+Every scene MUST include:
+- scene_id
+- name
+- description
+- start_paragraph
+- end_paragraph
+
+If a scene does not have start_paragraph and end_paragraph, the output is invalid.
+
 
 Return ONLY valid RFC8259 JSON.
 

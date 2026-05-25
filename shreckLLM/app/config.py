@@ -62,8 +62,8 @@ class Settings(BaseSettings):
         "ollama_cloud": {
             "kind": "cloud",
             "auth_strategy": "api_key",
-            "default_model": "gemma4:31b-cloud",
-            "models": ["gemma4:31b-cloud"],
+            "default_model": "gemma4:31b",
+            "models": ["gemma4:31b", "gemma4:31b-cloud"],
             "base_url": "https://ollama.com",
             "api_key": "",
         },

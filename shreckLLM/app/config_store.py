@@ -15,6 +15,7 @@ CONFIG_TABLE = "config_settings"
 MIGRATION_MODELS_V1_KEY = "migration_provider_models_v1_applied"
 MIGRATION_OPENAI_MODELS_V2_KEY = "migration_openai_models_v2_applied"
 MIGRATION_BOOTSTRAP_PROVIDERS_V3_KEY = "migration_bootstrap_providers_v3_applied"
+MIGRATION_OLLAMA_CLOUD_MODELS_V4_KEY = "migration_ollama_cloud_models_v4_applied"
 
 _cache: "RuntimeConfig | None" = None
 _lock = threading.Lock()
@@ -365,6 +366,72 @@ def load_runtime_config() -> RuntimeConfig:
             )
             conn.commit()
             merged = {**updated_payload, MIGRATION_BOOTSTRAP_PROVIDERS_V3_KEY: True}
+
+        ollama_cloud_models_migration_applied = bool(current.get(MIGRATION_OLLAMA_CLOUD_MODELS_V4_KEY))
+        if not ollama_cloud_models_migration_applied:
+            runtime = RuntimeConfig(**merged)
+            providers = dict(runtime.provider_defaults)
+            changed = False
+
+            cfg = providers.get("ollama_cloud")
+            if cfg is not None:
+                required_models = ["gemma4:31b", "gemma4:31b-cloud"]
+                merged_models: list[str] = []
+                for model in [*cfg.models, *required_models]:
+                    cleaned = model.strip() if isinstance(model, str) else ""
+                    if cleaned and cleaned not in merged_models:
+                        merged_models.append(cleaned)
+                default_model = cfg.default_model.strip() if isinstance(cfg.default_model, str) else ""
+                if default_model not in {"gemma4:31b", "gemma4:31b-cloud"}:
+                    default_model = "gemma4:31b"
+                if default_model not in merged_models:
+                    merged_models.insert(0, default_model)
+                if merged_models != cfg.models or default_model != cfg.default_model:
+                    providers["ollama_cloud"] = ProviderDefaults(
+                        default_model=default_model,
+                        kind=cfg.kind,
+                        auth_strategy=cfg.auth_strategy,
+                        healthcheck_path=cfg.healthcheck_path,
+                        models=merged_models,
+                        base_url=cfg.base_url,
+                        api_key=cfg.api_key,
+                    )
+                    changed = True
+
+            updated_payload = RuntimeConfig(
+                default_provider_id=runtime.default_provider_id,
+                provider_defaults=providers,
+                memory_ttl_seconds=runtime.memory_ttl_seconds,
+                memory_max_messages=runtime.memory_max_messages,
+                max_concurrent_requests=runtime.max_concurrent_requests,
+                request_timeout_seconds=runtime.request_timeout_seconds,
+                max_queue_wait_seconds=runtime.max_queue_wait_seconds,
+            ).model_dump()
+
+            ts = _now()
+            if changed:
+                conn.executemany(
+                    f"""
+                    INSERT INTO {CONFIG_TABLE} (key, value, updated_at)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(key) DO UPDATE SET
+                      value=excluded.value,
+                      updated_at=excluded.updated_at
+                    """,
+                    [(k, _serialize(v), ts) for k, v in updated_payload.items()],
+                )
+            conn.execute(
+                f"""
+                INSERT INTO {CONFIG_TABLE} (key, value, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(key) DO UPDATE SET
+                  value=excluded.value,
+                  updated_at=excluded.updated_at
+                """,
+                (MIGRATION_OLLAMA_CLOUD_MODELS_V4_KEY, _serialize(True), ts),
+            )
+            conn.commit()
+            merged = {**updated_payload, MIGRATION_OLLAMA_CLOUD_MODELS_V4_KEY: True}
     finally:
         conn.close()
 

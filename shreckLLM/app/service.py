@@ -359,22 +359,25 @@ class ChatService:
         if self._ollama is None:
             print("[SHRECKLLM_PREWARM] step=skipped reason=ollama_provider_not_bound")
             return
-        cfg = self._runtime.provider_defaults.get("ollama")
-        if cfg is None or not cfg.default_model:
+        # Intentionally source prewarm target from bootstrap settings (seed/env),
+        # not runtime DB config, to keep startup deterministic across deployments.
+        bootstrap_ollama = self.settings.bootstrap_provider_defaults.get("ollama", {})
+        bootstrap_model = str(bootstrap_ollama.get("default_model") or "").strip()
+        if not bootstrap_model:
             print("[SHRECKLLM_PREWARM] step=skipped reason=missing_default_model")
             return
-        print(f"[SHRECKLLM_PREWARM] step=start model={cfg.default_model} keep_alive={self.settings.ollama_keep_alive}")
+        print(f"[SHRECKLLM_PREWARM] step=start model={bootstrap_model} keep_alive={self.settings.ollama_keep_alive}")
         try:
             await self._ollama.chat(
-                model=cfg.default_model,
+                model=bootstrap_model,
                 messages=[ChatMessage(role="user", content="ping")],
                 temperature=0.0,
             )
-            print(f"[SHRECKLLM_PREWARM] step=done model={cfg.default_model} keep_alive={self.settings.ollama_keep_alive}")
-            logger.info("[SHRECKLLM] ollama_prewarm_done model=%s keep_alive=%s", cfg.default_model, self.settings.ollama_keep_alive)
+            print(f"[SHRECKLLM_PREWARM] step=done model={bootstrap_model} keep_alive={self.settings.ollama_keep_alive}")
+            logger.info("[SHRECKLLM] ollama_prewarm_done model=%s keep_alive=%s", bootstrap_model, self.settings.ollama_keep_alive)
         except Exception as exc:
-            print(f"[SHRECKLLM_PREWARM] step=failed model={cfg.default_model} error={exc}")
-            logger.warning("[SHRECKLLM] ollama_prewarm_failed model=%s error=%s", cfg.default_model, exc)
+            print(f"[SHRECKLLM_PREWARM] step=failed model={bootstrap_model} error={exc}")
+            logger.warning("[SHRECKLLM] ollama_prewarm_failed model=%s error=%s", bootstrap_model, exc)
 
     async def chat(self, request: ChatRequest) -> ChatResponse:
         start = time.monotonic()

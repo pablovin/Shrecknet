@@ -59,12 +59,16 @@
 - `model_librarian`
 - `model_novelist`
 - `model_novelist_draft`
+- `novelist_scene_pipeline_batch_size`
+- `novelist_scene_pipeline_max_concurrency`
 - `neo4j_database`
 - `neo4j_password`
 - `neo4j_uri`
 - `neo4j_user`
 - `novelist_elder_query_concurrency`
 - `novelist_elder_query_timeout_s`
+- `novelist_scene_pipeline_batch_size`
+- `novelist_scene_pipeline_max_concurrency`
 - `old_database_url`
 - `openai_api_key`
 - `shreckllm_max_retries`
@@ -139,6 +143,8 @@
 | `model_elder` | llm_target | no | no | no | no | yes | hot | Provider/model target for elder responses. |
 | `model_novelist` | llm_target | no | no | no | no | yes | hot | Provider/model target for novelist. |
 | `model_novelist_draft` | llm_target | no | no | no | no | yes | hot | Provider/model target for novelist draft mode. |
+| `novelist_scene_pipeline_batch_size` | integer | no | no | no | no | yes | hot | Novelist per-run scene batch size for steps 2-5 fanout. |
+| `novelist_scene_pipeline_max_concurrency` | integer | no | no | no | no | yes | hot | Novelist max parallel scene pipelines per run. |
 | `model_librarian` | llm_target | no | no | no | no | yes | hot | Provider/model target for librarian. |
 | `default_top_k` | integer | no | no | no | no | yes | hot | Default retrieval top-k. |
 | `embedding_model_id` | string | no | no | no | no | yes | hot | Embedding model identifier. |

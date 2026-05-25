@@ -83,6 +83,8 @@
   "embedding_runtime_fail_open_health": true,
   "embedding_chunk_size": 900,
   "embedding_chunk_overlap": 150,
+  "novelist_scene_pipeline_batch_size": 4,
+  "novelist_scene_pipeline_max_concurrency": 4,
   "novelist_elder_query_concurrency": 1,
   "novelist_elder_query_timeout_s": 75,
   "event_publisher_mode": "logging",

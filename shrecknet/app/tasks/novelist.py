@@ -374,7 +374,8 @@ async def _execute_run(
             orchestrator = NovelistOrchestrator(
                 llm_client=llm_client,
                 model_policy=model_policy,
-                max_concurrency=4,
+                max_concurrency=settings.novelist_scene_pipeline_max_concurrency,
+                scene_pipeline_batch_size=settings.novelist_scene_pipeline_batch_size,
                 elder_query_concurrency=settings.novelist_elder_query_concurrency,
                 elder_query_timeout_s=settings.novelist_elder_query_timeout_s,
                 elder_query_runner=elder_query_runner,

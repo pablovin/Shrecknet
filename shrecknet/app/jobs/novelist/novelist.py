@@ -37,7 +37,7 @@ from app.models.novelist import NovelistStage
 from app.schemas.novelist import NovelistRunCreate
 
 logger = logging.getLogger(__name__)
-SCENE_PIPELINE_BATCH_SIZE = 10
+SCENE_PIPELINE_BATCH_SIZE_DEFAULT = 10
 
 StageCallback = Callable[[NovelistStage, dict[str, Any]], Awaitable[None]]
 ElderQueryRunner = Callable[[Agent, str], Awaitable[list[dict[str, Any]]]]
@@ -60,6 +60,7 @@ class NovelistOrchestrator:
         llm_client: ShreckLLMClient,
         model_policy: ModelPolicy,
         max_concurrency: int = 10,
+        scene_pipeline_batch_size: int = SCENE_PIPELINE_BATCH_SIZE_DEFAULT,
         elder_query_concurrency: int = 1,
         elder_query_timeout_s: float = 75.0,
         elder_query_runner: ElderQueryRunner | None = None,
@@ -70,6 +71,7 @@ class NovelistOrchestrator:
         self.draft_model = getattr(model_policy, "model_novelist_draft", None)
         self.novelist_model = getattr(model_policy, "model_novelist", None)
         self.max_concurrency = max(1, min(10, max_concurrency))
+        self.scene_pipeline_batch_size = max(1, min(50, int(scene_pipeline_batch_size)))
         self._elder_query_concurrency = max(1, int(elder_query_concurrency))
         self._elder_query_timeout_s = max(1.0, float(elder_query_timeout_s))
         self._elder_query_semaphore = asyncio.Semaphore(self._elder_query_concurrency)
@@ -193,7 +195,7 @@ class NovelistOrchestrator:
         step_3_completed = 0
         step_4_completed = 0
         step_5_completed = 0
-        worker_sem = asyncio.Semaphore(10)
+        worker_sem = asyncio.Semaphore(self.max_concurrency)
         progress_lock = asyncio.Lock()
 
         async def _worker(index: int, scene: dict[str, Any]) -> tuple[
@@ -278,8 +280,8 @@ class NovelistOrchestrator:
             ]
         ] = []
         total_scene_count = len(step_1_scenes)
-        for batch_start in range(0, total_scene_count, SCENE_PIPELINE_BATCH_SIZE):
-            batch = step_1_scenes[batch_start : batch_start + SCENE_PIPELINE_BATCH_SIZE]
+        for batch_start in range(0, total_scene_count, self.scene_pipeline_batch_size):
+            batch = step_1_scenes[batch_start : batch_start + self.scene_pipeline_batch_size]
             logger.info(
                 "novelist_scene_pipeline_batch_start batch_start=%d batch_size=%d total_scenes=%d",
                 batch_start,

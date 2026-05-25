@@ -26,6 +26,7 @@ class ShreckLLMClient:
         self.base_url = base_url.rstrip("/")
         self.timeout = float(timeout)
         self.max_retries = max(0, int(max_retries))
+        self._max_backoff_s = 20.0
         self._http = httpx.AsyncClient(base_url=self.base_url, timeout=self.timeout)
         self._usage_events: list[dict[str, Any]] = []
 
@@ -99,7 +100,12 @@ class ShreckLLMClient:
                         exc_info=True,
                     )
                     raise
-                await asyncio.sleep(min(8.0, (2 ** (attempt - 1)) + random.uniform(0.1, 0.6)))
+                await asyncio.sleep(
+                    min(
+                        self._max_backoff_s,
+                        (2 ** attempt) + random.uniform(0.25, 1.25),
+                    )
+                )
 
         raise RuntimeError("Unreachable retry loop state in ShreckLLMClient.chat")
 

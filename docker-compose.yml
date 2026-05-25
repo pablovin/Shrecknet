@@ -427,12 +427,12 @@ services:
       test:
         - CMD-SHELL
         - >-
-          python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8110/health', timeout=5).read()"
+          python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8110/health', timeout=15).read()"
           || exit 1
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 30s
+      interval: 15s
+      timeout: 20s
+      retries: 20
+      start_period: 120s
 
   shrecknet_ready:
     image: alpine:3.20

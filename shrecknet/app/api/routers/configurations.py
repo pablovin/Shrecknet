@@ -222,6 +222,50 @@ FIELD_UI_META: dict[str, dict[str, Any]] = {
     "jwt_public_key_pem": {"type": "string", "multiline": True, "help": "Public key PEM."},
 }
 
+# Settings that should not be editable from the frontend runtime config UI because they
+# are bootstrap/infrastructure concerns and typically require service re-provisioning.
+FRONTEND_LOCKED_FIELDS: set[str] = {
+    "cors_allow_origins",
+    "cors_allow_origin_regex",
+    "cors_allow_credentials",
+    "cors_allow_methods",
+    "cors_allow_headers",
+    "cors_max_age",
+    "database_url",
+    "jobs_database_url",
+    "neo4j_uri",
+    "neo4j_user",
+    "neo4j_password",
+    "neo4j_database",
+    "celery_broker_url",
+    "celery_result_backend",
+    "jwt_private_key_pem",
+    "jwt_public_key_pem",
+}
+
+RESTART_REQUIRED_FIELDS: set[str] = {
+    field
+    for field, meta in FIELD_UI_META.items()
+    if bool(meta.get("requires_restart"))
+}
+RESTART_REQUIRED_FIELDS.update(
+    {
+        "shreckllm_base_url",
+        "neo4j_uri",
+        "neo4j_user",
+        "neo4j_password",
+        "neo4j_database",
+        "celery_broker_url",
+        "celery_result_backend",
+        "jwt_issuer",
+        "jwt_audience",
+        "jwt_kid",
+        "jwt_access_token_expiry_minutes",
+        "jwt_private_key_pem",
+        "jwt_public_key_pem",
+    }
+)
+
 
 def _validate_updates(payload: dict[str, Any]) -> dict[str, Any]:
     allowed = set(Settings.model_fields)
@@ -328,10 +372,48 @@ def get_config_schema() -> dict[str, Any]:
     for group in SETTINGS_GROUPS:
         grouped_fields.update(group["fields"])
     ungrouped = sorted(all_fields - grouped_fields)
+    editable_fields = all_fields - FRONTEND_LOCKED_FIELDS
+    runtime_changeable_fields = sorted(editable_fields - RESTART_REQUIRED_FIELDS)
+    restart_required_fields = sorted(editable_fields & RESTART_REQUIRED_FIELDS)
+
+    groups_v2 = [
+        {
+            "id": "runtime_changeable",
+            "label": "Runtime Changeable",
+            "fields": runtime_changeable_fields,
+            "change_impact": "hot",
+        },
+        {
+            "id": "restart_required",
+            "label": "Requires Restart",
+            "fields": restart_required_fields,
+            "change_impact": "service_restart",
+        },
+    ]
+
+    field_meta = dict(FIELD_UI_META)
+    for field in runtime_changeable_fields:
+        row = dict(field_meta.get(field, {}))
+        row["change_impact"] = "hot"
+        row.setdefault("frontend_editable", True)
+        field_meta[field] = row
+    for field in restart_required_fields:
+        row = dict(field_meta.get(field, {}))
+        row["change_impact"] = "service_restart"
+        row.setdefault("frontend_editable", True)
+        field_meta[field] = row
+    for field in sorted(FRONTEND_LOCKED_FIELDS & all_fields):
+        row = dict(field_meta.get(field, {}))
+        row["frontend_editable"] = False
+        row.setdefault("change_impact", "locked")
+        field_meta[field] = row
+
     return {
-        "version": 1,
+        "version": 2,
         "groups": SETTINGS_GROUPS,
-        "field_meta": FIELD_UI_META,
+        "groups_v2": groups_v2,
+        "field_meta": field_meta,
+        "frontend_locked_fields": sorted(FRONTEND_LOCKED_FIELDS & all_fields),
         "ungrouped_fields": ungrouped,
     }
 

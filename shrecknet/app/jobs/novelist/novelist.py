@@ -1579,7 +1579,7 @@ class NovelistOrchestrator:
         for item in items:
             if not isinstance(item, dict):
                 continue
-            title = str(item.get("title") or item.get("label") or "").strip()
+            title = str(item.get("title") or item.get("label") or "")
             description = str(item.get("description") or "").strip()
             boundary_type = str(item.get("boundary_type") or "none").strip().lower()
             if boundary_type in {"start"}:
@@ -1666,7 +1666,10 @@ class NovelistOrchestrator:
             scene_id = str(scene.get("scene_id") or f"scene-{idx:03d}").strip()
             if not scene_id:
                 scene_id = f"scene-{idx:03d}"
-            name = str(scene.get("name") or scene_id).strip() or scene_id
+            name_raw = scene.get("name")
+            name = str(name_raw) if name_raw is not None else scene_id
+            if not str(name).strip():
+                name = scene_id
             out.append(
                 {
                     "scene_id": scene_id,
@@ -1675,7 +1678,7 @@ class NovelistOrchestrator:
                     "source_rawtext": str(
                         scene.get("source_rawtext") or scene.get("raw_scene_text") or ""
                     ).strip(),
-                    "milestones": self._normalize_text_list(scene.get("milestones", []), max_items=8),
+                    "milestones": self._normalize_title_list(scene.get("milestones", []), max_items=8),
                     "related_entities": self._normalize_related_entities(
                         scene.get("related_entities", []),
                     ),
@@ -2059,6 +2062,25 @@ class NovelistOrchestrator:
         return out
 
     @staticmethod
+    def _normalize_title_list(values: Any, *, max_items: int, max_chars: int = 220) -> list[str]:
+        if not isinstance(values, list):
+            return []
+        out: list[str] = []
+        seen: set[str] = set()
+        for item in values:
+            text = str(item if item is not None else "")
+            if not text.strip():
+                continue
+            key = text.strip().lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(text[:max_chars] if max_chars > 0 else text)
+            if len(out) >= max_items:
+                break
+        return out
+
+    @staticmethod
     def _parse_json_object(raw: str) -> Any:
         try:
             return json.loads(raw)
@@ -2285,10 +2307,10 @@ class NovelistOrchestrator:
     def _build_scene_brief_text(self, scene: dict[str, Any]) -> str:
         summary = self._clip_text(str(scene.get("scene_summary") or ""), max_chars=500)
         goal = self._clip_text(str(scene.get("scene_goal") or ""), max_chars=350)
-        milestones = self._normalize_text_list(scene.get("milestones", []), max_items=5, max_chars=140)
+        milestones = self._normalize_title_list(scene.get("milestones", []), max_items=5, max_chars=140)
         entities = self._normalize_text_list(scene.get("related_entities", []), max_items=8, max_chars=80)
         lines = [
-            f"Scene name: {str(scene.get('name') or scene.get('scene_id') or 'Scene').strip()}",
+            f"Scene name: {str(scene.get('name') or scene.get('scene_id') or 'Scene')}",
             f"Scene summary: {summary or '(none)'}",
             f"Scene goal: {goal or '(none)'}",
             f"Milestones: {', '.join(milestones) if milestones else '(none)'}",

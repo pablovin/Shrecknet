@@ -69,8 +69,8 @@ def _milestone_extraction_concurrency() -> int:
     return max(1, configured)
 
 def _safe_scene_title(scene: dict[str, Any], fallback_index: int) -> str:
-    title = str(scene.get("name") or "").strip()
-    return title or f"Scene {fallback_index + 1}"
+    title = str(scene.get("name") or "")
+    return title if title.strip() else f"Scene {fallback_index + 1}"
 
 
 def _format_exception_message(exc: Exception) -> str:
@@ -630,6 +630,9 @@ async def _load_existing_nodes(
                 top_k=batch_size,
             )
             for result in results:
+                node_label = str(getattr(result, "node_label", "") or "").strip()
+                if node_label and node_label != "EntityInstance":
+                    continue
                 node_id = str(result.node_id or "").strip()
                 alias = str(result.node_alias or "").strip()
                 if not node_id or not alias:
@@ -1291,9 +1294,9 @@ def _coerce_milestone_title(
     boundary_type: str,
     index: int,
 ) -> str:
-    title = _safe_json_text(raw_title)
+    title = str(raw_title or "")
     if title and not re.fullmatch(r"milestone\s*\d+", title, flags=re.IGNORECASE):
-        return " ".join(title.split()[:6])
+        return title
 
     # Derive a short descriptive title from the milestone description.
     words = re.findall(r"[A-Za-z0-9']+", description)

@@ -593,7 +593,7 @@ async def _execute_generation(
 
                 payload = SceneCreate(
                     id=scene_id,
-                    name=str(scene.get("effective_name") or scene.get("scene_name") or "Scene").strip(),
+                    name=str(scene.get("effective_name") or scene.get("scene_name") or "Scene"),
                     description=(scene.get("scene_description") or scene.get("scene_text") or "").strip()[:2000],
                     created_by_type="agent",
                     created_by_author=author_id,
@@ -711,7 +711,7 @@ async def _execute_generation(
 
                     payload = MilestoneCreate(
                         id=milestone_id,
-                        name=(milestone.get("title") or milestone.get("label") or "Milestone").strip(),
+                        name=str(milestone.get("title") or milestone.get("label") or "Milestone"),
                         description=(milestone.get("description") or "").strip(),
                         created_by_type="agent",
                         created_by_author=author_id,
@@ -1090,7 +1090,7 @@ async def _apply_enrichment_updates(
                 scenes_for_context.append(
                     {
                         "scene_ref": scene_ref,
-                        "title": str(scene.get("effective_name") or scene.get("scene_name") or "Scene").strip(),
+                        "title": str(scene.get("effective_name") or scene.get("scene_name") or "Scene"),
                         "description": str(scene.get("scene_description") or scene.get("scene_text") or "").strip(),
                         "related_entities": [
                             _entity_ref(target_id)
@@ -1127,7 +1127,7 @@ async def _apply_enrichment_updates(
                     {
                         "scene_ref": scene_ref,
                         "milestone_ref": str(milestone.get("milestone_ref") or ""),
-                        "title": str(milestone.get("title") or milestone.get("label") or "Milestone").strip(),
+                        "title": str(milestone.get("title") or milestone.get("label") or "Milestone"),
                         "description": str(milestone.get("description") or "").strip(),
                         "related_entities": [
                             _entity_ref(item)
@@ -1804,7 +1804,9 @@ def _canonicalize_scene_proposals(raw: list[dict[str, Any]]) -> list[dict[str, A
                 "updates": updates,
                 "effective_status": _norm(item.get("status")),
                 "effective_name": (
-                    str(updates.get("name") or item.get("scene_name") or "Scene").strip() or "Scene"
+                    str(updates.get("name") or item.get("scene_name") or "Scene")
+                    if str(updates.get("name") or item.get("scene_name") or "Scene").strip()
+                    else "Scene"
                 ),
                 "effective_related_to": _effective_scene_related({**item, "updates": updates}),
             }
@@ -1829,7 +1831,9 @@ def _canonicalize_milestone_groups(raw: list[dict[str, Any]]) -> list[dict[str, 
                     "updates": updates,
                     "effective_status": _norm(milestone.get("status")),
                     "effective_name": (
-                        str(milestone.get("title") or milestone.get("label") or "Milestone").strip() or "Milestone"
+                        str(milestone.get("title") or milestone.get("label") or "Milestone")
+                        if str(milestone.get("title") or milestone.get("label") or "Milestone").strip()
+                        else "Milestone"
                     ),
                     "effective_related_to": _effective_milestone_related(
                         {**milestone, "updates": updates}

@@ -236,6 +236,17 @@ async def _execute_run(
                 ontology_entities: list[Any] = []
                 for ontology_id in agent_ontology_ids:
                     ontology_entities.extend(await ontology_repo.list_entities(ontology_id))
+                ontology_entities = [
+                    definition
+                    for definition in ontology_entities
+                    if bool(getattr(definition, "auto_generatable", True))
+                ]
+                allowed_ontology_map = _build_allowed_ontology_map(ontology_entities)
+                allowed_ontology_names = {
+                    str(value).strip()
+                    for value in allowed_ontology_map.values()
+                    if str(value).strip()
+                }
 
                 ontology_definitions = _format_ontology_definitions_from_entities(
                     ontology_entities
@@ -271,7 +282,7 @@ async def _execute_run(
                     llm_client=llm_client,
                     model=architect_model,
                     ontology_definitions=ontology_definitions,
-                    allowed_ontology_names=_build_allowed_ontology_map(ontology_entities),
+                    allowed_ontology_names=allowed_ontology_map,
                     existing_nodes=existing_nodes,
                     chunk_results=chunking_phase["chunk_results"],
                     instructions=instructions,
@@ -308,12 +319,14 @@ async def _execute_run(
                     scene_key = str(scene_ref or "").strip()
                     if not scene_key:
                         continue
-                    milestone_titles_by_scene[scene_key] = [
-                        str(item.get("title") or item.get("label") or "").strip()
-                        for item in (milestones or [])
-                        if isinstance(item, dict)
-                        and str(item.get("title") or item.get("label") or "").strip()
-                    ]
+                    titles: list[str] = []
+                    for item in (milestones or []):
+                        if not isinstance(item, dict):
+                            continue
+                        raw_title = str(item.get("title") or item.get("label") or "")
+                        if raw_title.strip():
+                            titles.append(raw_title)
+                    milestone_titles_by_scene[scene_key] = titles
 
                 scenes: list[dict[str, Any]] = []
                 for order, scene in enumerate(scene_phase.get("proposed_scenes") or [], start=1):
@@ -322,6 +335,7 @@ async def _execute_run(
                         str(item.get("alias") or item.get("canonical") or "").strip()
                         for item in (scene.get("related_to") or [])
                         if isinstance(item, dict)
+                        and str(item.get("ontology") or "").strip() in allowed_ontology_names
                         and str(item.get("alias") or item.get("canonical") or "").strip()
                     ]
                     # Preserve order and de-duplicate aliases.
@@ -337,7 +351,7 @@ async def _execute_run(
                     scenes.append(
                         {
                             "scene_id": f"scene-{order:03d}",
-                            "name": str(scene.get("scene_name") or f"Scene {order}").strip(),
+                            "name": str(scene.get("scene_name") or f"Scene {order}"),
                             "scene_summary": str(scene.get("scene_description") or "").strip(),
                             "raw_scene_text": str(scene.get("scene_text") or "").strip(),
                             "source_paragraphs": [],

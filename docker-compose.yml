@@ -322,10 +322,10 @@ services:
       NEO4J_AUTH: "${SHRECKNET_NEO4J_USER:-neo4j}/${SHRECKNET_NEO4J_PASSWORD:-VeryStrongPass123}"
     healthcheck:
       test: ["CMD-SHELL", "cypher-shell -u neo4j -p \"$${SHRECKNET_NEO4J_PASSWORD:-VeryStrongPass123}\" 'RETURN 1'"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 40s
+      interval: 15s
+      timeout: 20s
+      retries: 20
+      start_period: 120s
 
   # Main FastAPI service
   shrecknet_api:

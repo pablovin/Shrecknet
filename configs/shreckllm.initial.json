@@ -46,5 +46,5 @@
   "bootstrap_request_timeout_seconds": 180.0,
   "bootstrap_max_queue_wait_seconds": 10.0,
   "ollama_keep_alive": "30m",
-  "ollama_prewarm_on_startup": true
+  "ollama_prewarm_on_startup": false
 }

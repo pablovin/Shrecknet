@@ -599,17 +599,8 @@ class NovelistOrchestrator:
         prompt_payload: dict[str, Any],
         response_payload: dict[str, Any],
     ) -> None:
-        base_dir = self._resolve_local_tests_output_dir(
-            run_date=self._sanitize_debug_component(self._debug_run_date)
-        )
-        prompt_path = base_dir / f"{step}_prompt.json"
-        response_path = base_dir / f"{step}_response.json"
-        prompt_path.write_text(
-            json.dumps(prompt_payload, ensure_ascii=True, indent=2), encoding="utf-8"
-        )
-        response_path.write_text(
-            json.dumps(response_payload, ensure_ascii=True, indent=2), encoding="utf-8"
-        )
+        # File-based debug dumps intentionally disabled; keep job-level artifacts only.
+        return
 
     def _resolve_local_tests_output_dir(self, *, run_date: str) -> Path:
         if self._debug_output_dir is not None:

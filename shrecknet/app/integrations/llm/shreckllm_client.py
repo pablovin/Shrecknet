@@ -90,8 +90,8 @@ class ShreckLLMClient:
                 retry_after_s: float | None = None
                 if isinstance(exc, httpx.HTTPStatusError):
                     try:
-                        payload = exc.response.json()
-                        detail = payload.get("detail") if isinstance(payload, dict) else None
+                        error_payload = exc.response.json()
+                        detail = error_payload.get("detail") if isinstance(error_payload, dict) else None
                         if isinstance(detail, dict):
                             value = detail.get("retry_after_seconds")
                             if isinstance(value, (int, float)):

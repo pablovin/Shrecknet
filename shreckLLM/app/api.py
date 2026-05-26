@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
-from app.auth import get_admin_or_world_builder
+from app.auth import get_admin_or_world_builder, get_admin_or_world_builder_or_internal
 from app.config_store import RuntimeConfigUpdate, ProviderDefaults, reload_runtime_config, update_runtime_config
 from app.errors import (
     DependencyUnavailableError,
@@ -173,7 +173,7 @@ async def get_chat_job_result(job_id: str, service: ChatService = Depends(get_se
 @router.get("/config", status_code=status.HTTP_200_OK)
 async def get_config(
     service: ChatService = Depends(get_service),
-    _user=Depends(get_admin_or_world_builder),
+    _user=Depends(get_admin_or_world_builder_or_internal),
 ) -> dict[str, object]:
     return service.config_public_view()
 

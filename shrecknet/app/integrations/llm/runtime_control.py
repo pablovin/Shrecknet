@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from typing import Any
 
 import httpx
@@ -10,8 +11,10 @@ from app.core.config_store import LLMModelTarget, Settings
 async def fetch_shreckllm_runtime(settings: Settings) -> dict[str, Any]:
     base_url = str(settings.shreckllm_base_url or "").rstrip("/")
     timeout = float(settings.shreckllm_request_timeout_s or 10.0)
+    token = str(os.getenv("SHRECKLLM_INTERNAL_SERVICE_TOKEN") or "").strip()
+    headers = {"Authorization": f"Bearer {token}"} if token else None
     async with httpx.AsyncClient(base_url=base_url, timeout=timeout) as client:
-        response = await client.get("/config")
+        response = await client.get("/config", headers=headers)
         response.raise_for_status()
         payload = response.json() if response.content else {}
         return payload if isinstance(payload, dict) else {}

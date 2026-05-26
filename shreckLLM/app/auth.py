@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 import httpx
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 
 from app.config import get_settings
@@ -32,6 +32,24 @@ async def get_authenticated_user(token: str = Depends(oauth2_scheme)) -> dict[st
 
 
 async def get_admin_or_world_builder(user: dict[str, Any] = Depends(get_authenticated_user)) -> dict[str, Any]:
+    role = str(user.get("role") or "").strip().lower()
+    if role not in {"admin", "world_builder"}:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin or world_builder role required",
+        )
+    return user
+
+
+async def get_admin_or_world_builder_or_internal(
+    request: Request,
+    token: str = Depends(oauth2_scheme),
+) -> dict[str, Any]:
+    settings = get_settings()
+    internal_token = str(settings.internal_service_token or "").strip()
+    if internal_token and token == internal_token:
+        return {"id": "internal_service", "role": "internal_service"}
+    user = await _fetch_shrecknet_user(token)
     role = str(user.get("role") or "").strip().lower()
     if role not in {"admin", "world_builder"}:
         raise HTTPException(

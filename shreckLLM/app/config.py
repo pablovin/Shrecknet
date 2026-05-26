@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     # Infrastructure/static wiring
     redis_url: str = "redis://localhost:6379/2"
     shrecknet_api_base_url: str = "http://localhost:8100"
+    internal_service_token: str = ""
     cors_allow_origins: list[str] = [
         "http://localhost:3000",
         "http://127.0.0.1:3000",

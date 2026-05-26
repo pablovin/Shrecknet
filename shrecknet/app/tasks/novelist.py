@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 from types import SimpleNamespace
 from typing import Any
 
@@ -11,6 +12,7 @@ from app.celery_app import celery_app
 from app.core.config_store import LLMModelTarget, get_settings, is_shreckllm_configured
 from app.db.session import AsyncSessionMaker
 from app.integrations.llm.model_policy import ModelPolicy
+from app.integrations.llm.runtime_control import fetch_shreckllm_runtime, resolve_provider_default_target
 from app.integrations.llm.shreckllm_client import ShreckLLMClient
 from app.integrations.retrieval.neo4j_retriever import Neo4jGraphRetriever
 from app.graph.neo4j import get_driver
@@ -43,6 +45,34 @@ from app.utils.job_tracking import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _derive_novelist_runtime_controls(runtime_config: dict[str, Any], provider_id: str) -> dict[str, int]:
+    global_max = int(runtime_config.get("max_concurrent_requests") or 0)
+    if global_max <= 0:
+        raise RuntimeError("Invalid shreckLLM runtime max_concurrent_requests")
+    effective_capacity = global_max
+    provider_limits = runtime_config.get("provider_limits")
+    if isinstance(provider_limits, dict):
+        provider_payload = provider_limits.get(provider_id)
+        if isinstance(provider_payload, dict):
+            provider_max = int(provider_payload.get("max_concurrent") or 0)
+            if provider_max > 0:
+                effective_capacity = min(effective_capacity, provider_max)
+    effective_capacity = max(1, effective_capacity)
+    scene_pipeline_max_concurrency = max(1, math.floor(effective_capacity * 0.5))
+    scene_pipeline_batch_size = max(1, min(4, scene_pipeline_max_concurrency))
+    elder_query_concurrency = 1
+    timeout_raw = runtime_config.get("request_timeout_seconds")
+    timeout_s = int(float(timeout_raw)) if isinstance(timeout_raw, (int, float)) else 75
+    elder_query_timeout_s = min(timeout_s, 75)
+    return {
+        "scene_pipeline_max_concurrency": scene_pipeline_max_concurrency,
+        "scene_pipeline_batch_size": scene_pipeline_batch_size,
+        "elder_query_concurrency": elder_query_concurrency,
+        "elder_query_timeout_s": elder_query_timeout_s,
+        "effective_capacity": effective_capacity,
+    }
 
 
 def _json_safe(value: Any) -> Any:
@@ -162,18 +192,21 @@ async def _execute_run(
         llm_client = ShreckLLMClient(base_url=settings.shreckllm_base_url, timeout=settings.shreckllm_request_timeout_s, max_retries=settings.shreckllm_max_retries)
         try:
             await update_job_progress(job_id, 0.05, {"status": "preparing orchestrator"})
+            runtime_config = await fetch_shreckllm_runtime(settings)
+            default_target = resolve_provider_default_target(runtime_config)
+            runtime_controls = _derive_novelist_runtime_controls(runtime_config, default_target.provider)
             model_policy = ModelPolicy(
-                default_model=settings.model_novelist,
-                architect_extract_model=settings.model_architect,
+                default_model=default_target,
+                architect_extract_model=default_target,
             )
             # Attach novelist-specific model preferences for orchestrator
-            setattr(model_policy, "model_novelist_draft", settings.model_novelist_draft)
+            setattr(model_policy, "model_novelist_draft", default_target)
             setattr(
                 model_policy,
                 "model_novelist",
-                settings.model_novelist,
+                default_target,
             )
-            setattr(model_policy, "model_elder", settings.model_elder)
+            setattr(model_policy, "model_elder", default_target)
 
             async def elder_query_runner(agent: Agent, query: str) -> list[dict[str, Any]]:
                 # Elder context is an optional flavor-only layer: never plot authority.
@@ -268,8 +301,8 @@ async def _execute_run(
                 )
                 pseudo_instance = SimpleNamespace(entities=[source_entity])
 
-                scene_chunking_model = settings.model_architect_scene_chunking
-                architect_model = settings.model_architect
+                scene_chunking_model = default_target
+                architect_model = default_target
                 chunking_phase = await _run_scene_chunking_phase(
                     run_id=run_id,
                     ontology_instance=pseudo_instance,
@@ -388,10 +421,10 @@ async def _execute_run(
             orchestrator = NovelistOrchestrator(
                 llm_client=llm_client,
                 model_policy=model_policy,
-                max_concurrency=settings.novelist_scene_pipeline_max_concurrency,
-                scene_pipeline_batch_size=settings.novelist_scene_pipeline_batch_size,
-                elder_query_concurrency=settings.novelist_elder_query_concurrency,
-                elder_query_timeout_s=settings.novelist_elder_query_timeout_s,
+                max_concurrency=runtime_controls["scene_pipeline_max_concurrency"],
+                scene_pipeline_batch_size=runtime_controls["scene_pipeline_batch_size"],
+                elder_query_concurrency=runtime_controls["elder_query_concurrency"],
+                elder_query_timeout_s=runtime_controls["elder_query_timeout_s"],
                 elder_query_runner=elder_query_runner,
                 architect_scaffolding_runner=architect_scaffolding_runner,
             )

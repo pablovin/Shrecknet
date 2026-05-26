@@ -35,7 +35,7 @@
 ### Architect Agent
 - `id`: `architect`
 - `property`: `runtime`
-- `fields`: `model_architect_scene_chunking`, `model_architect`, `architect_scene_entity_extraction_concurrency`, `architect_milestone_extraction_concurrency`
+- `fields`: `model_architect_scene_chunking`, `model_architect`
 
 ### Elder Agent
 - `id`: `elder`
@@ -45,7 +45,7 @@
 ### Novelist Agent
 - `id`: `novelist`
 - `property`: `runtime`
-- `fields`: `model_novelist`, `model_novelist_draft`, `novelist_scene_pipeline_batch_size`, `novelist_scene_pipeline_max_concurrency`, `novelist_elder_query_concurrency`, `novelist_elder_query_timeout_s`
+- `fields`: `model_novelist`, `model_novelist_draft`
 
 ### Librarian Agent
 - `id`: `librarian`

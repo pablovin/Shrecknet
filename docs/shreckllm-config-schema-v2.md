@@ -1,29 +1,19 @@
 # shreckLLM Config Schema v2 Contract
 
-## Frontend Instructions
-1. Call `GET /config/schema` and render `groups`.
-2. Use `field_meta` per field (`type`, `help`, `change_impact`, `frontend_editable`).
-3. Hide or disable fields where `frontend_editable=false`.
-4. Badge fields by `change_impact` (`hot`, `service_restart`, `locked`).
-5. Save only editable changed fields to `PUT /config`.
-6. Use dedicated token endpoints for provider API keys.
+## Current Runtime Contract
+This document reflects the **current** `GET /config/schema` behavior implemented by shreckLLM.
 
 ## Groups Returned by `GET /config/schema`
 
-### Providers
-- `id`: `providers`
+### Provider Assignment
+- `id`: `provider_assignment`
 - `property`: `runtime`
-- `fields`: `provider_defaults`, `provider_limits`
+- `fields`: `provider_defaults`
 
-### Memory
-- `id`: `memory`
+### Expert Overrides
+- `id`: `expert_overrides`
 - `property`: `runtime`
-- `fields`: `memory_ttl_seconds`, `memory_max_messages`
-
-### Concurrency
-- `id`: `concurrency`
-- `property`: `runtime`
-- `fields`: `max_concurrent_requests`, `request_timeout_seconds`, `max_queue_wait_seconds`
+- `fields`: `provider_limits`, `memory_ttl_seconds`, `memory_max_messages`, `max_concurrent_requests`, `request_timeout_seconds`, `max_queue_wait_seconds`, `chat_job_queue_max_size`, `chat_job_result_ttl_seconds`, `chat_job_poll_default_interval_ms`, `chat_job_max_retries`
 
 ## Field Metadata
 - `provider_defaults`: `type=provider_map`, `category=Providers`
@@ -33,10 +23,15 @@
 - `max_concurrent_requests`: `type=integer`, `category=Concurrency`
 - `request_timeout_seconds`: `type=number`, `category=Concurrency`
 - `max_queue_wait_seconds`: `type=number`, `category=Concurrency`
+- `chat_job_queue_max_size`: `type=integer`, `category=Concurrency`
+- `chat_job_result_ttl_seconds`: `type=integer`, `category=Concurrency`
+- `chat_job_poll_default_interval_ms`: `type=integer`, `category=Concurrency`
+- `chat_job_max_retries`: `type=integer`, `category=Concurrency`
 
-All fields currently default to:
-- `change_impact`: `hot`
-- `frontend_editable`: `true`
+Defaults applied by schema generation:
+- all fields default to `change_impact=hot`
+- expert override fields default to `frontend_editable=false`
+- expert override fields default to `derived_from_profile=true`
 
 `default_provider_id` is intentionally hidden from schema/UI.
 

@@ -153,10 +153,6 @@ class Settings(BaseSettings):
     shreckllm_base_url: str = "http://shreckllm:8110"
     shreckllm_request_timeout_s: float = 60.0
     shreckllm_max_retries: int = 2
-    novelist_scene_pipeline_batch_size: int = 4
-    novelist_scene_pipeline_max_concurrency: int = 4
-    architect_scene_entity_extraction_concurrency: int = 8
-    architect_milestone_extraction_concurrency: int = 8
     enable_ai_agents: bool = True
     model_architect_scene_chunking: LLMModelTarget = Field(
         default_factory=lambda: LLMModelTarget(provider="openai", name="gpt-5")
@@ -200,8 +196,6 @@ class Settings(BaseSettings):
     embedding_runtime_fail_open_health: bool = True
     embedding_chunk_size: int = 900
     embedding_chunk_overlap: int = 150
-    novelist_elder_query_concurrency: int = 1
-    novelist_elder_query_timeout_s: int = 75
     event_publisher_mode: str = "logging"
     event_webhook_url: str | None = None
 

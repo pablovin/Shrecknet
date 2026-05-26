@@ -12,6 +12,7 @@ from app.core.config_store import get_settings, is_shreckllm_configured
 from app.graphrag.embedding_runtime import EmbeddingRuntimeError
 from app.graph.neo4j import get_driver
 from app.integrations.llm.model_policy import ModelPolicy
+from app.integrations.llm.runtime_control import fetch_shreckllm_runtime, resolve_provider_default_target
 from app.integrations.llm.shreckllm_client import ShreckLLMClient
 from app.integrations.retrieval.neo4j_retriever import Neo4jGraphRetriever
 from app.jobs.elder.elder import ElderOrchestrator
@@ -55,11 +56,13 @@ async def get_model_policy() -> ModelPolicy:
     """Dependency to get model policy."""
     settings = get_settings()
 
+    runtime_config = await fetch_shreckllm_runtime(settings)
+    default_target = resolve_provider_default_target(runtime_config)
     model_policy = ModelPolicy(
-        default_model=settings.model_elder,
-        architect_extract_model=settings.model_architect,
+        default_model=default_target,
+        architect_extract_model=default_target,
     )
-    setattr(model_policy, "model_elder", settings.model_elder)
+    setattr(model_policy, "model_elder", default_target)
     return model_policy
 
 

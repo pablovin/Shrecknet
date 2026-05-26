@@ -83,6 +83,10 @@ class Settings(BaseSettings):
             "requests_per_second": 0.0,
         }
     }
+    bootstrap_chat_job_queue_max_size: int = 256
+    bootstrap_chat_job_result_ttl_seconds: int = 900
+    bootstrap_chat_job_poll_default_interval_ms: int = 250
+    bootstrap_chat_job_max_retries: int = 2
     ollama_keep_alive: str = "30m"
     ollama_prewarm_on_startup: bool = True
 

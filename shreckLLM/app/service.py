@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 import time
+from uuid import uuid4
 from typing import Any
 
 import httpx
@@ -11,14 +13,22 @@ from redis.asyncio import Redis
 from app.concurrency import RequestLimiter
 from app.config import Settings
 from app.config_store import RuntimeConfig, get_runtime_config
-from app.errors import DependencyUnavailableError, InvalidModelError, ProviderOverloadedError
+from app.errors import DependencyUnavailableError, InvalidModelError, ProviderOverloadedError, ProviderTimeoutError
 from app.locking import ConversationLockManager
 from app.memory import RedisConversationMemory
 from app.anthropic_client import AnthropicClient
 from app.ollama_client import OllamaClient
 from app.openai_client import OpenAIClient
 from app.provider_registry import ProviderRegistry
-from app.schemas import ChatMessage, ChatRequest, ChatResponse, ChatUsage, ServiceStatusResponse
+from app.schemas import (
+    ChatJobCreateResponse,
+    ChatJobStatusResponse,
+    ChatMessage,
+    ChatRequest,
+    ChatResponse,
+    ChatUsage,
+    ServiceStatusResponse,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +70,11 @@ class ChatService:
         self._provider_cooldown_until: dict[str, float] = {}
         self._provider_lock = asyncio.Lock()
         self._init_provider_limiters()
+        self._job_queue: asyncio.Queue[str] = asyncio.Queue(maxsize=max(1, int(self._runtime.chat_job_queue_max_size)))
+        self._chat_jobs: dict[str, dict[str, Any]] = {}
+        self._job_events: dict[str, asyncio.Event] = {}
+        self._job_worker_task: asyncio.Task[Any] | None = None
+        self._job_gc_task: asyncio.Task[Any] | None = None
 
     def _init_provider_limiters(self) -> None:
         self._provider_semaphores = {}
@@ -126,6 +141,10 @@ class ChatService:
             self._anthropic = None
 
     async def aclose(self) -> None:
+        if self._job_worker_task is not None:
+            self._job_worker_task.cancel()
+        if self._job_gc_task is not None:
+            self._job_gc_task.cancel()
         closers = [self.redis.aclose()]
         if self._ollama is not None:
             closers.append(self._ollama.aclose())
@@ -136,6 +155,10 @@ class ChatService:
         if self._anthropic is not None:
             closers.append(self._anthropic.aclose())
         await asyncio.gather(*closers, return_exceptions=True)
+        await asyncio.gather(
+            *(task for task in [self._job_worker_task, self._job_gc_task] if task is not None),
+            return_exceptions=True,
+        )
 
     async def refresh_runtime(self) -> RuntimeConfig:
         self._runtime = get_runtime_config()
@@ -159,7 +182,14 @@ class ChatService:
         self._bind_providers()
         self.limiter = RequestLimiter(max_concurrent=self._runtime.max_concurrent_requests)
         self._init_provider_limiters()
+        self._job_queue = asyncio.Queue(maxsize=max(1, int(self._runtime.chat_job_queue_max_size)))
         return self._runtime
+
+    def ensure_background_tasks(self) -> None:
+        if self._job_worker_task is None or self._job_worker_task.done():
+            self._job_worker_task = asyncio.create_task(self._job_worker_loop())
+        if self._job_gc_task is None or self._job_gc_task.done():
+            self._job_gc_task = asyncio.create_task(self._job_gc_loop())
 
     @staticmethod
     def _mask_secret(value: str | None) -> str | None:
@@ -411,31 +441,143 @@ class ChatService:
             logger.warning("[SHRECKLLM] ollama_prewarm_failed model=%s error=%s", bootstrap_model, exc)
 
     async def chat(self, request: ChatRequest) -> ChatResponse:
+        job = await self.submit_chat_job(request)
+        return await self.wait_for_chat_job_result(job.job_id, timeout_s=self._runtime.request_timeout_seconds)
+
+    async def submit_chat_job(self, request: ChatRequest) -> ChatJobCreateResponse:
+        self.ensure_background_tasks()
+        if self._job_queue.full():
+            raise ProviderOverloadedError("chat job queue full")
+        now = time.time()
+        job_id = str(uuid4())
+        self._chat_jobs[job_id] = {
+            "job_id": job_id,
+            "status": "queued",
+            "created_at": now,
+            "started_at": None,
+            "finished_at": None,
+            "expires_at": None,
+            "provider_id": None,
+            "resolved_model": None,
+            "requested_model": None,
+            "retry_count": 0,
+            "error": None,
+            "request": request,
+            "response": None,
+        }
+        self._job_events[job_id] = asyncio.Event()
+        self._job_queue.put_nowait(job_id)
+        return ChatJobCreateResponse(job_id=job_id, status="queued", created_at=now, expires_at=None)
+
+    def get_chat_job_status(self, job_id: str) -> ChatJobStatusResponse | None:
+        row = self._chat_jobs.get(job_id)
+        if row is None:
+            return None
+        return ChatJobStatusResponse(
+            job_id=job_id,
+            status=str(row.get("status") or "unknown"),
+            created_at=float(row.get("created_at") or 0.0),
+            started_at=row.get("started_at"),
+            finished_at=row.get("finished_at"),
+            expires_at=row.get("expires_at"),
+            provider_id=row.get("provider_id"),
+            resolved_model=row.get("resolved_model"),
+            requested_model=row.get("requested_model"),
+            retry_count=int(row.get("retry_count") or 0),
+            error=row.get("error"),
+        )
+
+    async def wait_for_chat_job_result(self, job_id: str, *, timeout_s: float) -> ChatResponse:
+        event = self._job_events.get(job_id)
+        if event is None:
+            raise InvalidModelError("job not found")
+        try:
+            await asyncio.wait_for(event.wait(), timeout=max(0.01, float(timeout_s)))
+        except asyncio.TimeoutError as exc:
+            raise ProviderTimeoutError(f"chat job timeout job_id={job_id}") from exc
+        row = self._chat_jobs.get(job_id)
+        if not row:
+            raise InvalidModelError("job expired")
+        status = str(row.get("status") or "")
+        if status == "succeeded" and isinstance(row.get("response"), ChatResponse):
+            return row["response"]
+        if status == "failed":
+            raise DependencyUnavailableError(str(row.get("error") or "chat job failed"))
+        raise ProviderTimeoutError(f"chat job unfinished status={status}")
+
+    async def get_chat_job_result(self, job_id: str) -> ChatResponse | None:
+        row = self._chat_jobs.get(job_id)
+        if row is None:
+            return None
+        return row.get("response") if isinstance(row.get("response"), ChatResponse) else None
+
+    async def _job_worker_loop(self) -> None:
+        while True:
+            job_id = await self._job_queue.get()
+            row = self._chat_jobs.get(job_id)
+            if row is None:
+                continue
+            row["status"] = "running"
+            row["started_at"] = time.time()
+            request = row.get("request")
+            try:
+                response = await self._execute_chat_request(request)
+                row["response"] = response
+                row["status"] = "succeeded"
+            except Exception as exc:
+                row["status"] = "failed"
+                row["error"] = str(exc)
+            finally:
+                row["finished_at"] = time.time()
+                row["expires_at"] = row["finished_at"] + max(1, int(self._runtime.chat_job_result_ttl_seconds))
+                event = self._job_events.get(job_id)
+                if event is not None:
+                    event.set()
+
+    async def _job_gc_loop(self) -> None:
+        while True:
+            await asyncio.sleep(1.0)
+            now = time.time()
+            expired = [
+                job_id
+                for job_id, row in self._chat_jobs.items()
+                if isinstance(row.get("expires_at"), (int, float)) and float(row["expires_at"]) <= now
+            ]
+            for job_id in expired:
+                self._chat_jobs.pop(job_id, None)
+                self._job_events.pop(job_id, None)
+
+    async def _execute_chat_request(self, request: ChatRequest) -> ChatResponse:
         start = time.monotonic()
-
-        async with self.limiter.slot(wait_timeout_s=self._runtime.max_queue_wait_seconds):
-            memory_applied = bool(request.use_conversation_memory and request.conversation_id)
-            if memory_applied and request.conversation_id:
-                lock = await self.locks.get_lock(request.conversation_id)
-                async with lock:
-                    return await self._chat_with_memory_lock(request, start)
-
-            result = await self._run_chat(request, history=[])
-            latency_ms = round((time.monotonic() - start) * 1000, 2)
-            resolved_model = result["resolved_model"]
-            return ChatResponse(
-                text=result["result"]["text"],
-                provider_id=result["provider_id"],
-                requested_model=result["requested_model"],
-                resolved_model=resolved_model,
-                provider_request_id=result["result"].get("provider_request_id"),
-                model=resolved_model,
-                usage=ChatUsage.model_validate(result["result"]["usage"]),
-                latency_ms=latency_ms,
-                conversation_id=request.conversation_id,
-                memory_applied=False,
-                metadata=request.metadata,
-            )
+        attempts = max(1, int(self._runtime.chat_job_max_retries) + 1)
+        for attempt in range(1, attempts + 1):
+            try:
+                async with self.limiter.slot(wait_timeout_s=self._runtime.max_queue_wait_seconds):
+                    memory_applied = bool(request.use_conversation_memory and request.conversation_id)
+                    if memory_applied and request.conversation_id:
+                        lock = await self.locks.get_lock(request.conversation_id)
+                        async with lock:
+                            return await self._chat_with_memory_lock(request, start)
+                    result = await self._run_chat(request, history=[])
+                    latency_ms = round((time.monotonic() - start) * 1000, 2)
+                    resolved_model = result["resolved_model"]
+                    return ChatResponse(
+                        text=result["result"]["text"],
+                        provider_id=result["provider_id"],
+                        requested_model=result["requested_model"],
+                        resolved_model=resolved_model,
+                        provider_request_id=result["result"].get("provider_request_id"),
+                        model=resolved_model,
+                        usage=ChatUsage.model_validate(result["result"]["usage"]),
+                        latency_ms=latency_ms,
+                        conversation_id=request.conversation_id,
+                        memory_applied=False,
+                        metadata=request.metadata,
+                    )
+            except (ProviderOverloadedError, ProviderTimeoutError, DependencyUnavailableError) as exc:
+                if attempt >= attempts:
+                    raise
+                await asyncio.sleep(min(10.0, (2 ** attempt) + random.uniform(0.1, 0.8)))
 
     async def _chat_with_memory_lock(self, request: ChatRequest, start: float) -> ChatResponse:
         if not request.conversation_id:

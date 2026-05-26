@@ -17,6 +17,8 @@ from app.errors import (
 from app.schemas import (
     AnthropicTokenUpdateRequest,
     AnthropicValidationResponse,
+    ChatJobCreateResponse,
+    ChatJobStatusResponse,
     ChatRequest,
     ChatResponse,
     OpenAITokenUpdateRequest,
@@ -35,26 +37,35 @@ CONFIG_FIELD_META: dict[str, dict[str, object]] = {
     "max_concurrent_requests": {"type": "integer", "help": "Global concurrent request limit.", "category": "Concurrency"},
     "request_timeout_seconds": {"type": "number", "help": "Per-request timeout in seconds.", "category": "Concurrency"},
     "max_queue_wait_seconds": {"type": "number", "help": "Maximum queue wait before rejection.", "category": "Concurrency"},
+    "chat_job_queue_max_size": {"type": "integer", "help": "Maximum queued chat jobs.", "category": "Concurrency"},
+    "chat_job_result_ttl_seconds": {"type": "integer", "help": "How long completed chat job results are retained.", "category": "Concurrency"},
+    "chat_job_poll_default_interval_ms": {"type": "integer", "help": "Suggested polling interval for chat job status.", "category": "Concurrency"},
+    "chat_job_max_retries": {"type": "integer", "help": "Retry attempts for chat jobs on retryable provider failures.", "category": "Concurrency"},
 }
 
 CONFIG_GROUPS: list[dict[str, object]] = [
     {
-        "id": "providers",
-        "label": "Providers",
+        "id": "provider_assignment",
+        "label": "Provider Assignment",
         "property": "runtime",
-        "fields": ["provider_defaults", "provider_limits"],
+        "fields": ["provider_defaults"],
     },
     {
-        "id": "memory",
-        "label": "Memory",
+        "id": "expert_overrides",
+        "label": "Expert Overrides",
         "property": "runtime",
-        "fields": ["memory_ttl_seconds", "memory_max_messages"],
-    },
-    {
-        "id": "concurrency",
-        "label": "Concurrency",
-        "property": "runtime",
-        "fields": ["max_concurrent_requests", "request_timeout_seconds", "max_queue_wait_seconds"],
+        "fields": [
+            "provider_limits",
+            "memory_ttl_seconds",
+            "memory_max_messages",
+            "max_concurrent_requests",
+            "request_timeout_seconds",
+            "max_queue_wait_seconds",
+            "chat_job_queue_max_size",
+            "chat_job_result_ttl_seconds",
+            "chat_job_poll_default_interval_ms",
+            "chat_job_max_retries",
+        ],
     },
 ]
 
@@ -128,6 +139,37 @@ async def chat(payload: ChatRequest, service: ChatService = Depends(get_service)
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
+@router.post("/chat/jobs", response_model=ChatJobCreateResponse, status_code=status.HTTP_202_ACCEPTED)
+async def create_chat_job(payload: ChatRequest, service: ChatService = Depends(get_service)) -> ChatJobCreateResponse:
+    try:
+        return await service.submit_chat_job(payload)
+    except ProviderOverloadedError as exc:
+        raise HTTPException(status_code=429, detail={"error": str(exc), "provider_overloaded": True}) from exc
+
+
+@router.get("/chat/jobs/{job_id}", response_model=ChatJobStatusResponse, status_code=status.HTTP_200_OK)
+async def get_chat_job(job_id: str, service: ChatService = Depends(get_service)) -> ChatJobStatusResponse:
+    status_row = service.get_chat_job_status(job_id)
+    if status_row is None:
+        raise HTTPException(status_code=404, detail="chat job not found")
+    return status_row
+
+
+@router.get("/chat/jobs/{job_id}/result", response_model=ChatResponse, status_code=status.HTTP_200_OK)
+async def get_chat_job_result(job_id: str, service: ChatService = Depends(get_service)) -> ChatResponse:
+    status_row = service.get_chat_job_status(job_id)
+    if status_row is None:
+        raise HTTPException(status_code=404, detail="chat job not found")
+    if status_row.status == "succeeded":
+        result = await service.get_chat_job_result(job_id)
+        if result is None:
+            raise HTTPException(status_code=410, detail="chat job result expired")
+        return result
+    if status_row.status == "failed":
+        raise HTTPException(status_code=409, detail={"status": "failed", "error": status_row.error, "job_id": job_id})
+    raise HTTPException(status_code=409, detail={"status": status_row.status, "job_id": job_id})
+
+
 @router.get("/config", status_code=status.HTTP_200_OK)
 async def get_config(
     service: ChatService = Depends(get_service),
@@ -153,6 +195,9 @@ async def get_config_schema(
         row = dict(field_meta.get(field, {}))
         row.setdefault("change_impact", "hot")
         row.setdefault("frontend_editable", True)
+        if field in {"provider_limits", "memory_ttl_seconds", "memory_max_messages", "max_concurrent_requests", "request_timeout_seconds", "max_queue_wait_seconds", "chat_job_queue_max_size", "chat_job_result_ttl_seconds", "chat_job_poll_default_interval_ms", "chat_job_max_retries"}:
+            row.setdefault("frontend_editable", False)
+            row.setdefault("derived_from_profile", True)
         field_meta[field] = row
 
     return {

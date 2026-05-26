@@ -16,6 +16,7 @@ from app.celery_app import celery_app
 from app.core.config_store import LLMModelTarget, get_settings, is_shreckllm_configured
 from app.graph.neo4j import get_driver
 from app.integrations.llm.shreckllm_client import ShreckLLMClient
+from app.integrations.llm.runtime_control import fetch_shreckllm_runtime, resolve_effective_architect_concurrency
 from app.integrations.retrieval.neo4j_retriever import Neo4jGraphRetriever
 from app.jobs.architect import prompts as architect_prompts
 from app.jobs.architect.schemas import (
@@ -45,28 +46,23 @@ from app.db.session import AsyncSessionMaker
 
 logger = logging.getLogger(__name__)
 
-SCENE_ENTITY_EXTRACTION_CONCURRENCY = 8
 ENTITY_PROPOSAL_BATCH_SIZE = 3
 ENTITY_SCENE_TEXT_MAX_CHARS = 1_400
-MILESTONE_EXTRACTION_CONCURRENCY = 8
 MILESTONE_BATCH_SIZE = 5
 MILESTONE_SCENE_TEXT_MAX_CHARS = 2_400
+_ARCHITECT_CONCURRENCY: int | None = None
 
 
 def _scene_entity_extraction_concurrency() -> int:
-    try:
-        configured = int(get_settings().architect_scene_entity_extraction_concurrency)
-    except Exception:
-        configured = SCENE_ENTITY_EXTRACTION_CONCURRENCY
-    return max(1, configured)
+    if _ARCHITECT_CONCURRENCY is None:
+        raise RuntimeError("Architect concurrency not initialized from shreckLLM runtime")
+    return _ARCHITECT_CONCURRENCY
 
 
 def _milestone_extraction_concurrency() -> int:
-    try:
-        configured = int(get_settings().architect_milestone_extraction_concurrency)
-    except Exception:
-        configured = MILESTONE_EXTRACTION_CONCURRENCY
-    return max(1, configured)
+    if _ARCHITECT_CONCURRENCY is None:
+        raise RuntimeError("Architect concurrency not initialized from shreckLLM runtime")
+    return _ARCHITECT_CONCURRENCY
 
 def _safe_scene_title(scene: dict[str, Any], fallback_index: int) -> str:
     title = str(scene.get("name") or "")
@@ -1931,6 +1927,12 @@ async def _execute_architect_pipeline(
             await session.flush()
 
             llm_client = ShreckLLMClient(base_url=settings.shreckllm_base_url, timeout=settings.shreckllm_request_timeout_s, max_retries=settings.shreckllm_max_retries)
+            runtime_config = await fetch_shreckllm_runtime(settings)
+            global _ARCHITECT_CONCURRENCY
+            _ARCHITECT_CONCURRENCY = resolve_effective_architect_concurrency(
+                runtime_config,
+                provider_id=settings.model_architect.provider,
+            )
 
             existing_nodes = _existing_nodes_from_instance(ontology_instance)
             # Always merge with graph catalogue so reconciliation sees persisted entities

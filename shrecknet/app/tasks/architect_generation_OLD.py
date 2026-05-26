@@ -13,6 +13,7 @@ from app.core.config_store import get_settings, is_shreckllm_configured
 from app.db.session import AsyncSessionMaker
 from app.graph.neo4j import get_driver
 from app.integrations.llm.model_policy import ModelPolicy
+from app.integrations.llm.runtime_control import fetch_shreckllm_runtime, resolve_provider_default_target
 from app.integrations.llm.shreckllm_client import ShreckLLMClient
 from app.jobs.architect.entity_generator import EntityGenerator
 from app.models.architect import ArchitectProposalStatus, ArchitectProposalType
@@ -322,9 +323,11 @@ async def _execute_entity_generation(
                     update_proposals.append(proposal_dict)
 
             # Initialize LLM client and generator
+            runtime_config = await fetch_shreckllm_runtime(settings)
+            default_target = resolve_provider_default_target(runtime_config)
             model_policy = ModelPolicy(
-                default_model=settings.model_architect,
-                architect_extract_model=settings.model_architect,
+                default_model=default_target,
+                architect_extract_model=default_target,
             )
             llm_client = ShreckLLMClient(base_url=settings.shreckllm_base_url, timeout=settings.shreckllm_request_timeout_s, max_retries=settings.shreckllm_max_retries)
             generator = EntityGenerator(llm_client, model_policy)

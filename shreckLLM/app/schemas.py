@@ -41,6 +41,27 @@ class ChatResponse(BaseModel):
     metadata: dict[str, Any] | None = None
 
 
+class ChatJobCreateResponse(BaseModel):
+    job_id: str
+    status: str
+    created_at: float
+    expires_at: float | None = None
+
+
+class ChatJobStatusResponse(BaseModel):
+    job_id: str
+    status: str
+    created_at: float
+    started_at: float | None = None
+    finished_at: float | None = None
+    expires_at: float | None = None
+    provider_id: str | None = None
+    resolved_model: str | None = None
+    requested_model: str | None = None
+    retry_count: int = 0
+    error: str | None = None
+
+
 class ServiceStatusResponse(BaseModel):
     service: str = "shreckLLM"
     default_provider_id: str

@@ -40,6 +40,10 @@ class RuntimeConfig(BaseModel):
     request_timeout_seconds: float = 180.0
     max_queue_wait_seconds: float = 10.0
     provider_limits: dict[str, dict[str, float | int]] = Field(default_factory=dict)
+    chat_job_queue_max_size: int = 256
+    chat_job_result_ttl_seconds: int = 900
+    chat_job_poll_default_interval_ms: int = 250
+    chat_job_max_retries: int = 2
 
 
 class RuntimeConfigUpdate(BaseModel):
@@ -51,6 +55,10 @@ class RuntimeConfigUpdate(BaseModel):
     request_timeout_seconds: float | None = None
     max_queue_wait_seconds: float | None = None
     provider_limits: dict[str, dict[str, float | int]] | None = None
+    chat_job_queue_max_size: int | None = None
+    chat_job_result_ttl_seconds: int | None = None
+    chat_job_poll_default_interval_ms: int | None = None
+    chat_job_max_retries: int | None = None
 
 
 def _db_path() -> Path:
@@ -129,6 +137,10 @@ def _bootstrap_defaults(settings: Settings) -> RuntimeConfig:
         request_timeout_seconds=settings.bootstrap_request_timeout_seconds,
         max_queue_wait_seconds=settings.bootstrap_max_queue_wait_seconds,
         provider_limits=getattr(settings, "bootstrap_provider_limits", {}) or {},
+        chat_job_queue_max_size=getattr(settings, "bootstrap_chat_job_queue_max_size", 256),
+        chat_job_result_ttl_seconds=getattr(settings, "bootstrap_chat_job_result_ttl_seconds", 900),
+        chat_job_poll_default_interval_ms=getattr(settings, "bootstrap_chat_job_poll_default_interval_ms", 250),
+        chat_job_max_retries=getattr(settings, "bootstrap_chat_job_max_retries", 2),
     )
 
 

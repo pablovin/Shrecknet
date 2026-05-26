@@ -15,6 +15,7 @@ from app.service import ChatService
 async def lifespan(app: FastAPI):
     settings = get_settings()
     app.state.chat_service = ChatService(settings)
+    app.state.chat_service.ensure_background_tasks()
     try:
         await app.state.chat_service.prewarm_local_llm()
         yield

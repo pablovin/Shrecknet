@@ -63,9 +63,12 @@ class ShreckLLMClient:
         attempts = self.max_retries + 1
         for attempt in range(1, attempts + 1):
             try:
-                response = await self._http.post("/chat", json=payload)
-                response.raise_for_status()
-                data = response.json()
+                job_id = await self.submit_chat_job(payload)
+                data = await self.wait_for_chat_job(
+                    job_id,
+                    timeout_s=self.timeout,
+                    poll_interval_s=0.25,
+                )
                 text = str(data.get("text") or "")
                 usage = data.get("usage") if isinstance(data.get("usage"), dict) else {}
                 resolved_model = str(data.get("resolved_model") or target.name)
@@ -115,6 +118,37 @@ class ShreckLLMClient:
                 await asyncio.sleep(max(base_sleep, retry_after_s or 0.0))
 
         raise RuntimeError("Unreachable retry loop state in ShreckLLMClient.chat")
+
+    async def submit_chat_job(self, payload: dict[str, Any]) -> str:
+        response = await self._http.post("/chat/jobs", json=payload)
+        response.raise_for_status()
+        data = response.json() if response.content else {}
+        job_id = str(data.get("job_id") or "").strip()
+        if not job_id:
+            raise RuntimeError("missing chat job_id from shreckLLM")
+        return job_id
+
+    async def wait_for_chat_job(
+        self,
+        job_id: str,
+        *,
+        timeout_s: float,
+        poll_interval_s: float,
+    ) -> dict[str, Any]:
+        start = asyncio.get_running_loop().time()
+        interval = max(0.05, float(poll_interval_s))
+        while True:
+            result = await self._http.get(f"/chat/jobs/{job_id}/result")
+            if result.status_code == 200:
+                data = result.json() if result.content else {}
+                return data if isinstance(data, dict) else {}
+            if result.status_code in (404, 410):
+                result.raise_for_status()
+            if result.status_code not in (409,):
+                result.raise_for_status()
+            if (asyncio.get_running_loop().time() - start) >= max(0.1, float(timeout_s)):
+                raise httpx.TimeoutException(f"chat job timed out job_id={job_id}")
+            await asyncio.sleep(interval)
 
     def _coerce_target(self, model: str | LLMModelTarget) -> LLMModelTarget:
         if isinstance(model, LLMModelTarget):

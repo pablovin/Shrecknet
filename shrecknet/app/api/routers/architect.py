@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 from uuid import uuid4
 
@@ -17,6 +18,8 @@ from app.api.deps import (
 from app.api.agent_feature_gate import require_ai_agents_enabled
 from app.core.config_store import get_settings, is_shreckllm_configured
 from app.models.agent import Agent
+from app.db.jobs_session import JobsSessionMaker
+from app.repositories.background_job_repository import BackgroundJobRepository
 from app.models.architect import ArchitectProposal, ArchitectProposalStatus, ArchitectProposalType
 from app.models.user import User
 from app.repositories.agent_repository import AgentRepository
@@ -396,4 +399,58 @@ async def generate_entities_from_validated_proposals(
         "task_id": result.id,
         "run_id": run_id,
         "message": "Entity generation task started",
+    }
+
+
+@router.post(
+    "/runs/{run_id}/retry-enrichment",
+    response_model=dict,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def retry_enrichment_for_run(
+    run_id: str,
+    current_user: User = Depends(get_current_user),
+    service: ArchitectService = Depends(get_architect_service),
+) -> dict[str, Any]:
+    run = await service.get_run(run_id, include_proposals=False)
+    if not run:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Architect run not found")
+    reviewed: dict[str, Any] | None = None
+    if run.generation_job_id is not None:
+        async with JobsSessionMaker() as jobs_session:
+            jobs_repo = BackgroundJobRepository(jobs_session)
+            job = await jobs_repo.get_by_id(int(run.generation_job_id))
+            if job and isinstance(job.details, str):
+                try:
+                    payload = json.loads(job.details)
+                except Exception:
+                    payload = {}
+                if isinstance(payload, dict):
+                    meta = payload.get("generation_metadata")
+                    if isinstance(meta, dict):
+                        candidate = meta.get("reviewed_pipeline_output")
+                        if isinstance(candidate, dict):
+                            reviewed = candidate
+    if not isinstance(reviewed, dict):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No stored reviewed pipeline output found in generation job details for this run",
+        )
+    from app.tasks.architect_generation import generate_entities as generation_task
+    settings = get_settings()
+    result = generation_task.apply_async(
+        kwargs={
+            "run_id": run_id,
+            "reviewed_pipeline_output": reviewed,
+            "author_type": "user",
+            "author_id": str(current_user.id),
+            "retry_enrichment_only": True,
+        },
+        expires=max(60, int(settings.celery_expires_architect_seconds)),
+    )
+    return {
+        "status": "accepted",
+        "task_id": result.id,
+        "run_id": run_id,
+        "message": "Enrichment retry task started",
     }

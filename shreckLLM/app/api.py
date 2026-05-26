@@ -81,7 +81,17 @@ async def chat(payload: ChatRequest, service: ChatService = Depends(get_service)
     except ProviderPermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except ProviderOverloadedError as exc:
-        raise HTTPException(status_code=429, detail=str(exc)) from exc
+        detail = str(exc)
+        retry_after = None
+        if "retry_after=" in detail:
+            try:
+                retry_after = float(detail.split("retry_after=", 1)[1].split()[0])
+            except Exception:
+                retry_after = None
+        raise HTTPException(
+            status_code=429,
+            detail={"error": detail, "retry_after_seconds": retry_after, "provider_overloaded": True},
+        ) from exc
     except ProviderTimeoutError as exc:
         raise HTTPException(status_code=504, detail=str(exc)) from exc
     except DependencyUnavailableError as exc:

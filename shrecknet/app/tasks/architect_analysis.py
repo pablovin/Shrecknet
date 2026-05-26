@@ -1826,6 +1826,9 @@ def analyze_instance(
                 "run_id": run_id,
                 "agent_id": agent_id,
                 "ontology_instance_id": request_payload.get("ontology_instance_id"),
+                "analysis_metadata": {
+                    "request_payload": request_payload,
+                },
             },
         )
     )

@@ -15,14 +15,16 @@ from uuid import uuid4
 from app.celery_app import celery_app
 from app.core.config_store import get_settings, is_shreckllm_configured
 from app.db.session import AsyncSessionMaker
+from app.db.jobs_session import JobsSessionMaker
 from app.graph.neo4j import get_driver
 from app.integrations.llm.model_policy import ModelPolicy
 from app.integrations.llm.shreckllm_client import ShreckLLMClient
 from app.jobs.architect.entity_generator import EntityGenerator
 from app.models.ontology import AuthorType as OntologyAuthorType
-from app.models.architect import ArchitectProposalStatus, ArchitectProposalType
+from app.models.architect import ArchitectProposalStatus, ArchitectProposalType, ArchitectRunStatus
 from app.models.background_job import AuthorType, JobType
 from app.repositories.architect_repository import ArchitectRepository
+from app.repositories.background_job_repository import BackgroundJobRepository
 from app.repositories.ontology_repository import OntologyRepository
 from app.schemas.ontology_instance import (
     MilestoneCreate,
@@ -62,6 +64,7 @@ def generate_entities(
     *,
     author_type: str = "agent",
     author_id: str = "system",
+    retry_enrichment_only: bool = False,
 ) -> dict[str, Any]:
     """Generate entities/scenes/milestones and perform enrichment updates."""
 
@@ -73,7 +76,12 @@ def generate_entities(
             job_type=JobType.ARCHITECT_GENERATION,
             description=description,
             celery_task_id=generate_entities.request.id,
-            details={"run_id": run_id},
+            details={
+                "run_id": run_id,
+                "generation_metadata": {
+                    "reviewed_pipeline_output": reviewed_pipeline_output,
+                },
+            },
         )
     )
 
@@ -87,6 +95,7 @@ def generate_entities(
                 job_id=job_id,
                 author_id=author_id,
                 author_type=author_type,
+                retry_enrichment_only=retry_enrichment_only,
             )
         )
         run_async(mark_job_done(job_id, result))
@@ -94,6 +103,7 @@ def generate_entities(
     except Exception as exc:
         logger.error("architect generation failed for run %s: %s", run_id, exc, exc_info=True)
         run_async(mark_job_failed(job_id, str(exc)))
+        run_async(_mark_run_failed(run_id))
         raise
 
 
@@ -104,6 +114,13 @@ async def _attach_generation_job_to_run(run_id: str, job_id: int) -> None:
         await session.commit()
 
 
+async def _mark_run_failed(run_id: str) -> None:
+    async with AsyncSessionMaker() as session:
+        repo = ArchitectRepository(session)
+        await repo.update_run_status(run_id, status=ArchitectRunStatus.FAILED)
+        await session.commit()
+
+
 async def _execute_generation(
     *,
     run_id: str,
@@ -111,6 +128,7 @@ async def _execute_generation(
     job_id: int,
     author_id: str,
     author_type: str,
+    retry_enrichment_only: bool = False,
 ) -> dict[str, Any]:
     total_started_at = perf_counter()
     settings = get_settings()
@@ -150,6 +168,8 @@ async def _execute_generation(
         run = await repo.get_run(run_id, with_proposals=True)
         if not run:
             raise ValueError("Architect run not found")
+        await repo.update_run_status(run_id, status=ArchitectRunStatus.RUNNING)
+        await session.commit()
 
         await update_job_progress(job_id, 0.05, {"status": "Loading ontology and instance context"})
 
@@ -228,13 +248,14 @@ async def _execute_generation(
             pending_merge_resolutions: list[dict[str, Any]] = []
             skipped_entities = 0
 
-            await update_job_progress(
-                job_id,
-                0.14,
-                {"status": "Step 0/4: applying approved update_instance entity updates"},
-            )
+            if not retry_enrichment_only:
+                await update_job_progress(
+                    job_id,
+                    0.14,
+                    {"status": "Step 0/4: applying approved update_instance entity updates"},
+                )
             step0_started_at = perf_counter()
-            for proposal in approved_entities:
+            for proposal in ([] if retry_enrichment_only else approved_entities):
                 proposal_index = int(proposal.get("_proposal_index"))
                 alias = str(proposal.get("effective_name") or "Unnamed").strip()
                 alias_keys = _proposal_alias_keys(proposal)
@@ -365,7 +386,8 @@ async def _execute_generation(
                 len(update_targets),
             )
 
-            await update_job_progress(job_id, 0.18, {"status": "Step 1/4: inserting approved new entities"})
+            if not retry_enrichment_only:
+                await update_job_progress(job_id, 0.18, {"status": "Step 1/4: inserting approved new entities"})
             step1_started_at = perf_counter()
             logger.info(
                 "architect.generate run=%s step=1 start approved_entities=%d",
@@ -373,7 +395,7 @@ async def _execute_generation(
                 len(approved_entities),
             )
 
-            for proposal in approved_entities:
+            for proposal in ([] if retry_enrichment_only else approved_entities):
                 proposal_index = int(proposal.get("_proposal_index"))
                 alias = str(proposal.get("effective_name") or "Unnamed").strip()
                 if not alias:
@@ -540,16 +562,8 @@ async def _execute_generation(
                 },
             )
 
-            await update_job_progress(job_id, 0.36, {"status": "Step 2/4: inserting approved scenes"})
-            step2_started_at = perf_counter()
-
             approved_scenes = [item for item in scene_proposals if _is_approved(item.get("status"))]
             approved_scenes.sort(key=lambda s: int(s.get("scene_order") or 0))
-            logger.info(
-                "architect.generate run=%s step=2 start approved_scenes=%d",
-                run_id,
-                len(approved_scenes),
-            )
             scene_ref_to_scene_id: dict[str, str] = {}
             scene_ref_to_entities: dict[str, set[str]] = {}
             previous_scene_id: str | None = None
@@ -562,50 +576,75 @@ async def _execute_generation(
             if default_source_entity_id is None:
                 raise ValueError("No entity available to anchor derived_from for scenes")
 
-            for scene in approved_scenes:
-                source_entity_id = scene.get("source_entity_instance_id") or default_source_entity_id
-                if source_entity_id not in existing_entity_ids:
-                    source_entity_id = default_source_entity_id
-
-                scene_ref = str(scene.get("scene_ref") or "")
-                scene_id = str(scene.get("scene_id") or uuid4())
-                scene_ref_to_scene_id[scene_ref] = scene_id
-
-                related_entity_ids: set[str] = set()
-                for related in (scene.get("effective_related_to") or []):
-                    related_id = _resolve_related_target_entity_id(
-                        related=related,
-                        proposal_to_entity_id=proposal_to_entity_id,
-                        alias_to_entity_id=alias_to_entity_id,
-                        alias_candidates=[related.get("alias"), related.get("canonical")],
-                        fallback_entity_instance_id=related.get("entity_instance_id"),
-                        valid_entity_ids=existing_entity_ids,
-                    )
-                    if not related_id:
-                        raise ValueError(
-                            "Unresolvable related_to target in scene "
-                            f"{scene_ref}: {related.get('alias') or related.get('canonical') or related.get('entity_instance_id')}"
+            if retry_enrichment_only:
+                for scene in approved_scenes:
+                    scene_ref = str(scene.get("scene_ref") or "")
+                    related_entity_ids: set[str] = set()
+                    for related in (scene.get("effective_related_to") or []):
+                        related_id = _resolve_related_target_entity_id(
+                            related=related,
+                            proposal_to_entity_id=proposal_to_entity_id,
+                            alias_to_entity_id=alias_to_entity_id,
+                            alias_candidates=[related.get("alias"), related.get("canonical")],
+                            fallback_entity_instance_id=related.get("entity_instance_id"),
+                            valid_entity_ids=existing_entity_ids,
                         )
-                    related_entity_ids.add(related_id)
-                scene_ref_to_entities[scene_ref] = related_entity_ids
-                impacted_entity_ids |= related_entity_ids
-                expected_scene_relation_links += len(related_entity_ids)
-
-                payload = SceneCreate(
-                    id=scene_id,
-                    name=str(scene.get("effective_name") or scene.get("scene_name") or "Scene"),
-                    description=(scene.get("scene_description") or scene.get("scene_text") or "").strip()[:2000],
-                    created_by_type="agent",
-                    created_by_author=author_id,
-                    derived_from=SceneDerivedFrom(entity_instance_id=source_entity_id),
-                    relates_to=[
-                        SceneEntityRelation(entity_instance_id=entity_id, label="related_to")
-                        for entity_id in sorted(related_entity_ids)
-                    ],
-                    local_order=SceneLocalOrder(preceded_by_scene_id=previous_scene_id),
-                    milestones=[],
+                        if related_id:
+                            related_entity_ids.add(related_id)
+                    scene_ref_to_entities[scene_ref] = related_entity_ids
+                    impacted_entity_ids |= related_entity_ids
+            else:
+                await update_job_progress(job_id, 0.36, {"status": "Step 2/4: inserting approved scenes"})
+                step2_started_at = perf_counter()
+                logger.info(
+                    "architect.generate run=%s step=2 start approved_scenes=%d",
+                    run_id,
+                    len(approved_scenes),
                 )
-                await service.create_scene(
+                for scene in approved_scenes:
+                    source_entity_id = scene.get("source_entity_instance_id") or default_source_entity_id
+                    if source_entity_id not in existing_entity_ids:
+                        source_entity_id = default_source_entity_id
+
+                    scene_ref = str(scene.get("scene_ref") or "")
+                    scene_id = str(scene.get("scene_id") or uuid4())
+                    scene_ref_to_scene_id[scene_ref] = scene_id
+
+                    related_entity_ids: set[str] = set()
+                    for related in (scene.get("effective_related_to") or []):
+                        related_id = _resolve_related_target_entity_id(
+                            related=related,
+                            proposal_to_entity_id=proposal_to_entity_id,
+                            alias_to_entity_id=alias_to_entity_id,
+                            alias_candidates=[related.get("alias"), related.get("canonical")],
+                            fallback_entity_instance_id=related.get("entity_instance_id"),
+                            valid_entity_ids=existing_entity_ids,
+                        )
+                        if not related_id:
+                            raise ValueError(
+                                "Unresolvable related_to target in scene "
+                                f"{scene_ref}: {related.get('alias') or related.get('canonical') or related.get('entity_instance_id')}"
+                            )
+                        related_entity_ids.add(related_id)
+                    scene_ref_to_entities[scene_ref] = related_entity_ids
+                    impacted_entity_ids |= related_entity_ids
+                    expected_scene_relation_links += len(related_entity_ids)
+
+                    payload = SceneCreate(
+                        id=scene_id,
+                        name=str(scene.get("effective_name") or scene.get("scene_name") or "Scene"),
+                        description=(scene.get("scene_description") or scene.get("scene_text") or "").strip()[:2000],
+                        created_by_type="agent",
+                        created_by_author=author_id,
+                        derived_from=SceneDerivedFrom(entity_instance_id=source_entity_id),
+                        relates_to=[
+                            SceneEntityRelation(entity_instance_id=entity_id, label="related_to")
+                            for entity_id in sorted(related_entity_ids)
+                        ],
+                        local_order=SceneLocalOrder(preceded_by_scene_id=previous_scene_id),
+                        milestones=[],
+                    )
+                    await service.create_scene(
                     run.ontology_instance_id,
                     payload,
                     trigger_background_jobs=False,
@@ -614,9 +653,9 @@ async def _execute_generation(
                 created_scenes += 1
                 created_scene_ids.append(scene_id)
 
-            actual_scene_relation_links = 0
-            if created_scene_ids:
-                scene_rel_result = await graph_session.run(
+                actual_scene_relation_links = 0
+                if created_scene_ids:
+                    scene_rel_result = await graph_session.run(
                     """
                     UNWIND $scene_ids AS scene_id
                     MATCH (scene:Scene {id: scene_id})
@@ -625,38 +664,39 @@ async def _execute_generation(
                     """,
                     scene_ids=created_scene_ids,
                 )
-                scene_rel_row = await scene_rel_result.single()
-                actual_scene_relation_links = int((scene_rel_row or {}).get("relation_count") or 0)
-            if actual_scene_relation_links != expected_scene_relation_links:
-                raise ValueError(
-                    "Scene relation persistence mismatch "
-                    f"expected={expected_scene_relation_links} actual={actual_scene_relation_links}"
+                    scene_rel_row = await scene_rel_result.single()
+                    actual_scene_relation_links = int((scene_rel_row or {}).get("relation_count") or 0)
+                if actual_scene_relation_links != expected_scene_relation_links:
+                    raise ValueError(
+                        "Scene relation persistence mismatch "
+                        f"expected={expected_scene_relation_links} actual={actual_scene_relation_links}"
+                    )
+
+                scene_relation_links = expected_scene_relation_links
+                logger.info(
+                    "architect.generate run=%s step=2 done elapsed=%ss created_scenes=%d scene_rel_links=%d impacted_entities=%d",
+                    run_id,
+                    _elapsed_seconds(step2_started_at),
+                    created_scenes,
+                    scene_relation_links,
+                    len(impacted_entity_ids),
                 )
 
-            scene_relation_links = expected_scene_relation_links
-            logger.info(
-                "architect.generate run=%s step=2 done elapsed=%ss created_scenes=%d scene_rel_links=%d impacted_entities=%d",
-                run_id,
-                _elapsed_seconds(step2_started_at),
-                created_scenes,
-                scene_relation_links,
-                len(impacted_entity_ids),
-            )
-
-            await update_job_progress(job_id, 0.54, {"status": "Step 3/4: inserting approved milestones"})
-            step3_started_at = perf_counter()
-            logger.info(
-                "architect.generate run=%s step=3 start milestone_scene_groups=%d",
-                run_id,
-                len(milestones_per_scene),
-            )
+            if not retry_enrichment_only:
+                await update_job_progress(job_id, 0.54, {"status": "Step 3/4: inserting approved milestones"})
+                step3_started_at = perf_counter()
+                logger.info(
+                    "architect.generate run=%s step=3 start milestone_scene_groups=%d",
+                    run_id,
+                    len(milestones_per_scene),
+                )
 
             created_milestones = 0
             milestone_rel_links = 0
             created_milestone_ids: list[str] = []
             milestone_ref_to_milestone_id: dict[str, str] = {}
             expected_milestone_relation_links = 0
-            for scene_bundle in milestones_per_scene:
+            for scene_bundle in ([] if retry_enrichment_only else milestones_per_scene):
                 scene_ref = scene_bundle.get("scene_ref")
                 if scene_ref not in scene_ref_to_scene_id:
                     continue
@@ -745,26 +785,47 @@ async def _execute_generation(
                 )
                 milestone_rel_row = await milestone_rel_result.single()
                 actual_milestone_relation_links = int((milestone_rel_row or {}).get("relation_count") or 0)
-            if actual_milestone_relation_links != expected_milestone_relation_links:
+            if not retry_enrichment_only and actual_milestone_relation_links != expected_milestone_relation_links:
                 raise ValueError(
                     "Milestone relation persistence mismatch "
                     f"expected={expected_milestone_relation_links} actual={actual_milestone_relation_links}"
                 )
 
-            logger.info(
-                "architect.generate run=%s step=3 done elapsed=%ss created_milestones=%d milestone_rel_links=%d impacted_entities=%d",
-                run_id,
-                _elapsed_seconds(step3_started_at),
-                created_milestones,
-                milestone_rel_links,
-                len(impacted_entity_ids),
-            )
+            if not retry_enrichment_only:
+                logger.info(
+                    "architect.generate run=%s step=3 done elapsed=%ss created_milestones=%d milestone_rel_links=%d impacted_entities=%d",
+                    run_id,
+                    _elapsed_seconds(step3_started_at),
+                    created_milestones,
+                    milestone_rel_links,
+                    len(impacted_entity_ids),
+                )
 
             await update_job_progress(job_id, 0.74, {"status": "Step 4/4: enriching and updating entities"})
             step4_started_at = perf_counter()
             enrichment_target_entity_ids = sorted(
                 _collect_scene_linked_entity_ids(scene_ref_to_entities)
             )
+            if retry_enrichment_only:
+                previous_failed_ids: list[str] = []
+                if run.generation_job_id is not None:
+                    async with JobsSessionMaker() as jobs_session:
+                        jobs_repo = BackgroundJobRepository(jobs_session)
+                        previous_job = await jobs_repo.get_by_id(int(run.generation_job_id))
+                        if previous_job and isinstance(previous_job.details, str):
+                            try:
+                                previous_payload = json.loads(previous_job.details)
+                            except Exception:
+                                previous_payload = {}
+                            if isinstance(previous_payload, dict):
+                                raw_failed = previous_payload.get("enrichment_failed_entity_ids")
+                                if isinstance(raw_failed, list):
+                                    previous_failed_ids = [str(item) for item in raw_failed if str(item).strip()]
+                if isinstance(previous_failed_ids, list):
+                    previous_failed_set = {str(item).strip() for item in previous_failed_ids if str(item).strip()}
+                    enrichment_target_entity_ids = [
+                        entity_id for entity_id in enrichment_target_entity_ids if entity_id in previous_failed_set
+                    ]
             excluded_from_enrichment = len(set(impacted_entity_ids) - set(enrichment_target_entity_ids))
             logger.info(
                 "architect.generate run=%s step=4 start impacted_entities=%d enrichment_targets=%d excluded_no_scene_or_milestone_link=%d target_ids_sample=%s",
@@ -798,23 +859,46 @@ async def _execute_generation(
             for scene_ref, related_ids in scene_ref_to_entities.items():
                 for related_id in related_ids:
                     entity_scene_refs[related_id].add(scene_ref)
+            enrichment_retryable_failed = 0
+            enrichment_terminal_failed = 0
             try:
                 usage_start = llm_client.get_usage_event_count()
-                enrichment_stats = await _apply_enrichment_updates(
-                    graph_session=graph_session,
-                    generator=generator,
-                    debug_job_id=job_id,
-                    target_entity_ids=enrichment_target_entity_ids,
-                    entity_definitions_map=entity_definitions_map,
-                    existing_entities_map=current_entities_map,
-                    alias_to_entity_id=alias_to_entity_id,
-                    scene_proposals=approved_scenes,
-                    milestone_groups=milestones_per_scene,
-                    scene_ref_to_entities=scene_ref_to_entities,
-                    proposal_scene_refs=proposal_scene_refs,
-                    entity_scene_refs=entity_scene_refs,
-                    author_id=author_id,
-                )
+                try:
+                    enrichment_stats = await _apply_enrichment_updates(
+                        graph_session=graph_session,
+                        generator=generator,
+                        debug_job_id=job_id,
+                        target_entity_ids=enrichment_target_entity_ids,
+                        entity_definitions_map=entity_definitions_map,
+                        existing_entities_map=current_entities_map,
+                        alias_to_entity_id=alias_to_entity_id,
+                        scene_proposals=approved_scenes,
+                        milestone_groups=milestones_per_scene,
+                        scene_ref_to_entities=scene_ref_to_entities,
+                        proposal_scene_refs=proposal_scene_refs,
+                        entity_scene_refs=entity_scene_refs,
+                        author_id=author_id,
+                    )
+                except Exception as exc:
+                    message = str(exc).lower()
+                    retryable = "429" in message or "overload" in message or "timeout" in message
+                    if retryable:
+                        enrichment_retryable_failed = len(enrichment_target_entity_ids)
+                        enrichment_stats = {
+                            "scanned_entities": len(enrichment_target_entity_ids),
+                            "processed_entities": 0,
+                            "fallback_entities": 0,
+                            "failed_entities": len(enrichment_target_entity_ids),
+                            "summary_updates": 0,
+                            "property_updates": 0,
+                            "relationship_creates": 0,
+                            "relationship_updates": 0,
+                            "failed_entity_ids": list(enrichment_target_entity_ids),
+                        }
+                        logger.warning("architect.generate run=%s enrichment retryable failure: %s", run_id, exc)
+                    else:
+                        enrichment_terminal_failed = len(enrichment_target_entity_ids)
+                        raise
                 step_usage = llm_client.get_usage_summary_since(usage_start)
                 logger.info(
                     "architect_generation_llm_usage_step run_id=%s step=%s totals=%s by_model=%s by_tag=%s",
@@ -899,6 +983,13 @@ async def _execute_generation(
                 proposal_to_entity_id=proposal_to_entity_id,
             )
             await session.commit()
+            final_status = (
+                ArchitectRunStatus.COMPLETED_WITH_WARNINGS
+                if enrichment_retryable_failed > 0
+                else ArchitectRunStatus.COMPLETED
+            )
+            await repo.update_run_status(run_id, status=final_status)
+            await session.commit()
 
             logger.info(
                 "architect.generate run=%s done total_elapsed=%ss created_entities=%d updated_entities=%d created_scenes=%d created_milestones=%d impacted_entities=%d",
@@ -919,6 +1010,16 @@ async def _execute_generation(
                 "created_milestones": created_milestones,
                 "impacted_entities": len(impacted_entity_ids),
                 "embedding_nodes_requested": len(batch_embed_node_ids),
+                "core_success": True,
+                "enrichment_total": len(enrichment_target_entity_ids),
+                "enrichment_succeeded": max(0, len(enrichment_target_entity_ids) - enrichment_stats["failed_entities"]),
+                "enrichment_retryable_failed": enrichment_retryable_failed,
+                "enrichment_terminal_failed": enrichment_terminal_failed,
+                "enrichment_failed_entity_ids": enrichment_stats.get("failed_entity_ids", []),
+                "generation_metadata": {
+                    "reviewed_pipeline_output": reviewed_pipeline_output,
+                    "retry_enrichment_only": retry_enrichment_only,
+                },
                 # Frontend reconciliation: real persisted IDs keyed by proposal/ref.
                 "entity_reconciliation": [
                     {"proposal_index": proposal_index, "entity_instance_id": entity_instance_id}
@@ -953,8 +1054,8 @@ async def _apply_enrichment_updates(
     proposal_scene_refs: dict[str, list[str]],
     entity_scene_refs: dict[str, set[str]],
     author_id: str,
-) -> dict[str, int]:
-    stats = {
+) -> dict[str, Any]:
+    stats: dict[str, Any] = {
         "scanned_entities": 0,
         "processed_entities": 0,
         "fallback_entities": 0,
@@ -963,6 +1064,7 @@ async def _apply_enrichment_updates(
         "property_updates": 0,
         "relationship_creates": 0,
         "relationship_updates": 0,
+        "failed_entity_ids": [],
     }
 
     # ------------------------------------------------------------------
@@ -1245,6 +1347,7 @@ async def _apply_enrichment_updates(
         result_item = extraction_by_target.get(target_entity_id)
         if result_item is None:
             stats["failed_entities"] += 1
+            stats["failed_entity_ids"].append(target_entity_id)
             logger.info(
                 "architect.generate enrichment entity_id=%s status=not_updated reason=processing_failed auto_text_50= attributes_50= relationships_added=0 summary_updated=false properties_updated=false",
                 target_entity_id,

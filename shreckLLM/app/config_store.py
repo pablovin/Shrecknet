@@ -39,6 +39,7 @@ class RuntimeConfig(BaseModel):
     max_concurrent_requests: int = 8
     request_timeout_seconds: float = 180.0
     max_queue_wait_seconds: float = 10.0
+    provider_limits: dict[str, dict[str, float | int]] = Field(default_factory=dict)
 
 
 class RuntimeConfigUpdate(BaseModel):
@@ -49,6 +50,7 @@ class RuntimeConfigUpdate(BaseModel):
     max_concurrent_requests: int | None = None
     request_timeout_seconds: float | None = None
     max_queue_wait_seconds: float | None = None
+    provider_limits: dict[str, dict[str, float | int]] | None = None
 
 
 def _db_path() -> Path:
@@ -126,6 +128,7 @@ def _bootstrap_defaults(settings: Settings) -> RuntimeConfig:
         max_concurrent_requests=settings.bootstrap_max_concurrent_requests,
         request_timeout_seconds=settings.bootstrap_request_timeout_seconds,
         max_queue_wait_seconds=settings.bootstrap_max_queue_wait_seconds,
+        provider_limits=getattr(settings, "bootstrap_provider_limits", {}) or {},
     )
 
 
@@ -212,6 +215,7 @@ def load_runtime_config() -> RuntimeConfig:
                 max_concurrent_requests=runtime.max_concurrent_requests,
                 request_timeout_seconds=runtime.request_timeout_seconds,
                 max_queue_wait_seconds=runtime.max_queue_wait_seconds,
+                provider_limits=runtime.provider_limits,
             ).model_dump()
 
             ts = _now()
@@ -276,6 +280,7 @@ def load_runtime_config() -> RuntimeConfig:
                 max_concurrent_requests=runtime.max_concurrent_requests,
                 request_timeout_seconds=runtime.request_timeout_seconds,
                 max_queue_wait_seconds=runtime.max_queue_wait_seconds,
+                provider_limits=runtime.provider_limits,
             ).model_dump()
 
             ts = _now()
@@ -340,6 +345,7 @@ def load_runtime_config() -> RuntimeConfig:
                 max_concurrent_requests=runtime.max_concurrent_requests,
                 request_timeout_seconds=runtime.request_timeout_seconds,
                 max_queue_wait_seconds=runtime.max_queue_wait_seconds,
+                provider_limits=runtime.provider_limits,
             ).model_dump()
 
             ts = _now()
@@ -406,6 +412,7 @@ def load_runtime_config() -> RuntimeConfig:
                 max_concurrent_requests=runtime.max_concurrent_requests,
                 request_timeout_seconds=runtime.request_timeout_seconds,
                 max_queue_wait_seconds=runtime.max_queue_wait_seconds,
+                provider_limits=runtime.provider_limits,
             ).model_dump()
 
             ts = _now()

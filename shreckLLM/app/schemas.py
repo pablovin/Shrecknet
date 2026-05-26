@@ -52,6 +52,7 @@ class ServiceStatusResponse(BaseModel):
     request_timeout_seconds: float
     max_queue_wait_seconds: float
     dependencies: dict[str, Any]
+    provider_limiters: dict[str, Any] | None = None
 
 
 class OpenAITokenUpdateRequest(BaseModel):

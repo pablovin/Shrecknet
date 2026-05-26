@@ -87,6 +87,17 @@ class ShreckLLMClient:
                     }
                 return text
             except Exception as exc:
+                retry_after_s: float | None = None
+                if isinstance(exc, httpx.HTTPStatusError):
+                    try:
+                        payload = exc.response.json()
+                        detail = payload.get("detail") if isinstance(payload, dict) else None
+                        if isinstance(detail, dict):
+                            value = detail.get("retry_after_seconds")
+                            if isinstance(value, (int, float)):
+                                retry_after_s = float(value)
+                    except Exception:
+                        retry_after_s = None
                 if not self._is_retryable_exception(exc) or attempt >= attempts:
                     error_text = str(exc).strip()
                     if not error_text:
@@ -100,12 +111,8 @@ class ShreckLLMClient:
                         exc_info=True,
                     )
                     raise
-                await asyncio.sleep(
-                    min(
-                        self._max_backoff_s,
-                        (2 ** attempt) + random.uniform(0.25, 1.25),
-                    )
-                )
+                base_sleep = min(self._max_backoff_s, (2 ** attempt) + random.uniform(0.25, 1.25))
+                await asyncio.sleep(max(base_sleep, retry_after_s or 0.0))
 
         raise RuntimeError("Unreachable retry loop state in ShreckLLMClient.chat")
 

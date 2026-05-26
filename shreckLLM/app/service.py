@@ -11,7 +11,7 @@ from redis.asyncio import Redis
 from app.concurrency import RequestLimiter
 from app.config import Settings
 from app.config_store import RuntimeConfig, get_runtime_config
-from app.errors import DependencyUnavailableError, InvalidModelError
+from app.errors import DependencyUnavailableError, InvalidModelError, ProviderOverloadedError
 from app.locking import ConversationLockManager
 from app.memory import RedisConversationMemory
 from app.anthropic_client import AnthropicClient
@@ -54,6 +54,25 @@ class ChatService:
         self._anthropic: AnthropicClient | None = None
         self._bind_providers()
         self.limiter = RequestLimiter(max_concurrent=self._runtime.max_concurrent_requests)
+        self._provider_semaphores: dict[str, asyncio.Semaphore] = {}
+        self._provider_waiting: dict[str, int] = {}
+        self._provider_rejected: dict[str, int] = {}
+        self._provider_cooldown_until: dict[str, float] = {}
+        self._provider_lock = asyncio.Lock()
+        self._init_provider_limiters()
+
+    def _init_provider_limiters(self) -> None:
+        self._provider_semaphores = {}
+        self._provider_waiting = {}
+        self._provider_rejected = {}
+        self._provider_cooldown_until = {}
+        for provider_id in self._runtime.provider_defaults.keys():
+            limits = (self._runtime.provider_limits or {}).get(provider_id, {})
+            max_concurrent = int(limits.get("max_concurrent", 0) or 0)
+            if max_concurrent > 0:
+                self._provider_semaphores[provider_id] = asyncio.Semaphore(max_concurrent)
+                self._provider_waiting[provider_id] = 0
+                self._provider_rejected[provider_id] = 0
 
     def _bind_providers(self) -> None:
         self.registry = ProviderRegistry()
@@ -139,6 +158,7 @@ class ChatService:
         )
         self._bind_providers()
         self.limiter = RequestLimiter(max_concurrent=self._runtime.max_concurrent_requests)
+        self._init_provider_limiters()
         return self._runtime
 
     @staticmethod
@@ -350,6 +370,17 @@ class ChatService:
             request_timeout_seconds=self._runtime.request_timeout_seconds,
             max_queue_wait_seconds=self._runtime.max_queue_wait_seconds,
             dependencies=ready_payload["dependencies"],
+            provider_limiters={
+                provider_id: {
+                    "active_requests": int(
+                        ((self._runtime.provider_limits or {}).get(provider_id, {}).get("max_concurrent", 0) or 0)
+                    ) - sem._value,
+                    "queue_depth": self._provider_waiting.get(provider_id, 0),
+                    "cooldown_until": self._provider_cooldown_until.get(provider_id),
+                    "rejected_due_to_queue": self._provider_rejected.get(provider_id, 0),
+                }
+                for provider_id, sem in self._provider_semaphores.items()
+            },
         )
 
     async def prewarm_local_llm(self) -> None:
@@ -447,13 +478,52 @@ class ChatService:
         if not resolved_model:
             raise InvalidModelError(f"no model configured for provider_id: {provider_id}")
 
+        now = time.monotonic()
+        cooldown_until = self._provider_cooldown_until.get(provider_id, 0.0)
+        if cooldown_until > now:
+            raise ProviderOverloadedError(
+                f"provider cooldown active provider={provider_id} retry_after={round(cooldown_until - now, 2)}"
+            )
+
         combined_messages = [*history, *request.messages]
         provider_call_start = time.monotonic()
-        payload = await adapter.chat(
-            model=resolved_model,
-            messages=combined_messages,
-            temperature=request.temperature,
-        )
+        sem = self._provider_semaphores.get(provider_id)
+        if sem is None:
+            payload = await adapter.chat(
+                model=resolved_model,
+                messages=combined_messages,
+                temperature=request.temperature,
+            )
+        else:
+            limits = (self._runtime.provider_limits or {}).get(provider_id, {})
+            queue_size = int(limits.get("max_queue_size", 0) or 0)
+            queue_wait_s = float(limits.get("max_queue_wait_seconds", self._runtime.max_queue_wait_seconds))
+            async with self._provider_lock:
+                waiting = self._provider_waiting.get(provider_id, 0)
+                if queue_size > 0 and waiting >= queue_size:
+                    self._provider_rejected[provider_id] = self._provider_rejected.get(provider_id, 0) + 1
+                    raise ProviderOverloadedError(f"provider queue full provider={provider_id}")
+                self._provider_waiting[provider_id] = waiting + 1
+            try:
+                await asyncio.wait_for(sem.acquire(), timeout=max(0.01, queue_wait_s))
+            except asyncio.TimeoutError as exc:
+                self._provider_rejected[provider_id] = self._provider_rejected.get(provider_id, 0) + 1
+                raise ProviderOverloadedError(f"provider queue wait timeout provider={provider_id}") from exc
+            finally:
+                async with self._provider_lock:
+                    self._provider_waiting[provider_id] = max(0, self._provider_waiting.get(provider_id, 1) - 1)
+            try:
+                payload = await adapter.chat(
+                    model=resolved_model,
+                    messages=combined_messages,
+                    temperature=request.temperature,
+                )
+            except ProviderOverloadedError:
+                cooldown_s = float(limits.get("cooldown_seconds_on_429", 10.0) or 10.0)
+                self._provider_cooldown_until[provider_id] = time.monotonic() + max(1.0, cooldown_s)
+                raise
+            finally:
+                sem.release()
         provider_latency_s = time.monotonic() - provider_call_start
         self._log_backend_usage(
             provider_id=provider_id,

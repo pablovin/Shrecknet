@@ -138,14 +138,18 @@ class ShreckLLMClient:
         start = asyncio.get_running_loop().time()
         interval = max(0.05, float(poll_interval_s))
         while True:
-            result = await self._http.get(f"/chat/jobs/{job_id}/result")
-            if result.status_code == 200:
+            status_resp = await self._http.get(f"/chat/jobs/{job_id}")
+            status_resp.raise_for_status()
+            status_data = status_resp.json() if status_resp.content else {}
+            status_value = str((status_data or {}).get("status") or "").strip().lower()
+            if status_value == "succeeded":
+                result = await self._http.get(f"/chat/jobs/{job_id}/result")
+                result.raise_for_status()
                 data = result.json() if result.content else {}
                 return data if isinstance(data, dict) else {}
-            if result.status_code in (404, 410):
-                result.raise_for_status()
-            if result.status_code not in (409,):
-                result.raise_for_status()
+            if status_value == "failed":
+                error = (status_data or {}).get("error")
+                raise RuntimeError(f"chat job failed job_id={job_id} error={error}")
             if (asyncio.get_running_loop().time() - start) >= max(0.1, float(timeout_s)):
                 raise httpx.TimeoutException(f"chat job timed out job_id={job_id}")
             await asyncio.sleep(interval)

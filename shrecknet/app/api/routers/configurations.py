@@ -11,7 +11,13 @@ from fastapi.responses import FileResponse
 
 from app.api.deps import get_current_active_admin_or_world_builder, get_current_admin_user
 from app.celery_app import configure_celery_app
-from app.core.config_store import Settings, get_settings, reload_settings, update_settings
+from app.core.config_store import (
+    BOOTSTRAP_ENV_FIELDS,
+    Settings,
+    get_settings,
+    reload_settings,
+    update_settings,
+)
 
 router = APIRouter(prefix="/config", tags=["config"])
 logger = logging.getLogger(__name__)
@@ -334,7 +340,10 @@ async def _save_google_service_account(
 
 
 def _get_config_payload() -> dict[str, Any]:
-    return get_settings().model_dump()
+    payload = get_settings().model_dump()
+    for key in BOOTSTRAP_ENV_FIELDS:
+        payload.pop(key, None)
+    return payload
 
 
 def _google_service_account_metadata(settings: Settings) -> dict[str, Any]:
@@ -372,28 +381,44 @@ def get_config() -> dict[str, Any]:
 )
 def get_config_schema() -> dict[str, Any]:
     all_fields = set(Settings.model_fields)
+    visible_fields = all_fields - set(BOOTSTRAP_ENV_FIELDS)
     grouped_fields: set[str] = set()
     for group in SETTINGS_GROUPS:
-        grouped_fields.update(group["fields"])
-    ungrouped = sorted(all_fields - grouped_fields)
-    editable_fields = all_fields - FRONTEND_LOCKED_FIELDS
+        grouped_fields.update([f for f in group["fields"] if f in visible_fields])
+    ungrouped = sorted(visible_fields - grouped_fields)
+    editable_fields = visible_fields - FRONTEND_LOCKED_FIELDS
     runtime_changeable_fields = sorted(editable_fields - RESTART_REQUIRED_FIELDS)
     restart_required_fields = sorted(editable_fields & RESTART_REQUIRED_FIELDS)
 
-    groups_v2 = [
-        {
-            "id": "runtime_changeable",
-            "label": "Runtime Changeable",
-            "fields": runtime_changeable_fields,
-            "change_impact": "hot",
-        },
-        {
-            "id": "restart_required",
-            "label": "Requires Restart",
-            "fields": restart_required_fields,
-            "change_impact": "service_restart",
-        },
+    group_definitions: list[dict[str, Any]] = [
+        {"id": "app_runtime", "label": "App Runtime", "fields": ["app_name", "debug", "event_publisher_mode", "event_webhook_url"]},
+        {"id": "media_uploads", "label": "Media & Uploads", "fields": ["media_root", "media_base_url", "media_public_url", "max_image_upload_bytes", "image_max_width", "image_max_height", "max_pdf_upload_bytes", "library_max_pdf_bytes"]},
+        {"id": "background_workers", "label": "Background Workers", "fields": ["celery_task_always_eager", "celery_expires_architect_seconds", "celery_expires_novelist_seconds", "celery_expires_reconciliation_seconds", "celery_stale_reaper_enabled", "celery_stale_reaper_interval_seconds", "celery_stale_reaper_max_task_age_seconds"]},
+        {"id": "ai_agents", "label": "AI Agents", "fields": ["enable_ai_agents", "shreckllm_base_url"]},
+        {"id": "architect", "label": "Architect Agent", "fields": ["model_architect_scene_chunking", "model_architect", "architect_scene_entity_extraction_concurrency", "architect_milestone_extraction_concurrency"]},
+        {"id": "elder", "label": "Elder Agent", "fields": ["model_elder", "default_top_k", "elder_embedding_inference_concurrency", "elder_query_embedding_timeout_s", "elder_embedding_warmup_on_worker_start", "elder_embedding_manager_enabled", "elder_embedding_queue_max_size", "elder_embedding_batch_max_size", "elder_embedding_batch_wait_ms", "elder_embedding_cache_size", "elder_embedding_request_timeout_s", "embedding_runtime_enabled", "embedding_runtime_queue_max_size", "embedding_runtime_batch_max_size", "embedding_runtime_batch_wait_ms", "embedding_runtime_cache_size", "embedding_runtime_request_timeout_s", "embedding_runtime_startup_timeout_s", "embedding_runtime_fail_open_health", "embedding_model_id", "embedding_dimension", "embedding_device", "embedding_chunk_size", "embedding_chunk_overlap"]},
+        {"id": "novelist", "label": "Novelist Agent", "fields": ["model_novelist", "model_novelist_draft", "novelist_scene_pipeline_batch_size", "novelist_scene_pipeline_max_concurrency", "novelist_elder_query_concurrency", "novelist_elder_query_timeout_s"]},
+        {"id": "librarian", "label": "Librarian Agent", "fields": ["model_librarian"]},
+        {"id": "security_tokens", "label": "Security Tokens", "fields": ["jwt_issuer", "jwt_audience", "jwt_kid", "jwt_access_token_expiry_minutes"]},
+        {"id": "legacy_migration", "label": "Legacy Migration", "fields": ["old_database_url"]},
     ]
+
+    groups: list[dict[str, Any]] = []
+    for definition in group_definitions:
+        fields = [f for f in definition["fields"] if f in visible_fields]
+        if not fields:
+            continue
+        property_value = "runtime"
+        if all(f in restart_required_fields for f in fields):
+            property_value = "restart_required"
+        groups.append(
+            {
+                "id": definition["id"],
+                "label": definition["label"],
+                "fields": fields,
+                "property": property_value,
+            }
+        )
 
     field_meta = dict(FIELD_UI_META)
     for field in runtime_changeable_fields:
@@ -406,7 +431,7 @@ def get_config_schema() -> dict[str, Any]:
         row["change_impact"] = "service_restart"
         row.setdefault("frontend_editable", True)
         field_meta[field] = row
-    for field in sorted(FRONTEND_LOCKED_FIELDS & all_fields):
+    for field in sorted(FRONTEND_LOCKED_FIELDS & visible_fields):
         row = dict(field_meta.get(field, {}))
         row["frontend_editable"] = False
         row.setdefault("change_impact", "locked")
@@ -414,10 +439,9 @@ def get_config_schema() -> dict[str, Any]:
 
     return {
         "version": 2,
-        "groups": SETTINGS_GROUPS,
-        "groups_v2": groups_v2,
-        "field_meta": field_meta,
-        "frontend_locked_fields": sorted(FRONTEND_LOCKED_FIELDS & all_fields),
+        "groups": groups,
+        "field_meta": {k: v for k, v in field_meta.items() if k in visible_fields},
+        "frontend_locked_fields": sorted(FRONTEND_LOCKED_FIELDS & visible_fields),
         "ungrouped_fields": ungrouped,
     }
 
@@ -429,9 +453,13 @@ def _put_config_payload(payload: dict[str, Any]) -> dict[str, Any]:
             detail="Config payload must be an object",
         )
     updates = _validate_updates(payload)
+    updates = {k: v for k, v in updates.items() if k not in BOOTSTRAP_ENV_FIELDS}
     settings = update_settings(updates)
     configure_celery_app()
-    return settings.model_dump()
+    filtered = settings.model_dump()
+    for key in BOOTSTRAP_ENV_FIELDS:
+        filtered.pop(key, None)
+    return filtered
 
 
 @router.put(
@@ -461,7 +489,10 @@ def put_config(payload: dict[str, Any]) -> dict[str, Any]:
 def reload_config() -> dict[str, Any]:
     settings = reload_settings()
     configure_celery_app()
-    return settings.model_dump()
+    payload = settings.model_dump()
+    for key in BOOTSTRAP_ENV_FIELDS:
+        payload.pop(key, None)
+    return payload
 
 
 @router.post(

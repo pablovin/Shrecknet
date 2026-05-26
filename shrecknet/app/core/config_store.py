@@ -158,8 +158,6 @@ class Settings(BaseSettings):
     architect_scene_entity_extraction_concurrency: int = 8
     architect_milestone_extraction_concurrency: int = 8
     enable_ai_agents: bool = True
-    # Deprecated: keep for backward compatibility with older deployments.
-    openai_api_key: str = ""
     model_architect_scene_chunking: LLMModelTarget = Field(
         default_factory=lambda: LLMModelTarget(provider="openai", name="gpt-5")
     )
@@ -320,7 +318,12 @@ def _load_settings_from_db(conn: sqlite3.Connection) -> dict[str, Any]:
 def _seed_defaults_if_needed(conn: sqlite3.Connection) -> dict[str, Any]:
     defaults = _default_settings_dict()
     existing = _load_settings_from_db(conn)
-    missing = {key: value for key, value in defaults.items() if key not in existing}
+    # Env-only bootstrap fields are sourced from environment and must not be seeded into DB.
+    missing = {
+        key: value
+        for key, value in defaults.items()
+        if key not in existing and key not in BOOTSTRAP_ENV_FIELDS
+    }
     if missing:
         timestamp = _current_timestamp()
         conn.executemany(
@@ -485,6 +488,8 @@ def update_settings(updates: dict[str, Any]) -> Settings:
                     name=name or "gpt-5-nano",
                 ).model_dump()
         updated = Settings(**settings_dict).model_dump()
+        # Env-only bootstrap fields must never be persisted in runtime DB settings.
+        db_updated = {k: v for k, v in updated.items() if k not in BOOTSTRAP_ENV_FIELDS}
         conn = _connect()
         try:
             _ensure_schema(conn)
@@ -499,7 +504,7 @@ def update_settings(updates: dict[str, Any]) -> Settings:
                 """,
                 [
                     (key, _serialize_value(value), timestamp)
-                    for key, value in updated.items()
+                    for key, value in db_updated.items()
                 ],
             )
             conn.commit()
@@ -513,12 +518,6 @@ def update_settings(updates: dict[str, Any]) -> Settings:
 def get_app_config(current: Settings | None = None) -> AppConfig:
     s = current or get_settings()
     return AppConfig(app_name=s.app_name, debug=s.debug)
-
-
-def is_openai_configured(current: Settings | None = None) -> bool:
-    s = current or get_settings()
-    raw_key = (s.openai_api_key or "").strip()
-    return bool(raw_key and raw_key.lower() != "openaikey")
 
 
 def is_shreckllm_configured(current: Settings | None = None) -> bool:

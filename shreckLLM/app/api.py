@@ -27,6 +27,36 @@ from app.service import ChatService
 
 router = APIRouter()
 
+CONFIG_FIELD_META: dict[str, dict[str, object]] = {
+    "provider_defaults": {"type": "provider_map", "help": "Provider definitions including models, URLs, auth settings, and API keys.", "category": "Providers"},
+    "provider_limits": {"type": "object", "help": "Per-provider concurrency and queue limit overrides.", "category": "Providers"},
+    "memory_ttl_seconds": {"type": "integer", "help": "Conversation memory TTL in seconds.", "category": "Memory"},
+    "memory_max_messages": {"type": "integer", "help": "Maximum messages stored per conversation.", "category": "Memory"},
+    "max_concurrent_requests": {"type": "integer", "help": "Global concurrent request limit.", "category": "Concurrency"},
+    "request_timeout_seconds": {"type": "number", "help": "Per-request timeout in seconds.", "category": "Concurrency"},
+    "max_queue_wait_seconds": {"type": "number", "help": "Maximum queue wait before rejection.", "category": "Concurrency"},
+}
+
+CONFIG_GROUPS: list[dict[str, object]] = [
+    {
+        "id": "providers",
+        "label": "Providers",
+        "property": "runtime",
+        "fields": ["provider_defaults", "provider_limits"],
+    },
+    {
+        "id": "memory",
+        "label": "Memory",
+        "property": "runtime",
+        "fields": ["memory_ttl_seconds", "memory_max_messages"],
+    },
+    {
+        "id": "concurrency",
+        "label": "Concurrency",
+        "property": "runtime",
+        "fields": ["max_concurrent_requests", "request_timeout_seconds", "max_queue_wait_seconds"],
+    },
+]
 
 class ProviderModelMutationRequest(BaseModel):
     model: str = Field(min_length=1)
@@ -104,6 +134,34 @@ async def get_config(
     _user=Depends(get_admin_or_world_builder),
 ) -> dict[str, object]:
     return service.config_public_view()
+
+
+@router.get("/config/schema", status_code=status.HTTP_200_OK)
+async def get_config_schema(
+    _user=Depends(get_admin_or_world_builder),
+) -> dict[str, object]:
+    all_fields = set(RuntimeConfigUpdate.model_fields.keys())
+    # Keep default provider internal for now; frontend should not render or edit it.
+    all_fields.discard("default_provider_id")
+    grouped_fields: set[str] = set()
+    for group in CONFIG_GROUPS:
+        grouped_fields.update([f for f in group["fields"] if isinstance(f, str)])
+    ungrouped_fields = sorted(all_fields - grouped_fields)
+
+    field_meta = dict(CONFIG_FIELD_META)
+    for field in sorted(all_fields):
+        row = dict(field_meta.get(field, {}))
+        row.setdefault("change_impact", "hot")
+        row.setdefault("frontend_editable", True)
+        field_meta[field] = row
+
+    return {
+        "version": 2,
+        "groups": CONFIG_GROUPS,
+        "field_meta": {k: v for k, v in field_meta.items() if k in all_fields},
+        "frontend_locked_fields": [],
+        "ungrouped_fields": ungrouped_fields,
+    }
 
 
 @router.put("/config", status_code=status.HTTP_200_OK)

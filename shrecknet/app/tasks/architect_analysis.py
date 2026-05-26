@@ -53,6 +53,11 @@ MILESTONE_SCENE_TEXT_MAX_CHARS = 2_400
 _ARCHITECT_CONCURRENCY: int | None = None
 
 
+def initialize_architect_concurrency(*, concurrency: int) -> None:
+    global _ARCHITECT_CONCURRENCY
+    _ARCHITECT_CONCURRENCY = max(1, int(concurrency))
+
+
 def _scene_entity_extraction_concurrency() -> int:
     if _ARCHITECT_CONCURRENCY is None:
         raise RuntimeError("Architect concurrency not initialized from shreckLLM runtime")

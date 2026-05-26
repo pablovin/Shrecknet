@@ -34,6 +34,7 @@ from app.tasks.architect_analysis import (
     _run_milestone_proposal_phase,
     _run_scene_chunking_phase,
     _run_scene_proposal_phase,
+    initialize_architect_concurrency,
 )
 from app.utils.async_helpers import run_async
 from app.utils.job_tracking import (
@@ -209,6 +210,9 @@ async def _execute_run(
                 # Fallback to runtime defaults only when the configured provider is unavailable.
                 default_target = resolve_provider_default_target(runtime_config)
             runtime_controls = _derive_novelist_runtime_controls(runtime_config, default_target.provider)
+            initialize_architect_concurrency(
+                concurrency=runtime_controls["effective_capacity"]
+            )
             model_policy = ModelPolicy(
                 default_model=default_target,
                 architect_extract_model=configured_architect_target,

@@ -645,25 +645,25 @@ async def _execute_generation(
                         milestones=[],
                     )
                     await service.create_scene(
-                    run.ontology_instance_id,
-                    payload,
-                    trigger_background_jobs=False,
-                )
-                previous_scene_id = scene_id
-                created_scenes += 1
-                created_scene_ids.append(scene_id)
+                        run.ontology_instance_id,
+                        payload,
+                        trigger_background_jobs=False,
+                    )
+                    previous_scene_id = scene_id
+                    created_scenes += 1
+                    created_scene_ids.append(scene_id)
 
                 actual_scene_relation_links = 0
                 if created_scene_ids:
                     scene_rel_result = await graph_session.run(
-                    """
-                    UNWIND $scene_ids AS scene_id
-                    MATCH (scene:Scene {id: scene_id})
-                    OPTIONAL MATCH (scene)-[rel:RELATES_TO]->(:EntityInstance)
-                    RETURN count(rel) AS relation_count
-                    """,
-                    scene_ids=created_scene_ids,
-                )
+                        """
+                        UNWIND $scene_ids AS scene_id
+                        MATCH (scene:Scene {id: scene_id})
+                        OPTIONAL MATCH (scene)-[rel:RELATES_TO]->(:EntityInstance)
+                        RETURN count(rel) AS relation_count
+                        """,
+                        scene_ids=created_scene_ids,
+                    )
                     scene_rel_row = await scene_rel_result.single()
                     actual_scene_relation_links = int((scene_rel_row or {}).get("relation_count") or 0)
                 if actual_scene_relation_links != expected_scene_relation_links:

@@ -193,18 +193,32 @@ async def _execute_run(
         try:
             await update_job_progress(job_id, 0.05, {"status": "preparing orchestrator"})
             runtime_config = await fetch_shreckllm_runtime(settings)
-            default_target = resolve_provider_default_target(runtime_config)
+            configured_draft_target = settings.model_novelist_draft
+            configured_novelist_target = settings.model_novelist
+            configured_architect_target = settings.model_architect_scene_chunking
+            try:
+                runtime_default_target = resolve_provider_default_target(
+                    runtime_config,
+                    configured_draft_target.provider,
+                )
+                default_target = LLMModelTarget(
+                    provider=configured_draft_target.provider,
+                    name=configured_draft_target.name or runtime_default_target.name,
+                )
+            except Exception:
+                # Fallback to runtime defaults only when the configured provider is unavailable.
+                default_target = resolve_provider_default_target(runtime_config)
             runtime_controls = _derive_novelist_runtime_controls(runtime_config, default_target.provider)
             model_policy = ModelPolicy(
                 default_model=default_target,
-                architect_extract_model=default_target,
+                architect_extract_model=configured_architect_target,
             )
             # Attach novelist-specific model preferences for orchestrator
-            setattr(model_policy, "model_novelist_draft", default_target)
+            setattr(model_policy, "model_novelist_draft", configured_draft_target)
             setattr(
                 model_policy,
                 "model_novelist",
-                default_target,
+                configured_novelist_target,
             )
             setattr(model_policy, "model_elder", default_target)
 
@@ -301,8 +315,8 @@ async def _execute_run(
                 )
                 pseudo_instance = SimpleNamespace(entities=[source_entity])
 
-                scene_chunking_model = default_target
-                architect_model = default_target
+                scene_chunking_model = configured_architect_target
+                architect_model = configured_architect_target
                 chunking_phase = await _run_scene_chunking_phase(
                     run_id=run_id,
                     ontology_instance=pseudo_instance,

@@ -334,12 +334,14 @@ async def _execute_run(
                     ontology_instance=pseudo_instance,
                     llm_client=llm_client,
                     model=scene_chunking_model,
+                    repair_model=configured_repair_json_target,
                     instructions=instructions,
                 )
                 entity_phase = await _run_entity_proposal_phase(
                     run_id=run_id,
                     llm_client=llm_client,
                     model=architect_model,
+                    repair_model=configured_repair_json_target,
                     ontology_definitions=ontology_definitions,
                     allowed_ontology_names=allowed_ontology_map,
                     existing_nodes=existing_nodes,
@@ -356,6 +358,7 @@ async def _execute_run(
                     run_id=run_id,
                     llm_client=llm_client,
                     model=architect_model,
+                    repair_model=configured_repair_json_target,
                     proposed_scenes=scene_phase["proposed_scenes"],
                     author_id=agent.id,
                     instructions=instructions,

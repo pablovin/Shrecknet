@@ -180,6 +180,24 @@ class _FakeLLM:
         if "Revise the full draft using critic feedback" in system:
             return "<p>The party crossed from suspicion to negotiation without breaking stride.</p><blockquote>\"We ask for terms, not mercy,\" Aria said.</blockquote>"
 
+        if "synthesizing elder-grounded context for one merged narrative chunk" in system:
+            return json.dumps(
+                {
+                    "prior_events": "Prior events summary.",
+                    "relationship_summaries": "Relationships summary.",
+                    "personality_reminders": "Personality reminders.",
+                    "unresolved_tensions": "Unresolved tensions.",
+                    "style_details": "Style details.",
+                    "contradiction_warnings": "No contradictions.",
+                }
+            )
+
+        if "writing one merged narrative chunk in third-person prose" in system:
+            return "<p>Chunk prose paragraph one.</p><p>Chunk prose paragraph two.</p>"
+
+        if "full chapter from merged-chunk draft prose and critic notes" in system:
+            return "<p>Intro transition paragraph.</p><p>Climax paragraph.</p><p>Conclusion paragraph.</p>"
+
         return "{}"
 
     async def aclose(self):
@@ -258,6 +276,18 @@ async def test_scene_pipeline_stage_progression_and_artifacts() -> None:
 
 def test_parse_milestones_enforces_begin_end_when_empty() -> None:
     milestones = NovelistOrchestrator._parse_milestones({"milestones": []})
+
+
+def test_build_merged_chunks_v2_limits_to_five_and_preserves_order() -> None:
+    orchestrator = NovelistOrchestrator(llm_client=_FakeLLM(), model_policy=_FakeModelPolicy())
+    scenes = [
+        {"scene_id": f"scene-{i:03d}", "scene_summary": f"summary {i}", "raw_scene_text": f"text {i}"}
+        for i in range(1, 21)
+    ]
+    merged = orchestrator._build_merged_chunks_v2(scenes, max_chunks=5)
+    assert len(merged) == 5
+    assert merged[0]["merged_from_scene_ids"] == ["scene-001", "scene-002", "scene-003", "scene-004"]
+    assert merged[-1]["merged_from_scene_ids"] == ["scene-017", "scene-018", "scene-019", "scene-020"]
     assert len(milestones) >= 2
     assert any("Scene opening beat" in item for item in milestones)
     assert any("Scene closing beat" in item for item in milestones)

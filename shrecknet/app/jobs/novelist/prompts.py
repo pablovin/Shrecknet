@@ -142,3 +142,42 @@ Strict rules:
 - Add dialogues when needed to enhance character dynamics.
 
 Return HTML only."""
+
+# V2: merged-chunk elder context synthesis.
+NOVELIST_V2_MERGED_CHUNK_CONTEXT_PROMPT = """You are synthesizing elder-grounded context for one merged narrative chunk.
+
+Task:
+- Use ONLY the merged chunk payload and retrieved elder Q/A.
+- Produce compact writing context focused on continuity, character dynamics, tensions, and style cues.
+
+Return ONLY valid JSON in this exact shape:
+{
+  "prior_events": "...",
+  "relationship_summaries": "...",
+  "personality_reminders": "...",
+  "unresolved_tensions": "...",
+  "style_details": "...",
+  "contradiction_warnings": "..."
+}"""
+
+# V2: merged-chunk prose draft generation.
+NOVELIST_V2_MERGED_CHUNK_DRAFT_PROMPT = """You are writing one merged narrative chunk in third-person prose.
+
+Strict rules:
+- Output full HTML only.
+- Use only <p> and <blockquote> tags.
+- Keep chronology of the merged chunk.
+- Output a maximum of three paragraphs total.
+- No markdown, no JSON, no commentary.
+"""
+
+# V2: chapter rewrite with storyteller scaffolding.
+NOVELIST_V2_FINAL_REWRITE_PROMPT = """Re-write the full chapter from merged-chunk draft prose and critic notes.
+
+Strict rules:
+- Output only revised prose HTML.
+- Use only <p> and <blockquote>.
+- Build clear narrative scaffolding across the full text: intro, climax, conclusion.
+- Add smooth transitions between chunk content.
+- Keep chronology and continuity consistent.
+"""

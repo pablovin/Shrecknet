@@ -74,6 +74,7 @@ class NovelistOrchestrator:
         self.novelist_planning_model = getattr(model_policy, "model_novelist_planning", None)
         self.novelist_prose_model = getattr(model_policy, "model_novelist_prose", None)
         self.novelist_critic_model = getattr(model_policy, "model_novelist_critic", None)
+        self.repair_json_model = getattr(model_policy, "model_agents_repair_json", None)
         self.max_concurrency = max(1, min(10, max_concurrency))
         self.scene_pipeline_batch_size = max(1, min(50, int(scene_pipeline_batch_size)))
         self._elder_query_concurrency = max(1, int(elder_query_concurrency))
@@ -895,7 +896,7 @@ class NovelistOrchestrator:
                 scenes = await segment_chunk_into_scenes(
                     llm_client=self.llm_client,
                     model=model,
-                    repair_model=model,
+                    repair_model=self.repair_json_model or model,
                     marked_paragraphs=chunk.marked_paragraphs,
                     paragraph_count=chunk.paragraph_count,
                     paragraphs=chunk.paragraphs,

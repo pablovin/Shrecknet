@@ -13,6 +13,7 @@ from typing import Any, Optional
 from uuid import uuid4
 
 from app.core.config_store import LLMModelTarget
+from app.integrations.llm.json_repair import repair_json_text
 from app.integrations.llm.model_policy import LLMTask, ModelPolicy
 from app.integrations.llm.shreckllm_client import ShreckLLMClient
 from app.integrations.retrieval.neo4j_retriever import GraphRetriever
@@ -97,6 +98,7 @@ class ElderOrchestrator:
         self.model_policy = model_policy
         self.graph_retriever = graph_retriever
         self.default_top_k = default_top_k
+        self.repair_json_model = getattr(model_policy, "model_agents_repair_json", None) or self._query_model(LLMTask.DECOMPOSE)
         self.max_subqueries = 10
         self.max_concurrency = 10
         self.llm_max_concurrency = max(1, int(llm_max_concurrency))
@@ -496,7 +498,7 @@ class ElderOrchestrator:
                     temperature=0.2,
                     usage_tag=usage_tag or "elder.decompose",
                 )
-            payload = self._extract_json(response)
+            payload = await self._extract_json(response)
             raw_intents = payload.get("intents") if isinstance(payload, dict) else None
             intents: list[DecomposedIntent] = []
             if isinstance(raw_intents, list):
@@ -977,8 +979,7 @@ class ElderOrchestrator:
             return ["Milestone"]
         return ["EntityInstance", "Scene", "Milestone"]
 
-    @staticmethod
-    def _extract_json(raw: str) -> dict[str, Any]:
+    async def _extract_json(self, raw: str) -> dict[str, Any]:
         text = (raw or "").strip()
         if not text:
             return {}
@@ -995,8 +996,18 @@ class ElderOrchestrator:
                 parsed = json.loads(text[start : end + 1])
                 return parsed if isinstance(parsed, dict) else {}
             except json.JSONDecodeError:
-                return {}
-        return {}
+                pass
+        try:
+            repaired = await repair_json_text(
+                self.llm_client,
+                model=self.repair_json_model,
+                malformed_text=text,
+                usage_tag="agents.json_repair",
+            )
+            parsed = json.loads(repaired)
+            return parsed if isinstance(parsed, dict) else {}
+        except Exception:
+            return {}
 
     @staticmethod
     def _extract_memory_summary(

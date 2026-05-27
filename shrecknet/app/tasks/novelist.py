@@ -200,6 +200,7 @@ async def _execute_run(
             configured_novelist_prose_target = getattr(settings, "model_novelist_prose", configured_draft_target) or configured_draft_target
             configured_novelist_critic_target = getattr(settings, "model_novelist_critic", configured_novelist_target) or configured_novelist_target
             configured_architect_target = settings.model_architect_scene_chunking
+            configured_repair_json_target = getattr(settings, "model_agents_repair_json", configured_architect_target) or configured_architect_target
             try:
                 runtime_default_target = resolve_provider_default_target(
                     runtime_config,
@@ -231,6 +232,7 @@ async def _execute_run(
             setattr(model_policy, "model_novelist_prose", configured_novelist_prose_target)
             setattr(model_policy, "model_novelist_critic", configured_novelist_critic_target)
             setattr(model_policy, "model_elder", default_target)
+            setattr(model_policy, "model_agents_repair_json", configured_repair_json_target)
 
             async def elder_query_runner(agent: Agent, query: str) -> list[dict[str, Any]]:
                 # Elder context is an optional flavor-only layer: never plot authority.

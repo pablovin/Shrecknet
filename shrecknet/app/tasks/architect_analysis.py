@@ -1227,6 +1227,7 @@ async def _run_entity_proposal_phase(
         run_id=run_id,
         llm_client=llm_client,
         model=model,
+        repair_model=repair_model,
         ontology_definitions=ontology_definitions,
         allowed_ontology_names=allowed_ontology_names,
         existing_nodes=existing_nodes,

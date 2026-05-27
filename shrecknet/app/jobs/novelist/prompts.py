@@ -9,6 +9,20 @@ Step mapping (orchestrator):
 - step_7_scene_revision: NOVELIST_SCENE_REVISION_PROMPT
 """
 
+NOVELIST_SCENE_MERGE_PROMPT = """You are merging adjacent narrative scenes into one stronger scene.
+
+Task:
+- Given a bundle of adjacent scenes, produce one merged scene title and one merged scene summary.
+- Keep chronology intact and preserve key entities/conflicts from all input scenes.
+- Avoid generic/vague names.
+
+Return ONLY valid JSON in this shape:
+{
+  "name": "...",
+  "scene_summary": "..."
+}
+"""
+
 # Step 2: scene package exploration.
 NOVELIST_SCENE_EXPLORATION_PROMPT = """You are exploring one scene to produce only missing planning details.
 

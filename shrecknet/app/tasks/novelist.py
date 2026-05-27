@@ -196,6 +196,9 @@ async def _execute_run(
             runtime_config = await fetch_shreckllm_runtime(settings)
             configured_draft_target = settings.model_novelist_draft
             configured_novelist_target = settings.model_novelist
+            configured_novelist_planning_target = getattr(settings, "model_novelist_planning", configured_novelist_target) or configured_novelist_target
+            configured_novelist_prose_target = getattr(settings, "model_novelist_prose", configured_draft_target) or configured_draft_target
+            configured_novelist_critic_target = getattr(settings, "model_novelist_critic", configured_novelist_target) or configured_novelist_target
             configured_architect_target = settings.model_architect_scene_chunking
             try:
                 runtime_default_target = resolve_provider_default_target(
@@ -224,6 +227,9 @@ async def _execute_run(
                 "model_novelist",
                 configured_novelist_target,
             )
+            setattr(model_policy, "model_novelist_planning", configured_novelist_planning_target)
+            setattr(model_policy, "model_novelist_prose", configured_novelist_prose_target)
+            setattr(model_policy, "model_novelist_critic", configured_novelist_critic_target)
             setattr(model_policy, "model_elder", default_target)
 
             async def elder_query_runner(agent: Agent, query: str) -> list[dict[str, Any]]:

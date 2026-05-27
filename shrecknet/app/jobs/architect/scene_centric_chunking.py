@@ -10,6 +10,7 @@ from typing import Any
 
 from app.core.config_store import LLMModelTarget
 from app.integrations.llm.shreckllm_client import ShreckLLMClient
+from app.integrations.llm.json_repair import repair_json_text
 from app.jobs.architect import prompts as architect_prompts
 
 
@@ -486,16 +487,11 @@ async def _retry_scene_payload_via_llm_json_repair(
     model: str | LLMModelTarget,
     malformed_text: str,
 ) -> dict[str, Any]:
-    repair_template = getattr(
-        architect_prompts,
-        "ARCHITECT_SCENE_SEGMENTATION_JSON_REPAIR_PROMPT",
-        "",
-    )
-    prompt = str(repair_template).format(malformed_json=malformed_text)
-    response_text = await llm_client.chat(
+    response_text = await repair_json_text(
+        llm_client=llm_client,
         model=model,
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.0,
+        malformed_text=malformed_text,
+        schema_hint='{"scenes":[{"scene_id":0,"name":"...","description":"...","start_paragraph":1,"end_paragraph":4}]}',
         usage_tag="architect.scene_discovery.json_repair",
     )
     return _parse_scene_payload_with_repair(response_text)
@@ -593,6 +589,7 @@ async def segment_chunk_into_scenes(
     *,
     llm_client: ShreckLLMClient,
     model: str | LLMModelTarget,
+    repair_model: str | LLMModelTarget,
     marked_paragraphs: str,
     paragraph_count: int,
     paragraphs: list[str],
@@ -634,7 +631,7 @@ async def segment_chunk_into_scenes(
         try:
             payload = await _retry_scene_payload_via_llm_json_repair(
                 llm_client=llm_client,
-                model=model,
+                model=repair_model,
                 malformed_text=response_text,
             )
             used_json_repair = True

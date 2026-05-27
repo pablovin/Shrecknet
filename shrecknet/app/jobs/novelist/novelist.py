@@ -25,6 +25,7 @@ from app.jobs.architect.scene_centric_chunking import (
 )
 from app.jobs.architect.schemas import ChunkExtractionResponse
 from app.jobs.novelist.prompts import (
+    NOVELIST_SCENE_MERGE_PROMPT,
     NOVELIST_SCENE_CONTEXT_CREATION_PROMPT,
     NOVELIST_SCENE_CRITIC_PROMPT,
     NOVELIST_SCENE_EXPLORATION_PROMPT,
@@ -70,6 +71,9 @@ class NovelistOrchestrator:
         self.model_policy = model_policy
         self.draft_model = getattr(model_policy, "model_novelist_draft", None)
         self.novelist_model = getattr(model_policy, "model_novelist", None)
+        self.novelist_planning_model = getattr(model_policy, "model_novelist_planning", None)
+        self.novelist_prose_model = getattr(model_policy, "model_novelist_prose", None)
+        self.novelist_critic_model = getattr(model_policy, "model_novelist_critic", None)
         self.max_concurrency = max(1, min(10, max_concurrency))
         self.scene_pipeline_batch_size = max(1, min(50, int(scene_pipeline_batch_size)))
         self._elder_query_concurrency = max(1, int(elder_query_concurrency))
@@ -86,12 +90,22 @@ class NovelistOrchestrator:
         self._debug_prompt_calls: list[dict[str, Any]] = []
         self._debug_response_calls: list[dict[str, Any]] = []
         self._debug_output_dir: Path | None = None
-        self._model_steps_1_to_6 = (
-            self.novelist_model
-            or self.draft_model
+        self._model_step_2_4 = (
+            self.novelist_planning_model
+            or self.novelist_model
             or self.model_policy.get_model(LLMTask.SYNTHESIS)
         )
-        self._model_step_7 = self.draft_model or self.model_policy.get_model(LLMTask.SYNTHESIS)
+        self._model_step_5_7 = (
+            self.novelist_prose_model
+            or self.draft_model
+            or self.novelist_model
+            or self.model_policy.get_model(LLMTask.SYNTHESIS)
+        )
+        self._model_step_6 = (
+            self.novelist_critic_model
+            or self.novelist_model
+            or self.model_policy.get_model(LLMTask.SYNTHESIS)
+        )
 
     async def execute(
         self,
@@ -868,7 +882,7 @@ class NovelistOrchestrator:
                     exc_info=True,
                 )
 
-        model = self._model_steps_1_to_6
+        model = self._model_step_2_4
         paragraphs = extract_paragraphs_from_sources(unstructured_text, None)
         if not paragraphs:
             paragraphs = [re.sub(r"\s+", " ", unstructured_text).strip()][:1]
@@ -881,6 +895,7 @@ class NovelistOrchestrator:
                 scenes = await segment_chunk_into_scenes(
                     llm_client=self.llm_client,
                     model=model,
+                    repair_model=model,
                     marked_paragraphs=chunk.marked_paragraphs,
                     paragraph_count=chunk.paragraph_count,
                     paragraphs=chunk.paragraphs,
@@ -925,9 +940,16 @@ class NovelistOrchestrator:
             if not scene.get("name"):
                 scene["name"] = f"Scene {idx}"
 
+        merged_scenes = await self._merge_segmented_scenes(
+            scenes=segmented_scenes,
+            model=model,
+            conversation_id=conversation_id,
+            bundle_size=5,
+        )
+
         ontology_definitions = self._serialize_ontology_definitions(agent)
         enriched_scenes = await self._extract_scene_entities_and_milestones(
-            scenes=segmented_scenes,
+            scenes=merged_scenes,
             ontology_definitions=ontology_definitions,
             model=model,
             conversation_id=conversation_id,
@@ -972,75 +994,80 @@ class NovelistOrchestrator:
         model: str,
         conversation_id: str | None,
     ) -> list[dict[str, Any]]:
-        semaphore = asyncio.Semaphore(self.max_concurrency)
-
-        async def _run(scene: dict[str, Any]) -> dict[str, Any]:
-            async with semaphore:
-                scene_name = str(scene.get("name") or scene.get("scene_id") or "Scene").strip()
-                scene_summary = str(scene.get("scene_summary") or "").strip()
-                raw_scene_text = str(scene.get("raw_scene_text") or "").strip()
-
-                entity_prompt = ARCHITECT_ENTITY_PROPOSAL_PROMPT.format(
-                    ontology_definitions=ontology_definitions,
-                    scene_name=scene_name,
-                    scene_description=scene_summary or "(no description)",
-                    scene_text=raw_scene_text or "(no text)",
-                )
-                entity_raw, _, _ = await self._call_llm(
-                    model=model,
-                    messages=[{"role": "user", "content": entity_prompt}],
-                    temperature=0.1,
-                    conversation_id=conversation_id,
-                )
-                entity_payload = self._parse_json_object(entity_raw) or {}
-                entities = self._parse_architect_entities(entity_payload)
-
-                scene_ref = str(scene.get("scene_id") or "scene")
-                milestone_prompt = ARCHITECT_MILESTONE_BATCH_PROMPT.format(
-                    scenes_payload=json.dumps(
-                        [
-                            {
-                                "scene_ref": scene_ref,
-                                "scene_name": scene_name,
-                                "scene_description": scene_summary or "(no description)",
-                                "scene_text": raw_scene_text or "(no text)",
-                                "entities": entities,
-                            }
-                        ],
-                        ensure_ascii=False,
-                    )
-                )
-                milestone_raw, _, _ = await self._call_llm(
-                    model=model,
-                    messages=[{"role": "user", "content": milestone_prompt}],
-                    temperature=0.1,
-                    conversation_id=conversation_id,
-                )
-                milestone_payload = self._parse_json_object(milestone_raw) or {}
-                milestone_scenes = milestone_payload.get("scenes")
-                if isinstance(milestone_scenes, list):
-                    scene_payload = next(
-                        (
-                            item
-                            for item in milestone_scenes
-                            if isinstance(item, dict)
-                            and str(item.get("scene_ref") or "") == scene_ref
-                        ),
-                        {},
-                    )
-                    milestones = self._parse_milestones(scene_payload)
-                else:
-                    milestones = self._parse_milestones(milestone_payload)
-
-                return {
-                    **scene,
-                    "related_entities": entities,
-                    "milestones": milestones,
-                    "entity_raw": entity_raw,
-                    "milestone_raw": milestone_raw,
+        out = [dict(scene) for scene in scenes]
+        scene_by_id = {str(s.get("scene_id") or ""): s for s in out}
+        # Architect-style batching: entities in 3-scene batches, milestones in 5-scene batches.
+        for idx in range(0, len(out), 3):
+            batch = out[idx : idx + 3]
+            scenes_payload = [
+                {
+                    "scene_ref": str(scene.get("scene_id") or ""),
+                    "scene_name": str(scene.get("name") or "Scene"),
+                    "scene_description": str(scene.get("scene_summary") or ""),
+                    "scene_text": str(scene.get("raw_scene_text") or ""),
                 }
+                for scene in batch
+            ]
+            prompt = ARCHITECT_ENTITY_PROPOSAL_PROMPT.format(
+                ontology_definitions=ontology_definitions,
+                existing_entities="[]",
+                scenes_payload=json.dumps(scenes_payload, ensure_ascii=False),
+                scene_name=scenes_payload[0]["scene_name"] if scenes_payload else "",
+                scene_description=scenes_payload[0]["scene_description"] if scenes_payload else "",
+                scene_text=scenes_payload[0]["scene_text"] if scenes_payload else "",
+            )
+            entity_raw, _, _ = await self._call_llm(
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.1,
+                conversation_id=conversation_id,
+            )
+            payload = self._parse_json_object(entity_raw) or {}
+            for row in payload.get("scenes", []) if isinstance(payload.get("scenes"), list) else []:
+                if not isinstance(row, dict):
+                    continue
+                scene_ref = str(row.get("scene_ref") or "")
+                target = scene_by_id.get(scene_ref)
+                if target is None:
+                    continue
+                target["related_entities"] = self._parse_architect_entities({"entities": row.get("entities", [])})
 
-        return await asyncio.gather(*[asyncio.create_task(_run(scene)) for scene in scenes])
+        for scene in out:
+            scene.setdefault("related_entities", [])
+
+        for idx in range(0, len(out), 5):
+            batch = out[idx : idx + 5]
+            scenes_payload = [
+                {
+                    "scene_ref": str(scene.get("scene_id") or ""),
+                    "scene_name": str(scene.get("name") or "Scene"),
+                    "scene_description": str(scene.get("scene_summary") or ""),
+                    "scene_text": str(scene.get("raw_scene_text") or ""),
+                    "entities": scene.get("related_entities") or [],
+                }
+                for scene in batch
+            ]
+            prompt = ARCHITECT_MILESTONE_BATCH_PROMPT.format(
+                scenes_payload=json.dumps(scenes_payload, ensure_ascii=False)
+            )
+            milestone_raw, _, _ = await self._call_llm(
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.1,
+                conversation_id=conversation_id,
+            )
+            payload = self._parse_json_object(milestone_raw) or {}
+            for row in payload.get("scenes", []) if isinstance(payload.get("scenes"), list) else []:
+                if not isinstance(row, dict):
+                    continue
+                scene_ref = str(row.get("scene_ref") or "")
+                target = scene_by_id.get(scene_ref)
+                if target is None:
+                    continue
+                target["milestones"] = self._parse_milestones(row)
+        for scene in out:
+            scene.setdefault("milestones", [])
+        return out
 
     async def _build_scene_packages(
         self,
@@ -1069,7 +1096,7 @@ class NovelistOrchestrator:
                     ensure_ascii=True,
                 )
                 raw, latency_ms, _ = await self._call_llm(
-                    model=self._model_steps_1_to_6,
+                    model=self._model_step_2_4,
                     messages=[
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_prompt},
@@ -1096,6 +1123,57 @@ class NovelistOrchestrator:
         out = await asyncio.gather(*[asyncio.create_task(_run(scene)) for scene in scenes])
         out.sort(key=lambda item: str(item.get("scene_id", "")))
         return out
+
+    async def _merge_segmented_scenes(
+        self,
+        *,
+        scenes: list[dict[str, Any]],
+        model: str,
+        conversation_id: str | None,
+        bundle_size: int = 5,
+    ) -> list[dict[str, Any]]:
+        if not scenes:
+            return []
+        merged: list[dict[str, Any]] = []
+        for i in range(0, len(scenes), max(1, bundle_size)):
+            bundle = scenes[i : i + max(1, bundle_size)]
+            summary_input = [
+                {
+                    "scene_id": str(s.get("scene_id") or ""),
+                    "name": str(s.get("name") or ""),
+                    "scene_summary": str(s.get("scene_summary") or ""),
+                }
+                for s in bundle
+            ]
+            prompt = NOVELIST_SCENE_MERGE_PROMPT + "\n\n" + json.dumps(summary_input, ensure_ascii=False)
+            raw, _, _ = await self._call_llm(
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.1,
+                conversation_id=conversation_id,
+            )
+            parsed = self._parse_json_object(raw) or {}
+            source_paragraphs: list[int] = []
+            source_anchors: list[str] = []
+            raw_text_parts: list[str] = []
+            for s in bundle:
+                source_paragraphs.extend(list(s.get("source_paragraphs") or []))
+                source_anchors.extend(list(s.get("source_anchors") or []))
+                txt = str(s.get("raw_scene_text") or "").strip()
+                if txt:
+                    raw_text_parts.append(txt)
+            merged.append(
+                {
+                    "scene_id": f"scene-{len(merged)+1:03d}",
+                    "name": str(parsed.get("name") or f"Merged Scene {len(merged)+1}").strip(),
+                    "scene_summary": str(parsed.get("scene_summary") or "").strip(),
+                    "raw_scene_text": "\n\n".join(raw_text_parts),
+                    "source_paragraphs": sorted(set(source_paragraphs)),
+                    "source_anchors": source_anchors,
+                    "merged_from_scene_ids": [str(s.get("scene_id") or "") for s in bundle if str(s.get("scene_id") or "").strip()],
+                }
+            )
+        return merged
 
     async def _collect_scene_retrieval(
         self,
@@ -1133,6 +1211,7 @@ class NovelistOrchestrator:
                 prior_knowledge_pairs,
                 fallback=scene.get("open_questions_for_retrieval") or [],
             )
+            queries = queries[:3]
             query_results.append((scene_id, queries))
 
         semaphore = asyncio.Semaphore(self.max_concurrency)
@@ -1261,7 +1340,7 @@ class NovelistOrchestrator:
                 )
             async with context_sem:
                 raw, _, _ = await self._call_llm(
-                    model=self._model_steps_1_to_6,
+                    model=self._model_step_2_4,
                     messages=[
                         {"role": "system", "content": context_system},
                         {"role": "user", "content": user_payload},
@@ -1329,7 +1408,7 @@ class NovelistOrchestrator:
             ensure_ascii=True,
         )
         raw, _, _ = await self._call_llm(
-            model=self._model_steps_1_to_6,
+            model=self._model_step_2_4,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_payload},
@@ -1377,7 +1456,7 @@ class NovelistOrchestrator:
             ensure_ascii=True,
         )
         raw, _, _ = await self._call_llm(
-            model=self._model_steps_1_to_6,
+            model=self._model_step_5_7,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_payload},
@@ -1408,7 +1487,7 @@ class NovelistOrchestrator:
         merged_text = self._clip_text(merged_text, max_chars=self._critic_input_max_chars)
         user_payload = merged_text
         raw, latency_ms, _ = await self._call_llm(
-            model=self._model_steps_1_to_6,
+            model=self._model_step_6,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_payload},
@@ -1464,7 +1543,7 @@ class NovelistOrchestrator:
             "Return revised prose HTML only."
         )
         raw, latency_ms, _ = await self._call_llm(
-            model=self._model_step_7,
+            model=self._model_step_5_7,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_payload},

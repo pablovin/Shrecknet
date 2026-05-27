@@ -8,6 +8,20 @@ Primary implementation:
 - `shrecknet/app/tasks/novelist.py`
 - `shrecknet/app/api/routers/novelist.py`
 
+## Model Configuration
+
+Novelist uses dedicated model targets for grouped stages:
+
+- `model_novelist_planning`: planning stages (step 2 + step 4).
+- `model_novelist_prose`: prose generation stages (step 5 + step 7).
+- `model_novelist_critic`: critic stage (step 6).
+
+Compatibility/fallback behavior:
+
+- `model_novelist_planning` falls back to `model_novelist`.
+- `model_novelist_prose` falls back to `model_novelist_draft`, then to `model_novelist`.
+- `model_novelist_critic` falls back to `model_novelist`.
+
 ## Jobs Overview
 
 Main endpoints:

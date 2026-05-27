@@ -12,7 +12,11 @@ from app.core.config_store import get_settings, is_shreckllm_configured
 from app.graphrag.embedding_runtime import EmbeddingRuntimeError
 from app.graph.neo4j import get_driver
 from app.integrations.llm.model_policy import ModelPolicy
-from app.integrations.llm.runtime_control import fetch_shreckllm_runtime, resolve_provider_default_target
+from app.integrations.llm.runtime_control import (
+    fetch_shreckllm_runtime,
+    resolve_effective_architect_concurrency,
+    resolve_provider_default_target,
+)
 from app.integrations.llm.shreckllm_client import ShreckLLMClient
 from app.integrations.retrieval.neo4j_retriever import Neo4jGraphRetriever
 from app.jobs.elder.elder import ElderOrchestrator
@@ -66,6 +70,20 @@ async def get_model_policy() -> ModelPolicy:
     return model_policy
 
 
+async def get_elder_llm_concurrency() -> int:
+    settings = get_settings()
+    try:
+        runtime_config = await fetch_shreckllm_runtime(settings)
+        target = resolve_provider_default_target(runtime_config)
+        return resolve_effective_architect_concurrency(
+            runtime_config,
+            provider_id=target.provider,
+        )
+    except Exception as exc:
+        logger.warning("elder_llm_concurrency_fallback_to_1 error=%s", exc)
+        return 1
+
+
 async def get_graph_retriever() -> Neo4jGraphRetriever:
     """Dependency to get graph retriever."""
     settings = get_settings()
@@ -83,6 +101,7 @@ async def get_elder_orchestrator(
     llm_client: ShreckLLMClient = Depends(get_llm_client),
     model_policy: ModelPolicy = Depends(get_model_policy),
     graph_retriever: Neo4jGraphRetriever = Depends(get_graph_retriever),
+    llm_max_concurrency: int = Depends(get_elder_llm_concurrency),
 ) -> ElderOrchestrator:
     """Dependency to get Elder orchestrator."""
     settings = get_settings()
@@ -92,6 +111,7 @@ async def get_elder_orchestrator(
         model_policy=model_policy,
         graph_retriever=graph_retriever,
         default_top_k=settings.default_top_k,
+        llm_max_concurrency=llm_max_concurrency,
     )
 
 

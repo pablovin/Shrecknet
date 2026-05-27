@@ -19,6 +19,7 @@ from app.db.jobs_session import JobsSessionMaker
 from app.graph.neo4j import get_driver
 from app.integrations.llm.model_policy import ModelPolicy
 from app.integrations.llm.shreckllm_client import ShreckLLMClient
+from app.integrations.llm.runtime_control import fetch_shreckllm_runtime, resolve_effective_architect_concurrency
 from app.jobs.architect.entity_generator import EntityGenerator
 from app.models.ontology import AuthorType as OntologyAuthorType
 from app.models.architect import ArchitectProposalStatus, ArchitectProposalType, ArchitectRunStatus
@@ -849,12 +850,26 @@ async def _execute_generation(
                 for entity in refreshed_instance.entities
             }
 
+            generation_model = getattr(
+                settings,
+                "model_architect_entity_generation",
+                settings.model_architect,
+            ) or settings.model_architect
+            runtime_config = await fetch_shreckllm_runtime(settings)
+            enrichment_concurrency = resolve_effective_architect_concurrency(
+                runtime_config,
+                provider_id=generation_model.provider,
+            )
             model_policy = ModelPolicy(
-                default_model=settings.model_architect,
-                architect_extract_model=settings.model_architect,
+                default_model=generation_model,
+                architect_extract_model=generation_model,
             )
             llm_client = ShreckLLMClient(base_url=settings.shreckllm_base_url, timeout=settings.shreckllm_request_timeout_s, max_retries=settings.shreckllm_max_retries)
-            generator = EntityGenerator(llm_client, model_policy)
+            generator = EntityGenerator(
+                llm_client,
+                model_policy,
+                concurrent_extractions=enrichment_concurrency,
+            )
             entity_scene_refs: dict[str, set[str]] = defaultdict(set)
             for scene_ref, related_ids in scene_ref_to_entities.items():
                 for related_id in related_ids:
@@ -878,6 +893,7 @@ async def _execute_generation(
                         proposal_scene_refs=proposal_scene_refs,
                         entity_scene_refs=entity_scene_refs,
                         author_id=author_id,
+                        extraction_concurrency=enrichment_concurrency,
                     )
                 except Exception as exc:
                     message = str(exc).lower()
@@ -1054,6 +1070,7 @@ async def _apply_enrichment_updates(
     proposal_scene_refs: dict[str, list[str]],
     entity_scene_refs: dict[str, set[str]],
     author_id: str,
+    extraction_concurrency: int | None = None,
 ) -> dict[str, Any]:
     stats: dict[str, Any] = {
         "scanned_entities": 0,
@@ -1136,7 +1153,12 @@ async def _apply_enrichment_updates(
     # never accessed concurrently.
     # ------------------------------------------------------------------
 
-    semaphore = asyncio.Semaphore(_ENRICHMENT_CONCURRENCY)
+    effective_concurrency = (
+        max(1, int(extraction_concurrency))
+        if extraction_concurrency is not None
+        else _ENRICHMENT_CONCURRENCY
+    )
+    semaphore = asyncio.Semaphore(effective_concurrency)
 
     async def _prepare_and_extract(entity_id: str):
         """Prepare enrichment inputs and run extraction for one entity."""

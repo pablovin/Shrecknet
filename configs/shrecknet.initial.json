@@ -40,6 +40,22 @@
     "provider": "ollama",
     "name": "gemma3:4b"
   },
+  "model_architect_entity_proposal": {
+    "provider": "ollama",
+    "name": "gemma3:4b"
+  },
+  "model_architect_milestone_proposal": {
+    "provider": "ollama",
+    "name": "gemma3:4b"
+  },
+  "model_architect_entity_generation": {
+    "provider": "ollama",
+    "name": "gemma3:4b"
+  },
+  "model_agents_repair_json": {
+    "provider": "ollama",
+    "name": "gemma3:4b"
+  },
   "model_elder": {
     "provider": "ollama",
     "name": "gemma3:4b"
@@ -49,6 +65,18 @@
     "name": "gemma3:4b"
   },
   "model_novelist_draft": {
+    "provider": "ollama",
+    "name": "gemma3:4b"
+  },
+  "model_novelist_planning": {
+    "provider": "ollama",
+    "name": "gemma3:4b"
+  },
+  "model_novelist_prose": {
+    "provider": "ollama",
+    "name": "gemma3:4b"
+  },
+  "model_novelist_critic": {
     "provider": "ollama",
     "name": "gemma3:4b"
   },

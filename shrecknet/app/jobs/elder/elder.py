@@ -7,6 +7,7 @@ import json
 import logging
 import re
 import time
+from difflib import SequenceMatcher
 from collections import defaultdict
 from typing import Any, Optional
 from uuid import uuid4
@@ -90,6 +91,7 @@ class ElderOrchestrator:
         model_policy: ModelPolicy,
         graph_retriever: GraphRetriever,
         default_top_k: int = 20,
+        llm_max_concurrency: int = 1,
     ):
         self.llm_client = llm_client
         self.model_policy = model_policy
@@ -97,9 +99,12 @@ class ElderOrchestrator:
         self.default_top_k = default_top_k
         self.max_subqueries = 10
         self.max_concurrency = 10
+        self.llm_max_concurrency = max(1, int(llm_max_concurrency))
+        self._llm_semaphore = asyncio.Semaphore(self.llm_max_concurrency)
         self.fast_first_min_results = 3
         self.fast_first_min_top_score = 0.42
         self.last_retrieval_debug: list[dict[str, Any]] = []
+        self.query_entity_matches: list[dict[str, Any]] = []
 
     def _query_model(self, fallback_task: LLMTask) -> LLMModelTarget:
         model = getattr(self.model_policy, "model_elder", None)
@@ -137,6 +142,15 @@ class ElderOrchestrator:
             request.rerank_limit if request.rerank_limit is not None else 50
         )
         ontology_ids = [ont.id for ont in agent.ontologies]
+        self.query_entity_matches = await self._match_query_entities(
+            query=request.query,
+            ontology_ids=ontology_ids,
+        )
+        query_entity_ids = {str(item.get("node_id") or "").strip() for item in self.query_entity_matches if str(item.get("node_id") or "").strip()}
+        entities_hint_augmented = self._augment_entities_hint(
+            base_hint=request.entities_hint,
+            matches=self.query_entity_matches,
+        )
 
         # Layer 1: memory summary
         t0 = time.monotonic()
@@ -161,7 +175,7 @@ class ElderOrchestrator:
                 ontology_ids,
                 chat_history,
                 trace,
-                request.entities_hint,
+                entities_hint_augmented,
                 usage_tag=f"elder.{mode_tag}.decompose_initial",
             )
             deep_usage = _llm_usage_since(self.llm_client, deep_usage_start)
@@ -238,7 +252,7 @@ class ElderOrchestrator:
                 ontology_ids,
                 chat_history,
                 trace,
-                request.entities_hint,
+                entities_hint_augmented,
                 usage_tag=f"elder.{mode_tag}.decompose_expand",
             )
             expand_usage = _llm_usage_since(self.llm_client, expand_usage_start)
@@ -309,6 +323,7 @@ class ElderOrchestrator:
             request_query=request.query,
             sources=consolidated_sources,
             memory_summary=memory_summary,
+            query_entity_ids=query_entity_ids,
         )
         consolidated_sources.sort(key=lambda s: s.score, reverse=True)
         consolidated_sources = consolidated_sources[: max(top_k, 1)]
@@ -409,6 +424,9 @@ class ElderOrchestrator:
             f"totals={summary_totals} pipeline_step_usage={summary_steps} llm_runs_by_tag={summary_tags}",
             flush=True,
         )
+        retrieval_debug_payload = list(self.last_retrieval_debug or [])
+        if self.query_entity_matches:
+            retrieval_debug_payload.append({"query_entity_matches": self.query_entity_matches})
 
         return ElderQueryResponse(
             agent_id=agent.id,
@@ -420,7 +438,7 @@ class ElderOrchestrator:
             memory_priors_applied=memory_priors_applied,
             trace_id=trace_id,
             trace=trace if request.include_trace else None,
-            retrieval_debug=self.last_retrieval_debug or None,
+            retrieval_debug=retrieval_debug_payload or None,
         )
 
     def _should_expand_after_first_pass(
@@ -471,12 +489,13 @@ class ElderOrchestrator:
         messages.append({"role": "user", "content": prompt})
 
         try:
-            response = await self.llm_client.chat(
-                model=model,
-                messages=messages,
-                temperature=0.2,
-                usage_tag=usage_tag or "elder.decompose",
-            )
+            async with self._llm_semaphore:
+                response = await self.llm_client.chat(
+                    model=model,
+                    messages=messages,
+                    temperature=0.2,
+                    usage_tag=usage_tag or "elder.decompose",
+                )
             payload = self._extract_json(response)
             raw_intents = payload.get("intents") if isinstance(payload, dict) else None
             intents: list[DecomposedIntent] = []
@@ -710,6 +729,7 @@ class ElderOrchestrator:
         request_query: str,
         sources: list[SourceNode],
         memory_summary: dict[str, Any],
+        query_entity_ids: set[str] | None = None,
     ) -> list[dict[str, Any]]:
         priors_applied: list[dict[str, Any]] = []
         if not sources:
@@ -724,6 +744,7 @@ class ElderOrchestrator:
         boosted_temporal_targets: list[str] = []
         boosted_disambiguation_targets: list[str] = []
         boosted_continuity_targets: list[str] = []
+        boosted_query_match_targets: list[str] = []
 
         for source in sources:
             base = source.score
@@ -740,6 +761,9 @@ class ElderOrchestrator:
             if query_has_pronouns and source.node_label == "EntityInstance":
                 source.score += 0.015
                 boosted_disambiguation_targets.append(source.node_id)
+            if query_entity_ids and source.node_id in query_entity_ids:
+                source.score += 0.04
+                boosted_query_match_targets.append(source.node_id)
 
             source_text = " ".join((c.text or "") for c in source.evidence_chunks).lower()
             if last_answer_terms and any(term in source_text for term in last_answer_terms):
@@ -791,8 +815,106 @@ class ElderOrchestrator:
                     "impact_on_scores": 0.01,
                 }
             )
+        if boosted_query_match_targets:
+            priors_applied.append(
+                {
+                    "type": "query_entity_match_prior",
+                    "effect": "boost",
+                    "targets": sorted(set(boosted_query_match_targets)),
+                    "why": "high-confidence fuzzy match from query text",
+                    "impact_on_scores": 0.04,
+                }
+            )
 
         return priors_applied
+
+    async def _match_query_entities(
+        self,
+        *,
+        query: str,
+        ontology_ids: list[int],
+    ) -> list[dict[str, Any]]:
+        query_n = self._normalize_text(query)
+        if not query_n:
+            return []
+        results: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for ontology_id in ontology_ids:
+            skip = 0
+            while True:
+                rows = await self.graph_retriever.list_entities_by_ontology(
+                    ontology_id,
+                    skip=skip,
+                    limit=500,
+                )
+                if not rows:
+                    break
+                for row in rows:
+                    node_id = str(row.get("node_id") or "").strip()
+                    alias = str(row.get("alias") or "").strip()
+                    if not node_id or not alias or node_id in seen:
+                        continue
+                    score = self._query_alias_match_score(query_n, alias)
+                    if score < 0.6:
+                        continue
+                    results.append(
+                        {
+                            "node_id": node_id,
+                            "alias": alias,
+                            "ontology": str(row.get("ontology") or ""),
+                            "confidence": round(score, 4),
+                        }
+                    )
+                    seen.add(node_id)
+                if len(rows) < 500:
+                    break
+                skip += 500
+        results.sort(key=lambda item: float(item.get("confidence") or 0.0), reverse=True)
+        return results[:8]
+
+    @staticmethod
+    def _normalize_text(value: str) -> str:
+        return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9\s]", " ", (value or "").lower())).strip()
+
+    @staticmethod
+    def _query_alias_match_score(query_normalized: str, alias: str) -> float:
+        alias_n = ElderOrchestrator._normalize_text(alias)
+        if not alias_n:
+            return 0.0
+        if alias_n in query_normalized:
+            return 1.0
+        alias_tokens = [t for t in alias_n.split() if t]
+        query_tokens = [t for t in query_normalized.split() if t]
+        overlap = 0.0
+        if alias_tokens:
+            overlap_count = sum(1 for t in alias_tokens if t in query_tokens)
+            overlap = overlap_count / len(alias_tokens)
+        sim = SequenceMatcher(None, alias_n, query_normalized).ratio()
+        partial = max(
+            (SequenceMatcher(None, alias_n, " ".join(query_tokens[i : i + len(alias_tokens) or 1])).ratio()
+             for i in range(max(1, len(query_tokens) - len(alias_tokens) + 1))),
+            default=0.0,
+        )
+        return max(overlap, sim * 0.8, partial * 0.95)
+
+    @staticmethod
+    def _augment_entities_hint(
+        *,
+        base_hint: str | None,
+        matches: list[dict[str, Any]],
+    ) -> str | None:
+        base = str(base_hint or "").strip()
+        if not matches:
+            return base or None
+        lines = [
+            "Query matched entity candidates (high-confidence fuzzy):",
+            *[
+                f"- {m.get('alias')} (id={m.get('node_id')}, confidence={m.get('confidence')})"
+                for m in matches
+            ],
+        ]
+        prefix = "\n".join(lines)
+        return f"{prefix}\n\n{base}" if base else prefix
 
     async def _synthesize(
         self,
@@ -833,12 +955,13 @@ class ElderOrchestrator:
         )
 
         try:
-            return await self.llm_client.chat(
-                model=model,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.3,
-                usage_tag=usage_tag or "elder.synthesize",
-            )
+            async with self._llm_semaphore:
+                return await self.llm_client.chat(
+                    model=model,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.3,
+                    usage_tag=usage_tag or "elder.synthesize",
+                )
         except Exception as exc:
             logger.error("Synthesis failed: %s", exc)
             return "I had trouble synthesizing a response from the retrieved evidence. Please try again."

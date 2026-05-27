@@ -17,6 +17,22 @@ Background tasks:
 - `architect.analyze_instance`
 - `architect.generate_entities`
 
+## Model Configuration
+
+Architect uses step-specific model targets from runtime settings:
+
+- `model_architect_scene_chunking`: scene segmentation/chunking stage.
+- `model_architect_entity_proposal`: entity proposal/discovery stage.
+- `model_architect_milestone_proposal`: milestone proposal/discovery stage.
+- `model_architect_entity_generation`: generate/enrichment stage.
+- `model_agents_repair_json`: shared JSON repair model used when model output is malformed JSON.
+
+Compatibility/fallback behavior:
+
+- `model_architect` remains as the general Architect fallback target.
+- If a step-specific Architect field is missing, runtime falls back to `model_architect`.
+- `model_agents_repair_json` falls back to `model_architect_scene_chunking` when not explicitly configured.
+
 ## Analyze Job
 
 Goal:

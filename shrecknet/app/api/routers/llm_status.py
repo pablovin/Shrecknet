@@ -57,9 +57,16 @@ async def get_service_status(
         "model_targets": {
             "model_architect_scene_chunking": _target_status(settings.model_architect_scene_chunking),
             "model_architect": _target_status(settings.model_architect),
+            "model_architect_entity_proposal": _target_status(settings.model_architect_entity_proposal),
+            "model_architect_milestone_proposal": _target_status(settings.model_architect_milestone_proposal),
+            "model_architect_entity_generation": _target_status(settings.model_architect_entity_generation),
+            "model_agents_repair_json": _target_status(settings.model_agents_repair_json),
             "model_elder": _target_status(settings.model_elder),
             "model_novelist": _target_status(settings.model_novelist),
             "model_novelist_draft": _target_status(settings.model_novelist_draft),
+            "model_novelist_planning": _target_status(settings.model_novelist_planning),
+            "model_novelist_prose": _target_status(settings.model_novelist_prose),
+            "model_novelist_critic": _target_status(settings.model_novelist_critic),
             "model_librarian": _target_status(settings.model_librarian),
         },
     }

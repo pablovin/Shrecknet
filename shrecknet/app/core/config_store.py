@@ -43,9 +43,16 @@ logger = logging.getLogger(__name__)
 LLM_TARGET_FIELDS = (
     "model_architect_scene_chunking",
     "model_architect",
+    "model_architect_entity_proposal",
+    "model_architect_milestone_proposal",
+    "model_architect_entity_generation",
+    "model_agents_repair_json",
     "model_elder",
     "model_novelist",
     "model_novelist_draft",
+    "model_novelist_planning",
+    "model_novelist_prose",
+    "model_novelist_critic",
     "model_librarian",
 )
 ALLOWED_OPENAI_MODELS = frozenset({"gpt-5", "gpt-5-nano", "gpt-4o-mini"})
@@ -160,6 +167,18 @@ class Settings(BaseSettings):
     model_architect: LLMModelTarget = Field(
         default_factory=lambda: LLMModelTarget(provider="openai", name="gpt-5-nano")
     )
+    model_architect_entity_proposal: LLMModelTarget = Field(
+        default_factory=lambda: LLMModelTarget(provider="openai", name="gpt-5-nano")
+    )
+    model_architect_milestone_proposal: LLMModelTarget = Field(
+        default_factory=lambda: LLMModelTarget(provider="openai", name="gpt-5-nano")
+    )
+    model_architect_entity_generation: LLMModelTarget = Field(
+        default_factory=lambda: LLMModelTarget(provider="openai", name="gpt-5-nano")
+    )
+    model_agents_repair_json: LLMModelTarget = Field(
+        default_factory=lambda: LLMModelTarget(provider="openai", name="gpt-5-nano")
+    )
     model_elder: LLMModelTarget = Field(
         default_factory=lambda: LLMModelTarget(provider="openai", name="gpt-5-nano")
     )
@@ -168,6 +187,15 @@ class Settings(BaseSettings):
     )
     model_novelist_draft: LLMModelTarget = Field(
         default_factory=lambda: LLMModelTarget(provider="openai", name="gpt-5")
+    )
+    model_novelist_planning: LLMModelTarget = Field(
+        default_factory=lambda: LLMModelTarget(provider="openai", name="gpt-5-nano")
+    )
+    model_novelist_prose: LLMModelTarget = Field(
+        default_factory=lambda: LLMModelTarget(provider="openai", name="gpt-5")
+    )
+    model_novelist_critic: LLMModelTarget = Field(
+        default_factory=lambda: LLMModelTarget(provider="openai", name="gpt-5-nano")
     )
     model_librarian: LLMModelTarget = Field(
         default_factory=lambda: LLMModelTarget(provider="openai", name="gpt-5-nano")

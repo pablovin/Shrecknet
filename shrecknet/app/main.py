@@ -200,10 +200,17 @@ async def _run_llm_prewarm() -> None:
     targets: list[LLMModelTarget] = [
         settings.model_architect_scene_chunking,
         settings.model_architect,
+        settings.model_architect_entity_proposal,
+        settings.model_architect_milestone_proposal,
+        settings.model_architect_entity_generation,
+        settings.model_agents_repair_json,
         settings.model_elder,
         settings.model_librarian,
         settings.model_novelist,
         settings.model_novelist_draft,
+        settings.model_novelist_planning,
+        settings.model_novelist_prose,
+        settings.model_novelist_critic,
     ]
     unique: dict[str, LLMModelTarget] = {}
     for target in targets:

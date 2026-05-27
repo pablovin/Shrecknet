@@ -22,6 +22,16 @@ class _FakeLLM:
         return "{}"
 
 
+class _FakeRetriever:
+    async def list_entities_by_ontology(self, ontology_id: int, *, skip: int = 0, limit: int = 500):
+        del ontology_id, skip, limit
+        return [
+            {"node_id": "e1", "alias": "Cwenhild", "ontology": "Character"},
+            {"node_id": "e2", "alias": "Arthur", "ontology": "Character"},
+            {"node_id": "e3", "alias": "Londinium", "ontology": "Location"},
+        ]
+
+
 def _chunk(score: float, node_id: str = "n-1") -> RetrievedChunk:
     return RetrievedChunk(
         node_id=node_id,
@@ -146,3 +156,44 @@ async def test_fast_first_expands_to_decomposition_when_first_pass_is_weak(monke
     assert retrieve_call_intent_counts[0] == 1
     assert retrieve_call_intent_counts[1] == 3
     assert decompose_calls["count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_query_entity_matching_fuzzy_finds_typo_entities():
+    orchestrator = ElderOrchestrator(
+        llm_client=_FakeLLM(),
+        model_policy=_FakeModelPolicy(),
+        graph_retriever=_FakeRetriever(),
+    )
+    matches = await orchestrator._match_query_entities(
+        query="what is the age of Cwenhild when she fought Artur in Londinium?",
+        ontology_ids=[1],
+    )
+    ids = {m["node_id"] for m in matches}
+    assert "e1" in ids
+    assert "e2" in ids
+    assert "e3" in ids
+
+
+def test_memory_priors_include_query_entity_match_boost():
+    orchestrator = ElderOrchestrator(
+        llm_client=_FakeLLM(),
+        model_policy=_FakeModelPolicy(),
+        graph_retriever=SimpleNamespace(),
+    )
+    sources = [
+        SimpleNamespace(
+            node_id="e2",
+            node_label="EntityInstance",
+            node_name="Arthur",
+            score=0.5,
+            evidence_chunks=[SimpleNamespace(text="Arthur fought in Londinium", score=0.5)],
+        )
+    ]
+    priors = orchestrator._apply_memory_priors(
+        request_query="who is Arthur",
+        sources=sources,  # type: ignore[arg-type]
+        memory_summary={"recent_entities": [], "temporal_terms": [], "last_answer_terms": []},
+        query_entity_ids={"e2"},
+    )
+    assert any(p.get("type") == "query_entity_match_prior" for p in priors)

@@ -17,6 +17,7 @@ from app.core.config_store import LLMModelTarget, get_settings, is_shreckllm_con
 from app.graph.neo4j import get_driver
 from app.integrations.llm.shreckllm_client import ShreckLLMClient
 from app.integrations.llm.runtime_control import fetch_shreckllm_runtime, resolve_effective_architect_concurrency
+from app.integrations.llm.json_repair import repair_json_text
 from app.integrations.retrieval.neo4j_retriever import Neo4jGraphRetriever
 from app.jobs.architect import prompts as architect_prompts
 from app.jobs.architect.schemas import (
@@ -48,7 +49,7 @@ logger = logging.getLogger(__name__)
 
 ENTITY_PROPOSAL_BATCH_SIZE = 3
 ENTITY_SCENE_TEXT_MAX_CHARS = 1_400
-MILESTONE_BATCH_SIZE = 5
+MILESTONE_BATCH_SIZE = 2
 MILESTONE_SCENE_TEXT_MAX_CHARS = 2_400
 _ARCHITECT_CONCURRENCY: int | None = None
 
@@ -197,6 +198,29 @@ def _parse_scene_entity_batch_extraction(
     except Exception as exc:
         logger.warning("scene_entity_batch_parse_error: error=%s", exc)
     return SceneEntityBatchExtractionResponse(scenes=[])
+
+
+async def _parse_scene_entity_batch_extraction_with_repair(
+    *,
+    llm_client: ShreckLLMClient,
+    repair_model: str | LLMModelTarget,
+    response_text: str,
+) -> SceneEntityBatchExtractionResponse:
+    parsed = _parse_scene_entity_batch_extraction(response_text)
+    if parsed.scenes:
+        return parsed
+    try:
+        repaired = await repair_json_text(
+            llm_client=llm_client,
+            model=repair_model,
+            malformed_text=response_text,
+            schema_hint='{"scenes":[{"scene_ref":"...","entities":[{"name":"...","ontology":"...","status":"existing|new","matched_alias":null,"confidence":0.0,"why":"..."}]}]}',
+            usage_tag="agents.json_repair",
+        )
+    except Exception as exc:
+        logger.warning("scene_entity_batch_repair_error: error=%s", exc)
+        return SceneEntityBatchExtractionResponse(scenes=[])
+    return _parse_scene_entity_batch_extraction(repaired)
 
 
 def _normalize_ontology_name(value: str | None) -> str:
@@ -730,6 +754,7 @@ async def _extract_scene_entities(
     run_id: str,
     llm_client: ShreckLLMClient,
     model: str | LLMModelTarget,
+    repair_model: str | LLMModelTarget,
     ontology_definitions: str,
     allowed_ontology_names: dict[str, str],
     existing_nodes: list[dict[str, Any]],
@@ -863,7 +888,11 @@ async def _extract_scene_entities(
                 if isinstance(response_text, str)
                 else json.dumps(response_text, ensure_ascii=False)
             )
-            parsed = _parse_scene_entity_batch_extraction(response_payload)
+            parsed = await _parse_scene_entity_batch_extraction_with_repair(
+                llm_client=llm_client,
+                repair_model=repair_model,
+                response_text=response_payload,
+            )
             rows_by_ref = {
                 str(row.scene_ref or "").strip(): row.entities
                 for row in parsed.scenes
@@ -1002,6 +1031,7 @@ async def _run_scene_chunking_phase(
     ontology_instance: Any,
     llm_client: ShreckLLMClient,
     model: str | LLMModelTarget,
+    repair_model: str | LLMModelTarget,
     instructions: str | None = None,
 ) -> dict[str, Any]:
     started = perf_counter()
@@ -1058,6 +1088,7 @@ async def _run_scene_chunking_phase(
                 scenes = await segment_chunk_into_scenes(
                     llm_client=llm_client,
                     model=model,
+                    repair_model=repair_model,
                     marked_paragraphs=chunk.marked_paragraphs,
                     paragraph_count=chunk.paragraph_count,
                     paragraphs=chunk.paragraphs,
@@ -1176,6 +1207,7 @@ async def _run_entity_proposal_phase(
     run_id: str,
     llm_client: ShreckLLMClient,
     model: str | LLMModelTarget,
+    repair_model: str | LLMModelTarget,
     ontology_definitions: str,
     allowed_ontology_names: dict[str, str],
     existing_nodes: list[dict[str, Any]],
@@ -1528,11 +1560,35 @@ def _parse_batched_milestone_extraction(response_text: str) -> dict[str, list[di
     return {}
 
 
+async def _parse_batched_milestone_extraction_with_repair(
+    *,
+    llm_client: ShreckLLMClient,
+    repair_model: str | LLMModelTarget,
+    response_text: str,
+) -> dict[str, list[dict[str, Any]]]:
+    parsed = _parse_batched_milestone_extraction(response_text)
+    if parsed:
+        return parsed
+    try:
+        repaired = await repair_json_text(
+            llm_client=llm_client,
+            model=repair_model,
+            malformed_text=response_text,
+            schema_hint='{"scenes":[{"scene_ref":"...","milestones":[{"title":"...","description":"...","boundary_type":"begin|middle|end","adjacent_to":[],"related_to":[]}]}]}',
+            usage_tag="agents.json_repair",
+        )
+    except Exception as exc:
+        logger.warning("milestone_batch_repair_error: error=%s", exc)
+        return {}
+    return _parse_batched_milestone_extraction(repaired)
+
+
 async def _run_milestone_proposal_phase(
     *,
     run_id: str,
     llm_client: ShreckLLMClient,
     model: str | LLMModelTarget,
+    repair_model: str | LLMModelTarget,
     proposed_scenes: list[dict[str, Any]],
     author_id: str,
     instructions: str | None = None,
@@ -1640,7 +1696,11 @@ async def _run_milestone_proposal_phase(
                     usage_tag="architect.milestone_proposal",
                 )
                 response_payload = response if isinstance(response, str) else json.dumps(response, ensure_ascii=False)
-                raw_by_ref = _parse_batched_milestone_extraction(response_payload)
+                raw_by_ref = await _parse_batched_milestone_extraction_with_repair(
+                    llm_client=llm_client,
+                    repair_model=repair_model,
+                    response_text=response_payload,
+                )
             except Exception as exc:
                 logger.warning(
                     "milestone_proposal_batch_error: run_id=%s scene_refs=%s error=%s",
@@ -1933,10 +1993,15 @@ async def _execute_architect_pipeline(
 
             llm_client = ShreckLLMClient(base_url=settings.shreckllm_base_url, timeout=settings.shreckllm_request_timeout_s, max_retries=settings.shreckllm_max_retries)
             runtime_config = await fetch_shreckllm_runtime(settings)
+            architect_model_fallback = settings.model_architect
+            scene_chunking_model = settings.model_architect_scene_chunking
+            entity_proposal_model = getattr(settings, "model_architect_entity_proposal", architect_model_fallback) or architect_model_fallback
+            milestone_proposal_model = getattr(settings, "model_architect_milestone_proposal", architect_model_fallback) or architect_model_fallback
+            repair_json_model = getattr(settings, "model_agents_repair_json", scene_chunking_model) or scene_chunking_model
             global _ARCHITECT_CONCURRENCY
             _ARCHITECT_CONCURRENCY = resolve_effective_architect_concurrency(
                 runtime_config,
-                provider_id=settings.model_architect.provider,
+                provider_id=entity_proposal_model.provider,
             )
 
             existing_nodes = _existing_nodes_from_instance(ontology_instance)
@@ -1972,8 +2037,10 @@ async def _execute_architect_pipeline(
                     ontology_instance_id=ontology_instance_id,
                     ontology_instance=ontology_instance,
                     llm_client=llm_client,
-                    scene_chunking_model=settings.model_architect_scene_chunking,
-                    architect_model=settings.model_architect,
+                    scene_chunking_model=scene_chunking_model,
+                    entity_proposal_model=entity_proposal_model,
+                    milestone_proposal_model=milestone_proposal_model,
+                    repair_json_model=repair_json_model,
                     ontology_definitions=ontology_definitions,
                     allowed_ontology_names=allowed_ontology_names,
                     existing_nodes=existing_nodes,
@@ -2032,7 +2099,9 @@ async def _run_scene_centric_chunking_test(
     ontology_instance: Any,
     llm_client: ShreckLLMClient,
     scene_chunking_model: str | LLMModelTarget,
-    architect_model: str | LLMModelTarget,
+    entity_proposal_model: str | LLMModelTarget,
+    milestone_proposal_model: str | LLMModelTarget,
+    repair_json_model: str | LLMModelTarget,
     ontology_definitions: str,
     allowed_ontology_names: dict[str, str],
     existing_nodes: list[dict[str, Any]],
@@ -2049,6 +2118,7 @@ async def _run_scene_centric_chunking_test(
         ontology_instance=ontology_instance,
         llm_client=llm_client,
         model=scene_chunking_model,
+        repair_model=repair_json_model,
     )
     _log_step_usage(
         run_id=run_id,
@@ -2068,7 +2138,8 @@ async def _run_scene_centric_chunking_test(
     entity_phase = await _run_entity_proposal_phase(
         run_id=run_id,
         llm_client=llm_client,
-        model=architect_model,
+        model=entity_proposal_model,
+        repair_model=repair_json_model,
         ontology_definitions=ontology_definitions,
         allowed_ontology_names=allowed_ontology_names,
         existing_nodes=existing_nodes,
@@ -2101,7 +2172,8 @@ async def _run_scene_centric_chunking_test(
     milestone_phase = await _run_milestone_proposal_phase(
         run_id=run_id,
         llm_client=llm_client,
-        model=architect_model,
+        model=milestone_proposal_model,
+        repair_model=repair_json_model,
         proposed_scenes=proposed_scenes,
         author_id=author_id,
     )

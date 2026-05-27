@@ -337,6 +337,10 @@ class NovelistOrchestrator:
             }
             for idx, scene in enumerate(step_4_scene_packages)
         ]
+        step_2_traces = [item[4] for item in worker_results if isinstance(item[4], dict)]
+        step_3_traces = [trace for item in worker_results for trace in (item[5] if isinstance(item[5], list) else []) if isinstance(trace, dict)]
+        step_4_traces = [item[9] for item in worker_results if isinstance(item[9], dict)]
+        step_5_traces = [trace for item in worker_results for trace in (item[10] if isinstance(item[10], list) else []) if isinstance(trace, dict)]
         scene_packages = step_5_scene_packages
 
         artifacts["stages"]["scene_package"] = {
@@ -438,6 +442,7 @@ class NovelistOrchestrator:
                 "critic_remarks": critic,
             },
         )
+        step_6_calls = list(self._debug_response_calls)
         if stage_callback:
             await stage_callback(
                 NovelistStage.CRITIC,
@@ -450,14 +455,51 @@ class NovelistOrchestrator:
         self._debug_step_label = "step_7"
         self._debug_prompt_calls = []
         self._debug_response_calls = []
-        revision = await self._revise_scene_set(
-            scene_packages=scene_packages,
-            prose_by_scene=prose_by_scene,
-            critic=critic,
-            language=language,
-            instructions=instructions,
-            conversation_id=critic_conversation_id,
-        )
+        revision_fallback_used = False
+        revision_fallback_reason: str | None = None
+        try:
+            revision = await self._revise_scene_set(
+                scene_packages=scene_packages,
+                prose_by_scene=prose_by_scene,
+                critic=critic,
+                language=language,
+                instructions=instructions,
+                conversation_id=critic_conversation_id,
+            )
+        except Exception as exc:
+            logger.warning(
+                "novelist_revision_fallback_used reason=%s",
+                exc,
+                exc_info=True,
+            )
+            revision_fallback_used = True
+            revision_fallback_reason = str(exc)
+            fallback_html = self._merge_scene_html(prose_by_scene)
+            revision = {
+                "scenes": [
+                    {
+                        "scene_id": "scene-rev-fallback-001",
+                        "name": "Fallback Merged Draft",
+                        "prose_html": fallback_html,
+                        "merged_from": [str(item.get("scene_id")) for item in prose_by_scene if item.get("scene_id")],
+                        "split_from": None,
+                        "notes": ["Revision step failed; fallback used merged step-5 prose."],
+                    }
+                ],
+                "lineage": {
+                    str(item.get("scene_id")): {
+                        "source_scene_ids": [item.get("scene_id")],
+                        "action": "kept_step5_fallback",
+                    }
+                    for item in prose_by_scene
+                    if item.get("scene_id")
+                },
+                "global_revision_notes": ["Revision fallback path applied."],
+                "final_text_html": fallback_html,
+                "latency_ms": 0.0,
+                "fallback_used": True,
+                "fallback_reason": revision_fallback_reason,
+            }
         self._write_step_debug_files(
             step="step_7",
             prompt_payload={
@@ -474,6 +516,7 @@ class NovelistOrchestrator:
                 },
             },
         )
+        step_7_calls = list(self._debug_response_calls)
         self._debug_step_label = None
         if stage_callback:
             await stage_callback(
@@ -491,6 +534,11 @@ class NovelistOrchestrator:
             "scene_count": len(step_4_scene_packages),
             "final_text": final_html,
         }
+        if revision_fallback_used:
+            artifacts["stages"]["revision_fallback"] = {
+                "used": True,
+                "reason": revision_fallback_reason,
+            }
         artifacts["timings_ms"]["merging"] = round(
             (time.monotonic() - package_t0) * 1000, 2
         )
@@ -534,6 +582,14 @@ class NovelistOrchestrator:
             final_html=final_html,
         )
         artifacts["step_outputs"] = step_outputs
+        artifacts["llm_call_summary"] = self._build_llm_call_summary(
+            step_2_traces=step_2_traces,
+            step_3_traces=step_3_traces,
+            step_4_traces=step_4_traces,
+            step_5_traces=step_5_traces,
+            step_6_calls=step_6_calls,
+            step_7_calls=step_7_calls,
+        )
 
         if stage_callback:
             await stage_callback(
@@ -2259,6 +2315,96 @@ class NovelistOrchestrator:
             "total_tokens": total_total,
             "call_count": call_count,
             "per_scene": per_scene,
+        }
+
+    @staticmethod
+    def _token_summary_from_calls(calls: list[dict[str, Any]]) -> dict[str, int]:
+        prompt_total = 0
+        completion_total = 0
+        total_total = 0
+        call_count = 0
+        for call in calls:
+            if not isinstance(call, dict):
+                continue
+            usage = call.get("token_usage")
+            if not isinstance(usage, dict):
+                continue
+            call_count += 1
+            prompt = usage.get("prompt_tokens")
+            completion = usage.get("completion_tokens")
+            total = usage.get("total_tokens")
+            if isinstance(prompt, int):
+                prompt_total += prompt
+            if isinstance(completion, int):
+                completion_total += completion
+            if isinstance(total, int):
+                total_total += total
+        return {
+            "call_count": call_count,
+            "prompt_tokens": prompt_total,
+            "completion_tokens": completion_total,
+            "total_tokens": total_total,
+        }
+
+    @staticmethod
+    def _models_from_calls(calls: list[dict[str, Any]]) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for call in calls:
+            if not isinstance(call, dict):
+                continue
+            model = str(call.get("model") or "").strip()
+            if not model:
+                continue
+            counts[model] = counts.get(model, 0) + 1
+        return counts
+
+    def _build_llm_call_summary(
+        self,
+        *,
+        step_2_traces: list[dict[str, Any]],
+        step_3_traces: list[dict[str, Any]],
+        step_4_traces: list[dict[str, Any]],
+        step_5_traces: list[dict[str, Any]],
+        step_6_calls: list[dict[str, Any]],
+        step_7_calls: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        steps: dict[str, dict[str, Any]] = {}
+        totals = {
+            "call_count": 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+        }
+        total_by_model: dict[str, int] = {}
+
+        def add_step(step_id: str, calls: list[dict[str, Any]]) -> None:
+            token_summary = self._token_summary_from_calls(calls)
+            by_model = self._models_from_calls(calls)
+            steps[step_id] = {
+                "call_count": token_summary["call_count"],
+                "prompt_tokens": token_summary["prompt_tokens"],
+                "completion_tokens": token_summary["completion_tokens"],
+                "total_tokens": token_summary["total_tokens"],
+                "by_model": by_model,
+            }
+            totals["call_count"] += token_summary["call_count"]
+            totals["prompt_tokens"] += token_summary["prompt_tokens"]
+            totals["completion_tokens"] += token_summary["completion_tokens"]
+            totals["total_tokens"] += token_summary["total_tokens"]
+            for model_name, count in by_model.items():
+                total_by_model[model_name] = total_by_model.get(model_name, 0) + count
+
+        add_step("step_2", [row for row in step_2_traces for row in (row.get("llm_calls") or []) if isinstance(row, dict)])
+        add_step("step_3", [row for row in step_3_traces for row in (row.get("llm_calls") or []) if isinstance(row, dict)])
+        add_step("step_4", [row for row in step_4_traces for row in (row.get("llm_calls") or []) if isinstance(row, dict)])
+        add_step("step_5", [row for row in step_5_traces for row in (row.get("llm_calls") or []) if isinstance(row, dict)])
+        add_step("step_6", step_6_calls)
+        add_step("step_7", step_7_calls)
+
+        return {
+            "totals": totals,
+            "by_model": total_by_model,
+            "by_step": steps,
         }
 
     async def _call_llm(

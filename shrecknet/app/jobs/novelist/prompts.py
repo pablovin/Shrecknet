@@ -168,6 +168,10 @@ Strict rules:
 - Use only <p> and <blockquote> tags.
 - Keep chronology of the merged chunk.
 - Output a maximum of three paragraphs total.
+- Include at least one line of spoken dialogue when characters are present.
+- Make character choices explicit: what is chosen, what is risked, and why now.
+- Build tension inside the chunk (pressure, stakes, uncertainty), not flat summary.
+- Use emotionally grounded narration (fear, resolve, doubt, desire) tied to concrete actions.
 - No markdown, no JSON, no commentary.
 """
 
@@ -176,8 +180,13 @@ NOVELIST_V2_FINAL_REWRITE_PROMPT = """Re-write the full chapter from merged-chun
 
 Strict rules:
 - Output only revised prose HTML.
-- Use only <p> and <blockquote>.
+- Use only <h1>, <p> and <blockquote>.
 - Build clear narrative scaffolding across the full text: intro, climax, conclusion.
 - Add smooth transitions between chunk content.
 - Keep chronology and continuity consistent.
+- Preserve scene separation in HTML: every scene MUST start with an <h1>Scene Title</h1> block followed by scene prose.
+- Make transitions carry dramatic causality (the next scene should feel caused by prior choices/events).
+- Strengthen dialogue cadence and subtext; avoid exposition-only narration.
+- Emphasize character decisions and consequences in each scene.
+- Keep emotional intensity progressive toward climax, then release into conclusion.
 """

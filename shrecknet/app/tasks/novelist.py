@@ -570,7 +570,7 @@ async def _execute_run(
                 usage_summary.get("totals"),
                 usage_summary.get("by_model"),
             )
-            return result
+            return _json_safe(result)
         except Exception as exc:
             logger.error("Novelist run %s failed: %s", run_id, exc, exc_info=True)
             await session.rollback()
@@ -620,7 +620,7 @@ def generate_draft(
         result = run_async(
             _execute_run(run_id=run_id, request_payload=request_payload, job_id=job_id)
         )
-        return {"job_id": job_id, "status": "success", "run_id": run_id, **result}
+        return _json_safe({"job_id": job_id, "status": "success", "run_id": run_id, **result})
     except Exception as exc:
         run_async(mark_job_failed(job_id, str(exc)))
         raise

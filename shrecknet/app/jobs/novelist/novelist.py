@@ -1762,13 +1762,42 @@ class NovelistOrchestrator:
         merged: list[dict[str, Any]] = []
         for idx in range(0, len(scenes), chunk_size):
             bundle = scenes[idx : idx + chunk_size]
+            chunk_entities = self._dedupe_and_limit(
+                [
+                    str(item.get("entity") or "").strip()
+                    for scene in bundle
+                    for item in (scene.get("related_entities") or [])
+                    if isinstance(item, dict) and str(item.get("entity") or "").strip()
+                ],
+                limit=6,
+            )
+            fallback_entities = ", ".join(chunk_entities[:3]) if chunk_entities else "the core cast"
+            chunk_summary = " ".join(
+                str(s.get("scene_summary") or "").strip() for s in bundle
+            ).strip()
+            prior_knowledge_needed = [
+                {
+                    "question": f"What unresolved conflict from earlier chapters most changes decisions by {fallback_entities} in this chunk?",
+                    "answer": "",
+                },
+                {
+                    "question": f"What relationship tensions between {fallback_entities} should remain visible in dialogue and choices here?",
+                    "answer": "",
+                },
+                {
+                    "question": f"What continuity constraints from earlier events must be preserved while writing this chunk about: {self._clip_text(chunk_summary, max_chars=180)}",
+                    "answer": "",
+                },
+            ]
             merged.append(
                 {
                     "scene_id": f"chunk-{len(merged)+1:03d}",
                     "name": f"Merged Chunk {len(merged)+1}",
-                    "scene_summary": " ".join(str(s.get("scene_summary") or "").strip() for s in bundle).strip(),
+                    "scene_summary": chunk_summary,
                     "raw_scene_text": "\n\n".join(str(s.get("raw_scene_text") or "").strip() for s in bundle if str(s.get("raw_scene_text") or "").strip()),
                     "merged_from_scene_ids": [str(s.get("scene_id") or "") for s in bundle if str(s.get("scene_id") or "").strip()],
+                    "related_entities": chunk_entities,
+                    "prior_knowledge_needed": prior_knowledge_needed,
                 }
             )
         return merged

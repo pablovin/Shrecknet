@@ -13,6 +13,7 @@ import httpx
 from app.core.config_store import LLMModelTarget
 
 logger = logging.getLogger(__name__)
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
 class ShreckLLMClient:
@@ -67,7 +68,7 @@ class ShreckLLMClient:
                 data = await self.wait_for_chat_job(
                     job_id,
                     timeout_s=self.timeout,
-                    poll_interval_s=0.25,
+                    poll_interval_s=1.0,
                 )
                 text = str(data.get("text") or "")
                 usage = data.get("usage") if isinstance(data.get("usage"), dict) else {}

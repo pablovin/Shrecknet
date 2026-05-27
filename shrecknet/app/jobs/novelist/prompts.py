@@ -131,7 +131,7 @@ Return ONLY valid JSON in this exact shape:
 }"""
 
 # Step 7: full-draft revision pass.
-NOVELIST_SCENE_REVISION_PROMPT = """Revise the full draft using critic feedback.
+NOVELIST_SCENE_REVISION_PROMPT = """Re-write the full text using critic feedback.
 
 Strict rules:
 - Output only revised prose HTML.

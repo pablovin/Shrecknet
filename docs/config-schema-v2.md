@@ -35,7 +35,7 @@
 ### Architect Agent
 - `id`: `architect`
 - `property`: `runtime`
-- `fields`: `model_architect_scene_chunking`, `model_architect`
+- `fields`: `model_architect_scene_chunking`, `model_architect_entity_proposal`, `model_architect_milestone_proposal`, `model_architect_entity_generation`, `model_agents_repair_json`
 
 ### Elder Agent
 - `id`: `elder`
@@ -45,7 +45,7 @@
 ### Novelist Agent
 - `id`: `novelist`
 - `property`: `runtime`
-- `fields`: `model_novelist`, `model_novelist_draft`
+- `fields`: `model_novelist_planning`, `model_novelist_prose`, `model_novelist_critic`
 
 ### Librarian Agent
 - `id`: `librarian`

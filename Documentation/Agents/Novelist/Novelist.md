@@ -18,9 +18,9 @@ Novelist uses dedicated model targets for grouped stages:
 
 Compatibility/fallback behavior:
 
-- `model_novelist_planning` falls back to `model_novelist`.
-- `model_novelist_prose` falls back to `model_novelist_draft`, then to `model_novelist`.
-- `model_novelist_critic` falls back to `model_novelist`.
+- `model_novelist_planning` falls back to `LLMTask.SYNTHESIS` policy target.
+- `model_novelist_prose` falls back to `LLMTask.SYNTHESIS` policy target.
+- `model_novelist_critic` falls back to `LLMTask.SYNTHESIS` policy target.
 
 ## Jobs Overview
 

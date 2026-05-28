@@ -1994,10 +1994,9 @@ async def _execute_architect_pipeline(
 
             llm_client = ShreckLLMClient(base_url=settings.shreckllm_base_url, timeout=settings.shreckllm_request_timeout_s, max_retries=settings.shreckllm_max_retries)
             runtime_config = await fetch_shreckllm_runtime(settings)
-            architect_model_fallback = settings.model_architect
             scene_chunking_model = settings.model_architect_scene_chunking
-            entity_proposal_model = getattr(settings, "model_architect_entity_proposal", architect_model_fallback) or architect_model_fallback
-            milestone_proposal_model = getattr(settings, "model_architect_milestone_proposal", architect_model_fallback) or architect_model_fallback
+            entity_proposal_model = settings.model_architect_entity_proposal
+            milestone_proposal_model = settings.model_architect_milestone_proposal
             repair_json_model = getattr(settings, "model_agents_repair_json", scene_chunking_model) or scene_chunking_model
             global _ARCHITECT_CONCURRENCY
             _ARCHITECT_CONCURRENCY = resolve_effective_architect_concurrency(

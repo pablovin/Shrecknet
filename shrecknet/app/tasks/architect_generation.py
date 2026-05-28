@@ -850,11 +850,7 @@ async def _execute_generation(
                 for entity in refreshed_instance.entities
             }
 
-            generation_model = getattr(
-                settings,
-                "model_architect_entity_generation",
-                settings.model_architect,
-            ) or settings.model_architect
+            generation_model = settings.model_architect_entity_generation
             runtime_config = await fetch_shreckllm_runtime(settings)
             enrichment_concurrency = resolve_effective_architect_concurrency(
                 runtime_config,

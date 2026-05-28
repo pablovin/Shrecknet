@@ -36,10 +36,6 @@
     "provider": "ollama",
     "name": "gemma3:4b"
   },
-  "model_architect": {
-    "provider": "ollama",
-    "name": "gemma3:4b"
-  },
   "model_architect_entity_proposal": {
     "provider": "ollama",
     "name": "gemma3:4b"
@@ -57,14 +53,6 @@
     "name": "gemma3:4b"
   },
   "model_elder": {
-    "provider": "ollama",
-    "name": "gemma3:4b"
-  },
-  "model_novelist": {
-    "provider": "ollama",
-    "name": "gemma3:4b"
-  },
-  "model_novelist_draft": {
     "provider": "ollama",
     "name": "gemma3:4b"
   },

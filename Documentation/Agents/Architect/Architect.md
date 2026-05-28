@@ -29,8 +29,6 @@ Architect uses step-specific model targets from runtime settings:
 
 Compatibility/fallback behavior:
 
-- `model_architect` remains as the general Architect fallback target.
-- If a step-specific Architect field is missing, runtime falls back to `model_architect`.
 - `model_agents_repair_json` falls back to `model_architect_scene_chunking` when not explicitly configured.
 
 ## Analyze Job

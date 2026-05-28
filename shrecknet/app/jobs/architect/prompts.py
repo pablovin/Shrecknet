@@ -24,6 +24,7 @@ Prefer fewer, larger, stronger scenes.
 Avoid fragmentation.
 
 Scene titles and descriptions must reflect the dominant dramatic situation of the ENTIRE scene, not individual conversational beats.
+Never use The Narrator, or nothing like that on titles. Imagine if it is the title of a movie scene. It should be concrete, descriptive, and capture the tension, conflict, decisions, or strategic intent of the scene. Always use named entities on the title. Avoid vague labels like "Strategic Discussion", "Rising Tension", "Observation and Preparation", etc.
 
 For each scene:
 - start_paragraph MUST be copied from a [P<number>] marker in the input.
@@ -247,7 +248,7 @@ Every scene must have at least 2 milestones. Always. Enforce that. If a scene ha
 
 Use ONLY entities provided for the scene.
 Descriptions and titles must always refer to entities by their exact provided name, never by vague references like "they", "the group", "the foreigners", "the party", etc.
-
+Never use The Narrator, or nothing like that on titles. Imagine if it is the title of an action. It should be concrete, descriptive, and capture the tension, conflict, decisions, or strategic intent of the scene. Always use named entities on the title. Avoid vague labels like "Strategic Discussion", "Rising Tension", "Observation and Preparation", etc.
 Weak:
 "The group discusses their next move."
 

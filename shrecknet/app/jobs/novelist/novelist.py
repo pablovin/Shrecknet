@@ -69,8 +69,6 @@ class NovelistOrchestrator:
     ) -> None:
         self.llm_client = llm_client
         self.model_policy = model_policy
-        self.draft_model = getattr(model_policy, "model_novelist_draft", None)
-        self.novelist_model = getattr(model_policy, "model_novelist", None)
         self.novelist_planning_model = getattr(model_policy, "model_novelist_planning", None)
         self.novelist_prose_model = getattr(model_policy, "model_novelist_prose", None)
         self.novelist_critic_model = getattr(model_policy, "model_novelist_critic", None)
@@ -93,18 +91,14 @@ class NovelistOrchestrator:
         self._debug_output_dir: Path | None = None
         self._model_step_2_4 = (
             self.novelist_planning_model
-            or self.novelist_model
             or self.model_policy.get_model(LLMTask.SYNTHESIS)
         )
         self._model_step_5_7 = (
             self.novelist_prose_model
-            or self.draft_model
-            or self.novelist_model
             or self.model_policy.get_model(LLMTask.SYNTHESIS)
         )
         self._model_step_6 = (
             self.novelist_critic_model
-            or self.novelist_model
             or self.model_policy.get_model(LLMTask.SYNTHESIS)
         )
         self._novelist_v2_enabled = str(os.getenv("NOVELIST_V2_ENABLED", "true")).strip().lower() in {

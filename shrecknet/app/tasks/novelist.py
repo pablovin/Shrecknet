@@ -193,21 +193,19 @@ async def _execute_run(
         try:
             await update_job_progress(job_id, 0.05, {"status": "preparing orchestrator"})
             runtime_config = await fetch_shreckllm_runtime(settings)
-            configured_draft_target = settings.model_novelist_draft
-            configured_novelist_target = settings.model_novelist
-            configured_novelist_planning_target = getattr(settings, "model_novelist_planning", configured_novelist_target) or configured_novelist_target
-            configured_novelist_prose_target = getattr(settings, "model_novelist_prose", configured_draft_target) or configured_draft_target
-            configured_novelist_critic_target = getattr(settings, "model_novelist_critic", configured_novelist_target) or configured_novelist_target
+            configured_novelist_planning_target = settings.model_novelist_planning
+            configured_novelist_prose_target = settings.model_novelist_prose
+            configured_novelist_critic_target = settings.model_novelist_critic
             configured_architect_target = settings.model_architect_scene_chunking
             configured_repair_json_target = getattr(settings, "model_agents_repair_json", configured_architect_target) or configured_architect_target
             try:
                 runtime_default_target = resolve_provider_default_target(
                     runtime_config,
-                    configured_draft_target.provider,
+                    configured_novelist_prose_target.provider,
                 )
                 default_target = LLMModelTarget(
-                    provider=configured_draft_target.provider,
-                    name=configured_draft_target.name or runtime_default_target.name,
+                    provider=configured_novelist_prose_target.provider,
+                    name=configured_novelist_prose_target.name or runtime_default_target.name,
                 )
             except Exception:
                 # Fallback to runtime defaults only when the configured provider is unavailable.
@@ -221,12 +219,6 @@ async def _execute_run(
                 architect_extract_model=configured_architect_target,
             )
             # Attach novelist-specific model preferences for orchestrator
-            setattr(model_policy, "model_novelist_draft", configured_draft_target)
-            setattr(
-                model_policy,
-                "model_novelist",
-                configured_novelist_target,
-            )
             setattr(model_policy, "model_novelist_planning", configured_novelist_planning_target)
             setattr(model_policy, "model_novelist_prose", configured_novelist_prose_target)
             setattr(model_policy, "model_novelist_critic", configured_novelist_critic_target)

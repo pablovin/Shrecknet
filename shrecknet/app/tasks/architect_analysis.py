@@ -158,6 +158,23 @@ def _log_step_usage(
     )
 
 
+def _log_run_llm_usage_summary(*, run_id: str, usage_summary: dict[str, Any]) -> None:
+    totals = usage_summary.get("totals") if isinstance(usage_summary, dict) else {}
+    totals = totals if isinstance(totals, dict) else {}
+    logger.info(
+        "architect_analysis_llm_usage_summary run_id=%s total_calls=%d input_tokens_est=%d memory_tokens_est=%d output_tokens=%d total_tokens=%d estimated_cost_usd=%.6f by_model=%s by_tag=%s",
+        run_id,
+        int(totals.get("calls") or 0),
+        int(totals.get("input_tokens_est") or 0),
+        int(totals.get("memory_tokens_est") or 0),
+        int(totals.get("output_tokens") or 0),
+        int(totals.get("total_tokens") or 0),
+        float(totals.get("estimated_cost_usd") or 0.0),
+        usage_summary.get("by_model"),
+        usage_summary.get("by_tag"),
+    )
+
+
 def _compress_scene_text_for_milestone_prompt(scene_text: str, max_chars: int) -> str:
     text = str(scene_text or "").strip()
     if not text or len(text) <= max_chars:
@@ -2048,17 +2065,7 @@ async def _execute_architect_pipeline(
                     author_id=agent_id,
                 )
                 usage_summary = llm_client.get_usage_summary()
-                logger.info(
-                    "architect_analysis_llm_usage run_id=%s totals=%s by_model=%s",
-                    run_id,
-                    usage_summary.get("totals"),
-                    usage_summary.get("by_model"),
-                )
-                logger.info(
-                    "architect_analysis_llm_usage_by_tag run_id=%s by_tag=%s",
-                    run_id,
-                    usage_summary.get("by_tag"),
-                )
+                _log_run_llm_usage_summary(run_id=run_id, usage_summary=usage_summary)
             finally:
                 await llm_client.aclose()
 

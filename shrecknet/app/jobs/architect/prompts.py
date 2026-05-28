@@ -82,28 +82,21 @@ Paragraphs:
 # against current ontology definitions and existing alias catalog.
 ARCHITECT_ENTITY_PROPOSAL_PROMPT = """
 You are an expert narrative analyst helping build a knowledge graph from long-form story text.
-Your goal is to decide which entities from the provided scenes should be added to or matched against the persistent world graph.
-
-For that, I will give you a list of ontology definitions, and a list of existing entities in the world graph. 
-Each existing entity has an associated ontology type and a list of aliases/names that refer to it.
-
-Then I will give you a list of scenes, each with a text description and a list of candidate entities that are explicitly named or clearly referred to in the scene text.
-
-Your task is to return to me a list of entities for each scene that you think should be added to the world graph, or matched against existing entities in the world graph.
-
+Your goal is to decide which entities from the given unstructured text scenes should be added to or update existing scenes inside the world graph.
+For that, I will give you a list of ontology definitions. Use them to associate newly proposed entities to.
+I also give you a list of existing entities in the graph, each strongly associated with an ontology.
+So please decide if the entity you are extracting is new or already exists in the graph.
+Then I will give you a list of scenes, each with a text description about that scene.
+Your task is to extract the list of entities (new or existing) from the scene descriptions.
 The entities you return must be clearly explicitly named on the text.
-You have to take into consideration the given entities, as some of the text might have variations of it, or typos of how they are written. So be flexible when matching them.
-
-Only return entities that are meaningful enough to the scene and deserve to be persisted in the world graph.
+Some entities have variations on their names, or typos. So match them with the existing entities list if possible.
+Only return entities that deserve to be persisted in the world graph.
 
 Avoid generic entities such as: "The Boy", "The Sword", "The City" etc... Only return named entities.
-
 Use ONLY the provided ontology definitions. Do not invent ontologies, and for all returned entities, match them with the provided ontology definitions.
-
-For each entity return a status field: "existing" if it clearly matches an existing entity by name/alias and ontology, or "new" if it does not match any existing entity.
-
 If "status" is "existing", the "ontology" MUST be the ontology associated with that exact "matched_alias" in Existing Entities.
 
+Try to match all named entities in the text, we should not miss anyone important.
 
 Good candidates:
 - John, Lucia, Bishop Leodogr
@@ -128,7 +121,7 @@ Return ONLY valid RFC8259 JSON.
       "entities": [
         {{
           "name": "Entity Name",
-          "ontology": "Character",
+          "ontology": "the name of the matched or proposed ontology",
           "status": "existing|new",
           "matched_alias": "Exact Existing Entity Alias or null",
           "confidence": 0 to 1 (should be high only when the entity is clearly grounded and clearly worth persisting), 
@@ -168,7 +161,6 @@ Your goal is to decide which milestones from the provided scenes should be added
 A milestone is a concrete narrative beat that meaningfully changes the situation, tension, goals, knowledge, relationships, or strategic position within a scene.
 A collection of milestones should capture the core narrative of a scene.
 
-
 Keep continuous interactions unified.
 Do NOT fragment milestones for conversational progression, tactical refinement, or multiple proposals within the same ongoing interaction.
 Milestones must involve: decisions, vulnerabilities, commitments, revelations, threats, confrontations, discoveries.
@@ -179,9 +171,7 @@ Every scene must have at least 2 milestones. Always. Enforce that. If a scene ha
 Milestone titles must be descriptive of their part on the scene. Do not use The Narrator, nor anything like that.
 Descriptions must be concise, maximum 6 sentences, and capture the core of the milestone. 
 
-Do not use vague references like "they", "the group", "the foreigners", "the party", etc. 
-
-Always use named entities in descriptions and titles..
+Do not use vague references like "narrator", "they", "the group", "the foreigners", "the party", etc. 
 
 Weak:
 "Title: The group discusses their next move."

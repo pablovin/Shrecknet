@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 import re
 import time
 from datetime import datetime, timezone
@@ -26,10 +25,6 @@ from app.jobs.novelist.prompts import (
     NOVELIST_SCENE_MERGE_PROMPT,
     NOVELIST_SCENE_CONTEXT_CREATION_PROMPT,
     NOVELIST_SCENE_CRITIC_PROMPT,
-    NOVELIST_SCENE_EXPLORATION_PROMPT,
-    NOVELIST_SCENE_INTENT_PROMPT,
-    NOVELIST_SCENE_PROSE_PROMPT,
-    NOVELIST_SCENE_REVISION_PROMPT,
     NOVELIST_V2_FINAL_REWRITE_PROMPT,
     NOVELIST_V2_MERGED_CHUNK_CONTEXT_PROMPT,
     NOVELIST_V2_MERGED_CHUNK_DRAFT_PROMPT,
@@ -102,12 +97,6 @@ class NovelistOrchestrator:
             self.novelist_critic_model
             or self.model_policy.get_model(LLMTask.SYNTHESIS)
         )
-        self._novelist_v2_enabled = str(os.getenv("NOVELIST_V2_ENABLED", "true")).strip().lower() in {
-            "1",
-            "true",
-            "yes",
-            "on",
-        }
 
     async def execute(
         self,
@@ -204,423 +193,16 @@ class NovelistOrchestrator:
         )
         self._debug_step_label = None
 
-        if self._novelist_v2_enabled:
-            return await self._execute_v2(
-                agent=agent,
-                step_1_scenes=step_1_scenes,
-                language=language,
-                instructions=instructions,
-                conversation_id=conversation_id,
-                stage_callback=stage_callback,
-                artifacts=artifacts,
-                started_total=started_total,
-            )
-
-        # Stage 2/3/4/5 per-scene pipeline: each scene runs sequentially.
-        package_t0 = time.monotonic()
-        total_scenes = len(step_1_scenes)
-        step_2_completed = 0
-        step_3_completed = 0
-        step_4_completed = 0
-        step_5_completed = 0
-        worker_sem = asyncio.Semaphore(self.max_concurrency)
-        progress_lock = asyncio.Lock()
-
-        async def _worker(index: int, scene: dict[str, Any]) -> tuple[
-            int,
-            dict[str, Any],
-            dict[str, Any],
-            dict[str, Any],
-            dict[str, Any],
-            list[dict[str, Any]],
-            dict[str, Any],
-            dict[str, Any],
-            str,
-            dict[str, Any],
-            list[dict[str, Any]],
-        ]:
-            async with worker_sem:
-                result = await self._process_scene_pipeline(
-                    agent=agent,
-                    scene=scene,
-                    index=index,
-                    language=language,
-                    instructions=instructions,
-                    conversation_id=conversation_id,
-                )
-                nonlocal step_2_completed, step_3_completed, step_4_completed, step_5_completed
-                async with progress_lock:
-                    step_2_completed += 1
-                    if stage_callback:
-                        await stage_callback(
-                            NovelistStage.SCENE_PACKAGE,
-                            {
-                                "artifacts": artifacts,
-                                "scene_count": total_scenes,
-                                "completed_scenes": step_2_completed,
-                            },
-                        )
-                    step_3_completed += 1
-                    if stage_callback:
-                        await stage_callback(
-                            NovelistStage.RETRIEVAL,
-                            {
-                                "artifacts": artifacts,
-                                "scene_count": total_scenes,
-                                "completed_scenes": step_3_completed,
-                            },
-                        )
-                    step_4_completed += 1
-                    if stage_callback:
-                        await stage_callback(
-                            NovelistStage.INTENT_DRAFTING,
-                            {
-                                "artifacts": artifacts,
-                                "scene_count": total_scenes,
-                                "completed_scenes": step_4_completed,
-                            },
-                        )
-                    step_5_completed += 1
-                    if stage_callback:
-                        await stage_callback(
-                            NovelistStage.PROSE_GENERATION,
-                            {
-                                "artifacts": artifacts,
-                                "scene_count": total_scenes,
-                                "completed_scenes": step_5_completed,
-                            },
-                        )
-                return result
-
-        worker_results: list[
-            tuple[
-                int,
-                dict[str, Any],
-                dict[str, Any],
-                dict[str, Any],
-                dict[str, Any],
-                list[dict[str, Any]],
-                dict[str, Any],
-                dict[str, Any],
-                str,
-                dict[str, Any],
-                list[dict[str, Any]],
-            ]
-        ] = []
-        total_scene_count = len(step_1_scenes)
-        for batch_start in range(0, total_scene_count, self.scene_pipeline_batch_size):
-            batch = step_1_scenes[batch_start : batch_start + self.scene_pipeline_batch_size]
-            logger.info(
-                "novelist_scene_pipeline_batch_start batch_start=%d batch_size=%d total_scenes=%d",
-                batch_start,
-                len(batch),
-                total_scene_count,
-            )
-            batch_results = await asyncio.gather(
-                *[
-                    asyncio.create_task(_worker(batch_start + idx, scene))
-                    for idx, scene in enumerate(batch)
-                ]
-            )
-            worker_results.extend(batch_results)
-        worker_results.sort(key=lambda item: item[0])
-
-        step_2_scene_packages = [item[1] for item in worker_results]
-        step_3_scene_packages = [item[2] for item in worker_results]
-        retrieval_by_scene = {
-            str(item[2].get("scene_id") or ""): item[3] for item in worker_results
-        }
-        intents_by_scene = {
-            str(item[7].get("scene_id") or ""): {
-                "scene_id": str(item[7].get("scene_id") or ""),
-                "what_happens": item[6].get("what_happens", []),
-                "emotional_progression": item[6].get("emotional_progression", []),
-                "speaking_goals": item[6].get("speaking_goals", []),
-                "implied_history": item[6].get("implied_history", []),
-                "forbidden_contradictions": item[6].get("forbidden_contradictions", []),
-            }
-            for item in worker_results
-        }
-        step_4_scene_packages = [item[7] for item in worker_results]
-        prose_paragraphs = [item[8] for item in worker_results]
-        step_5_scene_packages = [
-            {
-                **scene,
-                "prose_html": prose_paragraphs[idx],
-            }
-            for idx, scene in enumerate(step_4_scene_packages)
-        ]
-        step_2_traces = [item[4] for item in worker_results if isinstance(item[4], dict)]
-        step_3_traces = [trace for item in worker_results for trace in (item[5] if isinstance(item[5], list) else []) if isinstance(trace, dict)]
-        step_4_traces = [item[9] for item in worker_results if isinstance(item[9], dict)]
-        step_5_traces = [trace for item in worker_results for trace in (item[10] if isinstance(item[10], list) else []) if isinstance(trace, dict)]
-        scene_packages = step_5_scene_packages
-
-        artifacts["stages"]["scene_package"] = {
-            "count": len(step_2_scene_packages),
-            "packages": step_2_scene_packages,
-        }
-        artifacts["stages"]["retrieval"] = retrieval_by_scene
-        artifacts["stages"]["intent_drafting"] = {
-            "count": len(intents_by_scene),
-            "scene_intents": list(intents_by_scene.values()),
-        }
-        artifacts["stages"]["prose_generation"] = {
-            "count": len(prose_paragraphs),
-            "scene_paragraphs": [
-                {
-                    "scene_id": str(scene.get("scene_id") or f"scene-{idx+1:03d}"),
-                    "paragraph": prose_paragraphs[idx],
-                }
-                for idx, scene in enumerate(step_4_scene_packages)
-            ],
-        }
-        artifacts["timings_ms"]["scene_package"] = round(
-            (time.monotonic() - package_t0) * 1000, 2
-        )
-        artifacts["timings_ms"]["retrieval"] = round(
-            (time.monotonic() - package_t0) * 1000, 2
-        )
-        artifacts["timings_ms"]["intent_drafting"] = round(
-            (time.monotonic() - package_t0) * 1000, 2
-        )
-        artifacts["timings_ms"]["prose_generation"] = round(
-            (time.monotonic() - package_t0) * 1000, 2
-        )
-
-        self._write_step_debug_files(
-            step="step_2",
-            prompt_payload={
-                "entity_name": self._debug_entity_name,
-                "step": "step_2",
-            },
-            response_payload={"scene_packages": step_2_scene_packages},
-        )
-        self._write_step_debug_files(
-            step="step_3",
-            prompt_payload={
-                "entity_name": self._debug_entity_name,
-                "step": "step_3",
-            },
-            response_payload={"scene_packages": step_3_scene_packages},
-        )
-        self._write_step_debug_files(
-            step="step_4",
-            prompt_payload={
-                "entity_name": self._debug_entity_name,
-                "step": "step_4",
-            },
-            response_payload={"scene_packages": step_4_scene_packages},
-        )
-        self._write_step_debug_files(
-            step="step_5",
-            prompt_payload={
-                "entity_name": self._debug_entity_name,
-                "step": "step_5",
-            },
-            response_payload={"scene_packages": step_5_scene_packages},
-        )
-
-        prose_by_scene: list[dict[str, Any]] = [
-            {
-                "scene_id": str(scene.get("scene_id") or f"scene-{idx+1:03d}"),
-                "name": str(scene.get("name") or f"Scene {idx+1}"),
-                "scene_summary": str(scene.get("scene_summary") or ""),
-                "prose_html": prose_paragraphs[idx],
-            }
-            for idx, scene in enumerate(step_4_scene_packages)
-        ]
-        critic_conversation_id = self._build_step_6_7_conversation_id(conversation_id)
-        self._debug_step_label = "step_6"
-        self._debug_prompt_calls = []
-        self._debug_response_calls = []
-        critic = await self._critic_scene_set(
-            scene_packages=scene_packages,
-            prose_by_scene=prose_by_scene,
+        return await self._execute_v2(
+            agent=agent,
+            step_1_scenes=step_1_scenes,
             language=language,
             instructions=instructions,
-            conversation_id=critic_conversation_id,
+            conversation_id=conversation_id,
+            stage_callback=stage_callback,
+            artifacts=artifacts,
+            started_total=started_total,
         )
-        self._write_step_debug_files(
-            step="step_6",
-            prompt_payload={
-                "entity_name": self._debug_entity_name,
-                "step": "step_6",
-                "llm_calls": self._debug_prompt_calls,
-            },
-            response_payload={
-                "entity_name": self._debug_entity_name,
-                "step": "step_6",
-                "llm_calls": self._debug_response_calls,
-                "critic_remarks": critic,
-            },
-        )
-        step_6_calls = list(self._debug_response_calls)
-        if stage_callback:
-            await stage_callback(
-                NovelistStage.CRITIC,
-                {
-                    "artifacts": artifacts,
-                    "critic_notes": critic,
-                },
-            )
-
-        self._debug_step_label = "step_7"
-        self._debug_prompt_calls = []
-        self._debug_response_calls = []
-        revision_fallback_used = False
-        revision_fallback_reason: str | None = None
-        try:
-            revision = await self._revise_scene_set(
-                scene_packages=scene_packages,
-                prose_by_scene=prose_by_scene,
-                critic=critic,
-                language=language,
-                instructions=instructions,
-                conversation_id=critic_conversation_id,
-            )
-        except Exception as exc:
-            logger.warning(
-                "novelist_revision_fallback_used reason=%s",
-                exc,
-                exc_info=True,
-            )
-            revision_fallback_used = True
-            revision_fallback_reason = str(exc)
-            fallback_html = self._merge_scene_html(prose_by_scene)
-            revision = {
-                "scenes": [
-                    {
-                        "scene_id": "scene-rev-fallback-001",
-                        "name": "Fallback Merged Draft",
-                        "prose_html": fallback_html,
-                        "merged_from": [str(item.get("scene_id")) for item in prose_by_scene if item.get("scene_id")],
-                        "split_from": None,
-                        "notes": ["Revision step failed; fallback used merged step-5 prose."],
-                    }
-                ],
-                "lineage": {
-                    str(item.get("scene_id")): {
-                        "source_scene_ids": [item.get("scene_id")],
-                        "action": "kept_step5_fallback",
-                    }
-                    for item in prose_by_scene
-                    if item.get("scene_id")
-                },
-                "global_revision_notes": ["Revision fallback path applied."],
-                "final_text_html": fallback_html,
-                "latency_ms": 0.0,
-                "fallback_used": True,
-                "fallback_reason": revision_fallback_reason,
-            }
-        self._write_step_debug_files(
-            step="step_7",
-            prompt_payload={
-                "entity_name": self._debug_entity_name,
-                "step": "step_7",
-                "llm_calls": self._debug_prompt_calls,
-            },
-            response_payload={
-                "entity_name": self._debug_entity_name,
-                "step": "step_7",
-                "llm_calls": self._debug_response_calls,
-                "final_step_response": {
-                    "final_text_html": str(revision.get("final_text_html") or ""),
-                },
-            },
-        )
-        step_7_calls = list(self._debug_response_calls)
-        self._debug_step_label = None
-        if stage_callback:
-            await stage_callback(
-                NovelistStage.REVISION,
-                {
-                    "artifacts": artifacts,
-                },
-            )
-        final_html = str(revision.get("final_text_html") or "").strip()
-        if not final_html:
-            final_html = self._merge_revised_scene_html(
-                revision.get("scenes", []) if isinstance(revision, dict) else []
-            )
-        artifacts["stages"]["merging"] = {
-            "scene_count": len(step_4_scene_packages),
-            "final_text": final_html,
-        }
-        if revision_fallback_used:
-            artifacts["stages"]["revision_fallback"] = {
-                "used": True,
-                "reason": revision_fallback_reason,
-            }
-        artifacts["timings_ms"]["merging"] = round(
-            (time.monotonic() - package_t0) * 1000, 2
-        )
-        scene_results = self._build_scene_results(
-            scene_packages=scene_packages,
-            retrieval_by_scene=retrieval_by_scene,
-            intents_by_scene=intents_by_scene,
-            prose_by_scene=prose_by_scene,
-            critic=critic,
-            revision=revision,
-        )
-
-        artifacts["scene_progress"] = {
-            item["scene_id"]: {
-                "intent_done": bool(item.get("intent")),
-                "prose_done": bool(item.get("prose_html")),
-                "critic_issue_count": item.get("critic_issue_count", 0),
-                "revision_action": item.get("revision_action", "kept"),
-            }
-            for item in scene_results
-        }
-        artifacts["timings_ms"]["total"] = round((time.monotonic() - started_total) * 1000, 2)
-
-        timing_summary = {
-            "total_ms": artifacts["timings_ms"].get("total", 0.0),
-            "by_stage_ms": artifacts["timings_ms"],
-            "scene_count": len(scene_results),
-            "retrieval_query_count": sum(
-                len((retrieval_by_scene.get(item.get("scene_id", ""), {}) or {}).get("queries", []))
-                for item in scene_packages
-            ),
-        }
-        step_outputs = self._build_step_outputs(
-            scaffolding=scaffolding,
-            scene_packages=scene_packages,
-            retrieval_by_scene=retrieval_by_scene,
-            intents_by_scene=intents_by_scene,
-            prose_by_scene=prose_by_scene,
-            critic=critic,
-            revision=revision,
-            final_html=final_html,
-        )
-        artifacts["step_outputs"] = step_outputs
-        artifacts["llm_call_summary"] = self._build_llm_call_summary(
-            step_2_traces=step_2_traces,
-            step_3_traces=step_3_traces,
-            step_4_traces=step_4_traces,
-            step_5_traces=step_5_traces,
-            step_6_calls=step_6_calls,
-            step_7_calls=step_7_calls,
-        )
-
-        if stage_callback:
-            await stage_callback(
-                NovelistStage.MERGING,
-                {
-                    "artifacts": artifacts,
-                    "draft_text": final_html,
-                    "critic_notes": critic,
-                    "scene_results": scene_results,
-                    "timing_summary": timing_summary,
-                },
-            )
-
-        return {
-            "scene_packages": scene_packages,
-            "critic_remarks": critic,
-            "final_text_html": final_html,
-        }
 
     @staticmethod
     def _sanitize_debug_component(value: str | None) -> str:
@@ -729,58 +311,8 @@ class NovelistOrchestrator:
         language: str,
         instructions: str,
         conversation_id: str | None,
-    ) -> tuple[
-        int,
-        dict[str, Any],
-        dict[str, Any],
-        dict[str, Any],
-        dict[str, Any],
-        list[dict[str, Any]],
-        dict[str, Any],
-        dict[str, Any],
-        str,
-        dict[str, Any],
-        list[dict[str, Any]],
-    ]:
-        scene_id = str(scene.get("scene_id") or f"scene-{index + 1:03d}")
-        scene_conversation_id = (
-            f"{conversation_id}:scene:{scene_id}"
-            if conversation_id
-            else f"novelist_scene:{scene_id}"
-        )
-
-        step_2_calls: list[dict[str, Any]] = []
-        step_3_calls: list[dict[str, Any]] = []
-        step_4_calls: list[dict[str, Any]] = []
-        step_5_calls: list[dict[str, Any]] = []
-
-        step_2_before = self._lean_scene_payload(scene)
-        step_2_t0 = time.monotonic()
-        raw_scene_packages = await self._build_scene_packages(
-            scenes=[scene],
-            language=language,
-            instructions=instructions,
-            conversation_id=scene_conversation_id,
-            use_conversation_memory=True,
-            debug_collector=step_2_calls,
-        )
-        step_2_package = self._build_step_2_scene_packages(
-            scene_packages=raw_scene_packages,
-            step_1_scenes=[scene],
-        )[0]
-        step_2_latency_ms = round((time.monotonic() - step_2_t0) * 1000, 2)
-        step_2_trace: dict[str, Any] = {
-            "scene_id": scene_id,
-            "conversation_id": scene_conversation_id,
-            "status": "ok",
-            "timing_ms": step_2_latency_ms,
-            "llm_calls": step_2_calls,
-            "delta_output": self._scene_delta_allowlist(
-                step_2_before,
-                step_2_package,
-                allowed_fields=("prior_knowledge_needed", "scene_tone", "scene_goal"),
-            ),
-        }
+    ) -> tuple[int, dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any], list[dict[str, Any]], dict[str, Any], dict[str, Any], str, dict[str, Any], list[dict[str, Any]]]:
+        raise RuntimeError("V1 novelist scene pipeline has been removed")
 
         step_3_t0 = time.monotonic()
         try:
@@ -1119,15 +651,7 @@ class NovelistOrchestrator:
         use_conversation_memory: bool = False,
         debug_collector: list[dict[str, Any]] | None = None,
     ) -> list[dict[str, Any]]:
-        if not scenes:
-            return []
-
-        semaphore = asyncio.Semaphore(self.max_concurrency)
-        system_prompt = self._compose_system_prompt(
-            NOVELIST_SCENE_EXPLORATION_PROMPT,
-            language=language,
-            instructions=instructions,
-        )
+        raise RuntimeError("V1 novelist scene packaging has been removed")
 
         async def _run(scene: dict[str, Any]) -> dict[str, Any]:
             async with semaphore:
@@ -1435,11 +959,7 @@ class NovelistOrchestrator:
         conversation_id: str | None,
         debug_collector: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
-        system_prompt = self._compose_system_prompt(
-            NOVELIST_SCENE_INTENT_PROMPT,
-            language=language,
-            instructions=instructions,
-        )
+        raise RuntimeError("V1 novelist intent drafting has been removed")
         user_payload = json.dumps(
             {
                 "scene_id": scene_id,
@@ -1483,11 +1003,7 @@ class NovelistOrchestrator:
         conversation_id: str | None,
         debug_collector: list[dict[str, Any]] | None = None,
     ) -> str:
-        system_prompt = self._compose_system_prompt(
-            NOVELIST_SCENE_PROSE_PROMPT,
-            language=language,
-            instructions=instructions,
-        )
+        raise RuntimeError("V1 novelist prose generation has been removed")
         user_payload = json.dumps(
             {
                 "scene_id": scene_id,
@@ -1572,11 +1088,7 @@ class NovelistOrchestrator:
         instructions: str,
         conversation_id: str | None,
     ) -> dict[str, Any]:
-        system_prompt = self._compose_system_prompt(
-            NOVELIST_SCENE_REVISION_PROMPT,
-            language=language,
-            instructions=instructions,
-        )
+        raise RuntimeError("V1 novelist revision has been removed")
         user_payload = (
             "Use the draft text and critic notes already present in this conversation memory "
             "from the immediately previous turn. Rewrite the complete chapter accordingly.\n\n"

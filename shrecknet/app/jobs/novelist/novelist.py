@@ -14,10 +14,7 @@ from typing import Any, Awaitable, Callable
 
 from app.integrations.llm.model_policy import LLMTask, ModelPolicy
 from app.integrations.llm.shreckllm_client import ShreckLLMClient
-from app.jobs.architect.prompts import (
-    ARCHITECT_ENTITY_PROPOSAL_PROMPT,
-    ARCHITECT_MILESTONE_BATCH_PROMPT,
-)
+from app.jobs.architect.prompts import ARCHITECT_ENTITY_PROPOSAL_PROMPT
 from app.jobs.architect.scene_centric_chunking import (
     build_scene_chunks,
     extract_paragraphs_from_sources,
@@ -1026,7 +1023,7 @@ class NovelistOrchestrator:
         )
 
         ontology_definitions = self._serialize_ontology_definitions(agent)
-        enriched_scenes = await self._extract_scene_entities_and_milestones(
+        enriched_scenes = await self._extract_scene_entities_only(
             scenes=merged_scenes,
             ontology_definitions=ontology_definitions,
             model=model,
@@ -1064,7 +1061,7 @@ class NovelistOrchestrator:
             "scenes": final_scenes,
         }
 
-    async def _extract_scene_entities_and_milestones(
+    async def _extract_scene_entities_only(
         self,
         *,
         scenes: list[dict[str, Any]],
@@ -1074,7 +1071,7 @@ class NovelistOrchestrator:
     ) -> list[dict[str, Any]]:
         out = [dict(scene) for scene in scenes]
         scene_by_id = {str(s.get("scene_id") or ""): s for s in out}
-        # Architect-style batching: entities in 3-scene batches, milestones in 5-scene batches.
+        # Architect-style batching: entities in 3-scene batches.
         for idx in range(0, len(out), 3):
             batch = out[idx : idx + 3]
             scenes_payload = [
@@ -1113,36 +1110,6 @@ class NovelistOrchestrator:
         for scene in out:
             scene.setdefault("related_entities", [])
 
-        for idx in range(0, len(out), 5):
-            batch = out[idx : idx + 5]
-            scenes_payload = [
-                {
-                    "scene_ref": str(scene.get("scene_id") or ""),
-                    "scene_name": str(scene.get("name") or "Scene"),
-                    "scene_description": str(scene.get("scene_summary") or ""),
-                    "scene_text": str(scene.get("raw_scene_text") or ""),
-                    "entities": scene.get("related_entities") or [],
-                }
-                for scene in batch
-            ]
-            prompt = ARCHITECT_MILESTONE_BATCH_PROMPT.format(
-                scenes_payload=json.dumps(scenes_payload, ensure_ascii=False)
-            )
-            milestone_raw, _, _ = await self._call_llm(
-                model=model,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.1,
-                conversation_id=conversation_id,
-            )
-            payload = self._parse_json_object(milestone_raw) or {}
-            for row in payload.get("scenes", []) if isinstance(payload.get("scenes"), list) else []:
-                if not isinstance(row, dict):
-                    continue
-                scene_ref = str(row.get("scene_ref") or "")
-                target = scene_by_id.get(scene_ref)
-                if target is None:
-                    continue
-                target["milestones"] = self._parse_milestones(row)
         for scene in out:
             scene.setdefault("milestones", [])
         return out
@@ -1772,22 +1739,25 @@ class NovelistOrchestrator:
                 limit=6,
             )
             fallback_entities = ", ".join(chunk_entities[:3]) if chunk_entities else "the core cast"
+            first_scene_name = str(bundle[0].get("name") or f"Merged Chunk {len(merged)+1}").strip()
             chunk_summary = " ".join(
                 str(s.get("scene_summary") or "").strip() for s in bundle
             ).strip()
+            top_entities = chunk_entities[:3]
+            if top_entities:
+                open_questions_for_retrieval = [
+                    f"What happened earlier between {top_entities[0]} and {top_entities[1] if len(top_entities) > 1 else top_entities[0]} that should shape decisions in '{first_scene_name}'?",
+                    f"What unresolved goal or pressure currently drives {top_entities[0]} in '{first_scene_name}'?",
+                    f"What constraint from prior events must remain true in '{first_scene_name}' to avoid continuity breaks?",
+                ]
+            else:
+                open_questions_for_retrieval = [
+                    f"What earlier event most directly causes the conflict in '{first_scene_name}'?",
+                    f"What unresolved pressure should be visible in character choices in '{first_scene_name}'?",
+                    f"What continuity constraint must remain true in '{first_scene_name}'?",
+                ]
             prior_knowledge_needed = [
-                {
-                    "question": f"What unresolved conflict from earlier chapters most changes decisions by {fallback_entities} in this chunk?",
-                    "answer": "",
-                },
-                {
-                    "question": f"What relationship tensions between {fallback_entities} should remain visible in dialogue and choices here?",
-                    "answer": "",
-                },
-                {
-                    "question": f"What continuity constraints from earlier events must be preserved while writing this chunk about: {self._clip_text(chunk_summary, max_chars=180)}",
-                    "answer": "",
-                },
+                {"question": q, "answer": ""} for q in open_questions_for_retrieval
             ]
             merged.append(
                 {
@@ -1797,6 +1767,7 @@ class NovelistOrchestrator:
                     "raw_scene_text": "\n\n".join(str(s.get("raw_scene_text") or "").strip() for s in bundle if str(s.get("raw_scene_text") or "").strip()),
                     "merged_from_scene_ids": [str(s.get("scene_id") or "") for s in bundle if str(s.get("scene_id") or "").strip()],
                     "related_entities": chunk_entities,
+                    "open_questions_for_retrieval": open_questions_for_retrieval,
                     "prior_knowledge_needed": prior_knowledge_needed,
                 }
             )

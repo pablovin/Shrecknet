@@ -31,7 +31,6 @@ from app.tasks.architect_analysis import (
     _format_ontology_definitions_from_entities,
     _load_existing_nodes,
     _run_entity_proposal_phase,
-    _run_milestone_proposal_phase,
     _run_scene_chunking_phase,
     _run_scene_proposal_phase,
     initialize_architect_concurrency,
@@ -354,42 +353,6 @@ async def _execute_run(
                     proposed_entities=entity_phase["proposed_entities"],
                     author_id=agent.id,
                 )
-                milestone_phase = await _run_milestone_proposal_phase(
-                    run_id=run_id,
-                    llm_client=llm_client,
-                    model=architect_model,
-                    repair_model=configured_repair_json_target,
-                    proposed_scenes=scene_phase["proposed_scenes"],
-                    author_id=agent.id,
-                    instructions=instructions,
-                )
-
-                milestone_titles_by_scene: dict[str, list[str]] = {}
-                per_scene = milestone_phase.get("per_scene") or {}
-                if isinstance(per_scene, list):
-                    scene_milestone_pairs = [
-                        (row.get("scene_ref"), row.get("milestones"))
-                        for row in per_scene
-                        if isinstance(row, dict)
-                    ]
-                elif isinstance(per_scene, dict):
-                    scene_milestone_pairs = list(per_scene.items())
-                else:
-                    scene_milestone_pairs = []
-
-                for scene_ref, milestones in scene_milestone_pairs:
-                    scene_key = str(scene_ref or "").strip()
-                    if not scene_key:
-                        continue
-                    titles: list[str] = []
-                    for item in (milestones or []):
-                        if not isinstance(item, dict):
-                            continue
-                        raw_title = str(item.get("title") or item.get("label") or "")
-                        if raw_title.strip():
-                            titles.append(raw_title)
-                    milestone_titles_by_scene[scene_key] = titles
-
                 scenes: list[dict[str, Any]] = []
                 for order, scene in enumerate(scene_phase.get("proposed_scenes") or [], start=1):
                     scene_ref = str(scene.get("scene_ref") or f"scene_{order}")
@@ -418,7 +381,7 @@ async def _execute_run(
                             "raw_scene_text": str(scene.get("scene_text") or "").strip(),
                             "source_paragraphs": [],
                             "source_anchors": [scene_ref],
-                            "milestones": milestone_titles_by_scene.get(scene_ref, []),
+                            "milestones": [],
                             "related_entities": dedup_related,
                             "new_or_update": "new",
                         }
@@ -439,10 +402,6 @@ async def _execute_run(
                         "updated_count": entity_phase.get("updated_count", 0),
                         "new_count": entity_phase.get("new_count", 0),
                         "elapsed_seconds": entity_phase.get("elapsed_seconds", 0.0),
-                    },
-                    "milestone_phase": {
-                        "milestone_count": milestone_phase.get("milestone_count", 0),
-                        "elapsed_seconds": milestone_phase.get("elapsed_seconds", 0.0),
                     },
                     "scenes": scenes,
                 }

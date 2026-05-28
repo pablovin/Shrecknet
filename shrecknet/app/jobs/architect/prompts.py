@@ -1,30 +1,36 @@
-ARCHITECT_SCENE_SEGMENTATION_PROMPT = """You are an expert narrative analyst.
+# Used by: Architect Analyze job (`architect.analyze_instance`), scene chunking phase.
+# Callsite: `app/jobs/architect/scene_centric_chunking.py::segment_chunk_into_scenes`.
+# Goal: Segment chunk-level paragraph-marked narrative text into coherent scenes with
+# global paragraph boundaries (`start_paragraph`, `end_paragraph`) for downstream proposals.
+ARCHITECT_SCENE_SEGMENTATION_PROMPT = """
+You are an expert narrative analyst helping build a knowledge graph from long-form story text.
 
-Segment the text into coherent narrative scenes.
+Your task is to segment the provided text into coherent narrative scenes.
 
-A Scene is a continuous narrative situation with a beginning, escalation, and outcome.
-A scene is closer to a continuous camera shot than to a topic cluster.  A scene always refer to named entities, and must always reference them.
+The input text is divided into numbered paragraphs, using markers such as [P1], [P2], [P3], etc.
 
-Keep interactions unified while the same characters continue the same conversation, conflict, plan, or strategic objective.
+A scene is a continuous storytelling situation. It has a clear narrative focus, usually involving the same main characters, location, time period, and ongoing interaction or objective. 
+A scene should feel like a continuous passage in a novel, or like one extended camera sequence: something begins, develops, and reaches a meaningful pause, result, or transition.
 
-Create a new scene ONLY when there is a meaningful change in:
-- time
-- location
-- dominant participating characters
+Scenes will later be used by other agents to extract entities, relationships and milestones. So each scene has to be very well detailed.
 
-Do NOT split scenes for:
-- planning progression
-- tactical refinement
-- new proposals within the same discussion
-- emotional escalation within the same interaction
-- continuation of the same strategic objective
-- ongoing dialogue between the same characters
+A scene should usually remain unified while:
+- the same characters continue the same conversation
+- the same conflict or plan is being developed
+- the same action sequence continues
+- the same emotional or strategic objective is unfolding
+- the same location and time are maintained
 
 Prefer fewer, larger, stronger scenes.
-Avoid fragmentation.
+Avoid scene fragmentation.
 
-Scene titles and descriptions must reflect the dominant dramatic situation of the ENTIRE scene, not individual conversational beats.
-Never use The Narrator, or nothing like that on titles. Imagine if it is the title of a movie scene. It should be concrete, descriptive, and capture the tension, conflict, decisions, or strategic intent of the scene. Always use named entities on the title. Avoid vague labels like "Strategic Discussion", "Rising Tension", "Observation and Preparation", etc.
+Scene titles: must reflect the dominant dramatic situation of the entire scene.
+Always use a descriptive title that captures the tension, conflict, decisions, or strategic intent of the scene. Never use The Narrator, or nothing like that in titles.
+Always use named entities on the title. Avoid vague labels like "Strategic Discussion", "Rising Tension", "Observation and Preparation", etc.
+
+Scene descriptions: must capture the core tension and meaningful state change of the entire scene. Write a maximum of 6 sentences.
+never use vague references like "they", "the group", "the foreigners", "the party", etc. Always use named entities in descriptions.
+Never talk about the narrator or the writer or nothing like that.
 
 For each scene:
 - start_paragraph MUST be copied from a [P<number>] marker in the input.
@@ -33,38 +39,14 @@ For each scene:
 - Do NOT omit paragraph fields.
 - Do NOT invent entities.
 
-Titles must:
-- be concrete and descriptive
-- capture conflict, pressure, decisions, or strategic intent
-- always use named entities on the title
-- avoid vague labels like:
-  - Strategic Discussion
-  - Rising Tension
-  - Observation and Preparation
-
-Descriptions must:
-- describe the beginning, escalation, and outcome of the scene. Make a long paragraph that captures the whole scene story in a concise way, and name all entities.
-- preserve the core tension and meaningful state change
-- always use named entitie. NEVER use collectives as "they", "the city", "the group", "the foreigners", "they", "the party", etc.
-
-
 Weak:
 "The foreigners discuss their next move."
 
 Strong:
 "Tamura, Evrain, Lynelle, and Everin discuss how to manipulate Hold’s expectations while maintaining leverage over Leodogr and the bishop."
 
-
 CRITICAL OUTPUT RULE:
-Every scene MUST include:
-- scene_id
-- name
-- description
-- start_paragraph
-- end_paragraph
-
 If a scene does not have start_paragraph and end_paragraph, the output is invalid.
-
 
 Return ONLY valid RFC8259 JSON.
 
@@ -82,120 +64,63 @@ Return ONLY valid RFC8259 JSON.
 
 Constraints:
 - Do NOT include text outside JSON.
-- Do NOT invent entities not present in the text.
-- Output must be strict RFC8259 JSON.
 - Use double quotes for all keys and string values.
 - Do not use trailing commas.
-- Do not include markdown fences.
+- Do not use markdown fences.
 - Ensure start_paragraph and end_paragraph are integers (not strings).
-- `start_paragraph` and `end_paragraph` MUST be global paragraph ids taken directly from the `[P<number>]` markers shown in the input.
-- Do NOT return chunk-local paragraph positions.
 
 Paragraphs:
 {marked_paragraphs}
 """
 
 
-ARCHITECT_SCENE_SEGMENTATION_JSON_REPAIR_PROMPT = """You are a strict JSON repair assistant.
+# Used by: Architect Analyze job (`architect.analyze_instance`) and Novelist scaffolding flow.
+# Callsites:
+# - `app/tasks/architect_analysis.py::_extract_scene_entities`
+# - `app/jobs/novelist/novelist.py`
+# Goal: Propose scene-level graph-worthy entities and classify each as `existing` or `new`
+# against current ontology definitions and existing alias catalog.
+ARCHITECT_ENTITY_PROPOSAL_PROMPT = """
+You are an expert narrative analyst helping build a knowledge graph from long-form story text.
+Your goal is to decide which entities from the provided scenes should be added to or matched against the persistent world graph.
 
-Task:
-Repair the following malformed JSON output so it becomes valid strict RFC8259 JSON.
-Do not change semantic content unless required for JSON validity.
+For that, I will give you a list of ontology definitions, and a list of existing entities in the world graph. 
+Each existing entity has an associated ontology type and a list of aliases/names that refer to it.
 
-Required final schema:
-{
-  "scenes": [
-    {
-      "scene_id": 0,
-      "name": "...",
-      "description": "...",
-      "start_paragraph": 1,
-      "end_paragraph": 4
-    }
-  ]
-}
+Then I will give you a list of scenes, each with a text description and a list of candidate entities that are explicitly named or clearly referred to in the scene text.
 
-Rules:
-- Return ONLY JSON.
-- Use double quotes.
-- No trailing commas.
-- scene_id/start_paragraph/end_paragraph must be integers.
-- Do not add markdown or explanations.
+Your task is to return to me a list of entities for each scene that you think should be added to the world graph, or matched against existing entities in the world graph.
 
-Malformed JSON:
-{malformed_json}
-"""
+The entities you return must be clearly explicitly named on the text.
+You have to take into consideration the given entities, as some of the text might have variations of it, or typos of how they are written. So be flexible when matching them.
 
+Only return entities that are meaningful enough to the scene and deserve to be persisted in the world graph.
 
-# Step 2: Batched scene-level entity extraction and reconciliation
-ARCHITECT_ENTITY_PROPOSAL_PROMPT = """You are reviewing final scene spans and deciding which entities should be added to or matched against the persistent world graph.
+Avoid generic entities such as: "The Boy", "The Sword", "The City" etc... Only return named entities.
 
-Use ONLY the provided ontology definitions.
+Use ONLY the provided ontology definitions. Do not invent ontologies, and for all returned entities, match them with the provided ontology definitions.
 
-Ontology Definitions:
-{ontology_definitions}
+For each entity return a status field: "existing" if it clearly matches an existing entity by name/alias and ontology, or "new" if it does not match any existing entity.
 
-Existing Entities:
-{existing_entities}
+If "status" is "existing", the "ontology" MUST be the ontology associated with that exact "matched_alias" in Existing Entities.
 
-Scenes payload:
-{scenes_payload}
-
-Task:
-For each scene, return ONLY entities that clearly satisfy ALL of the following:
-1. They are explicitly named or clearly referred to in the text.
-2. They are uniquely identifiable as the same entity beyond this scene.
-3. They are meaningful enough to the scene story to persist in the world model.
-
-For each returned entity:
-- Set "status" to "existing" only when it clearly matches one of the Existing Entities by alias/name and ontology.
-- Similar names like: Lady Anastasia and Anastasia should be considered a clear match if the scene context supports it, even if the shorter alias is not an exact match in the Existing Entities list. In this case, set "matched_alias" to the exact alias string from Existing Entities that it matches.
-- Typos like King Leodrgance and King Leodogrance should be considered a clear match if the scene context supports it. In this case, set "matched_alias" to the exact alias string from Existing Entities that it matches.
-- Set "status" to "new" when no listed Existing Entity is a clear match.
-- For existing matches, set "matched_alias" to the exact alias string from Existing Entities. Also set the "ontology" to the ontology associated with that exact "matched_alias" in Existing Entities, even if the scene text suggests a different ontology. This is to enforce graph-truth and avoid mixing ontologies for the same entity.
-- If "status" is "existing", the "ontology" MUST be the ontology associated with that exact "matched_alias" in Existing Entities.
-- Never mix an existing alias with a different ontology; if you are not sure, always trust the ontology provided on the Existing Entities list.
-- Do not invent existing aliases.
-- Do not output ids. Existing entity ids are not part of this task.
-
-Important:
-- Returning an empty list is correct if the scene does not contain clear persistent entities.
-- Do NOT extract generic objects, generic places, temporary descriptions, symbolic references, or vague groups.
-- Do NOT infer entities that are not directly supported by the text.
-- Prefer the most complete, clean, human-readable name.
-- If two names refer to the same entity, keep only one.
-- Use only the provided ontology definitions for the ontology field.
-- The ontology value MUST exactly match one of the provided ontology definition names.
-- NEVER output placeholders like "Unknown", "Other", or inferred ontology types not present in the provided list.
-
-Practical guardrails:
-- If a scene clearly contains at least one named character, named location, named faction, or named organization, return at least one entity.
-- Use an empty list only when no clearly named persistent candidate exists in the scene text.
-- Prefer obvious named entities over aggressive filtering.
 
 Good candidates:
-- named characters
-- named locations
-- named factions or organizations
-- unique, clearly identified items with persistent story identity
+- John, Lucia, Bishop Leodogr
+- London, The Catedral of Light, the Subplane of Devotion
+- The Order of the Rose, the Rocket Team
 
 Bad candidates:
 - "the sword", "the stone", "the road", "the cathedral", "john`s horse", "The servant", "the mask", "the city"
-- one-off background elements
-- broad symbolic references unless clearly established as a concrete ontology entity
+- Entities that appear only once or do not carry any meaningful weight in the scene.
 
-Confidence:
-- 0 to 1
-- should be high only when the entity is clearly grounded and clearly worth persisting
-
-Why:
-- one short sentence grounded in the text
 
 Before outputting each entity, ask:
 "Would I want this stored as its own reusable node in the world graph?"
 If no, exclude it.
 
-Return ONLY valid JSON in this exact format:
+
+Return ONLY valid RFC8259 JSON.
 {{
   "scenes": [
     {{
@@ -206,58 +131,73 @@ Return ONLY valid JSON in this exact format:
           "ontology": "Character",
           "status": "existing|new",
           "matched_alias": "Exact Existing Entity Alias or null",
-          "confidence": 0.85,
-          "why": "Clearly named and directly involved in the scene."
+          "confidence": 0 to 1 (should be high only when the entity is clearly grounded and clearly worth persisting), 
+          "why": " one short sentence grounded in the text."
         }}
       ]
     }}
   ]
 }}
-"""
 
 
-# Step 3: Milestone extraction from proposed scene
-ARCHITECT_MILESTONE_BATCH_PROMPT = """You are the Architect Agent.
 
-Extract meaningful milestones from narrative scenes.
+Ontology Definitions:
+{ontology_definitions}
+
+Existing Entities:
+{existing_entities}
 
 Scenes payload:
 {scenes_payload}
 
+
+
+
+"""
+
+
+# Used by: Architect Analyze job (`architect.analyze_instance`), milestone proposal phase.
+# Callsite: `app/tasks/architect_analysis.py::_run_milestone_proposal_phase`.
+# Goal: Extract 2-5 meaningful milestones per scene, with scene-bounded `related_to`
+# entity links and boundary markers (`begin|end|none`) for proposal review.
+ARCHITECT_MILESTONE_BATCH_PROMPT = """
+
+You are an expert narrative analyst helping build a knowledge graph from long-form story text.
+Your goal is to decide which milestones from the provided scenes should be added to or matched against the persistent world graph.
+
 A milestone is a concrete narrative beat that meaningfully changes the situation, tension, goals, knowledge, relationships, or strategic position within a scene.
+A collection of milestones should capture the core narrative of a scene.
+
 
 Keep continuous interactions unified.
 Do NOT fragment milestones for conversational progression, tactical refinement, or multiple proposals within the same ongoing interaction.
+Milestones must involve: decisions, vulnerabilities, commitments, revelations, threats, confrontations, discoveries.
 
-Extract milestones involving:
-- decisions
-- commitments
-- revelations
-- threats
-- confrontations
-- discoveries
+Every scene must contain 2-5 meaningful milestones.
+Every scene must have at least 2 milestones. Always. Enforce that. If a scene has fewer than 2 milestones, merge them aggressively until you reach at least 2. 
 
-Do NOT extract:
-- filler dialogue
-- atmosphere
-- routine movement
-- minor actions
+Milestone titles must be descriptive of their part on the scene. Do not use The Narrator, nor anything like that.
+Descriptions must be concise, maximum 6 sentences, and capture the core of the milestone. 
 
-Scenes must contain 2-5 meaningful milestones.
-Every scene must have at least 2 milestones. Always. Enforce that. If a scene has fewer than 2 milestones, extract more aggressively until you reach at least 2. If a scene has more than 5 milestones, prioritize the most meaningful ones and discard the rest until you have at most 5.
+Do not use vague references like "they", "the group", "the foreigners", "the party", etc. 
 
-Use ONLY entities provided for the scene.
-Descriptions and titles must always refer to entities by their exact provided name, never by vague references like "they", "the group", "the foreigners", "the party", etc.
-Never use The Narrator, or nothing like that on titles. Imagine if it is the title of an action. It should be concrete, descriptive, and capture the tension, conflict, decisions, or strategic intent of the scene. Always use named entities on the title. Avoid vague labels like "Strategic Discussion", "Rising Tension", "Observation and Preparation", etc.
+Always use named entities in descriptions and titles..
+
 Weak:
-"The group discusses their next move."
+"Title: The group discusses their next move."
+"Description: The foreigners discuss their next move."
 
 Strong:
-"Tamura, Lynelle and Cwenhild Commits to Restraint"
+"Title: Tamura, Lynelle and Cwenhild Commits to Restraint"
+"Description: During a tense discussion, Tamura, Lynelle and Cwenhild agree to restrain from taking any aggressive action against Hold for now, 
+in order to avoid provoking him and to maintain leverage over Leodogr and the bishop. This commitment shapes their strategy moving forward and creates 
+internal tension as they struggle with their desire for revenge against Hold."
 
-Milestones are related to entities. We are giving you a list of entities for each scene. 
-For every Milestone, mention all the entities that are important and related to it. All of them!
-Only use the entities provided for the scene. Do not invent entities. Do not refer to entities by vague references like "they", "the group", "the foreigners", "the party", etc.
+
+You are the Architect Agent.
+
+Extract meaningful milestones from narrative scenes.
+
 
 
 Return STRICT RFC8259 JSON.
@@ -269,7 +209,7 @@ Return STRICT RFC8259 JSON.
       "milestones": [
         {{
           "title": "short descriptive title",
-          "description": "max 2 concise sentences",
+          "description": "max 6 concise sentences",
           "boundary_type": "begin|end|none",          
           "adjacent_to": ["optional nearby milestone title"],
           "related_to": [
@@ -284,28 +224,63 @@ Return STRICT RFC8259 JSON.
     }}
   ]
 }}
+
+
+
+Scenes payload:
+{scenes_payload}
+
+
 """
 
 
-ARCHITECT_PROPERTY_EXTRACTION_PROMPT = """You are extracting ontology data for an entity using only provided evidence.
+# Used by: Architect Generate job (`architect.generate_entities`), entity enrichment/update step.
+# Callsite: `app/jobs/architect/entity_generator.py::_extract_properties_and_relationships`.
+# Goal: Produce strict delta updates for properties/relationships and a full rewritten
+# autogenerated summary using only scene-bounded evidence and allowed relationship targets.
+ARCHITECT_PROPERTY_UPDATE_PROMPT = """You are extracting ontology data for an entity using only provided evidence.
+
+
+You are an expert narrative analyst helping build a knowledge graph from long-form story text.
+
+
+Your task is to decide which properties and relationships of a given entity from the provided scenes should be added to or matched against the persistent world graph.
+For existing entities, only update the properties and relationships if there is a meaningful change or addition, otherwise return an empty update.
+For new entities, return the properties and relationships that are clearly supported by the text and are meaningful enough to be added to the world graph.
+
+I am giving you the context of each entity, including a summary, existing properties and relationships, catalogs of possible properties and relationships to choose from, 
+allowed relationship targets, and relevant text chunks from the scenes.
+
+
+Rules:
+- Do not invent facts.
+- Return only property values that are NEW or CHANGED.
+- Return only relationships that are NEW or CHANGED.
+- Choose properties by property_name from the properties catalog.
+- Choose relationships by relationship_name from the relationships catalog.
+- relationship_target must be an entity ID from the allowed related_entities list.
+- For each relationship, obey destination type constraints in the relationships catalog.
+- updated_autogenerated_summary must be a full rewritten summary, not an append/merge.
+
+
 
 Entity context:
 - entity_alias: {entity_alias}
 - entity_type_name: {entity_type_name}
 
-Existing autogenerated summary:
+Existing entity summary:
 {existing_autogenerated_text}
 
-Existing properties:
+Existing entity properties:
 {existing_properties}
 
-Existing relationships:
+Existing entity relationships:
 {existing_relationships}
 
-Auto-generatable properties catalog:
+Properties that can be updated/added (from properties catalog):
 {properties_catalog}
 
-Auto-generatable relationships catalog:
+Relationships that can be updated/added (from relationships catalog):
 {relationships_catalog}
 
 Allowed relationship targets (explicit name/id/type):
@@ -319,17 +294,9 @@ Relevant text chunks:
 {combined_chunks}
 [/TEXT_CHUNKS]
 
-Rules:
-- Do not invent facts.
-- Return only property values that are NEW or CHANGED.
-- Return only relationships that are NEW or CHANGED.
-- Choose properties by property_name from the properties catalog.
-- Choose relationships by relationship_name from the relationships catalog.
-- relationship_target must be an entity ID from the allowed related_entities list.
-- For each relationship, obey destination type constraints in the relationships catalog.
-- updated_autogenerated_summary must be a full rewritten summary, not an append/merge.
 
-Return STRICT JSON only:
+
+Return STRICT RFC8259 JSON:
 {{
   "properties_update": [
     {{"property_name": "Property Name", "property_value": "..."}}
@@ -340,9 +307,6 @@ Return STRICT JSON only:
       "relationship_target": "entity_instance_id"
     }}
   ],
-  "updated_autogenerated_summary": "full rewritten summary"
+  "updated_autogenerated_summary": "re-write the existing autogenerated summary to reflect the new information, or keep it the same if there is no meaningful update. Always return a full rewritten summary, not an append/merge."
 }}
 """
-
-
-ARCHITECT_PROPERTY_UPDATE_PROMPT = ARCHITECT_PROPERTY_EXTRACTION_PROMPT

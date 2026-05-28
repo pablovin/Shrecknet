@@ -10,7 +10,7 @@ from typing import Any
 
 from app.core.config_store import LLMModelTarget
 from app.integrations.llm.shreckllm_client import ShreckLLMClient
-from app.integrations.llm.json_repair import repair_json_text
+from app.jobs.shrecknet import validate_or_repair_json
 from app.jobs.architect import prompts as architect_prompts
 
 
@@ -487,14 +487,16 @@ async def _retry_scene_payload_via_llm_json_repair(
     model: str | LLMModelTarget,
     malformed_text: str,
 ) -> dict[str, Any]:
-    response_text = await repair_json_text(
+    parsed = await validate_or_repair_json(
         llm_client=llm_client,
         model=model,
-        malformed_text=malformed_text,
+        raw_text=malformed_text,
         schema_hint='{"scenes":[{"scene_id":0,"name":"...","description":"...","start_paragraph":1,"end_paragraph":4}]}',
         usage_tag="architect.scene_discovery.json_repair",
     )
-    return _parse_scene_payload_with_repair(response_text)
+    if isinstance(parsed, dict):
+        return parsed
+    return {}
 
 
 def attach_scene_text(

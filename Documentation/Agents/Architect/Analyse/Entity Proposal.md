@@ -35,7 +35,7 @@ The internal existing-node catalogue still includes `node_id`, but `node_id` is 
 ## Prompt and Model
 
 - Extraction and reconciliation prompt: `ARCHITECT_ENTITY_PROPOSAL_PROMPT`
-- Model: configured architect model (`settings.model_architect`)
+- Model: `settings.model_architect_entity_proposal`
 - Batch size: `ENTITY_PROPOSAL_BATCH_SIZE = 5`
 
 LLM extraction parses to `SceneEntityBatchExtractionResponse` and expects:

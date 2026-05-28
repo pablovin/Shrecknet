@@ -14,6 +14,7 @@ from typing import Any, Awaitable, Callable
 
 from app.integrations.llm.model_policy import LLMTask, ModelPolicy
 from app.integrations.llm.shreckllm_client import ShreckLLMClient
+from app.jobs.shrecknet import validate_or_repair_json
 from app.jobs.architect.prompts import ARCHITECT_ENTITY_PROPOSAL_PROMPT
 from app.jobs.architect.scene_centric_chunking import (
     build_scene_chunks,
@@ -1091,7 +1092,7 @@ class NovelistOrchestrator:
                 temperature=0.1,
                 conversation_id=conversation_id,
             )
-            payload = self._parse_json_object(entity_raw) or {}
+            payload = await self._parse_json_object_checked(entity_raw) or {}
             for row in payload.get("scenes", []) if isinstance(payload.get("scenes"), list) else []:
                 if not isinstance(row, dict):
                     continue
@@ -1145,7 +1146,7 @@ class NovelistOrchestrator:
                     use_conversation_memory=use_conversation_memory,
                     debug_collector=debug_collector,
                 )
-                parsed = self._parse_json_object(raw) or {}
+                parsed = await self._parse_json_object_checked(raw) or {}
                 package = parsed if isinstance(parsed, dict) else {}
                 package["scene_id"] = str(package.get("scene_id") or scene.get("scene_id"))
                 package["prior_knowledge_needed"] = self._normalize_prior_knowledge_pairs(
@@ -1191,7 +1192,7 @@ class NovelistOrchestrator:
                 temperature=0.1,
                 conversation_id=conversation_id,
             )
-            parsed = self._parse_json_object(raw) or {}
+            parsed = await self._parse_json_object_checked(raw) or {}
             source_paragraphs: list[int] = []
             source_anchors: list[str] = []
             raw_text_parts: list[str] = []
@@ -1389,7 +1390,7 @@ class NovelistOrchestrator:
                     use_conversation_memory=use_conversation_memory,
                     debug_collector=debug_collector,
                 )
-            payload = self._parse_json_object(raw) or {}
+            payload = await self._parse_json_object_checked(raw) or {}
             if not isinstance(payload, dict):
                 payload = {}
             buckets: dict[str, list[str]] = {}
@@ -1457,7 +1458,7 @@ class NovelistOrchestrator:
             use_conversation_memory=True,
             debug_collector=debug_collector,
         )
-        parsed = self._parse_json_object(raw) or {}
+        parsed = await self._parse_json_object_checked(raw) or {}
         if not isinstance(parsed, dict):
             parsed = {}
         return {
@@ -1535,7 +1536,7 @@ class NovelistOrchestrator:
             conversation_id=conversation_id,
             use_conversation_memory=True,
         )
-        parsed = self._parse_json_object(raw) or {}
+        parsed = await self._parse_json_object_checked(raw) or {}
         by_scene = parsed.get("by_scene") if isinstance(parsed, dict) else None
         if not isinstance(by_scene, dict):
             by_scene = {}
@@ -1777,7 +1778,7 @@ class NovelistOrchestrator:
             conversation_id=conversation_id,
             use_conversation_memory=True,
         )
-        parsed = self._parse_json_object(raw) or {}
+        parsed = await self._parse_json_object_checked(raw) or {}
         return {k: str(parsed.get(k) or "").strip() for k in self._empty_retrieval_buckets().keys()}
 
     async def _generate_merged_chunk_draft_v2(self, *, chunk: dict[str, Any], language: str, instructions: str, conversation_id: str | None) -> str:
@@ -2374,17 +2375,24 @@ class NovelistOrchestrator:
                 break
         return out
 
-    @staticmethod
-    def _parse_json_object(raw: str) -> Any:
+    async def _parse_json_object_checked(
+        self,
+        raw: str,
+        *,
+        schema_hint: str | None = None,
+        usage_tag: str = "agents.json_repair",
+    ) -> Any:
         try:
             return json.loads(raw)
         except Exception:
-            # Try extracting first JSON object from mixed output.
-            match = re.search(r"\{.*\}", raw or "", flags=re.DOTALL)
-            if not match:
-                return None
             try:
-                return json.loads(match.group(0))
+                return await validate_or_repair_json(
+                    llm_client=self.llm_client,
+                    model=self.repair_json_model or self._model_step_2_4,
+                    raw_text=raw,
+                    schema_hint=schema_hint,
+                    usage_tag=usage_tag,
+                )
             except Exception:
                 return None
 

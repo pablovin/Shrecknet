@@ -17,7 +17,7 @@ from app.core.config_store import LLMModelTarget, get_settings, is_shreckllm_con
 from app.graph.neo4j import get_driver
 from app.integrations.llm.shreckllm_client import ShreckLLMClient
 from app.integrations.llm.runtime_control import fetch_shreckllm_runtime, resolve_effective_architect_concurrency
-from app.integrations.llm.json_repair import repair_json_text
+from app.jobs.shrecknet import validate_or_repair_json
 from app.integrations.retrieval.neo4j_retriever import Neo4jGraphRetriever
 from app.jobs.architect import prompts as architect_prompts
 from app.jobs.architect.schemas import (
@@ -210,17 +210,17 @@ async def _parse_scene_entity_batch_extraction_with_repair(
     if parsed.scenes:
         return parsed
     try:
-        repaired = await repair_json_text(
+        repaired_payload = await validate_or_repair_json(
             llm_client=llm_client,
             model=repair_model,
-            malformed_text=response_text,
+            raw_text=response_text,
             schema_hint='{"scenes":[{"scene_ref":"...","entities":[{"name":"...","ontology":"...","status":"existing|new","matched_alias":null,"confidence":0.0,"why":"..."}]}]}',
             usage_tag="agents.json_repair",
         )
     except Exception as exc:
         logger.warning("scene_entity_batch_repair_error: error=%s", exc)
         return SceneEntityBatchExtractionResponse(scenes=[])
-    return _parse_scene_entity_batch_extraction(repaired)
+    return _parse_scene_entity_batch_extraction(json.dumps(repaired_payload))
 
 
 def _normalize_ontology_name(value: str | None) -> str:
@@ -1571,17 +1571,17 @@ async def _parse_batched_milestone_extraction_with_repair(
     if parsed:
         return parsed
     try:
-        repaired = await repair_json_text(
+        repaired_payload = await validate_or_repair_json(
             llm_client=llm_client,
             model=repair_model,
-            malformed_text=response_text,
+            raw_text=response_text,
             schema_hint='{"scenes":[{"scene_ref":"...","milestones":[{"title":"...","description":"...","boundary_type":"begin|middle|end","adjacent_to":[],"related_to":[]}]}]}',
             usage_tag="agents.json_repair",
         )
     except Exception as exc:
         logger.warning("milestone_batch_repair_error: error=%s", exc)
         return {}
-    return _parse_batched_milestone_extraction(repaired)
+    return _parse_batched_milestone_extraction(json.dumps(repaired_payload))
 
 
 async def _run_milestone_proposal_phase(

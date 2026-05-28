@@ -13,7 +13,7 @@ from typing import Any, Optional
 from uuid import uuid4
 
 from app.core.config_store import LLMModelTarget
-from app.integrations.llm.json_repair import repair_json_text
+from app.jobs.shrecknet import validate_or_repair_json
 from app.integrations.llm.model_policy import LLMTask, ModelPolicy
 from app.integrations.llm.shreckllm_client import ShreckLLMClient
 from app.integrations.retrieval.neo4j_retriever import GraphRetriever
@@ -984,27 +984,12 @@ class ElderOrchestrator:
         if not text:
             return {}
         try:
-            parsed = json.loads(text)
-            return parsed if isinstance(parsed, dict) else {}
-        except json.JSONDecodeError:
-            pass
-
-        start = text.find("{")
-        end = text.rfind("}")
-        if start >= 0 and end > start:
-            try:
-                parsed = json.loads(text[start : end + 1])
-                return parsed if isinstance(parsed, dict) else {}
-            except json.JSONDecodeError:
-                pass
-        try:
-            repaired = await repair_json_text(
-                self.llm_client,
+            parsed = await validate_or_repair_json(
+                llm_client=self.llm_client,
                 model=self.repair_json_model,
-                malformed_text=text,
+                raw_text=text,
                 usage_tag="agents.json_repair",
             )
-            parsed = json.loads(repaired)
             return parsed if isinstance(parsed, dict) else {}
         except Exception:
             return {}

@@ -2,23 +2,7 @@ from __future__ import annotations
 
 from app.core.config_store import LLMModelTarget
 from app.integrations.llm.shreckllm_client import ShreckLLMClient
-
-REPAIR_PROMPT_TEMPLATE = """You are a strict JSON repair assistant.
-
-Task:
-Repair the following malformed JSON so it becomes valid strict RFC8259 JSON.
-Do not change semantic content unless required for JSON validity.
-
-Rules:
-- Return ONLY JSON.
-- Use double quotes.
-- No trailing commas.
-- Do not add markdown or explanations.
-
-{schema_hint_block}
-Malformed JSON:
-{malformed_json}
-"""
+from app.jobs.shrecknet.agent import repair_invalid_json
 
 
 async def repair_json_text(
@@ -29,17 +13,10 @@ async def repair_json_text(
     schema_hint: str | None = None,
     usage_tag: str = "agents.json_repair",
 ) -> str:
-    schema_hint_block = ""
-    if schema_hint and str(schema_hint).strip():
-        schema_hint_block = f"Expected schema hint:\n{schema_hint.strip()}\n"
-    prompt = REPAIR_PROMPT_TEMPLATE.format(
-        schema_hint_block=schema_hint_block,
-        malformed_json=str(malformed_text or ""),
-    )
-    response = await llm_client.chat(
+    return await repair_invalid_json(
+        llm_client=llm_client,
         model=model,
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.0,
+        malformed_text=malformed_text,
+        schema_hint=schema_hint,
         usage_tag=usage_tag,
     )
-    return response if isinstance(response, str) else str(response)

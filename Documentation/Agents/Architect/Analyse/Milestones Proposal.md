@@ -35,12 +35,11 @@ Current goals:
 In the active analysis path:
 
 1. Scene segmentation runs first and does not produce milestones.
-2. Scene metadata is deduplicated/merged.
-3. Entity discovery runs per final scene.
-4. Scene proposals are built with `related_to` entities.
-5. `_run_milestone_proposal_phase` sends final scenes to `ARCHITECT_MILESTONE_BATCH_PROMPT` in batches of at most 5 scenes.
-6. Returned milestones are mapped back by `scene_ref`.
-7. Boundaries are normalized so each retained scene has at least one `begin` and one `end` milestone.
+2. Entity discovery runs per final scene.
+3. Scene proposals are built with `related_to` entities.
+4. `_run_milestone_proposal_phase` sends final scenes to `ARCHITECT_MILESTONE_BATCH_PROMPT` in batches of at most 5 scenes.
+5. Returned milestones are mapped back by `scene_ref`.
+6. Boundaries are normalized so each retained scene has at least one `begin` and one `end` milestone.
 
 The milestone prompt receives only final scene payloads and allowed scene entities. It must not introduce entities outside the scene-local allowed entity list.
 
@@ -54,7 +53,6 @@ The milestone prompt receives only final scene payloads and allowed scene entiti
     - `title`
     - `description`
     - `boundary_type` (`begin|end|none`)
-    - `mentions`
     - `adjacent_to`
     - `related_to`
       - `entity`
@@ -65,10 +63,10 @@ Prompt constraints:
 
 - Group milestones by `scene_ref`.
 - Return at least one `begin` and one `end` milestone per scene when supported.
-- Keep normal scenes to 2-4 milestones; never exceed 6.
-- Keep milestone descriptions to a maximum of 2 sentences.
+- Keep normal scenes to 2-5 milestones.
+- Keep milestone descriptions to a maximum of 6 sentences.
 - Mention involved entities by name when supported by the text.
-- Use only allowed scene entities in `mentions` and `related_to`.
+- Use only allowed scene entities in `related_to`.
 
 ## Output Shape
 
@@ -81,7 +79,6 @@ Each milestone in analysis output includes:
 - `label` (kept for backward compatibility)
 - `description`
 - `boundary_type` (`begin|end|none`)
-- `mentions`
 - `adjacent_to`
 - `related_to`
   - `entity`

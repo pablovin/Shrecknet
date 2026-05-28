@@ -30,6 +30,10 @@ Official documentation for the async Shrecknet Python SDK.
 - [Analyze and Review Lifecycle](./architect/analyze-review-lifecycle.md)
 - [Generate Lifecycle](./architect/generate-lifecycle.md)
 
+## Comprehensive Example
+
+- [Comprehensive Story Flow README](../examples/09_comprehensive_story_flow/README.md)
+
 ## Operations
 
 - [Troubleshooting](./operations/troubleshooting.md)

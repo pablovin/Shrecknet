@@ -50,6 +50,8 @@ from .models import (
     OntologyInstanceSummaryPage,
     OntologyInstanceUpdate,
     OntologyWorldStatsResponse,
+    NovelistRunCreate,
+    NovelistRunRead,
     ProviderStatus,
     ProviderValidation,
     World,
@@ -809,3 +811,90 @@ class ArchitectAPI:
         if strict and not report.ready:
             raise ArchitectPreflightError(reasons)
         return report
+
+
+class NovelistAPI:
+    """Novelist run lifecycle endpoints."""
+
+    def __init__(self, client: AsyncShrecknetClient, jobs: JobsAPI):
+        self._client = client
+        self._jobs = jobs
+
+    async def start_run(self, agent_id: str, payload: NovelistRunCreate) -> NovelistRunRead:
+        data = await self._client.raw_request(
+            "POST",
+            f"/jobs/novelist/{agent_id}/runs",
+            json=payload.model_dump(exclude_none=True),
+        )
+        return NovelistRunRead.model_validate(data)
+
+    async def start_run_from_upload(
+        self,
+        agent_id: str,
+        *,
+        pdf_path: str,
+        language: str | None = None,
+        instructions: str | None = None,
+        previous_session_id: str | None = None,
+    ) -> NovelistRunRead:
+        form = {
+            "language": language,
+            "instructions": instructions,
+            "previous_session_id": previous_session_id,
+        }
+        form = {k: v for k, v in form.items() if v is not None}
+
+        with open(pdf_path, "rb") as f:
+            files = {"file": (pdf_path.rsplit("/", 1)[-1], f, "application/pdf")}
+            response = await self._client._client.post(
+                f"/jobs/novelist/{agent_id}/runs/upload",
+                data=form,
+                files=files,
+                headers=self._client._headers(),
+            )
+        detail = None
+        try:
+            payload = response.json()
+            if isinstance(payload, dict):
+                detail = payload.get("detail")
+        except Exception:
+            detail = response.text
+        from .errors import raise_for_status
+
+        raise_for_status(response.status_code, detail)
+        return NovelistRunRead.model_validate(response.json())
+
+    async def get_run(self, run_id: str) -> NovelistRunRead:
+        data = await self._client.raw_request("GET", f"/jobs/novelist/runs/{run_id}")
+        return NovelistRunRead.model_validate(data)
+
+    async def list_runs(self, agent_id: str, *, limit: int = 20, offset: int = 0) -> list[NovelistRunRead]:
+        data = await self._client.raw_request(
+            "GET", f"/jobs/novelist/{agent_id}/runs", params={"limit": limit, "offset": offset}
+        )
+        return [NovelistRunRead.model_validate(item) for item in data]
+
+    async def delete_run(self, agent_id: str, run_id: str) -> dict[str, int]:
+        return await self._client.raw_request("DELETE", f"/jobs/novelist/{agent_id}/runs/{run_id}")
+
+    async def wait_for_run(
+        self,
+        run_id: str,
+        *,
+        timeout_s: float = 900,
+        poll_interval_s: float = 1.0,
+        strict: bool = True,
+    ) -> BackgroundJobRecord:
+        started = time.monotonic()
+        while True:
+            run = await self.get_run(run_id)
+            if run.background_job_id is not None:
+                return await self._jobs.wait(
+                    run.background_job_id,
+                    timeout_s=max(1.0, timeout_s - (time.monotonic() - started)),
+                    poll_interval_s=poll_interval_s,
+                    strict=strict,
+                )
+            if time.monotonic() - started >= timeout_s:
+                raise JobTimeoutError(-1, timeout_s)
+            await asyncio.sleep(poll_interval_s)

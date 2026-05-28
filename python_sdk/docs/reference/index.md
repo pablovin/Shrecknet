@@ -7,3 +7,4 @@ Generated from SDK source docstrings and method signatures.
 - [WorldsAPI](./worlds.md)
 - [OntologiesAPI](./ontologies.md)
 - [OntologyInstancesAPI](./ontology-instances.md)
+- [NovelistAPI](./shrecknet.md)

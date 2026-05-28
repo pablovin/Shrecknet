@@ -1,4 +1,4 @@
-from shrecknet_client.models import Ontology, World
+from shrecknet_client.models import NovelistRunRead, Ontology, World
 
 
 def test_world_model_parse() -> None:
@@ -20,3 +20,20 @@ def test_ontology_model_parse() -> None:
     )
     assert ontology.id == 1
     assert ontology.name == "Test"
+
+
+def test_novelist_run_model_parse() -> None:
+    run = NovelistRunRead.model_validate(
+        {
+            "id": "run-1",
+            "agent_id": "agent-1",
+            "status": "done",
+            "stage": "complete",
+            "draft_text": "Draft body",
+            "created_at": "2026-01-01T00:00:00Z",
+            "updated_at": "2026-01-01T00:00:00Z",
+        }
+    )
+    assert run.id == "run-1"
+    assert run.agent_id == "agent-1"
+    assert run.draft_text == "Draft body"

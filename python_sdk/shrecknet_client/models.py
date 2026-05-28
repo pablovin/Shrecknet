@@ -461,3 +461,39 @@ class ArchitectPreflightReport(BaseModel):
     llm_ready: bool
     agent_ready: bool
     provider_checks: dict[str, bool] = Field(default_factory=dict)
+
+
+class NovelistRunCreate(BaseModel):
+    unstructured_text: str
+    language: str | None = None
+    instructions: str | None = None
+    previous_session_id: str | None = None
+    previous_session_text: str | None = None
+    previous_session_summary: str | None = None
+
+
+class NovelistRunRead(BaseModel):
+    id: str
+    agent_id: str
+    background_job_id: int | None = None
+    ontology_id: int | None = None
+    ontology_instance_id: str | None = None
+    status: str
+    stage: str
+    settings: dict[str, Any] | None = None
+    request_payload: dict[str, Any] | None = None
+    artifacts: dict[str, Any] | None = None
+    previous_session_id: str | None = None
+    previous_session_summary: str | None = None
+    previous_session_lookup_status: str | None = None
+    elder_qna_by_part: dict[str, dict[str, list[str]]] | None = None
+    scene_results: list[dict[str, Any]] | None = None
+    step_outputs: dict[str, Any] | None = None
+    timing_summary: dict[str, Any] | None = None
+    stage_timings: dict[str, float] | None = None
+    scene_progress: dict[str, dict[str, Any]] | None = None
+    draft_text: str | None = None
+    critic_notes: str | None = None
+    error_message: str | None = None
+    created_at: datetime
+    updated_at: datetime

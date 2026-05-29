@@ -913,8 +913,19 @@ async def _run_scene_merge_phase(
     max_scenes_after_merge = max(1, int(max_scenes_after_merge or MAX_SCENES_AFTER_MERGE))
     scene_inputs = _flatten_scene_inputs(chunk_results)
     before_count = len(scene_inputs)
+    titles_before = [
+        str(row.get("scene_name") or "").strip()
+        for row in scene_inputs
+        if str(row.get("scene_name") or "").strip()
+    ]
     if before_count <= max_scenes_after_merge:
-        return chunk_results, {"applied": False, "scene_count_before": before_count, "scene_count_after": before_count}
+        return chunk_results, {
+            "applied": False,
+            "scene_count_before": before_count,
+            "scene_count_after": before_count,
+            "scene_titles_before": titles_before,
+            "scene_titles_after": titles_before,
+        }
 
     scenes_payload = [
         {
@@ -925,6 +936,7 @@ async def _run_scene_merge_phase(
         for row in scene_inputs
     ]
     prompt = str(getattr(architect_prompts, "ARCHITECT_SCENE_MERGE_PROMPT", "")).format(
+        max_scenes_after_merge=max_scenes_after_merge,
         scenes_payload=json.dumps(scenes_payload, ensure_ascii=False)
     )
     response_text = await llm_client.chat(
@@ -988,7 +1000,6 @@ async def _run_scene_merge_phase(
             continue
         normalized_merged.append(scene)
 
-    normalized_merged = normalized_merged[:max_scenes_after_merge]
     merged_chunk_result = [{
         "status": "ok",
         "entity_instance_id": None,
@@ -1011,10 +1022,25 @@ async def _run_scene_merge_phase(
             for scene in normalized_merged
         ],
     }]
+    titles_after = [
+        str(scene.get("scene_name") or "").strip()
+        for scene in normalized_merged
+        if str(scene.get("scene_name") or "").strip()
+    ]
+    logger.info(
+        "scene_merge_summary: run_id=%s before=%d after=%d titles_before=%s titles_after=%s",
+        run_id,
+        before_count,
+        len(normalized_merged),
+        titles_before,
+        titles_after,
+    )
     return merged_chunk_result, {
         "applied": True,
         "scene_count_before": before_count,
         "scene_count_after": len(normalized_merged),
+        "scene_titles_before": titles_before,
+        "scene_titles_after": titles_after,
     }
 
 

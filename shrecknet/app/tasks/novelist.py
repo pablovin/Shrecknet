@@ -66,6 +66,91 @@ def _build_frontend_llm_usage_summary(usage_summary: dict[str, Any] | None) -> d
     }
 
 
+def _merge_usage_summaries(*summaries: dict[str, Any] | None) -> dict[str, Any]:
+    merged: dict[str, Any] = {"totals": {}, "by_model": {}, "by_tag": {}}
+    totals = {
+        "calls": 0,
+        "input_tokens_est": 0,
+        "memory_tokens_est": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "estimated_cost_usd": 0.0,
+    }
+    by_model: dict[str, dict[str, Any]] = {}
+    by_tag: dict[str, dict[str, Any]] = {}
+
+    def _accumulate_bucket(dst: dict[str, Any], src: dict[str, Any]) -> None:
+        dst["calls"] = int(dst.get("calls") or 0) + int(src.get("calls") or 0)
+        dst["input_tokens_est"] = int(dst.get("input_tokens_est") or 0) + int(src.get("input_tokens_est") or 0)
+        dst["memory_tokens_est"] = int(dst.get("memory_tokens_est") or 0) + int(src.get("memory_tokens_est") or 0)
+        dst["output_tokens"] = int(dst.get("output_tokens") or 0) + int(src.get("output_tokens") or 0)
+        dst["total_tokens"] = int(dst.get("total_tokens") or 0) + int(src.get("total_tokens") or 0)
+        dst["estimated_cost_usd"] = float(dst.get("estimated_cost_usd") or 0.0) + float(src.get("estimated_cost_usd") or 0.0)
+
+    for summary in summaries:
+        if not isinstance(summary, dict):
+            continue
+        _accumulate_bucket(totals, summary.get("totals") if isinstance(summary.get("totals"), dict) else {})
+        model_map = summary.get("by_model") if isinstance(summary.get("by_model"), dict) else {}
+        for model_name, model_bucket in model_map.items():
+            key = str(model_name).strip()
+            if not key or not isinstance(model_bucket, dict):
+                continue
+            dst = by_model.setdefault(
+                key,
+                {
+                    "calls": 0,
+                    "input_tokens_est": 0,
+                    "memory_tokens_est": 0,
+                    "output_tokens": 0,
+                    "total_tokens": 0,
+                    "estimated_cost_usd": 0.0,
+                },
+            )
+            _accumulate_bucket(dst, model_bucket)
+        tag_map = summary.get("by_tag") if isinstance(summary.get("by_tag"), dict) else {}
+        for tag_name, tag_bucket in tag_map.items():
+            key = str(tag_name).strip()
+            if not key or not isinstance(tag_bucket, dict):
+                continue
+            dst = by_tag.setdefault(
+                key,
+                {
+                    "calls": 0,
+                    "input_tokens_est": 0,
+                    "memory_tokens_est": 0,
+                    "output_tokens": 0,
+                    "total_tokens": 0,
+                    "estimated_cost_usd": 0.0,
+                    "by_model": {},
+                },
+            )
+            _accumulate_bucket(dst, tag_bucket)
+            tag_by_model = tag_bucket.get("by_model") if isinstance(tag_bucket.get("by_model"), dict) else {}
+            dst_by_model = dst.setdefault("by_model", {})
+            for model_name, model_bucket in tag_by_model.items():
+                mkey = str(model_name).strip()
+                if not mkey or not isinstance(model_bucket, dict):
+                    continue
+                mdst = dst_by_model.setdefault(
+                    mkey,
+                    {
+                        "calls": 0,
+                        "input_tokens_est": 0,
+                        "memory_tokens_est": 0,
+                        "output_tokens": 0,
+                        "total_tokens": 0,
+                        "estimated_cost_usd": 0.0,
+                    },
+                )
+                _accumulate_bucket(mdst, model_bucket)
+
+    merged["totals"] = totals
+    merged["by_model"] = by_model
+    merged["by_tag"] = by_tag
+    return merged
+
+
 def _derive_novelist_runtime_controls(runtime_config: dict[str, Any], provider_id: str) -> dict[str, int]:
     global_max = int(runtime_config.get("max_concurrent_requests") or 0)
     if global_max <= 0:
@@ -209,6 +294,7 @@ async def _execute_run(
             raise ValueError("Agent not found")
 
         llm_client = ShreckLLMClient(base_url=settings.shreckllm_base_url, timeout=settings.shreckllm_request_timeout_s, max_retries=settings.shreckllm_max_retries)
+        elder_llm_client = ShreckLLMClient(base_url=settings.shreckllm_base_url, timeout=settings.shreckllm_request_timeout_s, max_retries=settings.shreckllm_max_retries)
         try:
             await update_job_progress(job_id, 0.05, {"status": "preparing orchestrator"})
             runtime_config = await fetch_shreckllm_runtime(settings)
@@ -254,7 +340,7 @@ async def _execute_run(
                     async with driver.session(database=settings.neo4j_database) as graph_session:
                         retriever = Neo4jGraphRetriever(graph_session)
                         elder_orchestrator = ElderOrchestrator(
-                            llm_client=llm_client,
+                            llm_client=elder_llm_client,
                             model_policy=model_policy,
                             graph_retriever=retriever,
                             default_top_k=getattr(settings, "default_top_k", 8),
@@ -343,7 +429,15 @@ async def _execute_run(
                     model=scene_chunking_model,
                     repair_model=configured_repair_json_target,
                     chunk_results=chunking_phase["chunk_results"],
-                    max_scenes_after_merge=6,
+                    max_scenes_after_merge=10,
+                )
+                logger.info(
+                    "novelist_scaffolding_scene_merge: run_id=%s before=%s after=%s titles_before=%s titles_after=%s",
+                    run_id,
+                    scene_merge_summary.get("scene_count_before"),
+                    scene_merge_summary.get("scene_count_after"),
+                    scene_merge_summary.get("scene_titles_before", []),
+                    scene_merge_summary.get("scene_titles_after", []),
                 )
                 scene_inputs = _flatten_scene_inputs(merged_chunk_results)
                 scene_phase = _run_scene_proposal_phase(
@@ -477,10 +571,19 @@ async def _execute_run(
                 progress_info = stage_progress.get(stage)
                 if progress_info:
                     progress_value, progress_status = progress_info
-                    detail_payload: dict[str, Any] = {"status": progress_status}
+                    status_text = progress_status
+                    if stage == NovelistStage.PROSE_GENERATION:
+                        completed_scenes = payload.get("completed_scenes")
+                        scene_count = payload.get("scene_count")
+                        if isinstance(completed_scenes, int) and isinstance(scene_count, int) and scene_count > 0:
+                            status_text = f"{progress_status} ({completed_scenes}/{scene_count})"
+                    detail_payload: dict[str, Any] = {"status": status_text}
                     scene_count = payload.get("scene_count")
                     if isinstance(scene_count, int):
                         detail_payload["scene_count"] = scene_count
+                    completed_scenes = payload.get("completed_scenes")
+                    if isinstance(completed_scenes, int):
+                        detail_payload["completed_scenes"] = completed_scenes
                     timing_summary = payload.get("timing_summary")
                     if isinstance(timing_summary, dict):
                         detail_payload["timing_summary"] = timing_summary
@@ -518,7 +621,9 @@ async def _execute_run(
                 update_kwargs["artifacts"] = _json_safe(result_artifacts)
 
             usage_summary = llm_client.get_usage_summary()
-            llm_usage_for_frontend = _build_frontend_llm_usage_summary(usage_summary)
+            elder_usage_summary = elder_llm_client.get_usage_summary()
+            combined_usage_summary = _merge_usage_summaries(usage_summary, elder_usage_summary)
+            llm_usage_for_frontend = _build_frontend_llm_usage_summary(combined_usage_summary)
             if isinstance(result_artifacts, dict):
                 result_artifacts["llm_usage_summary"] = llm_usage_for_frontend
                 result["artifacts"] = result_artifacts
@@ -541,10 +646,11 @@ async def _execute_run(
                 },
             )
             logger.info(
-                "novelist_llm_usage run_id=%s totals=%s by_model=%s",
+                "novelist_llm_usage run_id=%s novelist_totals=%s elder_totals=%s combined_by_model=%s",
                 run_id,
                 usage_summary.get("totals"),
-                usage_summary.get("by_model"),
+                elder_usage_summary.get("totals"),
+                combined_usage_summary.get("by_model"),
             )
             return _json_safe(result)
         except Exception as exc:
@@ -559,6 +665,7 @@ async def _execute_run(
             await mark_job_failed(job_id, str(exc))
             raise
         finally:
+            await elder_llm_client.aclose()
             await llm_client.aclose()
 
 

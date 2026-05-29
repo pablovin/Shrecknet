@@ -257,6 +257,19 @@ class NovelistOrchestrator:
             return f"{base}:step6_7"
         return f"novelist_step6_7:{self._debug_run_date}:{self._debug_entity_name}"
 
+    def _build_scene_4_5_conversation_id(
+        self,
+        *,
+        base_conversation_id: str | None,
+        scene_id: str,
+    ) -> str:
+        base = str(base_conversation_id or "").strip()
+        scene = str(scene_id or "scene").strip() or "scene"
+        scene = re.sub(r"[^a-zA-Z0-9_.:-]", "_", scene)
+        if base:
+            return f"{base}:step4_5:{scene}"
+        return f"novelist_step4_5:{self._debug_run_date}:{self._debug_entity_name}:{scene}"
+
     def _write_step_debug_files(
         self,
         *,
@@ -1152,20 +1165,24 @@ class NovelistOrchestrator:
             )
         for chunk in enhanced_chunks:
             chunk_id = str(chunk.get("scene_id") or "")
+            scene_conversation_id = self._build_scene_4_5_conversation_id(
+                base_conversation_id=conversation_id,
+                scene_id=chunk_id,
+            )
             self._debug_step_label = "step_4"
             context = await self._build_chunk_context_v2(
                 chunk=chunk,
                 retrieval=retrieval_by_scene.get(chunk_id, {}),
                 language=language,
                 instructions=instructions,
-                conversation_id=conversation_id,
+                conversation_id=scene_conversation_id,
             )
             self._debug_step_label = "step_5"
             prose_html = await self._generate_merged_chunk_draft_v2(
                 chunk={**chunk, "v2_context": context},
                 language=language,
                 instructions=instructions,
-                conversation_id=conversation_id,
+                conversation_id=scene_conversation_id,
             )
             self._debug_step_label = None
             prose_by_scene.append(

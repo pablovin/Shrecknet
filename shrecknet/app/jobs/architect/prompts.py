@@ -238,7 +238,7 @@ Scenes payload:
 
 # Used by: Architect Analyze job (`architect.analyze_instance`), post-discovery scene merge phase.
 # Callsite: `app/tasks/architect_analysis.py::_run_scene_merge_phase`.
-# Goal: Reduce discovered scenes to a maximum cap (10) by merging coherent scene groups
+# Goal: Reduce discovered scenes to a caller-provided maximum cap by merging coherent scene groups
 # using only scene title/description metadata, returning rewritten merged titles/descriptions
 # plus source scene references so paragraph/text spans can be recomposed downstream.
 ARCHITECT_SCENE_MERGE_PROMPT = """
@@ -253,10 +253,10 @@ The current scene list may be over-fragmented.
 Your task is to merge candidate scenes into a smaller set of coherent narrative scenes.
 
 MERGE GOAL
-- Return at most 10 scenes.
-- Use the minimum amount of merging required to reach at most 10 scenes.
+- Return at most {max_scenes_after_merge} scenes.
+- Use the minimum amount of merging required to reach at most {max_scenes_after_merge} scenes.
 - Prefer fewer, larger, coherent scenes, but do not destroy narrative structure.
-- If the input already has 10 or fewer scenes, return the scenes unchanged except for minor title/description cleanup.
+- If the input already has {max_scenes_after_merge} or fewer scenes, return the scenes unchanged except for minor title/description cleanup.
 
 MERGE RULES
 Merge adjacent scenes when they continue the same:
@@ -301,7 +301,7 @@ Return STRICT RFC8259 JSON only:
 }}
 
 CONSTRAINTS
-- Output max 10 scenes.
+- Output max {max_scenes_after_merge} scenes.
 - Every original scene_ref from input must appear in exactly one output scene's source_scene_refs.
 - source_scene_refs must be non-empty.
 - Preserve chronological order.

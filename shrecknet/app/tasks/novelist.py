@@ -47,6 +47,24 @@ from app.utils.job_tracking import (
 logger = logging.getLogger(__name__)
 
 
+def _build_frontend_llm_usage_summary(usage_summary: dict[str, Any] | None) -> dict[str, Any]:
+    by_tag = (usage_summary or {}).get("by_tag") if isinstance(usage_summary, dict) else {}
+    by_tag = by_tag if isinstance(by_tag, dict) else {}
+    totals = (usage_summary or {}).get("totals") if isinstance(usage_summary, dict) else {}
+    totals = totals if isinstance(totals, dict) else {}
+    return {
+        "totals": {
+            "calls": int(totals.get("calls") or 0),
+            "input_tokens_est": int(totals.get("input_tokens_est") or 0),
+            "output_tokens": int(totals.get("output_tokens") or 0),
+            "total_tokens": int(totals.get("total_tokens") or 0),
+            "estimated_cost_usd": float(totals.get("estimated_cost_usd") or 0.0),
+        },
+        "by_model": usage_summary.get("by_model") if isinstance(usage_summary, dict) else {},
+        "by_tag": by_tag,
+    }
+
+
 def _derive_novelist_runtime_controls(runtime_config: dict[str, Any], provider_id: str) -> dict[str, int]:
     global_max = int(runtime_config.get("max_concurrent_requests") or 0)
     if global_max <= 0:
@@ -510,11 +528,29 @@ async def _execute_run(
                 result["artifacts"] = result_artifacts
                 update_kwargs["artifacts"] = _json_safe(result_artifacts)
 
+            usage_summary = llm_client.get_usage_summary()
+            llm_usage_for_frontend = _build_frontend_llm_usage_summary(usage_summary)
+            if isinstance(result_artifacts, dict):
+                result_artifacts["llm_usage_summary"] = llm_usage_for_frontend
+                result["artifacts"] = result_artifacts
+                update_kwargs["artifacts"] = _json_safe(result_artifacts)
+            result["llm_usage_summary"] = llm_usage_for_frontend
+
             await repo.update_status(run_id, **update_kwargs)
             await session.commit()
-            await update_job_progress(job_id, 1.0, {"status": "completed"})
-            await mark_job_done(job_id, {"run_id": run_id, "status": "completed"})
-            usage_summary = llm_client.get_usage_summary()
+            await update_job_progress(
+                job_id,
+                1.0,
+                {"status": "completed", "llm_usage_summary": llm_usage_for_frontend},
+            )
+            await mark_job_done(
+                job_id,
+                {
+                    "run_id": run_id,
+                    "status": "completed",
+                    "llm_usage_summary": llm_usage_for_frontend,
+                },
+            )
             logger.info(
                 "novelist_llm_usage run_id=%s totals=%s by_model=%s",
                 run_id,

@@ -345,10 +345,37 @@ def _canonical_alias(alias: str | None) -> str:
     return value
 
 
+def _strip_honorific_prefix(alias: str | None) -> str:
+    value = str(alias or "").strip()
+    if not value:
+        return ""
+    tokens = value.split()
+    if not tokens:
+        return ""
+    honorifics = {"lady", "dame", "sir", "lord", "king", "queen", "prince", "princess"}
+    while tokens and tokens[0].lower().strip(".") in honorifics:
+        tokens = tokens[1:]
+    return " ".join(tokens).strip()
+
+
+def _canonical_alias_for_lookup(alias: str | None) -> str:
+    primary = _canonical_alias(alias)
+    stripped = _canonical_alias(_strip_honorific_prefix(alias))
+    if primary and stripped and primary != stripped:
+        # Keep both behaviors reachable; prefer stripped for matching broad existing aliases.
+        return stripped
+    return primary or stripped
+
+
 def _aliases_equivalent(alias_a: str | None, alias_b: str | None) -> bool:
     if not alias_a or not alias_b:
         return False
     if alias_a == alias_b:
+        return True
+    # Honorific-insensitive exact compare.
+    stripped_a = _canonical_alias(_strip_honorific_prefix(alias_a))
+    stripped_b = _canonical_alias(_strip_honorific_prefix(alias_b))
+    if stripped_a and stripped_b and stripped_a == stripped_b:
         return True
 
     tokens_a = alias_a.split()
@@ -427,14 +454,14 @@ def _resolve_existing_node_by_alias(
     ontology_key = _normalize_ontology_name(ontology)
     candidates = [matched_alias, name]
     for candidate in candidates:
-        canonical = _canonical_alias(candidate)
+        canonical = _canonical_alias_for_lookup(candidate)
         if not canonical:
             continue
         relaxed_match: dict[str, Any] | None = None
         for node in existing_nodes:
             node_alias = str(node.get("alias") or "")
             node_ontology = _normalize_ontology_name(str(node.get("ontology") or ""))
-            node_canonical = _canonical_alias(node_alias)
+            node_canonical = _canonical_alias_for_lookup(node_alias)
             same_alias = canonical == node_canonical or _aliases_equivalent(canonical, node_canonical)
             if not same_alias:
                 continue
@@ -1150,24 +1177,46 @@ async def _extract_scene_entities(
                     if matched_ontology:
                         payload["ontology"] = matched_ontology
                 else:
-                    requested_alias = str(entity.matched_alias or entity.name or "").strip()
-                    requested_canonical = _canonical_alias(requested_alias)
-                    alias_present = any(
-                        _canonical_alias(str(node.get("alias") or "")) == requested_canonical
-                        for node in existing_nodes
+                    # Alias-authoritative fallback: if alias uniquely resolves, keep as existing
+                    # and inherit ontology from the matched node regardless of model ontology text.
+                    fallback_matched = _resolve_existing_node_by_alias(
+                        name=entity.name,
+                        matched_alias=entity.name,
+                        ontology=None,
+                        existing_nodes=existing_nodes,
                     )
-                    logger.warning(
-                        "scene_entity_existing_match_unresolved: run_id=%s scene_ref=%s name=%s matched_alias=%s alias_present=%s existing_nodes_count=%d",
-                        run_id,
-                        scene_ref,
-                        entity.name,
-                        entity.matched_alias,
-                        alias_present,
-                        len(existing_nodes),
-                    )
-                    payload["status"] = "new"
-                    payload["matched_alias"] = None
-                    payload["matched_node_id"] = None
+                    if fallback_matched:
+                        payload["matched_alias"] = str(
+                            fallback_matched.get("alias") or entity.name or ""
+                        ).strip()
+                        payload["matched_node_id"] = str(
+                            fallback_matched.get("node_id") or ""
+                        ).strip() or None
+                        fallback_ontology = _resolve_allowed_ontology_name(
+                            str(fallback_matched.get("ontology") or ""),
+                            allowed_ontology_names,
+                        )
+                        if fallback_ontology:
+                            payload["ontology"] = fallback_ontology
+                    else:
+                        requested_alias = str(entity.matched_alias or entity.name or "").strip()
+                        requested_canonical = _canonical_alias_for_lookup(requested_alias)
+                        alias_present = any(
+                            _canonical_alias_for_lookup(str(node.get("alias") or "")) == requested_canonical
+                            for node in existing_nodes
+                        )
+                        logger.warning(
+                            "scene_entity_existing_match_unresolved: run_id=%s scene_ref=%s name=%s matched_alias=%s alias_present=%s existing_nodes_count=%d",
+                            run_id,
+                            scene_ref,
+                            entity.name,
+                            entity.matched_alias,
+                            alias_present,
+                            len(existing_nodes),
+                        )
+                        payload["status"] = "new"
+                        payload["matched_alias"] = None
+                        payload["matched_node_id"] = None
             else:
                 payload["matched_alias"] = None
                 payload["matched_node_id"] = None
@@ -1722,20 +1771,26 @@ def _normalize_related_to_items(
         return []
 
     scene_keys: set[str] = set()
+    display_alias_by_key: dict[str, str] = {}
     for item in scene_entities:
-        canonical = _canonical_alias(item.get("canonical"))
-        alias = _canonical_alias(item.get("alias"))
+        canonical = _canonical_alias_for_lookup(item.get("canonical"))
+        alias = _canonical_alias_for_lookup(item.get("alias"))
+        display_alias = str(item.get("alias") or item.get("canonical") or "").strip()
         if canonical:
             scene_keys.add(canonical)
+            if display_alias and canonical not in display_alias_by_key:
+                display_alias_by_key[canonical] = display_alias
         if alias:
             scene_keys.add(alias)
+            if display_alias and alias not in display_alias_by_key:
+                display_alias_by_key[alias] = display_alias
 
     normalized: list[dict[str, Any]] = []
     for raw in raw_items:
         if not isinstance(raw, dict):
             continue
         entity_value = _safe_json_text(raw.get("entity") or raw.get("alias") or raw.get("canonical"))
-        entity_key = _canonical_alias(entity_value)
+        entity_key = _canonical_alias_for_lookup(entity_value)
         if not entity_key or entity_key not in scene_keys:
             continue
 
@@ -1745,7 +1800,7 @@ def _normalize_related_to_items(
 
         normalized.append(
             {
-                "entity": entity_value,
+                "entity": display_alias_by_key.get(entity_key) or entity_value,
                 "relationship_label": relationship_label,
                 "relationship_description": relationship_description,
             }

@@ -175,6 +175,27 @@ def _log_run_llm_usage_summary(*, run_id: str, usage_summary: dict[str, Any]) ->
     )
 
 
+def _build_frontend_llm_usage_summary(usage_summary: dict[str, Any] | None) -> dict[str, Any]:
+    by_tag = (usage_summary or {}).get("by_tag") if isinstance(usage_summary, dict) else {}
+    by_tag = by_tag if isinstance(by_tag, dict) else {}
+    tag_to_step = {
+        "architect.scene_discovery": "architect.scene_discovery",
+        "architect.entity_extraction": "architect.entity_extraction",
+        "architect.milestone_proposal": "architect.milestone_proposal",
+    }
+
+    steps: dict[str, dict[str, int]] = {}
+    for tag, step_name in tag_to_step.items():
+        row = by_tag.get(tag) if isinstance(by_tag.get(tag), dict) else {}
+        steps[step_name] = {
+            "calls": int((row or {}).get("calls") or 0),
+            "input_tokens_est": int((row or {}).get("input_tokens_est") or 0),
+            "output_tokens": int((row or {}).get("output_tokens") or 0),
+            "total_tokens": int((row or {}).get("total_tokens") or 0),
+        }
+    return {"steps": steps}
+
+
 def _compress_scene_text_for_milestone_prompt(scene_text: str, max_chars: int) -> str:
     text = str(scene_text or "").strip()
     if not text or len(text) <= max_chars:
@@ -2066,6 +2087,7 @@ async def _execute_architect_pipeline(
                 )
                 usage_summary = llm_client.get_usage_summary()
                 _log_run_llm_usage_summary(run_id=run_id, usage_summary=usage_summary)
+                result["llm_usage_by_step"] = _build_frontend_llm_usage_summary(usage_summary)
             finally:
                 await llm_client.aclose()
 
@@ -2082,6 +2104,7 @@ async def _execute_architect_pipeline(
             "pipeline_output_transport": "background_job_details",
             "pipeline_output_format": "json",
             "scene_dedup_applied": bool(result.get("scene_dedup_applied", True)),
+            "llm_usage_by_step": result.get("llm_usage_by_step") or {},
         }
         await session.commit()
 
@@ -2092,6 +2115,7 @@ async def _execute_architect_pipeline(
                 "status": "Architect analysis completed",
                 "chunk_count": result.get("chunk_count", 0),
                 "scene_count": result.get("scene_count", 0),
+                "llm_usage_by_step": result.get("llm_usage_by_step") or {},
             },
         )
         return result

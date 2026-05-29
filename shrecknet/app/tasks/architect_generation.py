@@ -71,6 +71,29 @@ def _log_run_llm_usage_summary(*, run_id: str, usage_summary: dict[str, Any]) ->
     )
 
 
+def _build_frontend_llm_usage_summary(usage_summary: dict[str, Any] | None) -> dict[str, Any]:
+    by_tag = (usage_summary or {}).get("by_tag") if isinstance(usage_summary, dict) else {}
+    by_tag = by_tag if isinstance(by_tag, dict) else {}
+
+    tag_to_step = {
+        "architect.generate": "architect.generate",
+        "architect.generate.json_repair": "architect.generate.json_repair",
+        "architect.generate.entity_catalog_retry": "architect.generate.entity_catalog_retry",
+        "architect.generate.relationship_catalog_retry": "architect.generate.relationship_catalog_retry",
+        "architect.generate.allowed_related_retry": "architect.generate.allowed_related_retry",
+    }
+    steps: dict[str, dict[str, int]] = {}
+    for tag, step_name in tag_to_step.items():
+        row = by_tag.get(tag) if isinstance(by_tag.get(tag), dict) else {}
+        steps[step_name] = {
+            "calls": int((row or {}).get("calls") or 0),
+            "input_tokens_est": int((row or {}).get("input_tokens_est") or 0),
+            "output_tokens": int((row or {}).get("output_tokens") or 0),
+            "total_tokens": int((row or {}).get("total_tokens") or 0),
+        }
+    return {"steps": steps}
+
+
 def _elapsed_seconds(started_at: float) -> float:
     return round(perf_counter() - started_at, 3)
 
@@ -883,6 +906,7 @@ async def _execute_generation(
                 model_policy,
                 concurrent_extractions=enrichment_concurrency,
             )
+            llm_usage_by_step: dict[str, Any] = {"steps": {}}
             entity_scene_refs: dict[str, set[str]] = defaultdict(set)
             for scene_ref, related_ids in scene_ref_to_entities.items():
                 for related_id in related_ids:
@@ -939,6 +963,7 @@ async def _execute_generation(
                 )
                 usage_summary = llm_client.get_usage_summary()
                 _log_run_llm_usage_summary(run_id=run_id, usage_summary=usage_summary)
+                llm_usage_by_step = _build_frontend_llm_usage_summary(usage_summary)
             finally:
                 await llm_client.aclose()
 
@@ -1001,6 +1026,11 @@ async def _execute_generation(
                 frontend_entities=entity_proposals,
                 proposal_to_entity_id=proposal_to_entity_id,
             )
+            current_settings = run.settings if isinstance(run.settings, dict) else {}
+            run.settings = {
+                **current_settings,
+                "llm_usage_by_step_generation": llm_usage_by_step,
+            }
             await session.commit()
             final_status = (
                 ArchitectRunStatus.COMPLETED_WITH_WARNINGS
@@ -1035,6 +1065,7 @@ async def _execute_generation(
                 "enrichment_retryable_failed": enrichment_retryable_failed,
                 "enrichment_terminal_failed": enrichment_terminal_failed,
                 "enrichment_failed_entity_ids": enrichment_stats.get("failed_entity_ids", []),
+                "llm_usage_by_step": llm_usage_by_step,
                 "generation_metadata": {
                     "reviewed_pipeline_output": reviewed_pipeline_output,
                     "retry_enrichment_only": retry_enrichment_only,

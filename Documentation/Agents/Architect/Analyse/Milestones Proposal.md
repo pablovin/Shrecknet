@@ -37,7 +37,7 @@ In the active analysis path:
 1. Scene segmentation runs first and does not produce milestones.
 2. Entity discovery runs per final scene.
 3. Scene proposals are built with `related_to` entities.
-4. `_run_milestone_proposal_phase` sends final scenes to `ARCHITECT_MILESTONE_BATCH_PROMPT` in batches of at most 5 scenes.
+4. `_run_milestone_proposal_phase` sends final scenes to `ARCHITECT_MILESTONE_BATCH_PROMPT` in batches of at most 2 scenes.
 5. Returned milestones are mapped back by `scene_ref`.
 6. Boundaries are normalized so each retained scene has at least one `begin` and one `end` milestone.
 

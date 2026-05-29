@@ -8,7 +8,7 @@ Entity proposal runs after scene chunking output is finalized and before scene p
 
 Current goals:
 
-- Extract candidate entities from final scene outputs in batches of up to 5 scenes.
+- Extract candidate entities from final scene outputs in batches of up to 3 scenes.
 - Let the LLM classify each extracted entity as `existing` or `new` using existing entity aliases and ontology names only.
 - Keep graph ids out of the LLM prompt.
 - Resolve `existing` matches back to internal node ids deterministically by alias and ontology after the LLM response.
@@ -36,7 +36,7 @@ The internal existing-node catalogue still includes `node_id`, but `node_id` is 
 
 - Extraction and reconciliation prompt: `ARCHITECT_ENTITY_PROPOSAL_PROMPT`
 - Model: `settings.model_architect_entity_proposal`
-- Batch size: `ENTITY_PROPOSAL_BATCH_SIZE = 5`
+- Batch size: `ENTITY_PROPOSAL_BATCH_SIZE = 3`
 
 LLM extraction parses to `SceneEntityBatchExtractionResponse` and expects:
 
@@ -55,9 +55,9 @@ The entity extraction prompt does not ask for milestones, milestone links, menti
 
 ## Parallel Execution
 
-- Concurrency cap: `10`
-- Batch size: `5` scenes per LLM call
-- Mechanism: `asyncio.Semaphore(10)` plus `asyncio.gather(...)`
+- Concurrency: runtime-configured via `resolve_effective_architect_concurrency` (initialized in `initialize_architect_concurrency`).
+- Batch size: `3` scenes per LLM call.
+- Mechanism: `asyncio.Semaphore(effective_concurrency)` plus `asyncio.gather(...)`.
 - Failure isolation: batch-level failures produce empty entities for affected scenes and continue
 
 ## Deduplication and Reconciliation

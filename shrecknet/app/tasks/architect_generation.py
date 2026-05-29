@@ -78,7 +78,7 @@ def _build_frontend_llm_usage_summary(usage_summary: dict[str, Any] | None) -> d
     tag_to_step = {
         "architect.generate": "architect.generate",
         "architect.generate.enrichment": "architect.generate.enrichment",
-        "architect.generate.json_repair": "architect.generate.json_repair",
+        "agents.json_repair": "agents.json_repair",
         "architect.generate.entity_catalog_retry": "architect.generate.entity_catalog_retry",
         "architect.generate.relationship_catalog_retry": "architect.generate.relationship_catalog_retry",
         "architect.generate.allowed_related_retry": "architect.generate.allowed_related_retry",
@@ -1252,14 +1252,6 @@ async def _apply_enrichment_updates(
         for scene in scene_proposals:
             scene_ref = str(scene.get("scene_ref") or "")
             if scene_ref in scene_refs:
-                # Architect scene proposals provide scene_text/scene_description.
-                context_parts = [
-                    str(scene.get("scene_text") or "").strip(),
-                    str(scene.get("scene_description") or "").strip(),
-                ]
-                context = "\n".join(part for part in context_parts if part)
-                if context:
-                    chunks.append(context)
                 allowed_targets |= scene_ref_to_entities.get(scene_ref, set())
                 scenes_for_context.append(
                     {
@@ -1311,11 +1303,39 @@ async def _apply_enrichment_updates(
                     }
                 )
 
-        if not chunks:
+        # Build compact, structured context (no raw scene paragraphs/text body).
+        compact_context_lines: list[str] = []
+        if scenes_for_context:
+            compact_context_lines.append("Scenes:")
+            for scene_ctx in scenes_for_context:
+                related_aliases = [
+                    str(item.get("name") or "").strip()
+                    for item in (scene_ctx.get("related_entities") or [])
+                    if str(item.get("name") or "").strip()
+                ]
+                compact_context_lines.append(
+                    f"- {scene_ctx.get('title') or 'Scene'}: "
+                    f"{str(scene_ctx.get('description') or '').strip() or '(no description)'}"
+                )
+                compact_context_lines.append(
+                    "  Entities: " + (", ".join(related_aliases) if related_aliases else "(none)")
+                )
+
+        if milestones_for_context:
+            compact_context_lines.append("Milestones:")
+            for milestone_ctx in milestones_for_context:
+                compact_context_lines.append(
+                    f"- {milestone_ctx.get('title') or 'Milestone'}: "
+                    f"{str(milestone_ctx.get('description') or '').strip() or '(no description)'}"
+                )
+
+        if compact_context_lines:
+            chunks = ["\n".join(compact_context_lines)]
+        else:
             anomalies.append("no_context")
             chunks = [
-                "No scene text context was linked to this entity in step 4. "
-                "Use existing entity state and global text context to infer safe updates."
+                "No scene or milestone context was linked to this entity in step 4. "
+                "Use existing entity state to infer only safe, minimal updates."
             ]
 
         definition_id = entity_data.get("definition_id")

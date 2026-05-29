@@ -182,7 +182,8 @@ def _build_frontend_llm_usage_summary(usage_summary: dict[str, Any] | None) -> d
     tag_to_step = {
         "architect.scene_discovery": "architect.scene_discovery",
         "architect.scene_merging": "architect.scene_merging",
-        "architect.scene_merging.json_repair": "architect.scene_merging.json_repair",
+        "agents.json_repair": "agents.json_repair",
+        "architect.scene_rewrite": "architect.scene_rewrite",
         "architect.entity_extraction": "architect.entity_extraction",
         "architect.milestone_proposal": "architect.milestone_proposal",
     }
@@ -844,7 +845,7 @@ async def _run_scene_merge_phase(
         model=repair_model,
         raw_text=response_text if isinstance(response_text, str) else json.dumps(response_text, ensure_ascii=False),
         schema_hint='{"scenes":[{"scene_ref":"merged_1","name":"...","description":"...","source_scene_refs":["..."]}]}',
-        usage_tag="architect.scene_merging.json_repair",
+        usage_tag="agents.json_repair",
     )
     merged_rows = (parsed or {}).get("scenes") if isinstance(parsed, dict) else []
     merged_rows = merged_rows if isinstance(merged_rows, list) else []
@@ -922,6 +923,104 @@ async def _run_scene_merge_phase(
         "scene_count_before": before_count,
         "scene_count_after": len(normalized_merged),
     }
+
+
+async def _run_scene_rewrite_phase(
+    *,
+    run_id: str,
+    llm_client: ShreckLLMClient,
+    model: str | LLMModelTarget,
+    repair_model: str | LLMModelTarget,
+    chunk_results: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    scene_inputs = _flatten_scene_inputs(chunk_results)
+    if not scene_inputs:
+        return chunk_results, {"applied": False, "rewritten_count": 0}
+
+    scenes_payload = [
+        {
+            "scene_ref": row.get("scene_ref"),
+            "scene_name": row.get("scene_name"),
+            "scene_description": row.get("scene_description"),
+            "scene_text": row.get("scene_text"),
+        }
+        for row in scene_inputs
+    ]
+    prompt = str(getattr(architect_prompts, "ARCHITECT_SCENE_REWRITE_PROMPT", "")).format(
+        scenes_payload=json.dumps(scenes_payload, ensure_ascii=False)
+    )
+    response_text = await llm_client.chat(
+        model=model,
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.1,
+        usage_tag="architect.scene_rewrite",
+    )
+    parsed = await validate_or_repair_json(
+        llm_client=llm_client,
+        model=repair_model,
+        raw_text=response_text if isinstance(response_text, str) else json.dumps(response_text, ensure_ascii=False),
+        schema_hint='{"scenes":[{"scene_ref":"...","scene_description":"...","scene_text":"..."}]}',
+        usage_tag="agents.json_repair",
+    )
+    rows = (parsed or {}).get("scenes") if isinstance(parsed, dict) else []
+    rows = rows if isinstance(rows, list) else []
+    rewrite_by_ref: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        scene_ref = str(row.get("scene_ref") or "").strip()
+        if not scene_ref:
+            continue
+        rewrite_by_ref[scene_ref] = row
+
+    rewritten = 0
+    rewritten_scenes: list[dict[str, Any]] = []
+    for idx, scene in enumerate(scene_inputs):
+        scene_ref = str(scene.get("scene_ref") or "").strip()
+        rewrite = rewrite_by_ref.get(scene_ref) or {}
+        next_description = str(
+            rewrite.get("scene_description")
+            or scene.get("scene_description")
+            or ""
+        ).strip()
+        next_text = str(
+            rewrite.get("scene_text")
+            or scene.get("scene_text")
+            or ""
+        ).strip()
+        if scene_ref in rewrite_by_ref:
+            rewritten += 1
+        rewritten_scenes.append(
+            {
+                "scene_id": scene.get("scene_id", idx),
+                "scene_ref": scene_ref,
+                "name": scene.get("scene_name") or "",
+                "description": next_description,
+                "start_paragraph": scene.get("start_paragraph"),
+                "end_paragraph": scene.get("end_paragraph"),
+                "text": next_text,
+            }
+        )
+    rewritten_chunk_results: list[dict[str, Any]] = [{
+        "status": "ok",
+        "entity_instance_id": None,
+        "entity_alias": None,
+        "chunk_index": 0,
+        "paragraph_count": sum(1 for s in rewritten_scenes if s.get("start_paragraph") and s.get("end_paragraph")),
+        "token_count": 0,
+        "paragraph_start": None,
+        "paragraph_end": None,
+        "marked_paragraphs": "",
+        "scenes": rewritten_scenes,
+    }]
+
+    logger.info(
+        "scene_rewrite_done: run_id=%s input_scenes=%d rewritten=%d",
+        run_id,
+        len(scene_inputs),
+        rewritten,
+    )
+    return rewritten_chunk_results, {"applied": True, "rewritten_count": rewritten}
 
 
 async def _extract_scene_entities(
@@ -2308,6 +2407,19 @@ async def _run_scene_centric_chunking_test(
         step="scene_merging",
         usage=_format_step_usage_delta(llm_client, step_usage_start),
     )
+    step_usage_start = llm_client.get_usage_event_count()
+    all_chunk_results, scene_rewrite_summary = await _run_scene_rewrite_phase(
+        run_id=run_id,
+        llm_client=llm_client,
+        model=scene_chunking_model,
+        repair_model=repair_json_model,
+        chunk_results=all_chunk_results,
+    )
+    _log_step_usage(
+        run_id=run_id,
+        step="scene_rewrite",
+        usage=_format_step_usage_delta(llm_client, step_usage_start),
+    )
 
     await update_job_progress(job_id, 0.7, {"status": "Scene entity discovery"})
     step_usage_start = llm_client.get_usage_event_count()
@@ -2390,6 +2502,7 @@ async def _run_scene_centric_chunking_test(
                 "new_by_ontology": status_ontology_counts.get("new", {}),
             },
             "scene_merge": scene_merge_summary,
+            "scene_rewrite": scene_rewrite_summary,
         },
         "timings": {
             "scene_chunking_elapsed_seconds": scene_chunking_elapsed_seconds,

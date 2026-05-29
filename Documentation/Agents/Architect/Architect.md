@@ -56,10 +56,10 @@ High-level flow:
 4. Segment each 30-paragraph chunk with one scene-only LLM call.
 5. Parse scene JSON with strict parsing, JSON repair retry, and single-scene fallback if parsing still fails.
 6. Reconstruct scene text from global paragraph ids returned by the LLM (no scene dedup/merge step).
-7. Extract scene-level entities in batches of up to 5 scenes, using existing aliases and ontology names only.
+7. Extract scene-level entities in batched calls (current batch size: `3` scenes per call), using existing aliases and ontology names only.
 8. Resolve existing entity matches back to internal ids deterministically, then deduplicate entity proposals.
 9. Build scene proposals with `related_to`, `preceded_by`, and `followed_by`.
-10. Generate milestone proposals after entity discovery with `ARCHITECT_MILESTONE_BATCH_PROMPT`, max 5 scenes per LLM call.
+10. Generate milestone proposals after entity discovery with `ARCHITECT_MILESTONE_BATCH_PROMPT` (current batch size: `2` scenes per call).
 11. Normalize boundaries and deduplicate adjacent duplicate boundary milestones.
 12. Build consolidated pipeline output payload and persist it in background job details.
 13. Complete run status/progress updates.
@@ -98,7 +98,7 @@ High-level flow:
 1. Insert approved new entities. Build `proposal_to_entity_id` map.
 2. Insert approved scenes and scene ordering links. Persist Scene → Entity RELATES_TO edges.
 3. Insert approved milestones grouped by scene. Persist Milestone → Entity RELATES_TO edges.
-4. Enrich and update validated entities with scene-bounded evidence (parallel LLM, max 10 concurrent).
+4. Enrich and update validated entities with scene-bounded evidence (parallel LLM, runtime-configured concurrency from shreckLLM runtime control).
 5. Trigger post-generation jobs (`link_instance`, `embed_reconciliation`).
 6. Sync proposal states and store final reconciliation payload in job details.
 
@@ -111,7 +111,7 @@ Post-generation trigger behavior is currently:
 
 - Only entities from the approved new/update proposal set are written. Scenes and milestones are never mutated in Step 4.
 - Relationships produced by Step 4 are strictly entity-to-entity (`EntityInstance → EntityInstance`). No edges to Scene or Milestone nodes are created.
-- LLM extraction calls run in parallel with a maximum concurrency of 10 (`asyncio.Semaphore(10)` + `asyncio.gather`). Graph writes remain sequential.
+- LLM extraction calls run in parallel with runtime-configured concurrency (`resolve_effective_architect_concurrency`), while graph writes remain sequential.
 - Relationship targets must resolve to an entity that appears in the same scene context as the source entity (scene-bounded policy).
 
 ### Final Reconciliation Payload
@@ -130,7 +130,7 @@ Detailed generate doc:
 
 ## Runtime Artifacts
 
-Architect analyze currently has local artifact writing disabled in code (`_write_local_json_artifact` returns `None`), so JSON files are not emitted by default.
+Architect analyze writes local JSON artifacts when writable output paths are available (under `local_tests/arhictect/Analyses/{run_id}/`).
 
 ## Operational Notes
 

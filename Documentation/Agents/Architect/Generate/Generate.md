@@ -168,9 +168,7 @@ The task sends this combined ID list to `ontology.embed_reconciliation` as `node
 
 #### Parallel LLM execution
 
-LLM extraction (`_extract_properties_and_relationships`) runs in parallel across all target entities with a hard cap of 10 concurrent calls (`asyncio.Semaphore(10)` + `asyncio.gather`). Graph writes are applied sequentially after all extractions complete to keep the Neo4j session single-threaded.
-
-Concurrency constant: `_ENRICHMENT_CONCURRENCY = 10` in `shrecknet/app/tasks/architect_generation.py`.
+LLM extraction (`_extract_properties_and_relationships`) runs in parallel across all target entities using runtime-configured architect concurrency (`resolve_effective_architect_concurrency`), with fallback default `_ENRICHMENT_CONCURRENCY = 10`. Graph writes are applied sequentially after all extractions complete to keep the Neo4j session single-threaded.
 
 #### Inputs used per entity
 

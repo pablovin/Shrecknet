@@ -311,6 +311,42 @@ Scenes payload:
 """
 
 
+# Used by: Architect Analyze job (`architect.analyze_instance`), post-merge scene rewrite phase.
+# Callsite: `app/tasks/architect_analysis.py::_run_scene_rewrite_phase`.
+# Goal: Rewrite scene descriptions/text to replace vague references with explicit names when grounded.
+ARCHITECT_SCENE_REWRITE_PROMPT = """
+You are an expert narrative editor for knowledge graph preparation.
+
+You will receive scenes with:
+- scene_ref
+- scene_name
+- scene_description
+- scene_text
+
+Task:
+- Rewrite `scene_description` and `scene_text` to remove vague references when explicit names exist in the scene text.
+- Prefer explicit names (e.g., "Thomas") over vague phrases (e.g., "a boy", "he", "they") when unambiguous.
+- Do not invent names or events.
+- If ambiguous, keep a neutral explicit phrase (e.g., "an unidentified woman").
+- Keep scene meaning and chronology unchanged.
+- Keep rewritten description concise (3-6 sentences).
+
+Return STRICT RFC8259 JSON only:
+{
+  "scenes": [
+    {
+      "scene_ref": "scene ref from input",
+      "scene_description": "rewritten description",
+      "scene_text": "rewritten text"
+    }
+  ]
+}
+
+Scenes payload:
+{scenes_payload}
+"""
+
+
 # Used by: Architect Generate job (`architect.generate_entities`), entity enrichment/update step.
 # Callsite: `app/jobs/architect/entity_generator.py::_extract_properties_and_relationships`.
 # Goal: Produce strict delta updates for properties/relationships and a full rewritten

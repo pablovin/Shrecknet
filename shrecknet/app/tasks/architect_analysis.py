@@ -937,41 +937,50 @@ async def _run_scene_rewrite_phase(
     if not scene_inputs:
         return chunk_results, {"applied": False, "rewritten_count": 0}
 
-    scenes_payload = [
-        {
-            "scene_ref": row.get("scene_ref"),
-            "scene_name": row.get("scene_name"),
-            "scene_description": row.get("scene_description"),
-            "scene_text": row.get("scene_text"),
-        }
-        for row in scene_inputs
-    ]
-    prompt = str(getattr(architect_prompts, "ARCHITECT_SCENE_REWRITE_PROMPT", "")).format(
-        scenes_payload=json.dumps(scenes_payload, ensure_ascii=False)
-    )
-    response_text = await llm_client.chat(
-        model=model,
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.1,
-        usage_tag="architect.scene_rewrite",
-    )
-    parsed = await validate_or_repair_json(
-        llm_client=llm_client,
-        model=repair_model,
-        raw_text=response_text if isinstance(response_text, str) else json.dumps(response_text, ensure_ascii=False),
-        schema_hint='{"scenes":[{"scene_ref":"...","scene_description":"...","scene_text":"..."}]}',
-        usage_tag="agents.json_repair",
-    )
-    rows = (parsed or {}).get("scenes") if isinstance(parsed, dict) else []
-    rows = rows if isinstance(rows, list) else []
-    rewrite_by_ref: dict[str, dict[str, Any]] = {}
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        scene_ref = str(row.get("scene_ref") or "").strip()
-        if not scene_ref:
-            continue
-        rewrite_by_ref[scene_ref] = row
+    async def _rewrite_single(scene: dict[str, Any]) -> tuple[str, dict[str, Any] | None]:
+        payload = [
+            {
+                "scene_ref": scene.get("scene_ref"),
+                "scene_name": scene.get("scene_name"),
+                "scene_description": scene.get("scene_description"),
+                "scene_text": scene.get("scene_text"),
+            }
+        ]
+        scene_ref = str(scene.get("scene_ref") or "").strip()
+        prompt = str(getattr(architect_prompts, "ARCHITECT_SCENE_REWRITE_PROMPT", "")).format(
+            scenes_payload=json.dumps(payload, ensure_ascii=False)
+        )
+        try:
+            response_text = await llm_client.chat(
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.1,
+                usage_tag="architect.scene_rewrite",
+            )
+            parsed = await validate_or_repair_json(
+                llm_client=llm_client,
+                model=repair_model,
+                raw_text=response_text if isinstance(response_text, str) else json.dumps(response_text, ensure_ascii=False),
+                schema_hint='{"scenes":[{"scene_ref":"...","scene_description":"...","scene_text":"..."}]}',
+                usage_tag="agents.json_repair",
+            )
+            rows = (parsed or {}).get("scenes") if isinstance(parsed, dict) else []
+            rows = rows if isinstance(rows, list) else []
+            row = rows[0] if rows and isinstance(rows[0], dict) else None
+            return scene_ref, row
+        except Exception as exc:
+            logger.warning(
+                "scene_rewrite_single_error: run_id=%s scene_ref=%s error=%s",
+                run_id,
+                scene_ref,
+                exc,
+            )
+            return scene_ref, None
+
+    rewrite_pairs = await asyncio.gather(*(_rewrite_single(scene) for scene in scene_inputs))
+    rewrite_by_ref: dict[str, dict[str, Any]] = {
+        scene_ref: row for scene_ref, row in rewrite_pairs if scene_ref and isinstance(row, dict)
+    }
 
     rewritten = 0
     rewritten_scenes: list[dict[str, Any]] = []

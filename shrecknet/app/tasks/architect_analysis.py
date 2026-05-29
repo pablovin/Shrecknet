@@ -745,12 +745,14 @@ def _flatten_scene_inputs(chunk_results: list[dict[str, Any]]) -> list[dict[str,
         if chunk.get("status") != "ok":
             continue
         chunk_index = chunk.get("chunk_index")
-        entity_instance_id = chunk.get("entity_instance_id")
-        entity_alias = chunk.get("entity_alias")
+        chunk_entity_instance_id = chunk.get("entity_instance_id")
+        chunk_entity_alias = chunk.get("entity_alias")
         for idx, scene in enumerate(chunk.get("scenes", [])):
+            scene_entity_instance_id = scene.get("source_entity_instance_id") or chunk_entity_instance_id
+            scene_entity_alias = scene.get("source_entity_alias") or chunk_entity_alias
             scene_id = scene.get("scene_id", idx)
             base_scene_ref = (
-                f"entity_{_safe_ref_token(entity_instance_id, 'unknown')}"
+                f"entity_{_safe_ref_token(scene_entity_instance_id, 'unknown')}"
                 f"_chunk_{_safe_ref_token(chunk_index, '0')}"
                 f"_scene_{_safe_ref_token(scene_id, str(idx))}"
             )
@@ -764,7 +766,7 @@ def _flatten_scene_inputs(chunk_results: list[dict[str, Any]]) -> list[dict[str,
                     "scene_ref_collision_resolved: base=%s resolved=%s entity_id=%s chunk_index=%s scene_id=%s",
                     base_scene_ref,
                     scene_ref,
-                    entity_instance_id,
+                    scene_entity_instance_id,
                     chunk_index,
                     scene_id,
                 )
@@ -774,8 +776,8 @@ def _flatten_scene_inputs(chunk_results: list[dict[str, Any]]) -> list[dict[str,
                 {
                     "scene_ref": scene_ref,
                     "chunk_index": chunk_index,
-                    "source_entity_instance_id": entity_instance_id,
-                    "source_entity_alias": entity_alias,
+                    "source_entity_instance_id": scene_entity_instance_id,
+                    "source_entity_alias": scene_entity_alias,
                     "scene_id": scene_id,
                     "scene_name": scene.get("name") or "",
                     "scene_description": scene.get("description") or "",

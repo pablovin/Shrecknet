@@ -27,6 +27,8 @@ Avoid scene fragmentation.
 Scene names: must reflect the dominant dramatic situation of the entire scene.
 Always use a descriptive title that captures the tension, conflict, decisions, or strategic intent of the scene. Never use The Narrator, or nothing like that in titles.
 Always use named entities on the title. Avoid vague labels like "Strategic Discussion", "Rising Tension", "Observation and Preparation", etc.
+Scene title grounding rule: include at least one explicit proper-name entity exactly as written in the provided paragraphs.
+Do NOT use role-only placeholders in titles like "the man", "the woman", "the daughter", "the squire", "the noble", unless that exact phrase is the canonical named entity in text.
 
 Scene descriptions: must capture the core tension and meaningful state change of the entire scene. Write a maximum of 6 sentences.
 never use vague references like "the narrator", "they", "the group", "the foreigners", "the party", etc. Always use named entities in descriptions.
@@ -39,6 +41,7 @@ For each scene:
 - Do NOT omit paragraph fields.
 - Do NOT invent entities.
 - Use only named entities that exist on the text. DO not invent entities for the title nor description. Never!
+- Name the entities always in the scene name and description! Five Companions is bad. Use: Tamura, Cwenhild, Lynelle, Evrain, Everin, Hold, Leodogr, etc.
 
 Weak:
 "The foreigners discuss their next move."
@@ -245,6 +248,8 @@ Task:
 - Do not invent facts or characters.
 - Do not just concatenate titles/descriptions.
 - Rewrite merged scene title and description so they encapsulate what happens across merged scenes.
+- Merged scene title must include at least one explicit proper-name entity from the source scene titles/descriptions.
+- Do NOT output generic role-only titles like "The Confrontation Between the Squire and the Woman" or "The Interaction Between the Daughter and the Man".
 
 Return STRICT RFC8259 JSON only:
 {{

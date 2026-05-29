@@ -444,7 +444,7 @@ class EntityGenerator:
                     base_dir.mkdir(parents=True, exist_ok=True)
                     target = base_dir / target_name
                     target.write_text(
-                        json.dumps(payload, ensure_ascii=False, indent=2),
+                        json.dumps(payload, ensure_ascii=False, indent=2, default=str),
                         encoding="utf-8",
                     )
                     wrote_any = True

@@ -66,6 +66,83 @@ def _build_frontend_llm_usage_summary(usage_summary: dict[str, Any] | None) -> d
     }
 
 
+def _empty_usage_bucket() -> dict[str, Any]:
+    return {
+        "calls": 0,
+        "input_tokens_est": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "estimated_cost_usd": 0.0,
+    }
+
+
+def _add_usage_bucket(dst: dict[str, Any], src: dict[str, Any]) -> None:
+    dst["calls"] = int(dst.get("calls") or 0) + int(src.get("calls") or 0)
+    dst["input_tokens_est"] = int(dst.get("input_tokens_est") or 0) + int(src.get("input_tokens_est") or 0)
+    dst["output_tokens"] = int(dst.get("output_tokens") or 0) + int(src.get("output_tokens") or 0)
+    dst["total_tokens"] = int(dst.get("total_tokens") or 0) + int(src.get("total_tokens") or 0)
+    dst["estimated_cost_usd"] = float(dst.get("estimated_cost_usd") or 0.0) + float(src.get("estimated_cost_usd") or 0.0)
+
+
+def _build_by_agent_usage(
+    *,
+    combined_usage_summary: dict[str, Any],
+    llm_usage_by_step_novelist: dict[str, Any] | None,
+) -> dict[str, Any]:
+    by_agent = {
+        "architect": _empty_usage_bucket(),
+        "novelist": _empty_usage_bucket(),
+        "elder": _empty_usage_bucket(),
+    }
+
+    # Architect bucket from explicit architect tags.
+    by_tag = combined_usage_summary.get("by_tag") if isinstance(combined_usage_summary, dict) else {}
+    if isinstance(by_tag, dict):
+        for tag_name, row in by_tag.items():
+            if not isinstance(row, dict):
+                continue
+            if str(tag_name).startswith("architect."):
+                _add_usage_bucket(by_agent["architect"], row)
+
+    # Novelist bucket from explicit novelist step usage map.
+    step_map = (
+        (llm_usage_by_step_novelist or {}).get("by_step")
+        if isinstance(llm_usage_by_step_novelist, dict)
+        else {}
+    )
+    if isinstance(step_map, dict):
+        for step_name, row in step_map.items():
+            if not isinstance(row, dict):
+                continue
+            # Retrieval is Elder work; keep novelist focused on writing/planning steps.
+            if str(step_name) in {"step_2", "step_4", "step_5", "step_6", "step_7"}:
+                mapped = {
+                    "calls": int(row.get("calls") or 0),
+                    "input_tokens_est": int(row.get("prompt_tokens") or 0),
+                    "output_tokens": int(row.get("completion_tokens") or 0),
+                    "total_tokens": int(row.get("total_tokens") or 0),
+                    "estimated_cost_usd": 0.0,
+                }
+                _add_usage_bucket(by_agent["novelist"], mapped)
+
+    # Elder bucket as residual so totals stay consistent.
+    totals = combined_usage_summary.get("totals") if isinstance(combined_usage_summary, dict) else {}
+    if isinstance(totals, dict):
+        elder = _empty_usage_bucket()
+        elder["calls"] = max(0, int(totals.get("calls") or 0) - int(by_agent["architect"]["calls"]) - int(by_agent["novelist"]["calls"]))
+        elder["input_tokens_est"] = max(0, int(totals.get("input_tokens_est") or 0) - int(by_agent["architect"]["input_tokens_est"]) - int(by_agent["novelist"]["input_tokens_est"]))
+        elder["output_tokens"] = max(0, int(totals.get("output_tokens") or 0) - int(by_agent["architect"]["output_tokens"]) - int(by_agent["novelist"]["output_tokens"]))
+        elder["total_tokens"] = max(0, int(totals.get("total_tokens") or 0) - int(by_agent["architect"]["total_tokens"]) - int(by_agent["novelist"]["total_tokens"]))
+        elder["estimated_cost_usd"] = max(
+            0.0,
+            float(totals.get("estimated_cost_usd") or 0.0)
+            - float(by_agent["architect"]["estimated_cost_usd"])
+            - float(by_agent["novelist"]["estimated_cost_usd"]),
+        )
+        by_agent["elder"] = elder
+    return by_agent
+
+
 def _merge_usage_summaries(*summaries: dict[str, Any] | None) -> dict[str, Any]:
     merged: dict[str, Any] = {"totals": {}, "by_model": {}, "by_tag": {}}
     totals = {
@@ -301,6 +378,7 @@ async def _execute_run(
             configured_novelist_planning_target = settings.model_novelist_planning
             configured_novelist_prose_target = settings.model_novelist_prose
             configured_novelist_critic_target = settings.model_novelist_critic
+            configured_elder_target = settings.model_elder
             configured_architect_target = settings.model_architect_scene_chunking
             configured_repair_json_target = getattr(settings, "model_agents_repair_json", configured_architect_target) or configured_architect_target
             try:
@@ -327,7 +405,7 @@ async def _execute_run(
             setattr(model_policy, "model_novelist_planning", configured_novelist_planning_target)
             setattr(model_policy, "model_novelist_prose", configured_novelist_prose_target)
             setattr(model_policy, "model_novelist_critic", configured_novelist_critic_target)
-            setattr(model_policy, "model_elder", default_target)
+            setattr(model_policy, "model_elder", configured_elder_target or default_target)
             setattr(model_policy, "model_agents_repair_json", configured_repair_json_target)
 
             async def elder_query_runner(agent: Agent, query: str) -> list[dict[str, Any]]:
@@ -577,6 +655,11 @@ async def _execute_run(
                         scene_count = payload.get("scene_count")
                         if isinstance(completed_scenes, int) and isinstance(scene_count, int) and scene_count > 0:
                             status_text = f"{progress_status} ({completed_scenes}/{scene_count})"
+                    if stage == NovelistStage.RETRIEVAL:
+                        retrieved_questions = payload.get("retrieved_questions")
+                        total_questions = payload.get("total_questions")
+                        if isinstance(retrieved_questions, int) and isinstance(total_questions, int) and total_questions >= 0:
+                            status_text = f"{progress_status} ({retrieved_questions}/{total_questions})"
                     detail_payload: dict[str, Any] = {"status": status_text}
                     scene_count = payload.get("scene_count")
                     if isinstance(scene_count, int):
@@ -584,6 +667,12 @@ async def _execute_run(
                     completed_scenes = payload.get("completed_scenes")
                     if isinstance(completed_scenes, int):
                         detail_payload["completed_scenes"] = completed_scenes
+                    total_questions = payload.get("total_questions")
+                    if isinstance(total_questions, int):
+                        detail_payload["total_questions"] = total_questions
+                    retrieved_questions = payload.get("retrieved_questions")
+                    if isinstance(retrieved_questions, int):
+                        detail_payload["retrieved_questions"] = retrieved_questions
                     timing_summary = payload.get("timing_summary")
                     if isinstance(timing_summary, dict):
                         detail_payload["timing_summary"] = timing_summary
@@ -624,6 +713,15 @@ async def _execute_run(
             elder_usage_summary = elder_llm_client.get_usage_summary()
             combined_usage_summary = _merge_usage_summaries(usage_summary, elder_usage_summary)
             llm_usage_for_frontend = _build_frontend_llm_usage_summary(combined_usage_summary)
+            by_step_novelist = (
+                result_artifacts.get("llm_usage_by_step_novelist")
+                if isinstance(result_artifacts, dict)
+                else None
+            )
+            llm_usage_for_frontend["by_agent"] = _build_by_agent_usage(
+                combined_usage_summary=combined_usage_summary,
+                llm_usage_by_step_novelist=by_step_novelist if isinstance(by_step_novelist, dict) else None,
+            )
             if isinstance(result_artifacts, dict):
                 result_artifacts["llm_usage_summary"] = llm_usage_for_frontend
                 result["artifacts"] = result_artifacts

@@ -1134,12 +1134,19 @@ class NovelistOrchestrator:
         }
 
         self._debug_step_label = "step_3"
+        total_retrieval_questions = sum(
+            len(self._normalize_prior_knowledge_pairs(chunk.get("prior_knowledge_needed"), scene_name=str(chunk.get("name") or "")))
+            for chunk in merged_chunks
+            if isinstance(chunk, dict)
+        )
         if stage_callback:
             await stage_callback(
                 NovelistStage.RETRIEVAL,
                 {
                     "artifacts": artifacts,
                     "scene_count": len(merged_chunks),
+                    "total_questions": total_retrieval_questions,
+                    "retrieved_questions": 0,
                 },
             )
         enhanced_chunks, retrieval_by_scene, _ = await self._collect_scene_retrieval(
@@ -1151,6 +1158,27 @@ class NovelistOrchestrator:
             use_conversation_memory=True,
         )
         self._debug_step_label = None
+        retrieved_questions = 0
+        for retrieval in retrieval_by_scene.values():
+            if not isinstance(retrieval, dict):
+                continue
+            qa = retrieval.get("questions_answers")
+            if isinstance(qa, list):
+                retrieved_questions += sum(
+                    1
+                    for row in qa
+                    if isinstance(row, dict) and str(row.get("answer") or "").strip()
+                )
+        if stage_callback:
+            await stage_callback(
+                NovelistStage.RETRIEVAL,
+                {
+                    "artifacts": artifacts,
+                    "scene_count": len(merged_chunks),
+                    "total_questions": total_retrieval_questions,
+                    "retrieved_questions": retrieved_questions,
+                },
+            )
         artifacts["stages"]["retrieval"] = retrieval_by_scene
 
         prose_by_scene: list[dict[str, Any]] = []
@@ -2490,8 +2518,40 @@ class NovelistOrchestrator:
         if not raw:
             return ""
 
-        if any(tag in raw.lower() for tag in ("<p", "<blockquote", "<ul", "<ol", "<h3", "<h4")):
-            return raw
+        # If model returned HTML-like content, normalize it to flat allowed blocks.
+        if "<" in raw and ">" in raw:
+            # Convert nested/inline tags into plain text blocks, keeping only p/blockquote/h1 wrappers.
+            lowered = raw.lower()
+            allowed_pattern = re.compile(
+                r"<(h1|p|blockquote)[^>]*>(.*?)</\1>",
+                flags=re.IGNORECASE | re.DOTALL,
+            )
+            blocks: list[tuple[str, str]] = []
+            for match in allowed_pattern.finditer(raw):
+                tag = str(match.group(1) or "").lower()
+                content = str(match.group(2) or "")
+                # Flatten nested tags to text.
+                content = re.sub(r"<[^>]+>", " ", content)
+                content = re.sub(r"\s+", " ", content).strip()
+                if content:
+                    blocks.append((tag, content))
+
+            # Fallback: if no proper wrappers parsed, treat full HTML as plain text.
+            if not blocks and any(tag in lowered for tag in ("<p", "<blockquote", "<h1", "<h2", "<h3", "<h4", "<div")):
+                flattened = re.sub(r"<[^>]+>", " ", raw)
+                flattened = re.sub(r"\s+", " ", flattened).strip()
+                return f"<p>{flattened}</p>" if flattened else ""
+
+            if blocks:
+                html_blocks: list[str] = []
+                for tag, content in blocks:
+                    if tag == "h1":
+                        html_blocks.append(f"<h1>{content}</h1>")
+                    elif tag == "blockquote":
+                        html_blocks.append(f"<blockquote>{content}</blockquote>")
+                    else:
+                        html_blocks.append(f"<p>{content}</p>")
+                return "\n".join(html_blocks)
 
         chunks = [c.strip() for c in re.split(r"\n\s*\n+", raw) if c.strip()]
         if len(chunks) <= 1:

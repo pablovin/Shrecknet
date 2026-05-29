@@ -66,7 +66,8 @@ async def get_model_policy() -> ModelPolicy:
         default_model=default_target,
         architect_extract_model=default_target,
     )
-    setattr(model_policy, "model_elder", default_target)
+    settings = get_settings()
+    setattr(model_policy, "model_elder", settings.model_elder or default_target)
     repair_target = getattr(settings, "model_agents_repair_json", default_target) or default_target
     setattr(model_policy, "model_agents_repair_json", repair_target)
     return model_policy

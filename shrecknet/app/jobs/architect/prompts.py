@@ -38,6 +38,7 @@ For each scene:
 - Do NOT use chunk-local paragraph numbers.
 - Do NOT omit paragraph fields.
 - Do NOT invent entities.
+- Use only named entities that exist on the text. DO not invent entities for the title nor description. Never!
 
 Weak:
 "The foreigners discuss their next move."
@@ -223,6 +224,48 @@ Scenes payload:
 {scenes_payload}
 
 
+"""
+
+
+# Used by: Architect Analyze job (`architect.analyze_instance`), post-discovery scene merge phase.
+# Callsite: `app/tasks/architect_analysis.py::_run_scene_merge_phase`.
+# Goal: Reduce discovered scenes to a maximum cap (10) by merging coherent scene groups
+# using only scene title/description metadata, returning rewritten merged titles/descriptions
+# plus source scene references so paragraph/text spans can be recomposed downstream.
+ARCHITECT_SCENE_MERGE_PROMPT = """
+You are an expert narrative analyst helping build a knowledge graph from long-form story text.
+
+We currently have too many scenes and need to reduce them while preserving narrative coherence.
+You will receive a list of scenes with only: scene_ref, scene_name, scene_description.
+
+Task:
+- Merge scenes until there are at most 10 scenes total.
+- Merge based on continuity of characters, time, location, objective, and conflict progression.
+- Prefer merging adjacent/related scenes.
+- Do not invent facts or characters.
+- Do not just concatenate titles/descriptions.
+- Rewrite merged scene title and description so they encapsulate what happens across merged scenes.
+
+Return STRICT RFC8259 JSON only:
+{
+  "scenes": [
+    {
+      "scene_ref": "new merged scene ref (string)",
+      "name": "rewritten scene title",
+      "description": "rewritten merged description",
+      "source_scene_refs": ["original_scene_ref_1", "original_scene_ref_2"]
+    }
+  ]
+}
+
+Constraints:
+- Output max 10 scenes.
+- Every original scene_ref from input must appear in exactly one output scene's source_scene_refs.
+- source_scene_refs must be non-empty.
+- Use double quotes and valid JSON only.
+
+Scenes payload:
+{scenes_payload}
 """
 
 

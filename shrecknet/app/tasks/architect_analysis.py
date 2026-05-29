@@ -52,6 +52,7 @@ ENTITY_SCENE_TEXT_MAX_CHARS = 1_400
 MILESTONE_BATCH_SIZE = 2
 MILESTONE_SCENE_TEXT_MAX_CHARS = 2_400
 _ARCHITECT_CONCURRENCY: int | None = None
+MAX_SCENES_AFTER_MERGE = 10
 
 
 def initialize_architect_concurrency(*, concurrency: int) -> None:
@@ -785,6 +786,121 @@ def _flatten_scene_inputs(chunk_results: list[dict[str, Any]]) -> list[dict[str,
                 }
             )
     return scenes
+
+
+async def _run_scene_merge_phase(
+    *,
+    run_id: str,
+    llm_client: ShreckLLMClient,
+    model: str | LLMModelTarget,
+    repair_model: str | LLMModelTarget,
+    chunk_results: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    scene_inputs = _flatten_scene_inputs(chunk_results)
+    before_count = len(scene_inputs)
+    if before_count <= MAX_SCENES_AFTER_MERGE:
+        return chunk_results, {"applied": False, "scene_count_before": before_count, "scene_count_after": before_count}
+
+    scenes_payload = [
+        {
+            "scene_ref": row.get("scene_ref"),
+            "scene_name": row.get("scene_name"),
+            "scene_description": row.get("scene_description"),
+        }
+        for row in scene_inputs
+    ]
+    prompt = str(getattr(architect_prompts, "ARCHITECT_SCENE_MERGE_PROMPT", "")).format(
+        scenes_payload=json.dumps(scenes_payload, ensure_ascii=False)
+    )
+    response_text = await llm_client.chat(
+        model=model,
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.1,
+        usage_tag="architect.scene_merging",
+    )
+    parsed = await validate_or_repair_json(
+        llm_client=llm_client,
+        model=repair_model,
+        raw_text=response_text if isinstance(response_text, str) else json.dumps(response_text, ensure_ascii=False),
+        schema_hint='{"scenes":[{"scene_ref":"merged_1","name":"...","description":"...","source_scene_refs":["..."]}]}',
+        usage_tag="architect.scene_merging.json_repair",
+    )
+    merged_rows = (parsed or {}).get("scenes") if isinstance(parsed, dict) else []
+    merged_rows = merged_rows if isinstance(merged_rows, list) else []
+
+    by_scene_ref = {str(s.get("scene_ref") or ""): s for s in scene_inputs}
+    normalized_merged: list[dict[str, Any]] = []
+    used_refs: set[str] = set()
+    for idx, row in enumerate(merged_rows):
+        if not isinstance(row, dict):
+            continue
+        source_refs = [str(x).strip() for x in (row.get("source_scene_refs") or []) if str(x).strip() in by_scene_ref]
+        source_refs = [x for x in source_refs if x not in used_refs]
+        if not source_refs:
+            continue
+        for ref in source_refs:
+            used_refs.add(ref)
+        source_scenes = [by_scene_ref[ref] for ref in source_refs]
+        all_pids: list[int] = []
+        for src in source_scenes:
+            start = int(src.get("start_paragraph") or 0)
+            end = int(src.get("end_paragraph") or start)
+            if start > 0 and end >= start:
+                all_pids.extend(list(range(start, end + 1)))
+        all_pids = sorted(set(all_pids))
+        merged_text = "\n".join(
+            str(src.get("scene_text") or "").strip() for src in source_scenes if str(src.get("scene_text") or "").strip()
+        )
+        normalized_merged.append(
+            {
+                "scene_ref": str(row.get("scene_ref") or f"merged_scene_{idx+1}"),
+                "chunk_index": source_scenes[0].get("chunk_index"),
+                "source_entity_instance_id": source_scenes[0].get("source_entity_instance_id"),
+                "source_entity_alias": source_scenes[0].get("source_entity_alias"),
+                "scene_id": idx,
+                "scene_name": str(row.get("name") or "Merged Scene").strip(),
+                "scene_description": str(row.get("description") or "").strip(),
+                "scene_text": merged_text,
+                "start_paragraph": all_pids[0] if all_pids else None,
+                "end_paragraph": all_pids[-1] if all_pids else None,
+                "scene_milestones": [],
+            }
+        )
+
+    # Ensure coverage for any orphan scene refs.
+    for ref, scene in by_scene_ref.items():
+        if ref in used_refs:
+            continue
+        normalized_merged.append(scene)
+
+    normalized_merged = normalized_merged[:MAX_SCENES_AFTER_MERGE]
+    merged_chunk_result = [{
+        "status": "ok",
+        "entity_instance_id": None,
+        "entity_alias": None,
+        "chunk_index": 0,
+        "paragraph_count": sum(1 for s in normalized_merged if s.get("start_paragraph") and s.get("end_paragraph")),
+        "token_count": 0,
+        "paragraph_start": None,
+        "paragraph_end": None,
+        "marked_paragraphs": "",
+        "scenes": [
+            {
+                "scene_id": scene.get("scene_id"),
+                "name": scene.get("scene_name"),
+                "description": scene.get("scene_description"),
+                "start_paragraph": scene.get("start_paragraph"),
+                "end_paragraph": scene.get("end_paragraph"),
+                "text": scene.get("scene_text"),
+            }
+            for scene in normalized_merged
+        ],
+    }]
+    return merged_chunk_result, {
+        "applied": True,
+        "scene_count_before": before_count,
+        "scene_count_after": len(normalized_merged),
+    }
 
 
 async def _extract_scene_entities(
@@ -2163,6 +2279,19 @@ async def _run_scene_centric_chunking_test(
     scene_dedup_applied = bool(chunking_phase.get("scene_dedup_applied", True))
     scene_chunking_elapsed_seconds = chunking_phase["elapsed_seconds"]
     llm_scene_chunk_debug = list(chunking_phase.get("llm_scene_chunk_debug") or [])
+    step_usage_start = llm_client.get_usage_event_count()
+    all_chunk_results, scene_merge_summary = await _run_scene_merge_phase(
+        run_id=run_id,
+        llm_client=llm_client,
+        model=scene_chunking_model,
+        repair_model=repair_json_model,
+        chunk_results=all_chunk_results,
+    )
+    _log_step_usage(
+        run_id=run_id,
+        step="scene_merging",
+        usage=_format_step_usage_delta(llm_client, step_usage_start),
+    )
 
     await update_job_progress(job_id, 0.7, {"status": "Scene entity discovery"})
     step_usage_start = llm_client.get_usage_event_count()
@@ -2244,6 +2373,7 @@ async def _run_scene_centric_chunking_test(
                 "updated_by_ontology": status_ontology_counts.get("updated", {}),
                 "new_by_ontology": status_ontology_counts.get("new", {}),
             },
+            "scene_merge": scene_merge_summary,
         },
         "timings": {
             "scene_chunking_elapsed_seconds": scene_chunking_elapsed_seconds,

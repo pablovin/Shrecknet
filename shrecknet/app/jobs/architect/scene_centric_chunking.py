@@ -22,7 +22,7 @@ _BULLET_OR_NUMBERED_START = re.compile(r"^\s*(?:[●•\-\*]\s+|\d+[.)]\s+)")
 _TIMESTAMP_MARKER = re.compile(r"\(\d{1,2}:\d{2}:\d{2}\)")
 PARAGRAPH_CHUNK_SIZE = 30
 MIN_HEADING_PARAGRAPHS = 5
-MAX_PARAGRAPHS_PER_CHUNK = 50_000
+MAX_PARAGRAPHS_PER_CHUNK = 50
 
 
 @dataclass

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from collections import defaultdict
+from difflib import SequenceMatcher
 import inspect
 import json
 import logging
@@ -330,6 +331,30 @@ def _resolve_allowed_ontology_name(
     return None
 
 
+def _resolve_allowed_ontology_name_fuzzy(
+    value: str | None, allowed_ontology_names: dict[str, str]
+) -> str | None:
+    mapped = _resolve_allowed_ontology_name(value, allowed_ontology_names)
+    if mapped:
+        return mapped
+    query = _normalize_ontology_name_loose(value)
+    if not query:
+        return None
+    best_name: str | None = None
+    best_score = 0.0
+    for key, canonical in allowed_ontology_names.items():
+        key_loose = _normalize_ontology_name_loose(key)
+        if not key_loose:
+            continue
+        score = SequenceMatcher(None, query, key_loose).ratio()
+        if score > best_score:
+            best_score = score
+            best_name = canonical
+    if best_name and best_score >= 0.72:
+        return best_name
+    return None
+
+
 def _canonical_alias(alias: str | None) -> str:
     if not alias:
         return ""
@@ -429,9 +454,8 @@ def _build_existing_entity_prompt_catalogue(
             continue
         if allowed_ontology_names is not None:
             mapped = _resolve_allowed_ontology_name(ontology, allowed_ontology_names)
-            if not mapped:
-                continue
-            ontology = mapped
+            if mapped:
+                ontology = mapped
         key = (_canonical_alias(alias), _normalize_ontology_name(ontology))
         if key in seen:
             continue
@@ -1157,8 +1181,28 @@ async def _extract_scene_entities(
             status = str(entity.status or "new").strip().lower()
             payload = entity.model_dump()
             payload["status"] = "existing" if status == "existing" else "new"
-            mapped = _resolve_allowed_ontology_name(entity.ontology, allowed_ontology_names)
+            mapped = _resolve_allowed_ontology_name_fuzzy(entity.ontology, allowed_ontology_names)
             payload["ontology"] = mapped or str(entity.ontology or "").strip()
+            # Alias-authoritative match first: if name resolves to an existing node, force update semantics.
+            alias_matched = _resolve_existing_node_by_alias(
+                name=entity.name,
+                matched_alias=entity.matched_alias or entity.name,
+                ontology=None,
+                existing_nodes=existing_nodes,
+            )
+            if alias_matched:
+                payload["status"] = "existing"
+                payload["matched_alias"] = str(
+                    alias_matched.get("alias") or entity.matched_alias or entity.name or ""
+                ).strip()
+                payload["matched_node_id"] = str(alias_matched.get("node_id") or "").strip() or None
+                alias_matched_ontology = _resolve_allowed_ontology_name_fuzzy(
+                    str(alias_matched.get("ontology") or ""),
+                    allowed_ontology_names,
+                )
+                if alias_matched_ontology:
+                    payload["ontology"] = alias_matched_ontology
+
             if payload["status"] == "existing":
                 matched = _resolve_existing_node_by_alias(
                     name=entity.name,
@@ -1170,7 +1214,7 @@ async def _extract_scene_entities(
                     payload["matched_alias"] = str(matched.get("alias") or entity.matched_alias or entity.name)
                     payload["matched_node_id"] = str(matched.get("node_id") or "")
                     # Existing-node match is authoritative for ontology typing.
-                    matched_ontology = _resolve_allowed_ontology_name(
+                    matched_ontology = _resolve_allowed_ontology_name_fuzzy(
                         str(matched.get("ontology") or ""),
                         allowed_ontology_names,
                     )
@@ -1192,7 +1236,7 @@ async def _extract_scene_entities(
                         payload["matched_node_id"] = str(
                             fallback_matched.get("node_id") or ""
                         ).strip() or None
-                        fallback_ontology = _resolve_allowed_ontology_name(
+                        fallback_ontology = _resolve_allowed_ontology_name_fuzzy(
                             str(fallback_matched.get("ontology") or ""),
                             allowed_ontology_names,
                         )
@@ -1222,7 +1266,7 @@ async def _extract_scene_entities(
                 payload["matched_node_id"] = None
 
             # Final ontology validation after recovery/coercion attempts.
-            resolved_ontology = _resolve_allowed_ontology_name(payload.get("ontology"), allowed_ontology_names)
+            resolved_ontology = _resolve_allowed_ontology_name_fuzzy(payload.get("ontology"), allowed_ontology_names)
             if not resolved_ontology:
                 logger.warning(
                     "scene_entity_invalid_ontology_dropped: run_id=%s scene_ref=%s name=%s ontology=%s",
@@ -1332,10 +1376,8 @@ async def _extract_scene_entities(
                 for scene in batch
             ]
 
-    batches = [
-        scenes[idx : idx + ENTITY_PROPOSAL_BATCH_SIZE]
-        for idx in range(0, len(scenes), ENTITY_PROPOSAL_BATCH_SIZE)
-    ]
+    # One scene per LLM call for better per-scene precision and easier retries/debugging.
+    batches = [[scene] for scene in scenes]
     batch_results = await asyncio.gather(*(_process_batch(batch) for batch in batches))
     return [row for batch in batch_results for row in batch]
 
@@ -2145,10 +2187,8 @@ async def _run_milestone_proposal_phase(
                 )
             return rows
 
-    batches = [
-        proposed_scenes[idx : idx + MILESTONE_BATCH_SIZE]
-        for idx in range(0, len(proposed_scenes), MILESTONE_BATCH_SIZE)
-    ]
+    # One scene per milestone extraction call for stronger scene-local fidelity.
+    batches = [[scene] for scene in proposed_scenes]
     batch_results = await asyncio.gather(*(_process_batch(batch) for batch in batches))
     by_scene = [row for batch in batch_results for row in batch]
     deduped_boundary_count = _dedupe_adjacent_boundary_milestones(by_scene)

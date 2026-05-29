@@ -198,6 +198,8 @@ You are the Architect Agent.
 
 Extract meaningful milestones from narrative scenes.
 
+Added all the entities mentioned in this milestone to the related_to. ALL of them!!
+
 
 
 Return STRICT RFC8259 JSON.

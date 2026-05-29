@@ -22,12 +22,11 @@ from app.jobs.architect.scene_centric_chunking import (
 )
 from app.jobs.architect.schemas import ChunkExtractionResponse
 from app.jobs.novelist.prompts import (
-    NOVELIST_SCENE_MERGE_PROMPT,
-    NOVELIST_SCENE_CONTEXT_CREATION_PROMPT,
-    NOVELIST_SCENE_CRITIC_PROMPT,
-    NOVELIST_V2_FINAL_REWRITE_PROMPT,
-    NOVELIST_V2_MERGED_CHUNK_CONTEXT_PROMPT,
-    NOVELIST_V2_MERGED_CHUNK_DRAFT_PROMPT,
+    NOVELIST_STEP_2_RETRIEVAL_QUESTION_PLANNER_PROMPT,
+    NOVELIST_STEP_4_CONTEXT_BUILD_PROMPT,
+    NOVELIST_STEP_5_DRAFT_PROMPT,
+    NOVELIST_STEP_6_CRITIC_PROMPT,
+    NOVELIST_STEP_7_FINAL_REWRITE_PROMPT,
 )
 from app.models.agent import Agent
 from app.models.novelist import NovelistStage
@@ -542,12 +541,7 @@ class NovelistOrchestrator:
             if not scene.get("name"):
                 scene["name"] = f"Scene {idx}"
 
-        merged_scenes = await self._merge_segmented_scenes(
-            scenes=segmented_scenes,
-            model=model,
-            conversation_id=conversation_id,
-            bundle_size=5,
-        )
+        merged_scenes = segmented_scenes
 
         ontology_definitions = self._serialize_ontology_definitions(agent)
         enriched_scenes = await self._extract_scene_entities_only(
@@ -688,57 +682,6 @@ class NovelistOrchestrator:
         out.sort(key=lambda item: str(item.get("scene_id", "")))
         return out
 
-    async def _merge_segmented_scenes(
-        self,
-        *,
-        scenes: list[dict[str, Any]],
-        model: str,
-        conversation_id: str | None,
-        bundle_size: int = 5,
-    ) -> list[dict[str, Any]]:
-        if not scenes:
-            return []
-        merged: list[dict[str, Any]] = []
-        for i in range(0, len(scenes), max(1, bundle_size)):
-            bundle = scenes[i : i + max(1, bundle_size)]
-            summary_input = [
-                {
-                    "scene_id": str(s.get("scene_id") or ""),
-                    "name": str(s.get("name") or ""),
-                    "scene_summary": str(s.get("scene_summary") or ""),
-                }
-                for s in bundle
-            ]
-            prompt = NOVELIST_SCENE_MERGE_PROMPT + "\n\n" + json.dumps(summary_input, ensure_ascii=False)
-            raw, _, _ = await self._call_llm(
-                model=model,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.1,
-                conversation_id=conversation_id,
-            )
-            parsed = await self._parse_json_object_checked(raw) or {}
-            source_paragraphs: list[int] = []
-            source_anchors: list[str] = []
-            raw_text_parts: list[str] = []
-            for s in bundle:
-                source_paragraphs.extend(list(s.get("source_paragraphs") or []))
-                source_anchors.extend(list(s.get("source_anchors") or []))
-                txt = str(s.get("raw_scene_text") or "").strip()
-                if txt:
-                    raw_text_parts.append(txt)
-            merged.append(
-                {
-                    "scene_id": f"scene-{len(merged)+1:03d}",
-                    "name": str(parsed.get("name") or f"Merged Scene {len(merged)+1}").strip(),
-                    "scene_summary": str(parsed.get("scene_summary") or "").strip(),
-                    "raw_scene_text": "\n\n".join(raw_text_parts),
-                    "source_paragraphs": sorted(set(source_paragraphs)),
-                    "source_anchors": source_anchors,
-                    "merged_from_scene_ids": [str(s.get("scene_id") or "") for s in bundle if str(s.get("scene_id") or "").strip()],
-                }
-            )
-        return merged
-
     async def _collect_scene_retrieval(
         self,
         *,
@@ -873,7 +816,7 @@ class NovelistOrchestrator:
             grouped[scene_id]["instructions"] = instructions
 
         context_system = self._compose_system_prompt(
-            NOVELIST_SCENE_CONTEXT_CREATION_PROMPT,
+            NOVELIST_STEP_4_CONTEXT_BUILD_PROMPT,
             language=language,
             instructions=instructions,
         )
@@ -1035,7 +978,7 @@ class NovelistOrchestrator:
         conversation_id: str | None,
     ) -> dict[str, Any]:
         system_prompt = self._compose_system_prompt(
-            NOVELIST_SCENE_CRITIC_PROMPT,
+            NOVELIST_STEP_6_CRITIC_PROMPT,
             language=language,
             instructions=instructions,
         )
@@ -1144,9 +1087,32 @@ class NovelistOrchestrator:
         artifacts: dict[str, Any],
         started_total: float,
     ) -> dict[str, Any]:
-        merged_chunks = self._build_merged_chunks_v2(step_1_scenes, max_chunks=5)
-        artifacts["stages"]["chunk_merge"] = {"count": len(merged_chunks), "chunks": merged_chunks}
+        # Reset and collect per-call usage traces for this run (all steps).
+        self._debug_response_calls = []
+        # Reuse Architect scene outputs directly (no additional Novelist merge layer).
+        merged_chunks = [dict(scene) for scene in step_1_scenes if isinstance(scene, dict)]
+        for chunk in merged_chunks:
+            self._debug_step_label = "step_2"
+            planned = await self._plan_retrieval_questions_for_chunk(
+                chunk=chunk,
+                language=language,
+                instructions=instructions,
+                conversation_id=conversation_id,
+            )
+            if len(planned) >= 2:
+                chunk["open_questions_for_retrieval"] = planned[:3]
+                chunk["prior_knowledge_needed"] = [
+                    {"question": q, "answer": ""}
+                    for q in planned[:3]
+                ]
+        self._debug_step_label = None
+        artifacts["stages"]["chunk_merge"] = {
+            "count": len(merged_chunks),
+            "chunks": merged_chunks,
+            "merge_mode": "architect_scene_passthrough",
+        }
 
+        self._debug_step_label = "step_3"
         enhanced_chunks, retrieval_by_scene, _ = await self._collect_scene_retrieval(
             agent=agent,
             scene_packages=merged_chunks,
@@ -1155,11 +1121,13 @@ class NovelistOrchestrator:
             conversation_id=conversation_id,
             use_conversation_memory=True,
         )
+        self._debug_step_label = None
         artifacts["stages"]["retrieval"] = retrieval_by_scene
 
         prose_by_scene: list[dict[str, Any]] = []
         for chunk in enhanced_chunks:
             chunk_id = str(chunk.get("scene_id") or "")
+            self._debug_step_label = "step_4"
             context = await self._build_chunk_context_v2(
                 chunk=chunk,
                 retrieval=retrieval_by_scene.get(chunk_id, {}),
@@ -1167,12 +1135,14 @@ class NovelistOrchestrator:
                 instructions=instructions,
                 conversation_id=conversation_id,
             )
+            self._debug_step_label = "step_5"
             prose_html = await self._generate_merged_chunk_draft_v2(
                 chunk={**chunk, "v2_context": context},
                 language=language,
                 instructions=instructions,
                 conversation_id=conversation_id,
             )
+            self._debug_step_label = None
             prose_by_scene.append(
                 {
                     "scene_id": chunk_id,
@@ -1184,6 +1154,7 @@ class NovelistOrchestrator:
 
         artifacts["stages"]["prose_generation"] = {"count": len(prose_by_scene), "scene_paragraphs": prose_by_scene}
         critic_conversation_id = self._build_step_6_7_conversation_id(conversation_id)
+        self._debug_step_label = "step_6"
         critic = await self._critic_scene_set(
             scene_packages=enhanced_chunks,
             prose_by_scene=prose_by_scene,
@@ -1191,6 +1162,7 @@ class NovelistOrchestrator:
             instructions=instructions,
             conversation_id=critic_conversation_id,
         )
+        self._debug_step_label = "step_7"
         revision = await self._revise_scene_set_v2(
             prose_by_scene=prose_by_scene,
             critic=critic,
@@ -1198,6 +1170,7 @@ class NovelistOrchestrator:
             instructions=instructions,
             conversation_id=critic_conversation_id,
         )
+        self._debug_step_label = None
         final_html = str(revision.get("final_text_html") or "").strip()
         artifacts["stages"]["merging"] = {"scene_count": len(prose_by_scene), "final_text": final_html}
         artifacts["timings_ms"]["total"] = round((time.monotonic() - started_total) * 1000, 2)
@@ -1211,6 +1184,9 @@ class NovelistOrchestrator:
             "estimated_v1_calls": (4 * len(step_1_scenes)) + 2,
             "estimated_v2_calls": (2 * len(merged_chunks)) + 2,
         }
+        artifacts["llm_usage_by_step_novelist"] = self._build_llm_usage_by_step_from_debug_calls(
+            self._debug_response_calls
+        )
         if stage_callback:
             await stage_callback(NovelistStage.MERGING, {"artifacts": artifacts, "draft_text": final_html})
         return {
@@ -1227,6 +1203,50 @@ class NovelistOrchestrator:
             "draft_text": final_html,
             "conversation_id": conversation_id,
         }
+
+    @staticmethod
+    def _build_llm_usage_by_step_from_debug_calls(
+        calls: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        by_step: dict[str, dict[str, Any]] = {}
+        totals = {
+            "calls": 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+        }
+
+        for call in calls:
+            if not isinstance(call, dict):
+                continue
+            step = str(call.get("step") or "").strip() or "unknown"
+            usage = call.get("token_usage")
+            if not isinstance(usage, dict):
+                usage = {}
+            prompt = int(usage.get("prompt_tokens") or 0)
+            completion = int(usage.get("completion_tokens") or 0)
+            total = int(usage.get("total_tokens") or 0)
+
+            bucket = by_step.setdefault(
+                step,
+                {
+                    "calls": 0,
+                    "prompt_tokens": 0,
+                    "completion_tokens": 0,
+                    "total_tokens": 0,
+                },
+            )
+            bucket["calls"] += 1
+            bucket["prompt_tokens"] += prompt
+            bucket["completion_tokens"] += completion
+            bucket["total_tokens"] += total
+
+            totals["calls"] += 1
+            totals["prompt_tokens"] += prompt
+            totals["completion_tokens"] += completion
+            totals["total_tokens"] += total
+
+        return {"totals": totals, "by_step": by_step}
 
     def _build_merged_chunks_v2(self, scenes: list[dict[str, Any]], *, max_chunks: int = 5) -> list[dict[str, Any]]:
         if not scenes:
@@ -1271,7 +1291,11 @@ class NovelistOrchestrator:
                     "scene_id": f"chunk-{len(merged)+1:03d}",
                     "name": f"Merged Chunk {len(merged)+1}",
                     "scene_summary": chunk_summary,
-                    "raw_scene_text": "\n\n".join(str(s.get("raw_scene_text") or "").strip() for s in bundle if str(s.get("raw_scene_text") or "").strip()),
+                    "source_rawtext": "\n\n".join(
+                        str(s.get("source_rawtext") or s.get("raw_scene_text") or "").strip()
+                        for s in bundle
+                        if str(s.get("source_rawtext") or s.get("raw_scene_text") or "").strip()
+                    ),
                     "merged_from_scene_ids": [str(s.get("scene_id") or "") for s in bundle if str(s.get("scene_id") or "").strip()],
                     "related_entities": chunk_entities,
                     "open_questions_for_retrieval": open_questions_for_retrieval,
@@ -1280,9 +1304,90 @@ class NovelistOrchestrator:
             )
         return merged
 
+    async def _plan_retrieval_questions_for_chunk(
+        self,
+        *,
+        chunk: dict[str, Any],
+        language: str,
+        instructions: str,
+        conversation_id: str | None,
+    ) -> list[str]:
+        system_prompt = self._compose_system_prompt(
+            NOVELIST_STEP_2_RETRIEVAL_QUESTION_PLANNER_PROMPT,
+            language=language,
+            instructions=instructions,
+        )
+        user_payload = json.dumps(
+            {
+                "scene_id": str(chunk.get("scene_id") or ""),
+                "scene_name": str(chunk.get("name") or ""),
+                "scene_summary": str(chunk.get("scene_summary") or ""),
+            },
+            ensure_ascii=True,
+        )
+        try:
+            raw, _, _ = await self._call_llm(
+                model=self._model_step_2_4,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_payload},
+                ],
+                temperature=0.1,
+                conversation_id=conversation_id,
+                use_conversation_memory=True,
+            )
+            parsed = await self._parse_json_object_checked(
+                raw,
+                schema_hint='{"questions":["...","...","..."]}',
+                usage_tag="agents.json_repair",
+            )
+            values = parsed.get("questions") if isinstance(parsed, dict) else []
+            if not isinstance(values, list):
+                return []
+            cleaned = [
+                str(v).strip()
+                for v in values
+                if str(v or "").strip()
+            ]
+            # hard cap and dedupe
+            return self._dedupe_and_limit(cleaned, limit=3)
+        except Exception:
+            return []
+
+    @staticmethod
+    def _compact_chunk_payload_for_llm(chunk: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "scene_id": str(chunk.get("scene_id") or ""),
+            "name": str(chunk.get("name") or ""),
+            "scene_summary": str(chunk.get("scene_summary") or ""),
+            "source_rawtext": str(
+                chunk.get("source_rawtext") or chunk.get("raw_scene_text") or ""
+            ),
+            "merged_from_scene_ids": chunk.get("merged_from_scene_ids", []),
+            "related_entities": chunk.get("related_entities", []),
+            "open_questions_for_retrieval": chunk.get("open_questions_for_retrieval", []),
+            "prior_knowledge_needed": chunk.get("prior_knowledge_needed", []),
+            "v2_context": chunk.get("v2_context", {}),
+        }
+
     async def _build_chunk_context_v2(self, *, chunk: dict[str, Any], retrieval: dict[str, Any], language: str, instructions: str, conversation_id: str | None) -> dict[str, str]:
-        system_prompt = self._compose_system_prompt(NOVELIST_V2_MERGED_CHUNK_CONTEXT_PROMPT, language=language, instructions=instructions)
-        user_payload = json.dumps({"chunk": chunk, "questions_answers": retrieval.get("questions_answers", []), "queries": retrieval.get("queries", [])}, ensure_ascii=True)
+        system_prompt = self._compose_system_prompt(NOVELIST_STEP_4_CONTEXT_BUILD_PROMPT, language=language, instructions=instructions)
+        prior_knowledge: dict[str, str] = {}
+        for row in (retrieval.get("questions_answers", []) if isinstance(retrieval, dict) else []):
+            if not isinstance(row, dict):
+                continue
+            question = str(row.get("question") or "").strip()
+            answer = str(row.get("answer") or "").strip()
+            if question and answer:
+                prior_knowledge[question] = answer
+        user_payload = json.dumps(
+            {
+                "scene_name": str(chunk.get("name") or chunk.get("scene_id") or ""),
+                "scene_description": str(chunk.get("scene_summary") or ""),
+                "prior_knowledge": prior_knowledge,
+            },
+            ensure_ascii=True,
+        )
         raw, _, _ = await self._call_llm(
             model=self._model_step_2_4,
             messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_payload}],
@@ -1294,10 +1399,21 @@ class NovelistOrchestrator:
         return {k: str(parsed.get(k) or "").strip() for k in self._empty_retrieval_buckets().keys()}
 
     async def _generate_merged_chunk_draft_v2(self, *, chunk: dict[str, Any], language: str, instructions: str, conversation_id: str | None) -> str:
-        system_prompt = self._compose_system_prompt(NOVELIST_V2_MERGED_CHUNK_DRAFT_PROMPT, language=language, instructions=instructions)
+        system_prompt = self._compose_system_prompt(NOVELIST_STEP_5_DRAFT_PROMPT, language=language, instructions=instructions)
+        # Step 5 relies on shared conversation memory from step 4 for this chunk.
+        # Send only minimal framing payload to avoid duplicate large context resend.
+        user_payload = json.dumps(
+            {
+                "scene_id": str(chunk.get("scene_id") or ""),
+                "scene_name": str(chunk.get("name") or ""),
+                "scene_summary": str(chunk.get("scene_summary") or ""),
+                "instruction": "Write the merged chunk prose using prior scene context from this conversation.",
+            },
+            ensure_ascii=True,
+        )
         raw, _, _ = await self._call_llm(
             model=self._model_step_5_7,
-            messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": json.dumps(chunk, ensure_ascii=True)}],
+            messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_payload}],
             temperature=0.2,
             conversation_id=conversation_id,
             use_conversation_memory=True,
@@ -1305,8 +1421,14 @@ class NovelistOrchestrator:
         return self._ensure_readable_html(raw)
 
     async def _revise_scene_set_v2(self, *, prose_by_scene: list[dict[str, Any]], critic: dict[str, Any], language: str, instructions: str, conversation_id: str | None) -> dict[str, Any]:
-        system_prompt = self._compose_system_prompt(NOVELIST_V2_FINAL_REWRITE_PROMPT, language=language, instructions=instructions)
-        user_payload = json.dumps({"draft_html": self._clip_text(self._merge_scene_html(prose_by_scene), max_chars=self._revision_input_max_chars), "critic": critic}, ensure_ascii=True)
+        system_prompt = self._compose_system_prompt(NOVELIST_STEP_7_FINAL_REWRITE_PROMPT, language=language, instructions=instructions)
+        user_payload = json.dumps(
+            {
+                "draft_html": self._merge_scene_html(prose_by_scene),
+                "critic": critic,
+            },
+            ensure_ascii=True,
+        )
         raw, latency_ms, _ = await self._call_llm(
             model=self._model_step_5_7,
             messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_payload}],

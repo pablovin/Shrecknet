@@ -28,9 +28,9 @@ from app.repositories.novelist_repository import NovelistRepository
 from app.schemas.novelist import NovelistRunCreate
 from app.tasks.architect_analysis import (
     _build_allowed_ontology_map,
+    _flatten_scene_inputs,
     _format_ontology_definitions_from_entities,
     _load_existing_nodes,
-    _run_entity_proposal_phase,
     _run_scene_chunking_phase,
     _run_scene_proposal_phase,
     initialize_architect_concurrency,
@@ -316,17 +316,7 @@ async def _execute_run(
                     if str(value).strip()
                 }
 
-                ontology_definitions = _format_ontology_definitions_from_entities(
-                    ontology_entities
-                )
-
-                driver = get_driver()
-                async with driver.session(database=settings.neo4j_database) as graph_session:
-                    retriever = Neo4jGraphRetriever(graph_session)
-                    existing_nodes = await _load_existing_nodes(
-                        retriever,
-                        agent_ontology_ids,
-                    )
+                _ = _format_ontology_definitions_from_entities(ontology_entities)
 
                 source_entity = SimpleNamespace(
                     entity_instance_id=request_payload.get("previous_session_id") or "novelist-source",
@@ -346,21 +336,11 @@ async def _execute_run(
                     repair_model=configured_repair_json_target,
                     instructions=instructions,
                 )
-                entity_phase = await _run_entity_proposal_phase(
-                    run_id=run_id,
-                    llm_client=llm_client,
-                    model=architect_model,
-                    repair_model=configured_repair_json_target,
-                    ontology_definitions=ontology_definitions,
-                    allowed_ontology_names=allowed_ontology_map,
-                    existing_nodes=existing_nodes,
-                    chunk_results=chunking_phase["chunk_results"],
-                    instructions=instructions,
-                )
+                scene_inputs = _flatten_scene_inputs(chunking_phase["chunk_results"])
                 scene_phase = _run_scene_proposal_phase(
                     run_id=run_id,
-                    scene_inputs=entity_phase["scene_inputs"],
-                    proposed_entities=entity_phase["proposed_entities"],
+                    scene_inputs=scene_inputs,
+                    proposed_entities=[],
                     author_id=agent.id,
                 )
                 scenes: list[dict[str, Any]] = []
@@ -409,9 +389,8 @@ async def _execute_run(
                         "elapsed_seconds": chunking_phase.get("elapsed_seconds", 0.0),
                     },
                     "entity_phase": {
-                        "updated_count": entity_phase.get("updated_count", 0),
-                        "new_count": entity_phase.get("new_count", 0),
-                        "elapsed_seconds": entity_phase.get("elapsed_seconds", 0.0),
+                        "skipped": True,
+                        "reason": "novelist_scaffolding_uses_scene_chunking_only",
                     },
                     "scenes": scenes,
                 }

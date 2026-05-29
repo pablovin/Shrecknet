@@ -91,7 +91,22 @@ def _build_frontend_llm_usage_summary(usage_summary: dict[str, Any] | None) -> d
             "output_tokens": int((row or {}).get("output_tokens") or 0),
             "total_tokens": int((row or {}).get("total_tokens") or 0),
         }
-    return {"steps": steps}
+    json_repair_totals = {
+        "calls": 0,
+        "input_tokens_est": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+    }
+    for tag, row in by_tag.items():
+        if not isinstance(row, dict):
+            continue
+        if "json_repair" not in str(tag or ""):
+            continue
+        json_repair_totals["calls"] += int(row.get("calls") or 0)
+        json_repair_totals["input_tokens_est"] += int(row.get("input_tokens_est") or 0)
+        json_repair_totals["output_tokens"] += int(row.get("output_tokens") or 0)
+        json_repair_totals["total_tokens"] += int(row.get("total_tokens") or 0)
+    return {"steps": steps, "json_repair_totals": json_repair_totals}
 
 
 def _elapsed_seconds(started_at: float) -> float:

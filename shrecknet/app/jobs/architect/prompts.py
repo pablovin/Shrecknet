@@ -21,49 +21,54 @@ A scene should usually remain unified while:
 - the same emotional or strategic objective is unfolding
 - the same location and time are maintained
 
-Prefer fewer, larger, stronger scenes.
-Avoid scene fragmentation.
 
-Scene names: must reflect the dominant dramatic situation of the entire scene.
-Always use a descriptive title that captures the tension, conflict, decisions, or strategic intent of the scene. Never use The Narrator, or nothing like that in titles.
-Always use named entities on the title. Avoid vague labels like "Strategic Discussion", "Rising Tension", "Observation and Preparation", etc.
-Scene title grounding rule: include at least one explicit proper-name entity exactly as written in the provided paragraphs.
-Do NOT use role-only placeholders in titles like "the man", "the woman", "the daughter", "the squire", "the noble", unless that exact phrase is the canonical named entity in text.
+ENTITY-GROUNDED WRITING RULE
 
-Scene descriptions: must capture the core tension and meaningful state change of the entire scene. Write a maximum of 6 sentences.
-never use vague references like "the narrator", "they", "the group", "the foreigners", "the party", etc. Always use named entities in descriptions.
-Never talk about the narrator or the writer or nothing like that.
+Scene names and descriptions must be grounded in explicit textual entities.
 
-For each scene:
-- start_paragraph MUST be copied from a [P<number>] marker in the input.
-- end_paragraph MUST be copied from a [P<number>] marker in the input.
-- Do NOT use chunk-local paragraph numbers.
-- Do NOT omit paragraph fields.
-- Do NOT invent entities.
-- Use only named entities that exist on the text. DO not invent entities for the title nor description. Never!
-- Name the entities always in the scene name and description! Five Companions is bad. Use: Tamura, Cwenhild, Lynelle, Evrain, Everin, Hold, Leodogr, etc.
+A scene name MUST begin with:
+1. a named character, if one appears in the scene span;
+2. otherwise, a named place, faction, institution, object, or event from the scene span;
+3. otherwise, the most specific role phrase explicitly used in the text.
 
-Weak:
-"The foreigners discuss their next move."
+Do not invent names.
 
-Strong:
-"Tamura, Evrain, Lynelle, and Everin discuss how to manipulate Hold’s expectations while maintaining leverage over Leodogr and the bishop."
+Do not write abstract titles such as:
+- "Tensions Among the Travelers"
+- "Arrival at the Ruined City"
+- "A Dangerous Encounter"
+- "The Group Debates the Plan"
+
+Instead, write titles such as:
+- "Elaine and Astenius Clash During Evrain’s March"
+- "Evrain Arrives at the Ruined Roman City"
+- "Elaine Challenges Evrain After the Horse Bolts"
+
+Descriptions must also use explicit names whenever they are available.
+
+Forbidden generic references when a more specific name is available:
+"the travelers", "the group", "the party", "the companions", "the foreigners", "the riders", "the narrator", "the man", "the woman", "the commander", "the squire".
+
+If the text gives only a role and no proper name, use the exact role phrase from the text, such as "the Saxon commander", "the Irish noblewoman", or "the young squire".
+
 
 CRITICAL OUTPUT RULE:
 If a scene does not have start_paragraph and end_paragraph, the output is invalid.
 DO NOT invent anything. Only use the information from the paragraphs.
 Do not create scenes and narrative that is not present on the paragraphs.
 
+"description": "3-6 sentences describing the scene, using explicit named entities instead of generic labels"
 Return ONLY valid RFC8259 JSON.
 
 {{
   "scenes": [
     {{
-      "scene_id": Should be temporally incremental,
-      "name": "...",
-      "description": "...",
-      "start_paragraph": 1,
-      "end_paragraph": 4
+ "scene_id": 1,
+       "name": "Elaine Startles Evrain's Horse and Asterius Rides After Him",
+  "description": "Elaine, daughter of King Lot, confronts Evrain after the Pictish attack leaves the road march tense and unstable. Evrain mocks Elaine, escalating the conflict between them instead of restoring order. Elaine reacts in anger and startles Evrain's horse, causing the horse to bolt with Evrain. Asterius, the Roman knight, decides to pursue Evrain and intervene before the incident becomes fatal."
+      "named_entities": ["Elaine", "King Lot", "Evrain", "Asterius", "Picts"],
+      "start_paragraph": 12,
+      "end_paragraph": 98
     }}
   ]
 }}
@@ -92,8 +97,8 @@ Your goal is to decide which entities from the given unstructured text scenes sh
 For that, I will give you a list of ontology definitions. Use them to associate newly proposed entities to.
 I also give you a list of existing entities in the graph, each strongly associated with an ontology.
 So please decide if the entity you are extracting is new or already exists in the graph.
-Then I will give you a list of scenes, each with a text description about that scene.
-Your task is to extract the list of entities (new or existing) from the scene descriptions.
+Then I will give you a list of scenes, each with a text description and named_entities list.
+Your task is to extract the list of entities (new or existing) from the scene descriptions and named_entities.
 The entities you return must be clearly explicitly named on the text.
 Some entities have variations on their names, or typos. So match them with the existing entities list if possible.
 Only return entities that deserve to be persisted in the world graph.
@@ -238,18 +243,49 @@ Scenes payload:
 ARCHITECT_SCENE_MERGE_PROMPT = """
 You are an expert narrative analyst helping build a knowledge graph from long-form story text.
 
-We currently have too many scenes and need to reduce them while preserving narrative coherence.
-You will receive a list of scenes with only: scene_ref, scene_name, scene_description.
+You will receive a list of candidate scenes with:
+- scene_ref
+- scene_name
+- scene_description
 
-Task:
-- Merge scenes until there are at most 10 scenes total.
-- Merge based on continuity of characters, time, location, objective, and conflict progression.
-- Prefer merging adjacent/related scenes.
-- Do not invent facts or characters.
-- Do not just concatenate titles/descriptions.
-- Rewrite merged scene title and description so they encapsulate what happens across merged scenes.
+The current scene list may be over-fragmented.
+Your task is to merge candidate scenes into a smaller set of coherent narrative scenes.
+
+MERGE GOAL
+- Return at most 10 scenes.
+- Use the minimum amount of merging required to reach at most 10 scenes.
+- Prefer fewer, larger, coherent scenes, but do not destroy narrative structure.
+- If the input already has 10 or fewer scenes, return the scenes unchanged except for minor title/description cleanup.
+
+MERGE RULES
+Merge adjacent scenes when they continue the same:
+- time period
+- location
+- dominant named characters
+- conversation, confrontation, journey, plan, objective, or conflict progression
+
+Prefer merging adjacent scenes.
+Merge non-adjacent scenes only if they are clearly part of the same interrupted situation and can be merged without breaking chronology.
+
+DO NOT MERGE ACROSS HARD BOUNDARIES
+Do not merge scenes if there is a clear:
+- time jump
+- location change
+- major change in dominant participating characters
+- completed conflict followed by a new unrelated objective
+- switch from one independent conversation/action sequence to another
+
+WRITING RULES
+- Do not invent facts, characters, places, motives, or outcomes.
+- Do not just concatenate titles or descriptions.
+- Rewrite each merged scene title and description so they summarize the full merged situation.
+- Preserve the meaningful state changes from all source scenes.
 - Merged scene title must include at least one explicit proper-name entity from the source scene titles/descriptions.
-- Do NOT output generic role-only titles like "The Confrontation Between the Squire and the Woman" or "The Interaction Between the Daughter and the Man".
+- Descriptions must use explicit named entities when available.
+- Avoid generic labels such as "the group", "the party", "the travelers", "the companions", "the foreigners", "the man", "the woman", "the squire", or "the commander" when a proper name is available.
+- If no proper name is available, use the most specific textual anchor from the source scenes.
+
+
 
 Return STRICT RFC8259 JSON only:
 {{
@@ -263,11 +299,13 @@ Return STRICT RFC8259 JSON only:
   ]
 }}
 
-Constraints:
+CONSTRAINTS
 - Output max 10 scenes.
 - Every original scene_ref from input must appear in exactly one output scene's source_scene_refs.
 - source_scene_refs must be non-empty.
+- Preserve chronological order.
 - Use double quotes and valid JSON only.
+- Do not include markdown fences or text outside JSON.
 
 Scenes payload:
 {scenes_payload}

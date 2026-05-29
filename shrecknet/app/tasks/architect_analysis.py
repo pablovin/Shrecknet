@@ -181,6 +181,8 @@ def _build_frontend_llm_usage_summary(usage_summary: dict[str, Any] | None) -> d
     by_tag = by_tag if isinstance(by_tag, dict) else {}
     tag_to_step = {
         "architect.scene_discovery": "architect.scene_discovery",
+        "architect.scene_merging": "architect.scene_merging",
+        "architect.scene_merging.json_repair": "architect.scene_merging.json_repair",
         "architect.entity_extraction": "architect.entity_extraction",
         "architect.milestone_proposal": "architect.milestone_proposal",
     }
@@ -194,7 +196,24 @@ def _build_frontend_llm_usage_summary(usage_summary: dict[str, Any] | None) -> d
             "output_tokens": int((row or {}).get("output_tokens") or 0),
             "total_tokens": int((row or {}).get("total_tokens") or 0),
         }
-    return {"steps": steps}
+    json_repair_totals = {
+        "calls": 0,
+        "input_tokens_est": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+    }
+    for tag, row in by_tag.items():
+        if not isinstance(row, dict):
+            continue
+        tag_name = str(tag or "")
+        if "json_repair" not in tag_name and tag_name != "agents.json_repair":
+            continue
+        json_repair_totals["calls"] += int(row.get("calls") or 0)
+        json_repair_totals["input_tokens_est"] += int(row.get("input_tokens_est") or 0)
+        json_repair_totals["output_tokens"] += int(row.get("output_tokens") or 0)
+        json_repair_totals["total_tokens"] += int(row.get("total_tokens") or 0)
+
+    return {"steps": steps, "json_repair_totals": json_repair_totals}
 
 
 def _compress_scene_text_for_milestone_prompt(scene_text: str, max_chars: int) -> str:
@@ -781,6 +800,7 @@ def _flatten_scene_inputs(chunk_results: list[dict[str, Any]]) -> list[dict[str,
                     "scene_id": scene_id,
                     "scene_name": scene.get("name") or "",
                     "scene_description": scene.get("description") or "",
+                    "named_entities": list(scene.get("named_entities") or []),
                     "scene_text": scene.get("text") or "",
                     "start_paragraph": scene.get("start_paragraph"),
                     "end_paragraph": scene.get("end_paragraph"),
@@ -808,6 +828,7 @@ async def _run_scene_merge_phase(
             "scene_ref": row.get("scene_ref"),
             "scene_name": row.get("scene_name"),
             "scene_description": row.get("scene_description"),
+            "named_entities": list(row.get("named_entities") or []),
         }
         for row in scene_inputs
     ]
@@ -862,6 +883,14 @@ async def _run_scene_merge_phase(
                 "scene_id": idx,
                 "scene_name": str(row.get("name") or "Merged Scene").strip(),
                 "scene_description": str(row.get("description") or "").strip(),
+                "named_entities": sorted(
+                    {
+                        str(entity).strip()
+                        for src in source_scenes
+                        for entity in list(src.get("named_entities") or [])
+                        if str(entity).strip()
+                    }
+                ),
                 "scene_text": merged_text,
                 "start_paragraph": all_pids[0] if all_pids else None,
                 "end_paragraph": all_pids[-1] if all_pids else None,
@@ -891,6 +920,7 @@ async def _run_scene_merge_phase(
                 "scene_id": scene.get("scene_id"),
                 "name": scene.get("scene_name"),
                 "description": scene.get("scene_description"),
+                "named_entities": list(scene.get("named_entities") or []),
                 "start_paragraph": scene.get("start_paragraph"),
                 "end_paragraph": scene.get("end_paragraph"),
                 "text": scene.get("scene_text"),
@@ -995,19 +1025,15 @@ async def _extract_scene_entities(
                 "scene_ref": scene.get("scene_ref"),
                 "scene_name": scene.get("scene_name"),
                 "scene_description": scene.get("scene_description"),
-                "scene_text": _safe_json_text(scene.get("scene_text")),
+                "named_entities": list(scene.get("named_entities") or []),
             }
             for scene in batch
         ]
-        scene_text_lengths = [len(str(row.get("scene_text") or "")) for row in scenes_payload]
         logger.info(
-            "scene_entity_extraction_batch_payload: run_id=%s batch_size=%d scene_refs=%s total_scene_text_chars=%d max_scene_text_chars=%d oversized_scene_count=%d",
+            "scene_entity_extraction_batch_payload: run_id=%s batch_size=%d scene_refs=%s",
             run_id,
             len(batch),
             [scene.get("scene_ref") for scene in batch],
-            sum(scene_text_lengths),
-            max(scene_text_lengths, default=0),
-            sum(1 for length in scene_text_lengths if length > ENTITY_SCENE_TEXT_MAX_CHARS),
         )
         try:
             async with semaphore:
@@ -1023,8 +1049,8 @@ async def _extract_scene_entities(
                     # Backward compatibility for old templates during partial deploys.
                     scene_name=batch[0].get("scene_name", "") if batch else "",
                     scene_description=batch[0].get("scene_description", "") if batch else "",
-                    scene_text=batch[0].get("scene_text", "") if batch else "",
-                    chunk_text=batch[0].get("scene_text", "") if batch else "",
+                    scene_text="",
+                    chunk_text="",
                 )
                 instructions_text = str(instructions or "").strip()
                 if instructions_text:
@@ -1825,7 +1851,7 @@ async def _run_milestone_proposal_phase(
                     "scene_ref": scene.get("scene_ref"),
                     "scene_name": scene.get("scene_name"),
                     "scene_description": scene.get("scene_description"),
-                    "scene_text": _safe_json_text(scene.get("scene_text")),
+                    "named_entities": list(scene.get("named_entities") or []),
                     "entities": _scene_entity_aliases(scene),
                 }
                 for scene in batch

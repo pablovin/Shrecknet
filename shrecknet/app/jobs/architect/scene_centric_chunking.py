@@ -642,6 +642,11 @@ def _normalize_scene_ranges_global(
                 "raw_scene_order": idx,
                 "name": str(scene.get("name", "")).strip(),
                 "description": str(scene.get("description", "")).strip(),
+                "named_entities": [
+                    str(item).strip()
+                    for item in (scene.get("named_entities") or [])
+                    if str(item).strip()
+                ],
                 "start_paragraph": span_ids[0],
                 "end_paragraph": span_ids[-1],
                 "source_paragraphs_absolute": span_ids,

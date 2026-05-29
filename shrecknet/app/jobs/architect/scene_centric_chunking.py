@@ -22,7 +22,8 @@ _BULLET_OR_NUMBERED_START = re.compile(r"^\s*(?:[●•\-\*]\s+|\d+[.)]\s+)")
 _TIMESTAMP_MARKER = re.compile(r"\(\d{1,2}:\d{2}:\d{2}\)")
 PARAGRAPH_CHUNK_SIZE = 30
 MIN_HEADING_PARAGRAPHS = 5
-MAX_PARAGRAPHS_PER_CHUNK = 100
+MAX_PARAGRAPHS_PER_CHUNK = 60
+MAX_PARAGRAPHS_TOLERANCE_RATIO = 1.10
 
 
 @dataclass
@@ -311,7 +312,12 @@ def _split_oversized_chunk_by_paragraph_count(
     max_paragraphs_per_chunk: int,
     encoding_name: str,
 ) -> list[SceneChunk]:
-    if chunk.paragraph_count <= max_paragraphs_per_chunk:
+    allowed_max = max_paragraphs_per_chunk
+    tolerated_max = max(
+        allowed_max,
+        int(allowed_max * MAX_PARAGRAPHS_TOLERANCE_RATIO),
+    )
+    if chunk.paragraph_count <= tolerated_max:
         return [chunk]
 
     paragraphs = list(chunk.paragraphs)

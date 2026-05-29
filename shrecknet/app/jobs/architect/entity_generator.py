@@ -432,36 +432,32 @@ class EntityGenerator:
     ) -> None:
         if not debug_job_id:
             return
-        # Debug artifact writing is intentionally disabled for architect/generate.
-        # Keep the implementation below commented for quick re-enable when needed.
-        return
-
-        # try:
-        #     stem = self._safe_filename(entity_alias or "entity")
-        #     if entity_id:
-        #         stem = f"{stem}_{self._safe_filename(entity_id)[:12]}"
-        #     target_name = f"{stem}_enrich.json"
-        #     write_errors: list[str] = []
-        #     wrote_any = False
-        #     for base_dir in self._resolve_architect_generate_debug_dirs(debug_job_id=debug_job_id):
-        #         try:
-        #             base_dir.mkdir(parents=True, exist_ok=True)
-        #             target = base_dir / target_name
-        #             target.write_text(
-        #                 json.dumps(payload, ensure_ascii=False, indent=2),
-        #                 encoding="utf-8",
-        #             )
-        #             wrote_any = True
-        #         except Exception as exc:
-        #             write_errors.append(f"{base_dir}: {exc}")
-        #     if not wrote_any:
-        #         raise OSError("; ".join(write_errors) or "no writable debug directory")
-        # except Exception:
-        #     logger.exception(
-        #         "architect.generate failed writing enrich debug file job_id=%s entity=%s",
-        #         debug_job_id,
-        #         entity_alias or entity_id or "",
-        #     )
+        try:
+            stem = self._safe_filename(entity_alias or "entity")
+            if entity_id:
+                stem = f"{stem}_{self._safe_filename(entity_id)[:12]}"
+            target_name = f"{stem}_enrich.json"
+            write_errors: list[str] = []
+            wrote_any = False
+            for base_dir in self._resolve_architect_generate_debug_dirs(debug_job_id=debug_job_id):
+                try:
+                    base_dir.mkdir(parents=True, exist_ok=True)
+                    target = base_dir / target_name
+                    target.write_text(
+                        json.dumps(payload, ensure_ascii=False, indent=2),
+                        encoding="utf-8",
+                    )
+                    wrote_any = True
+                except Exception as exc:
+                    write_errors.append(f"{base_dir}: {exc}")
+            if not wrote_any:
+                raise OSError("; ".join(write_errors) or "no writable debug directory")
+        except Exception:
+            logger.exception(
+                "architect.generate failed writing enrich debug file job_id=%s entity=%s",
+                debug_job_id,
+                entity_alias or entity_id or "",
+            )
 
     @staticmethod
     def _resolve_architect_generate_debug_dirs(*, debug_job_id: int) -> list[Path]:

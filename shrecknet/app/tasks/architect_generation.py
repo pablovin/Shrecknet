@@ -77,6 +77,7 @@ def _build_frontend_llm_usage_summary(usage_summary: dict[str, Any] | None) -> d
 
     tag_to_step = {
         "architect.generate": "architect.generate",
+        "architect.generate.enrichment": "architect.generate.enrichment",
         "architect.generate.json_repair": "architect.generate.json_repair",
         "architect.generate.entity_catalog_retry": "architect.generate.entity_catalog_retry",
         "architect.generate.relationship_catalog_retry": "architect.generate.relationship_catalog_retry",

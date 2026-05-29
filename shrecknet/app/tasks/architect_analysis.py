@@ -967,6 +967,12 @@ async def _run_scene_rewrite_phase(
             rows = (parsed or {}).get("scenes") if isinstance(parsed, dict) else []
             rows = rows if isinstance(rows, list) else []
             row = rows[0] if rows and isinstance(rows[0], dict) else None
+            logger.info(
+                "scene_rewrite_single_done: run_id=%s scene_ref=%s rewritten=%s",
+                run_id,
+                scene_ref,
+                bool(row),
+            )
             return scene_ref, row
         except Exception as exc:
             logger.warning(

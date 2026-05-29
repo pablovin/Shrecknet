@@ -287,6 +287,21 @@ def _normalize_ontology_name(value: str | None) -> str:
     return re.sub(r"\s+", " ", raw)
 
 
+def _normalize_ontology_name_loose(value: str | None) -> str:
+    raw = _normalize_ontology_name(value)
+    raw = re.sub(r"[^a-z0-9\s]", " ", raw)
+    raw = re.sub(r"\s+", " ", raw).strip()
+    if raw.endswith("es") and len(raw) > 3:
+        singular = raw[:-2]
+        if singular:
+            return singular
+    if raw.endswith("s") and len(raw) > 2:
+        singular = raw[:-1]
+        if singular:
+            return singular
+    return raw
+
+
 def _build_allowed_ontology_map(entity_defs: list[Any]) -> dict[str, str]:
     allowed: dict[str, str] = {}
     for definition in entity_defs:
@@ -297,6 +312,22 @@ def _build_allowed_ontology_map(entity_defs: list[Any]) -> dict[str, str]:
             continue
         allowed[_normalize_ontology_name(name)] = name
     return allowed
+
+
+def _resolve_allowed_ontology_name(
+    value: str | None, allowed_ontology_names: dict[str, str]
+) -> str | None:
+    direct = allowed_ontology_names.get(_normalize_ontology_name(value))
+    if direct:
+        return direct
+    loose = _normalize_ontology_name_loose(value)
+    if not loose:
+        return None
+    for key, canonical in allowed_ontology_names.items():
+        key_loose = _normalize_ontology_name_loose(key)
+        if key_loose == loose:
+            return canonical
+    return None
 
 
 def _canonical_alias(alias: str | None) -> str:
@@ -356,6 +387,7 @@ def _find_existing_match(
 
 def _build_existing_entity_prompt_catalogue(
     existing_nodes: list[dict[str, Any]],
+    allowed_ontology_names: dict[str, str] | None = None,
 ) -> list[dict[str, str]]:
     """Expose only natural-language identity fields to the LLM."""
     rows: list[dict[str, str]] = []
@@ -365,6 +397,14 @@ def _build_existing_entity_prompt_catalogue(
         ontology = str(node.get("ontology") or "").strip()
         if not alias:
             continue
+        # Hard filter: never pass internal node labels / unknown ontology labels to LLM.
+        if _normalize_ontology_name(ontology) in {"entityinstance", "scene", "milestone"}:
+            continue
+        if allowed_ontology_names is not None:
+            mapped = _resolve_allowed_ontology_name(ontology, allowed_ontology_names)
+            if not mapped:
+                continue
+            ontology = mapped
         key = (_canonical_alias(alias), _normalize_ontology_name(ontology))
         if key in seen:
             continue
@@ -1075,7 +1115,10 @@ async def _extract_scene_entities(
 ) -> list[dict[str, Any]]:
     concurrency = _scene_entity_extraction_concurrency()
     semaphore = asyncio.Semaphore(concurrency)
-    existing_catalogue = _build_existing_entity_prompt_catalogue(existing_nodes)
+    existing_catalogue = _build_existing_entity_prompt_catalogue(
+        existing_nodes,
+        allowed_ontology_names=allowed_ontology_names,
+    )
 
     def _normalize_entities_for_scene(
         scene_input: dict[str, Any],
@@ -1084,30 +1127,28 @@ async def _extract_scene_entities(
         scene_ref = str(scene_input.get("scene_ref") or "")
         entities: list[dict[str, Any]] = []
         for entity in raw_entities:
-            mapped = allowed_ontology_names.get(_normalize_ontology_name(entity.ontology))
-            if not mapped:
-                logger.warning(
-                    "scene_entity_invalid_ontology_dropped: run_id=%s scene_ref=%s name=%s ontology=%s",
-                    run_id,
-                    scene_ref,
-                    entity.name,
-                    entity.ontology,
-                )
-                continue
             status = str(entity.status or "new").strip().lower()
             payload = entity.model_dump()
-            payload["ontology"] = mapped
             payload["status"] = "existing" if status == "existing" else "new"
+            mapped = _resolve_allowed_ontology_name(entity.ontology, allowed_ontology_names)
+            payload["ontology"] = mapped or str(entity.ontology or "").strip()
             if payload["status"] == "existing":
                 matched = _resolve_existing_node_by_alias(
                     name=entity.name,
                     matched_alias=entity.matched_alias,
-                    ontology=mapped,
+                    ontology=mapped or str(entity.ontology or "").strip(),
                     existing_nodes=existing_nodes,
                 )
                 if matched:
                     payload["matched_alias"] = str(matched.get("alias") or entity.matched_alias or entity.name)
                     payload["matched_node_id"] = str(matched.get("node_id") or "")
+                    # Existing-node match is authoritative for ontology typing.
+                    matched_ontology = _resolve_allowed_ontology_name(
+                        str(matched.get("ontology") or ""),
+                        allowed_ontology_names,
+                    )
+                    if matched_ontology:
+                        payload["ontology"] = matched_ontology
                 else:
                     requested_alias = str(entity.matched_alias or entity.name or "").strip()
                     requested_canonical = _canonical_alias(requested_alias)
@@ -1130,6 +1171,19 @@ async def _extract_scene_entities(
             else:
                 payload["matched_alias"] = None
                 payload["matched_node_id"] = None
+
+            # Final ontology validation after recovery/coercion attempts.
+            resolved_ontology = _resolve_allowed_ontology_name(payload.get("ontology"), allowed_ontology_names)
+            if not resolved_ontology:
+                logger.warning(
+                    "scene_entity_invalid_ontology_dropped: run_id=%s scene_ref=%s name=%s ontology=%s",
+                    run_id,
+                    scene_ref,
+                    entity.name,
+                    payload.get("ontology"),
+                )
+                continue
+            payload["ontology"] = resolved_ontology
             entities.append(payload)
 
         logger.info(

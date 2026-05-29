@@ -66,7 +66,6 @@ Return ONLY valid RFC8259 JSON.
  "scene_id": 1,
        "name": "Elaine Startles Evrain's Horse and Asterius Rides After Him",
   "description": "Elaine, daughter of King Lot, confronts Evrain after the Pictish attack leaves the road march tense and unstable. Evrain mocks Elaine, escalating the conflict between them instead of restoring order. Elaine reacts in anger and startles Evrain's horse, causing the horse to bolt with Evrain. Asterius, the Roman knight, decides to pursue Evrain and intervene before the incident becomes fatal."
-      "named_entities": ["Elaine", "King Lot", "Evrain", "Asterius", "Picts"],
       "start_paragraph": 12,
       "end_paragraph": 98
     }}
@@ -97,8 +96,8 @@ Your goal is to decide which entities from the given unstructured text scenes sh
 For that, I will give you a list of ontology definitions. Use them to associate newly proposed entities to.
 I also give you a list of existing entities in the graph, each strongly associated with an ontology.
 So please decide if the entity you are extracting is new or already exists in the graph.
-Then I will give you a list of scenes, each with a text description and named_entities list.
-Your task is to extract the list of entities (new or existing) from the scene descriptions and named_entities.
+Then I will give you a list of scenes, each with text description and text excerpt.
+Your task is to extract the list of entities (new or existing) from those scenes.
 The entities you return must be clearly explicitly named on the text.
 Some entities have variations on their names, or typos. So match them with the existing entities list if possible.
 Only return entities that deserve to be persisted in the world graph.

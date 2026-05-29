@@ -800,7 +800,6 @@ def _flatten_scene_inputs(chunk_results: list[dict[str, Any]]) -> list[dict[str,
                     "scene_id": scene_id,
                     "scene_name": scene.get("name") or "",
                     "scene_description": scene.get("description") or "",
-                    "named_entities": list(scene.get("named_entities") or []),
                     "scene_text": scene.get("text") or "",
                     "start_paragraph": scene.get("start_paragraph"),
                     "end_paragraph": scene.get("end_paragraph"),
@@ -828,7 +827,6 @@ async def _run_scene_merge_phase(
             "scene_ref": row.get("scene_ref"),
             "scene_name": row.get("scene_name"),
             "scene_description": row.get("scene_description"),
-            "named_entities": list(row.get("named_entities") or []),
         }
         for row in scene_inputs
     ]
@@ -883,14 +881,6 @@ async def _run_scene_merge_phase(
                 "scene_id": idx,
                 "scene_name": str(row.get("name") or "Merged Scene").strip(),
                 "scene_description": str(row.get("description") or "").strip(),
-                "named_entities": sorted(
-                    {
-                        str(entity).strip()
-                        for src in source_scenes
-                        for entity in list(src.get("named_entities") or [])
-                        if str(entity).strip()
-                    }
-                ),
                 "scene_text": merged_text,
                 "start_paragraph": all_pids[0] if all_pids else None,
                 "end_paragraph": all_pids[-1] if all_pids else None,
@@ -920,7 +910,6 @@ async def _run_scene_merge_phase(
                 "scene_id": scene.get("scene_id"),
                 "name": scene.get("scene_name"),
                 "description": scene.get("scene_description"),
-                "named_entities": list(scene.get("named_entities") or []),
                 "start_paragraph": scene.get("start_paragraph"),
                 "end_paragraph": scene.get("end_paragraph"),
                 "text": scene.get("scene_text"),
@@ -1026,7 +1015,6 @@ async def _extract_scene_entities(
                 "scene_name": scene.get("scene_name"),
                 "scene_description": scene.get("scene_description"),
                 "scene_text": _safe_json_text(scene.get("scene_text")),
-                "named_entities": list(scene.get("named_entities") or []),
             }
             for scene in batch
         ]
@@ -1852,7 +1840,6 @@ async def _run_milestone_proposal_phase(
                     "scene_ref": scene.get("scene_ref"),
                     "scene_name": scene.get("scene_name"),
                     "scene_description": scene.get("scene_description"),
-                    "named_entities": list(scene.get("named_entities") or []),
                     "entities": _scene_entity_aliases(scene),
                 }
                 for scene in batch

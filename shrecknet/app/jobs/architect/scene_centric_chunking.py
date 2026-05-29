@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 PARAGRAPH_MARKER_PATTERN = re.compile(r"^\[P(\d+)\]\s*(.*)$")
 _BULLET_OR_NUMBERED_START = re.compile(r"^\s*(?:[●•\-\*]\s+|\d+[.)]\s+)")
 _TIMESTAMP_MARKER = re.compile(r"\(\d{1,2}:\d{2}:\d{2}\)")
+_PERSON_TITLES = {"lady", "sir", "dame", "lord", "king", "queen", "prince", "princess"}
 PARAGRAPH_CHUNK_SIZE = 30
 MIN_HEADING_PARAGRAPHS = 5
 MAX_PARAGRAPHS_PER_CHUNK = 60
@@ -49,13 +50,25 @@ class _NarrativeHTMLParagraphParser(HTMLParser):
         self._paragraph_buffer: list[str] = []
         self._pending_non_paragraph: list[str] = []
         self._paragraphs: list[str] = []
+        self._in_anchor: int = 0
+        self._anchor_buffer: list[str] = []
+        self._token_stream: list[tuple[str, bool]] = []
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         del attrs
-        self._tag_stack.append(tag.lower())
+        normalized = tag.lower()
+        self._tag_stack.append(normalized)
+        if normalized == "a":
+            self._in_anchor += 1
 
     def handle_endtag(self, tag: str) -> None:
         normalized = tag.lower()
+        if normalized == "a" and self._in_anchor > 0:
+            text = " ".join(self._anchor_buffer).strip()
+            if text:
+                self._token_stream.append((text, True))
+            self._anchor_buffer = []
+            self._in_anchor -= 1
         if self._tag_stack:
             for idx in range(len(self._tag_stack) - 1, -1, -1):
                 if self._tag_stack[idx] == normalized:
@@ -74,12 +87,16 @@ class _NarrativeHTMLParagraphParser(HTMLParser):
         if not cleaned:
             return
 
-        current_tag = self._tag_stack[-1] if self._tag_stack else ""
-        if current_tag in self._PARAGRAPH_TAGS:
-            self._paragraph_buffer.append(cleaned)
+        if self._in_anchor > 0:
+            self._anchor_buffer.append(cleaned)
             return
 
-        if current_tag in self._HEADING_TAGS:
+        # Treat inline-tag text inside a paragraph as paragraph content.
+        if any(tag in self._PARAGRAPH_TAGS for tag in self._tag_stack):
+            self._token_stream.append((cleaned, False))
+            return
+
+        if any(tag in self._HEADING_TAGS for tag in self._tag_stack):
             self._pending_non_paragraph.append(cleaned)
             return
 
@@ -102,10 +119,21 @@ class _NarrativeHTMLParagraphParser(HTMLParser):
             self._paragraph_buffer = []
 
     def _flush_paragraph(self) -> None:
-        if not self._paragraph_buffer:
+        if self._anchor_buffer:
+            text = " ".join(self._anchor_buffer).strip()
+            if text:
+                self._token_stream.append((text, True))
+            self._anchor_buffer = []
+        if not self._token_stream and not self._paragraph_buffer:
             return
 
-        paragraph_text = " ".join(self._paragraph_buffer)
+        if self._paragraph_buffer:
+            self._token_stream.extend((part, False) for part in self._paragraph_buffer if part)
+            self._paragraph_buffer = []
+
+        normalized_tokens = self._normalize_linked_name_tokens(self._token_stream)
+        paragraph_text = " ".join(token for token in normalized_tokens if token).strip()
+        self._token_stream = []
         self._paragraph_buffer = []
 
         if self._pending_non_paragraph:
@@ -113,6 +141,31 @@ class _NarrativeHTMLParagraphParser(HTMLParser):
             self._pending_non_paragraph = []
 
         self._paragraphs.append(paragraph_text)
+
+    @staticmethod
+    def _normalize_linked_name_tokens(tokens: list[tuple[str, bool]]) -> list[str]:
+        out: list[str] = []
+        i = 0
+        while i < len(tokens):
+            text, linked = tokens[i]
+            curr = str(text or "").strip()
+            if not curr:
+                i += 1
+                continue
+            if (
+                linked
+                and curr.lower() in _PERSON_TITLES
+                and i + 1 < len(tokens)
+                and tokens[i + 1][1]
+            ):
+                nxt = str(tokens[i + 1][0] or "").strip()
+                if nxt and re.match(r"^[A-Z][\w'`-]*$", nxt):
+                    out.append(f"{curr} {nxt}")
+                    i += 2
+                    continue
+            out.append(curr)
+            i += 1
+        return out
 
 
 class _NarrativeHTMLHeadingSectionParser(HTMLParser):
@@ -156,11 +209,11 @@ class _NarrativeHTMLHeadingSectionParser(HTMLParser):
         if not cleaned:
             return
 
-        current_tag = self._tag_stack[-1] if self._tag_stack else ""
-        if current_tag in self._PARAGRAPH_TAGS:
+        # Treat inline-tag text inside a paragraph as paragraph content.
+        if any(tag in self._PARAGRAPH_TAGS for tag in self._tag_stack):
             self._paragraph_buffer.append(cleaned)
             return
-        if current_tag in self._HEADING_TAGS:
+        if any(tag in self._HEADING_TAGS for tag in self._tag_stack):
             self._heading_buffer.append(cleaned)
 
     def close(self) -> None:

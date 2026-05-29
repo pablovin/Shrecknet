@@ -1151,7 +1151,6 @@ async def _extract_scene_entities(
                 "scene_ref": scene.get("scene_ref"),
                 "scene_name": scene.get("scene_name"),
                 "scene_description": scene.get("scene_description"),
-                "scene_text": _safe_json_text(scene.get("scene_text")),
             }
             for scene in batch
         ]
@@ -1175,8 +1174,8 @@ async def _extract_scene_entities(
                     # Backward compatibility for old templates during partial deploys.
                     scene_name=batch[0].get("scene_name", "") if batch else "",
                     scene_description=batch[0].get("scene_description", "") if batch else "",
-                    scene_text=batch[0].get("scene_text", "") if batch else "",
-                    chunk_text=batch[0].get("scene_text", "") if batch else "",
+                    scene_text="",
+                    chunk_text="",
                 )
                 instructions_text = str(instructions or "").strip()
                 if instructions_text:
@@ -2445,19 +2444,11 @@ async def _run_scene_centric_chunking_test(
         step="scene_merging",
         usage=_format_step_usage_delta(llm_client, step_usage_start),
     )
-    step_usage_start = llm_client.get_usage_event_count()
-    all_chunk_results, scene_rewrite_summary = await _run_scene_rewrite_phase(
-        run_id=run_id,
-        llm_client=llm_client,
-        model=scene_chunking_model,
-        repair_model=repair_json_model,
-        chunk_results=all_chunk_results,
-    )
-    _log_step_usage(
-        run_id=run_id,
-        step="scene_rewrite",
-        usage=_format_step_usage_delta(llm_client, step_usage_start),
-    )
+    scene_rewrite_summary = {
+        "applied": False,
+        "reason": "disabled_by_pipeline_configuration",
+        "rewritten_count": 0,
+    }
 
     await update_job_progress(job_id, 0.7, {"status": "Scene entity discovery"})
     step_usage_start = llm_client.get_usage_event_count()

@@ -332,15 +332,15 @@ Task:
 - Keep rewritten description concise (3-6 sentences).
 
 Return STRICT RFC8259 JSON only:
-{
+{{
   "scenes": [
-    {
+    {{
       "scene_ref": "scene ref from input",
       "scene_description": "rewritten description",
       "scene_text": "rewritten text"
-    }
+    }}
   ]
-}
+}}
 
 Scenes payload:
 {scenes_payload}

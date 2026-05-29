@@ -1025,6 +1025,7 @@ async def _extract_scene_entities(
                 "scene_ref": scene.get("scene_ref"),
                 "scene_name": scene.get("scene_name"),
                 "scene_description": scene.get("scene_description"),
+                "scene_text": _safe_json_text(scene.get("scene_text")),
                 "named_entities": list(scene.get("named_entities") or []),
             }
             for scene in batch
@@ -1049,8 +1050,8 @@ async def _extract_scene_entities(
                     # Backward compatibility for old templates during partial deploys.
                     scene_name=batch[0].get("scene_name", "") if batch else "",
                     scene_description=batch[0].get("scene_description", "") if batch else "",
-                    scene_text="",
-                    chunk_text="",
+                    scene_text=batch[0].get("scene_text", "") if batch else "",
+                    chunk_text=batch[0].get("scene_text", "") if batch else "",
                 )
                 instructions_text = str(instructions or "").strip()
                 if instructions_text:

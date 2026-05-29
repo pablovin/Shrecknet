@@ -61,22 +61,19 @@ Internal stage progression:
   - `milestones`, `related_entities`
   - `instructions`, `Language_output_text`
 
-### Steps 2-5 (Incremental `scene_packages`)
+### Steps 2-5 (Per-scene pipeline)
 
-The same scene package is enriched incrementally:
+Current flow per scene:
 
-- Step 2 adds exploration fields (`scene_goal`, `scene_tone`, `prior_knowledge_needed`)
-- Step 3 adds retrieval/context fields (`prior_events`, `relationship_summaries`, `personality_reminders`, `unresolved_tensions`, `style_details`, `contradiction_warnings`, plus retrieval `queries` and `questions_answers`)
-- Step 4 adds intent fields (`what_happens`, `emotional_progression`, `speaking_goals`, `implied_history`, `forbidden_contradictions`)
-- Step 5 adds `prose_html`
+- Step 2 plans retrieval questions (2-3) from scene title + description.
+- Step 3 retrieves elder context and stores retrieval traces.
+- Step 4 builds compact narrative context JSON from scene metadata + prior knowledge Q/A.
+- Step 5 generates scene prose HTML using step 4 context memory.
 
-Debug files for `step_2_response.json` to `step_5_response.json` now use strict shape:
+Per-step usage is tracked in:
 
-```json
-{ "scene_packages": [ ... ] }
-```
-
-No trace/token payloads are emitted in those primary step response files.
+- `artifacts.llm_usage_summary`
+- `artifacts.llm_usage_by_step_novelist`
 
 ### Step 5 prose limiting
 
@@ -126,9 +123,7 @@ Novelist intentionally reuses existing systems.
 Architect reuse (scaffolding):
 
 - `_run_scene_chunking_phase`
-- `_run_entity_proposal_phase`
-- `_run_scene_proposal_phase`
-- `_run_milestone_proposal_phase`
+- `_run_scene_proposal_phase` (scene-only scaffolding path for Novelist)
 - `_load_existing_nodes`
 - `_format_ontology_definitions_from_entities`
 

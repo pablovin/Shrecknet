@@ -1089,8 +1089,16 @@ class NovelistOrchestrator:
     ) -> dict[str, Any]:
         # Reset and collect per-call usage traces for this run (all steps).
         self._debug_response_calls = []
-        # Reuse Architect scene outputs directly (no additional Novelist merge layer).
+        # Reuse Architect scene outputs directly (including Architect merge decisions).
         merged_chunks = [dict(scene) for scene in step_1_scenes if isinstance(scene, dict)]
+        if stage_callback:
+            await stage_callback(
+                NovelistStage.SCENE_PACKAGE,
+                {
+                    "artifacts": artifacts,
+                    "scene_count": len(merged_chunks),
+                },
+            )
         for chunk in merged_chunks:
             self._debug_step_label = "step_2"
             planned = await self._plan_retrieval_questions_for_chunk(
@@ -1113,6 +1121,14 @@ class NovelistOrchestrator:
         }
 
         self._debug_step_label = "step_3"
+        if stage_callback:
+            await stage_callback(
+                NovelistStage.RETRIEVAL,
+                {
+                    "artifacts": artifacts,
+                    "scene_count": len(merged_chunks),
+                },
+            )
         enhanced_chunks, retrieval_by_scene, _ = await self._collect_scene_retrieval(
             agent=agent,
             scene_packages=merged_chunks,
@@ -1125,6 +1141,15 @@ class NovelistOrchestrator:
         artifacts["stages"]["retrieval"] = retrieval_by_scene
 
         prose_by_scene: list[dict[str, Any]] = []
+        if stage_callback:
+            await stage_callback(
+                NovelistStage.PROSE_GENERATION,
+                {
+                    "artifacts": artifacts,
+                    "scene_count": len(enhanced_chunks),
+                    "completed_scenes": 0,
+                },
+            )
         for chunk in enhanced_chunks:
             chunk_id = str(chunk.get("scene_id") or "")
             self._debug_step_label = "step_4"
@@ -1151,10 +1176,27 @@ class NovelistOrchestrator:
                     "prose_html": prose_html,
                 }
             )
+            if stage_callback:
+                await stage_callback(
+                    NovelistStage.PROSE_GENERATION,
+                    {
+                        "artifacts": artifacts,
+                        "scene_count": len(enhanced_chunks),
+                        "completed_scenes": len(prose_by_scene),
+                    },
+                )
 
         artifacts["stages"]["prose_generation"] = {"count": len(prose_by_scene), "scene_paragraphs": prose_by_scene}
         critic_conversation_id = self._build_step_6_7_conversation_id(conversation_id)
         self._debug_step_label = "step_6"
+        if stage_callback:
+            await stage_callback(
+                NovelistStage.CRITIC,
+                {
+                    "artifacts": artifacts,
+                    "scene_count": len(prose_by_scene),
+                },
+            )
         critic = await self._critic_scene_set(
             scene_packages=enhanced_chunks,
             prose_by_scene=prose_by_scene,
@@ -1163,6 +1205,14 @@ class NovelistOrchestrator:
             conversation_id=critic_conversation_id,
         )
         self._debug_step_label = "step_7"
+        if stage_callback:
+            await stage_callback(
+                NovelistStage.REVISION,
+                {
+                    "artifacts": artifacts,
+                    "scene_count": len(prose_by_scene),
+                },
+            )
         revision = await self._revise_scene_set_v2(
             prose_by_scene=prose_by_scene,
             critic=critic,

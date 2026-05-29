@@ -31,6 +31,7 @@ from app.tasks.architect_analysis import (
     _flatten_scene_inputs,
     _format_ontology_definitions_from_entities,
     _load_existing_nodes,
+    _run_scene_merge_phase,
     _run_scene_chunking_phase,
     _run_scene_proposal_phase,
     initialize_architect_concurrency,
@@ -336,7 +337,15 @@ async def _execute_run(
                     repair_model=configured_repair_json_target,
                     instructions=instructions,
                 )
-                scene_inputs = _flatten_scene_inputs(chunking_phase["chunk_results"])
+                merged_chunk_results, scene_merge_summary = await _run_scene_merge_phase(
+                    run_id=run_id,
+                    llm_client=llm_client,
+                    model=scene_chunking_model,
+                    repair_model=configured_repair_json_target,
+                    chunk_results=chunking_phase["chunk_results"],
+                    max_scenes_after_merge=6,
+                )
+                scene_inputs = _flatten_scene_inputs(merged_chunk_results)
                 scene_phase = _run_scene_proposal_phase(
                     run_id=run_id,
                     scene_inputs=scene_inputs,
@@ -388,6 +397,7 @@ async def _execute_run(
                         "scene_count": chunking_phase.get("scene_count", 0),
                         "elapsed_seconds": chunking_phase.get("elapsed_seconds", 0.0),
                     },
+                    "scene_merge": scene_merge_summary,
                     "entity_phase": {
                         "skipped": True,
                         "reason": "novelist_scaffolding_uses_scene_chunking_only",

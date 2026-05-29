@@ -9,9 +9,10 @@ This document reflects the current pipeline implementation in:
 
 Transform unstructured narrative/session text into:
 
-1. incrementally enriched per-scene packages,
-2. global editorial critic remarks,
-3. final rewritten chapter HTML.
+1. Architect-scaffolded scene packages,
+2. per-scene retrieval/context + prose drafts,
+3. global critic remarks,
+4. final rewritten chapter HTML.
 
 ## Runtime Flow
 
@@ -24,31 +25,36 @@ Transform unstructured narrative/session text into:
 ### Stage 1: scaffolding (`step_1`)
 
 - Build normalized scene list (Architect-backed scaffolding path).
-- Output baseline scene structures used for all downstream steps.
+- In the current flow, this is an Architect scene passthrough for Novelist (no extra Novelist merge prompt).
 
-### Stage 2: scene exploration (`step_2`)
+### Stage 2: retrieval question planning (`step_2`)
 
-- Build initial scene writing package.
-- Adds exploration fields (tone, goal, prior knowledge questions/answers).
+- Generate 2-3 retrieval questions per scene from scene title + description.
+- This stage prepares retrieval intents only.
 
 ### Stage 3: retrieval context (`step_3`)
 
-- Retrieve scene-specific evidence/context via Elder integration.
-- Adds narrative context fields + retrieval query/answer traces into scene package fields.
+- Retrieve scene-specific prior context via Elder integration.
+- Output includes retrieval query/answer traces used to build prior knowledge.
 
-### Stage 4: intent drafting (`step_4`)
+### Stage 4: context build (`step_4`)
 
-- Adds intent fields to each scene package:
-  - `what_happens`
-  - `emotional_progression`
-  - `speaking_goals`
-  - `implied_history`
-  - `forbidden_contradictions`
+- Build compact context JSON per scene from:
+  - `scene_name`
+  - `scene_description`
+  - `prior_knowledge` (`{question: answer}`)
+- Output fields:
+  - `prior_events`
+  - `relationship_summaries`
+  - `personality_reminders`
+  - `unresolved_tensions`
+  - `style_details`
+  - `contradiction_warnings`
 
 ### Stage 5: prose generation (`step_5`)
 
-- Generates scene prose HTML and adds `prose_html` into each scene package.
-- Code no longer clips/limits paragraphs; full LLM response is retained after HTML normalization.
+- Generates per-scene prose HTML.
+- Uses conversation memory from step 4 for each scene thread.
 
 ### Stage 6: critic (`step_6`)
 
@@ -68,7 +74,7 @@ Transform unstructured narrative/session text into:
 
 ### Merging
 
-- Final HTML is assembled with scene-title separation using:
+- Final chapter HTML is assembled in scene order with:
   - `<h1>{scene_name}</h1>` + scene prose blocks.
 
 ## Debug Files
@@ -78,12 +84,12 @@ Step debug prompt/response files are written per run.
 Current response shapes:
 
 - `step_1_response.json`: scenes payload.
-- `step_2_response.json`: `{ "scene_packages": [...] }`
-- `step_3_response.json`: `{ "scene_packages": [...] }`
-- `step_4_response.json`: `{ "scene_packages": [...] }`
-- `step_5_response.json`: `{ "scene_packages": [...] }`
+- `step_2_response.json`: retrieval planning artifacts
+- `step_3_response.json`: retrieval artifacts
+- `step_4_response.json`: context build artifacts
+- `step_5_response.json`: prose generation artifacts
 
-For steps 2-5, debug response files are intentionally scene-packages-only (no token summaries, no scene traces).
+LLM usage for Novelist is aggregated in run artifacts (`llm_usage_summary` and `llm_usage_by_step_novelist`).
 
 ## Output Contracts
 

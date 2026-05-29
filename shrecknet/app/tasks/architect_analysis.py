@@ -908,10 +908,12 @@ async def _run_scene_merge_phase(
     model: str | LLMModelTarget,
     repair_model: str | LLMModelTarget,
     chunk_results: list[dict[str, Any]],
+    max_scenes_after_merge: int = MAX_SCENES_AFTER_MERGE,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    max_scenes_after_merge = max(1, int(max_scenes_after_merge or MAX_SCENES_AFTER_MERGE))
     scene_inputs = _flatten_scene_inputs(chunk_results)
     before_count = len(scene_inputs)
-    if before_count <= MAX_SCENES_AFTER_MERGE:
+    if before_count <= max_scenes_after_merge:
         return chunk_results, {"applied": False, "scene_count_before": before_count, "scene_count_after": before_count}
 
     scenes_payload = [
@@ -986,7 +988,7 @@ async def _run_scene_merge_phase(
             continue
         normalized_merged.append(scene)
 
-    normalized_merged = normalized_merged[:MAX_SCENES_AFTER_MERGE]
+    normalized_merged = normalized_merged[:max_scenes_after_merge]
     merged_chunk_result = [{
         "status": "ok",
         "entity_instance_id": None,

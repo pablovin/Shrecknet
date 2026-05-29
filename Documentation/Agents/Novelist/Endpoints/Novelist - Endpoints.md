@@ -128,9 +128,9 @@ API run reads return `NovelistRunRead`, which includes:
 For the local debug output directory, step response files are:
 
 - `step_1_response.json`: scene scaffolding payload
-- `step_2_response.json`: `{ "scene_packages": [...] }`
-- `step_3_response.json`: `{ "scene_packages": [...] }`
-- `step_4_response.json`: `{ "scene_packages": [...] }`
-- `step_5_response.json`: `{ "scene_packages": [...] }`
+- `step_2_response.json`: retrieval question planning artifacts
+- `step_3_response.json`: retrieval artifacts
+- `step_4_response.json`: context build artifacts
+- `step_5_response.json`: prose generation artifacts
 
-Steps 2-5 are intentionally scene-packages-only for easier debugging.
+LLM usage breakdown is exposed via run artifacts (`llm_usage_summary` and `llm_usage_by_step_novelist`).

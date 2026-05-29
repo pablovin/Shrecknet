@@ -977,7 +977,30 @@ async def _run_scene_rewrite_phase(
             )
             return scene_ref, None
 
-    rewrite_pairs = await asyncio.gather(*(_rewrite_single(scene) for scene in scene_inputs))
+    try:
+        rewrite_results = await asyncio.gather(
+            *(_rewrite_single(scene) for scene in scene_inputs),
+            return_exceptions=True,
+        )
+    except Exception as exc:
+        logger.warning(
+            "scene_rewrite_phase_error: run_id=%s error=%s; continuing without rewrite",
+            run_id,
+            exc,
+        )
+        return chunk_results, {"applied": False, "rewritten_count": 0, "error": str(exc)}
+
+    rewrite_pairs: list[tuple[str, dict[str, Any] | None]] = []
+    for item in rewrite_results:
+        if isinstance(item, Exception):
+            logger.warning(
+                "scene_rewrite_phase_task_exception: run_id=%s error=%s",
+                run_id,
+                item,
+            )
+            continue
+        rewrite_pairs.append(item)
+
     rewrite_by_ref: dict[str, dict[str, Any]] = {
         scene_ref: row for scene_ref, row in rewrite_pairs if scene_ref and isinstance(row, dict)
     }

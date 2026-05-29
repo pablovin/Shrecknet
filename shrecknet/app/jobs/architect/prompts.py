@@ -24,12 +24,12 @@ A scene should usually remain unified while:
 Prefer fewer, larger, stronger scenes.
 Avoid scene fragmentation.
 
-Scene titles: must reflect the dominant dramatic situation of the entire scene.
+Scene names: must reflect the dominant dramatic situation of the entire scene.
 Always use a descriptive title that captures the tension, conflict, decisions, or strategic intent of the scene. Never use The Narrator, or nothing like that in titles.
 Always use named entities on the title. Avoid vague labels like "Strategic Discussion", "Rising Tension", "Observation and Preparation", etc.
 
 Scene descriptions: must capture the core tension and meaningful state change of the entire scene. Write a maximum of 6 sentences.
-never use vague references like "they", "the group", "the foreigners", "the party", etc. Always use named entities in descriptions.
+never use vague references like "the narrator", "they", "the group", "the foreigners", "the party", etc. Always use named entities in descriptions.
 Never talk about the narrator or the writer or nothing like that.
 
 For each scene:
@@ -47,13 +47,15 @@ Strong:
 
 CRITICAL OUTPUT RULE:
 If a scene does not have start_paragraph and end_paragraph, the output is invalid.
+DO NOT invent anything. Only use the information from the paragraphs.
+Do not create scenes and narrative that is not present on the paragraphs.
 
 Return ONLY valid RFC8259 JSON.
 
 {{
   "scenes": [
     {{
-      "scene_id": 0,
+      "scene_id": Should be temporally incremental,
       "name": "...",
       "description": "...",
       "start_paragraph": 1,

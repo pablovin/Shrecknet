@@ -247,16 +247,16 @@ Task:
 - Rewrite merged scene title and description so they encapsulate what happens across merged scenes.
 
 Return STRICT RFC8259 JSON only:
-{
+{{
   "scenes": [
-    {
+    {{
       "scene_ref": "new merged scene ref (string)",
       "name": "rewritten scene title",
       "description": "rewritten merged description",
       "source_scene_refs": ["original_scene_ref_1", "original_scene_ref_2"]
-    }
+    }}
   ]
-}
+}}
 
 Constraints:
 - Output max 10 scenes.

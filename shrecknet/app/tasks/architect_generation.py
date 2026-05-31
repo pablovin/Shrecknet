@@ -628,8 +628,9 @@ async def _execute_generation(
             created_scene_ids: list[str] = []
             expected_scene_relation_links = 0
 
-            existing_entity_ids = set(existing_entities_map.keys()) | set(created_entity_ids)
-            default_source_entity_id = next(iter(existing_entity_ids), None)
+            instance_entity_ids = set(existing_entities_map.keys())
+            existing_entity_ids = instance_entity_ids | set(created_entity_ids)
+            default_source_entity_id = next(iter(sorted(instance_entity_ids)), None)
             if default_source_entity_id is None:
                 raise ValueError("No entity available to anchor derived_from for scenes")
 
@@ -660,7 +661,7 @@ async def _execute_generation(
                 )
                 for scene in approved_scenes:
                     source_entity_id = scene.get("source_entity_instance_id") or default_source_entity_id
-                    if source_entity_id not in existing_entity_ids:
+                    if source_entity_id not in instance_entity_ids:
                         source_entity_id = default_source_entity_id
 
                     scene_ref = str(scene.get("scene_ref") or "")
@@ -770,6 +771,8 @@ async def _execute_generation(
                         scene_proposals=approved_scenes,
                         fallback=default_source_entity_id,
                     )
+                    if source_entity_id not in instance_entity_ids:
+                        source_entity_id = default_source_entity_id
                     relates = []
                     milestone_relation_pairs: set[tuple[str, str]] = set()
                     allowed_entities = scene_ref_to_entities.get(scene_ref, set())

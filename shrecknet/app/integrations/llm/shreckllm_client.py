@@ -31,6 +31,22 @@ class ShreckLLMClient:
         self._http = httpx.AsyncClient(base_url=self.base_url, timeout=self.timeout)
         self._usage_events: list[dict[str, Any]] = []
 
+    async def fetch_provider_auth_statuses(self) -> dict[str, bool]:
+        """Fetch which providers have auth configured from shreckLLM.
+
+        Returns a mapping of provider_id -> True/False. If the request fails, returns
+        an empty dict (caller should treat missing entries as unchecked / proceed normally).
+        """
+        try:
+            resp = await self._http.get("/providers/auth-status")
+            if resp.status_code == 200:
+                data = resp.json() if resp.content else {}
+                if isinstance(data, dict):
+                    return {k: bool(v) for k, v in data.items()}
+        except Exception:
+            pass
+        return {}
+
     async def aclose(self) -> None:
         await self._http.aclose()
         self._usage_events.clear()

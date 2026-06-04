@@ -214,18 +214,29 @@ async def _run_llm_prewarm() -> None:
         unique[_target_key(target)] = target
     if not unique:
         return
-    logger.info(
-        "llm_prewarm_start configured_targets=%d unique_targets=%d models=%s",
-        len(targets),
-        len(unique),
-        list(unique.keys()),
-    )
     client = ShreckLLMClient(
         base_url=settings.shreckllm_base_url,
         timeout=max(12.0, settings.shreckllm_request_timeout_s),
         max_retries=0,
     )
     try:
+        provider_auth = await client.fetch_provider_auth_statuses()
+        if provider_auth:
+            unconfigured = {t.provider for t in unique.values() if not provider_auth.get(t.provider, True)}
+            for provider in sorted(unconfigured):
+                logger.info(
+                    "llm_prewarm_skipped provider=%s reason=provider_not_configured",
+                    provider,
+                )
+            unique = {k: t for k, t in unique.items() if t.provider not in unconfigured}
+        if not unique:
+            return
+        logger.info(
+            "llm_prewarm_start configured_targets=%d unique_targets=%d models=%s",
+            len(targets),
+            len(unique),
+            list(unique.keys()),
+        )
         for key, target in unique.items():
             try:
                 await asyncio.wait_for(

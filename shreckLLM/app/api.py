@@ -491,6 +491,14 @@ async def get_anthropic_validate(
     return AnthropicValidationResponse.model_validate(payload)
 
 
+@router.get("/providers/auth-status", status_code=status.HTTP_200_OK)
+async def get_providers_auth_status(
+    service: ChatService = Depends(get_service),
+) -> dict[str, object]:
+    """Return whether each provider has auth configured. No auth required; no network calls made."""
+    return service.providers_auth_status()
+
+
 @router.get("/providers/validate", status_code=status.HTTP_200_OK)
 async def get_providers_validate(
     service: ChatService = Depends(get_service),

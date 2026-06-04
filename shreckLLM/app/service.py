@@ -327,6 +327,16 @@ class ChatService:
             providers[provider_id] = await self.provider_validation_status(provider_id)
         return {"providers": providers}
 
+    def providers_auth_status(self) -> dict[str, bool]:
+        """Return whether each provider has auth configured (no network calls)."""
+        result: dict[str, bool] = {}
+        for provider_id, cfg in self._runtime.provider_defaults.items():
+            if cfg.auth_strategy == "api_key":
+                result[provider_id] = bool((cfg.api_key or "").strip())
+            else:
+                result[provider_id] = True
+        return result
+
     async def health(self) -> dict[str, Any]:
         return {"ok": True, "service": "shreckLLM"}
 

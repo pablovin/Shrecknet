@@ -22,6 +22,7 @@ from app.models.ontology import (
     OntologyRelationship,
     PropertyDataType,
 )
+from app.models.personal_companion_agent import PersonalCompanionAgent
 from app.models.user import User, UserRole, user_entities
 from app.models.world import World
 
@@ -38,6 +39,7 @@ __all__ = [
     "PropertyDataType",
     "Agent",
     "agent_ontologies",
+    "PersonalCompanionAgent",
     "BackgroundJob",
     "AuthorType",
     "AuditAction",

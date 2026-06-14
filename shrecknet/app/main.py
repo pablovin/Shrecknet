@@ -32,6 +32,7 @@ from app.api.routers import (
     novelist,
     ontologies,
     ontology_instances,
+    personal_companion_agents,
     setup,
     users,
     worlds,
@@ -341,6 +342,7 @@ app.include_router(media.router)
 app.include_router(media_admin.router)
 app.include_router(libraries.router)
 app.include_router(ontology_instances.router)
+app.include_router(personal_companion_agents.router)
 app.include_router(events.router)
 app.include_router(contracts.router)
 app.include_router(backups.router)

@@ -4,7 +4,11 @@ from sqlalchemy.orm import Session
 
 from app import models as _models  # noqa: F401
 from app.db.base import Base
-from app.db.migrations import migrate_agents_table, migrate_deprecate_sql_ontology_instances
+from app.db.migrations import (
+    migrate_agents_table,
+    migrate_deprecate_sql_ontology_instances,
+    migrate_personal_companion_agents_table,
+)
 from app.db.session import get_engine, get_sessionmaker
 
 
@@ -14,6 +18,7 @@ def init_db() -> None:
     with engine.begin() as conn:
         migrate_agents_table(conn)
         migrate_deprecate_sql_ontology_instances(conn)
+        migrate_personal_companion_agents_table(conn)
 
     sessionmaker = get_sessionmaker()
     with sessionmaker() as session:

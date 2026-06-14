@@ -39,6 +39,9 @@ from .models import (
     AgentCreate,
     AgentRead,
     AgentUpdate,
+    PersonalCompanionAgentCreate,
+    PersonalCompanionAgentRead,
+    PersonalCompanionAgentUpdate,
     LLMReadinessReport,
     Ontology,
     OntologyEntityResolveResponse,
@@ -242,6 +245,56 @@ class AgentsAPI:
     async def detach_ontology(self, agent_id: str, ontology_id: int) -> AgentRead:
         data = await self._client.raw_request("DELETE", f"/agents/{agent_id}/ontologies/{ontology_id}")
         return AgentRead.model_validate(data)
+
+
+class PersonalCompanionAPI:
+    """Personal companion singleton endpoints for current user."""
+
+    def __init__(self, client: AsyncShrecknetClient):
+        self._client = client
+
+    async def create(self, payload: PersonalCompanionAgentCreate) -> PersonalCompanionAgentRead:
+        data = await self._client.raw_request(
+            "POST",
+            "/users/me/companion",
+            json=payload.model_dump(exclude_none=True),
+        )
+        return PersonalCompanionAgentRead.model_validate(data)
+
+    async def get(self) -> PersonalCompanionAgentRead:
+        data = await self._client.raw_request("GET", "/users/me/companion")
+        return PersonalCompanionAgentRead.model_validate(data)
+
+    async def update(self, payload: PersonalCompanionAgentUpdate) -> PersonalCompanionAgentRead:
+        data = await self._client.raw_request(
+            "PATCH",
+            "/users/me/companion",
+            json=payload.model_dump(exclude_none=True),
+        )
+        return PersonalCompanionAgentRead.model_validate(data)
+
+    async def delete(self) -> None:
+        await self._client.raw_request("DELETE", "/users/me/companion")
+
+    async def upload_avatar(self, image_path: str) -> PersonalCompanionAgentRead:
+        with open(image_path, "rb") as avatar:
+            files = {"file": (image_path.rsplit("/", 1)[-1], avatar, "application/octet-stream")}
+            response = await self._client._client.post(
+                "/users/me/companion/avatar",
+                files=files,
+                headers=self._client._headers(),
+            )
+        detail = None
+        try:
+            payload = response.json()
+            if isinstance(payload, dict):
+                detail = payload.get("detail")
+        except Exception:
+            detail = response.text
+        from .errors import raise_for_status
+
+        raise_for_status(response.status_code, detail)
+        return PersonalCompanionAgentRead.model_validate(response.json())
 
 
 class ShreckLLMAPI:

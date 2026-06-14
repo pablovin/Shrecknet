@@ -182,6 +182,47 @@ def migrate_deprecate_sql_ontology_instances(sync_conn) -> None:
     finally:
         sync_conn.execute(text("PRAGMA foreign_keys=ON"))
 
+
+def migrate_personal_companion_agents_table(sync_conn) -> None:
+    """Ensure personal_companion_agents table exists with singleton-per-user constraint."""
+    inspector = inspect(sync_conn)
+    table_names = set(inspector.get_table_names())
+
+    if "personal_companion_agents" not in table_names:
+        sync_conn.execute(
+            text(
+                """
+                CREATE TABLE personal_companion_agents (
+                    id VARCHAR(36) NOT NULL,
+                    user_id INTEGER NOT NULL,
+                    name VARCHAR(255) NOT NULL,
+                    avatar_url VARCHAR(512),
+                    writing_style TEXT NOT NULL,
+                    active BOOLEAN NOT NULL DEFAULT 1,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+                    PRIMARY KEY (id),
+                    FOREIGN KEY(user_id) REFERENCES users (id) ON DELETE CASCADE
+                )
+                """
+            )
+        )
+
+    sync_conn.execute(
+        text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS "
+            "uq_personal_companion_agents_user_id "
+            "ON personal_companion_agents (user_id)"
+        )
+    )
+    sync_conn.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS "
+            "ix_personal_companion_agents_id "
+            "ON personal_companion_agents (id)"
+        )
+    )
+
 async def migrate_novelist_runs(engine: AsyncEngine) -> None:
     """Ensure novelist_runs table exists when upgrading."""
     async with engine.begin() as conn:

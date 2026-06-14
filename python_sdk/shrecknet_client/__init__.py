@@ -1,6 +1,6 @@
 from .client import AsyncShrecknetClient
 from .models import *
-from .resources import AgentsAPI, ArchitectAPI, ElderAPI, EmbeddingsAPI, JobsAPI, NovelistAPI, OntologiesAPI, OntologyEmbeddingsAPI, OntologyInstancesAPI, ShreckLLMAPI, WorldsAPI
+from .resources import AgentsAPI, ArchitectAPI, ElderAPI, EmbeddingsAPI, JobsAPI, NovelistAPI, OntologiesAPI, OntologyEmbeddingsAPI, OntologyInstancesAPI, PersonalCompanionAPI, ShreckLLMAPI, WorldsAPI
 
 
 class Shrecknet:
@@ -18,6 +18,7 @@ class Shrecknet:
         self.ontologies = OntologiesAPI(self.client)
         self.ontology_instances = OntologyInstancesAPI(self.client)
         self.agents = AgentsAPI(self.client)
+        self.personal_companion = PersonalCompanionAPI(self.client)
         self.shreckllm = ShreckLLMAPI(self.client, base_url=shreckllm_base_url, timeout=timeout)
         self.jobs = JobsAPI(self.client)
         self.ontology_embeddings = OntologyEmbeddingsAPI(self.client, self.jobs)

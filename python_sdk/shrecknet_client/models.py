@@ -153,6 +153,31 @@ class AgentRead(AgentBase):
     ontology_ids: list[int] = Field(default_factory=list)
 
 
+class PersonalCompanionAgentBase(BaseModel):
+    name: str
+    avatar_url: str | None = None
+    writing_style: str
+    active: bool = True
+
+
+class PersonalCompanionAgentCreate(PersonalCompanionAgentBase):
+    pass
+
+
+class PersonalCompanionAgentUpdate(BaseModel):
+    name: str | None = None
+    avatar_url: str | None = None
+    writing_style: str | None = None
+    active: bool | None = None
+
+
+class PersonalCompanionAgentRead(PersonalCompanionAgentBase):
+    id: str
+    user_id: int
+    created_at: datetime
+    updated_at: datetime
+
+
 class ProviderValidation(BaseModel):
     configured: bool
     present: bool

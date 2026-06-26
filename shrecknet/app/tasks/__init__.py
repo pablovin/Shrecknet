@@ -11,6 +11,7 @@ from . import (
     backup_tasks,
     novelist,
     ontology_instance_clear,
+    companion_orchestrator,
 )
 
 __all__ = [
@@ -23,4 +24,5 @@ __all__ = [
     "backup_tasks",
     "novelist",
     "ontology_instance_clear",
+    "companion_orchestrator",
 ]

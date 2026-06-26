@@ -7,7 +7,9 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from app.api import router
+from app.config import Settings
 from app.schemas import ChatRequest, ChatResponse, ChatUsage
+from app.service import ChatService
 
 
 class FakeService:
@@ -141,3 +143,52 @@ async def test_chat_endpoint_and_concurrency(test_app: FastAPI) -> None:
             )
         )
         assert all(r.status_code == 200 for r in burst)
+
+
+@pytest.mark.asyncio
+async def test_chat_jobs_continue_after_runtime_refresh(monkeypatch, tmp_path) -> None:
+    import app.config_store as config_store
+
+    settings = Settings(
+        redis_url="redis://localhost:6379/15",
+        data_dir=str(tmp_path),
+        ollama_prewarm_on_startup=False,
+    )
+    config_store._cache = None
+    monkeypatch.setattr(config_store, "get_settings", lambda: settings)
+
+    service = ChatService(settings)
+
+    async def fake_execute(request: ChatRequest) -> ChatResponse:
+        return ChatResponse(
+            text="ok",
+            provider_id=request.provider_id,
+            requested_model=request.model,
+            resolved_model=request.model or "gemma3:4b",
+            provider_request_id=None,
+            model=request.model or "gemma3:4b",
+            usage=ChatUsage(prompt_tokens=1, completion_tokens=1, total_tokens=2),
+            latency_ms=1.0,
+            conversation_id=request.conversation_id,
+            memory_applied=False,
+            metadata=request.metadata,
+        )
+
+    monkeypatch.setattr(service, "_execute_chat_request", fake_execute)
+
+    try:
+        service.ensure_background_tasks()
+        await service.refresh_runtime()
+
+        request = ChatRequest(
+            provider_id="ollama",
+            model="gemma3:4b",
+            messages=[{"role": "user", "content": "hello"}],
+        )
+        job = await service.submit_chat_job(request)
+        result = await service.wait_for_chat_job_result(job.job_id, timeout_s=1.0)
+
+        assert result.text == "ok"
+        assert service.get_chat_job_status(job.job_id).status == "succeeded"
+    finally:
+        await service.aclose()

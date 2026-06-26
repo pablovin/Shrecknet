@@ -1,5 +1,7 @@
 """Repository for Agent model."""
 
+from __future__ import annotations
+
 from typing import Optional
 from uuid import uuid4
 
@@ -138,3 +140,27 @@ class AgentRepository:
         await self.session.refresh(agent, ["ontologies"])
 
         return agent
+
+    async def list_active_by_ontology_and_jobs(
+        self,
+        *,
+        ontology_id: int,
+        jobs: list[str],
+    ) -> list[Agent]:
+        """List active agents linked to an ontology and constrained by job types."""
+        if not jobs:
+            return []
+
+        stmt = (
+            select(Agent)
+            .join(Agent.ontologies)
+            .where(
+                Ontology.id == ontology_id,
+                Agent.active.is_(True),
+                Agent.job.in_(jobs),
+            )
+            .options(selectinload(Agent.ontologies))
+            .order_by(Agent.name.asc())
+        )
+        result = await self.session.execute(stmt)
+        return list(result.scalars().unique().all())

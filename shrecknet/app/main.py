@@ -206,6 +206,8 @@ async def _run_llm_prewarm() -> None:
         settings.model_agents_repair_json,
         settings.model_elder,
         settings.model_librarian,
+        settings.model_orchestrator_routing,
+        settings.model_orchestrator_synthesis,
         settings.model_novelist_planning,
         settings.model_novelist_prose,
         settings.model_novelist_critic,

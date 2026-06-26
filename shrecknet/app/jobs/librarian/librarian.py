@@ -155,7 +155,7 @@ class LibrarianOrchestrator:
                 )
             else:
                 # Generate answer with proper citations
-                answer = await self._generate_answer_with_style(
+                raw_answer = await self._generate_answer_with_style(
                     query=request.query,
                     chunks=retrieved_chunks[: self.max_answer_chunks],
                     writing_style=agent.writing_style,
@@ -163,9 +163,8 @@ class LibrarianOrchestrator:
                 )
 
                 # Extract sources that were actually used in the answer
-                sources_used = self._extract_sources_from_answer(
-                    answer, retrieved_chunks
-                )
+                sources_used = self._extract_sources_from_answer(raw_answer, retrieved_chunks)
+                answer = self._render_inline_book_citations(raw_answer, retrieved_chunks)
 
         # Get unique library items used
         library_items_used = list({chunk.library_item_id for chunk in sources_used})
@@ -500,4 +499,62 @@ class LibrarianOrchestrator:
                 sources_used.append(chunk)
 
         return sources_used
+
+    def _render_inline_book_citations(
+        self,
+        answer: str,
+        all_chunks: list[RetrievedChunk],
+    ) -> str:
+        """Replace cite wrappers with natural inline book/page references and links."""
+        if not answer:
+            return answer
+
+        chunk_index: dict[tuple[int, int], RetrievedChunk] = {}
+        for chunk in all_chunks:
+            chunk_index[(int(chunk.library_item_id), int(chunk.page_number))] = chunk
+
+        pattern = re.compile(r"\[(?P<text>.*?)\]\{cite(?P<attrs>[^}]*)\}", re.DOTALL)
+
+        def _extract_int(attrs: str, key: str) -> int | None:
+            match = re.search(rf"\b{re.escape(key)}\s*=\s*(\d+)", attrs)
+            if not match:
+                return None
+            try:
+                return int(match.group(1))
+            except (TypeError, ValueError):
+                return None
+
+        def _extract_str(attrs: str, key: str) -> str | None:
+            match = re.search(rf'{re.escape(key)}\s*=\s*"([^"]+)"', attrs)
+            if match:
+                return match.group(1).strip()
+            match = re.search(rf"\b{re.escape(key)}\s*=\s*([^\s]+)", attrs)
+            if match:
+                return match.group(1).strip().strip('"')
+            return None
+
+        def _replace(match: re.Match[str]) -> str:
+            text = (match.group("text") or "").strip()
+            attrs = match.group("attrs") or ""
+
+            item_id = _extract_int(attrs, "library_item_id")
+            page = _extract_int(attrs, "page")
+            title = _extract_str(attrs, "library_item_name")
+
+            chunk = chunk_index.get((item_id, page)) if item_id is not None and page is not None else None
+            resolved_title = title or (chunk.book_title if chunk else None) or (
+                f"Book #{item_id}" if item_id is not None else "Book"
+            )
+            page_label = page if page is not None else (chunk.page_number if chunk else None)
+            page_url = chunk.page_url if chunk else None
+
+            if page_url and page_label is not None:
+                return f"{text} (according to [{resolved_title}, p.{page_label}]({page_url}))"
+            if page_label is not None:
+                return f"{text} (according to {resolved_title}, p.{page_label})"
+            return f"{text} (according to {resolved_title})"
+
+        rendered = pattern.sub(_replace, answer)
+        rendered = re.sub(r"\n{3,}", "\n\n", rendered).strip()
+        return rendered
 

@@ -51,6 +51,8 @@ LLM_TARGET_FIELDS = (
     "model_novelist_prose",
     "model_novelist_critic",
     "model_librarian",
+    "model_orchestrator_routing",
+    "model_orchestrator_synthesis",
 )
 ALLOWED_OPENAI_MODELS = frozenset({"gpt-5", "gpt-5-nano", "gpt-4o-mini"})
 
@@ -187,6 +189,12 @@ class Settings(BaseSettings):
     )
     model_librarian: LLMModelTarget = Field(
         default_factory=lambda: LLMModelTarget(provider="openai", name="gpt-5-nano")
+    )
+    model_orchestrator_routing: LLMModelTarget = Field(
+        default_factory=lambda: LLMModelTarget(provider="openai", name="gpt-5-nano")
+    )
+    model_orchestrator_synthesis: LLMModelTarget = Field(
+        default_factory=lambda: LLMModelTarget(provider="openai", name="gpt-5")
     )
     default_top_k: int = 20
     embedding_model_id: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"

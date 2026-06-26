@@ -72,6 +72,14 @@
     "provider": "ollama",
     "name": "gemma3:4b"
   },
+  "model_orchestrator_routing": {
+    "provider": "ollama",
+    "name": "gemma3:4b"
+  },
+  "model_orchestrator_synthesis": {
+    "provider": "ollama",
+    "name": "gemma3:4b"
+  },
   "default_top_k": 20,
   "embedding_model_id": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
   "embedding_dimension": 384,

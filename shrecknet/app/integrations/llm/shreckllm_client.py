@@ -65,6 +65,14 @@ class ShreckLLMClient:
         for attempt in range(1, attempts + 1):
             try:
                 job_id = await self.submit_chat_job(payload)
+                logger.info(
+                    "shreckllm_chat_job_submitted provider=%s model=%s job_id=%s usage_tag=%s attempt=%s",
+                    target.provider,
+                    target.name,
+                    job_id,
+                    usage_tag,
+                    attempt,
+                )
                 data = await self.wait_for_chat_job(
                     job_id,
                     timeout_s=self.timeout,
@@ -138,15 +146,27 @@ class ShreckLLMClient:
     ) -> dict[str, Any]:
         start = asyncio.get_running_loop().time()
         interval = max(0.05, float(poll_interval_s))
+        last_status = ""
         while True:
             status_resp = await self._http.get(f"/chat/jobs/{job_id}")
             status_resp.raise_for_status()
             status_data = status_resp.json() if status_resp.content else {}
             status_value = str((status_data or {}).get("status") or "").strip().lower()
+            if status_value != last_status:
+                logger.info(
+                    "shreckllm_chat_job_status job_id=%s status=%s provider=%s model=%s retry_count=%s",
+                    job_id,
+                    status_value,
+                    (status_data or {}).get("provider_id"),
+                    (status_data or {}).get("resolved_model") or (status_data or {}).get("requested_model"),
+                    (status_data or {}).get("retry_count"),
+                )
+                last_status = status_value
             if status_value == "succeeded":
                 result = await self._http.get(f"/chat/jobs/{job_id}/result")
                 result.raise_for_status()
                 data = result.json() if result.content else {}
+                logger.info("shreckllm_chat_job_result job_id=%s status=succeeded", job_id)
                 return data if isinstance(data, dict) else {}
             if status_value == "failed":
                 error = (status_data or {}).get("error")

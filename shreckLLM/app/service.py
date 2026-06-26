@@ -182,14 +182,16 @@ class ChatService:
         self._bind_providers()
         self.limiter = RequestLimiter(max_concurrent=self._runtime.max_concurrent_requests)
         self._init_provider_limiters()
-        self._job_queue = asyncio.Queue(maxsize=max(1, int(self._runtime.chat_job_queue_max_size)))
+        self.ensure_background_tasks()
         return self._runtime
 
     def ensure_background_tasks(self) -> None:
         if self._job_worker_task is None or self._job_worker_task.done():
             self._job_worker_task = asyncio.create_task(self._job_worker_loop())
+            logger.info("chat_job_worker_started")
         if self._job_gc_task is None or self._job_gc_task.done():
             self._job_gc_task = asyncio.create_task(self._job_gc_loop())
+            logger.info("chat_job_gc_started")
 
     @staticmethod
     def _mask_secret(value: str | None) -> str | None:
@@ -457,9 +459,9 @@ class ChatService:
             "started_at": None,
             "finished_at": None,
             "expires_at": None,
-            "provider_id": None,
+            "provider_id": request.provider_id,
             "resolved_model": None,
-            "requested_model": None,
+            "requested_model": request.model,
             "retry_count": 0,
             "error": None,
             "request": request,
@@ -467,6 +469,13 @@ class ChatService:
         }
         self._job_events[job_id] = asyncio.Event()
         self._job_queue.put_nowait(job_id)
+        logger.info(
+            "chat_job_queued job_id=%s provider=%s model=%s queue_depth=%s",
+            job_id,
+            request.provider_id,
+            request.model,
+            self._job_queue.qsize(),
+        )
         return ChatJobCreateResponse(job_id=job_id, status="queued", created_at=now, expires_at=None)
 
     def get_chat_job_status(self, job_id: str) -> ChatJobStatusResponse | None:
@@ -520,16 +529,35 @@ class ChatService:
             row["status"] = "running"
             row["started_at"] = time.time()
             request = row.get("request")
+            logger.info(
+                "chat_job_started job_id=%s provider=%s model=%s queue_depth=%s",
+                job_id,
+                getattr(request, "provider_id", None),
+                getattr(request, "model", None),
+                self._job_queue.qsize(),
+            )
             try:
                 response = await self._execute_chat_request(request)
                 row["response"] = response
                 row["status"] = "succeeded"
+                row["provider_id"] = response.provider_id
+                row["resolved_model"] = response.resolved_model
+                row["requested_model"] = response.requested_model
             except Exception as exc:
                 row["status"] = "failed"
                 row["error"] = str(exc)
             finally:
                 row["finished_at"] = time.time()
                 row["expires_at"] = row["finished_at"] + max(1, int(self._runtime.chat_job_result_ttl_seconds))
+                logger.info(
+                    "chat_job_finished job_id=%s status=%s provider=%s model=%s elapsed_ms=%s error=%s",
+                    job_id,
+                    row.get("status"),
+                    row.get("provider_id") or getattr(request, "provider_id", None),
+                    row.get("resolved_model") or getattr(request, "model", None),
+                    round((float(row["finished_at"]) - float(row["started_at"] or row["finished_at"])) * 1000, 2),
+                    row.get("error"),
+                )
                 event = self._job_events.get(job_id)
                 if event is not None:
                     event.set()

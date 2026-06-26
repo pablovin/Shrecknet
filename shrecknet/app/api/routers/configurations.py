@@ -121,6 +121,8 @@ SETTINGS_GROUPS: list[dict[str, Any]] = [
             "model_novelist_prose",
             "model_novelist_critic",
             "model_librarian",
+            "model_orchestrator_routing",
+            "model_orchestrator_synthesis",
         ],
     },
     {
@@ -215,6 +217,8 @@ FIELD_UI_META: dict[str, dict[str, Any]] = {
     "model_novelist_prose": {"type": "llm_target", "help": "Provider/model target for novelist prose stages (step5+step7)."},
     "model_novelist_critic": {"type": "llm_target", "help": "Provider/model target for novelist critic stage (step6)."},
     "model_librarian": {"type": "llm_target", "help": "Provider/model target for librarian."},
+    "model_orchestrator_routing": {"type": "llm_target", "help": "Provider/model target for companion orchestrator routing classifier."},
+    "model_orchestrator_synthesis": {"type": "llm_target", "help": "Provider/model target for companion orchestrator final synthesis."},
     "max_image_upload_bytes": {"type": "integer", "help": "Maximum image upload size in bytes."},
     "image_max_width": {"type": "integer", "help": "Maximum image width in pixels."},
     "image_max_height": {"type": "integer", "help": "Maximum image height in pixels."},

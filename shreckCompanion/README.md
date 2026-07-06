@@ -24,6 +24,7 @@ Public fields:
 - `headers.authorization`: user bearer token forwarded to Shrecknet job endpoints.
 - `headers.user_id`: user identity header expected by v1.
 - `endpoints`: relative API paths for companion CRUD, bootstrap, queue turn, poll turn, and chat file.
+- `endpoints.companion_rapport`: read-only user-companion rapport snapshot.
 - `limits.turn_query_max_length`: current frontend validation limit.
 - `limits.turn_job_result_ttl_seconds`: result retention window.
 - `media.base_url`: static media mount for uploaded companion assets.
@@ -38,7 +39,7 @@ Frontend polling type contract:
 - `frontend_types.ts`: TypeScript contract for `queued`, `running`, `done`, and `failed` turn-result payloads.
 - `done.payload.final.linked_text`: HTML-renderable final answer with inline node anchors.
 
-## Turn Job Phases
+## Turn Lifecycle
 
 The frontend polls `GET /users/me/companion/orchestrator/turns/{job_id}`.
 
@@ -53,212 +54,54 @@ Envelope shape:
 ```
 
 While the backend is working, `status` stays `running` and `payload.phase` changes through four values.
+While the backend is working, `status` stays `running` and `payload.phase` moves through six values.
 
-### 1. Planning
+Deterministic pipeline order (logical lifecycle):
 
-Purpose:
+1. Load state
+2. Lifecycle policy
+3. Knowledge planning (Elder/Librarian only)
+4. Knowledge execution
+5. Synthesis
+6. Reflection evaluator
+7. Optional repair (max one pass)
+8. Optional proactive nudge (max one short nudge)
+9. Apply bounded state updates
+10. Persist final payload
 
-- Herald is deciding which tools are needed, in which order, and whether later steps depend on earlier grounded evidence.
+Observable running phases in turn payload:
 
-Payload fields:
+1. `policy` (`Planning companion policy`) progress `{ "current": 1, "total": 6 }`
+2. `planning` (`Planning tool usage`) progress `{ "current": 2, "total": 6 }`
+3. `selecting_tools` (`Selecting tools`) progress `{ "current": 3, "total": 6 }`
+4. `executing_steps` (`Executing tool plan`) progress `{ "current": 4, "total": 6 }`
+5. `synthesizing` (`Synthesizing answer`) progress `{ "current": 5, "total": 6 }`
+6. `reflection` (`Evaluating response quality`) progress `{ "current": 6, "total": 6 }`
 
-- `status`: always `running`
-- `phase`: `planning`
-- `phase_label`: `Planning tool usage`
-- `progress`: `{ "current": 1, "total": 4 }`
-- plus the base turn context: `query`, `session_id`, `ontology_id`, `companion_id`, `allocated_tools`
+Done payload lifecycle metadata:
 
-Example:
+- `companion_policy`
+- `turn_reflection`
+- `chat_state`
+- `rapport_profile`
+- `rapport_patch_applied`
 
-```json
-{
-  "job_id": 8,
-  "status": "running",
-  "payload": {
-    "status": "running",
-    "query": "Who is Ernst?",
-    "session_id": "9ff6774b-e06d-417a-9b71-cab0a33e028d",
-    "ontology_id": 99,
-    "companion_id": "companion-123",
-    "allocated_tools": {
-      "elder": [{ "id": "elder-1", "name": "Elder", "job": "elder", "ontology_ids": [99] }],
-      "librarian": [{ "id": "librarian-1", "name": "Librarian", "job": "librarian", "ontology_ids": [99] }]
-    },
-    "phase": "planning",
-    "phase_label": "Planning tool usage",
-    "progress": { "current": 1, "total": 4 }
-  }
-}
-```
+### Efficiency And Parallelism Rules
 
-### 2. Selecting Tools
+The lifecycle remains deterministic, but internal work can run concurrently when data dependencies allow it.
 
-Purpose:
+Safe concurrency opportunities:
 
-- Routing finished and the backend has chosen which allocated tools will be called.
+1. In `executing_steps`, independent knowledge steps can run in parallel only when there are no `depends_on` constraints.
+2. Reflection/state update persistence can run after final text is produced, and can be optimized to avoid blocking frontend response in future async mode.
+3. Non-LLM transforms (normalization, payload shaping, reference linking, bounded patch validation) should stay local and deterministic.
 
-Payload fields:
+Concurrency guardrails:
 
-- everything from `planning`
-- `routing`: backward-compatible summary of whether `elder` and/or `librarian` are used
-- `plan`: structured execution plan
-- `selected_tools`: `{ elder: string[], librarian: string[] }`
-- `phase`: `selecting_tools`
-- `phase_label`: `Selecting tools`
-- `progress`: `{ "current": 2, "total": 4 }`
-
-Example:
-
-```json
-{
-  "job_id": 8,
-  "status": "running",
-  "payload": {
-    "status": "running",
-    "query": "Who is Ernst?",
-    "session_id": "9ff6774b-e06d-417a-9b71-cab0a33e028d",
-    "ontology_id": 99,
-    "companion_id": "companion-123",
-    "allocated_tools": {
-      "elder": [{ "id": "elder-1", "name": "Elder", "job": "elder", "ontology_ids": [99] }],
-      "librarian": [{ "id": "librarian-1", "name": "Librarian", "job": "librarian", "ontology_ids": [99] }]
-    },
-    "phase": "selecting_tools",
-    "phase_label": "Selecting tools",
-    "progress": { "current": 2, "total": 4 },
-    "routing": {
-      "use_elder": true,
-      "use_librarian": false,
-      "reason": "Requires knowledge of a specific character and their role in the story."
-    },
-    "selected_tools": {
-      "elder": ["elder-1"],
-      "librarian": []
-    }
-  }
-}
-```
-
-### 3. Executing Steps
-
-Purpose:
-
-- The backend is actively executing the planned tool steps, including sequential dependent steps.
-
-Payload fields:
-
-- everything from `selecting_tools`
-- `step_progress`: `{ total, completed, running, current }`
-- `current_step`: the currently executing step metadata
-- `execution`: completed step records plus any stop reason
-- `phase`: `executing_steps`
-- `phase_label`: `Executing tool plan`
-- `progress`: `{ "current": 3, "total": 4 }`
-
-Example:
-
-```json
-{
-  "job_id": 8,
-  "status": "running",
-  "payload": {
-    "status": "running",
-    "query": "Who is Ernst?",
-    "session_id": "9ff6774b-e06d-417a-9b71-cab0a33e028d",
-    "ontology_id": 99,
-    "companion_id": "companion-123",
-    "allocated_tools": {
-      "elder": [{ "id": "elder-1", "name": "Elder", "job": "elder", "ontology_ids": [99] }],
-      "librarian": [{ "id": "librarian-1", "name": "Librarian", "job": "librarian", "ontology_ids": [99] }]
-    },
-    "phase": "executing_steps",
-    "phase_label": "Executing tool plan",
-    "progress": { "current": 3, "total": 4 },
-    "routing": {
-      "use_elder": true,
-      "use_librarian": true,
-      "reason": "Needs both story context and rules context."
-    },
-    "selected_tools": {
-      "elder": ["elder-1"],
-      "librarian": ["librarian-1"]
-    },
-    "step_progress": {
-      "total": 2,
-      "completed": 0,
-      "running": 1,
-      "current": 1
-    },
-    "current_step": {
-      "step_id": "step-1",
-      "tool_job": "elder",
-      "goal": "Gather grounded canon context."
-    }
-  }
-}
-```
-
-### 4. Synthesizing
-
-Purpose:
-
-- Tool calls finished and Herald is generating the final answer text.
-
-Payload fields:
-
-- everything from `executing_steps`
-- `agent_responses`: normalized tool outputs already collected from executed steps
-- `step_progress`: usually `{ total: N, completed: N, running: 0 }`
-- `phase`: `synthesizing`
-- `phase_label`: `Synthesizing answer`
-- `progress`: `{ "current": 4, "total": 4 }`
-
-Example:
-
-```json
-{
-  "job_id": 8,
-  "status": "running",
-  "payload": {
-    "status": "running",
-    "query": "Who is Ernst?",
-    "session_id": "9ff6774b-e06d-417a-9b71-cab0a33e028d",
-    "ontology_id": 99,
-    "companion_id": "companion-123",
-    "allocated_tools": {
-      "elder": [{ "id": "elder-1", "name": "Elder", "job": "elder", "ontology_ids": [99] }],
-      "librarian": [{ "id": "librarian-1", "name": "Librarian", "job": "librarian", "ontology_ids": [99] }]
-    },
-    "phase": "synthesizing",
-    "phase_label": "Synthesizing answer",
-    "progress": { "current": 4, "total": 4 },
-    "routing": {
-      "use_elder": true,
-      "use_librarian": false,
-      "reason": "Requires knowledge of a specific character and their role in the story."
-    },
-    "selected_tools": {
-      "elder": ["elder-1"],
-      "librarian": []
-    },
-    "tool_progress": {
-      "total": 1,
-      "completed": 1,
-      "running": 0
-    },
-    "agent_responses": [
-      {
-        "ok": true,
-        "agent_id": "elder-1",
-        "agent_name": "Elder",
-        "agent_job": "elder",
-        "answer": "Based on the available records, Ernst is part of a Berlin circle...",
-        "sources": []
-      }
-    ]
-  }
-}
-```
+1. Keep lifecycle stage ordering fixed.
+2. Never run Librarian before required Elder grounding when a step depends on canon context.
+3. Keep `max one repair` and `max one proactive nudge` hard-limited.
+4. Apply rapport updates only through bounded, confidence-gated patches.
 
 ## Docker Compose
 
@@ -284,6 +127,7 @@ When the service is healthy, the `shreckcompanion_ready` container prints the ac
 - `POST /users/me/companion`
 - `GET /users/me/companion`
 - `PATCH /users/me/companion`
+- `GET /users/me/companion/rapport`
 - `POST /users/me/companion/avatar`
 - `DELETE /users/me/companion`
 - `POST /users/me/companion/orchestrator/bootstrap`
@@ -292,3 +136,20 @@ When the service is healthy, the `shreckcompanion_ready` container prints the ac
 - `GET /users/me/companion/orchestrator/chats/{session_id}/file`
 
 User identity is resolved from `X-Shreck-User-Id` in v1, with fallback to `default_user_id` for local development. Calls that execute Shrecknet jobs should also forward the user's `Authorization: Bearer ...` token so Shrecknet can authorize `/jobs/elder/...` and `/jobs/librarian/...`. Avatar uploads also accept `X-Shreck-Username`; uploaded files are normalized and stored as `media/{username}/companion.png`, replacing the previous file for that user.
+
+## Companion Core Personality And Rapport
+
+Companion profile is canonical companion identity and is editable through companion CRUD endpoints. It includes:
+
+1. `core_traits`
+2. `archetype`
+3. `voice`
+4. `boundaries`
+5. `default_style` (`verbosity`, `humor`, `directness`, `initiative`)
+
+Companion rapport is canonical user-companion adaptive state and is exposed as read-only frontend data at `GET /users/me/companion/rapport`.
+
+Ownership rules:
+
+1. Core personality is updated only through frontend/manual companion updates.
+2. Rapport is updated only by lifecycle backend logic using bounded patches.

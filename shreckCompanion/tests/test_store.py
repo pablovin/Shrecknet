@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from app.core.config import Settings
-from app.schemas import PersonalCompanionAgentCreate
+from app.schemas import PersonalCompanionAgentCreate, PersonalCompanionAgentUpdate
 from app.persistence.store import CompanionStore
 
 
@@ -38,9 +38,39 @@ def test_companion_and_session_persistence(tmp_path):
     store.update_turn_job(job_id, status="done", payload={"status": "done", "final": {"text": "Grounded answer."}})
 
     assert store.get_companion(12).id == companion.id
+    assert store.get_companion(12).core_traits
+    assert store.get_companion(12).default_style.directness == 0.5
     assert store.get_session(12, session["session_id"]) is not None
     assert store.get_turn_job(12, job_id)["status"] == "done"
     assert (tmp_path / "local_tests/personal_companion/orchestrator/frontend_response_example.json").exists()
+
+
+def test_companion_core_personality_update_and_rapport_bootstrap(tmp_path):
+    store = CompanionStore(Settings(data_dir=str(tmp_path)))
+    companion = store.create_companion(
+        5,
+        PersonalCompanionAgentCreate(name="Morgana", writing_style="Poetic and useful", active=True),
+    )
+
+    updated = store.update_companion(
+        5,
+        payload=PersonalCompanionAgentUpdate(
+            core_traits=["curious", "dramatic", "warm"],
+            archetype="gothic lorekeeper",
+            voice="poetic but useful",
+            boundaries=["do not invent canon", "do not fake certainty"],
+            default_style={"verbosity": 0.7, "humor": 0.3, "directness": 0.55, "initiative": 0.65},
+        ),
+    )
+
+    assert updated.archetype == "gothic lorekeeper"
+    assert updated.voice == "poetic but useful"
+    assert updated.core_traits == ["curious", "dramatic", "warm"]
+    assert updated.default_style.initiative == 0.65
+
+    rapport = store.get_or_create_rapport_profile(user_id=5, companion_id=companion.id)
+    assert "adaptive_traits" in rapport
+    assert rapport["adaptive_traits"]["directness"] >= 0.0
 
 
 def test_session_crud_and_limits(tmp_path):

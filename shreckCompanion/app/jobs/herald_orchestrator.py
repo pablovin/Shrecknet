@@ -8,7 +8,13 @@ from typing import Any
 
 from app.core.config import Settings
 from app.integrations.clients import ShreckLLMClient, ShrecknetProviderClient
-from app.jobs.prompts import DOWNSTREAM_LIBRARIAN_PROMPT, PLANNER_PROMPT, SYNTHESIS_PROMPT
+from app.jobs.prompts import (
+    COMPANION_POLICY_PROMPT,
+    DOWNSTREAM_LIBRARIAN_PROMPT,
+    PLANNER_PROMPT,
+    SYNTHESIS_PROMPT,
+    TURN_REFLECTION_PROMPT,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +84,39 @@ class HeraldOrchestrator:
         canon_terms = ("story", "canon", "scene", "timeline", "event", "background", "history", "who is")
         return any(term in lowered for term in rules_terms) and not any(term in lowered for term in canon_terms) and not cls.query_has_named_subject(query)
 
+    @classmethod
+    def query_mentions_rules(cls, text: str) -> bool:
+        lowered = str(text or "").strip().lower()
+        if not lowered:
+            return False
+        rules_terms = (
+            "rule",
+            "rules",
+            "mechanic",
+            "mechanics",
+            "sanity",
+            "occupation",
+            "stat",
+            "stats",
+            "dice",
+            "roll",
+            "recover",
+            "combat",
+            "skill",
+            "points",
+            "book",
+            "page",
+            "system",
+        )
+        return any(term in lowered for term in rules_terms)
+
+    @classmethod
+    def is_lore_identity_query(cls, text: str) -> bool:
+        query = str(text or "").strip()
+        if not query:
+            return False
+        return cls.query_has_named_subject(query) and not cls.query_mentions_rules(query)
+
     @staticmethod
     def normalize_entity_name(name: str) -> str:
         return re.sub(r"\s+", " ", str(name or "").strip())
@@ -121,6 +160,267 @@ class HeraldOrchestrator:
         return parsed if isinstance(parsed, dict) else {}
 
     @staticmethod
+    def _clamp_style_value(value: Any, *, default: float = 0.5) -> float:
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError):
+            parsed = default
+        return max(0.0, min(1.0, parsed))
+
+    @staticmethod
+    def default_companion_policy(query: str) -> dict[str, Any]:
+        return {
+            "chat_goal": "Help the user effectively with the current conversation topic.",
+            "turn_intention": "Answer the user query clearly and grounded.",
+            "conversation_mode": "general_assistant",
+            "user_need": "direct_answer",
+            "needs_knowledge_tools": True,
+            "suggested_response_style": {
+                "directness": 0.7,
+                "technical_depth": 0.7,
+                "playfulness": 0.3,
+                "initiative": 0.5,
+            },
+            "open_threads": [str(query or "").strip()] if str(query or "").strip() else [],
+            "next_best_actions": ["answer_user_query"],
+        }
+
+    @classmethod
+    def normalize_companion_policy(cls, raw: dict[str, Any], *, query: str) -> dict[str, Any]:
+        if not isinstance(raw, dict):
+            return cls.default_companion_policy(query)
+        style_raw = raw.get("suggested_response_style") if isinstance(raw.get("suggested_response_style"), dict) else {}
+        return {
+            "chat_goal": str(raw.get("chat_goal") or "").strip() or cls.default_companion_policy(query)["chat_goal"],
+            "turn_intention": str(raw.get("turn_intention") or "").strip() or cls.default_companion_policy(query)["turn_intention"],
+            "conversation_mode": str(raw.get("conversation_mode") or "general_assistant").strip() or "general_assistant",
+            "user_need": str(raw.get("user_need") or "direct_answer").strip() or "direct_answer",
+            "needs_knowledge_tools": bool(raw.get("needs_knowledge_tools", True)),
+            "suggested_response_style": {
+                "directness": cls._clamp_style_value(style_raw.get("directness"), default=0.7),
+                "technical_depth": cls._clamp_style_value(style_raw.get("technical_depth"), default=0.7),
+                "playfulness": cls._clamp_style_value(style_raw.get("playfulness"), default=0.3),
+                "initiative": cls._clamp_style_value(style_raw.get("initiative"), default=0.5),
+            },
+            "open_threads": [str(item).strip() for item in (raw.get("open_threads") or []) if str(item).strip()][:20],
+            "next_best_actions": [str(item).strip() for item in (raw.get("next_best_actions") or []) if str(item).strip()][:10],
+        }
+
+    async def plan_companion_policy(
+        self,
+        *,
+        query: str,
+        conversation_context: dict[str, Any] | None,
+        chat_state: dict[str, Any] | None,
+        rapport_profile: dict[str, Any] | None,
+        debug_trace: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        context = conversation_context or {}
+        prompt = COMPANION_POLICY_PROMPT.format(
+            query=query,
+            conversation_summary=str(context.get("summary_used") or "none"),
+            recent_conversation=self.format_recent_messages(context.get("recent_messages_used") or []),
+            active_context=self.format_active_context(
+                context.get("active_entities_used") or [],
+                context.get("resolved_subject"),
+            ),
+            chat_state=json.dumps(chat_state or {}, ensure_ascii=True),
+            rapport_profile=json.dumps(rapport_profile or {}, ensure_ascii=True),
+        )
+        logger.info(
+            "companion policy llm request usage_tag=%s query=%s prompt=%s",
+            "companion_orchestrator.policy",
+            self._debug_text(query, limit=1000),
+            self._debug_text(prompt),
+        )
+        if isinstance(debug_trace, dict):
+            debug_trace["policy"] = {
+                "usage_tag": "companion_orchestrator.policy",
+                "provider": self.settings.model_personal_companion_policy.provider,
+                "model": self.settings.model_personal_companion_policy.name,
+                "prompt": prompt,
+            }
+        try:
+            raw = await self.llm_client.chat(
+                provider_id=self.settings.model_personal_companion_policy.provider,
+                model=self.settings.model_personal_companion_policy.name,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=self.settings.policy_temperature,
+                usage_tag="companion_orchestrator.policy",
+            )
+            logger.info(
+                "companion policy llm response usage_tag=%s response=%s",
+                "companion_orchestrator.policy",
+                self._debug_text(raw),
+            )
+            if isinstance(debug_trace, dict) and isinstance(debug_trace.get("policy"), dict):
+                debug_trace["policy"]["response"] = raw
+            return self.normalize_companion_policy(self.extract_json_object(raw), query=query)
+        except Exception as exc:
+            logger.exception("companion policy llm failed error=%s", exc)
+            if isinstance(debug_trace, dict) and isinstance(debug_trace.get("policy"), dict):
+                debug_trace["policy"]["error"] = str(exc)
+            return self.default_companion_policy(query)
+
+    @staticmethod
+    def default_turn_reflection() -> dict[str, Any]:
+        return {
+            "answered_user": True,
+            "confidence": 0.6,
+            "user_state_estimate": {
+                "engagement": "medium",
+                "frustration": "low",
+                "confusion": "low",
+                "boredom": "low",
+            },
+            "response_quality": {
+                "too_verbose": False,
+                "too_dry": False,
+                "missed_question": False,
+                "needs_more_concrete_next_step": False,
+            },
+            "proactivity": {
+                "should_be_proactive": False,
+                "proactivity_type": "none",
+                "proactive_message": "",
+            },
+            "chat_state_patch": {
+                "chat_goal": "",
+                "current_intention": "",
+                "open_threads_add": [],
+                "open_threads_resolved": [],
+                "next_best_actions": [],
+            },
+            "rapport_patch": [],
+        }
+
+    @classmethod
+    def normalize_turn_reflection(cls, raw: dict[str, Any]) -> dict[str, Any]:
+        defaults = cls.default_turn_reflection()
+        if not isinstance(raw, dict):
+            return defaults
+        user_state = raw.get("user_state_estimate") if isinstance(raw.get("user_state_estimate"), dict) else {}
+        quality = raw.get("response_quality") if isinstance(raw.get("response_quality"), dict) else {}
+        proactivity = raw.get("proactivity") if isinstance(raw.get("proactivity"), dict) else {}
+        chat_patch = raw.get("chat_state_patch") if isinstance(raw.get("chat_state_patch"), dict) else {}
+        rapport_patch: list[dict[str, Any]] = []
+        for item in raw.get("rapport_patch") or []:
+            if not isinstance(item, dict):
+                continue
+            trait = str(item.get("trait") or "").strip()
+            if not trait:
+                continue
+            try:
+                delta = float(item.get("delta") or 0.0)
+            except (TypeError, ValueError):
+                delta = 0.0
+            try:
+                confidence = float(item.get("confidence") or 0.0)
+            except (TypeError, ValueError):
+                confidence = 0.0
+            rapport_patch.append(
+                {
+                    "trait": trait,
+                    "delta": max(-1.0, min(1.0, delta)),
+                    "confidence": max(0.0, min(1.0, confidence)),
+                    "reason": str(item.get("reason") or "").strip(),
+                }
+            )
+        return {
+            "answered_user": bool(raw.get("answered_user", defaults["answered_user"])),
+            "confidence": max(0.0, min(1.0, float(raw.get("confidence") or defaults["confidence"]))),
+            "user_state_estimate": {
+                "engagement": str(user_state.get("engagement") or defaults["user_state_estimate"]["engagement"]),
+                "frustration": str(user_state.get("frustration") or defaults["user_state_estimate"]["frustration"]),
+                "confusion": str(user_state.get("confusion") or defaults["user_state_estimate"]["confusion"]),
+                "boredom": str(user_state.get("boredom") or defaults["user_state_estimate"]["boredom"]),
+            },
+            "response_quality": {
+                "too_verbose": bool(quality.get("too_verbose", defaults["response_quality"]["too_verbose"])),
+                "too_dry": bool(quality.get("too_dry", defaults["response_quality"]["too_dry"])),
+                "missed_question": bool(quality.get("missed_question", defaults["response_quality"]["missed_question"])),
+                "needs_more_concrete_next_step": bool(
+                    quality.get(
+                        "needs_more_concrete_next_step",
+                        defaults["response_quality"]["needs_more_concrete_next_step"],
+                    )
+                ),
+            },
+            "proactivity": {
+                "should_be_proactive": bool(proactivity.get("should_be_proactive", False)),
+                "proactivity_type": str(proactivity.get("proactivity_type") or "none").strip() or "none",
+                "proactive_message": str(proactivity.get("proactive_message") or "").strip(),
+            },
+            "chat_state_patch": {
+                "chat_goal": str(chat_patch.get("chat_goal") or "").strip(),
+                "current_intention": str(chat_patch.get("current_intention") or "").strip(),
+                "open_threads_add": [str(item).strip() for item in (chat_patch.get("open_threads_add") or []) if str(item).strip()][:20],
+                "open_threads_resolved": [str(item).strip() for item in (chat_patch.get("open_threads_resolved") or []) if str(item).strip()][:20],
+                "next_best_actions": [str(item).strip() for item in (chat_patch.get("next_best_actions") or []) if str(item).strip()][:10],
+            },
+            "rapport_patch": rapport_patch,
+        }
+
+    async def evaluate_turn_reflection(
+        self,
+        *,
+        query: str,
+        final_text: str,
+        execution: dict[str, Any],
+        chat_state: dict[str, Any] | None,
+        rapport_profile: dict[str, Any] | None,
+        debug_trace: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        summary = json.dumps(
+            {
+                "completed_steps": execution.get("completed_steps") or [],
+                "stopped_reason": execution.get("stopped_reason"),
+            },
+            ensure_ascii=True,
+        )
+        prompt = TURN_REFLECTION_PROMPT.format(
+            query=query,
+            final_text=final_text,
+            execution_summary=summary,
+            chat_state=json.dumps(chat_state or {}, ensure_ascii=True),
+            rapport_profile=json.dumps(rapport_profile or {}, ensure_ascii=True),
+        )
+        logger.info(
+            "companion reflection llm request usage_tag=%s query=%s prompt=%s",
+            "companion_orchestrator.reflection",
+            self._debug_text(query, limit=1000),
+            self._debug_text(prompt),
+        )
+        if isinstance(debug_trace, dict):
+            debug_trace["reflection"] = {
+                "usage_tag": "companion_orchestrator.reflection",
+                "provider": self.settings.model_personal_companion_reflection.provider,
+                "model": self.settings.model_personal_companion_reflection.name,
+                "prompt": prompt,
+            }
+        try:
+            raw = await self.llm_client.chat(
+                provider_id=self.settings.model_personal_companion_reflection.provider,
+                model=self.settings.model_personal_companion_reflection.name,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=self.settings.reflection_temperature,
+                usage_tag="companion_orchestrator.reflection",
+            )
+            logger.info(
+                "companion reflection llm response usage_tag=%s response=%s",
+                "companion_orchestrator.reflection",
+                self._debug_text(raw),
+            )
+            if isinstance(debug_trace, dict) and isinstance(debug_trace.get("reflection"), dict):
+                debug_trace["reflection"]["response"] = raw
+            return self.normalize_turn_reflection(self.extract_json_object(raw))
+        except Exception as exc:
+            logger.exception("companion reflection llm failed error=%s", exc)
+            if isinstance(debug_trace, dict) and isinstance(debug_trace.get("reflection"), dict):
+                debug_trace["reflection"]["error"] = str(exc)
+            return self.default_turn_reflection()
+
+    @staticmethod
     def default_plan(query: str) -> dict[str, Any]:
         q = str(query or "").lower()
         librarian_terms = ("rule", "rules", "mechanic", "mechanics", "occupation", "stat", "dice", "roll", "sanity", "recover")
@@ -134,6 +434,8 @@ class HeraldOrchestrator:
             use_librarian = True
         if use_elder and use_librarian:
             return {
+                "needs_tools": True,
+                "no_tools_reason": "",
                 "strategy": "sequential",
                 "reason": "keyword_fallback_mixed_query",
                 "steps": [
@@ -161,6 +463,8 @@ class HeraldOrchestrator:
             }
         tool_job = "librarian" if use_librarian and not use_elder else "elder"
         return {
+            "needs_tools": True,
+            "no_tools_reason": "",
             "strategy": "parallel",
             "reason": "keyword_fallback_single_tool",
             "steps": [
@@ -198,6 +502,19 @@ class HeraldOrchestrator:
             )
         return "\n".join(lines) or "none"
 
+    @staticmethod
+    def format_available_tools(allocated_tools: dict[str, Any] | None) -> str:
+        allocated = allocated_tools or {}
+        lines: list[str] = []
+        for job in ("elder", "librarian"):
+            items = [item for item in (allocated.get(job) or []) if isinstance(item, dict)]
+            if not items:
+                lines.append(f"{job}: none")
+                continue
+            rendered = [f"{str(item.get('id') or '').strip()} ({str(item.get('name') or '').strip()})" for item in items if str(item.get("id") or "").strip()]
+            lines.append(f"{job}: {', '.join(rendered) if rendered else 'none'}")
+        return "\n".join(lines)
+
     def build_conversation_context(self, query: str, chat_payload: dict[str, Any] | None) -> dict[str, Any]:
         payload = dict(chat_payload or {})
         memory = payload.get("memory") if isinstance(payload.get("memory"), dict) else {}
@@ -232,10 +549,20 @@ class HeraldOrchestrator:
             context["recent_messages_used"] = context["recent_messages_used"][1:]
         return context
 
-    async def plan_query(self, query: str, *, conversation_context: dict[str, Any] | None = None) -> dict[str, Any]:
+    async def plan_query(
+        self,
+        query: str,
+        *,
+        conversation_context: dict[str, Any] | None = None,
+        allocated_tools: dict[str, Any] | None = None,
+        companion_policy: dict[str, Any] | None = None,
+        debug_trace: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         context = conversation_context or {}
         prompt = PLANNER_PROMPT.format(
             query=query,
+            companion_policy=json.dumps(companion_policy or {}, ensure_ascii=True),
+            available_tools=self.format_available_tools(allocated_tools),
             conversation_summary=str(context.get("summary_used") or "none"),
             recent_conversation=self.format_recent_messages(context.get("recent_messages_used") or []),
             active_context=self.format_active_context(
@@ -249,6 +576,13 @@ class HeraldOrchestrator:
             self._debug_text(query, limit=1000),
             self._debug_text(prompt),
         )
+        if isinstance(debug_trace, dict):
+            debug_trace["planning"] = {
+                "usage_tag": "companion_orchestrator.planning",
+                "provider": self.settings.model_personal_companion_routing.provider,
+                "model": self.settings.model_personal_companion_routing.name,
+                "prompt": prompt,
+            }
         try:
             raw = await self.llm_client.chat(
                 provider_id=self.settings.model_personal_companion_routing.provider,
@@ -262,25 +596,39 @@ class HeraldOrchestrator:
                 "companion_orchestrator.planning",
                 self._debug_text(raw),
             )
+            if isinstance(debug_trace, dict) and isinstance(debug_trace.get("planning"), dict):
+                debug_trace["planning"]["response"] = raw
             parsed = self.extract_json_object(raw)
-            normalized = self.constrain_plan_for_query(self.normalize_plan(parsed, query=query), query=query)
+            normalized = self.normalize_plan(parsed, query=query)
             logger.info(
                 "companion planner normalized plan strategy=%s reason=%s steps=%s",
                 normalized.get("strategy"),
                 normalized.get("reason"),
                 self._debug_text(json.dumps(normalized.get("steps") or [], ensure_ascii=True), limit=3000),
             )
-            if normalized.get("steps"):
+            if "needs_tools" in normalized:
                 return normalized
         except Exception as exc:
             logger.exception("companion planner llm failed error=%s", exc)
-        return self.constrain_plan_for_query(self.default_plan(query), query=query)
+            if isinstance(debug_trace, dict) and isinstance(debug_trace.get("planning"), dict):
+                debug_trace["planning"]["error"] = str(exc)
+        return self.default_plan(query)
 
     @staticmethod
     def normalize_plan(raw: dict[str, Any], *, query: str) -> dict[str, Any]:
         strategy = str(raw.get("strategy") or "parallel").strip().lower()
         if strategy not in {"parallel", "sequential"}:
             strategy = "parallel"
+        needs_tools_raw = raw.get("needs_tools")
+        explicit_needs_tools = isinstance(needs_tools_raw, bool)
+        if explicit_needs_tools and needs_tools_raw is False:
+            return {
+                "needs_tools": False,
+                "no_tools_reason": str(raw.get("no_tools_reason") or raw.get("reason") or "Planner judged no tool call is required.").strip(),
+                "strategy": "parallel",
+                "reason": str(raw.get("reason") or "no_tools_needed").strip() or "no_tools_needed",
+                "steps": [],
+            }
         normalized_steps: list[dict[str, Any]] = []
         for index, step in enumerate(raw.get("steps") or [], start=1):
             if not isinstance(step, dict):
@@ -306,39 +654,59 @@ class HeraldOrchestrator:
                 }
             )
         if not normalized_steps:
+            if explicit_needs_tools:
+                return {
+                    "needs_tools": False,
+                    "no_tools_reason": str(raw.get("no_tools_reason") or "Planner requested tools but returned no executable steps.").strip(),
+                    "strategy": "parallel",
+                    "reason": "planner_returned_no_steps",
+                    "steps": [],
+                }
             return HeraldOrchestrator.default_plan(query)
         if strategy == "parallel" and any(step.get("depends_on") for step in normalized_steps):
             strategy = "sequential"
+
+        # Guard against invalid planner outputs:
+        # - first step cannot depend on prior context
+        # - any prior-context step must point to an already seen dependency step
+        seen_step_ids: set[str] = set()
+        for index, step in enumerate(normalized_steps, start=1):
+            step_id = str(step.get("step_id") or f"step-{index}")
+            dependencies = [str(item) for item in (step.get("depends_on") or []) if str(item).strip()]
+            valid_dependencies = [dep for dep in dependencies if dep in seen_step_ids]
+            uses_prior_context = bool(step.get("use_prior_context"))
+            is_librarian_step = str(step.get("tool_job") or "") == "librarian"
+            if index == 1:
+                step["use_prior_context"] = False
+                step["depends_on"] = []
+            elif is_librarian_step:
+                # Librarian can opportunistically consume prior canon context,
+                # but it must not hard-depend on Elder.
+                step["depends_on"] = []
+            elif uses_prior_context:
+                if not valid_dependencies:
+                    step["use_prior_context"] = False
+                    step["depends_on"] = []
+                else:
+                    step["depends_on"] = [valid_dependencies[0]]
+            else:
+                step["depends_on"] = []
+            seen_step_ids.add(step_id)
+
+        if HeraldOrchestrator.is_lore_identity_query(query):
+            elder_only_steps = [step for step in normalized_steps if str(step.get("tool_job") or "") == "elder"]
+            if elder_only_steps:
+                normalized_steps = elder_only_steps
+                strategy = "parallel"
+            else:
+                return HeraldOrchestrator.default_plan(query)
+
         return {
+            "needs_tools": True,
+            "no_tools_reason": "",
             "strategy": strategy,
             "reason": str(raw.get("reason") or "llm_plan").strip() or "llm_plan",
             "steps": normalized_steps,
-        }
-
-    @classmethod
-    def constrain_plan_for_query(cls, plan: dict[str, Any], *, query: str) -> dict[str, Any]:
-        steps = [dict(step) for step in (plan.get("steps") or []) if isinstance(step, dict)]
-        if not steps:
-            return cls.default_plan(query)
-        if not cls.is_generic_rules_query(query):
-            return plan
-        librarian_steps: list[dict[str, Any]] = []
-        for step in steps:
-            if str(step.get("tool_job") or "").strip().lower() != "librarian":
-                continue
-            rewritten = dict(step)
-            rewritten["depends_on"] = []
-            rewritten["use_prior_context"] = False
-            rewritten["query"] = str(rewritten.get("query") or query).strip() or query
-            librarian_steps.append(rewritten)
-        if not librarian_steps:
-            return cls.default_plan(query)
-        selected_step = librarian_steps[0]
-        selected_step["step_id"] = "step-1"
-        return {
-            "strategy": "parallel",
-            "reason": "generic_rules_librarian_only",
-            "steps": [selected_step],
         }
 
     @classmethod
@@ -820,6 +1188,7 @@ class HeraldOrchestrator:
         plan: dict[str, Any],
         execution: dict[str, Any],
         agent_responses: list[dict[str, Any]],
+        debug_trace: dict[str, Any] | None = None,
     ) -> str:
         step_lines: list[str] = []
         results_by_step = {str(item.get("step_id")): item for item in execution.get("completed_steps") or [] if isinstance(item, dict)}
@@ -862,6 +1231,13 @@ class HeraldOrchestrator:
             self._debug_text(query, limit=1000),
             self._debug_text(prompt),
         )
+        if isinstance(debug_trace, dict):
+            debug_trace["synthesis"] = {
+                "usage_tag": "companion_orchestrator.synthesis",
+                "provider": self.settings.model_personal_companion_synthesis.provider,
+                "model": self.settings.model_personal_companion_synthesis.name,
+                "prompt": prompt,
+            }
         try:
             response = await self.llm_client.chat(
                 provider_id=self.settings.model_personal_companion_synthesis.provider,
@@ -875,9 +1251,13 @@ class HeraldOrchestrator:
                 "companion_orchestrator.synthesis",
                 self._debug_text(response),
             )
+            if isinstance(debug_trace, dict) and isinstance(debug_trace.get("synthesis"), dict):
+                debug_trace["synthesis"]["response"] = response
             return response
         except Exception as exc:
             logger.exception("companion synthesis llm failed error=%s", exc)
+            if isinstance(debug_trace, dict) and isinstance(debug_trace.get("synthesis"), dict):
+                debug_trace["synthesis"]["error"] = str(exc)
             return "Based on available evidence:\n" + "\n".join(step_lines)
 
     def build_turn_payload(
@@ -891,6 +1271,12 @@ class HeraldOrchestrator:
         agent_responses: list[dict[str, Any]],
         final_text: str,
         conversation_context: dict[str, Any] | None = None,
+        companion_policy: dict[str, Any] | None = None,
+        turn_reflection: dict[str, Any] | None = None,
+        chat_state: dict[str, Any] | None = None,
+        rapport_profile: dict[str, Any] | None = None,
+        rapport_patch_applied: list[dict[str, Any]] | None = None,
+        llm_trace: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         enriched_agent_responses = self.enrich_agent_responses(agent_responses)
         final_text = self.append_missing_book_references(final_text, enriched_agent_responses)
@@ -910,6 +1296,12 @@ class HeraldOrchestrator:
             "plan": plan,
             "execution": execution,
             "conversation_context": conversation_context or {},
+            "companion_policy": companion_policy or {},
+            "turn_reflection": turn_reflection or {},
+            "chat_state": chat_state or {},
+            "rapport_profile": rapport_profile or {},
+            "rapport_patch_applied": rapport_patch_applied or [],
+            "llm_trace": llm_trace or {},
             "agent_responses": enriched_agent_responses,
             "final": {
                 "text": final_text,

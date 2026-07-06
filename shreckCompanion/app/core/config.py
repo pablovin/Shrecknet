@@ -40,8 +40,18 @@ class Settings(BaseSettings):
         provider="ollama_cloud",
         name="gemma3:4b",
     )
+    model_personal_companion_policy: ModelReference = ModelReference(
+        provider="ollama_cloud",
+        name="gemma3:4b",
+    )
+    model_personal_companion_reflection: ModelReference = ModelReference(
+        provider="ollama_cloud",
+        name="gemma3:4b",
+    )
     routing_temperature: float = 0.0
     synthesis_temperature: float = 0.3
+    policy_temperature: float = 0.1
+    reflection_temperature: float = 0.1
     turn_query_max_length: int = 3000
     conversation_recent_messages_limit: int = 6
     conversation_summary_trigger_messages: int = 10
@@ -49,6 +59,11 @@ class Settings(BaseSettings):
     companion_chat_session_limit_per_ontology: int = 10
     provider_timeout_seconds: float = 120.0
     turn_job_result_ttl_seconds: int = 3600
+    rapport_confidence_threshold: float = 0.65
+    rapport_max_trait_delta_per_turn: float = 0.05
+    rapport_min_trait_value: float = 0.0
+    rapport_max_trait_value: float = 1.0
+    max_proactive_nudges_per_turn: int = 1
     cors_allow_origins: list[str] = [
         "http://localhost:3000",
         "http://127.0.0.1:3000",

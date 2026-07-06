@@ -127,7 +127,7 @@ class GenericRulesLLMClient:
 
     async def chat(self, **kwargs) -> str:
         if "planning" in str(kwargs.get("usage_tag") or ""):
-            return '{"strategy":"sequential","reason":"Sanity recovery requires understanding the game rules and character context.","steps":[{"step_id":"step-1","tool_job":"librarian","goal":"Determine the rules for Sanity recovery.","query":"What are the mechanics for recovering Sanity in the game system?","depends_on":[],"use_prior_context":false,"success_requirements":["Sanity recovery mechanics"],"on_failure":"stop"},{"step_id":"step-2","tool_job":"elder","goal":"Understand the character background.","query":"What is the character history?","depends_on":["step-1"],"use_prior_context":true,"success_requirements":["character context"],"on_failure":"stop"}]}'
+            return '{"needs_tools":true,"strategy":"parallel","reason":"generic_rules_librarian_only","steps":[{"step_id":"step-1","tool_job":"librarian","goal":"Determine the rules for Sanity recovery.","query":"What are the mechanics for recovering Sanity in the game system?","depends_on":[],"use_prior_context":false,"success_requirements":["Sanity recovery mechanics"],"on_failure":"stop"}]}'
         return "Recovering from indefinite insanity requires institutional care, and psychotherapy may form a part of that care."
 
 
@@ -191,6 +191,35 @@ class MemoryAwareLLMClient:
                 return '{"strategy":"parallel","reason":"Direct follow-up resolved from conversation memory.","steps":[{"step_id":"step-1","tool_job":"elder","goal":"Resolve the follow-up subject.","query":"What would help Ernst?","depends_on":[],"use_prior_context":false,"success_requirements":["direct_answer"],"on_failure":"stop"}]}'
             return '{"strategy":"parallel","reason":"Direct answer.","steps":[{"step_id":"step-1","tool_job":"elder","goal":"Answer directly.","query":"Who is Ernst?","depends_on":[],"use_prior_context":false,"success_requirements":["direct_answer"],"on_failure":"stop"}]}'
         return "Ernst benefits from prepared investigation gear. Sources: CoC Investigator Rulebook, p.114."
+
+
+class PolicyDisablesKnowledgeLLMClient:
+    def __init__(self) -> None:
+        self.planning_prompts: list[str] = []
+
+    async def aclose(self) -> None:
+        return None
+
+    async def chat(self, **kwargs) -> str:
+        usage_tag = str(kwargs.get("usage_tag") or "")
+        if "policy" in usage_tag:
+            return (
+                '{"chat_goal":"Answer quickly.","turn_intention":"Give a direct reply.",'
+                '"conversation_mode":"general_assistant","user_need":"information",'
+                '"needs_knowledge_tools":false,"suggested_response_style":'
+                '{"directness":0.9,"technical_depth":0.1,"playfulness":0.0,"initiative":0.1},'
+                '"open_threads":["Ernst"],"next_best_actions":["answer"]}'
+            )
+        if "planning" in usage_tag:
+            prompt = str((kwargs.get("messages") or [{}])[0].get("content") or "")
+            self.planning_prompts.append(prompt)
+            return (
+                '{"needs_tools":true,"strategy":"parallel","reason":"Need elder for named subject.","steps":['
+                '{"step_id":"step-1","tool_job":"elder","goal":"Resolve named subject.",'
+                '"query":"Is Ernst a human?","depends_on":[],"use_prior_context":false,'
+                '"success_requirements":["direct_answer"],"on_failure":"stop"}]}'
+            )
+        return "Ernst is human based on grounded records."
 
 
 async def _create_chat(service: CompanionService, *, user_id: int, ontology_id: int, title: str | None = None):
@@ -259,7 +288,12 @@ async def test_companion_service_frontend_contract(tmp_path):
     assert running["status"] == "running"
     assert running["payload"]["phase"] == "executing_steps"
     assert running["payload"]["phase_label"] == "Executing tool plan"
-    assert running["payload"]["progress"] == {"current": 3, "total": 4}
+    assert running["payload"]["progress"] == {"current": 4, "total": 6}
+    assert "llm_trace" in running["payload"]
+    assert "policy" in running["payload"]["llm_trace"]
+    assert "planning" in running["payload"]["llm_trace"]
+    assert "prompt" in running["payload"]["llm_trace"]["policy"]
+    assert "response" in running["payload"]["llm_trace"]["planning"]
     assert running["payload"]["routing"] == {
         "use_elder": True,
         "use_librarian": True,
@@ -322,6 +356,17 @@ async def test_companion_service_frontend_contract(tmp_path):
     assert result["payload"]["final"]["references"]["book_sources"][0]["pages"] == [114]
     done_snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
     assert done_snapshot == result
+    assert "llm_trace" in result["payload"]
+    assert "synthesis" in result["payload"]["llm_trace"]
+    assert "reflection" in result["payload"]["llm_trace"]
+
+    step_snapshots_dir = tmp_path / "data" / "local_tests" / "personal_companion" / "orchestrator" / "turn_steps" / str(queued.job_id)
+    assert step_snapshots_dir.exists()
+    step_snapshot_files = sorted(step_snapshots_dir.glob("*.json"))
+    assert len(step_snapshot_files) >= 4
+    sample_step_snapshot = json.loads(step_snapshot_files[-1].read_text(encoding="utf-8"))
+    assert sample_step_snapshot["turn_result_response"]["job_id"] == queued.job_id
+    assert "payload" in sample_step_snapshot["turn_result_response"]
 
     chat_file = service.store.read_chat_file(12, companion.id, chat.session_id)
     assert chat_file is not None
@@ -333,6 +378,14 @@ async def test_companion_service_frontend_contract(tmp_path):
     assert "ports" not in frontend_config
     assert "base_url" not in frontend_config
     assert frontend_config["models"]["personal_companion_routing"] == {
+        "provider": "ollama_cloud",
+        "name": "gemma3:4b",
+    }
+    assert frontend_config["models"]["personal_companion_policy"] == {
+        "provider": "ollama_cloud",
+        "name": "gemma3:4b",
+    }
+    assert frontend_config["models"]["personal_companion_reflection"] == {
         "provider": "ollama_cloud",
         "name": "gemma3:4b",
     }
@@ -394,9 +447,9 @@ async def test_companion_service_stops_before_librarian_when_canon_is_weak(tmp_p
 
     assert result is not None
     assert result["status"] == "done"
-    assert provider.librarian_queries == []
-    assert len(result["payload"]["execution"]["completed_steps"]) == 1
-    assert "insufficient grounded canon evidence" in result["payload"]["execution"]["stopped_reason"]
+    assert provider.librarian_queries
+    assert len(result["payload"]["execution"]["completed_steps"]) == 2
+    assert result["payload"]["execution"]["stopped_reason"] is None
 
 
 @pytest.mark.asyncio
@@ -734,6 +787,48 @@ async def test_chat_sessions_keep_memory_isolated_within_same_ontology(tmp_path)
     running_b = service.store.get_turn_job(12, queued_b.job_id)
     assert running_b is not None
     assert running_b["payload"]["conversation_context"]["resolved_subject"] == "Hans"
+
+
+@pytest.mark.asyncio
+async def test_planner_still_runs_and_selects_tools_when_policy_disables_them(tmp_path):
+    service = CompanionService(Settings(data_dir=str(tmp_path / "data"), media_root=str(tmp_path / "media")))
+    provider = FakeProviderClient()
+    llm = PolicyDisablesKnowledgeLLMClient()
+    service.provider_client = provider
+    service.llm_client = llm
+    service.orchestrator.provider_client = service.provider_client
+    service.orchestrator.llm_client = service.llm_client
+
+    service.create_companion(
+        12,
+        PersonalCompanionAgentCreate(name="Fiona", writing_style="Concise and grounded.", active=True),
+    )
+    await service.bootstrap_world(user_id=12, ontology_id=99)
+    chat = await _create_chat(service, user_id=12, ontology_id=99)
+
+    queued = await service.queue_turn(
+        user_id=12,
+        session_id=chat.session_id,
+        query="I have a couple questions about Ernst: Is he a human?",
+    )
+
+    await asyncio.wait_for(provider.elder_started.wait(), timeout=1)
+    provider.allow_elder_finish.set()
+
+    result = None
+    for _ in range(20):
+        result = service.store.get_turn_job(12, queued.job_id)
+        if result and result["status"] == "done":
+            break
+        await asyncio.sleep(0.05)
+
+    assert result is not None
+    assert provider.elder_queries
+    assert llm.planning_prompts
+    assert "Available tools for this session:" in llm.planning_prompts[0]
+    assert "Companion policy summary:" in llm.planning_prompts[0]
+    assert result["payload"]["routing"]["use_elder"] is True
+    assert result["payload"]["routing"]["use_librarian"] is False
 
 
 class FakeUpload:

@@ -91,3 +91,74 @@ def test_build_linked_final_text_returns_escaped_plain_text_without_matches() ->
     linked = HeraldOrchestrator.build_linked_final_text(final_text, {"inline_links": []})
 
     assert linked == "No links &lt;here&gt; &amp; now."
+
+
+def test_normalize_plan_sanitizes_invalid_prior_context_dependencies() -> None:
+    raw_plan = {
+        "needs_tools": True,
+        "strategy": "sequential",
+        "reason": "bad planner output",
+        "steps": [
+            {
+                "step_id": "step-1",
+                "tool_job": "elder",
+                "goal": "Find canon fact",
+                "query": "Is Ernst human?",
+                "depends_on": [],
+                "use_prior_context": True,
+                "success_requirements": ["fact"],
+                "on_failure": "stop",
+            },
+            {
+                "step_id": "step-2",
+                "tool_job": "librarian",
+                "goal": "Apply rules",
+                "query": "Apply rules",
+                "depends_on": [],
+                "use_prior_context": True,
+                "success_requirements": ["rules"],
+                "on_failure": "stop",
+            },
+        ],
+    }
+
+    normalized = HeraldOrchestrator.normalize_plan(raw_plan, query="Based on rules, which occupation fits Ernst?")
+
+    assert normalized["steps"][0]["use_prior_context"] is False
+    assert normalized["steps"][0]["depends_on"] == []
+    assert normalized["steps"][1]["use_prior_context"] is True
+    assert normalized["steps"][1]["depends_on"] == []
+
+
+def test_normalize_plan_prunes_librarian_for_lore_identity_query() -> None:
+    raw_plan = {
+        "needs_tools": True,
+        "strategy": "sequential",
+        "reason": "mixed",
+        "steps": [
+            {
+                "step_id": "step-1",
+                "tool_job": "elder",
+                "goal": "Identify Ernst",
+                "query": "Who is Ernst?",
+                "depends_on": [],
+                "use_prior_context": False,
+                "success_requirements": ["identity"],
+                "on_failure": "stop",
+            },
+            {
+                "step_id": "step-2",
+                "tool_job": "librarian",
+                "goal": "Apply rules",
+                "query": "What stats apply?",
+                "depends_on": ["step-1"],
+                "use_prior_context": True,
+                "success_requirements": ["rules"],
+                "on_failure": "stop",
+            },
+        ],
+    }
+
+    normalized = HeraldOrchestrator.normalize_plan(raw_plan, query="Is Ernst a human?")
+
+    assert [step["tool_job"] for step in normalized["steps"]] == ["elder"]

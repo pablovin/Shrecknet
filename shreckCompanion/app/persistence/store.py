@@ -47,6 +47,34 @@ class CompanionStore:
             "last_resolved_subject": None,
         }
 
+    @staticmethod
+    def default_rapport_profile() -> dict[str, Any]:
+        return {
+            "adaptive_traits": {
+                "directness": 0.5,
+                "technical_depth": 0.6,
+                "playfulness": 0.4,
+                "initiative": 0.5,
+                "question_frequency": 0.5,
+                "creative_suggestion_frequency": 0.5,
+                "emotional_support": 0.4,
+            },
+            "observed_preferences": [],
+            "negative_signals": [],
+            "recent_user_state": {},
+        }
+
+    @staticmethod
+    def default_chat_state() -> dict[str, Any]:
+        return {
+            "chat_goal": "Respond helpfully and grounded to the active conversation.",
+            "conversation_mode": "general_assistant",
+            "current_intention": "Answer the user query clearly.",
+            "open_threads": [],
+            "next_best_actions": [],
+            "recent_user_state": {},
+        }
+
     @classmethod
     def normalize_chat_payload(cls, payload: dict[str, Any] | None, *, user_id: int, companion_id: str, session_id: str) -> dict[str, Any]:
         normalized = dict(payload or {})
@@ -84,6 +112,11 @@ class CompanionStore:
                     name TEXT NOT NULL,
                     avatar_url TEXT,
                     writing_style TEXT NOT NULL,
+                    core_traits TEXT NOT NULL,
+                    archetype TEXT NOT NULL,
+                    voice TEXT NOT NULL,
+                    boundaries TEXT NOT NULL,
+                    default_style TEXT NOT NULL,
                     active INTEGER NOT NULL DEFAULT 1,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
@@ -114,6 +147,45 @@ class CompanionStore:
                 );
                 CREATE INDEX IF NOT EXISTS ix_turn_jobs_user_id ON turn_jobs(user_id);
                 CREATE INDEX IF NOT EXISTS ix_turn_jobs_session_id ON turn_jobs(session_id);
+
+                CREATE TABLE IF NOT EXISTS companion_user_rapport (
+                    user_id INTEGER NOT NULL,
+                    companion_id TEXT NOT NULL,
+                    adaptive_traits TEXT NOT NULL,
+                    observed_preferences TEXT NOT NULL,
+                    negative_signals TEXT NOT NULL,
+                    recent_user_state TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (user_id, companion_id)
+                );
+
+                CREATE TABLE IF NOT EXISTS companion_chat_state (
+                    user_id INTEGER NOT NULL,
+                    companion_id TEXT NOT NULL,
+                    session_id TEXT NOT NULL,
+                    chat_goal TEXT NOT NULL,
+                    conversation_mode TEXT NOT NULL,
+                    current_intention TEXT NOT NULL,
+                    open_threads TEXT NOT NULL,
+                    next_best_actions TEXT NOT NULL,
+                    recent_user_state TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (user_id, companion_id, session_id)
+                );
+
+                CREATE TABLE IF NOT EXISTS companion_turn_reflections (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    companion_id TEXT NOT NULL,
+                    session_id TEXT NOT NULL,
+                    turn_job_id INTEGER NOT NULL,
+                    payload TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS ix_companion_turn_reflections_lookup
+                    ON companion_turn_reflections(user_id, companion_id, session_id, turn_job_id);
                 """
             )
             columns = {row["name"] for row in conn.execute("PRAGMA table_info(sessions)").fetchall()}
@@ -122,14 +194,37 @@ class CompanionStore:
             if "last_message_at" not in columns:
                 conn.execute("ALTER TABLE sessions ADD COLUMN last_message_at TEXT")
 
+            companion_columns = {row["name"] for row in conn.execute("PRAGMA table_info(companions)").fetchall()}
+            if "core_traits" not in companion_columns:
+                conn.execute("ALTER TABLE companions ADD COLUMN core_traits TEXT NOT NULL DEFAULT '[]'")
+            if "archetype" not in companion_columns:
+                conn.execute("ALTER TABLE companions ADD COLUMN archetype TEXT NOT NULL DEFAULT 'companion'")
+            if "voice" not in companion_columns:
+                conn.execute("ALTER TABLE companions ADD COLUMN voice TEXT NOT NULL DEFAULT 'clear and helpful'")
+            if "boundaries" not in companion_columns:
+                conn.execute("ALTER TABLE companions ADD COLUMN boundaries TEXT NOT NULL DEFAULT '[]'")
+            if "default_style" not in companion_columns:
+                conn.execute("ALTER TABLE companions ADD COLUMN default_style TEXT NOT NULL DEFAULT '{}' ")
+
     @staticmethod
     def _companion_from_row(row: sqlite3.Row) -> PersonalCompanionAgentRead:
+        default_style = json_loads(row["default_style"]) or {}
         return PersonalCompanionAgentRead(
             id=str(row["id"]),
             user_id=int(row["user_id"]),
             name=str(row["name"]),
             avatar_url=row["avatar_url"],
             writing_style=str(row["writing_style"]),
+            core_traits=[str(item) for item in (json_loads(row["core_traits"]) or ["curious", "warm", "grounded"]) if str(item).strip()],
+            archetype=str(row["archetype"] or "companion"),
+            voice=str(row["voice"] or "clear and helpful"),
+            boundaries=[str(item) for item in (json_loads(row["boundaries"]) or ["do not invent canon", "do not fake certainty"]) if str(item).strip()],
+            default_style={
+                "verbosity": float(default_style.get("verbosity", 0.6)),
+                "humor": float(default_style.get("humor", 0.4)),
+                "directness": float(default_style.get("directness", 0.5)),
+                "initiative": float(default_style.get("initiative", 0.6)),
+            },
             active=bool(row["active"]),
             created_at=datetime.fromisoformat(str(row["created_at"])),
             updated_at=datetime.fromisoformat(str(row["updated_at"])),
@@ -142,8 +237,12 @@ class CompanionStore:
             try:
                 conn.execute(
                     """
-                    INSERT INTO companions (id,user_id,name,avatar_url,writing_style,active,created_at,updated_at)
-                    VALUES (?,?,?,?,?,?,?,?)
+                    INSERT INTO companions (
+                        id,user_id,name,avatar_url,writing_style,
+                        core_traits,archetype,voice,boundaries,default_style,
+                        active,created_at,updated_at
+                    )
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
                     """,
                     (
                         companion_id,
@@ -151,6 +250,11 @@ class CompanionStore:
                         payload.name,
                         payload.avatar_url,
                         payload.writing_style,
+                        json_dumps(payload.core_traits),
+                        payload.archetype,
+                        payload.voice,
+                        json_dumps(payload.boundaries),
+                        json_dumps(payload.default_style.model_dump()),
                         1 if payload.active else 0,
                         now,
                         now,
@@ -176,6 +280,14 @@ class CompanionStore:
             "name": patch.get("name", current.name),
             "avatar_url": patch.get("avatar_url", current.avatar_url),
             "writing_style": patch.get("writing_style", current.writing_style),
+            "core_traits": json_dumps(patch.get("core_traits", current.core_traits)),
+            "archetype": patch.get("archetype", current.archetype),
+            "voice": patch.get("voice", current.voice),
+            "boundaries": json_dumps(patch.get("boundaries", current.boundaries)),
+            "default_style": json_dumps(
+                (patch.get("default_style").model_dump() if hasattr(patch.get("default_style"), "model_dump") else patch.get("default_style"))
+                or current.default_style.model_dump()
+            ),
             "active": 1 if patch.get("active", current.active) else 0,
             "updated_at": utc_now_iso(),
             "user_id": user_id,
@@ -185,6 +297,8 @@ class CompanionStore:
                 """
                 UPDATE companions
                 SET name=:name, avatar_url=:avatar_url, writing_style=:writing_style,
+                    core_traits=:core_traits, archetype=:archetype, voice=:voice,
+                    boundaries=:boundaries, default_style=:default_style,
                     active=:active, updated_at=:updated_at
                 WHERE user_id=:user_id
                 """,
@@ -314,9 +428,275 @@ class CompanionStore:
             return None
         with self.connect() as conn:
             conn.execute("DELETE FROM sessions WHERE user_id = ? AND session_id = ?", (user_id, session_id))
+            conn.execute(
+                "DELETE FROM companion_chat_state WHERE user_id = ? AND session_id = ?",
+                (user_id, session_id),
+            )
         path = self.chat_file_path(user_id, str(session["companion_id"]), session_id)
         path.unlink(missing_ok=True)
         return session
+
+    def get_or_create_rapport_profile(self, *, user_id: int, companion_id: str) -> dict[str, Any]:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM companion_user_rapport WHERE user_id = ? AND companion_id = ?",
+                (user_id, companion_id),
+            ).fetchone()
+            if row is None:
+                now = utc_now_iso()
+                defaults = self.default_rapport_profile()
+                conn.execute(
+                    """
+                    INSERT INTO companion_user_rapport
+                    (user_id, companion_id, adaptive_traits, observed_preferences, negative_signals, recent_user_state, created_at, updated_at)
+                    VALUES (?,?,?,?,?,?,?,?)
+                    """,
+                    (
+                        user_id,
+                        companion_id,
+                        json_dumps(defaults["adaptive_traits"]),
+                        json_dumps(defaults["observed_preferences"]),
+                        json_dumps(defaults["negative_signals"]),
+                        json_dumps(defaults["recent_user_state"]),
+                        now,
+                        now,
+                    ),
+                )
+                row = conn.execute(
+                    "SELECT * FROM companion_user_rapport WHERE user_id = ? AND companion_id = ?",
+                    (user_id, companion_id),
+                ).fetchone()
+        if row is None:
+            return self.default_rapport_profile()
+        return {
+            "adaptive_traits": json_loads(row["adaptive_traits"]) or {},
+            "observed_preferences": json_loads(row["observed_preferences"]) or [],
+            "negative_signals": json_loads(row["negative_signals"]) or [],
+            "recent_user_state": json_loads(row["recent_user_state"]) or {},
+            "created_at": str(row["created_at"]),
+            "updated_at": str(row["updated_at"]),
+        }
+
+    def apply_rapport_patch(
+        self,
+        *,
+        user_id: int,
+        companion_id: str,
+        patch: list[dict[str, Any]],
+        confidence_threshold: float,
+        max_delta: float,
+        min_value: float,
+        max_value: float,
+        recent_user_state: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        profile = self.get_or_create_rapport_profile(user_id=user_id, companion_id=companion_id)
+        traits = dict(profile.get("adaptive_traits") or {})
+        applied: list[dict[str, Any]] = []
+        for item in patch or []:
+            if not isinstance(item, dict):
+                continue
+            trait = str(item.get("trait") or "").strip()
+            if not trait:
+                continue
+            confidence = float(item.get("confidence") or 0.0)
+            if confidence < float(confidence_threshold):
+                continue
+            if trait not in traits:
+                continue
+            raw_delta = float(item.get("delta") or 0.0)
+            clamped_delta = max(-float(max_delta), min(float(max_delta), raw_delta))
+            before = float(traits.get(trait) or 0.0)
+            after = max(float(min_value), min(float(max_value), before + clamped_delta))
+            traits[trait] = after
+            applied.append(
+                {
+                    "trait": trait,
+                    "before": before,
+                    "after": after,
+                    "delta_requested": raw_delta,
+                    "delta_applied": after - before,
+                    "confidence": confidence,
+                    "reason": str(item.get("reason") or "").strip(),
+                }
+            )
+
+        observed_preferences = [str(item).strip() for item in (profile.get("observed_preferences") or []) if str(item).strip()]
+        negative_signals = [str(item).strip() for item in (profile.get("negative_signals") or []) if str(item).strip()]
+        now = utc_now_iso()
+        user_state_payload = dict(profile.get("recent_user_state") or {})
+        if isinstance(recent_user_state, dict):
+            user_state_payload = dict(recent_user_state)
+        with self.connect() as conn:
+            conn.execute(
+                """
+                UPDATE companion_user_rapport
+                SET adaptive_traits = ?, observed_preferences = ?, negative_signals = ?, recent_user_state = ?, updated_at = ?
+                WHERE user_id = ? AND companion_id = ?
+                """,
+                (
+                    json_dumps(traits),
+                    json_dumps(observed_preferences),
+                    json_dumps(negative_signals),
+                    json_dumps(user_state_payload),
+                    now,
+                    user_id,
+                    companion_id,
+                ),
+            )
+        refreshed = self.get_or_create_rapport_profile(user_id=user_id, companion_id=companion_id)
+        refreshed["applied_patch"] = applied
+        return refreshed
+
+    def get_or_create_chat_state(self, *, user_id: int, companion_id: str, session_id: str) -> dict[str, Any]:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM companion_chat_state WHERE user_id = ? AND companion_id = ? AND session_id = ?",
+                (user_id, companion_id, session_id),
+            ).fetchone()
+            if row is None:
+                now = utc_now_iso()
+                defaults = self.default_chat_state()
+                conn.execute(
+                    """
+                    INSERT INTO companion_chat_state
+                    (user_id, companion_id, session_id, chat_goal, conversation_mode, current_intention, open_threads, next_best_actions, recent_user_state, created_at, updated_at)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?)
+                    """,
+                    (
+                        user_id,
+                        companion_id,
+                        session_id,
+                        defaults["chat_goal"],
+                        defaults["conversation_mode"],
+                        defaults["current_intention"],
+                        json_dumps(defaults["open_threads"]),
+                        json_dumps(defaults["next_best_actions"]),
+                        json_dumps(defaults["recent_user_state"]),
+                        now,
+                        now,
+                    ),
+                )
+                row = conn.execute(
+                    "SELECT * FROM companion_chat_state WHERE user_id = ? AND companion_id = ? AND session_id = ?",
+                    (user_id, companion_id, session_id),
+                ).fetchone()
+        if row is None:
+            return self.default_chat_state()
+        return {
+            "chat_goal": str(row["chat_goal"]),
+            "conversation_mode": str(row["conversation_mode"]),
+            "current_intention": str(row["current_intention"]),
+            "open_threads": json_loads(row["open_threads"]) or [],
+            "next_best_actions": json_loads(row["next_best_actions"]) or [],
+            "recent_user_state": json_loads(row["recent_user_state"]) or {},
+            "created_at": str(row["created_at"]),
+            "updated_at": str(row["updated_at"]),
+        }
+
+    def apply_chat_state_patch(
+        self,
+        *,
+        user_id: int,
+        companion_id: str,
+        session_id: str,
+        patch: dict[str, Any],
+        fallback_goal: str | None = None,
+        fallback_intention: str | None = None,
+        fallback_mode: str | None = None,
+        fallback_open_threads: list[str] | None = None,
+        fallback_next_actions: list[str] | None = None,
+        recent_user_state: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        state = self.get_or_create_chat_state(user_id=user_id, companion_id=companion_id, session_id=session_id)
+        payload = dict(state)
+        patch = dict(patch or {})
+
+        if str(patch.get("chat_goal") or "").strip():
+            payload["chat_goal"] = str(patch.get("chat_goal") or "").strip()
+        elif fallback_goal:
+            payload["chat_goal"] = str(fallback_goal).strip() or payload["chat_goal"]
+
+        if str(patch.get("current_intention") or "").strip():
+            payload["current_intention"] = str(patch.get("current_intention") or "").strip()
+        elif fallback_intention:
+            payload["current_intention"] = str(fallback_intention).strip() or payload["current_intention"]
+
+        if str(patch.get("conversation_mode") or "").strip():
+            payload["conversation_mode"] = str(patch.get("conversation_mode") or "").strip()
+        elif fallback_mode:
+            payload["conversation_mode"] = str(fallback_mode).strip() or payload["conversation_mode"]
+
+        open_threads = [str(item).strip() for item in (payload.get("open_threads") or []) if str(item).strip()]
+        if fallback_open_threads:
+            for item in fallback_open_threads:
+                value = str(item).strip()
+                if value and value not in open_threads:
+                    open_threads.append(value)
+        for item in patch.get("open_threads_add") or []:
+            value = str(item).strip()
+            if value and value not in open_threads:
+                open_threads.append(value)
+        for item in patch.get("open_threads_resolved") or []:
+            value = str(item).strip()
+            if value:
+                open_threads = [thread for thread in open_threads if thread != value]
+        payload["open_threads"] = open_threads[:20]
+
+        next_actions: list[str] = []
+        raw_next = patch.get("next_best_actions")
+        if isinstance(raw_next, list) and raw_next:
+            next_actions = [str(item).strip() for item in raw_next if str(item).strip()][:10]
+        elif fallback_next_actions:
+            next_actions = [str(item).strip() for item in fallback_next_actions if str(item).strip()][:10]
+        else:
+            next_actions = [str(item).strip() for item in (payload.get("next_best_actions") or []) if str(item).strip()][:10]
+        payload["next_best_actions"] = next_actions
+
+        if isinstance(recent_user_state, dict):
+            payload["recent_user_state"] = dict(recent_user_state)
+
+        now = utc_now_iso()
+        with self.connect() as conn:
+            conn.execute(
+                """
+                UPDATE companion_chat_state
+                SET chat_goal = ?, conversation_mode = ?, current_intention = ?, open_threads = ?, next_best_actions = ?, recent_user_state = ?, updated_at = ?
+                WHERE user_id = ? AND companion_id = ? AND session_id = ?
+                """,
+                (
+                    payload["chat_goal"],
+                    payload["conversation_mode"],
+                    payload["current_intention"],
+                    json_dumps(payload["open_threads"]),
+                    json_dumps(payload["next_best_actions"]),
+                    json_dumps(payload.get("recent_user_state") or {}),
+                    now,
+                    user_id,
+                    companion_id,
+                    session_id,
+                ),
+            )
+        return self.get_or_create_chat_state(user_id=user_id, companion_id=companion_id, session_id=session_id)
+
+    def create_turn_reflection(
+        self,
+        *,
+        user_id: int,
+        companion_id: str,
+        session_id: str,
+        turn_job_id: int,
+        reflection: dict[str, Any],
+    ) -> int:
+        with self.connect() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO companion_turn_reflections
+                (user_id, companion_id, session_id, turn_job_id, payload, created_at)
+                VALUES (?,?,?,?,?,?)
+                """,
+                (user_id, companion_id, session_id, turn_job_id, json_dumps(reflection or {}), utc_now_iso()),
+            )
+            return int(cursor.lastrowid)
 
     def create_turn_job(
         self,
@@ -339,6 +719,8 @@ class CompanionStore:
             )
             job_id = int(cursor.lastrowid)
         self.write_turn_job_media_snapshot(job_id)
+        self.write_frontend_response_example(job_id)
+        self.write_turn_step_snapshot(job_id)
         return job_id
 
     def update_turn_job(self, job_id: int, *, status: str, payload: dict[str, Any], error: str | None = None) -> None:
@@ -349,6 +731,7 @@ class CompanionStore:
             )
         self.write_turn_job_media_snapshot(job_id)
         self.write_frontend_response_example(job_id)
+        self.write_turn_step_snapshot(job_id)
 
     def get_turn_job(self, user_id: int, job_id: int) -> dict[str, Any] | None:
         with self.connect() as conn:
@@ -510,5 +893,38 @@ class CompanionStore:
                 indent=2,
                 ensure_ascii=False,
             ),
+            encoding="utf-8",
+        )
+
+    def write_turn_step_snapshot(self, job_id: int) -> None:
+        with self.connect() as conn:
+            row = conn.execute("SELECT * FROM turn_jobs WHERE id = ?", (job_id,)).fetchone()
+        if row is None:
+            return
+        payload = json_loads(row["payload"]) or {}
+        if row["error"] and "error" not in payload:
+            payload["error"] = row["error"]
+
+        envelope = {
+            "service": "ShreckCompanion",
+            "turn_result_response": {
+                "job_id": int(row["id"]),
+                "status": str(row["status"]),
+                "payload": payload,
+            },
+            "chat_file_path": str(
+                self.chat_file_path(int(row["user_id"]), str(row["companion_id"]), str(row["session_id"]))
+            ),
+            "updated_at": utc_now_iso(),
+        }
+
+        phase = str(payload.get("phase") or payload.get("status") or "state")
+        status = str(row["status"])
+        root = self.settings.local_tests_dir / "personal_companion" / "orchestrator" / "turn_steps" / str(row["id"])
+        root.mkdir(parents=True, exist_ok=True)
+        next_index = len(list(root.glob("*.json"))) + 1
+        filename = f"{next_index:03d}_{status}_{phase}.json"
+        (root / filename).write_text(
+            json.dumps(envelope, indent=2, ensure_ascii=False),
             encoding="utf-8",
         )

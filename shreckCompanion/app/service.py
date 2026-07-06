@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from datetime import datetime
 from typing import Any
 
 from fastapi import UploadFile
@@ -12,6 +13,7 @@ from app.integrations.clients import ShreckLLMClient, ShrecknetProviderClient
 from app.jobs.herald_orchestrator import HeraldOrchestrator
 from app.media import CompanionMediaService
 from app.schemas import (
+    CompanionUserRapportRead,
     CompanionChatSessionCount,
     CompanionChatSessionCreateRequest,
     CompanionChatSessionRead,
@@ -29,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 
 class CompanionService:
-    TURN_PHASES: tuple[str, ...] = ("planning", "selecting_tools", "executing_steps", "synthesizing")
+    TURN_PHASES: tuple[str, ...] = ("policy", "planning", "selecting_tools", "executing_steps", "synthesizing", "reflection")
 
     def __init__(self, settings: Settings):
         self.settings = settings
@@ -86,11 +88,17 @@ class CompanionService:
             "default_user_id": self.settings.default_user_id,
             "model_personal_companion_routing": self.settings.model_personal_companion_routing.model_dump(),
             "model_personal_companion_synthesis": self.settings.model_personal_companion_synthesis.model_dump(),
+            "model_personal_companion_policy": self.settings.model_personal_companion_policy.model_dump(),
+            "model_personal_companion_reflection": self.settings.model_personal_companion_reflection.model_dump(),
             "routing_temperature": self.settings.routing_temperature,
             "synthesis_temperature": self.settings.synthesis_temperature,
+            "policy_temperature": self.settings.policy_temperature,
+            "reflection_temperature": self.settings.reflection_temperature,
             "turn_query_max_length": self.settings.turn_query_max_length,
             "provider_timeout_seconds": self.settings.provider_timeout_seconds,
             "turn_job_result_ttl_seconds": self.settings.turn_job_result_ttl_seconds,
+            "rapport_confidence_threshold": self.settings.rapport_confidence_threshold,
+            "rapport_max_trait_delta_per_turn": self.settings.rapport_max_trait_delta_per_turn,
         }
 
     def frontend_config_view(self) -> dict[str, object]:
@@ -100,6 +108,8 @@ class CompanionService:
             "models": {
                 "personal_companion_routing": self.settings.model_personal_companion_routing.model_dump(),
                 "personal_companion_synthesis": self.settings.model_personal_companion_synthesis.model_dump(),
+                "personal_companion_policy": self.settings.model_personal_companion_policy.model_dump(),
+                "personal_companion_reflection": self.settings.model_personal_companion_reflection.model_dump(),
             },
             "media": {
                 "base_url": self.settings.media_base_url,
@@ -117,6 +127,7 @@ class CompanionService:
                 "config": "/config",
                 "frontend_config": "/config/frontend",
                 "companion": "/users/me/companion",
+                "companion_rapport": "/users/me/companion/rapport",
                 "bootstrap": "/users/me/companion/orchestrator/bootstrap",
                 "list_chats": "/users/me/companion/orchestrator/chats?ontology_id={ontology_id}",
                 "create_chat": "/users/me/companion/orchestrator/chats",
@@ -134,6 +145,8 @@ class CompanionService:
                 "max_image_upload_bytes": self.settings.max_image_upload_bytes,
                 "image_max_width": self.settings.image_max_width,
                 "image_max_height": self.settings.image_max_height,
+                "rapport_confidence_threshold": self.settings.rapport_confidence_threshold,
+                "rapport_max_trait_delta_per_turn": self.settings.rapport_max_trait_delta_per_turn,
             },
         }
 
@@ -145,6 +158,22 @@ class CompanionService:
 
     def update_companion(self, user_id: int, payload: PersonalCompanionAgentUpdate) -> PersonalCompanionAgentRead:
         return self.store.update_companion(user_id, payload)
+
+    def get_companion_rapport(self, user_id: int) -> CompanionUserRapportRead:
+        companion = self.get_companion(user_id)
+        rapport = self.store.get_or_create_rapport_profile(user_id=user_id, companion_id=companion.id)
+        return CompanionUserRapportRead(
+            user_id=user_id,
+            companion_id=companion.id,
+            adaptive_traits={
+                str(key): float(value)
+                for key, value in (rapport.get("adaptive_traits") or {}).items()
+            },
+            observed_preferences=[str(item) for item in (rapport.get("observed_preferences") or [])],
+            negative_signals=[str(item) for item in (rapport.get("negative_signals") or [])],
+            recent_user_state=dict(rapport.get("recent_user_state") or {}),
+            updated_at=datetime.fromisoformat(str(rapport.get("updated_at"))),
+        )
 
     async def upload_companion_avatar(
         self,
@@ -416,9 +445,52 @@ class CompanionService:
             allocated = session.get("allocated_tools") or {}
             chat_payload = self.store.read_chat_file(user_id, companion.id, session_id) or {}
             conversation_context = self.orchestrator.build_conversation_context(query, chat_payload)
+            rapport_profile = self.store.get_or_create_rapport_profile(user_id=user_id, companion_id=companion.id)
+            chat_state = self.store.get_or_create_chat_state(user_id=user_id, companion_id=companion.id, session_id=session_id)
+            llm_trace: dict[str, Any] = {}
             total_phases = len(self.TURN_PHASES)
 
-            payload = self._build_running_payload(payload, phase="planning", phase_label="Planning tool usage", progress_current=1, progress_total=total_phases, conversation_context=conversation_context)
+            logger.info("companion turn step policy started job_id=%s", job_id)
+
+            payload = self._build_running_payload(
+                payload,
+                phase="policy",
+                phase_label="Planning companion policy",
+                progress_current=1,
+                progress_total=total_phases,
+                conversation_context=conversation_context,
+                chat_state=chat_state,
+                rapport_profile=rapport_profile,
+                llm_trace=llm_trace,
+            )
+            self.store.update_turn_job(job_id, status="running", payload=payload)
+            companion_policy = await self.orchestrator.plan_companion_policy(
+                query=query,
+                conversation_context=conversation_context,
+                chat_state=chat_state,
+                rapport_profile=rapport_profile,
+                debug_trace=llm_trace,
+            )
+            logger.info(
+                "companion turn step policy happened job_id=%s needs_knowledge_tools=%s",
+                job_id,
+                companion_policy.get("needs_knowledge_tools"),
+            )
+            logger.info("companion turn step policy ended job_id=%s", job_id)
+
+            logger.info("companion turn step planning started job_id=%s", job_id)
+            payload = self._build_running_payload(
+                payload,
+                phase="planning",
+                phase_label="Planning tool usage",
+                progress_current=2,
+                progress_total=total_phases,
+                conversation_context=conversation_context,
+                companion_policy=companion_policy,
+                chat_state=chat_state,
+                rapport_profile=rapport_profile,
+                llm_trace=llm_trace,
+            )
             self.store.update_turn_job(job_id, status="running", payload=payload)
             logger.info("companion turn planning query job_id=%s", job_id)
             logger.info(
@@ -429,8 +501,22 @@ class CompanionService:
                 len(conversation_context.get("recent_messages_used") or []),
             )
             planning_query = str(conversation_context.get("rewritten_query") or query)
-            plan = await self.orchestrator.plan_query(planning_query, conversation_context=conversation_context)
+            plan = await self.orchestrator.plan_query(
+                planning_query,
+                conversation_context=conversation_context,
+                allocated_tools=allocated,
+                companion_policy=companion_policy,
+                debug_trace=llm_trace,
+            )
             selected_tools = self.orchestrator.plan_selected_tools(plan, allocated)
+            logger.info(
+                "companion turn step planning happened job_id=%s strategy=%s steps=%s",
+                job_id,
+                plan.get("strategy"),
+                len(plan.get("steps") or []),
+            )
+            logger.info("companion turn step planning ended job_id=%s", job_id)
+            logger.info("companion turn step selecting_tools started job_id=%s", job_id)
             routing = {
                 "use_elder": bool(selected_tools.get("elder")),
                 "use_librarian": bool(selected_tools.get("librarian")),
@@ -440,12 +526,16 @@ class CompanionService:
                 payload,
                 phase="selecting_tools",
                 phase_label="Selecting tools",
-                progress_current=2,
+                progress_current=3,
                 progress_total=total_phases,
                 routing=routing,
                 selected_tools=selected_tools,
                 plan=plan,
                 conversation_context=conversation_context,
+                companion_policy=companion_policy,
+                chat_state=chat_state,
+                rapport_profile=rapport_profile,
+                llm_trace=llm_trace,
             )
             self.store.update_turn_job(job_id, status="running", payload=payload)
             logger.info(
@@ -456,6 +546,7 @@ class CompanionService:
                 len(selected_tools.get("elder") or []),
                 len(selected_tools.get("librarian") or []),
             )
+            logger.info("companion turn step selecting_tools ended job_id=%s", job_id)
 
             async def elder_runner(agent_id: str, tool_query: str) -> dict[str, Any]:
                 logger.info("companion turn querying elder job_id=%s agent_id=%s", job_id, agent_id)
@@ -484,7 +575,7 @@ class CompanionService:
                 payload,
                 phase="executing_steps",
                 phase_label="Executing tool plan",
-                progress_current=3,
+                progress_current=4,
                 progress_total=total_phases,
                 step_progress={
                     "total": total_selected_tools,
@@ -492,13 +583,25 @@ class CompanionService:
                     "running": 1 if total_selected_tools else 0,
                 },
                 execution={"completed_steps": [], "stopped_reason": None},
+                companion_policy=companion_policy,
+                chat_state=chat_state,
+                rapport_profile=rapport_profile,
+                llm_trace=llm_trace,
             )
             self.store.update_turn_job(job_id, status="running", payload=payload)
+            logger.info("companion turn step executing_steps started job_id=%s", job_id)
             logger.info("companion turn executing plan job_id=%s steps=%s", job_id, total_selected_tools)
             agent_responses: list[dict[str, Any]] = []
             completed_steps: list[dict[str, Any]] = []
             results_by_step: dict[str, dict[str, Any]] = {}
             stopped_reason: str | None = None
+
+            def _latest_elder_result() -> dict[str, Any] | None:
+                for response in reversed(agent_responses):
+                    if str(response.get("agent_job") or "") == "elder":
+                        return response
+                return None
+
             for index, step in enumerate(plan.get("steps") or [], start=1):
                 step_id = str(step.get("step_id") or f"step-{index}")
                 tool_job = str(step.get("tool_job") or "")
@@ -525,36 +628,66 @@ class CompanionService:
                 query_used = self.orchestrator.rewrite_query_with_subject(str(step.get("query") or planning_query), conversation_context)
                 canon_context = None
                 if step.get("use_prior_context"):
-                    dependency_id = str((step.get("depends_on") or [""])[0] or "")
-                    dependency_result = results_by_step.get(dependency_id)
-                    if not dependency_result:
-                        stopped_reason = f"Required prior step {dependency_id or 'unknown'} was unavailable for {step_id}."
-                        logger.warning(
-                            "companion turn step stopped job_id=%s step_id=%s reason=%s",
+                    dependency_ids = [str(item) for item in (step.get("depends_on") or []) if str(item).strip()]
+                    dependency_id = ""
+                    dependency_result = None
+                    for candidate in dependency_ids:
+                        maybe = results_by_step.get(candidate)
+                        if maybe is not None:
+                            dependency_id = candidate
+                            dependency_result = maybe
+                            break
+
+                    if dependency_result is None and tool_job == "librarian":
+                        dependency_result = _latest_elder_result()
+                        dependency_id = str((dependency_result or {}).get("step_id") or "")
+
+                    if dependency_result is None:
+                        if tool_job == "librarian":
+                            logger.info(
+                                "companion turn step optional context missing job_id=%s step_id=%s tool_job=%s",
+                                job_id,
+                                step_id,
+                                tool_job,
+                            )
+                        else:
+                            stopped_reason = f"Required prior step {dependency_id or 'unknown'} was unavailable for {step_id}."
+                            logger.warning(
+                                "companion turn step stopped job_id=%s step_id=%s reason=%s",
+                                job_id,
+                                step_id,
+                                stopped_reason,
+                            )
+                            break
+                    else:
+                        canon_context = self.orchestrator.build_canon_context(dependency_result)
+                        logger.info(
+                            "companion turn step derived context job_id=%s step_id=%s dependency_id=%s context=%s",
                             job_id,
                             step_id,
-                            stopped_reason,
+                            dependency_id or "latest_elder",
+                            self._debug_text(json.dumps(canon_context, ensure_ascii=True), limit=3000),
                         )
-                        break
-                    canon_context = self.orchestrator.build_canon_context(dependency_result)
-                    logger.info(
-                        "companion turn step derived context job_id=%s step_id=%s dependency_id=%s context=%s",
-                        job_id,
-                        step_id,
-                        dependency_id,
-                        self._debug_text(json.dumps(canon_context, ensure_ascii=True), limit=3000),
-                    )
-                    if not self.orchestrator.canon_context_is_sufficient(canon_context):
-                        stopped_reason = f"Stopped before {step_id}: insufficient grounded canon evidence from {dependency_id}."
-                        logger.warning(
-                            "companion turn step stopped job_id=%s step_id=%s reason=%s",
-                            job_id,
-                            step_id,
-                            stopped_reason,
-                        )
-                        break
-                    if tool_job == "librarian":
-                        query_used = self.orchestrator.build_librarian_query(subquery=query_used, canon_context=canon_context)
+                        if tool_job == "librarian":
+                            if self.orchestrator.canon_context_is_sufficient(canon_context):
+                                query_used = self.orchestrator.build_librarian_query(subquery=query_used, canon_context=canon_context)
+                            else:
+                                logger.info(
+                                    "companion turn step optional context insufficient job_id=%s step_id=%s tool_job=%s",
+                                    job_id,
+                                    step_id,
+                                    tool_job,
+                                )
+                                canon_context = None
+                        elif not self.orchestrator.canon_context_is_sufficient(canon_context):
+                            stopped_reason = f"Stopped before {step_id}: insufficient grounded canon evidence from {dependency_id or 'unknown'}."
+                            logger.warning(
+                                "companion turn step stopped job_id=%s step_id=%s reason=%s",
+                                job_id,
+                                step_id,
+                                stopped_reason,
+                            )
+                            break
                 logger.info(
                     "companion turn step request job_id=%s step_id=%s tool_job=%s agent_id=%s query=%s",
                     job_id,
@@ -567,7 +700,7 @@ class CompanionService:
                     payload,
                     phase="executing_steps",
                     phase_label="Executing tool plan",
-                    progress_current=3,
+                    progress_current=4,
                     progress_total=total_phases,
                     routing=routing,
                     selected_tools=selected_tools,
@@ -585,6 +718,10 @@ class CompanionService:
                         "goal": step.get("goal"),
                     },
                     execution={"completed_steps": completed_steps, "stopped_reason": stopped_reason},
+                    companion_policy=companion_policy,
+                    chat_state=chat_state,
+                    rapport_profile=rapport_profile,
+                    llm_trace=llm_trace,
                 )
                 self.store.update_turn_job(job_id, status="running", payload=payload)
                 agent_id = selected_agent_ids[0]
@@ -603,6 +740,7 @@ class CompanionService:
                     self._debug_text(response.get("answer")),
                     self._debug_text(response.get("error"), limit=1000),
                 )
+                logger.info("companion turn step %s: this happened ok=%s", step_id, response.get("ok", True))
                 agent_responses.append(response)
                 results_by_step[step_id] = response
                 completed_steps.append(
@@ -626,11 +764,13 @@ class CompanionService:
                         stopped_reason,
                     )
                     break
+                logger.info("companion turn step ended job_id=%s step_id=%s", job_id, step_id)
+            logger.info("companion turn step executing_steps ended job_id=%s", job_id)
             payload = self._build_running_payload(
                 payload,
                 phase="synthesizing",
                 phase_label="Synthesizing answer",
-                progress_current=4,
+                progress_current=5,
                 progress_total=total_phases,
                 agent_responses=agent_responses,
                 plan=plan,
@@ -642,9 +782,14 @@ class CompanionService:
                 },
                 current_step=None,
                 conversation_context=conversation_context,
+                companion_policy=companion_policy,
+                chat_state=chat_state,
+                rapport_profile=rapport_profile,
+                llm_trace=llm_trace,
             )
             self.store.update_turn_job(job_id, status="running", payload=payload)
             logger.info("companion turn synthesizing final response job_id=%s", job_id)
+            logger.info("companion turn step synthesizing started job_id=%s", job_id)
             final_text = await self.orchestrator.synthesize_final_answer(
                 query=query,
                 companion_name=companion.name,
@@ -652,7 +797,77 @@ class CompanionService:
                 plan=plan,
                 execution={"completed_steps": completed_steps, "stopped_reason": stopped_reason},
                 agent_responses=agent_responses,
+                debug_trace=llm_trace,
             )
+            logger.info("companion turn step synthesizing happened job_id=%s chars=%s", job_id, len(final_text))
+            logger.info("companion turn step synthesizing ended job_id=%s", job_id)
+            logger.info("companion turn step reflection started job_id=%s", job_id)
+            payload = self._build_running_payload(
+                payload,
+                phase="reflection",
+                phase_label="Evaluating response quality",
+                progress_current=6,
+                progress_total=total_phases,
+                plan=plan,
+                execution={"completed_steps": completed_steps, "stopped_reason": stopped_reason},
+                selected_tools=selected_tools,
+                conversation_context=conversation_context,
+                companion_policy=companion_policy,
+                chat_state=chat_state,
+                rapport_profile=rapport_profile,
+                final={"text": final_text},
+                llm_trace=llm_trace,
+            )
+            self.store.update_turn_job(job_id, status="running", payload=payload)
+
+            reflection = await self.orchestrator.evaluate_turn_reflection(
+                query=query,
+                final_text=final_text,
+                execution={"completed_steps": completed_steps, "stopped_reason": stopped_reason},
+                chat_state=chat_state,
+                rapport_profile=rapport_profile,
+                debug_trace=llm_trace,
+            )
+            proactivity = reflection.get("proactivity") if isinstance(reflection.get("proactivity"), dict) else {}
+            proactive_message = str(proactivity.get("proactive_message") or "").strip()
+            if proactivity.get("should_be_proactive") and proactive_message and int(self.settings.max_proactive_nudges_per_turn) > 0:
+                final_text = f"{final_text}\n\n{proactive_message}"
+
+            updated_chat_state = self.store.apply_chat_state_patch(
+                user_id=user_id,
+                companion_id=companion.id,
+                session_id=session_id,
+                patch=reflection.get("chat_state_patch") if isinstance(reflection.get("chat_state_patch"), dict) else {},
+                fallback_goal=str(companion_policy.get("chat_goal") or "").strip() or None,
+                fallback_intention=str(companion_policy.get("turn_intention") or "").strip() or None,
+                fallback_mode=str(companion_policy.get("conversation_mode") or "").strip() or None,
+                fallback_open_threads=companion_policy.get("open_threads") if isinstance(companion_policy.get("open_threads"), list) else None,
+                fallback_next_actions=companion_policy.get("next_best_actions") if isinstance(companion_policy.get("next_best_actions"), list) else None,
+                recent_user_state=reflection.get("user_state_estimate") if isinstance(reflection.get("user_state_estimate"), dict) else None,
+            )
+            updated_rapport = self.store.apply_rapport_patch(
+                user_id=user_id,
+                companion_id=companion.id,
+                patch=reflection.get("rapport_patch") if isinstance(reflection.get("rapport_patch"), list) else [],
+                confidence_threshold=float(self.settings.rapport_confidence_threshold),
+                max_delta=float(self.settings.rapport_max_trait_delta_per_turn),
+                min_value=float(self.settings.rapport_min_trait_value),
+                max_value=float(self.settings.rapport_max_trait_value),
+                recent_user_state=reflection.get("user_state_estimate") if isinstance(reflection.get("user_state_estimate"), dict) else None,
+            )
+            self.store.create_turn_reflection(
+                user_id=user_id,
+                companion_id=companion.id,
+                session_id=session_id,
+                turn_job_id=job_id,
+                reflection=reflection,
+            )
+            logger.info(
+                "companion turn step reflection happened job_id=%s answered_user=%s",
+                job_id,
+                reflection.get("answered_user"),
+            )
+            logger.info("companion turn step reflection ended job_id=%s", job_id)
             logger.info("companion turn final response synthesized job_id=%s chars=%s", job_id, len(final_text))
             done_payload = self.orchestrator.build_turn_payload(
                 session_id=session_id,
@@ -663,6 +878,12 @@ class CompanionService:
                 agent_responses=agent_responses,
                 final_text=final_text,
                 conversation_context=conversation_context,
+                companion_policy=companion_policy,
+                turn_reflection=reflection,
+                chat_state=updated_chat_state,
+                rapport_profile=updated_rapport,
+                rapport_patch_applied=updated_rapport.get("applied_patch") if isinstance(updated_rapport.get("applied_patch"), list) else [],
+                llm_trace=llm_trace,
             )
             self.store.update_turn_job(job_id, status="done", payload=done_payload)
             self.store.append_chat_message(

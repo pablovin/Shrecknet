@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, File, Header, HTTPException, Request, Re
 
 from app.core.config import get_settings
 from app.schemas import (
+    CompanionUserRapportRead,
     CompanionChatSessionCount,
     CompanionChatSessionCreateRequest,
     CompanionChatSessionRead,
@@ -95,6 +96,17 @@ async def update_personal_companion(
 ) -> PersonalCompanionAgentRead:
     try:
         return service.update_companion(user_id, payload)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get("/users/me/companion/rapport", response_model=CompanionUserRapportRead)
+async def get_personal_companion_rapport(
+    user_id: int = Depends(get_current_user_id),
+    service: CompanionService = Depends(get_service),
+) -> CompanionUserRapportRead:
+    try:
+        return service.get_companion_rapport(user_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 

@@ -1,10 +1,12 @@
 export type CompanionTurnStatus = "queued" | "running" | "done" | "failed";
 
 export type CompanionTurnPhase =
+  | "policy"
   | "planning"
   | "selecting_tools"
   | "executing_steps"
-  | "synthesizing";
+  | "synthesizing"
+  | "reflection";
 
 export type ProgressState = {
   current: number;
@@ -53,6 +55,51 @@ export type CompanionChatSession = {
   created_at: string;
   updated_at: string;
   last_message_at?: string | null;
+};
+
+export type CompanionDefaultStyle = {
+  verbosity: number;
+  humor: number;
+  directness: number;
+  initiative: number;
+};
+
+export type PersonalCompanion = {
+  id: string;
+  user_id: number;
+  name: string;
+  avatar_url?: string | null;
+  writing_style: string;
+  core_traits: string[];
+  archetype: string;
+  voice: string;
+  boundaries: string[];
+  default_style: CompanionDefaultStyle;
+  active: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type PersonalCompanionUpdate = {
+  name?: string;
+  avatar_url?: string | null;
+  writing_style?: string;
+  core_traits?: string[];
+  archetype?: string;
+  voice?: string;
+  boundaries?: string[];
+  default_style?: CompanionDefaultStyle;
+  active?: boolean;
+};
+
+export type CompanionUserRapport = {
+  user_id: number;
+  companion_id: string;
+  adaptive_traits: Record<string, number>;
+  observed_preferences: string[];
+  negative_signals: string[];
+  recent_user_state: Record<string, unknown>;
+  updated_at: string;
 };
 
 export type CompanionChatSessionCount = {
@@ -113,6 +160,67 @@ export type RunningTurnPayloadBase = {
   phase: CompanionTurnPhase;
   phase_label: string;
   progress: ProgressState;
+  companion_policy?: CompanionPolicy;
+  chat_state?: CompanionChatState;
+  rapport_profile?: CompanionRapportProfile;
+  llm_trace?: Record<string, unknown>;
+};
+
+export type CompanionPolicy = {
+  chat_goal: string;
+  turn_intention: string;
+  conversation_mode: string;
+  user_need: string;
+  needs_knowledge_tools: boolean;
+  suggested_response_style: {
+    directness: number;
+    technical_depth: number;
+    playfulness: number;
+    initiative: number;
+  };
+  open_threads: string[];
+  next_best_actions: string[];
+};
+
+export type CompanionChatState = {
+  chat_goal: string;
+  conversation_mode: string;
+  current_intention: string;
+  open_threads: string[];
+  next_best_actions: string[];
+  recent_user_state?: Record<string, unknown>;
+};
+
+export type CompanionRapportProfile = {
+  adaptive_traits: Record<string, number>;
+  observed_preferences: string[];
+  negative_signals: string[];
+  recent_user_state?: Record<string, unknown>;
+};
+
+export type CompanionTurnReflection = {
+  answered_user: boolean;
+  confidence: number;
+  user_state_estimate: Record<string, string>;
+  response_quality: Record<string, boolean>;
+  proactivity: {
+    should_be_proactive: boolean;
+    proactivity_type: string;
+    proactive_message: string;
+  };
+  chat_state_patch: {
+    chat_goal?: string;
+    current_intention?: string;
+    open_threads_add?: string[];
+    open_threads_resolved?: string[];
+    next_best_actions?: string[];
+  };
+  rapport_patch: Array<{
+    trait: string;
+    delta: number;
+    confidence: number;
+    reason: string;
+  }>;
 };
 
 export type PlanningStep = {
@@ -151,6 +259,11 @@ export type PlanningTurnPayload = RunningTurnPayloadBase & {
   phase_label: "Planning tool usage";
 };
 
+export type PolicyTurnPayload = RunningTurnPayloadBase & {
+  phase: "policy";
+  phase_label: "Planning companion policy";
+};
+
 export type SelectingToolsTurnPayload = RunningTurnPayloadBase & {
   phase: "selecting_tools";
   phase_label: "Selecting tools";
@@ -185,11 +298,25 @@ export type SynthesizingTurnPayload = RunningTurnPayloadBase & {
   agent_responses: AgentResponse[];
 };
 
+export type ReflectionTurnPayload = RunningTurnPayloadBase & {
+  phase: "reflection";
+  phase_label: "Evaluating response quality";
+  routing?: RoutingDecision;
+  plan: ExecutionPlan;
+  execution: ExecutionState;
+  selected_tools: SelectedTools;
+  final?: {
+    text: string;
+  };
+};
+
 export type RunningTurnPayload =
+  | PolicyTurnPayload
   | PlanningTurnPayload
   | SelectingToolsTurnPayload
   | ExecutingStepsTurnPayload
-  | SynthesizingTurnPayload;
+  | SynthesizingTurnPayload
+  | ReflectionTurnPayload;
 
 export type QueuedTurnPayload = {
   status: "queued";
@@ -207,6 +334,20 @@ export type DoneTurnPayload = {
   routing: RoutingDecision;
   plan: ExecutionPlan;
   execution: ExecutionState;
+  companion_policy?: CompanionPolicy;
+  turn_reflection?: CompanionTurnReflection;
+  chat_state?: CompanionChatState;
+  rapport_profile?: CompanionRapportProfile;
+  llm_trace?: Record<string, unknown>;
+  rapport_patch_applied?: Array<{
+    trait: string;
+    before: number;
+    after: number;
+    delta_requested: number;
+    delta_applied: number;
+    confidence: number;
+    reason: string;
+  }>;
   selected_tools: SelectedTools;
   agent_responses: AgentResponse[];
   final: {
@@ -241,6 +382,7 @@ export type FailedTurnPayload = {
   selected_tools?: SelectedTools;
   step_progress?: StepProgressState;
   agent_responses?: AgentResponse[];
+  llm_trace?: Record<string, unknown>;
   error: string;
 };
 

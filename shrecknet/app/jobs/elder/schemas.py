@@ -94,6 +94,9 @@ class SourceNode(BaseModel):
     node_id: str
     node_label: Optional[str] = None
     node_name: Optional[str] = None
+    node_type: Optional[str] = None
+    scene_id: Optional[str] = None
+    source_entity_instance_id: Optional[str] = None
     score: float = 0.0
     evidence_chunks: list[SourceEvidenceChunk] = Field(default_factory=list)
 

@@ -39,6 +39,8 @@ data/
 databases/
 *.json
 !configs/*.json
+!shreckCompanion/configs/
+!shreckCompanion/configs/*.json
 
 # Deployment
 .vercel

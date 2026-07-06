@@ -105,6 +105,10 @@ class ElderOrchestrator:
         self._llm_semaphore = asyncio.Semaphore(self.llm_max_concurrency)
         self.fast_first_min_results = 3
         self.fast_first_min_top_score = 0.42
+        self.timeline_expansion_entity_limit = 3
+        self.timeline_expansion_scene_limit = 4
+        self.timeline_expansion_milestone_limit = 4
+        self.timeline_source_quota = 2
         self.last_retrieval_debug: list[dict[str, Any]] = []
         self.query_entity_matches: list[dict[str, Any]] = []
 
@@ -300,10 +304,16 @@ class ElderOrchestrator:
             retrieve_usage.get("by_tag"),
         )
 
+        retrieval_results = await self._expand_timeline_candidates(
+            query=request.query,
+            retrieval_results=retrieval_results,
+            ontology_ids=ontology_ids,
+        )
+
         # Layer 3: candidate consolidation
         t3 = time.monotonic()
         step_usage_start = _llm_usage_event_count(self.llm_client)
-        consolidated_sources = self._consolidate_sources(retrieval_results)
+        consolidated_sources = await self._consolidate_sources(retrieval_results)
         timings["consolidate_ms"] = round((time.monotonic() - t3) * 1000, 2)
         consolidate_usage = _llm_usage_since(self.llm_client, step_usage_start)
         step_usage_breakdown["consolidate"] = _usage_totals_view(consolidate_usage)
@@ -328,7 +338,10 @@ class ElderOrchestrator:
             query_entity_ids=query_entity_ids,
         )
         consolidated_sources.sort(key=lambda s: s.score, reverse=True)
-        consolidated_sources = consolidated_sources[: max(top_k, 1)]
+        consolidated_sources = self._select_final_sources(
+            consolidated_sources,
+            limit=max(top_k, 1),
+        )
         timings["rerank_ms"] = round((time.monotonic() - t4) * 1000, 2)
         rerank_usage = _llm_usage_since(self.llm_client, step_usage_start)
         step_usage_breakdown["rerank"] = _usage_totals_view(rerank_usage)
@@ -635,6 +648,90 @@ class ElderOrchestrator:
 
         return results
 
+    async def _expand_timeline_candidates(
+        self,
+        *,
+        query: str,
+        retrieval_results: list[dict[str, Any]],
+        ontology_ids: list[int],
+    ) -> list[dict[str, Any]]:
+        expand_timeline_context = getattr(self.graph_retriever, "expand_timeline_context", None)
+        if not callable(expand_timeline_context):
+            return retrieval_results
+
+        entity_scores: dict[str, float] = {}
+        for result in retrieval_results:
+            for chunk in result.get("chunks") or []:
+                if (chunk.node_label or "").strip() != "EntityInstance":
+                    continue
+                node_id = str(chunk.node_id or "").strip()
+                if not node_id or node_id in entity_scores:
+                    continue
+                entity_scores[node_id] = float(chunk.score)
+                if len(entity_scores) >= self.timeline_expansion_entity_limit:
+                    break
+            if len(entity_scores) >= self.timeline_expansion_entity_limit:
+                break
+        if not entity_scores:
+            return retrieval_results
+
+        expanded_chunks = await expand_timeline_context(
+            query=query,
+            ontology_ids=ontology_ids,
+            entity_scores=entity_scores,
+            max_scenes=self.timeline_expansion_scene_limit,
+            max_milestones=self.timeline_expansion_milestone_limit,
+        )
+        if not expanded_chunks:
+            return retrieval_results
+
+        logger.info(
+            "elder_timeline_expansion entity_ids=%s expanded_chunks=%s",
+            list(entity_scores.keys()),
+            len(expanded_chunks),
+        )
+        return self._merge_expanded_chunks_into_results(retrieval_results, expanded_chunks)
+
+    @staticmethod
+    def _merge_expanded_chunks_into_results(
+        retrieval_results: list[dict[str, Any]],
+        expanded_chunks: list[RetrievedChunk],
+    ) -> list[dict[str, Any]]:
+        if not retrieval_results:
+            if not expanded_chunks:
+                return []
+            return [
+                {
+                    "intent": DecomposedIntent(
+                        subquery="timeline_expansion",
+                        target_data_type="mixed",
+                        reason="timeline_expansion",
+                    ),
+                    "chunks": expanded_chunks,
+                    "duration_ms": 0.0,
+                    "debug_stats": {"expanded_timeline_chunks": len(expanded_chunks)},
+                }
+            ]
+
+        chunks_by_node_id: dict[str, RetrievedChunk] = {}
+        for result in retrieval_results:
+            for chunk in result.get("chunks") or []:
+                current = chunks_by_node_id.get(chunk.node_id)
+                if current is None or float(chunk.score) > float(current.score):
+                    chunks_by_node_id[chunk.node_id] = chunk
+        for chunk in expanded_chunks:
+            current = chunks_by_node_id.get(chunk.node_id)
+            if current is None or float(chunk.score) > float(current.score):
+                chunks_by_node_id[chunk.node_id] = chunk
+
+        merged_chunks = sorted(chunks_by_node_id.values(), key=lambda item: item.score, reverse=True)
+        retrieval_results[0]["chunks"] = merged_chunks
+        retrieval_results[0]["debug_stats"] = {
+            **(retrieval_results[0].get("debug_stats") or {}),
+            "expanded_timeline_chunks": len(expanded_chunks),
+        }
+        return retrieval_results
+
     def _attach_intent_top_k(
         self,
         *,
@@ -676,12 +773,15 @@ class ElderOrchestrator:
             enriched.extend(intents[len(enriched) :])
         return enriched
 
-    def _consolidate_sources(self, retrieval_results: list[dict[str, Any]]) -> list[SourceNode]:
+    async def _consolidate_sources(self, retrieval_results: list[dict[str, Any]]) -> list[SourceNode]:
         by_node: dict[str, dict[str, Any]] = defaultdict(
             lambda: {
                 "node_id": "",
                 "node_label": None,
+                "node_type": None,
                 "node_name": None,
+                "scene_id": None,
+                "source_entity_instance_id": None,
                 "score": 0.0,
                 "evidence_chunks": [],
             }
@@ -695,6 +795,7 @@ class ElderOrchestrator:
                 entry = by_node[node_id]
                 entry["node_id"] = node_id
                 entry["node_label"] = chunk.node_label
+                entry["node_type"] = (chunk.node_label or "").strip().lower() or None
                 entry["node_name"] = chunk.node_name or chunk.node_alias or chunk.node_id
                 entry["score"] = max(float(entry["score"]), float(chunk.score))
                 entry["evidence_chunks"].append(
@@ -705,6 +806,18 @@ class ElderOrchestrator:
                         text=chunk.text[:300] if chunk.text else None,
                     )
                 )
+
+        resolve_source_lineage = getattr(self.graph_retriever, "resolve_source_lineage", None)
+        lineage_by_node = {}
+        if callable(resolve_source_lineage):
+            lineage_by_node = await resolve_source_lineage(list(by_node.keys()))
+        for node_id, lineage in lineage_by_node.items():
+            entry = by_node.get(node_id)
+            if not entry:
+                continue
+            entry["node_type"] = lineage.get("node_type") or entry["node_type"]
+            entry["scene_id"] = lineage.get("scene_id")
+            entry["source_entity_instance_id"] = lineage.get("source_entity_instance_id")
 
         sources: list[SourceNode] = []
         for node_id, entry in by_node.items():
@@ -717,13 +830,49 @@ class ElderOrchestrator:
                 SourceNode(
                     node_id=node_id,
                     node_label=entry["node_label"],
+                    node_type=entry["node_type"],
                     node_name=entry["node_name"],
+                    scene_id=entry["scene_id"],
+                    source_entity_instance_id=entry["source_entity_instance_id"],
                     score=float(entry["score"]),
                     evidence_chunks=evidence_chunks,
                 )
             )
 
         return sources
+
+    def _select_final_sources(self, sources: list[SourceNode], *, limit: int) -> list[SourceNode]:
+        ranked = sorted(sources, key=lambda source: source.score, reverse=True)
+        timeline_sources = [
+            source
+            for source in ranked
+            if (source.node_label or "").strip() in {"Scene", "Milestone"}
+        ]
+        if not timeline_sources:
+            return ranked[:limit]
+
+        reserved: list[SourceNode] = []
+        scene_source = next((source for source in timeline_sources if source.node_label == "Scene"), None)
+        milestone_source = next((source for source in timeline_sources if source.node_label == "Milestone"), None)
+        if scene_source is not None:
+            reserved.append(scene_source)
+        if milestone_source is not None and milestone_source.node_id not in {item.node_id for item in reserved}:
+            reserved.append(milestone_source)
+        for source in timeline_sources:
+            if len(reserved) >= min(self.timeline_source_quota, len(timeline_sources)):
+                break
+            if source.node_id in {item.node_id for item in reserved}:
+                continue
+            reserved.append(source)
+
+        selected = reserved[:]
+        for source in ranked:
+            if len(selected) >= limit:
+                break
+            if source.node_id in {item.node_id for item in selected}:
+                continue
+            selected.append(source)
+        return selected[:limit]
 
     def _apply_memory_priors(
         self,

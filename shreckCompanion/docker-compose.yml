@@ -1,0 +1,56 @@
+name: ShreckCompanion
+
+x-shreckcompanion-env: &shreckcompanion-env
+  PYTHONUNBUFFERED: "1"
+  SHRECKCOMPANION_CONFIG_SEED_FILE: /configs/shreckcompanion.json
+
+services:
+  shreckcompanion:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    init: true
+    environment:
+      <<: *shreckcompanion-env
+      COMPANION_PORT: "${SHRECKCOMPANION_HOST_PORT:-8120}"
+    env_file:
+      - ../configs/compose.env
+    ports:
+      - "${SHRECKCOMPANION_HOST_PORT:-8120}:${SHRECKCOMPANION_HOST_PORT:-8120}"
+    volumes:
+      - ./databases:/app/databases
+      - ./media:/app/media
+      - ./configs:/configs:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          python -c "import os, urllib.request; urllib.request.urlopen(f'http://127.0.0.1:{os.environ[\"COMPANION_PORT\"]}/health', timeout=10).read()"
+          || exit 1
+      interval: 15s
+      timeout: 15s
+      retries: 10
+      start_period: 30s
+
+  shreckcompanion_ready:
+    image: alpine:3.20
+    environment:
+      SHRECKCOMPANION_HOST_PORT: "${SHRECKCOMPANION_HOST_PORT:-8120}"
+    depends_on:
+      shreckcompanion:
+        condition: service_healthy
+    command:
+      - /bin/sh
+      - -c
+      - |
+        echo "🧭 ShreckCompanion is ready at http://localhost:$${SHRECKCOMPANION_HOST_PORT}"
+        echo "   • API health:           http://localhost:$${SHRECKCOMPANION_HOST_PORT}/health"
+        echo "   • Swagger docs:         http://localhost:$${SHRECKCOMPANION_HOST_PORT}/docs"
+        echo "   • Companion config API: http://localhost:$${SHRECKCOMPANION_HOST_PORT}/config"
+        echo "   • Frontend config API:  http://localhost:$${SHRECKCOMPANION_HOST_PORT}/config/frontend"
+        echo "   • Internal URL:         http://shreckcompanion:$${SHRECKCOMPANION_HOST_PORT}"
+        echo "✅ ShreckCompanion stack is running"
+    restart: "no"

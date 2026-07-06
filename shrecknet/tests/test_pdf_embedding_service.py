@@ -6,9 +6,6 @@ from types import SimpleNamespace
 import pytest
 
 from app.services.pdf_embedding_service import PdfEmbeddingService
-from app.graphrag.embedding_runtime import EmbeddingRuntimeRequestTimeout
-
-
 class _FakeEmbeddingService:
     model_id = "test-model"
     embed_dim = 3
@@ -200,50 +197,3 @@ def test_rerank_hybrid_promotes_lexical_match_and_applies_diversity_cap() -> Non
     assert out[0]["library_item_id"] in (1, 2)
     assert out[1]["library_item_id"] in (1, 2)
     assert out[0]["library_item_id"] != out[1]["library_item_id"]
-
-
-@pytest.mark.asyncio
-async def test_search_chunks_falls_back_to_lexical_when_embedding_times_out(monkeypatch) -> None:
-    class _TimeoutRuntime:
-        async def embed_query(self, *_args, **_kwargs):
-            raise EmbeddingRuntimeRequestTimeout("embedding request timed out after 10.00s")
-
-    async def _runtime():
-        return _TimeoutRuntime()
-
-    monkeypatch.setattr("app.services.pdf_embedding_service.get_ready_embedding_runtime", _runtime)
-
-    rows = [
-        {
-            "props": {
-                "library_item_id": 10,
-                "ontology_id": 3,
-                "chunk_index": 1,
-                "page_number": 4,
-                "text": "Armor rules explain dexterity penalties and movement limits.",
-            }
-        },
-        {
-            "props": {
-                "library_item_id": 11,
-                "ontology_id": 3,
-                "chunk_index": 2,
-                "page_number": 8,
-                "text": "Unrelated travel notes.",
-            }
-        },
-    ]
-    service = PdfEmbeddingService(_FakeGraphSession(rows), embedding_service=_FakeEmbeddingService())
-
-    chunks = await service.search_chunks(
-        query_text="dexterity armor penalty",
-        ontology_id=3,
-        active_library_item_ids=[10, 11],
-        top_k=3,
-        score_threshold=0.3,
-    )
-
-    assert len(chunks) == 1
-    assert chunks[0]["library_item_id"] == 10
-    assert chunks[0]["page_number"] == 4
-    assert chunks[0]["lexical_score"] > 0

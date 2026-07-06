@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from pathlib import Path
 from typing import Sequence
@@ -13,6 +14,8 @@ from app.models.library import LibraryBookmark, LibraryItem
 from app.models.ontology import Ontology
 from app.models.user import User
 from app.repositories.library_repository import LibraryRepository
+
+logger = logging.getLogger(__name__)
 
 
 class PdfValidationError(ValueError):
@@ -450,6 +453,7 @@ class LibraryService:
         absolute_path.parent.mkdir(parents=True, exist_ok=True)
         temp_path = absolute_path.with_suffix(".tmp")
         total = 0
+        upload_name = upload.filename or "unknown.pdf"
         try:
             with temp_path.open("wb") as buffer:
                 while True:
@@ -461,6 +465,19 @@ class LibraryService:
                         raise PdfValidationError("Uploaded PDF exceeds size limit")
                     buffer.write(chunk)
             temp_path.replace(absolute_path)
+            logger.info(
+                "library_service_pdf_write completed filename=%s relative_path=%s bytes_written=%s",
+                upload_name,
+                relative_path.as_posix(),
+                total,
+            )
+            if total < 1024:
+                logger.warning(
+                    "library_service_pdf_write suspiciously_small_pdf filename=%s relative_path=%s bytes_written=%s",
+                    upload_name,
+                    relative_path.as_posix(),
+                    total,
+                )
         except Exception:
             if temp_path.exists():
                 temp_path.unlink(missing_ok=True)

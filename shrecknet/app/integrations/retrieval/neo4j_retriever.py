@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from typing import Any, Protocol
@@ -79,6 +80,22 @@ class GraphRetriever(Protocol):
         limit: int = 500,
     ) -> list[dict[str, Any]]:
         """Return lightweight entity records for the provided ontology."""
+        ...
+
+    async def resolve_source_lineage(self, node_ids: list[str]) -> dict[str, dict[str, Any]]:
+        """Return scene/milestone lineage metadata keyed by source node id."""
+        ...
+
+    async def expand_timeline_context(
+        self,
+        *,
+        query: str,
+        ontology_ids: list[int],
+        entity_scores: dict[str, float],
+        max_scenes: int = 6,
+        max_milestones: int = 6,
+    ) -> list[RetrievedChunk]:
+        """Return graph-near scene/milestone candidates for retrieved entities."""
         ...
 
 
@@ -390,6 +407,232 @@ class Neo4jGraphRetriever:
         # Sort by score and take top_k
         chunks.sort(key=lambda c: c.score, reverse=True)
         return chunks[:top_k]
+
+    async def resolve_source_lineage(self, node_ids: list[str]) -> dict[str, dict[str, Any]]:
+        unique_ids = [str(node_id).strip() for node_id in node_ids if str(node_id).strip()]
+        if not unique_ids:
+            return {}
+
+        query = """
+        MATCH (node)
+        WHERE (node:Scene OR node:Milestone) AND node.id IN $node_ids
+        OPTIONAL MATCH (node)-[:DERIVED_FROM]->(entity:EntityInstance)
+        RETURN node.id AS node_id,
+               CASE
+                   WHEN 'Scene' IN labels(node) THEN 'scene'
+                   WHEN 'Milestone' IN labels(node) THEN 'milestone'
+                   ELSE null
+               END AS node_type,
+               CASE
+                   WHEN 'Scene' IN labels(node) THEN node.id
+                   ELSE node.scene_id
+               END AS scene_id,
+               entity.entity_instance_id AS source_entity_instance_id
+        """
+
+        async with self._acquire_session() as session:
+            retrieval_service = RetrievalService(session)
+            if self._session_factory is None:
+                async with self._search_lock:
+                    result = await retrieval_service.graph_session.run(query, node_ids=unique_ids)
+                    rows = await result.data()
+            else:
+                result = await retrieval_service.graph_session.run(query, node_ids=unique_ids)
+                rows = await result.data()
+
+        return {
+            str(row.get("node_id")): {
+                "node_type": row.get("node_type"),
+                "scene_id": row.get("scene_id"),
+                "source_entity_instance_id": row.get("source_entity_instance_id"),
+            }
+            for row in rows
+            if row.get("node_id")
+        }
+
+    async def expand_timeline_context(
+        self,
+        *,
+        query: str,
+        ontology_ids: list[int],
+        entity_scores: dict[str, float],
+        max_scenes: int = 6,
+        max_milestones: int = 6,
+    ) -> list[RetrievedChunk]:
+        entity_ids = [entity_id for entity_id in entity_scores if entity_id]
+        if not entity_ids:
+            return []
+
+        scenes_query = """
+        UNWIND $entity_ids AS entity_id
+        MATCH (scene:Scene)
+        WHERE scene.ontology_id IN $ontology_ids
+          AND (
+            EXISTS {
+                MATCH (scene)-[:DERIVED_FROM]->(:EntityInstance {entity_instance_id: entity_id})
+            }
+            OR EXISTS {
+                MATCH (scene)-[:RELATES_TO]->(:EntityInstance {entity_instance_id: entity_id})
+            }
+            OR EXISTS {
+                MATCH (scene)-[:CONTAINS]->(:Milestone)-[:DERIVED_FROM]->(:EntityInstance {entity_instance_id: entity_id})
+            }
+            OR EXISTS {
+                MATCH (scene)-[:CONTAINS]->(:Milestone)-[:RELATES_TO]->(:EntityInstance {entity_instance_id: entity_id})
+            }
+          )
+        OPTIONAL MATCH (scene)-[:DERIVED_FROM]->(derived:EntityInstance)
+        WITH scene,
+             collect(DISTINCT entity_id) AS matched_entity_ids,
+             head(collect(DISTINCT derived.entity_instance_id)) AS derived_from_entity_id
+        RETURN scene AS node,
+               matched_entity_ids,
+               derived_from_entity_id
+        """
+        milestones_query = """
+        UNWIND $entity_ids AS entity_id
+        MATCH (scene:Scene)-[:CONTAINS]->(milestone:Milestone)
+        WHERE scene.ontology_id IN $ontology_ids
+          AND (
+            EXISTS {
+                MATCH (milestone)-[:DERIVED_FROM]->(:EntityInstance {entity_instance_id: entity_id})
+            }
+            OR EXISTS {
+                MATCH (milestone)-[:RELATES_TO]->(:EntityInstance {entity_instance_id: entity_id})
+            }
+          )
+        OPTIONAL MATCH (milestone)-[:DERIVED_FROM]->(derived:EntityInstance)
+        WITH scene,
+             milestone,
+             collect(DISTINCT entity_id) AS matched_entity_ids,
+             head(collect(DISTINCT derived.entity_instance_id)) AS derived_from_entity_id
+        RETURN milestone AS node,
+               scene.id AS scene_id,
+               matched_entity_ids,
+               derived_from_entity_id
+        """
+
+        async with self._acquire_session() as session:
+            retrieval_service = RetrievalService(session)
+            if self._session_factory is None:
+                async with self._search_lock:
+                    scene_result = await retrieval_service.graph_session.run(
+                        scenes_query,
+                        entity_ids=entity_ids,
+                        ontology_ids=ontology_ids,
+                    )
+                    scene_rows = await scene_result.data()
+                    milestone_result = await retrieval_service.graph_session.run(
+                        milestones_query,
+                        entity_ids=entity_ids,
+                        ontology_ids=ontology_ids,
+                    )
+                    milestone_rows = await milestone_result.data()
+            else:
+                scene_result = await retrieval_service.graph_session.run(
+                    scenes_query,
+                    entity_ids=entity_ids,
+                    ontology_ids=ontology_ids,
+                )
+                scene_rows = await scene_result.data()
+                milestone_result = await retrieval_service.graph_session.run(
+                    milestones_query,
+                    entity_ids=entity_ids,
+                    ontology_ids=ontology_ids,
+                )
+                milestone_rows = await milestone_result.data()
+
+        query_tokens = {
+            token
+            for token in re.findall(r"[a-z0-9]+", str(query or "").lower())
+            if len(token) >= 4
+        }
+
+        def _candidate_score(
+            *,
+            matched_entity_ids: list[str],
+            text: str,
+            node_type: str,
+            source_entity_instance_id: str | None,
+        ) -> float:
+            base = max((float(entity_scores.get(entity_id) or 0.0) for entity_id in matched_entity_ids), default=0.35)
+            text_tokens = {
+                token
+                for token in re.findall(r"[a-z0-9]+", str(text or "").lower())
+                if len(token) >= 4
+            }
+            overlap = len(query_tokens & text_tokens) / max(1, len(query_tokens)) if query_tokens else 0.0
+            lexical_bonus = min(0.08, overlap * 0.12)
+            type_bonus = 0.06 if node_type == "scene" else 0.04
+            lineage_bonus = 0.04 if source_entity_instance_id and source_entity_instance_id in matched_entity_ids else 0.0
+            return round(min(0.99, base + lexical_bonus + type_bonus + lineage_bonus), 6)
+
+        def _build_chunk(
+            *,
+            row: dict[str, Any],
+            node_type: str,
+        ) -> RetrievedChunk | None:
+            node = row.get("node")
+            if not node:
+                return None
+            props = dict(node)
+            node_id = str(props.get("id") or "").strip()
+            if not node_id:
+                return None
+            name = str(props.get("name") or node_id)
+            description = str(props.get("description") or "").strip()
+            text = f"{node_type.title()}: {name}\n{description}".strip()
+            matched_entity_ids = [str(item) for item in row.get("matched_entity_ids") or [] if str(item).strip()]
+            source_entity_instance_id = row.get("derived_from_entity_id")
+            score = _candidate_score(
+                matched_entity_ids=matched_entity_ids,
+                text=text,
+                node_type=node_type,
+                source_entity_instance_id=str(source_entity_instance_id) if source_entity_instance_id else None,
+            )
+            return RetrievedChunk(
+                node_id=node_id,
+                node_label="Scene" if node_type == "scene" else "Milestone",
+                node_name=name,
+                instance_id=props.get("instance_id"),
+                chunk_id=f"{node_id}-expanded",
+                chunk_type="scene_main" if node_type == "scene" else "milestone_main",
+                text=text,
+                score=score,
+                confidence_pct=round(score * 100, 2),
+                source="timeline_expansion",
+                properties={
+                    "scene_id": row.get("scene_id") or node_id if node_type == "scene" else row.get("scene_id"),
+                    "source_entity_instance_id": source_entity_instance_id,
+                    "matched_entity_ids": matched_entity_ids,
+                    "expanded_from_graph": True,
+                },
+            )
+
+        scene_chunks = [_build_chunk(row=row, node_type="scene") for row in scene_rows]
+        milestone_chunks = [_build_chunk(row=row, node_type="milestone") for row in milestone_rows]
+        chunks = [chunk for chunk in scene_chunks if chunk is not None]
+        chunks.extend(chunk for chunk in milestone_chunks if chunk is not None)
+        chunks.sort(key=lambda chunk: chunk.score, reverse=True)
+
+        selected: list[RetrievedChunk] = []
+        scene_count = 0
+        milestone_count = 0
+        seen_node_ids: set[str] = set()
+        for chunk in chunks:
+            if chunk.node_id in seen_node_ids:
+                continue
+            if chunk.node_label == "Scene":
+                if scene_count >= max_scenes:
+                    continue
+                scene_count += 1
+            elif chunk.node_label == "Milestone":
+                if milestone_count >= max_milestones:
+                    continue
+                milestone_count += 1
+            seen_node_ids.add(chunk.node_id)
+            selected.append(chunk)
+        return selected
 
     async def instance_summaries(
         self, ontology_ids: list[int], max_aliases: int = 8

@@ -108,10 +108,23 @@ class EmbeddingRuntime:
     def _mark_ready(self) -> None:
         self.status = "ready"
         print("[EMBED_DIAG] step=runtime_init_done")
-        if self._worker_task is None or self._worker_task.done():
-            self._worker_task = asyncio.create_task(
-                self._worker_loop(), name="embedding-runtime-worker"
-            )
+        self.ensure_worker_running()
+
+    def ensure_worker_running(self) -> None:
+        if self.status != "ready" or self._shutdown:
+            return
+        if self._worker_task is not None and not self._worker_task.done():
+            try:
+                if not self._worker_task.get_loop().is_closed():
+                    return
+            except RuntimeError:
+                pass
+        self._worker_task = asyncio.create_task(
+            self._worker_loop(), name="embedding-runtime-worker"
+        )
+        print(
+            f"[EMBED_DIAG] step=worker_started queue_depth={self._queue.qsize()}"
+        )
 
     def _mark_failed(self, exc: Exception) -> None:
         self.status = "failed"
@@ -180,6 +193,7 @@ class EmbeddingRuntime:
             raise EmbeddingRuntimeFailed(self.failure_reason or "embedding runtime failed")
         if self.status != "ready":
             raise EmbeddingRuntimeNotReady("embedding runtime not ready")
+        self.ensure_worker_running()
 
         normalized = self._normalize_text(text)
         cache_key = f"{get_embedding_model_id()}::{normalized}"
@@ -254,28 +268,34 @@ class EmbeddingRuntime:
                     break
                 batch.append(nxt)
 
+            live_batch = [job for job in batch if self._job_is_waiting(job)]
+            if not live_batch:
+                for _ in batch:
+                    self._queue.task_done()
+                continue
+
             self._inflight_batches += 1
-            texts = [job.text for job in batch]
-            submitted_min = min(job.submitted_monotonic for job in batch)
+            texts = [job.text for job in live_batch]
+            submitted_min = min(job.submitted_monotonic for job in live_batch)
             print(
-                f"[EMBED_DIAG] step=batch_start batch_size={len(batch)} queue_depth={self._queue.qsize()} inflight_batches={self._inflight_batches}"
+                f"[EMBED_DIAG] step=batch_start batch_size={len(live_batch)} stale_jobs={len(batch) - len(live_batch)} queue_depth={self._queue.qsize()} inflight_batches={self._inflight_batches}"
             )
             encode_started = time.monotonic()
             try:
                 vectors = await loop.run_in_executor(self._executor, self._encode_batch, texts)
             except Exception as exc:  # pragma: no cover
                 vectors = []
-                for job in batch:
+                for job in live_batch:
                     if not job.future.done():
                         job.future.set_exception(EmbeddingRuntimeError(str(exc)))
             encode_ms = round((time.monotonic() - encode_started) * 1000, 2)
             wait_ms = round((encode_started - submitted_min) * 1000, 2)
             print(
-                f"[EMBED_DIAG] step=batch_done batch_size={len(batch)} encode_ms={encode_ms:.2f} job_wait_ms={wait_ms:.2f} queue_depth={self._queue.qsize()}"
+                f"[EMBED_DIAG] step=batch_done batch_size={len(live_batch)} stale_jobs={len(batch) - len(live_batch)} encode_ms={encode_ms:.2f} job_wait_ms={wait_ms:.2f} queue_depth={self._queue.qsize()}"
             )
 
             if vectors:
-                for job, vector in zip(batch, vectors):
+                for job, vector in zip(live_batch, vectors):
                     await self._cache_put(job.cache_key, vector)
                     if not job.future.done():
                         job.future.set_result(vector)
@@ -283,6 +303,15 @@ class EmbeddingRuntime:
             self._inflight_batches = max(0, self._inflight_batches - 1)
             for _ in batch:
                 self._queue.task_done()
+
+    @staticmethod
+    def _job_is_waiting(job: _EmbeddingJob) -> bool:
+        if job.future.done():
+            return False
+        try:
+            return not job.future.get_loop().is_closed()
+        except RuntimeError:
+            return False
 
     @staticmethod
     def _encode_batch(texts: list[str]) -> list[list[float]]:
@@ -316,6 +345,8 @@ async def ensure_embedding_runtime_started() -> EmbeddingRuntime:
                 startup_timeout_s=float(settings.embedding_runtime_startup_timeout_s),
             )
             await _runtime.start()
+        elif _runtime.status == "ready":
+            _runtime.ensure_worker_running()
         return _runtime
 
 

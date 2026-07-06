@@ -12,13 +12,7 @@ from typing import Any
 from neo4j import AsyncSession as AsyncNeo4jSession
 
 from app.core.config_store import get_settings
-from app.graphrag.embedding_runtime import (
-    EmbeddingRuntimeFailed,
-    EmbeddingRuntimeNotReady,
-    EmbeddingRuntimeQueueFull,
-    EmbeddingRuntimeRequestTimeout,
-    get_ready_embedding_runtime,
-)
+from app.graphrag.embedding_runtime import get_ready_embedding_runtime
 from app.graphrag.embedding_service import EmbeddingService
 
 logger = logging.getLogger(__name__)
@@ -714,38 +708,11 @@ class PdfEmbeddingService:
             List of chunk dictionaries with text and metadata
         """
         # Generate query embedding through shared runtime for request-time stability.
-        request_id = f"librarian:{ontology_id}:{abs(hash(query_text)) % 1000000}"
-        try:
-            runtime = await get_ready_embedding_runtime()
-            query_embedding = await runtime.embed_query(
-                query_text,
-                request_id=request_id,
-            )
-        except (
-            EmbeddingRuntimeFailed,
-            EmbeddingRuntimeNotReady,
-            EmbeddingRuntimeQueueFull,
-            EmbeddingRuntimeRequestTimeout,
-        ) as exc:
-            logger.warning(
-                "librarian_embedding_fallback reason=%s ontology_id=%s request_id=%s top_k=%s",
-                type(exc).__name__,
-                ontology_id,
-                request_id,
-                top_k,
-            )
-            return await self._lexical_fallback_search_chunks(
-                query_text=query_text,
-                ontology_id=ontology_id,
-                library_item_ids=library_item_ids,
-                active_library_item_ids=active_library_item_ids,
-                top_k=top_k,
-                score_threshold=score_threshold,
-                candidate_limit=candidate_limit,
-                hybrid_rerank=hybrid_rerank,
-                max_chunks_per_item=max_chunks_per_item,
-                dynamic_score_floor=dynamic_score_floor,
-            )
+        runtime = await get_ready_embedding_runtime()
+        query_embedding = await runtime.embed_query(
+            query_text,
+            request_id=f"librarian:{ontology_id}:{abs(hash(query_text)) % 1000000}",
+        )
 
         query = f"""
         CALL db.index.vector.queryNodes(
@@ -846,106 +813,6 @@ class PdfEmbeddingService:
             max_chunks_per_item=max_chunks_per_item,
             dynamic_score_floor=dynamic_score_floor,
         )
-
-    async def _lexical_fallback_search_chunks(
-        self,
-        *,
-        query_text: str,
-        ontology_id: int,
-        library_item_ids: list[int] | None,
-        active_library_item_ids: list[int] | None,
-        top_k: int,
-        score_threshold: float,
-        candidate_limit: int | None,
-        hybrid_rerank: bool,
-        max_chunks_per_item: int | None,
-        dynamic_score_floor: bool,
-    ) -> list[dict[str, Any]]:
-        requested_ids = set(library_item_ids or [])
-        active_ids = set(active_library_item_ids or [])
-        if active_library_item_ids is not None and not active_ids:
-            logger.info(
-                "librarian_retrieval_no_hits reason=no_active_vectorized_items_fallback ontology_id=%s",
-                ontology_id,
-            )
-            return []
-
-        fetch_limit = max(int(candidate_limit or 0), top_k * 12, 80)
-        query = """
-        MATCH (c:PdfChunk)
-        WHERE c.ontology_id = $ontology_id
-          AND ($library_item_ids IS NULL OR c.library_item_id IN $library_item_ids)
-          AND ($active_library_item_ids IS NULL OR c.library_item_id IN $active_library_item_ids)
-        RETURN properties(c) AS props
-        LIMIT $limit
-        """
-        result = await self.graph_session.run(
-            query,
-            ontology_id=ontology_id,
-            library_item_ids=list(requested_ids) if requested_ids else None,
-            active_library_item_ids=list(active_ids) if active_library_item_ids is not None else None,
-            limit=fetch_limit,
-        )
-
-        base_url = (
-            self.settings.media_public_url.rstrip("/")
-            if self.settings.media_public_url
-            else self.settings.media_base_url.rstrip("/")
-        )
-        chunks: list[dict[str, Any]] = []
-        async for record in result:
-            props = record.get("props") or {}
-            text = props.get("text") or ""
-            lexical_score = self._lexical_score(query_text, text)
-            if lexical_score <= 0.0:
-                continue
-            li_raw = props.get("library_item_id")
-            if li_raw is None:
-                continue
-            try:
-                li = int(li_raw)
-            except (TypeError, ValueError):
-                continue
-            page = int(
-                props.get("primary_page_number")
-                or props.get("page_number")
-                or props.get("start_page_number")
-                or 1
-            )
-            pdf_url = f"{base_url}/library/{ontology_id}/{li}/content.pdf"
-            chunks.append(
-                {
-                    "library_item_id": li,
-                    "chunk_index": int(props.get("chunk_index") or 0),
-                    "page_number": page,
-                    "start_page_number": props.get("start_page_number") or page,
-                    "end_page_number": props.get("end_page_number") or page,
-                    "page_numbers": props.get("page_numbers") or [page],
-                    "text": text,
-                    "vector_score": lexical_score,
-                    "lexical_score": lexical_score,
-                    "score": lexical_score,
-                    "pdf_url": pdf_url,
-                    "page_url": f"{pdf_url}#page={page}",
-                }
-            )
-
-        results = self._rerank_and_select_chunks(
-            query_text=query_text,
-            chunks=chunks,
-            top_k=top_k,
-            score_threshold=min(score_threshold, 0.05),
-            hybrid_rerank=hybrid_rerank,
-            max_chunks_per_item=max_chunks_per_item,
-            dynamic_score_floor=dynamic_score_floor,
-        )
-        logger.info(
-            "librarian_embedding_fallback_result ontology_id=%s candidates=%s results=%s",
-            ontology_id,
-            len(chunks),
-            len(results),
-        )
-        return results
 
     def _tokenize(self, text: str) -> list[str]:
         return re.findall(r"[A-Za-z0-9_]+", (text or "").lower())

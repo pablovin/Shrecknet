@@ -292,6 +292,7 @@ async def _write_pdf(upload: UploadFile, relative_path: Path) -> None:
     absolute_path.parent.mkdir(parents=True, exist_ok=True)
     temp_path = absolute_path.with_suffix(".tmp")
     total = 0
+    upload_name = upload.filename or "unknown.pdf"
     try:
         with temp_path.open("wb") as handle:
             while True:
@@ -306,6 +307,19 @@ async def _write_pdf(upload: UploadFile, relative_path: Path) -> None:
                     )
                 handle.write(chunk)
         temp_path.replace(absolute_path)
+        logger.info(
+            "library_pdf_write completed filename=%s relative_path=%s bytes_written=%s",
+            upload_name,
+            relative_path.as_posix(),
+            total,
+        )
+        if total < 1024:
+            logger.warning(
+                "library_pdf_write suspiciously_small_pdf filename=%s relative_path=%s bytes_written=%s",
+                upload_name,
+                relative_path.as_posix(),
+                total,
+            )
     finally:
         if temp_path.exists():
             temp_path.unlink(missing_ok=True)

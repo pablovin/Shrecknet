@@ -109,13 +109,23 @@ def embed_pdf_book(
 
         if not pdf_path.exists():
             raise FileNotFoundError(f"PDF file not found: {pdf_path}")
+        pdf_size = pdf_path.stat().st_size
 
         logger.info(
-            "pdf_embedding_task stage=pdf_ready library_item_id=%s job_id=%s pdf_path=%s",
+            "pdf_embedding_task stage=pdf_ready library_item_id=%s job_id=%s pdf_path=%s pdf_size_bytes=%s",
             library_item_id,
             job_id,
             pdf_path,
+            pdf_size,
         )
+        if pdf_size < 1024:
+            logger.warning(
+                "pdf_embedding_task stage=suspicious_pdf_size library_item_id=%s job_id=%s pdf_path=%s pdf_size_bytes=%s",
+                library_item_id,
+                job_id,
+                pdf_path,
+                pdf_size,
+            )
 
         # Update progress: Processing PDF
         run_async(update_job_progress(job_id, 0.2, {"status": "Reading PDF file"}))

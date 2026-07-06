@@ -1,0 +1,34 @@
+[project]
+name = "shreckcompanion"
+version = "0.1.0"
+description = "Standalone Herald companion orchestration service for Shrecknet"
+requires-python = ">=3.10"
+dependencies = [
+  "fastapi>=0.110,<0.112",
+  "uvicorn[standard]>=0.27,<0.31",
+  "httpx>=0.27,<0.29",
+  "pillow>=10,<12",
+  "pydantic>=2.6,<3",
+  "pydantic-settings>=2.2,<3",
+  "python-multipart>=0.0.9,<0.1",
+]
+
+[project.optional-dependencies]
+test = [
+  "pytest>=8.0",
+  "pytest-asyncio>=0.23",
+  "httpx>=0.27,<0.29",
+]
+
+[build-system]
+requires = ["setuptools>=65", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+addopts = "-q"
+pythonpath = ["."]
+asyncio_mode = "auto"

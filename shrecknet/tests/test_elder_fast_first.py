@@ -31,6 +31,22 @@ class _FakeRetriever:
             {"node_id": "e3", "alias": "Londinium", "ontology": "Location"},
         ]
 
+    async def resolve_source_lineage(self, node_ids: list[str]):
+        del node_ids
+        return {}
+
+    async def expand_timeline_context(
+        self,
+        *,
+        query: str,
+        ontology_ids: list[int],
+        entity_scores: dict[str, float],
+        max_scenes: int = 6,
+        max_milestones: int = 6,
+    ):
+        del query, ontology_ids, entity_scores, max_scenes, max_milestones
+        return []
+
 
 def _chunk(score: float, node_id: str = "n-1") -> RetrievedChunk:
     return RetrievedChunk(
@@ -197,3 +213,160 @@ def test_memory_priors_include_query_entity_match_boost():
         query_entity_ids={"e2"},
     )
     assert any(p.get("type") == "query_entity_match_prior" for p in priors)
+
+
+@pytest.mark.asyncio
+async def test_consolidate_sources_enriches_scene_and_milestone_lineage():
+    retriever = _FakeRetriever()
+
+    async def _resolve_source_lineage(node_ids: list[str]):
+        assert set(node_ids) == {"scene-1", "milestone-1", "entity-1"}
+        return {
+            "scene-1": {
+                "node_type": "scene",
+                "scene_id": "scene-1",
+                "source_entity_instance_id": "entity-1",
+            },
+            "milestone-1": {
+                "node_type": "milestone",
+                "scene_id": "scene-1",
+                "source_entity_instance_id": "entity-1",
+            },
+        }
+
+    retriever.resolve_source_lineage = _resolve_source_lineage  # type: ignore[attr-defined]
+    orchestrator = ElderOrchestrator(
+        llm_client=_FakeLLM(),
+        model_policy=_FakeModelPolicy(),
+        graph_retriever=retriever,
+    )
+
+    sources = await orchestrator._consolidate_sources(
+        [
+            {
+                "chunks": [
+                    RetrievedChunk(
+                        node_id="scene-1",
+                        node_label="Scene",
+                        node_name="Council Meeting",
+                        text="Scene text",
+                        score=0.8,
+                        confidence_pct=80.0,
+                        properties={},
+                    ),
+                    RetrievedChunk(
+                        node_id="milestone-1",
+                        node_label="Milestone",
+                        node_name="Oath Refused",
+                        text="Milestone text",
+                        score=0.7,
+                        confidence_pct=70.0,
+                        properties={},
+                    ),
+                    RetrievedChunk(
+                        node_id="entity-1",
+                        node_label="EntityInstance",
+                        node_name="Aria",
+                        text="Entity text",
+                        score=0.9,
+                        confidence_pct=90.0,
+                        properties={},
+                    ),
+                ]
+            }
+        ]
+    )
+
+    by_id = {source.node_id: source for source in sources}
+    assert by_id["scene-1"].node_type == "scene"
+    assert by_id["scene-1"].scene_id == "scene-1"
+    assert by_id["scene-1"].source_entity_instance_id == "entity-1"
+    assert by_id["milestone-1"].node_type == "milestone"
+    assert by_id["milestone-1"].scene_id == "scene-1"
+    assert by_id["milestone-1"].source_entity_instance_id == "entity-1"
+    assert by_id["entity-1"].node_type == "entityinstance"
+    assert by_id["entity-1"].source_entity_instance_id is None
+
+
+@pytest.mark.asyncio
+async def test_timeline_expansion_merges_scene_and_milestone_chunks():
+    retriever = _FakeRetriever()
+
+    async def _expand_timeline_context(**kwargs):
+        assert kwargs["entity_scores"] == {"entity-1": 0.9}
+        return [
+            RetrievedChunk(
+                node_id="scene-1",
+                node_label="Scene",
+                node_name="Council Meeting",
+                text="Scene: Council Meeting",
+                score=0.86,
+                confidence_pct=86.0,
+                chunk_type="scene_main",
+                properties={},
+            ),
+            RetrievedChunk(
+                node_id="milestone-1",
+                node_label="Milestone",
+                node_name="Oath Refused",
+                text="Milestone: Oath Refused",
+                score=0.84,
+                confidence_pct=84.0,
+                chunk_type="milestone_main",
+                properties={},
+            ),
+        ]
+
+    retriever.expand_timeline_context = _expand_timeline_context  # type: ignore[attr-defined]
+    orchestrator = ElderOrchestrator(
+        llm_client=_FakeLLM(),
+        model_policy=_FakeModelPolicy(),
+        graph_retriever=retriever,
+    )
+
+    retrieval_results = [
+        {
+            "intent": DecomposedIntent(subquery="who is aria", target_data_type="mixed", reason="test"),
+            "chunks": [
+                RetrievedChunk(
+                    node_id="entity-1",
+                    node_label="EntityInstance",
+                    node_name="Aria",
+                    text="Aria entity",
+                    score=0.9,
+                    confidence_pct=90.0,
+                    properties={},
+                )
+            ],
+            "duration_ms": 1.0,
+            "debug_stats": {},
+        }
+    ]
+
+    expanded = await orchestrator._expand_timeline_candidates(
+        query="Who is Aria?",
+        retrieval_results=retrieval_results,
+        ontology_ids=[1],
+    )
+
+    node_ids = [chunk.node_id for chunk in expanded[0]["chunks"]]
+    assert node_ids[:3] == ["entity-1", "scene-1", "milestone-1"]
+    assert expanded[0]["debug_stats"]["expanded_timeline_chunks"] == 2
+
+
+def test_select_final_sources_reserves_timeline_slots():
+    orchestrator = ElderOrchestrator(
+        llm_client=_FakeLLM(),
+        model_policy=_FakeModelPolicy(),
+        graph_retriever=_FakeRetriever(),
+    )
+    sources = [
+        SimpleNamespace(node_id="entity-1", node_label="EntityInstance", score=0.95),
+        SimpleNamespace(node_id="entity-2", node_label="EntityInstance", score=0.92),
+        SimpleNamespace(node_id="scene-1", node_label="Scene", score=0.7),
+        SimpleNamespace(node_id="milestone-1", node_label="Milestone", score=0.69),
+    ]
+
+    selected = orchestrator._select_final_sources(sources, limit=3)  # type: ignore[arg-type]
+
+    assert [source.node_id for source in selected] == ["scene-1", "milestone-1", "entity-1"]

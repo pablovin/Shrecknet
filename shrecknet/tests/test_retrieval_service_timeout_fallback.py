@@ -168,6 +168,31 @@ async def test_embedding_runtime_request_timeout():
 
 
 @pytest.mark.asyncio
+async def test_embedding_runtime_restarts_missing_worker():
+    manager = EmbeddingRuntime(
+        queue_max_size=10,
+        batch_max_size=1,
+        batch_wait_ms=1,
+        cache_size=10,
+        request_timeout_s=1.0,
+        startup_timeout_s=1.0,
+    )
+    manager.status = "ready"
+
+    def _encode(texts: list[str]) -> list[list[float]]:
+        return [[0.1, 0.2, 0.3] for _ in texts]
+
+    manager._encode_batch = _encode  # type: ignore[method-assign]
+    try:
+        result = await manager.embed_query("restart worker", request_id="restart")
+        assert result == [0.1, 0.2, 0.3]
+        assert manager._worker_task is not None
+        assert not manager._worker_task.done()
+    finally:
+        await manager.stop()
+
+
+@pytest.mark.asyncio
 async def test_semantic_search_uses_embedding_runtime(monkeypatch):
     service = RetrievalService(_FakeGraphSession())
 

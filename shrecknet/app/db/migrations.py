@@ -223,6 +223,22 @@ def migrate_personal_companion_agents_table(sync_conn) -> None:
         )
     )
 
+
+def migrate_ontology_rpg_system_column(sync_conn) -> None:
+    """Ensure ontologies table has optional rpg_system column."""
+    inspector = inspect(sync_conn)
+    if "ontologies" not in inspector.get_table_names():
+        return
+
+    columns = {column["name"] for column in inspector.get_columns("ontologies")}
+    if "rpg_system" in columns:
+        return
+
+    logger.info("Adding rpg_system column to ontologies table")
+    sync_conn.execute(
+        text("ALTER TABLE ontologies ADD COLUMN rpg_system VARCHAR(255)")
+    )
+
 async def migrate_novelist_runs(engine: AsyncEngine) -> None:
     """Ensure novelist_runs table exists when upgrading."""
     async with engine.begin() as conn:

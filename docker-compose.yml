@@ -255,55 +255,6 @@ services:
       timeout: 3s
       retries: 5
 
-  # Local LLM runtime for shreckLLM
-  ollama:
-    image: ollama/ollama:latest
-    restart: unless-stopped
-    ports:
-      - "11434:11434"
-    environment:
-      OLLAMA_CONTEXT_LENGTH: "${SHRECKLLM_OLLAMA_CONTEXT_LENGTH:-8192}"
-    volumes:
-      - ollama-data:/root/.ollama
-
-  ollama_model_pull:
-    image: curlimages/curl:8.8.0
-    restart: "no"
-    env_file:
-      - ./configs/compose.env
-    depends_on:
-      ollama:
-        condition: service_started
-    command:
-      - /bin/sh
-      - -ec
-      - |
-        MODEL="$${SHRECKLLM_BOOTSTRAP_LOCAL_DEFAULT_MODEL:-gemma3:4b}"
-        echo "[ollama_model_pull] Waiting for Ollama API..."
-        until curl -fsS http://ollama:11434/api/tags >/dev/null 2>&1; do
-          sleep 2
-        done
-
-        echo "[ollama_model_pull] Pulling model: $${MODEL}"
-        curl -sS -N -X POST http://ollama:11434/api/pull \
-          -H 'Content-Type: application/json' \
-          -d '{"name":"'"$${MODEL}"'"}' | while IFS= read -r line; do
-            status=$$(echo "$$line" | sed -n 's/.*"status":"\([^"]*\)".*/\1/p')
-            completed=$$(echo "$$line" | sed -n 's/.*"completed":\([0-9][0-9]*\).*/\1/p')
-            total=$$(echo "$$line" | sed -n 's/.*"total":\([0-9][0-9]*\).*/\1/p')
-
-            if [ -n "$$completed" ] && [ -n "$$total" ] && [ "$$total" -gt 0 ]; then
-              pct=$$((completed * 100 / total))
-              done_mb=$$((completed / 1024 / 1024))
-              total_mb=$$((total / 1024 / 1024))
-              echo "[ollama_model_pull] $${status:-downloading} $${done_mb}MB/$${total_mb}MB ($${pct}%)"
-            elif [ -n "$$status" ]; then
-              echo "[ollama_model_pull] $${status}"
-            else
-              echo "[ollama_model_pull] $${line}"
-            fi
-          done
-
   # Neo4j graph store used by GraphRAG and ontology features
   neo4j:
     image: neo4j:5-community
@@ -401,7 +352,7 @@ services:
       shreckllm:
         condition: service_healthy
 
-  # Standalone local-LLM service (uses shared Redis + Ollama)
+  # Standalone LLM gateway service (uses shared Redis + external Ollama)
   shreckllm:
     build:
       context: ./shreckLLM
@@ -413,16 +364,14 @@ services:
       - ./configs/compose.env
     ports:
       - "8111:8110"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./shreckLLM/databases:/app/databases
       - ./configs:/configs:ro
     depends_on:
       redis:
         condition: service_healthy
-      ollama:
-        condition: service_started
-      ollama_model_pull:
-        condition: service_completed_successfully
     healthcheck:
       test:
         - CMD-SHELL
@@ -457,7 +406,7 @@ services:
         echo "🤖 shreckLLM is ready at http://localhost:8111"
         echo "   • LLM config API: http://localhost:8111/config"
         echo "   • Internal URL:  http://shreckllm:8110"
-        echo "   • Ollama API:    http://localhost:11434"
+        echo "   • External Ollama API expected on host: http://localhost:11434"
         echo "   • Neo4j browser: http://localhost:7475"
         echo "   • Neo4j bolt:    bolt://localhost:7688"
         echo "✅ Shrecknet + shreckLLM stack is running"
@@ -466,7 +415,6 @@ services:
 volumes:
   redis-data:
   hf-model-cache:
-  ollama-data:
   neo4j-data:
   neo4j-logs:
   neo4j-import:

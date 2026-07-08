@@ -3146,6 +3146,30 @@ class OntologyInstanceService:
                     entity_instance_id=relates.entity_instance_id,
                     label=relates.label,
                 )
+            if payload.local_order.followed_by_milestone_id:
+                await tx.run(
+                    """
+                    MATCH (source:Milestone {id: $milestone_id, scene_id: $scene_id})
+                    MATCH (target:Milestone {id: $target_milestone_id, scene_id: $scene_id})
+                    MERGE (source)-[:FOLLOWED_BY]->(target)
+                    MERGE (target)-[:PRECEDED_BY]->(source)
+                    """,
+                    milestone_id=milestone_id,
+                    scene_id=scene_id,
+                    target_milestone_id=payload.local_order.followed_by_milestone_id,
+                )
+            if payload.local_order.preceded_by_milestone_id:
+                await tx.run(
+                    """
+                    MATCH (source:Milestone {id: $milestone_id, scene_id: $scene_id})
+                    MATCH (target:Milestone {id: $target_milestone_id, scene_id: $scene_id})
+                    MERGE (source)-[:PRECEDED_BY]->(target)
+                    MERGE (target)-[:FOLLOWED_BY]->(source)
+                    """,
+                    milestone_id=milestone_id,
+                    scene_id=scene_id,
+                    target_milestone_id=payload.local_order.preceded_by_milestone_id,
+                )
         except Exception:
             await tx.rollback()
             await tx.close()

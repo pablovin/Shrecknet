@@ -197,3 +197,75 @@ def test_rerank_hybrid_promotes_lexical_match_and_applies_diversity_cap() -> Non
     assert out[0]["library_item_id"] in (1, 2)
     assert out[1]["library_item_id"] in (1, 2)
     assert out[0]["library_item_id"] != out[1]["library_item_id"]
+
+
+def test_hybrid_merge_and_rerank_promotes_exact_fulltext_match() -> None:
+    service = PdfEmbeddingService(_FakeGraphSession(), embedding_service=_FakeEmbeddingService())
+    vector_chunk = {
+        "library_item_id": 1,
+        "chunk_index": 1,
+        "text": "general character creation rules",
+        "vector_score": 0.80,
+        "fulltext_score": 0.0,
+        "page_number": 10,
+        "score": 0.80,
+    }
+    exact_chunk = {
+        "library_item_id": 1,
+        "chunk_index": 2,
+        "text": "Antiquarian occupation skills and credit rating",
+        "vector_score": 0.10,
+        "fulltext_score": 1.0,
+        "page_number": 33,
+        "score": 1.0,
+    }
+    duplicate_fulltext = {
+        "library_item_id": 1,
+        "chunk_index": 1,
+        "text": vector_chunk["text"],
+        "vector_score": 0.0,
+        "fulltext_score": 0.9,
+        "page_number": 10,
+        "score": 0.9,
+    }
+
+    merged = service._merge_hybrid_candidates([vector_chunk, exact_chunk, duplicate_fulltext])
+    assert len(merged) == 2
+    duplicate = next(ch for ch in merged if ch["chunk_index"] == 1)
+    assert duplicate["vector_score"] == 0.80
+    assert duplicate["fulltext_score"] == 0.9
+
+    out = service._rerank_and_select_chunks(
+        query_text="Antiquarian occupation",
+        chunks=merged,
+        top_k=1,
+        score_threshold=0.0,
+        hybrid_rerank=True,
+        max_chunks_per_item=None,
+        dynamic_score_floor=False,
+    )
+    assert out[0]["chunk_index"] == 2
+
+
+def test_table_like_normalization_preserves_rows_and_marks_chunk_type() -> None:
+    service = PdfEmbeddingService(_FakeGraphSession(), embedding_service=_FakeEmbeddingService())
+    raw = "\n".join(
+        [
+            "Occupation Skills",
+            "Antiquarian  Appraise  History  Library Use",
+            "Dilettante   Art/Craft  Credit Rating  Charm",
+            "Doctor       First Aid   Medicine       Science",
+            "Credit Rating: 30-70",
+        ]
+    )
+
+    normalized = service._normalize_page_text(raw, header_lines=set(), footer_lines=set())
+    assert "Antiquarian  Appraise" in normalized
+    assert "\nDilettante" in normalized
+
+    chunks = service._build_semantic_chunks(
+        library_item_id=1,
+        ontology_id=1,
+        page_records=[{"page_number": 33, "text": normalized}],
+    )
+    assert chunks[0]["chunk_type"] == "table_like"

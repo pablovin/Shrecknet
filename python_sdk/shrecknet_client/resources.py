@@ -84,20 +84,44 @@ class OntologiesAPI:
     def __init__(self, client: AsyncShrecknetClient):
         self._client = client
 
-    async def create(self, *, name: str, description: str | None = None, image_url: str | None = None) -> Ontology:
+    async def create(
+        self,
+        *,
+        name: str,
+        description: str | None = None,
+        rpg_system: str | None = None,
+        image_url: str | None = None,
+    ) -> Ontology:
         """Create ontology."""
         data = await self._client.raw_request(
-            "POST", "/ontologies/", json={"name": name, "description": description, "image_url": image_url}
+            "POST",
+            "/ontologies/",
+            json={
+                "name": name,
+                "description": description,
+                "rpg_system": rpg_system,
+                "image_url": image_url,
+            },
         )
         return Ontology.model_validate(data)
 
-    async def list(self, *, name: str | None = None, description: str | None = None, skip: int = 0, limit: int = 50) -> list[Ontology]:
+    async def list(
+        self,
+        *,
+        name: str | None = None,
+        description: str | None = None,
+        rpg_system: str | None = None,
+        skip: int = 0,
+        limit: int = 50,
+    ) -> list[Ontology]:
         """List ontologies with optional filters and pagination."""
         params = {"skip": skip, "limit": limit}
         if name is not None:
             params["name"] = name
         if description is not None:
             params["description"] = description
+        if rpg_system is not None:
+            params["rpg_system"] = rpg_system
         data = await self._client.raw_request("GET", "/ontologies/", params=params)
         return [Ontology.model_validate(item) for item in data]
 

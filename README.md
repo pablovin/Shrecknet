@@ -73,28 +73,37 @@ Initial configuration lives in the root `configs/` folder:
 
 Credentials are intentionally empty in the JSON seed files. API keys and provider credentials should be configured after startup through the config APIs so they are stored in the runtime config database.
 
-### 3. Start all services
+### 3. Start Ollama separately
+
+Shrecknet no longer starts Ollama inside Docker Compose. Start Ollama on the host before using local LLM models:
+
+```bash
+ollama serve
+```
+
+The Shrecknet Docker stack expects the host Ollama API at `http://localhost:11434`, exposed to containers as `http://host.docker.internal:11434`. Pull the configured local model separately if needed, for example:
+
+```bash
+ollama pull gemma4:e2b
+```
+
+For existing installs, the shreckLLM runtime config database is the source of truth after first boot. If you use a different external Ollama endpoint, update the `ollama` provider `base_url` through the shreckLLM `/config` API.
+
+### 4. Start Shrecknet services
 
 ```bash
 docker compose --env-file configs/compose.env --env-file configs/neo4j.env up --build
 ```
 
-Shortcut launchers with automatic Ollama GPU fallback:
+Shortcut launchers:
 
 - `./run.sh` (Linux/macOS)
 - `run.bat` (Windows)
 
-Both launchers inspect host GPU availability and include `docker-compose.gpu.yml` automatically when an NVIDIA GPU is detected. If no GPU is detected, Ollama runs on CPU.
-
-You can force behavior with `SHRECKNET_OLLAMA_GPU_MODE` in `configs/compose.env`:
-
-- `auto` (default): use GPU when available, otherwise CPU
-- `on`: always request GPU for Ollama
-- `off`: always run Ollama on CPU
-
-### 4. Verify
+### 5. Verify
 
 ```bash
+curl -s http://localhost:11434/api/tags
 curl -s http://localhost:8100/health
 curl -s http://localhost:8100/openapi.json | head
 ```
@@ -113,6 +122,7 @@ Immediately available:
 
 Requires additional setup:
 - LLM provider credentials should be added through the config APIs after startup.
+- Local Ollama models must be served outside Docker Compose and reachable from the host on port `11434`, unless you configure a different `ollama` provider `base_url`.
 - The initial JSON files seed only missing config DB values. Once `shrecknet_config.db` or `shreckllm_config.db` exists, those databases are the runtime source of truth.
 - Delete the relevant config DB only when you intentionally want to reseed from `configs/*.initial.json`.
 - `configs/neo4j.env` is the initial Neo4j source of truth for both the Neo4j container and Shrecknet's graph connection. It ships with a local password; change it before first run for non-local use.

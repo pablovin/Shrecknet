@@ -7,6 +7,7 @@ from app.db.base import Base
 from app.db.migrations import (
     migrate_agents_table,
     migrate_deprecate_sql_ontology_instances,
+    migrate_ontology_rpg_system_column,
     migrate_personal_companion_agents_table,
 )
 from app.db.session import get_engine, get_sessionmaker
@@ -19,6 +20,7 @@ def init_db() -> None:
         migrate_agents_table(conn)
         migrate_deprecate_sql_ontology_instances(conn)
         migrate_personal_companion_agents_table(conn)
+        migrate_ontology_rpg_system_column(conn)
 
     sessionmaker = get_sessionmaker()
     with sessionmaker() as session:

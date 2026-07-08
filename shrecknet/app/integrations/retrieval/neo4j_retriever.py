@@ -5,13 +5,16 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import time
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from typing import Any, Protocol
 
 from neo4j import AsyncSession as AsyncNeo4jSession
+from neo4j import GraphDatabase
 
-from app.graphrag.embedding_runtime import EmbeddingRuntimeError
+from app.core.config_store import get_settings
+from app.graphrag.embedding_runtime import EmbeddingRuntimeError, get_ready_embedding_runtime
 from app.graphrag.retrieval_service import RetrievalService
 from app.jobs.elder.schemas import RetrievedChunk
 
@@ -782,3 +785,702 @@ class Neo4jGraphRetriever:
             self._has_ontology_entity_schema = True
 
         return self._has_ontology_entity_schema
+
+
+class HybridNeo4jGraphRetriever(Neo4jGraphRetriever):
+    """Elder retriever using hybrid chunk anchors plus Shrecknet temporal expansion."""
+
+    vector_index_name = "entity_chunk_vec_idx"
+    fulltext_index_name = "entity_chunk_fulltext_idx"
+
+    def __init__(
+        self,
+        graph_session: AsyncNeo4jSession | None = None,
+        *,
+        session_factory: Callable[[], AsyncIterator[AsyncNeo4jSession]] | None = None,
+    ):
+        super().__init__(graph_session, session_factory=session_factory)
+        self._official_hybrid_available = self._detect_official_hybrid_retriever()
+        self._sync_driver = None
+        if self._official_hybrid_available:
+            settings = get_settings()
+            self._sync_driver = GraphDatabase.driver(
+                settings.neo4j_uri,
+                auth=(settings.neo4j_user, settings.neo4j_password),
+                max_connection_lifetime=3600,
+            )
+
+    @staticmethod
+    def _detect_official_hybrid_retriever() -> bool:
+        try:
+            from neo4j_graphrag.retrievers import HybridCypherRetriever  # noqa: F401
+
+            return True
+        except Exception:
+            logger.warning(
+                "elder_hybrid_official_retriever_unavailable fallback=async_driver_hybrid"
+            )
+            return False
+
+    @staticmethod
+    def infer_temporal_mode(query: str) -> str:
+        text = f" {str(query or '').lower()} "
+        if any(token in text for token in (" before ", " prior to ", " earlier than ")):
+            return "before"
+        if any(token in text for token in (" after ", " later than ", " following ")):
+            return "after"
+        if any(token in text for token in (" as of ", " at that point ", " by then ")):
+            return "as_of"
+        if any(token in text for token in (" relationship ", " relation ", " connected ", " why ")):
+            return "relationship_explanation"
+        if any(token in text for token in (" history ", " timeline ", " chronolog", " sequence ", " happened ")):
+            return "history_timeline"
+        return "current_state"
+
+    @staticmethod
+    def _fulltext_query(query: str) -> str:
+        terms = [
+            token
+            for token in re.findall(r"[A-Za-z0-9]+", str(query or "").lower())
+            if len(token) >= 2
+        ]
+        return " OR ".join(terms[:12]) or str(query or "").strip()
+
+    @staticmethod
+    def _node_id(props: dict[str, Any]) -> str:
+        return str(
+            props.get("entity_instance_id")
+            or props.get("id")
+            or props.get("instance_id")
+            or ""
+        )
+
+    @staticmethod
+    def _primary_label(labels: list[str]) -> str:
+        for label in ("EntityInstance", "Scene", "Milestone"):
+            if label in labels:
+                return label
+        return labels[0] if labels else "Node"
+
+    @staticmethod
+    def _as_props(node: Any) -> dict[str, Any]:
+        try:
+            return dict(node)
+        except Exception:
+            return {}
+
+    @staticmethod
+    def _as_labels(node: Any) -> list[str]:
+        try:
+            return list(node.labels)
+        except Exception:
+            return []
+
+    async def search(
+        self,
+        query: str,
+        ontology_ids: list[int],
+        top_k: int = 10,
+        node_scope: str = "everything",
+        allowed_labels: list[str] | None = None,
+        candidate_limit: int | None = None,
+        rerank_limit: int | None = None,
+    ) -> list[RetrievedChunk]:
+        started = time.monotonic()
+        self.last_errors = []
+        self.last_search_stats = []
+        labels = allowed_labels or ["EntityInstance", "Scene", "Milestone"]
+        search_ontologies = ontology_ids if ontology_ids else [None]
+        all_chunks: list[RetrievedChunk] = []
+        mode = self.infer_temporal_mode(query)
+
+        async with self._acquire_session() as session:
+            if self._session_factory is None:
+                async with self._search_lock:
+                    all_chunks = await self._search_with_session(
+                        session=session,
+                        query=query,
+                        search_ontologies=search_ontologies,
+                        top_k=top_k,
+                        allowed_labels=labels,
+                        candidate_limit=candidate_limit,
+                        rerank_limit=rerank_limit,
+                        temporal_mode=mode,
+                    )
+            else:
+                all_chunks = await self._search_with_session(
+                    session=session,
+                    query=query,
+                    search_ontologies=search_ontologies,
+                    top_k=top_k,
+                    allowed_labels=labels,
+                    candidate_limit=candidate_limit,
+                    rerank_limit=rerank_limit,
+                    temporal_mode=mode,
+                )
+
+        all_chunks.sort(key=lambda chunk: float(chunk.importance_index or chunk.score), reverse=True)
+        duration_ms = round((time.monotonic() - started) * 1000, 2)
+        logger.info(
+            "elder_hybrid_retrieval_done query='%s' ontologies=%s mode=%s chunks=%d duration_ms=%.2f official_available=%s",
+            query[:160],
+            ontology_ids or [None],
+            mode,
+            len(all_chunks),
+            duration_ms,
+            self._official_hybrid_available,
+        )
+        return all_chunks[:top_k]
+
+    async def _search_with_session(
+        self,
+        *,
+        session: AsyncNeo4jSession,
+        query: str,
+        search_ontologies: list[int | None],
+        top_k: int,
+        allowed_labels: list[str],
+        candidate_limit: int | None,
+        rerank_limit: int | None,
+        temporal_mode: str,
+    ) -> list[RetrievedChunk]:
+        try:
+            runtime = await get_ready_embedding_runtime()
+            query_embedding = await runtime.embed_query(query, request_id=f"elder-hybrid-{time.monotonic_ns()}")
+        except Exception as exc:
+            if isinstance(exc, EmbeddingRuntimeError):
+                raise
+            logger.error("elder_hybrid_query_embedding_failed error=%s", exc)
+            raise EmbeddingRuntimeError(str(exc)) from exc
+
+        chunks: list[RetrievedChunk] = []
+        for ontology_id in search_ontologies:
+            candidate_k = candidate_limit or max(top_k * 6, top_k)
+            anchors = await self._hybrid_anchor_search(
+                session=session,
+                query=query,
+                query_embedding=query_embedding,
+                ontology_id=ontology_id,
+                allowed_labels=allowed_labels,
+                candidate_k=candidate_k,
+                rerank_limit=rerank_limit or max(top_k * 3, top_k),
+            )
+            expanded = await self._expand_anchor_context(
+                session=session,
+                anchors=anchors,
+                ontology_id=ontology_id,
+                temporal_mode=temporal_mode,
+            )
+            merged = self._merge_anchor_and_expanded_chunks(
+                anchors=anchors,
+                expanded=expanded,
+                ontology_id=ontology_id,
+                temporal_mode=temporal_mode,
+            )
+            self.last_search_stats.append(
+                {
+                    "ontology_id": ontology_id,
+                    "query": query,
+                    "debug_stats": {
+                        "retrieval_mode": "hybrid_cypher",
+                        "temporal_mode": temporal_mode,
+                        "raw_candidates": sum(int(a.get("matched_chunk_count") or 1) for a in anchors),
+                        "after_parent_grouping": len(anchors),
+                        "after_dedup": len(anchors),
+                        "expanded_context": len(expanded),
+                        "final_k": min(top_k, len(merged)),
+                        "allowed_labels": allowed_labels,
+                    },
+                }
+            )
+            chunks.extend(merged)
+        return chunks
+
+    async def _hybrid_anchor_search(
+        self,
+        *,
+        session: AsyncNeo4jSession,
+        query: str,
+        query_embedding: list[float],
+        ontology_id: int | None,
+        allowed_labels: list[str],
+        candidate_k: int,
+        rerank_limit: int,
+    ) -> list[dict[str, Any]]:
+        vector_query = f"""
+        CALL db.index.vector.queryNodes('{self.vector_index_name}', $candidate_k, $query_embedding)
+        YIELD node, score
+        MATCH (parent)-[:HAS_CHUNK]->(node)
+        WHERE any(label IN labels(parent) WHERE label IN $allowed_labels)
+          AND ($ontology_id IS NULL OR toInteger(node.ontology_id) = toInteger($ontology_id))
+        RETURN node AS chunk, parent AS parent, score AS score, 'vector' AS source
+        ORDER BY score DESC
+        LIMIT $candidate_k
+        """
+        fulltext_query = f"""
+        CALL db.index.fulltext.queryNodes('{self.fulltext_index_name}', $fulltext_query)
+        YIELD node, score
+        MATCH (parent)-[:HAS_CHUNK]->(node)
+        WHERE any(label IN labels(parent) WHERE label IN $allowed_labels)
+          AND ($ontology_id IS NULL OR toInteger(node.ontology_id) = toInteger($ontology_id))
+        RETURN node AS chunk, parent AS parent, score AS score, 'fulltext' AS source
+        ORDER BY score DESC
+        LIMIT $candidate_k
+        """
+        if self._sync_driver is not None:
+            try:
+                return await self._official_hybrid_anchor_search(
+                    query=query,
+                    query_embedding=query_embedding,
+                    ontology_id=ontology_id,
+                    allowed_labels=allowed_labels,
+                    candidate_k=candidate_k,
+                    rerank_limit=rerank_limit,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "elder_hybrid_official_anchor_failed ontology=%s fallback=async_driver_hybrid error=%s",
+                    ontology_id,
+                    exc,
+                )
+
+        rows: list[dict[str, Any]] = []
+        try:
+            result = await session.run(
+                vector_query,
+                candidate_k=candidate_k,
+                query_embedding=query_embedding,
+                ontology_id=ontology_id,
+                allowed_labels=allowed_labels,
+            )
+            rows.extend(await result.data())
+        except Exception as exc:
+            logger.error("elder_hybrid_vector_anchor_failed ontology=%s error=%s", ontology_id, exc)
+            raise
+        try:
+            result = await session.run(
+                fulltext_query,
+                candidate_k=candidate_k,
+                fulltext_query=self._fulltext_query(query),
+                ontology_id=ontology_id,
+                allowed_labels=allowed_labels,
+            )
+            rows.extend(await result.data())
+        except Exception as exc:
+            logger.error("elder_hybrid_fulltext_anchor_failed ontology=%s error=%s", ontology_id, exc)
+            raise
+
+        max_fulltext = max(
+            [float(row.get("score") or 0.0) for row in rows if row.get("source") == "fulltext"],
+            default=1.0,
+        )
+        grouped: dict[str, dict[str, Any]] = {}
+        query_terms = {
+            token for token in re.findall(r"[a-z0-9]+", str(query or "").lower()) if token
+        }
+        for row in rows:
+            parent = row.get("parent")
+            chunk = row.get("chunk")
+            parent_props = self._as_props(parent)
+            chunk_props = self._as_props(chunk)
+            labels = self._as_labels(parent)
+            node_id = self._node_id(parent_props)
+            if not node_id:
+                continue
+            label = self._primary_label(labels)
+            source = str(row.get("source") or "hybrid")
+            raw_score = float(row.get("score") or 0.0)
+            score = raw_score if source == "vector" else min(1.0, raw_score / max(1.0, max_fulltext))
+            text = str(chunk_props.get("text_chunk") or parent_props.get("description") or parent_props.get("text") or "")
+            searchable = " ".join(
+                [
+                    str(parent_props.get("name") or ""),
+                    str(parent_props.get("alias") or ""),
+                    text,
+                ]
+            ).lower()
+            overlap = len([term for term in query_terms if term in searchable]) / max(1, len(query_terms)) if query_terms else 0.0
+            key = f"{label}::{node_id}"
+            existing = grouped.get(key)
+            if existing is None:
+                existing = {
+                    "node_id": node_id,
+                    "node_label": label,
+                    "node_name": parent_props.get("name"),
+                    "node_alias": parent_props.get("alias"),
+                    "instance_id": parent_props.get("instance_id"),
+                    "properties": parent_props,
+                    "context_text": text,
+                    "chunk_id": chunk_props.get("chunk_id"),
+                    "chunk_type": chunk_props.get("chunk_type"),
+                    "chunk_index": chunk_props.get("chunk_index"),
+                    "vector_score": 0.0,
+                    "fulltext_score": 0.0,
+                    "keyword_overlap": overlap,
+                    "matched_chunk_count": 0,
+                }
+                grouped[key] = existing
+            existing["matched_chunk_count"] = int(existing.get("matched_chunk_count") or 0) + 1
+            existing["keyword_overlap"] = max(float(existing.get("keyword_overlap") or 0.0), overlap)
+            if source == "vector":
+                existing["vector_score"] = max(float(existing.get("vector_score") or 0.0), score)
+            else:
+                existing["fulltext_score"] = max(float(existing.get("fulltext_score") or 0.0), score)
+            combined = (
+                0.58 * float(existing.get("vector_score") or 0.0)
+                + 0.30 * float(existing.get("fulltext_score") or 0.0)
+                + 0.12 * float(existing.get("keyword_overlap") or 0.0)
+            )
+            if combined >= float(existing.get("score") or 0.0):
+                existing["score"] = min(1.0, combined)
+                existing["context_text"] = text
+                existing["chunk_id"] = chunk_props.get("chunk_id")
+                existing["chunk_type"] = chunk_props.get("chunk_type")
+                existing["chunk_index"] = chunk_props.get("chunk_index")
+
+        anchors = sorted(
+            grouped.values(),
+            key=lambda item: float(item.get("score") or 0.0),
+            reverse=True,
+        )[:rerank_limit]
+        return anchors
+
+    async def _official_hybrid_anchor_search(
+        self,
+        *,
+        query: str,
+        query_embedding: list[float],
+        ontology_id: int | None,
+        allowed_labels: list[str],
+        candidate_k: int,
+        rerank_limit: int,
+    ) -> list[dict[str, Any]]:
+        from neo4j_graphrag.retrievers import HybridCypherRetriever
+
+        settings = get_settings()
+        retrieval_query = """
+        MATCH (parent)-[:HAS_CHUNK]->(node)
+        WHERE any(label IN labels(parent) WHERE label IN $allowed_labels)
+          AND ($ontology_id IS NULL OR toInteger(node.ontology_id) = toInteger($ontology_id))
+        RETURN node AS chunk, parent AS parent, score AS score, 'hybrid_cypher' AS source
+        """
+
+        def _run() -> list[dict[str, Any]]:
+            retriever = HybridCypherRetriever(
+                self._sync_driver,
+                self.vector_index_name,
+                self.fulltext_index_name,
+                retrieval_query,
+                neo4j_database=settings.neo4j_database,
+            )
+            result = retriever.get_search_results(
+                query_text=self._fulltext_query(query),
+                query_vector=query_embedding,
+                top_k=candidate_k,
+                effective_search_ratio=1,
+                query_params={
+                    "ontology_id": ontology_id,
+                    "allowed_labels": allowed_labels,
+                },
+            )
+            out: list[dict[str, Any]] = []
+            for record in result.records:
+                try:
+                    out.append(record.data())
+                except Exception:
+                    out.append(dict(record))
+            return out
+
+        rows = await asyncio.get_running_loop().run_in_executor(None, _run)
+        return self._group_hybrid_rows(
+            rows=rows,
+            query=query,
+            rerank_limit=rerank_limit,
+        )
+
+    def _group_hybrid_rows(
+        self,
+        *,
+        rows: list[dict[str, Any]],
+        query: str,
+        rerank_limit: int,
+    ) -> list[dict[str, Any]]:
+        max_fulltext = max(
+            [float(row.get("score") or 0.0) for row in rows if row.get("source") == "fulltext"],
+            default=1.0,
+        )
+        grouped: dict[str, dict[str, Any]] = {}
+        query_terms = {
+            token for token in re.findall(r"[a-z0-9]+", str(query or "").lower()) if token
+        }
+        for row in rows:
+            parent = row.get("parent")
+            chunk = row.get("chunk")
+            parent_props = self._as_props(parent)
+            chunk_props = self._as_props(chunk)
+            labels = self._as_labels(parent)
+            node_id = self._node_id(parent_props)
+            if not node_id:
+                continue
+            label = self._primary_label(labels)
+            source = str(row.get("source") or "hybrid")
+            raw_score = float(row.get("score") or 0.0)
+            score = raw_score if source in {"vector", "hybrid_cypher"} else min(1.0, raw_score / max(1.0, max_fulltext))
+            text = str(chunk_props.get("text_chunk") or parent_props.get("description") or parent_props.get("text") or "")
+            searchable = " ".join(
+                [
+                    str(parent_props.get("name") or ""),
+                    str(parent_props.get("alias") or ""),
+                    text,
+                ]
+            ).lower()
+            overlap = len([term for term in query_terms if term in searchable]) / max(1, len(query_terms)) if query_terms else 0.0
+            key = f"{label}::{node_id}"
+            existing = grouped.get(key)
+            if existing is None:
+                existing = {
+                    "node_id": node_id,
+                    "node_label": label,
+                    "node_name": parent_props.get("name"),
+                    "node_alias": parent_props.get("alias"),
+                    "instance_id": parent_props.get("instance_id"),
+                    "properties": parent_props,
+                    "context_text": text,
+                    "chunk_id": chunk_props.get("chunk_id"),
+                    "chunk_type": chunk_props.get("chunk_type"),
+                    "chunk_index": chunk_props.get("chunk_index"),
+                    "vector_score": 0.0,
+                    "fulltext_score": 0.0,
+                    "keyword_overlap": overlap,
+                    "matched_chunk_count": 0,
+                }
+                grouped[key] = existing
+            existing["matched_chunk_count"] = int(existing.get("matched_chunk_count") or 0) + 1
+            existing["keyword_overlap"] = max(float(existing.get("keyword_overlap") or 0.0), overlap)
+            if source in {"vector", "hybrid_cypher"}:
+                existing["vector_score"] = max(float(existing.get("vector_score") or 0.0), score)
+            else:
+                existing["fulltext_score"] = max(float(existing.get("fulltext_score") or 0.0), score)
+            combined = (
+                0.58 * float(existing.get("vector_score") or 0.0)
+                + 0.30 * float(existing.get("fulltext_score") or 0.0)
+                + 0.12 * float(existing.get("keyword_overlap") or 0.0)
+            )
+            if combined >= float(existing.get("score") or 0.0):
+                existing["score"] = min(1.0, combined)
+                existing["context_text"] = text
+                existing["chunk_id"] = chunk_props.get("chunk_id")
+                existing["chunk_type"] = chunk_props.get("chunk_type")
+                existing["chunk_index"] = chunk_props.get("chunk_index")
+
+        return sorted(
+            grouped.values(),
+            key=lambda item: float(item.get("score") or 0.0),
+            reverse=True,
+        )[:rerank_limit]
+
+    async def _expand_anchor_context(
+        self,
+        *,
+        session: AsyncNeo4jSession,
+        anchors: list[dict[str, Any]],
+        ontology_id: int | None,
+        temporal_mode: str,
+    ) -> list[dict[str, Any]]:
+        anchor_payload = [
+            {
+                "id": anchor["node_id"],
+                "label": anchor["node_label"],
+                "score": float(anchor.get("score") or 0.0),
+            }
+            for anchor in anchors
+            if anchor.get("node_id") and anchor.get("node_label")
+        ]
+        if not anchor_payload:
+            return []
+
+        order_direction = "DESC" if temporal_mode == "current_state" else "ASC"
+        query = f"""
+        UNWIND $anchors AS anchor
+        MATCH (a)
+        WHERE (
+            (anchor.label = 'EntityInstance' AND a:EntityInstance AND a.entity_instance_id = anchor.id)
+            OR (anchor.label = 'Scene' AND a:Scene AND a.id = anchor.id)
+            OR (anchor.label = 'Milestone' AND a:Milestone AND a.id = anchor.id)
+        )
+        CALL {{
+            WITH a, anchor
+            OPTIONAL MATCH (scene:Scene)-[scene_rel:RELATES_TO|DERIVED_FROM]->(a)
+            WHERE a:EntityInstance
+            RETURN scene AS node, 'Scene' AS node_label, type(scene_rel) AS relation, anchor.score AS anchor_score
+            UNION
+            WITH a, anchor
+            OPTIONAL MATCH (scene:Scene)-[:CONTAINS]->(milestone:Milestone)-[mrel:RELATES_TO|DERIVED_FROM]->(a)
+            WHERE a:EntityInstance
+            RETURN milestone AS node, 'Milestone' AS node_label, type(mrel) AS relation, anchor.score AS anchor_score
+            UNION
+            WITH a, anchor
+            OPTIONAL MATCH (a:Scene)-[:CONTAINS]->(milestone:Milestone)
+            RETURN milestone AS node, 'Milestone' AS node_label, 'CONTAINS' AS relation, anchor.score AS anchor_score
+            UNION
+            WITH a, anchor
+            OPTIONAL MATCH (a:Scene)-[rel:RELATES_TO|DERIVED_FROM]->(entity:EntityInstance)
+            RETURN entity AS node, 'EntityInstance' AS node_label, type(rel) AS relation, anchor.score AS anchor_score
+            UNION
+            WITH a, anchor
+            OPTIONAL MATCH (a:Scene)-[rel:FOLLOWED_BY|PRECEDED_BY]->(neighbor:Scene)
+            RETURN neighbor AS node, 'Scene' AS node_label, type(rel) AS relation, anchor.score AS anchor_score
+            UNION
+            WITH a, anchor
+            OPTIONAL MATCH (scene:Scene)-[:CONTAINS]->(a:Milestone)
+            RETURN scene AS node, 'Scene' AS node_label, 'CONTAINS_PARENT' AS relation, anchor.score AS anchor_score
+            UNION
+            WITH a, anchor
+            OPTIONAL MATCH (a:Milestone)-[rel:RELATES_TO|DERIVED_FROM]->(entity:EntityInstance)
+            RETURN entity AS node, 'EntityInstance' AS node_label, type(rel) AS relation, anchor.score AS anchor_score
+            UNION
+            WITH a, anchor
+            OPTIONAL MATCH (a:Milestone)-[rel:FOLLOWED_BY|PRECEDED_BY]->(neighbor:Milestone)
+            RETURN neighbor AS node, 'Milestone' AS node_label, type(rel) AS relation, anchor.score AS anchor_score
+        }}
+        WITH DISTINCT node, node_label, relation, anchor_score
+        WHERE node IS NOT NULL
+          AND ($ontology_id IS NULL OR toInteger(node.ontology_id) = toInteger($ontology_id))
+        OPTIONAL MATCH (node)-[:HAS_CHUNK]->(chunk:EntityChunk)
+        WITH node, node_label, relation, anchor_score,
+             head(collect(chunk)) AS chunk,
+             CASE WHEN EXISTS {{ MATCH (node)-[:FOLLOWED_BY|PRECEDED_BY]-() }} THEN 1 ELSE 0 END AS has_order_edge
+        RETURN node,
+               node_label,
+               relation,
+               anchor_score,
+               chunk,
+               has_order_edge,
+               coalesce(node.created_at, node.updated_at, '') AS temporal_value
+        ORDER BY has_order_edge DESC, temporal_value {order_direction}, coalesce(node.name, node.alias, node.id, node.entity_instance_id) ASC
+        LIMIT 60
+        """
+        result = await session.run(
+            query,
+            anchors=anchor_payload,
+            ontology_id=ontology_id,
+        )
+        return await result.data()
+
+    def _merge_anchor_and_expanded_chunks(
+        self,
+        *,
+        anchors: list[dict[str, Any]],
+        expanded: list[dict[str, Any]],
+        ontology_id: int | None,
+        temporal_mode: str,
+    ) -> list[RetrievedChunk]:
+        chunks_by_key: dict[str, RetrievedChunk] = {}
+
+        def _put(chunk: RetrievedChunk) -> None:
+            key = f"{chunk.node_label}::{chunk.node_id}"
+            current = chunks_by_key.get(key)
+            if current is None or float(chunk.score) > float(current.score):
+                chunks_by_key[key] = chunk
+
+        for anchor in anchors:
+            score = float(anchor.get("score") or 0.0)
+            breakdown = {
+                "vector_best": float(anchor.get("vector_score") or 0.0),
+                "fulltext_best": float(anchor.get("fulltext_score") or 0.0),
+                "keyword_overlap": float(anchor.get("keyword_overlap") or 0.0),
+            }
+            _put(
+                RetrievedChunk(
+                    node_id=str(anchor["node_id"]),
+                    node_label=anchor.get("node_label"),
+                    node_name=anchor.get("node_name"),
+                    node_alias=anchor.get("node_alias"),
+                    instance_id=anchor.get("instance_id"),
+                    chunk_id=anchor.get("chunk_id"),
+                    chunk_type=anchor.get("chunk_type"),
+                    chunk_index=anchor.get("chunk_index"),
+                    text=str(anchor.get("context_text") or anchor.get("node_name") or anchor["node_id"]),
+                    score=score,
+                    confidence_pct=round(score * 100, 2),
+                    source=f"hybrid_ontology_{ontology_id}" if ontology_id else "hybrid",
+                    properties=anchor.get("properties") or {},
+                    chunk_score=score,
+                    node_score=score,
+                    importance_index=score,
+                    matched_chunk_count=int(anchor.get("matched_chunk_count") or 1),
+                    score_breakdown=breakdown,
+                    evidence_bundle={
+                        "parent_type": anchor.get("node_label"),
+                        "parent_id": anchor.get("node_id"),
+                        "temporal_mode": temporal_mode,
+                        "anchor": True,
+                    },
+                )
+            )
+
+        for idx, row in enumerate(expanded):
+            node = row.get("node")
+            if node is None:
+                continue
+            props = self._as_props(node)
+            labels = self._as_labels(node)
+            label = str(row.get("node_label") or self._primary_label(labels))
+            node_id = self._node_id(props)
+            if not node_id:
+                continue
+            chunk_props = self._as_props(row.get("chunk"))
+            base_score = float(row.get("anchor_score") or 0.35)
+            expansion_score = max(0.05, min(0.97, base_score - 0.04 - (idx * 0.001)))
+            text = str(
+                chunk_props.get("text_chunk")
+                or props.get("description")
+                or props.get("text")
+                or props.get("autogenerated_text")
+                or props.get("name")
+                or props.get("alias")
+                or node_id
+            )
+            _put(
+                RetrievedChunk(
+                    node_id=node_id,
+                    node_label=label,
+                    node_name=props.get("name"),
+                    node_alias=props.get("alias"),
+                    instance_id=props.get("instance_id"),
+                    chunk_id=chunk_props.get("chunk_id") or f"{node_id}-expanded",
+                    chunk_type=chunk_props.get("chunk_type") or "temporal_expansion",
+                    chunk_index=chunk_props.get("chunk_index"),
+                    text=text,
+                    score=expansion_score,
+                    confidence_pct=round(expansion_score * 100, 2),
+                    source="hybrid_temporal_expansion",
+                    properties={
+                        **props,
+                        "expanded_relation": row.get("relation"),
+                        "temporal_mode": temporal_mode,
+                        "has_order_edge": bool(row.get("has_order_edge")),
+                    },
+                    chunk_score=expansion_score,
+                    node_score=expansion_score,
+                    importance_index=expansion_score,
+                    matched_chunk_count=1,
+                    score_breakdown={
+                        "anchor_score": base_score,
+                        "temporal_expansion": expansion_score,
+                    },
+                    graph_boost=0.0,
+                    evidence_bundle={
+                        "parent_type": label,
+                        "parent_id": node_id,
+                        "temporal_mode": temporal_mode,
+                        "expanded_relation": row.get("relation"),
+                    },
+                )
+            )
+
+        return sorted(
+            chunks_by_key.values(),
+            key=lambda item: float(item.importance_index or item.score),
+            reverse=True,
+        )

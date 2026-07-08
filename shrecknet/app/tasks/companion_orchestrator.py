@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from contextlib import asynccontextmanager
@@ -17,7 +18,7 @@ from app.integrations.llm.runtime_control import (
     resolve_provider_default_target,
 )
 from app.integrations.llm.shreckllm_client import ShreckLLMClient
-from app.integrations.retrieval.neo4j_retriever import Neo4jGraphRetriever
+from app.integrations.retrieval.neo4j_retriever import HybridNeo4jGraphRetriever, Neo4jGraphRetriever
 from app.jobs.elder.elder import ElderOrchestrator
 from app.jobs.elder.schemas import ElderQueryRequest
 from app.jobs.librarian.librarian import LibrarianOrchestrator
@@ -40,6 +41,28 @@ from app.utils.job_tracking import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _log_companion_agent_trace(*, job: str, agent_id: str, agent_name: str | None, trace: Any) -> None:
+    if not trace:
+        logger.info(
+            "companion_agent_trace job=%s agent_id=%s agent_name=%s trace=[]",
+            job,
+            agent_id,
+            agent_name,
+        )
+        return
+    try:
+        payload = json.dumps(trace, ensure_ascii=True, default=str)
+    except Exception:
+        payload = repr(trace)
+    logger.info(
+        "companion_agent_trace job=%s agent_id=%s agent_name=%s trace=%s",
+        job,
+        agent_id,
+        agent_name,
+        payload,
+    )
 
 
 def _build_model_policy(default_target) -> ModelPolicy:
@@ -93,7 +116,12 @@ async def _run_elder_agent(
         default_top_k=settings.default_top_k,
         llm_max_concurrency=2,
     )
-    request = ElderQueryRequest(query=query, mode="both", include_trace=False, route="auto")
+    request = ElderQueryRequest(
+        query=query,
+        mode="both",
+        include_trace=settings.companion_agent_trace_enabled,
+        route="auto",
+    )
     try:
         logger.info(
             "companion_agent_start job=elder agent_id=%s agent_name=%s query_chars=%s",
@@ -102,6 +130,13 @@ async def _run_elder_agent(
             len(query or ""),
         )
         response = await orchestrator.execute(agent, request, None)
+        if settings.companion_agent_trace_enabled:
+            _log_companion_agent_trace(
+                job="elder",
+                agent_id=agent.id,
+                agent_name=agent.name,
+                trace=response.trace,
+            )
         elapsed_ms = round((time.monotonic() - started) * 1000, 2)
         logger.info(
             "companion_agent_done job=elder agent_id=%s agent_name=%s sources=%s answer_chars=%s elapsed_ms=%s",
@@ -118,6 +153,7 @@ async def _run_elder_agent(
             "ok": True,
             "answer": response.answer,
             "sources": [source.model_dump() for source in response.sources],
+            "trace": response.trace if settings.companion_agent_trace_enabled else None,
             "timings": response.timings,
         }
     except Exception as exc:
@@ -182,7 +218,11 @@ async def _run_librarian_agent(
                 answer_model=settings.model_librarian,
                 style_model=settings.model_librarian,
             )
-            request = LibrarianQueryRequest(query=query, mode="both", include_trace=False)
+            request = LibrarianQueryRequest(
+                query=query,
+                mode="both",
+                include_trace=settings.companion_agent_trace_enabled,
+            )
             try:
                 logger.info(
                     "companion_agent_start job=librarian agent_id=%s agent_name=%s query_chars=%s",
@@ -191,6 +231,13 @@ async def _run_librarian_agent(
                     len(query or ""),
                 )
                 response = await orchestrator.execute(agent, request, sql_session)
+                if settings.companion_agent_trace_enabled:
+                    _log_companion_agent_trace(
+                        job="librarian",
+                        agent_id=agent.id,
+                        agent_name=agent.name,
+                        trace=response.trace,
+                    )
                 elapsed_ms = round((time.monotonic() - started) * 1000, 2)
                 logger.info(
                     "companion_agent_done job=librarian agent_id=%s agent_name=%s sources=%s library_items=%s answer_chars=%s elapsed_ms=%s",
@@ -209,6 +256,7 @@ async def _run_librarian_agent(
                     "answer": response.answer,
                     "sources": [chunk.model_dump() for chunk in response.sources_used],
                     "library_items_used": response.library_items_used,
+                    "trace": response.trace if settings.companion_agent_trace_enabled else None,
                 }
             except Exception as exc:
                 elapsed_ms = round((time.monotonic() - started) * 1000, 2)
@@ -345,7 +393,7 @@ async def _run_turn(
             async with driver.session(database=settings.neo4j_database) as graph_session:
                 yield graph_session
 
-        graph_retriever = Neo4jGraphRetriever(session_factory=_graph_session_factory)
+        graph_retriever = HybridNeo4jGraphRetriever(session_factory=_graph_session_factory)
 
         async def _elder_runner(agent_id: str) -> dict[str, Any]:
             return await _run_elder_agent(

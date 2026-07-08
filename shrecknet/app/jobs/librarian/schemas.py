@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 class LibrarianQueryRequest(BaseModel):
     """Request schema for Librarian query."""
 
-    query: str = Field(..., min_length=1, max_length=2000, description="User query")
+    query: str = Field(..., min_length=1, description="User query")
     mode: Literal["nl", "context", "both"] = Field(
         default="both",
         description="Response mode: 'nl' for natural language only, "

@@ -68,8 +68,11 @@ class OllamaClient:
         model: str,
         messages: list[ChatMessage],
         temperature: float,
+        max_tokens: int | None = None,
     ) -> dict[str, Any]:
         options: dict[str, Any] = {"temperature": float(temperature)}
+        if max_tokens is not None:
+            options["num_predict"] = int(max_tokens)
 
         payload = {
             "model": model,

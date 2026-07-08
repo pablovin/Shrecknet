@@ -16,7 +16,7 @@ Response example:
   "provider_defaults": {
     "ollama": {
       "default_model": "gemma3:4b",
-      "base_url": "http://ollama:11434",
+      "base_url": "http://host.docker.internal:11434",
       "api_key": null
     },
     "openai": {

@@ -32,6 +32,7 @@ BOOTSTRAP_ENV_FIELDS = frozenset(
         "neo4j_user",
         "neo4j_password",
         "neo4j_database",
+        "media_root",
     }
 )
 
@@ -196,6 +197,7 @@ class Settings(BaseSettings):
     model_orchestrator_synthesis: LLMModelTarget = Field(
         default_factory=lambda: LLMModelTarget(provider="openai", name="gpt-5")
     )
+    companion_agent_trace_enabled: bool = False
     default_top_k: int = 20
     embedding_model_id: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
     embedding_dimension: int = 384

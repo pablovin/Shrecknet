@@ -31,6 +31,7 @@ class AuthorMixin(BaseModel):
 class OntologyBase(BaseModel):
     name: str
     description: str | None = None
+    rpg_system: str | None = None
     image_url: str | None = Field(None, description="URL pointing to an ontology image")
 
 
@@ -41,6 +42,7 @@ class OntologyCreate(OntologyBase):
 class OntologyUpdate(BaseModel):
     name: str | None = None
     description: str | None = None
+    rpg_system: str | None = None
     image_url: str | None = None
 
 

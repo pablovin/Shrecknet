@@ -52,6 +52,7 @@ class PdfEmbeddingService:
             Dictionary with index name, exists status, model, and dimensions
         """
         index_name = "pdf_chunk_text_vec_idx"
+        fulltext_index_name = "pdf_chunk_text_fulltext_idx"
         model = self.embedding_service.model_id
         dims = self.embedding_service.embed_dim
 
@@ -82,9 +83,32 @@ class PdfEmbeddingService:
             await self.graph_session.run(create_query)
             logger.info(f"Created vector index {index_name}")
 
+        fulltext_status = "present"
+        fulltext_check = """
+        SHOW INDEXES YIELD name, type
+        WHERE name = $index_name AND type = 'FULLTEXT'
+        RETURN count(*) as count
+        """
+        fulltext_result = await self.graph_session.run(
+            fulltext_check, index_name=fulltext_index_name
+        )
+        fulltext_record = await fulltext_result.single()
+        fulltext_exists = fulltext_record["count"] > 0 if fulltext_record else False
+        if not fulltext_exists:
+            create_fulltext = f"""
+            CREATE FULLTEXT INDEX {fulltext_index_name} IF NOT EXISTS
+            FOR (c:PdfChunk)
+            ON EACH [c.text]
+            """
+            await self.graph_session.run(create_fulltext)
+            fulltext_status = "created"
+            logger.info("Created fulltext index %s", fulltext_index_name)
+
         return {
             "index_name": index_name,
+            "fulltext_index_name": fulltext_index_name,
             "exists": exists,
+            "fulltext_status": fulltext_status,
             "embedding_model": model,
             "embedding_dim": dims,
         }
@@ -365,13 +389,19 @@ class PdfEmbeddingService:
         while lines and lines[-1] in footer_lines:
             lines.pop()
 
-        text = "\n".join(lines)
-        text = text.replace("\x00", " ")
-        text = re.sub(r"-\n(?=\w)", "", text)
-        text = re.sub(r"[ \t]+", " ", text)
-        text = re.sub(r"\n{3,}", "\n\n", text)
-        text = re.sub(r"(?<!\n)\n(?!\n)", " ", text)
-        text = re.sub(r"\s+", " ", text)
+        preserve_lines = self._looks_table_like_lines(lines)
+        if not preserve_lines:
+            text = "\n".join(lines)
+            text = text.replace("\x00", " ")
+            text = re.sub(r"-\n(?=\w)", "", text)
+            text = re.sub(r"[ \t]+", " ", text)
+            text = re.sub(r"\n{3,}", "\n\n", text)
+            text = re.sub(r"(?<!\n)\n(?!\n)", " ", text)
+            text = re.sub(r"\s+", " ", text)
+        else:
+            text = "\n".join(line.replace("\x00", " ").strip() for line in lines if line.strip())
+            text = re.sub(r"-\n(?=\w)", "", text)
+            text = re.sub(r"\n{3,}", "\n\n", text)
         return text.strip()
 
     def _clean_lines(self, text: str) -> list[str]:
@@ -382,6 +412,21 @@ class PdfEmbeddingService:
             return False
         alpha_count = sum(1 for char in text if char.isalpha())
         return alpha_count >= 20
+
+    def _looks_table_like_lines(self, lines: list[str]) -> bool:
+        if len(lines) < 4:
+            return False
+        short_lines = sum(1 for line in lines if 3 <= len(line) <= 90)
+        numeric_lines = sum(1 for line in lines if re.search(r"\b\d+%?\b", line))
+        separator_lines = sum(1 for line in lines if re.search(r"\s{2,}|[|•·]", line))
+        colon_lines = sum(1 for line in lines if ":" in line and len(line) <= 100)
+        return (
+            short_lines / max(1, len(lines)) >= 0.65
+            and (numeric_lines + separator_lines + colon_lines) >= 2
+        )
+
+    def _looks_table_like_text(self, text: str) -> bool:
+        return self._looks_table_like_lines(self._clean_lines(text))
 
     def _split_page_into_segments(self, text: str) -> list[str]:
         pieces = re.split(r"(?<=[.!?])\s+|\n\n+", text)
@@ -442,7 +487,7 @@ class PdfEmbeddingService:
                     "start_page_number": page_numbers[0],
                     "end_page_number": page_numbers[-1],
                     "page_numbers": page_numbers,
-                    "chunk_type": "text",
+                    "chunk_type": "table_like" if self._looks_table_like_text(text) else "text",
                     "text": text,
                     "char_count": len(text),
                     "chunk_index": len(chunks),
@@ -714,7 +759,7 @@ class PdfEmbeddingService:
             request_id=f"librarian:{ontology_id}:{abs(hash(query_text)) % 1000000}",
         )
 
-        query = f"""
+        vector_query = f"""
         CALL db.index.vector.queryNodes(
             'pdf_chunk_text_vec_idx',
             $top_k,
@@ -727,7 +772,7 @@ class PdfEmbeddingService:
 
         internal_candidate_limit = candidate_limit or max(50, top_k * 8)
         result = await self.graph_session.run(
-            query,
+            vector_query,
             query_embedding=query_embedding,
             top_k=internal_candidate_limit,
             ontology_id=ontology_id,
@@ -752,51 +797,27 @@ class PdfEmbeddingService:
         )
         async for record in result:
             props = record.get("props") or {}
-            li_raw = props.get("library_item_id")
-            if li_raw is None:
-                continue
-            try:
-                li = int(li_raw)
-            except (TypeError, ValueError):
-                continue
-            if requested_ids and li not in requested_ids:
-                continue
-            if active_ids and li not in active_ids:
-                continue
-            node_ontology = props.get("ontology_id")
-            if node_ontology is not None:
-                try:
-                    if int(node_ontology) != int(ontology_id):
-                        continue
-                except (TypeError, ValueError):
-                    continue
-            page = int(
-                props.get("primary_page_number")
-                or props.get("page_number")
-                or props.get("start_page_number")
-                or 1
+            chunk = self._chunk_from_props(
+                props=props,
+                raw_score=float(record["score"]),
+                score_key="vector_score",
+                ontology_id=ontology_id,
+                requested_ids=requested_ids,
+                active_ids=active_ids,
+                base_url=base_url,
             )
-            page_numbers = props.get("page_numbers")
-            if not isinstance(page_numbers, list) or not page_numbers:
-                page_numbers = [page]
-            chunk_index = int(props.get("chunk_index") or 0)
-            pdf_url = f"{base_url}/library/{ontology_id}/{li}/content.pdf"
-            page_url = f"{pdf_url}#page={page}"
-            chunks.append(
-                {
-                    "library_item_id": li,
-                    "chunk_index": chunk_index,
-                    "page_number": page,
-                    "start_page_number": props.get("start_page_number") or page,
-                    "end_page_number": props.get("end_page_number") or page,
-                    "page_numbers": page_numbers,
-                    "text": props.get("text") or "",
-                    "vector_score": float(record["score"]),
-                    "score": float(record["score"]),
-                    "pdf_url": pdf_url,
-                    "page_url": page_url,
-                }
+            if chunk:
+                chunks.append(chunk)
+        if hybrid_rerank:
+            fulltext_chunks = await self._search_fulltext_chunks(
+                query_text=query_text,
+                ontology_id=ontology_id,
+                library_item_ids=library_item_ids,
+                active_library_item_ids=active_library_item_ids,
+                limit=internal_candidate_limit,
+                base_url=base_url,
             )
+            chunks = self._merge_hybrid_candidates(chunks + fulltext_chunks)
         if not chunks:
             logger.info(
                 "librarian_retrieval_no_hits reason=no_chunk_candidates_after_property_compat_filter ontology_id=%s requested_item_ids=%s active_item_ids_count=%s",
@@ -813,6 +834,158 @@ class PdfEmbeddingService:
             max_chunks_per_item=max_chunks_per_item,
             dynamic_score_floor=dynamic_score_floor,
         )
+
+    async def _search_fulltext_chunks(
+        self,
+        *,
+        query_text: str,
+        ontology_id: int,
+        library_item_ids: list[int] | None,
+        active_library_item_ids: list[int] | None,
+        limit: int,
+        base_url: str,
+    ) -> list[dict[str, Any]]:
+        query = """
+        CALL db.index.fulltext.queryNodes('pdf_chunk_text_fulltext_idx', $fulltext_query)
+        YIELD node as c, score
+        RETURN properties(c) as props, score
+        ORDER BY score DESC
+        LIMIT $limit
+        """
+        requested_ids = set(library_item_ids or [])
+        active_ids = set(active_library_item_ids or [])
+
+        async def _collect_rows() -> list[tuple[dict[str, Any], float]]:
+            result = await self.graph_session.run(
+                query,
+                fulltext_query=self._fulltext_query(query_text),
+                limit=limit,
+            )
+            rows: list[tuple[dict[str, Any], float]] = []
+            async for record in result:
+                rows.append((record.get("props") or {}, float(record.get("score") or 0.0)))
+            return rows
+
+        raw_rows: list[tuple[dict[str, Any], float]] = []
+        try:
+            raw_rows = await _collect_rows()
+        except Exception as exc:
+            if "no such fulltext schema index" in str(exc).lower():
+                logger.warning(
+                    "librarian_fulltext_index_missing ontology_id=%s error=%s; attempting to create indexes",
+                    ontology_id,
+                    exc,
+                )
+                try:
+                    await self.ensure_vector_index()
+                    raw_rows = await _collect_rows()
+                except Exception as retry_exc:
+                    logger.warning(
+                        "librarian_fulltext_search_failed_after_index_bootstrap ontology_id=%s error=%s",
+                        ontology_id,
+                        retry_exc,
+                    )
+                    return []
+            else:
+                logger.warning("librarian_fulltext_search_failed ontology_id=%s error=%s", ontology_id, exc)
+                return []
+
+        max_score = max((score for _, score in raw_rows), default=1.0)
+        chunks: list[dict[str, Any]] = []
+        for props, raw_score in raw_rows:
+            normalized_score = min(1.0, raw_score / max(1.0, max_score))
+            chunk = self._chunk_from_props(
+                props=props,
+                raw_score=normalized_score,
+                score_key="fulltext_score",
+                ontology_id=ontology_id,
+                requested_ids=requested_ids,
+                active_ids=active_ids,
+                base_url=base_url,
+            )
+            if chunk:
+                chunks.append(chunk)
+        return chunks
+
+    def _fulltext_query(self, query_text: str) -> str:
+        tokens = self._tokenize(query_text)
+        if not tokens:
+            return query_text.strip()
+        important = [tok for tok in tokens if len(tok) > 2][:12]
+        if not important:
+            return query_text.strip()
+        escaped = [re.sub(r'([+\\&|!(){}\[\]^"~*?:/\-])', r"\\\1", tok) for tok in important]
+        return " OR ".join(f"{tok}~" for tok in escaped)
+
+    def _chunk_from_props(
+        self,
+        *,
+        props: dict[str, Any],
+        raw_score: float,
+        score_key: str,
+        ontology_id: int,
+        requested_ids: set[int],
+        active_ids: set[int],
+        base_url: str,
+    ) -> dict[str, Any] | None:
+        li_raw = props.get("library_item_id")
+        if li_raw is None:
+            return None
+        try:
+            li = int(li_raw)
+        except (TypeError, ValueError):
+            return None
+        if requested_ids and li not in requested_ids:
+            return None
+        if active_ids and li not in active_ids:
+            return None
+        node_ontology = props.get("ontology_id")
+        if node_ontology is not None:
+            try:
+                if int(node_ontology) != int(ontology_id):
+                    return None
+            except (TypeError, ValueError):
+                return None
+        page = int(
+            props.get("primary_page_number")
+            or props.get("page_number")
+            or props.get("start_page_number")
+            or 1
+        )
+        page_numbers = props.get("page_numbers")
+        if not isinstance(page_numbers, list) or not page_numbers:
+            page_numbers = [page]
+        chunk_index = int(props.get("chunk_index") or 0)
+        pdf_url = f"{base_url}/library/{ontology_id}/{li}/content.pdf"
+        page_url = f"{pdf_url}#page={page}"
+        return {
+            "library_item_id": li,
+            "chunk_index": chunk_index,
+            "page_number": page,
+            "start_page_number": props.get("start_page_number") or page,
+            "end_page_number": props.get("end_page_number") or page,
+            "page_numbers": page_numbers,
+            "chunk_type": props.get("chunk_type") or "text",
+            "text": props.get("text") or "",
+            "vector_score": raw_score if score_key == "vector_score" else 0.0,
+            "fulltext_score": raw_score if score_key == "fulltext_score" else 0.0,
+            "score": raw_score,
+            "pdf_url": pdf_url,
+            "page_url": page_url,
+        }
+
+    def _merge_hybrid_candidates(self, chunks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        merged: dict[tuple[int, int], dict[str, Any]] = {}
+        for chunk in chunks:
+            key = (int(chunk.get("library_item_id", 0)), int(chunk.get("chunk_index", 0)))
+            existing = merged.get(key)
+            if existing is None:
+                merged[key] = dict(chunk)
+                continue
+            existing["vector_score"] = max(float(existing.get("vector_score", 0.0)), float(chunk.get("vector_score", 0.0)))
+            existing["fulltext_score"] = max(float(existing.get("fulltext_score", 0.0)), float(chunk.get("fulltext_score", 0.0)))
+            existing["score"] = max(float(existing.get("score", 0.0)), float(chunk.get("score", 0.0)))
+        return list(merged.values())
 
     def _tokenize(self, text: str) -> list[str]:
         return re.findall(r"[A-Za-z0-9_]+", (text or "").lower())
@@ -852,6 +1025,7 @@ class PdfEmbeddingService:
         for chunk in chunks:
             vector_score = float(chunk.get("vector_score", chunk.get("score", 0.0)))
             lexical = self._lexical_score(query_text, chunk.get("text", "")) if hybrid_rerank else 0.0
+            fulltext_score = float(chunk.get("fulltext_score", 0.0))
             page_span = max(
                 1,
                 int(chunk.get("end_page_number") or chunk.get("page_number") or 1)
@@ -859,7 +1033,16 @@ class PdfEmbeddingService:
                 + 1,
             )
             span_penalty = min(0.10, max(0.0, (page_span - 2) * 0.02))
-            final_score = (0.75 * vector_score + 0.25 * lexical if hybrid_rerank else vector_score) - span_penalty
+            if hybrid_rerank:
+                exact_bonus = 0.15 if lexical >= 0.95 or fulltext_score >= 0.95 else 0.0
+                final_score = (
+                    0.35 * vector_score
+                    + 0.35 * fulltext_score
+                    + 0.30 * lexical
+                    + exact_bonus
+                ) - span_penalty
+            else:
+                final_score = vector_score - span_penalty
             if final_score >= threshold:
                 scored_chunk = dict(chunk)
                 scored_chunk["lexical_score"] = lexical
@@ -911,6 +1094,93 @@ class PdfEmbeddingService:
             if pn:
                 out[int(pn)] = txt
         return out
+
+    async def fetch_chunks_by_page_anchors(
+        self,
+        *,
+        ontology_id: int,
+        page_anchors: list[dict[str, Any]],
+        library_item_ids: list[int] | None = None,
+        active_library_item_ids: list[int] | None = None,
+        radius: int = 0,
+    ) -> list[dict[str, Any]]:
+        if not page_anchors:
+            return []
+        if active_library_item_ids is not None and not active_library_item_ids:
+            return []
+        pages = sorted({
+            page
+            for anchor in page_anchors
+            for page in range(
+                max(1, int(anchor.get("page") or 1) - max(0, radius)),
+                int(anchor.get("page") or 1) + max(0, radius) + 1,
+            )
+        })
+        query = """
+        MATCH (c:PdfChunk)
+        WHERE c.ontology_id = $ontology_id
+          AND ANY(page IN $pages WHERE c.start_page_number <= page AND c.end_page_number >= page)
+        RETURN properties(c) as props, 1.0 as score
+        ORDER BY c.library_item_id ASC, c.chunk_index ASC
+        """
+        base_url = (
+            self.settings.media_public_url.rstrip("/")
+            if self.settings.media_public_url
+            else self.settings.media_base_url.rstrip("/")
+        )
+        requested_ids = set(library_item_ids or [])
+        active_ids = set(active_library_item_ids or [])
+        result = await self.graph_session.run(
+            query,
+            ontology_id=ontology_id,
+            pages=pages,
+        )
+        chunks: list[dict[str, Any]] = []
+        async for record in result:
+            chunk = self._chunk_from_props(
+                props=record.get("props") or {},
+                raw_score=float(record.get("score") or 1.0),
+                score_key="fulltext_score",
+                ontology_id=ontology_id,
+                requested_ids=requested_ids,
+                active_ids=active_ids,
+                base_url=base_url,
+            )
+            if chunk and any(
+                int(chunk.get("start_page_number") or chunk["page_number"]) <= page <= int(chunk.get("end_page_number") or chunk["page_number"])
+                for page in pages
+            ):
+                chunk["score"] = max(float(chunk.get("score", 0.0)), 1.0)
+                chunks.append(chunk)
+        return self._merge_hybrid_candidates(chunks)
+
+    async def expand_chunks_by_page_neighbors(
+        self,
+        chunks: list[dict[str, Any]],
+        *,
+        radius: int,
+        ontology_id: int,
+        library_item_ids: list[int] | None = None,
+        active_library_item_ids: list[int] | None = None,
+    ) -> list[dict[str, Any]]:
+        if radius <= 0 or not chunks:
+            return chunks
+        anchors = [
+            {"page": int(page)}
+            for chunk in chunks
+            for page in range(
+                int(chunk.get("start_page_number") or chunk.get("page_number") or 1),
+                int(chunk.get("end_page_number") or chunk.get("page_number") or 1) + 1,
+            )
+        ]
+        expanded = await self.fetch_chunks_by_page_anchors(
+            ontology_id=ontology_id,
+            page_anchors=anchors,
+            library_item_ids=library_item_ids,
+            active_library_item_ids=active_library_item_ids,
+            radius=radius,
+        )
+        return self._merge_hybrid_candidates(chunks + expanded)
 
     async def enrich_chunks_with_neighbors(
         self, chunks: list[dict[str, Any]]

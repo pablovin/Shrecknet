@@ -32,6 +32,7 @@ class Ontology(BaseModel):
     id: int
     name: str
     description: str | None = None
+    rpg_system: str | None = None
     image_url: str | None = None
     created_at: datetime
     updated_at: datetime

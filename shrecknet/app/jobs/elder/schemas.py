@@ -60,7 +60,7 @@ class TraceStep(BaseModel):
 class DecomposedIntent(BaseModel):
     """Intent used by retrieval pipeline."""
 
-    subquery: str = Field(..., min_length=1, max_length=400)
+    subquery: str = Field(..., min_length=1)
     target_data_type: Literal["entity", "scene", "milestone", "mixed"] = Field(
         "mixed"
     )
@@ -104,7 +104,7 @@ class SourceNode(BaseModel):
 class ElderQueryRequest(BaseModel):
     """Request schema for Elder query."""
 
-    query: str = Field(..., min_length=1, max_length=2000, description="User query")
+    query: str = Field(..., min_length=1, description="User query")
     # Kept for request backward-compatibility; response no longer depends on mode.
     mode: str = Field(
         "both",

@@ -16,6 +16,9 @@ MIGRATION_MODELS_V1_KEY = "migration_provider_models_v1_applied"
 MIGRATION_OPENAI_MODELS_V2_KEY = "migration_openai_models_v2_applied"
 MIGRATION_BOOTSTRAP_PROVIDERS_V3_KEY = "migration_bootstrap_providers_v3_applied"
 MIGRATION_OLLAMA_CLOUD_MODELS_V4_KEY = "migration_ollama_cloud_models_v4_applied"
+MIGRATION_EXTERNAL_OLLAMA_URL_V5_KEY = "migration_external_ollama_url_v5_applied"
+LEGACY_COMPOSE_OLLAMA_BASE_URL = "http://ollama:11434"
+EXTERNAL_OLLAMA_BASE_URL = "http://host.docker.internal:11434"
 
 _cache: "RuntimeConfig | None" = None
 _lock = threading.Lock()
@@ -451,6 +454,65 @@ def load_runtime_config() -> RuntimeConfig:
             )
             conn.commit()
             merged = {**updated_payload, MIGRATION_OLLAMA_CLOUD_MODELS_V4_KEY: True}
+
+        external_ollama_url_migration_applied = bool(current.get(MIGRATION_EXTERNAL_OLLAMA_URL_V5_KEY))
+        if not external_ollama_url_migration_applied:
+            runtime = RuntimeConfig(**merged)
+            providers = dict(runtime.provider_defaults)
+            changed = False
+
+            cfg = providers.get("ollama")
+            if cfg is not None and (cfg.base_url or "").rstrip("/") == LEGACY_COMPOSE_OLLAMA_BASE_URL:
+                providers["ollama"] = ProviderDefaults(
+                    default_model=cfg.default_model,
+                    kind=cfg.kind,
+                    auth_strategy=cfg.auth_strategy,
+                    healthcheck_path=cfg.healthcheck_path,
+                    models=cfg.models,
+                    base_url=EXTERNAL_OLLAMA_BASE_URL,
+                    api_key=cfg.api_key,
+                )
+                changed = True
+
+            updated_payload = RuntimeConfig(
+                default_provider_id=runtime.default_provider_id,
+                provider_defaults=providers,
+                memory_ttl_seconds=runtime.memory_ttl_seconds,
+                memory_max_messages=runtime.memory_max_messages,
+                max_concurrent_requests=runtime.max_concurrent_requests,
+                request_timeout_seconds=runtime.request_timeout_seconds,
+                max_queue_wait_seconds=runtime.max_queue_wait_seconds,
+                provider_limits=runtime.provider_limits,
+                chat_job_queue_max_size=runtime.chat_job_queue_max_size,
+                chat_job_result_ttl_seconds=runtime.chat_job_result_ttl_seconds,
+                chat_job_poll_default_interval_ms=runtime.chat_job_poll_default_interval_ms,
+                chat_job_max_retries=runtime.chat_job_max_retries,
+            ).model_dump()
+
+            ts = _now()
+            if changed:
+                conn.executemany(
+                    f"""
+                    INSERT INTO {CONFIG_TABLE} (key, value, updated_at)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(key) DO UPDATE SET
+                      value=excluded.value,
+                      updated_at=excluded.updated_at
+                    """,
+                    [(k, _serialize(v), ts) for k, v in updated_payload.items()],
+                )
+            conn.execute(
+                f"""
+                INSERT INTO {CONFIG_TABLE} (key, value, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(key) DO UPDATE SET
+                  value=excluded.value,
+                  updated_at=excluded.updated_at
+                """,
+                (MIGRATION_EXTERNAL_OLLAMA_URL_V5_KEY, _serialize(True), ts),
+            )
+            conn.commit()
+            merged = {**updated_payload, MIGRATION_EXTERNAL_OLLAMA_URL_V5_KEY: True}
     finally:
         conn.close()
 

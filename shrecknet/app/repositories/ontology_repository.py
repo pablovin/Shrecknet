@@ -28,12 +28,15 @@ class OntologyRepository(BaseRepository):
         limit: int = 50,
         name: str | None = None,
         description: str | None = None,
+        rpg_system: str | None = None,
     ) -> Sequence[Ontology]:
         query: Select[tuple[Ontology]] = select(Ontology).offset(skip).limit(limit)
         if name:
             query = query.where(Ontology.name.ilike(f"%{name}%"))
         if description:
             query = query.where(Ontology.description.ilike(f"%{description}%"))
+        if rpg_system:
+            query = query.where(Ontology.rpg_system.ilike(f"%{rpg_system}%"))
         result = await self.session.execute(query)
         return result.scalars().unique().all()
 

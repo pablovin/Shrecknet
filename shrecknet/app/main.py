@@ -37,6 +37,7 @@ from app.api.routers import (
     users,
     worlds,
 )
+from app.services.pdf_embedding_service import PdfEmbeddingService
 from app.core.config_store import get_settings
 from app.core.config_store import LLMModelTarget
 from app.celery_queue_reaper import reset_jobs_and_queues_on_startup
@@ -49,7 +50,11 @@ from app.graphrag.embedding_runtime import (
     start_embedding_runtime_background,
     stop_embedding_runtime,
 )
-from app.graph.neo4j import ensure_temporal_graph_constraints, get_driver
+from app.graph.neo4j import (
+    ensure_elder_hybrid_indexes,
+    ensure_temporal_graph_constraints,
+    get_driver,
+)
 from app.integrations.llm.shreckllm_client import ShreckLLMClient
 
 
@@ -277,8 +282,10 @@ async def lifespan(_: FastAPI):
         driver = get_driver()
         async with driver.session(database=settings.neo4j_database) as neo4j_session:
             await ensure_temporal_graph_constraints(neo4j_session)
+            await ensure_elder_hybrid_indexes(neo4j_session)
+            await PdfEmbeddingService(neo4j_session).ensure_vector_index()
     except Exception:
-        logger.exception("Unable to ensure temporal graph constraints during startup")
+        logger.exception("Unable to ensure Neo4j startup graph/index state")
     try:
         yield
     finally:

@@ -41,7 +41,7 @@ class Settings(BaseSettings):
             "healthcheck_path": "/health",
             "default_model": "gemma3:4b",
             "models": ["gemma3:4b"],
-            "base_url": "http://ollama:11434",
+            "base_url": "http://host.docker.internal:11434",
             "api_key": None,
         },
         "openai": {

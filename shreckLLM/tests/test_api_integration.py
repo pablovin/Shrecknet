@@ -81,7 +81,7 @@ class FakeService:
         return {
             "default_provider_id": "ollama",
             "provider_defaults": {
-                "ollama": {"default_model": "gemma3:4b", "base_url": "http://ollama:11434", "api_key": None},
+                "ollama": {"default_model": "gemma3:4b", "base_url": "http://host.docker.internal:11434", "api_key": None},
                 "openai": {"default_model": "gpt-5-nano", "base_url": None, "api_key": "sk-...mask"},
                 "anthropic": {"default_model": "claude-3-haiku-20240307", "base_url": "https://api.anthropic.com", "api_key": "sk-ant-...mask"},
             },

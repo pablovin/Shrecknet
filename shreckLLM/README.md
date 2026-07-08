@@ -54,6 +54,7 @@ Response includes execution details:
   - `claude-opus-4-1-20250805`
 
 When running with Docker compose, shreckLLM is exposed on `http://localhost:8111`.
+The Docker Compose stack does not start Ollama; the local `ollama` provider defaults to an Ollama API already running on the host at `http://host.docker.internal:11434`.
 
 ## Documentation
 - `shreckLLM/Documentation/Config/CONFIG_ENDPOINTS.md`

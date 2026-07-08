@@ -18,7 +18,10 @@ from app.integrations.llm.runtime_control import (
     resolve_provider_default_target,
 )
 from app.integrations.llm.shreckllm_client import ShreckLLMClient
-from app.integrations.retrieval.neo4j_retriever import Neo4jGraphRetriever
+from app.integrations.retrieval.neo4j_retriever import (
+    HybridNeo4jGraphRetriever,
+    Neo4jGraphRetriever,
+)
 from app.jobs.elder.elder import ElderOrchestrator
 from app.jobs.elder.schemas import ElderQueryRequest, ElderQueryResponse
 from app.models.user import User
@@ -87,7 +90,7 @@ async def get_elder_llm_concurrency() -> int:
         return 1
 
 
-async def get_graph_retriever() -> Neo4jGraphRetriever:
+async def get_graph_retriever() -> HybridNeo4jGraphRetriever:
     """Dependency to get graph retriever."""
     settings = get_settings()
     driver = get_driver()
@@ -97,7 +100,7 @@ async def get_graph_retriever() -> Neo4jGraphRetriever:
         async with driver.session(database=settings.neo4j_database) as session:
             yield session
 
-    return Neo4jGraphRetriever(session_factory=_session_factory)
+    return HybridNeo4jGraphRetriever(session_factory=_session_factory)
 
 
 async def get_elder_orchestrator(

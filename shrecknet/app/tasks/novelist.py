@@ -14,7 +14,7 @@ from app.db.session import AsyncSessionMaker
 from app.integrations.llm.model_policy import ModelPolicy
 from app.integrations.llm.runtime_control import fetch_shreckllm_runtime, resolve_provider_default_target
 from app.integrations.llm.shreckllm_client import ShreckLLMClient
-from app.integrations.retrieval.neo4j_retriever import Neo4jGraphRetriever
+from app.integrations.retrieval.neo4j_retriever import HybridNeo4jGraphRetriever
 from app.graph.neo4j import get_driver
 from app.jobs.elder.elder import ElderOrchestrator
 from app.jobs.elder.schemas import ElderQueryRequest
@@ -416,7 +416,7 @@ async def _execute_run(
                 try:
                     driver = get_driver()
                     async with driver.session(database=settings.neo4j_database) as graph_session:
-                        retriever = Neo4jGraphRetriever(graph_session)
+                        retriever = HybridNeo4jGraphRetriever(graph_session)
                         elder_orchestrator = ElderOrchestrator(
                             llm_client=elder_llm_client,
                             model_policy=model_policy,

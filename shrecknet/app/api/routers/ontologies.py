@@ -228,6 +228,7 @@ async def copy_ontology_definitions(
 async def list_ontologies(
     name: str | None = None,
     description: str | None = None,
+    rpg_system: str | None = None,
     skip: int = 0,
     limit: int = 50,
     service: OntologyService = Depends(get_ontology_service),
@@ -236,6 +237,7 @@ async def list_ontologies(
     ontologies = await service.list_ontologies(
         name=name,
         description=description,
+        rpg_system=rpg_system,
         skip=skip,
         limit=limit,
     )

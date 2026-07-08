@@ -34,9 +34,17 @@ class ProviderDefaults(BaseModel):
     api_key: str | None = None
 
 
+class ProviderState(BaseModel):
+    active: bool = False
+    last_validated_at: str | None = None
+    last_warmed_at: str | None = None
+    last_error: str | None = None
+
+
 class RuntimeConfig(BaseModel):
     default_provider_id: str = "ollama"
     provider_defaults: dict[str, ProviderDefaults] = Field(default_factory=dict)
+    provider_states: dict[str, ProviderState] = Field(default_factory=dict)
     memory_ttl_seconds: int = 3600
     memory_max_messages: int = 24
     max_concurrent_requests: int = 8
@@ -52,6 +60,7 @@ class RuntimeConfig(BaseModel):
 class RuntimeConfigUpdate(BaseModel):
     default_provider_id: str | None = None
     provider_defaults: dict[str, ProviderDefaults] | None = None
+    provider_states: dict[str, ProviderState] | None = None
     memory_ttl_seconds: int | None = None
     memory_max_messages: int | None = None
     max_concurrent_requests: int | None = None
@@ -102,6 +111,7 @@ def _deserialize(raw: str) -> Any:
 
 def _bootstrap_defaults(settings: Settings) -> RuntimeConfig:
     provider_defaults: dict[str, ProviderDefaults] = {}
+    provider_states: dict[str, ProviderState] = {}
     for provider_id, raw in settings.bootstrap_provider_defaults.items():
         if not isinstance(raw, dict):
             continue
@@ -128,12 +138,14 @@ def _bootstrap_defaults(settings: Settings) -> RuntimeConfig:
             base_url=raw.get("base_url") if isinstance(raw.get("base_url"), str) or raw.get("base_url") is None else None,
             api_key=raw.get("api_key") if isinstance(raw.get("api_key"), str) or raw.get("api_key") is None else None,
         )
+        provider_states[provider_id] = ProviderState(active=False)
 
     default_provider_id = next(iter(provider_defaults.keys()), "ollama")
 
     return RuntimeConfig(
         default_provider_id=default_provider_id,
         provider_defaults=provider_defaults,
+        provider_states=provider_states,
         memory_ttl_seconds=settings.bootstrap_memory_ttl_seconds,
         memory_max_messages=settings.bootstrap_memory_max_messages,
         max_concurrent_requests=settings.bootstrap_max_concurrent_requests,
@@ -225,6 +237,7 @@ def load_runtime_config() -> RuntimeConfig:
             updated_payload = RuntimeConfig(
                 default_provider_id=runtime.default_provider_id,
                 provider_defaults=migrated_providers,
+                provider_states=runtime.provider_states,
                 memory_ttl_seconds=runtime.memory_ttl_seconds,
                 memory_max_messages=runtime.memory_max_messages,
                 max_concurrent_requests=runtime.max_concurrent_requests,
@@ -290,6 +303,7 @@ def load_runtime_config() -> RuntimeConfig:
             updated_payload = RuntimeConfig(
                 default_provider_id=runtime.default_provider_id,
                 provider_defaults=providers,
+                provider_states=runtime.provider_states,
                 memory_ttl_seconds=runtime.memory_ttl_seconds,
                 memory_max_messages=runtime.memory_max_messages,
                 max_concurrent_requests=runtime.max_concurrent_requests,
@@ -355,6 +369,7 @@ def load_runtime_config() -> RuntimeConfig:
             updated_payload = RuntimeConfig(
                 default_provider_id=runtime.default_provider_id,
                 provider_defaults=providers,
+                provider_states=runtime.provider_states,
                 memory_ttl_seconds=runtime.memory_ttl_seconds,
                 memory_max_messages=runtime.memory_max_messages,
                 max_concurrent_requests=runtime.max_concurrent_requests,
@@ -422,6 +437,7 @@ def load_runtime_config() -> RuntimeConfig:
             updated_payload = RuntimeConfig(
                 default_provider_id=runtime.default_provider_id,
                 provider_defaults=providers,
+                provider_states=runtime.provider_states,
                 memory_ttl_seconds=runtime.memory_ttl_seconds,
                 memory_max_messages=runtime.memory_max_messages,
                 max_concurrent_requests=runtime.max_concurrent_requests,
@@ -477,6 +493,7 @@ def load_runtime_config() -> RuntimeConfig:
             updated_payload = RuntimeConfig(
                 default_provider_id=runtime.default_provider_id,
                 provider_defaults=providers,
+                provider_states=runtime.provider_states,
                 memory_ttl_seconds=runtime.memory_ttl_seconds,
                 memory_max_messages=runtime.memory_max_messages,
                 max_concurrent_requests=runtime.max_concurrent_requests,

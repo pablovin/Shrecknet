@@ -85,6 +85,11 @@ class FakeService:
                 "openai": {"default_model": "gpt-5-nano", "base_url": None, "api_key": "sk-...mask"},
                 "anthropic": {"default_model": "claude-3-haiku-20240307", "base_url": "https://api.anthropic.com", "api_key": "sk-ant-...mask"},
             },
+            "provider_states": {
+                "ollama": {"active": False, "last_validated_at": None, "last_warmed_at": None, "last_error": None},
+                "openai": {"active": False, "last_validated_at": None, "last_warmed_at": None, "last_error": None},
+                "anthropic": {"active": False, "last_validated_at": None, "last_warmed_at": None, "last_error": None},
+            },
         }
 
     async def refresh_runtime(self):
@@ -95,6 +100,12 @@ class FakeService:
 
     async def anthropic_validation_status(self):
         return {"configured": True, "present": True, "valid": True, "error": None}
+
+    async def activate_provider(self, provider_id: str):
+        return {"provider_id": provider_id, "configured": True, "active": True, "valid": True}
+
+    async def deactivate_provider(self, provider_id: str):
+        return {"provider_id": provider_id, "configured": True, "active": False, "valid": True}
 
 
 @pytest.fixture
@@ -190,5 +201,57 @@ async def test_chat_jobs_continue_after_runtime_refresh(monkeypatch, tmp_path) -
 
         assert result.text == "ok"
         assert service.get_chat_job_status(job.job_id).status == "succeeded"
+    finally:
+        await service.aclose()
+
+
+@pytest.mark.asyncio
+async def test_prewarm_only_runs_for_active_providers(monkeypatch, tmp_path) -> None:
+    import app.config_store as config_store
+
+    settings = Settings(
+        redis_url="redis://localhost:6379/15",
+        data_dir=str(tmp_path),
+        ollama_prewarm_on_startup=True,
+    )
+    config_store._cache = None
+    monkeypatch.setattr(config_store, "get_settings", lambda: settings)
+
+    service = ChatService(settings)
+
+    inactive_calls: list[str] = []
+
+    async def inactive_chat(**kwargs):
+        inactive_calls.append(kwargs["model"])
+        return None
+
+    try:
+        assert service._ollama is not None
+        monkeypatch.setattr(service._ollama, "chat", inactive_chat)
+        async def fake_validation(_provider_id: str):
+            return {
+                "provider_id": "ollama",
+                "configured": True,
+                "active": False,
+                "valid": True,
+                "reason": None,
+            }
+
+        monkeypatch.setattr(service, "provider_validation_status", fake_validation)
+        await service.prewarm_active_providers()
+        assert inactive_calls == []
+
+        await service.activate_provider("ollama")
+
+        active_calls: list[str] = []
+
+        async def active_chat(**kwargs):
+            active_calls.append(kwargs["model"])
+            return None
+
+        assert service._ollama is not None
+        monkeypatch.setattr(service._ollama, "chat", active_chat)
+        await service.prewarm_active_providers()
+        assert active_calls == [service._runtime.provider_defaults["ollama"].default_model]
     finally:
         await service.aclose()

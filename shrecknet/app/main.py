@@ -55,6 +55,7 @@ from app.graph.neo4j import (
     ensure_temporal_graph_constraints,
     get_driver,
 )
+from app.integrations.llm.runtime_control import fetch_shreckllm_runtime
 from app.integrations.llm.shreckllm_client import ShreckLLMClient
 
 
@@ -203,6 +204,22 @@ def _target_key(target: LLMModelTarget | str) -> str:
 async def _run_llm_prewarm() -> None:
     started = asyncio.get_running_loop().time()
     settings = get_settings()
+    try:
+        runtime_config = await fetch_shreckllm_runtime(settings)
+    except Exception as exc:
+        logger.warning("llm_prewarm_skipped reason=runtime_unavailable error=%s", exc)
+        return
+
+    provider_states = runtime_config.get("provider_states") if isinstance(runtime_config, dict) else None
+    active_provider_ids = {
+        provider_id
+        for provider_id, state in (provider_states.items() if isinstance(provider_states, dict) else [])
+        if isinstance(state, dict) and bool(state.get("active"))
+    }
+    if not active_provider_ids:
+        logger.info("llm_prewarm_skipped reason=no_active_providers")
+        return
+
     targets: list[LLMModelTarget] = [
         settings.model_architect_scene_chunking,
         settings.model_architect_entity_proposal,
@@ -219,8 +236,11 @@ async def _run_llm_prewarm() -> None:
     ]
     unique: dict[str, LLMModelTarget] = {}
     for target in targets:
+        if target.provider not in active_provider_ids:
+            continue
         unique[_target_key(target)] = target
     if not unique:
+        logger.info("llm_prewarm_skipped reason=no_active_targets")
         return
     logger.info(
         "llm_prewarm_start configured_targets=%d unique_targets=%d models=%s",

@@ -4,6 +4,7 @@ import asyncio
 import logging
 import random
 import time
+from datetime import datetime, timezone
 from uuid import uuid4
 from typing import Any
 
@@ -12,7 +13,7 @@ from redis.asyncio import Redis
 
 from app.concurrency import RequestLimiter
 from app.config import Settings
-from app.config_store import RuntimeConfig, get_runtime_config
+from app.config_store import ProviderState, RuntimeConfig, get_runtime_config, reload_runtime_config, update_runtime_config
 from app.errors import DependencyUnavailableError, InvalidModelError, ProviderOverloadedError, ProviderTimeoutError
 from app.locking import ConversationLockManager
 from app.memory import RedisConversationMemory
@@ -31,6 +32,10 @@ from app.schemas import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _ollama_cloud_model_variants(model: str) -> set[str]:
@@ -236,8 +241,15 @@ class ChatService:
     async def provider_validation_status(self, provider_id: str) -> dict[str, Any]:
         provider_key = provider_id.strip().lower()
         cfg = self._runtime.provider_defaults.get(provider_key)
+        state = self._runtime.provider_states.get(provider_key, ProviderState())
         if cfg is None:
-            return {"provider_id": provider_key, "configured": False, "valid": False, "reason": "provider_not_configured"}
+            return {
+                "provider_id": provider_key,
+                "configured": False,
+                "active": False,
+                "valid": False,
+                "reason": "provider_not_configured",
+            }
 
         adapter = self.registry.get(provider_key)
         discovered_models: list[str] = []
@@ -314,6 +326,10 @@ class ChatService:
             "kind": cfg.kind,
             "auth_strategy": cfg.auth_strategy,
             "configured": True,
+            "active": state.active,
+            "last_validated_at": state.last_validated_at,
+            "last_warmed_at": state.last_warmed_at,
+            "last_error": state.last_error,
             "reachable": reachable,
             "auth_configured": bool((cfg.api_key or "").strip()) if cfg.auth_strategy == "api_key" else True,
             "auth_valid": auth_valid,
@@ -415,32 +431,127 @@ class ChatService:
             },
         )
 
-    async def prewarm_local_llm(self) -> None:
-        if not self.settings.ollama_prewarm_on_startup:
-            print("[SHRECKLLM_PREWARM] step=skipped reason=disabled")
-            return
-        if self._ollama is None:
-            print("[SHRECKLLM_PREWARM] step=skipped reason=ollama_provider_not_bound")
-            return
-        # Intentionally source prewarm target from bootstrap settings (seed/env),
-        # not runtime DB config, to keep startup deterministic across deployments.
-        bootstrap_ollama = self.settings.bootstrap_provider_defaults.get("ollama", {})
-        bootstrap_model = str(bootstrap_ollama.get("default_model") or "").strip()
-        if not bootstrap_model:
-            print("[SHRECKLLM_PREWARM] step=skipped reason=missing_default_model")
-            return
-        print(f"[SHRECKLLM_PREWARM] step=start model={bootstrap_model} keep_alive={self.settings.ollama_keep_alive}")
+    async def _set_provider_state(
+        self,
+        provider_id: str,
+        *,
+        active: bool,
+        last_validated_at: str | None = None,
+        last_warmed_at: str | None = None,
+        last_error: str | None = None,
+    ) -> RuntimeConfig:
+        provider_key = provider_id.strip().lower()
+        states = dict(self._runtime.provider_states)
+        previous = states.get(provider_key, ProviderState())
+        states[provider_key] = ProviderState(
+            active=active,
+            last_validated_at=last_validated_at if last_validated_at is not None else previous.last_validated_at,
+            last_warmed_at=last_warmed_at if last_warmed_at is not None else previous.last_warmed_at,
+            last_error=last_error,
+        )
+        update_runtime_config({"provider_states": states})
+        reload_runtime_config()
+        return await self.refresh_runtime()
+
+    async def activate_provider(self, provider_id: str) -> dict[str, Any]:
+        provider_key = provider_id.strip().lower()
+        cfg = self._runtime.provider_defaults.get(provider_key)
+        if cfg is None:
+            raise InvalidModelError(f"provider not found: {provider_key}")
+
+        validation = await self.provider_validation_status(provider_key)
+        validated_at = _utc_now()
+        if not validation.get("valid"):
+            error = str(validation.get("reason") or validation.get("error") or "provider validation failed")
+            await self._set_provider_state(
+                provider_key,
+                active=False,
+                last_validated_at=validated_at,
+                last_error=error,
+            )
+            raise DependencyUnavailableError(error)
+
+        adapter = self.registry.get(provider_key)
+        if adapter is None:
+            error = f"provider_not_bound:{provider_key}"
+            await self._set_provider_state(
+                provider_key,
+                active=False,
+                last_validated_at=validated_at,
+                last_error=error,
+            )
+            raise DependencyUnavailableError(error)
+
         try:
-            await self._ollama.chat(
-                model=bootstrap_model,
+            await adapter.chat(
+                model=cfg.default_model,
                 messages=[ChatMessage(role="user", content="ping")],
                 temperature=0.0,
             )
-            print(f"[SHRECKLLM_PREWARM] step=done model={bootstrap_model} keep_alive={self.settings.ollama_keep_alive}")
-            logger.info("[SHRECKLLM] ollama_prewarm_done model=%s keep_alive=%s", bootstrap_model, self.settings.ollama_keep_alive)
         except Exception as exc:
-            print(f"[SHRECKLLM_PREWARM] step=failed model={bootstrap_model} error={exc}")
-            logger.warning("[SHRECKLLM] ollama_prewarm_failed model=%s error=%s", bootstrap_model, exc)
+            await self._set_provider_state(
+                provider_key,
+                active=False,
+                last_validated_at=validated_at,
+                last_error=str(exc),
+            )
+            raise DependencyUnavailableError(str(exc)) from exc
+
+        await self._set_provider_state(
+            provider_key,
+            active=True,
+            last_validated_at=validated_at,
+            last_warmed_at=validated_at,
+            last_error=None,
+        )
+        return await self.provider_validation_status(provider_key)
+
+    async def deactivate_provider(self, provider_id: str) -> dict[str, Any]:
+        provider_key = provider_id.strip().lower()
+        if provider_key not in self._runtime.provider_defaults:
+            raise InvalidModelError(f"provider not found: {provider_key}")
+        await self._set_provider_state(provider_key, active=False, last_error=None)
+        return await self.provider_validation_status(provider_key)
+
+    async def prewarm_active_providers(self) -> None:
+        if not self.settings.ollama_prewarm_on_startup:
+            print("[SHRECKLLM_PREWARM] step=skipped reason=disabled")
+            return
+        active_provider_ids = [provider_id for provider_id, state in self._runtime.provider_states.items() if state.active]
+        if not active_provider_ids:
+            print("[SHRECKLLM_PREWARM] step=skipped reason=no_active_providers")
+            return
+        for provider_id in active_provider_ids:
+            adapter = self.registry.get(provider_id)
+            cfg = self._runtime.provider_defaults.get(provider_id)
+            if adapter is None:
+                await self._set_provider_state(provider_id, active=False, last_error="provider_not_bound")
+                print(f"[SHRECKLLM_PREWARM] step=skipped provider={provider_id} reason=provider_not_bound")
+                continue
+            model = str(cfg.default_model if cfg else "").strip()
+            if not model:
+                await self._set_provider_state(provider_id, active=False, last_error="missing_default_model")
+                print(f"[SHRECKLLM_PREWARM] step=skipped provider={provider_id} reason=missing_default_model")
+                continue
+            print(f"[SHRECKLLM_PREWARM] step=start provider={provider_id} model={model}")
+            try:
+                await adapter.chat(
+                    model=model,
+                    messages=[ChatMessage(role="user", content="ping")],
+                    temperature=0.0,
+                )
+                await self._set_provider_state(
+                    provider_id,
+                    active=True,
+                    last_warmed_at=_utc_now(),
+                    last_error=None,
+                )
+                print(f"[SHRECKLLM_PREWARM] step=done provider={provider_id} model={model}")
+                logger.info("[SHRECKLLM] provider_prewarm_done provider=%s model=%s", provider_id, model)
+            except Exception as exc:
+                await self._set_provider_state(provider_id, active=False, last_error=str(exc))
+                print(f"[SHRECKLLM_PREWARM] step=failed provider={provider_id} model={model} error={exc}")
+                logger.warning("[SHRECKLLM] provider_prewarm_failed provider=%s model=%s error=%s", provider_id, model, exc)
 
     async def chat(self, request: ChatRequest) -> ChatResponse:
         job = await self.submit_chat_job(request)

@@ -508,6 +508,34 @@ async def get_provider_validate(
     return await service.provider_validation_status(provider_id)
 
 
+@router.post("/config/providers/{provider_id}/activate", status_code=status.HTTP_200_OK)
+async def activate_provider(
+    provider_id: str,
+    service: ChatService = Depends(get_service),
+    _user=Depends(get_admin_or_world_builder),
+) -> dict[str, object]:
+    try:
+        status_payload = await service.activate_provider(provider_id)
+    except InvalidModelError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except DependencyUnavailableError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"activated": True, "provider": status_payload}
+
+
+@router.delete("/config/providers/{provider_id}/activate", status_code=status.HTTP_200_OK)
+async def deactivate_provider(
+    provider_id: str,
+    service: ChatService = Depends(get_service),
+    _user=Depends(get_admin_or_world_builder),
+) -> dict[str, object]:
+    try:
+        status_payload = await service.deactivate_provider(provider_id)
+    except InvalidModelError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"activated": False, "provider": status_payload}
+
+
 @router.put("/config/providers/{provider_id}", status_code=status.HTTP_200_OK)
 async def update_provider_metadata(
     provider_id: str,

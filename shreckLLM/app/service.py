@@ -435,7 +435,7 @@ class ChatService:
         reason: str | None = None
 
         if cfg.kind == "local":
-            base_url = (cfg.base_url or "http://localhost:11434").rstrip("/")
+            base_url = (cfg.base_url or "").rstrip("/")
             path = cfg.healthcheck_path or "/health"
             if not base_url:
                 reachable = False

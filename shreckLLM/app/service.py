@@ -442,7 +442,7 @@ class ChatService:
                 reason = "missing_base_url"
             else:
                 try:
-                    async with httpx.AsyncClient(base_url=base_url, timeout=self._runtime.request_timeout_seconds) as client:
+                    async with httpx.AsyncClient(base_url=base_url, timeout=min(self._runtime.request_timeout_seconds, 5.0)) as client:
                         resp = await client.get(path)
                         reachable = resp.status_code < 500
                 except Exception:

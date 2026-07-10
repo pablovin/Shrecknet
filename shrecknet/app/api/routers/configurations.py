@@ -9,6 +9,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
 from fastapi.responses import FileResponse
 
+from app.api.agent_feature_gate import require_shreckllm_operational_for_agents_enable
 from app.api.deps import get_current_active_admin_or_world_builder, get_current_admin_user
 from app.celery_app import configure_celery_app
 from app.core.config_store import (
@@ -153,7 +154,7 @@ SETTINGS_GROUPS: list[dict[str, Any]] = [
 FIELD_UI_META: dict[str, dict[str, Any]] = {
     "app_name": {"type": "string", "help": "Application name shown in logs and diagnostics."},
     "debug": {"type": "boolean", "help": "Enable debug behavior and verbose internals."},
-    "enable_ai_agents": {"type": "boolean", "help": "Global toggle for AI agent features."},
+    "enable_ai_agents": {"type": "boolean", "label": "Enable Agents", "help": "Global toggle for agent jobs. Can only be turned on when shreckLLM is operational."},
     "cors_allow_origins": {"type": "string_list", "multiline": True, "help": "Allowed CORS origins."},
     "cors_allow_origin_regex": {"type": "string", "help": "Regex for allowed dynamic origins."},
     "cors_allow_credentials": {"type": "boolean", "help": "Allow CORS credentials."},
@@ -446,7 +447,7 @@ def get_config_schema() -> dict[str, Any]:
     }
 
 
-def _put_config_payload(payload: dict[str, Any]) -> dict[str, Any]:
+async def _put_config_payload(payload: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -454,6 +455,8 @@ def _put_config_payload(payload: dict[str, Any]) -> dict[str, Any]:
         )
     updates = _validate_updates(payload)
     updates = {k: v for k, v in updates.items() if k not in BOOTSTRAP_ENV_FIELDS}
+    if updates.get("enable_ai_agents") is True and not get_settings().enable_ai_agents:
+        await require_shreckllm_operational_for_agents_enable()
     settings = update_settings(updates)
     configure_celery_app()
     filtered = settings.model_dump()
@@ -468,8 +471,8 @@ def _put_config_payload(payload: dict[str, Any]) -> dict[str, Any]:
     status_code=status.HTTP_200_OK,
     include_in_schema=False,
 )
-def put_config_no_slash(payload: dict[str, Any]) -> dict[str, Any]:
-    return _put_config_payload(payload)
+async def put_config_no_slash(payload: dict[str, Any]) -> dict[str, Any]:
+    return await _put_config_payload(payload)
 
 
 @router.put(
@@ -477,8 +480,8 @@ def put_config_no_slash(payload: dict[str, Any]) -> dict[str, Any]:
     dependencies=[Depends(get_current_admin_user)],
     status_code=status.HTTP_200_OK,
 )
-def put_config(payload: dict[str, Any]) -> dict[str, Any]:
-    return _put_config_payload(payload)
+async def put_config(payload: dict[str, Any]) -> dict[str, Any]:
+    return await _put_config_payload(payload)
 
 
 @router.post(

@@ -359,6 +359,7 @@ async def generate_entities_from_validated_proposals(
     current_user: User = Depends(get_current_user),
     service: ArchitectService = Depends(get_architect_service),
 ) -> dict[str, Any]:
+    require_ai_agents_enabled()
     """
     Step 2: Generate/update entities from validated proposals.
     
@@ -412,6 +413,7 @@ async def retry_enrichment_for_run(
     current_user: User = Depends(get_current_user),
     service: ArchitectService = Depends(get_architect_service),
 ) -> dict[str, Any]:
+    require_ai_agents_enabled()
     run = await service.get_run(run_id, include_proposals=False)
     if not run:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Architect run not found")

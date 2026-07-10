@@ -3,6 +3,26 @@ from __future__ import annotations
 from fastapi import HTTPException, status
 
 from app.core.config_store import get_settings
+from app.services.shreckllm_status_service import get_shreckllm_status
+
+AGENTS_DISABLED_DETAIL = "Agents are disabled. Enable Agents in runtime configuration before starting agent jobs."
+AGENTS_ENABLE_REQUIRES_SHRECKLLM_DETAIL = (
+    "Enable Agents can only be turned on when shreckLLM is operational "
+    "(ready endpoint returns ready=true)."
+)
+
+
+async def require_shreckllm_operational_for_agents_enable() -> None:
+    settings = get_settings()
+    status = await get_shreckllm_status(settings)
+    if status.get("operational") is True:
+        return
+    error = status.get("error")
+    suffix = f" Current shreckLLM status: {error}." if error else ""
+    raise HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail=f"{AGENTS_ENABLE_REQUIRES_SHRECKLLM_DETAIL}{suffix}",
+    )
 
 
 def require_ai_agents_enabled() -> None:
@@ -11,5 +31,5 @@ def require_ai_agents_enabled() -> None:
         return
     raise HTTPException(
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-        detail="AI agents are disabled",
+        detail=AGENTS_DISABLED_DETAIL,
     )

@@ -33,7 +33,7 @@ Defaults applied by schema generation:
 - expert override fields default to `frontend_editable=false`
 - expert override fields default to `derived_from_profile=true`
 
-`default_provider_id` is intentionally hidden from schema/UI.
+Provider routing is explicit; shreckLLM does not expose a default provider or default provider model.
 
 ## Config Endpoints
 - `GET /config/schema`
@@ -54,3 +54,11 @@ Defaults applied by schema generation:
 - `GET /providers/{provider_id}/validate`
 - `GET /providers/openai/validate`
 - `GET /providers/anthropic/validate`
+
+`GET /providers/validate` exposes the persisted aggregate `shreckllm_operational` flag
+and `operational_provider_ids`. `shreckllm_operational` is true when at least one provider
+state is currently valid and has at least one configured model.
+
+`POST /providers/{provider_id}/test` is the canonical mutating provider functionality
+test. It probes the provider, persists the provider validity state, and returns the
+updated aggregate operational state.

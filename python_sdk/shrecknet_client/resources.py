@@ -403,6 +403,9 @@ class ShreckLLMAPI:
             await self._llm_request("GET", f"/providers/{provider_id}/validate")
         )
 
+    async def test_provider(self, provider_id: str) -> dict[str, Any]:
+        return await self._llm_request("POST", f"/providers/{provider_id}/test")
+
     async def add_provider_model(self, provider_id: str, model: str) -> dict[str, Any]:
         return await self._llm_request("POST", f"/config/providers/{provider_id}/models", json={"model": model})
 
@@ -416,6 +419,20 @@ class ShreckLLMAPI:
             return False
         return bool(payload.get("shreckllm", {}).get("reachable") is True)
 
+    async def check_shreckllm_operational(self) -> bool | None:
+        try:
+            payload = await self.llm_status()
+        except Exception:
+            return False
+        if not isinstance(payload, dict):
+            return None
+        if "shreckllm_operational" in payload:
+            return bool(payload.get("shreckllm_operational"))
+        shreckllm = payload.get("shreckllm")
+        if isinstance(shreckllm, dict) and "operational" in shreckllm:
+            return bool(shreckllm.get("operational"))
+        return None
+
     async def list_provider_statuses(self) -> list[ProviderStatus]:
         statuses: list[ProviderStatus] = []
         models_payload = await self.models()
@@ -426,10 +443,12 @@ class ShreckLLMAPI:
         for provider_id in provider_models.keys():
             info = await self.validate_provider(str(provider_id))
             models = provider_models.get(provider_id, {}).get("models", [])
+            active = info.active if info.active is not None else info.valid
             statuses.append(
                 ProviderStatus(
                     provider_id=str(provider_id),
-                    enabled=bool(info.valid),
+                    enabled=bool(active),
+                    active=active,
                     valid=info.valid,
                     configured=info.configured,
                     error=info.error,
@@ -439,8 +458,11 @@ class ShreckLLMAPI:
         return statuses
 
     async def has_any_provider_ready(self) -> bool:
+        operational = await self.check_shreckllm_operational()
+        if operational is not None:
+            return operational
         providers = await self.list_provider_statuses()
-        return any((p.valid is True) and len(p.models) > 0 for p in providers)
+        return any(((p.active is True) or (p.valid is True)) and len(p.models) > 0 for p in providers)
 
     async def preflight_agents_llm_ready(self, *, strict: bool = False) -> LLMReadinessReport:
         reasons: list[str] = []
@@ -449,20 +471,22 @@ class ShreckLLMAPI:
             reasons.append("shreckLLM is not reachable from Shrecknet")
 
         providers: list[ProviderStatus] = []
-        any_provider_ready = False
+        operational = await self.check_shreckllm_operational() if reachable else False
+        any_provider_ready = bool(operational) if operational is not None else False
         if reachable:
             try:
                 providers = await self.list_provider_statuses()
-                any_provider_ready = any((p.valid is True) and len(p.models) > 0 for p in providers)
+                if operational is None:
+                    any_provider_ready = any(((p.active is True) or (p.valid is True)) and len(p.models) > 0 for p in providers)
             except Exception as exc:
                 reasons.append(f"Failed to fetch provider status: {exc}")
         if reachable and not any_provider_ready:
-            reasons.append("No provider is both valid and has at least one model")
+            reasons.append("shreckLLM is reachable but not operational")
 
         report = LLMReadinessReport(
             checks={
                 "shreckllm_reachable": reachable,
-                "any_provider_ready": any_provider_ready,
+                "shreckllm_operational": any_provider_ready,
             },
             providers=providers,
             ready=reachable and any_provider_ready,

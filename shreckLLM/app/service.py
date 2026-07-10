@@ -13,7 +13,7 @@ from redis.asyncio import Redis
 
 from app.concurrency import RequestLimiter
 from app.config import Settings
-from app.config_store import ProviderState, RuntimeConfig, get_runtime_config, reload_runtime_config, update_runtime_config
+from app.config_store import ProviderDefaults, ProviderState, RuntimeConfig, get_runtime_config, reload_runtime_config, update_runtime_config
 from app.errors import DependencyUnavailableError, InvalidModelError, ProviderOverloadedError, ProviderTimeoutError
 from app.locking import ConversationLockManager
 from app.memory import RedisConversationMemory
@@ -48,6 +48,15 @@ def _ollama_cloud_model_variants(model: str) -> set[str]:
     else:
         variants.add(f"{cleaned}-cloud")
     return variants
+
+
+PROVIDER_MODEL_FALLBACKS: dict[str, list[str]] = {
+    "openai": ["gpt-5-nano", "gpt-5", "gpt-4o-mini"],
+    "anthropic": ["claude-3-haiku-20240307", "claude-opus-4-1-20250805"],
+    "ollama_cloud": ["gemma4:31b", "gemma4:31b-cloud"],
+}
+
+CLOUD_API_KEY_PROVIDERS = {"openai", "anthropic", "ollama_cloud"}
 
 
 class ChatService:
@@ -100,50 +109,62 @@ class ChatService:
 
         ollama_cfg = provider_defaults.get("ollama")
         if ollama_cfg is not None:
-            self._ollama = OllamaClient(
-                base_url=ollama_cfg.base_url or "http://localhost:11434",
-                timeout_s=self._runtime.request_timeout_seconds,
-                keep_alive=self.settings.ollama_keep_alive,
-                api_key=ollama_cfg.api_key,
-            )
+            self._ollama = self._build_provider_adapter("ollama", ollama_cfg)
             self.registry.register(self._ollama)
         else:
             self._ollama = None
 
         ollama_cloud_cfg = provider_defaults.get("ollama_cloud")
         if ollama_cloud_cfg is not None:
-            self._ollama_cloud = OllamaClient(
-                base_url=ollama_cloud_cfg.base_url or "https://ollama.com",
-                timeout_s=self._runtime.request_timeout_seconds,
-                keep_alive=None,
-                provider_id="ollama_cloud",
-                api_key=ollama_cloud_cfg.api_key,
-            )
+            self._ollama_cloud = self._build_provider_adapter("ollama_cloud", ollama_cloud_cfg)
             self.registry.register(self._ollama_cloud)
         else:
             self._ollama_cloud = None
 
         openai_cfg = provider_defaults.get("openai")
         if openai_cfg is not None:
-            self._openai = OpenAIClient(
-                api_key=openai_cfg.api_key or "",
-                timeout_s=self._runtime.request_timeout_seconds,
-                base_url=openai_cfg.base_url,
-            )
+            self._openai = self._build_provider_adapter("openai", openai_cfg)
             self.registry.register(self._openai)
         else:
             self._openai = None
 
         anthropic_cfg = provider_defaults.get("anthropic")
         if anthropic_cfg is not None:
-            self._anthropic = AnthropicClient(
-                api_key=anthropic_cfg.api_key or "",
-                timeout_s=self._runtime.request_timeout_seconds,
-                base_url=anthropic_cfg.base_url,
-            )
+            self._anthropic = self._build_provider_adapter("anthropic", anthropic_cfg)
             self.registry.register(self._anthropic)
         else:
             self._anthropic = None
+
+    def _build_provider_adapter(self, provider_id: str, cfg: ProviderDefaults) -> Any:
+        provider_key = provider_id.strip().lower()
+        if provider_key == "ollama":
+            return OllamaClient(
+                base_url=cfg.base_url or "http://localhost:11434",
+                timeout_s=self._runtime.request_timeout_seconds,
+                keep_alive=self.settings.ollama_keep_alive,
+                api_key=cfg.api_key,
+            )
+        if provider_key == "ollama_cloud":
+            return OllamaClient(
+                base_url=cfg.base_url or "https://ollama.com",
+                timeout_s=self._runtime.request_timeout_seconds,
+                keep_alive=None,
+                provider_id="ollama_cloud",
+                api_key=cfg.api_key,
+            )
+        if provider_key == "openai":
+            return OpenAIClient(
+                api_key=cfg.api_key or "",
+                timeout_s=self._runtime.request_timeout_seconds,
+                base_url=cfg.base_url,
+            )
+        if provider_key == "anthropic":
+            return AnthropicClient(
+                api_key=cfg.api_key or "",
+                timeout_s=self._runtime.request_timeout_seconds,
+                base_url=cfg.base_url,
+            )
+        raise DependencyUnavailableError(f"provider_not_bound:{provider_key}")
 
     async def aclose(self) -> None:
         if self._job_worker_task is not None:
@@ -218,6 +239,12 @@ class ChatService:
                     provider_cfg["api_key"] = self._mask_secret(provider_cfg.get("api_key"))
         return payload
 
+    def runtime_config_public_view(self) -> dict[str, Any]:
+        payload = self._runtime.model_dump()
+        payload.pop("provider_defaults", None)
+        payload.pop("provider_states", None)
+        return payload
+
     async def openai_validation_status(self) -> dict[str, Any]:
         if self._openai is None:
             return {
@@ -238,6 +265,120 @@ class ChatService:
             }
         return await self._anthropic.validate_api_key()
 
+    @staticmethod
+    def normalize_provider_models(models: list[str]) -> list[str]:
+        normalized: list[str] = []
+        for model in models:
+            if not isinstance(model, str):
+                continue
+            cleaned = model.strip()
+            if cleaned and cleaned not in normalized:
+                normalized.append(cleaned)
+        return normalized
+
+    @staticmethod
+    def _model_is_discovered(provider_id: str, model: str, discovered_models: list[str]) -> bool:
+        discovered_set = set(discovered_models)
+        if provider_id == "ollama_cloud":
+            return any(variant in discovered_set for variant in _ollama_cloud_model_variants(model))
+        return model in discovered_set
+
+    async def provider_model_catalog(
+        self,
+        provider_id: str,
+        cfg: ProviderDefaults | None = None,
+    ) -> dict[str, Any]:
+        provider_key = provider_id.strip().lower()
+        provider_cfg = cfg or self._runtime.provider_defaults.get(provider_key)
+        if provider_cfg is None:
+            raise InvalidModelError(f"provider not found: {provider_key}")
+
+        adapter = self.registry.get(provider_key) if cfg is None else None
+        owns_adapter = False
+        if adapter is None:
+            adapter = self._build_provider_adapter(provider_key, provider_cfg)
+            owns_adapter = True
+
+        try:
+            discovered_models = await adapter.list_models()
+        except Exception as exc:
+            raise DependencyUnavailableError(f"provider_model_catalog_unavailable:{provider_key}") from exc
+        finally:
+            if owns_adapter and hasattr(adapter, "aclose"):
+                await adapter.aclose()
+
+        configured_models = self.normalize_provider_models(list(provider_cfg.models))
+        if not discovered_models:
+            discovered_models = self.normalize_provider_models(PROVIDER_MODEL_FALLBACKS.get(provider_key, []))
+        merged_models: list[str] = []
+        for model in [*configured_models, *discovered_models]:
+            if isinstance(model, str):
+                cleaned = model.strip()
+                if cleaned and cleaned not in merged_models:
+                    merged_models.append(cleaned)
+
+        return {
+            "provider_id": provider_key,
+            "configured_models": configured_models,
+            "discovered_models": discovered_models,
+            "models": merged_models,
+        }
+
+    async def validate_provider_models(
+        self,
+        provider_id: str,
+        cfg: ProviderDefaults,
+    ) -> dict[str, Any]:
+        provider_key = provider_id.strip().lower()
+        configured_models = self.normalize_provider_models(list(cfg.models))
+        if not configured_models:
+            return {
+                "valid": False,
+                "error": "provider_requires_model",
+                "provider_id": provider_key,
+                "configured_models": [],
+                "discovered_models": [],
+                "invalid_models": [],
+            }
+
+        catalog = await self.provider_model_catalog(provider_key, cfg)
+        discovered_models = catalog["discovered_models"] if isinstance(catalog.get("discovered_models"), list) else []
+        invalid_models = [
+            model
+            for model in configured_models
+            if not self._model_is_discovered(provider_key, model, discovered_models)
+        ]
+        return {
+            "valid": not invalid_models,
+            "error": None if not invalid_models else "invalid_provider_models",
+            "provider_id": provider_key,
+            "configured_models": configured_models,
+            "discovered_models": discovered_models,
+            "invalid_models": invalid_models,
+        }
+
+    @staticmethod
+    def _provider_activation_blocker(provider_id: str, cfg: ProviderDefaults) -> str | None:
+        provider_key = provider_id.strip().lower()
+        if provider_key in CLOUD_API_KEY_PROVIDERS and not (cfg.api_key or "").strip():
+            return "missing_api_key"
+        if cfg.kind == "local" and not (cfg.base_url or "").strip():
+            return "missing_base_url"
+        return None
+
+    def _effective_provider_active(
+        self,
+        provider_id: str,
+        cfg: ProviderDefaults,
+        state: ProviderState,
+    ) -> tuple[bool, str | None]:
+        blocker = self._provider_activation_blocker(provider_id, cfg)
+        if blocker is not None:
+            return False, blocker
+        if not state.active:
+            return False, state.last_validation_error or "provider_not_active"
+        return True, None
+
     async def provider_validation_status(self, provider_id: str) -> dict[str, Any]:
         provider_key = provider_id.strip().lower()
         cfg = self._runtime.provider_defaults.get(provider_key)
@@ -245,9 +386,45 @@ class ChatService:
         if cfg is None:
             return {
                 "provider_id": provider_key,
-                "configured": False,
                 "active": False,
-                "valid": False,
+                "reason": "provider_not_configured",
+            }
+
+        effective_active, inactive_reason = self._effective_provider_active(provider_key, cfg, state)
+        model_statuses = [
+            {
+                "model": model,
+                "available": effective_active,
+                "reason": None if effective_active else inactive_reason,
+            }
+            for model in cfg.models
+        ]
+
+        return {
+            "provider_id": provider_key,
+            "kind": cfg.kind,
+            "auth_strategy": cfg.auth_strategy,
+            "base_url": cfg.base_url,
+            "api_key_present": bool((cfg.api_key or "").strip()),
+            "active": effective_active,
+            "last_validated_at": state.last_validated_at,
+            "last_validation_checked_at": state.last_validation_checked_at,
+            "last_validation_failed_at": state.last_validation_failed_at,
+            "last_validation_error": state.last_validation_error,
+            "last_warmed_at": state.last_warmed_at,
+            "last_error": state.last_error,
+            "reason": None if effective_active else inactive_reason,
+            "models": model_statuses,
+        }
+
+    async def live_provider_validation_status(self, provider_id: str) -> dict[str, Any]:
+        provider_key = provider_id.strip().lower()
+        cfg = self._runtime.provider_defaults.get(provider_key)
+        state = self._runtime.provider_states.get(provider_key, ProviderState())
+        if cfg is None:
+            return {
+                "provider_id": provider_key,
+                "active": False,
                 "reason": "provider_not_configured",
             }
 
@@ -258,7 +435,7 @@ class ChatService:
         reason: str | None = None
 
         if cfg.kind == "local":
-            base_url = (cfg.base_url or "").rstrip("/")
+            base_url = (cfg.base_url or "http://localhost:11434").rstrip("/")
             path = cfg.healthcheck_path or "/health"
             if not base_url:
                 reachable = False
@@ -274,7 +451,8 @@ class ChatService:
                     reason = "unreachable"
             auth_valid = True
         else:
-            api_key_present = bool((cfg.api_key or "").strip()) if cfg.auth_strategy == "api_key" else True
+            requires_api_key = provider_key in CLOUD_API_KEY_PROVIDERS or cfg.auth_strategy == "api_key"
+            api_key_present = bool((cfg.api_key or "").strip()) if requires_api_key else True
             if not api_key_present:
                 auth_valid = False
                 reason = "missing_api_key"
@@ -309,41 +487,218 @@ class ChatService:
             model_statuses.append(
                 {
                     "model": model,
-                    "configured": True,
                     "available": available,
-                    "valid": bool(available) and auth_valid is not False and reachable is not False,
                     "reason": None if available else "model_unavailable",
                 }
             )
 
-        valid = bool(reachable is not False and auth_valid is not False)
-        if valid and model_statuses and not all(m["valid"] for m in model_statuses):
-            valid = False
+        active = bool(reachable is not False and auth_valid is not False)
+        if active and model_statuses and not all(m["available"] for m in model_statuses):
+            active = False
             reason = reason or "model_unavailable"
 
         return {
             "provider_id": provider_key,
             "kind": cfg.kind,
             "auth_strategy": cfg.auth_strategy,
-            "configured": True,
+            "base_url": cfg.base_url,
+            "api_key_present": bool((cfg.api_key or "").strip()),
             "active": state.active,
             "last_validated_at": state.last_validated_at,
+            "last_validation_checked_at": state.last_validation_checked_at,
+            "last_validation_failed_at": state.last_validation_failed_at,
+            "last_validation_error": state.last_validation_error,
             "last_warmed_at": state.last_warmed_at,
             "last_error": state.last_error,
             "reachable": reachable,
             "auth_configured": bool((cfg.api_key or "").strip()) if cfg.auth_strategy == "api_key" else True,
             "auth_valid": auth_valid,
-            "valid": valid,
+            "validation_passed": active,
             "reason": reason,
-            "default_model": cfg.default_model,
             "models": model_statuses,
         }
+
+    async def _persist_provider_validation(self, provider_id: str, validation: dict[str, Any]) -> RuntimeConfig:
+        provider_key = provider_id.strip().lower()
+        checked_at = _utc_now()
+        active = self._validation_succeeded(validation)
+        error = None if active else str(validation.get("reason") or validation.get("error") or "provider validation failed")
+        states = dict(self._runtime.provider_states)
+        previous = states.get(provider_key, ProviderState())
+        states[provider_key] = ProviderState(
+            active=active,
+            last_validated_at=checked_at if active else previous.last_validated_at,
+            last_validation_checked_at=checked_at,
+            last_validation_failed_at=None if active else checked_at,
+            last_validation_error=error,
+            last_warmed_at=previous.last_warmed_at,
+            last_error=None if active else error,
+        )
+        update_runtime_config({"provider_states": states})
+        reload_runtime_config()
+        return await self.refresh_runtime()
+
+    @staticmethod
+    def _validation_succeeded(validation: dict[str, Any]) -> bool:
+        if "validation_passed" in validation:
+            return validation.get("validation_passed") is True
+        if "active" in validation:
+            return validation.get("active") is True
+        return validation.get("valid") is True
+
+    async def test_provider_functionality(self, provider_id: str, *, ping: bool = True) -> dict[str, Any]:
+        provider_key = provider_id.strip().lower()
+        if provider_key not in self._runtime.provider_defaults:
+            raise InvalidModelError(f"provider not found: {provider_key}")
+
+        logger.info(
+            "[SHRECKLLM_PROVIDER_EVAL] step=start provider=%s ping=%s",
+            provider_key,
+            ping,
+        )
+        validation = await self.live_provider_validation_status(provider_key)
+        logger.info(
+            "[SHRECKLLM_PROVIDER_EVAL] step=validation provider=%s passed=%s reason=%s reachable=%s auth_valid=%s models=%s",
+            provider_key,
+            self._validation_succeeded(validation),
+            validation.get("reason"),
+            validation.get("reachable"),
+            validation.get("auth_valid"),
+            validation.get("models"),
+        )
+        if self._validation_succeeded(validation) and ping:
+            adapter = self.registry.get(provider_key)
+            cfg = self._runtime.provider_defaults.get(provider_key)
+            ping_model = str((cfg.models or [""])[0]).strip() if cfg is not None else ""
+            validation["test_model"] = ping_model or None
+            if adapter is None:
+                validation["validation_passed"] = False
+                validation["reason"] = "provider_not_bound"
+            elif not ping_model:
+                validation["validation_passed"] = False
+                validation["reason"] = "missing_test_model"
+            else:
+                try:
+                    logger.info(
+                        "[SHRECKLLM_PROVIDER_EVAL] step=functional_ping_start provider=%s model=%s",
+                        provider_key,
+                        ping_model,
+                    )
+                    await adapter.chat(
+                        model=ping_model,
+                        messages=[ChatMessage(role="user", content="ping")],
+                        temperature=0.0,
+                    )
+                    validation["functional_test_passed"] = True
+                    logger.info(
+                        "[SHRECKLLM_PROVIDER_EVAL] step=functional_ping_done provider=%s model=%s",
+                        provider_key,
+                        ping_model,
+                    )
+                except Exception as exc:
+                    validation["validation_passed"] = False
+                    validation["functional_test_passed"] = False
+                    validation["reason"] = str(exc)
+                    logger.warning(
+                        "[SHRECKLLM_PROVIDER_EVAL] step=functional_ping_failed provider=%s model=%s error=%s",
+                        provider_key,
+                        ping_model,
+                        exc,
+                    )
+
+        await self._persist_provider_validation(provider_key, validation)
+        provider_payload = await self.provider_validation_status(provider_key)
+        aggregate = await self.all_provider_validation_statuses()
+        logger.info(
+            "[SHRECKLLM_PROVIDER_EVAL] step=done provider=%s active=%s reason=%s operational_provider_ids=%s",
+            provider_key,
+            provider_payload.get("active"),
+            provider_payload.get("reason"),
+            aggregate["operational_provider_ids"],
+        )
+        return {
+            "provider": provider_payload,
+            "shreckllm_operational": aggregate["shreckllm_operational"],
+            "operational_provider_ids": aggregate["operational_provider_ids"],
+        }
+
+    async def revalidate_all_providers(self) -> dict[str, Any]:
+        logger.info(
+            "[SHRECKLLM_PROVIDER_EVAL] step=revalidate_all_start providers=%s",
+            sorted(self._runtime.provider_defaults.keys()),
+        )
+        results: dict[str, Any] = {}
+        for provider_id in sorted(self._runtime.provider_defaults.keys()):
+            try:
+                results[provider_id] = await self.test_provider_functionality(provider_id, ping=True)
+            except Exception as exc:
+                await self._persist_provider_validation(
+                    provider_id,
+                    {
+                        "provider_id": provider_id,
+                        "active": False,
+                        "reason": str(exc),
+                    },
+                )
+                results[provider_id] = await self.provider_validation_status(provider_id)
+        aggregate = await self.all_provider_validation_statuses()
+        logger.info(
+            "[SHRECKLLM_PROVIDER_EVAL] step=revalidate_all_done shreckllm_operational=%s operational_provider_ids=%s",
+            aggregate["shreckllm_operational"],
+            aggregate["operational_provider_ids"],
+        )
+        return {**aggregate, "results": results}
+
+    async def refresh_runtime_and_validate(self, provider_ids: list[str] | None = None, *, ping: bool = True) -> dict[str, Any]:
+        await self.refresh_runtime()
+        if provider_ids is None:
+            return await self.revalidate_all_providers()
+        results: dict[str, Any] = {}
+        for provider_id in sorted(set(provider_ids)):
+            if provider_id in self._runtime.provider_defaults:
+                results[provider_id] = await self.test_provider_functionality(provider_id, ping=ping)
+        aggregate = await self.all_provider_validation_statuses()
+        return {**aggregate, "results": results}
 
     async def all_provider_validation_statuses(self) -> dict[str, Any]:
         providers: dict[str, Any] = {}
         for provider_id in sorted(self._runtime.provider_defaults.keys()):
             providers[provider_id] = await self.provider_validation_status(provider_id)
-        return {"providers": providers}
+        operational_provider_ids = self._operational_provider_ids(providers)
+        return {
+            "shreckllm_operational": bool(operational_provider_ids),
+            "operational_provider_ids": operational_provider_ids,
+            "providers": providers,
+        }
+
+    @staticmethod
+    def provider_summary_from_payload(providers: dict[str, Any], operational_provider_ids: list[str]) -> dict[str, Any]:
+        provider_ids = sorted(str(provider_id) for provider_id in providers.keys())
+        active_provider_ids = sorted(str(provider_id) for provider_id in operational_provider_ids)
+        return {
+            "total": len(provider_ids),
+            "active": len(active_provider_ids),
+            "inactive": max(0, len(provider_ids) - len(active_provider_ids)),
+            "provider_ids": provider_ids,
+            "active_provider_ids": active_provider_ids,
+        }
+
+    @staticmethod
+    def _provider_has_usable_model(provider_payload: dict[str, Any]) -> bool:
+        models = provider_payload.get("models")
+        if not isinstance(models, list):
+            return False
+        return any(isinstance(model, dict) and model.get("available") is True for model in models)
+
+    @classmethod
+    def _operational_provider_ids(cls, providers: dict[str, Any]) -> list[str]:
+        operational_provider_ids: list[str] = []
+        for provider_id, payload in sorted(providers.items()):
+            if not isinstance(payload, dict):
+                continue
+            if payload.get("active") is True and cls._provider_has_usable_model(payload):
+                operational_provider_ids.append(str(provider_id))
+        return operational_provider_ids
 
     async def health(self) -> dict[str, Any]:
         return {"ok": True, "service": "shreckLLM"}
@@ -359,18 +714,19 @@ class ChatService:
                 continue
             ok = await adapter.health()
             model_ok = False
-            default_model = None
+            configured_models: list[str] = []
             cfg = self._runtime.provider_defaults.get(provider_id)
             if cfg is not None:
-                default_model = cfg.default_model
+                configured_models = list(cfg.models)
                 try:
-                    model_ok = default_model in set(await adapter.list_models())
+                    discovered = set(await adapter.list_models())
+                    model_ok = any(model in discovered for model in configured_models) if discovered else bool(configured_models)
                 except Exception:
                     model_ok = False
             dependencies[provider_id] = {
                 "ok": bool(ok),
-                "default_model": default_model,
-                "default_model_available": model_ok,
+                "configured_models": configured_models,
+                "any_configured_model_available": model_ok,
             }
             provider_ready = provider_ready or (bool(ok) and bool(model_ok))
 
@@ -382,35 +738,43 @@ class ChatService:
     async def models(self) -> dict[str, Any]:
         providers_payload: dict[str, Any] = {}
         for provider_id in self.registry.provider_ids():
-            adapter = self.registry.get(provider_id)
-            if adapter is None:
-                continue
             cfg = self._runtime.provider_defaults.get(provider_id)
+            state = self._runtime.provider_states.get(provider_id, ProviderState())
+            if cfg is None:
+                continue
+            effective_active, _ = self._effective_provider_active(provider_id, cfg, state)
+            if not effective_active:
+                continue
             try:
-                discovered_models = await adapter.list_models()
+                catalog = await self.provider_model_catalog(provider_id)
             except Exception:
-                discovered_models = []
-            configured_models = list(cfg.models) if cfg else []
-            merged_models: list[str] = []
-            for model in [*configured_models, *discovered_models]:
-                if isinstance(model, str) and model and model not in merged_models:
-                    merged_models.append(model)
-            providers_payload[provider_id] = {
-                "default_model": cfg.default_model if cfg else None,
-                "configured_models": configured_models,
-                "discovered_models": discovered_models,
-                "models": merged_models,
-            }
+                catalog = {
+                    "configured_models": self.normalize_provider_models(list(cfg.models)) if cfg else [],
+                    "discovered_models": [],
+                    "models": self.normalize_provider_models(list(cfg.models)) if cfg else [],
+                }
+            providers_payload[provider_id] = catalog
 
         return {
-            "default_provider_id": self._runtime.default_provider_id,
             "providers": providers_payload,
         }
 
     async def status(self) -> ServiceStatusResponse:
         ready_payload = await self.ready()
+        validation_payload = await self.all_provider_validation_statuses()
+        operational_provider_ids = validation_payload.get("operational_provider_ids")
+        if not isinstance(operational_provider_ids, list):
+            operational_provider_ids = []
+        providers = validation_payload.get("providers")
+        if not isinstance(providers, dict):
+            providers = {}
         return ServiceStatusResponse(
-            default_provider_id=self._runtime.default_provider_id,
+            shreckllm_operational=validation_payload.get("shreckllm_operational") is True,
+            operational_provider_ids=[str(provider_id) for provider_id in operational_provider_ids],
+            providers_summary=self.provider_summary_from_payload(
+                providers,
+                [str(provider_id) for provider_id in operational_provider_ids],
+            ),
             redis_url=self.settings.redis_url,
             in_flight_requests=self.limiter.in_flight,
             waiting_requests=self.limiter.waiting,
@@ -446,6 +810,9 @@ class ChatService:
         states[provider_key] = ProviderState(
             active=active,
             last_validated_at=last_validated_at if last_validated_at is not None else previous.last_validated_at,
+            last_validation_checked_at=previous.last_validation_checked_at,
+            last_validation_failed_at=previous.last_validation_failed_at,
+            last_validation_error=previous.last_validation_error,
             last_warmed_at=last_warmed_at if last_warmed_at is not None else previous.last_warmed_at,
             last_error=last_error,
         )
@@ -459,10 +826,11 @@ class ChatService:
         if cfg is None:
             raise InvalidModelError(f"provider not found: {provider_key}")
 
-        validation = await self.provider_validation_status(provider_key)
+        validation = await self.live_provider_validation_status(provider_key)
         validated_at = _utc_now()
-        if not validation.get("valid"):
+        if not self._validation_succeeded(validation):
             error = str(validation.get("reason") or validation.get("error") or "provider validation failed")
+            await self._persist_provider_validation(provider_key, validation)
             await self._set_provider_state(
                 provider_key,
                 active=False,
@@ -474,6 +842,7 @@ class ChatService:
         adapter = self.registry.get(provider_key)
         if adapter is None:
             error = f"provider_not_bound:{provider_key}"
+            await self._persist_provider_validation(provider_key, {"provider_id": provider_key, "active": False, "reason": error})
             await self._set_provider_state(
                 provider_key,
                 active=False,
@@ -483,12 +852,16 @@ class ChatService:
             raise DependencyUnavailableError(error)
 
         try:
+            ping_model = str((cfg.models or [""])[0]).strip()
+            if not ping_model:
+                raise DependencyUnavailableError("missing_activation_model")
             await adapter.chat(
-                model=cfg.default_model,
+                model=ping_model,
                 messages=[ChatMessage(role="user", content="ping")],
                 temperature=0.0,
             )
         except Exception as exc:
+            await self._persist_provider_validation(provider_key, {"provider_id": provider_key, "active": False, "reason": str(exc)})
             await self._set_provider_state(
                 provider_key,
                 active=False,
@@ -497,6 +870,7 @@ class ChatService:
             )
             raise DependencyUnavailableError(str(exc)) from exc
 
+        await self._persist_provider_validation(provider_key, {**validation, "active": True, "reason": None})
         await self._set_provider_state(
             provider_key,
             active=True,
@@ -514,26 +888,31 @@ class ChatService:
         return await self.provider_validation_status(provider_key)
 
     async def prewarm_active_providers(self) -> None:
-        if not self.settings.ollama_prewarm_on_startup:
-            print("[SHRECKLLM_PREWARM] step=skipped reason=disabled")
-            return
-        active_provider_ids = [provider_id for provider_id, state in self._runtime.provider_states.items() if state.active]
+        active_provider_ids: list[str] = []
+        for provider_id, state in self._runtime.provider_states.items():
+            cfg = self._runtime.provider_defaults.get(provider_id)
+            if cfg is None:
+                continue
+            effective_active, _ = self._effective_provider_active(provider_id, cfg, state)
+            if effective_active:
+                active_provider_ids.append(provider_id)
         if not active_provider_ids:
-            print("[SHRECKLLM_PREWARM] step=skipped reason=no_active_providers")
+            logger.info("[SHRECKLLM_PREWARM] step=skipped reason=no_active_providers")
             return
+        logger.info("[SHRECKLLM_PREWARM] step=start active_provider_ids=%s", active_provider_ids)
         for provider_id in active_provider_ids:
             adapter = self.registry.get(provider_id)
             cfg = self._runtime.provider_defaults.get(provider_id)
             if adapter is None:
                 await self._set_provider_state(provider_id, active=False, last_error="provider_not_bound")
-                print(f"[SHRECKLLM_PREWARM] step=skipped provider={provider_id} reason=provider_not_bound")
+                logger.info("[SHRECKLLM_PREWARM] step=skipped provider=%s reason=provider_not_bound", provider_id)
                 continue
-            model = str(cfg.default_model if cfg else "").strip()
+            model = str((cfg.models or [""])[0] if cfg else "").strip()
             if not model:
-                await self._set_provider_state(provider_id, active=False, last_error="missing_default_model")
-                print(f"[SHRECKLLM_PREWARM] step=skipped provider={provider_id} reason=missing_default_model")
+                await self._set_provider_state(provider_id, active=False, last_error="missing_prewarm_model")
+                logger.info("[SHRECKLLM_PREWARM] step=skipped provider=%s reason=missing_prewarm_model", provider_id)
                 continue
-            print(f"[SHRECKLLM_PREWARM] step=start provider={provider_id} model={model}")
+            logger.info("[SHRECKLLM_PREWARM] step=provider_start provider=%s model=%s", provider_id, model)
             try:
                 await adapter.chat(
                     model=model,
@@ -546,12 +925,10 @@ class ChatService:
                     last_warmed_at=_utc_now(),
                     last_error=None,
                 )
-                print(f"[SHRECKLLM_PREWARM] step=done provider={provider_id} model={model}")
-                logger.info("[SHRECKLLM] provider_prewarm_done provider=%s model=%s", provider_id, model)
+                logger.info("[SHRECKLLM_PREWARM] step=provider_done provider=%s model=%s", provider_id, model)
             except Exception as exc:
                 await self._set_provider_state(provider_id, active=False, last_error=str(exc))
-                print(f"[SHRECKLLM_PREWARM] step=failed provider={provider_id} model={model} error={exc}")
-                logger.warning("[SHRECKLLM] provider_prewarm_failed provider=%s model=%s error=%s", provider_id, model, exc)
+                logger.warning("[SHRECKLLM_PREWARM] step=provider_failed provider=%s model=%s error=%s", provider_id, model, exc)
 
     async def chat(self, request: ChatRequest) -> ChatResponse:
         job = await self.submit_chat_job(request)
@@ -561,6 +938,15 @@ class ChatService:
         self.ensure_background_tasks()
         if self._job_queue.full():
             raise ProviderOverloadedError("chat job queue full")
+        provider_key = (request.provider_id or "").strip().lower()
+        cfg = self._runtime.provider_defaults.get(provider_key)
+        state = self._runtime.provider_states.get(provider_key, ProviderState())
+        if cfg is None:
+            raise DependencyUnavailableError(f"LLM provider {provider_key} is not configured")
+        effective_active, reason = self._effective_provider_active(provider_key, cfg, state)
+        if not effective_active:
+            reason = reason or "provider_not_active"
+            raise DependencyUnavailableError(f"LLM provider {provider_key} is not active: {reason}")
         now = time.time()
         job_id = str(uuid4())
         self._chat_jobs[job_id] = {
@@ -755,9 +1141,9 @@ class ChatService:
             raise InvalidModelError(f"missing provider defaults for: {provider_id}")
 
         requested_model = (request.model or "").strip() or None
-        resolved_model = requested_model or cfg.default_model
+        resolved_model = requested_model
         if not resolved_model:
-            raise InvalidModelError(f"no model configured for provider_id: {provider_id}")
+            raise InvalidModelError(f"model is required for provider_id: {provider_id}")
 
         now = time.monotonic()
         cooldown_until = self._provider_cooldown_until.get(provider_id, 0.0)

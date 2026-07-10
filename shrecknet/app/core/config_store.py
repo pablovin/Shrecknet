@@ -160,7 +160,7 @@ class Settings(BaseSettings):
     shreckllm_base_url: str = "http://shreckllm:8110"
     shreckllm_request_timeout_s: float = 60.0
     shreckllm_max_retries: int = 2
-    enable_ai_agents: bool = True
+    enable_ai_agents: bool = False
     model_architect_scene_chunking: LLMModelTarget = Field(
         default_factory=lambda: LLMModelTarget(provider="openai", name="gpt-5")
     )

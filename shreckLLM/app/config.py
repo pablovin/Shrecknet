@@ -39,7 +39,6 @@ class Settings(BaseSettings):
             "kind": "local",
             "auth_strategy": "none",
             "healthcheck_path": "/health",
-            "default_model": "gemma3:4b",
             "models": ["gemma3:4b"],
             "base_url": "http://host.docker.internal:11434",
             "api_key": None,
@@ -47,7 +46,6 @@ class Settings(BaseSettings):
         "openai": {
             "kind": "cloud",
             "auth_strategy": "api_key",
-            "default_model": "gpt-5-nano",
             "models": ["gpt-5-nano", "gpt-5", "gpt-4o-mini"],
             "base_url": None,
             "api_key": "",
@@ -55,7 +53,6 @@ class Settings(BaseSettings):
         "anthropic": {
             "kind": "cloud",
             "auth_strategy": "api_key",
-            "default_model": "claude-3-haiku-20240307",
             "models": ["claude-3-haiku-20240307", "claude-opus-4-1-20250805"],
             "base_url": "https://api.anthropic.com",
             "api_key": "",
@@ -63,7 +60,6 @@ class Settings(BaseSettings):
         "ollama_cloud": {
             "kind": "cloud",
             "auth_strategy": "api_key",
-            "default_model": "gemma4:31b",
             "models": ["gemma4:31b", "gemma4:31b-cloud"],
             "base_url": "https://ollama.com",
             "api_key": "",

@@ -12,7 +12,7 @@ from app.celery_app import celery_app
 from app.core.config_store import LLMModelTarget, get_settings, is_shreckllm_configured
 from app.db.session import AsyncSessionMaker
 from app.integrations.llm.model_policy import ModelPolicy
-from app.integrations.llm.runtime_control import fetch_shreckllm_runtime, resolve_provider_default_target
+from app.integrations.llm.runtime_control import fetch_shreckllm_runtime
 from app.integrations.llm.shreckllm_client import ShreckLLMClient
 from app.integrations.retrieval.neo4j_retriever import HybridNeo4jGraphRetriever
 from app.graph.neo4j import get_driver
@@ -381,18 +381,7 @@ async def _execute_run(
             configured_elder_target = settings.model_elder
             configured_architect_target = settings.model_architect_scene_chunking
             configured_repair_json_target = getattr(settings, "model_agents_repair_json", configured_architect_target) or configured_architect_target
-            try:
-                runtime_default_target = resolve_provider_default_target(
-                    runtime_config,
-                    configured_novelist_prose_target.provider,
-                )
-                default_target = LLMModelTarget(
-                    provider=configured_novelist_prose_target.provider,
-                    name=configured_novelist_prose_target.name or runtime_default_target.name,
-                )
-            except Exception:
-                # Fallback to runtime defaults only when the configured provider is unavailable.
-                default_target = resolve_provider_default_target(runtime_config)
+            default_target = configured_novelist_prose_target or LLMModelTarget(provider="openai", name="gpt-5")
             runtime_controls = _derive_novelist_runtime_controls(runtime_config, default_target.provider)
             initialize_architect_concurrency(
                 concurrency=runtime_controls["effective_capacity"]

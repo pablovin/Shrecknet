@@ -26,7 +26,7 @@ def test_agent_models_parse() -> None:
 
 def test_readiness_report_model() -> None:
     report = LLMReadinessReport(
-        checks={"shreckllm_reachable": True, "any_provider_ready": False},
+        checks={"shreckllm_reachable": True, "shreckllm_operational": False},
         providers=[ProviderStatus(provider_id="openai", enabled=False, valid=False, models=[])],
         ready=False,
         reasons=["No provider ready"],

@@ -180,8 +180,9 @@ class PersonalCompanionAgentRead(PersonalCompanionAgentBase):
 
 
 class ProviderValidation(BaseModel):
-    configured: bool
-    present: bool
+    configured: bool | None = None
+    present: bool | None = None
+    active: bool | None = None
     valid: bool | None = None
     error: str | None = None
 
@@ -189,6 +190,7 @@ class ProviderValidation(BaseModel):
 class ProviderStatus(BaseModel):
     provider_id: str
     enabled: bool
+    active: bool | None = None
     valid: bool | None = None
     configured: bool | None = None
     error: str | None = None

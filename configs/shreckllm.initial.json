@@ -16,25 +16,21 @@
   "data_dir": "/app/databases",
   "bootstrap_provider_defaults": {
     "ollama": {
-      "default_model": "gemma4:e2b",
       "models": ["gemma4:e2b"],
       "base_url": "http://host.docker.internal:11434",
       "api_key": null
     },
     "ollama_cloud": {
-      "default_model": "gemma4:31b",
       "models": ["gemma4:31b"],
       "base_url": "https://ollama.com",
       "api_key": ""
     },
     "openai": {
-      "default_model": "gpt-5-nano",
       "models": ["gpt-5-nano", "gpt-5", "gpt-4o-mini"],
       "base_url": null,
       "api_key": ""
     },
     "anthropic": {
-      "default_model": "claude-3-haiku-20240307",
       "models": ["claude-3-haiku-20240307", "claude-opus-4-1-20250805"],
       "base_url": "https://api.anthropic.com",
       "api_key": ""

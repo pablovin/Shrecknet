@@ -19,9 +19,14 @@ def test_chat_message_rejects_empty_content() -> None:
 
 def test_chat_request_requires_messages() -> None:
     with pytest.raises(ValidationError):
-        ChatRequest(provider_id="ollama", messages=[])
+        ChatRequest(provider_id="ollama", model="gemma3:4b", messages=[])
 
 
 def test_chat_request_requires_provider_id() -> None:
     with pytest.raises(ValidationError):
-        ChatRequest(messages=[{"role": "user", "content": "hi"}])
+        ChatRequest(model="gemma3:4b", messages=[{"role": "user", "content": "hi"}])
+
+
+def test_chat_request_requires_model() -> None:
+    with pytest.raises(ValidationError):
+        ChatRequest(provider_id="ollama", messages=[{"role": "user", "content": "hi"}])

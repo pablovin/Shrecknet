@@ -45,7 +45,6 @@ Response:
 {
   "providers": {
     "ollama": {
-      "default_model": "gemma3:4b",
       "models": ["gemma3:4b", "llama3.1:8b"]
     }
   }

@@ -22,8 +22,6 @@ async def _post_chat(client: httpx.AsyncClient, payload: dict[str, Any]) -> tupl
 
 def _build_config_patch(args: argparse.Namespace) -> dict[str, Any]:
     patch: dict[str, Any] = {}
-    if args.set_default_provider_id is not None:
-        patch["default_provider_id"] = args.set_default_provider_id
     if args.set_request_timeout is not None:
         patch["request_timeout_seconds"] = args.set_request_timeout
     if args.set_max_queue_wait is not None:
@@ -61,7 +59,6 @@ async def _apply_config_if_requested(
     print(
         "       snapshot:",
         {
-            "default_provider_id": cfg.get("default_provider_id"),
             "providers": list((cfg.get("provider_defaults") or {}).keys()),
         },
     )
@@ -158,7 +155,6 @@ def main() -> int:
     parser.add_argument("--provider-id", required=True, choices=["ollama", "ollama_cloud", "openai", "anthropic"])
 
     parser.add_argument("--admin-token", default=None, help="Shrecknet admin/world_builder bearer token")
-    parser.add_argument("--set-default-provider-id", default=None)
     parser.add_argument("--set-request-timeout", default=None, type=float)
     parser.add_argument("--set-max-queue-wait", default=None, type=float)
 

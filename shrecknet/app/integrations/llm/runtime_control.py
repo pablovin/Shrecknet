@@ -23,17 +23,27 @@ async def fetch_shreckllm_runtime(settings: Settings) -> dict[str, Any]:
 def resolve_provider_default_target(
     runtime_config: dict[str, Any],
     provider_id: str | None = None,
+    fallback: LLMModelTarget | None = None,
 ) -> LLMModelTarget:
     providers = runtime_config.get("provider_defaults")
     if not isinstance(providers, dict) or not providers:
+        if fallback is not None:
+            return fallback
         raise RuntimeError("shreckLLM runtime missing provider_defaults")
     chosen_provider = str(provider_id or "").strip() or next(iter(providers.keys()))
     provider_payload = providers.get(chosen_provider)
     if not isinstance(provider_payload, dict):
+        if fallback is not None:
+            return fallback
         raise RuntimeError(f"Provider '{chosen_provider}' not configured in shreckLLM runtime")
-    model_name = str(provider_payload.get("default_model") or "").strip()
+    models = provider_payload.get("models")
+    model_name = ""
+    if isinstance(models, list):
+        model_name = next((str(model).strip() for model in models if isinstance(model, str) and model.strip()), "")
     if not model_name:
-        raise RuntimeError(f"Provider '{chosen_provider}' has no default_model in shreckLLM runtime")
+        if fallback is not None:
+            return fallback
+        raise RuntimeError(f"Provider '{chosen_provider}' has no configured models in shreckLLM runtime")
     return LLMModelTarget(provider=chosen_provider, name=model_name)
 
 

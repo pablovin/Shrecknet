@@ -9,11 +9,10 @@ from typing import Any, Optional
 from uuid import uuid4
 
 from app.celery_app import celery_app
-from app.core.config_store import get_settings, is_shreckllm_configured
+from app.core.config_store import LLMModelTarget, get_settings, is_shreckllm_configured
 from app.db.session import AsyncSessionMaker
 from app.graph.neo4j import get_driver
 from app.integrations.llm.model_policy import ModelPolicy
-from app.integrations.llm.runtime_control import fetch_shreckllm_runtime, resolve_provider_default_target
 from app.integrations.llm.shreckllm_client import ShreckLLMClient
 from app.jobs.architect.entity_generator import EntityGenerator
 from app.models.architect import ArchitectProposalStatus, ArchitectProposalType
@@ -323,8 +322,7 @@ async def _execute_entity_generation(
                     update_proposals.append(proposal_dict)
 
             # Initialize LLM client and generator
-            runtime_config = await fetch_shreckllm_runtime(settings)
-            default_target = resolve_provider_default_target(runtime_config)
+            default_target = settings.model_architect_scene_chunking or LLMModelTarget(provider="openai", name="gpt-5")
             model_policy = ModelPolicy(
                 default_model=default_target,
                 architect_extract_model=default_target,

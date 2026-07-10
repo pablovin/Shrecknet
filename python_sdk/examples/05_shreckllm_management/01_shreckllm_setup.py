@@ -8,9 +8,9 @@ ensure_user_and_login = import_module("python_sdk.examples.01_login_and_user_cre
 
 
 # Purpose:
-# - Verify shreckLLM connectivity and configure default provider/model.
+# - Verify shreckLLM connectivity and reload runtime configuration.
 # Expected result:
-# - Prints status/health/ready, config default, applies patch, and reload confirmation.
+# - Prints status/health/ready, provider config, and reload confirmation.
 async def main() -> None:
     base_url = os.getenv("SHRECKNET_BASE_URL", "http://localhost:8100")
     shreckllm_base_url = os.getenv("SHRECKLLM_BASE_URL", "http://localhost:8111")
@@ -28,18 +28,9 @@ async def main() -> None:
         print("shreckllm_health:", health)
         print("shreckllm_ready:", ready)
 
-        # Inspect runtime config and set a deterministic default provider/model.
+        # Inspect runtime provider config.
         cfg = await sdk.shreckllm.get_config()
-        print("config_default_provider:", cfg.get("default_provider_id"))
-
-        providers = cfg.get("provider_defaults", {})
-        if providers:
-            first_provider = next(iter(providers.keys()))
-            default_model = providers[first_provider].get("default_model")
-            patched = await sdk.shreckllm.put_config(
-                {"default_provider_id": first_provider, "provider_defaults": {first_provider: {"default_model": default_model}}}
-            )
-            print("patched_default_provider:", patched.get("default_provider_id"))
+        print("config_providers:", list((cfg.get("provider_defaults") or {}).keys()))
 
         # Reload to ensure config is applied from runtime store.
         reloaded = await sdk.shreckllm.reload_config()

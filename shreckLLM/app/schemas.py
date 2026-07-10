@@ -12,7 +12,7 @@ class ChatMessage(BaseModel):
 
 class ChatRequest(BaseModel):
     provider_id: str = Field(min_length=1)
-    model: str | None = None
+    model: str = Field(min_length=1)
     messages: list[ChatMessage] = Field(min_length=1)
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)
     conversation_id: str | None = None
@@ -64,7 +64,9 @@ class ChatJobStatusResponse(BaseModel):
 
 class ServiceStatusResponse(BaseModel):
     service: str = "shreckLLM"
-    default_provider_id: str
+    shreckllm_operational: bool = False
+    operational_provider_ids: list[str] = Field(default_factory=list)
+    providers_summary: dict[str, Any] = Field(default_factory=dict)
     memory_backend: str = "redis"
     redis_url: str
     in_flight_requests: int

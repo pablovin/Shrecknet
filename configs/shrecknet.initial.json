@@ -31,7 +31,7 @@
   "celery_stale_reaper_interval_seconds": 300,
   "celery_stale_reaper_max_task_age_seconds": 7200,
   "shreckllm_base_url": "http://shreckllm:8110",
-  "enable_ai_agents": true,
+  "enable_ai_agents": false,
   "model_architect_scene_chunking": {
     "provider": "ollama",
     "name": "gemma3:4b"

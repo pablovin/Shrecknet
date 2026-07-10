@@ -26,11 +26,11 @@ from app.schemas import (
     ServiceStatusResponse,
 )
 from app.service import ChatService
+from app.service import PROVIDER_MODEL_FALLBACKS
 
 router = APIRouter()
 
 CONFIG_FIELD_META: dict[str, dict[str, object]] = {
-    "provider_defaults": {"type": "provider_map", "help": "Provider definitions including models, URLs, auth settings, and API keys.", "category": "Providers"},
     "provider_limits": {"type": "object", "help": "Per-provider concurrency and queue limit overrides.", "category": "Providers"},
     "memory_ttl_seconds": {"type": "integer", "help": "Conversation memory TTL in seconds.", "category": "Memory"},
     "memory_max_messages": {"type": "integer", "help": "Maximum messages stored per conversation.", "category": "Memory"},
@@ -44,12 +44,6 @@ CONFIG_FIELD_META: dict[str, dict[str, object]] = {
 }
 
 CONFIG_GROUPS: list[dict[str, object]] = [
-    {
-        "id": "provider_assignment",
-        "label": "Provider Assignment",
-        "property": "runtime",
-        "fields": ["provider_defaults"],
-    },
     {
         "id": "expert_overrides",
         "label": "Expert Overrides",
@@ -78,12 +72,110 @@ class ProviderMetadataUpdateRequest(BaseModel):
     auth_strategy: str | None = None
     healthcheck_path: str | None = None
     base_url: str | None = None
-    default_model: str | None = None
     models: list[str] | None = None
+    api_key: str | None = None
 
 
 def get_service(request: Request) -> ChatService:
     return request.app.state.chat_service
+
+
+async def _refresh_and_validate_providers(
+    service: ChatService,
+    provider_ids: list[str] | None = None,
+    *,
+    ping: bool = True,
+) -> dict[str, object]:
+    validation = await service.refresh_runtime_and_validate(provider_ids, ping=ping)
+    return {
+        "config": service.runtime_config_public_view(),
+        "validation": validation,
+    }
+
+
+def _runtime_config_patch(payload: RuntimeConfigUpdate) -> dict[str, object]:
+    patch = payload.model_dump(exclude_none=True)
+    patch.pop("provider_defaults", None)
+    patch.pop("provider_states", None)
+    return patch
+
+
+async def _validate_provider_models_before_save(
+    provider_id: str,
+    candidate: ProviderDefaults,
+    service: ChatService,
+) -> ProviderDefaults:
+    validation = await service.validate_provider_models(provider_id, candidate)
+    configured_models = validation.get("configured_models")
+    if not isinstance(configured_models, list):
+        configured_models = []
+    if validation.get("valid") is not True:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": validation.get("error") or "invalid_provider_models",
+                "provider_id": provider_id,
+                "invalid_models": validation.get("invalid_models") or [],
+                "discovered_models": validation.get("discovered_models") or [],
+            },
+        )
+    return ProviderDefaults(
+        kind=candidate.kind,
+        auth_strategy=candidate.auth_strategy,
+        healthcheck_path=candidate.healthcheck_path,
+        models=[str(model) for model in configured_models],
+        base_url=candidate.base_url,
+        api_key=candidate.api_key,
+    )
+
+
+async def _update_provider(
+    provider_id: str,
+    payload: ProviderMetadataUpdateRequest,
+    service: ChatService,
+) -> dict[str, object]:
+    provider_key = provider_id.strip().lower()
+    current = service._runtime.provider_defaults.get(provider_key)
+    if current is None:
+        raise HTTPException(status_code=404, detail=f"provider not found: {provider_key}")
+    updates = payload.model_dump(exclude_none=True)
+    providers = service._runtime.provider_defaults.copy()
+    candidate = ProviderDefaults(
+        kind=str(updates.get("kind", current.kind)).strip() or current.kind,
+        auth_strategy=str(updates.get("auth_strategy", current.auth_strategy)).strip() or current.auth_strategy,
+        healthcheck_path=updates.get("healthcheck_path", current.healthcheck_path),
+        models=updates.get("models", current.models),
+        base_url=updates.get("base_url", current.base_url),
+        api_key=updates.get("api_key", current.api_key),
+    )
+    try:
+        providers[provider_key] = await _validate_provider_models_before_save(provider_key, candidate, service)
+    except DependencyUnavailableError:
+        # Provider unreachable (bad base_url, invalid API key, etc.) —
+        # save the update anyway so the user can fix connectivity later.
+        providers[provider_key] = candidate
+    except HTTPException as exc:
+        if exc.status_code == 400:
+            # Models don't match the new config — save the update anyway,
+            # the user can adjust models later.
+            providers[provider_key] = candidate
+        else:
+            raise
+    update_runtime_config({"provider_defaults": providers})
+    reload_runtime_config()
+    validation = await service.refresh_runtime_and_validate([provider_key], ping=True)
+    providers_payload = validation.get("providers") if isinstance(validation, dict) else {}
+    provider_payload = providers_payload.get(provider_key) if isinstance(providers_payload, dict) else None
+    if not isinstance(provider_payload, dict):
+        provider_payload = await service.provider_validation_status(provider_key)
+    operational_provider_ids = validation.get("operational_provider_ids") if isinstance(validation, dict) else []
+    if not isinstance(operational_provider_ids, list):
+        operational_provider_ids = []
+    return {
+        "provider": provider_payload,
+        "shreckllm_operational": validation.get("shreckllm_operational") is True if isinstance(validation, dict) else False,
+        "operational_provider_ids": [str(provider_id) for provider_id in operational_provider_ids],
+    }
 
 
 @router.get("/health", status_code=status.HTTP_200_OK)
@@ -145,6 +237,8 @@ async def create_chat_job(payload: ChatRequest, service: ChatService = Depends(g
         return await service.submit_chat_job(payload)
     except ProviderOverloadedError as exc:
         raise HTTPException(status_code=429, detail={"error": str(exc), "provider_overloaded": True}) from exc
+    except DependencyUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @router.get("/chat/jobs/{job_id}", response_model=ChatJobStatusResponse, status_code=status.HTTP_200_OK)
@@ -175,16 +269,14 @@ async def get_config(
     service: ChatService = Depends(get_service),
     _user=Depends(get_admin_or_world_builder_or_internal),
 ) -> dict[str, object]:
-    return service.config_public_view()
+    return service.runtime_config_public_view()
 
 
 @router.get("/config/schema", status_code=status.HTTP_200_OK)
 async def get_config_schema(
     _user=Depends(get_admin_or_world_builder),
 ) -> dict[str, object]:
-    all_fields = set(RuntimeConfigUpdate.model_fields.keys())
-    # Keep default provider internal for now; frontend should not render or edit it.
-    all_fields.discard("default_provider_id")
+    all_fields = set(RuntimeConfigUpdate.model_fields.keys()) - {"provider_defaults", "provider_states"}
     grouped_fields: set[str] = set()
     for group in CONFIG_GROUPS:
         grouped_fields.update([f for f in group["fields"] if isinstance(f, str)])
@@ -215,20 +307,11 @@ async def put_config(
     service: ChatService = Depends(get_service),
     _user=Depends(get_admin_or_world_builder),
 ) -> dict[str, object]:
-    patch = payload.model_dump(exclude_none=True)
-    if "provider_defaults" in patch:
-        incoming = patch["provider_defaults"] or {}
-        merged = dict(service._runtime.provider_defaults)
-        for provider_id, defaults in incoming.items():
-            if isinstance(defaults, dict):
-                merged[provider_id] = ProviderDefaults.model_validate(defaults)
-            elif isinstance(defaults, ProviderDefaults):
-                merged[provider_id] = defaults
-        patch["provider_defaults"] = merged
+    patch = _runtime_config_patch(payload)
     update_runtime_config(patch)
     reload_runtime_config()
     await service.refresh_runtime()
-    return service.config_public_view()
+    return service.runtime_config_public_view()
 
 
 @router.post("/config/reload", status_code=status.HTTP_200_OK)
@@ -237,10 +320,11 @@ async def post_config_reload(
     _user=Depends(get_admin_or_world_builder),
 ) -> dict[str, object]:
     reload_runtime_config()
-    await service.refresh_runtime()
+    validation = await service.refresh_runtime_and_validate()
     return {
         "reloaded": True,
         "config": service.config_public_view(),
+        "validation": validation,
     }
 
 
@@ -257,7 +341,6 @@ async def put_openai_token(
         openai_defaults = ProviderDefaults(
             kind="cloud",
             auth_strategy="api_key",
-            default_model="gpt-5-nano",
             models=["gpt-5-nano"],
             base_url=None,
             api_key=payload.api_key,
@@ -267,7 +350,6 @@ async def put_openai_token(
             kind=openai_defaults.kind,
             auth_strategy=openai_defaults.auth_strategy,
             healthcheck_path=openai_defaults.healthcheck_path,
-            default_model=openai_defaults.default_model,
             models=openai_defaults.models,
             base_url=openai_defaults.base_url,
             api_key=payload.api_key,
@@ -277,7 +359,7 @@ async def put_openai_token(
     update_runtime_config({"provider_defaults": providers})
     reload_runtime_config()
     await service.refresh_runtime()
-    validation = await service.openai_validation_status()
+    validation = await service.test_provider_functionality("openai", ping=True)
     return {
         "stored": True,
         "openai": validation,
@@ -296,7 +378,6 @@ async def delete_openai_token(
         openai_defaults = ProviderDefaults(
             kind="cloud",
             auth_strategy="api_key",
-            default_model="gpt-5-nano",
             models=["gpt-5-nano"],
             base_url=None,
             api_key="",
@@ -306,7 +387,6 @@ async def delete_openai_token(
             kind=openai_defaults.kind,
             auth_strategy=openai_defaults.auth_strategy,
             healthcheck_path=openai_defaults.healthcheck_path,
-            default_model=openai_defaults.default_model,
             models=openai_defaults.models,
             base_url=openai_defaults.base_url,
             api_key="",
@@ -316,7 +396,7 @@ async def delete_openai_token(
     update_runtime_config({"provider_defaults": providers})
     reload_runtime_config()
     await service.refresh_runtime()
-    validation = await service.openai_validation_status()
+    validation = await service.test_provider_functionality("openai", ping=True)
     return {
         "stored": False,
         "openai": validation,
@@ -349,7 +429,6 @@ async def put_anthropic_token(
         current = ProviderDefaults(
             kind="cloud",
             auth_strategy="api_key",
-            default_model="claude-3-haiku-20240307",
             models=["claude-3-haiku-20240307", "claude-opus-4-1-20250805"],
             base_url="https://api.anthropic.com",
             api_key=payload.api_key,
@@ -359,7 +438,6 @@ async def put_anthropic_token(
             kind=current.kind,
             auth_strategy=current.auth_strategy,
             healthcheck_path=current.healthcheck_path,
-            default_model=current.default_model,
             models=current.models,
             base_url=current.base_url,
             api_key=payload.api_key,
@@ -368,7 +446,7 @@ async def put_anthropic_token(
     update_runtime_config({"provider_defaults": providers})
     reload_runtime_config()
     await service.refresh_runtime()
-    validation = await service.anthropic_validation_status()
+    validation = await service.test_provider_functionality("anthropic", ping=True)
     return {"stored": True, "anthropic": validation}
 
 
@@ -384,7 +462,6 @@ async def delete_anthropic_token(
         current = ProviderDefaults(
             kind="cloud",
             auth_strategy="api_key",
-            default_model="claude-3-haiku-20240307",
             models=["claude-3-haiku-20240307", "claude-opus-4-1-20250805"],
             base_url="https://api.anthropic.com",
             api_key="",
@@ -394,7 +471,6 @@ async def delete_anthropic_token(
             kind=current.kind,
             auth_strategy=current.auth_strategy,
             healthcheck_path=current.healthcheck_path,
-            default_model=current.default_model,
             models=current.models,
             base_url=current.base_url,
             api_key="",
@@ -403,7 +479,7 @@ async def delete_anthropic_token(
     update_runtime_config({"provider_defaults": providers})
     reload_runtime_config()
     await service.refresh_runtime()
-    validation = await service.anthropic_validation_status()
+    validation = await service.test_provider_functionality("anthropic", ping=True)
     return {"stored": False, "anthropic": validation}
 
 
@@ -420,8 +496,7 @@ async def put_ollama_cloud_token(
         current = ProviderDefaults(
             kind="cloud",
             auth_strategy="api_key",
-            default_model="gemma4:31b-cloud",
-            models=["gemma4:31b-cloud"],
+            models=PROVIDER_MODEL_FALLBACKS["ollama_cloud"],
             base_url="https://ollama.com",
             api_key=payload.api_key,
         )
@@ -430,7 +505,6 @@ async def put_ollama_cloud_token(
             kind=current.kind,
             auth_strategy=current.auth_strategy,
             healthcheck_path=current.healthcheck_path,
-            default_model=current.default_model,
             models=current.models,
             base_url=current.base_url,
             api_key=payload.api_key,
@@ -439,7 +513,7 @@ async def put_ollama_cloud_token(
     update_runtime_config({"provider_defaults": providers})
     reload_runtime_config()
     await service.refresh_runtime()
-    validation = await service.provider_validation_status("ollama_cloud")
+    validation = await service.test_provider_functionality("ollama_cloud", ping=True)
     return {"stored": True, "ollama_cloud": validation}
 
 
@@ -455,8 +529,7 @@ async def delete_ollama_cloud_token(
         current = ProviderDefaults(
             kind="cloud",
             auth_strategy="api_key",
-            default_model="gemma4:31b-cloud",
-            models=["gemma4:31b-cloud"],
+            models=PROVIDER_MODEL_FALLBACKS["ollama_cloud"],
             base_url="https://ollama.com",
             api_key="",
         )
@@ -465,7 +538,6 @@ async def delete_ollama_cloud_token(
             kind=current.kind,
             auth_strategy=current.auth_strategy,
             healthcheck_path=current.healthcheck_path,
-            default_model=current.default_model,
             models=current.models,
             base_url=current.base_url,
             api_key="",
@@ -474,7 +546,7 @@ async def delete_ollama_cloud_token(
     update_runtime_config({"provider_defaults": providers})
     reload_runtime_config()
     await service.refresh_runtime()
-    validation = await service.provider_validation_status("ollama_cloud")
+    validation = await service.test_provider_functionality("ollama_cloud", ping=True)
     return {"stored": False, "ollama_cloud": validation}
 
 
@@ -496,7 +568,7 @@ async def get_providers_validate(
     service: ChatService = Depends(get_service),
     _user=Depends(get_admin_or_world_builder),
 ) -> dict[str, object]:
-    return await service.all_provider_validation_statuses()
+    return await get_providers(service=service, _user=_user)
 
 
 @router.get("/providers/{provider_id}/validate", status_code=status.HTTP_200_OK)
@@ -505,7 +577,48 @@ async def get_provider_validate(
     service: ChatService = Depends(get_service),
     _user=Depends(get_admin_or_world_builder),
 ) -> dict[str, object]:
-    return await service.provider_validation_status(provider_id)
+    return await get_provider(provider_id=provider_id, service=service, _user=_user)
+
+
+@router.get("/providers", status_code=status.HTTP_200_OK)
+async def get_providers(
+    service: ChatService = Depends(get_service),
+) -> dict[str, object]:
+    return await service.all_provider_validation_statuses()
+
+
+@router.get("/providers/{provider_id}", status_code=status.HTTP_200_OK)
+async def get_provider(
+    provider_id: str,
+    service: ChatService = Depends(get_service),
+    _user=Depends(get_admin_or_world_builder),
+) -> dict[str, object]:
+    provider_key = provider_id.strip().lower()
+    if provider_key not in service._runtime.provider_defaults:
+        raise HTTPException(status_code=404, detail=f"provider not found: {provider_key}")
+    return await service.provider_validation_status(provider_key)
+
+
+@router.put("/providers/{provider_id}", status_code=status.HTTP_200_OK)
+async def put_provider(
+    provider_id: str,
+    payload: ProviderMetadataUpdateRequest,
+    service: ChatService = Depends(get_service),
+    _user=Depends(get_admin_or_world_builder),
+) -> dict[str, object]:
+    return await _update_provider(provider_id, payload, service)
+
+
+@router.post("/providers/{provider_id}/test", status_code=status.HTTP_200_OK)
+async def test_provider_functionality(
+    provider_id: str,
+    service: ChatService = Depends(get_service),
+    _user=Depends(get_admin_or_world_builder_or_internal),
+) -> dict[str, object]:
+    try:
+        return await service.test_provider_functionality(provider_id, ping=True)
+    except InvalidModelError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.post("/config/providers/{provider_id}/activate", status_code=status.HTTP_200_OK)
@@ -543,25 +656,7 @@ async def update_provider_metadata(
     service: ChatService = Depends(get_service),
     _user=Depends(get_admin_or_world_builder),
 ) -> dict[str, object]:
-    provider_key = provider_id.strip().lower()
-    current = service._runtime.provider_defaults.get(provider_key)
-    if current is None:
-        raise HTTPException(status_code=404, detail=f"provider not found: {provider_key}")
-    updates = payload.model_dump(exclude_none=True)
-    providers = service._runtime.provider_defaults.copy()
-    providers[provider_key] = ProviderDefaults(
-        kind=str(updates.get("kind", current.kind)).strip() or current.kind,
-        auth_strategy=str(updates.get("auth_strategy", current.auth_strategy)).strip() or current.auth_strategy,
-        healthcheck_path=updates.get("healthcheck_path", current.healthcheck_path),
-        default_model=str(updates.get("default_model", current.default_model)).strip() or current.default_model,
-        models=updates.get("models", current.models),
-        base_url=updates.get("base_url", current.base_url),
-        api_key=current.api_key,
-    )
-    update_runtime_config({"provider_defaults": providers})
-    reload_runtime_config()
-    await service.refresh_runtime()
-    return service.config_public_view()
+    return await _update_provider(provider_id, payload, service)
 
 
 @router.post("/config/providers/{provider_id}/models", status_code=status.HTTP_200_OK)
@@ -586,21 +681,25 @@ async def add_provider_model(
     updated_models = list(current.models)
     if model_id not in updated_models:
         updated_models.append(model_id)
-    current = ProviderDefaults(
+    candidate = ProviderDefaults(
         kind=current.kind,
         auth_strategy=current.auth_strategy,
         healthcheck_path=current.healthcheck_path,
-        default_model=current.default_model or model_id,
         models=updated_models,
         base_url=current.base_url,
         api_key=current.api_key,
     )
-    providers[provider_key] = current
+    try:
+        providers[provider_key] = await _validate_provider_models_before_save(provider_key, candidate, service)
+    except DependencyUnavailableError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "provider_model_catalog_unavailable", "provider_id": provider_key},
+        ) from exc
 
     update_runtime_config({"provider_defaults": providers})
     reload_runtime_config()
-    await service.refresh_runtime()
-    return service.config_public_view()
+    return await _refresh_and_validate_providers(service, [provider_key])
 
 
 @router.delete("/config/providers/{provider_id}/models", status_code=status.HTTP_200_OK)
@@ -626,14 +725,10 @@ async def remove_provider_model(
     remaining_models = [m for m in current.models if m != model_id]
     if not remaining_models:
         raise HTTPException(status_code=400, detail="cannot remove last configured model for provider")
-    default_model = current.default_model
-    if default_model == model_id:
-        default_model = remaining_models[0]
     providers[provider_key] = ProviderDefaults(
         kind=current.kind,
         auth_strategy=current.auth_strategy,
         healthcheck_path=current.healthcheck_path,
-        default_model=default_model,
         models=remaining_models,
         base_url=current.base_url,
         api_key=current.api_key,
@@ -641,5 +736,4 @@ async def remove_provider_model(
 
     update_runtime_config({"provider_defaults": providers})
     reload_runtime_config()
-    await service.refresh_runtime()
-    return service.config_public_view()
+    return await _refresh_and_validate_providers(service, [provider_key])

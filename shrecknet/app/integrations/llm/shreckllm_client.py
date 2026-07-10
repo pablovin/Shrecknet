@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import random
 from collections import defaultdict
 from typing import Any
@@ -30,10 +31,12 @@ class ShreckLLMClient:
         self._max_backoff_s = 20.0
         self._http = httpx.AsyncClient(base_url=self.base_url, timeout=self.timeout)
         self._usage_events: list[dict[str, Any]] = []
+        self._validated_providers: set[str] = set()
 
     async def aclose(self) -> None:
         await self._http.aclose()
         self._usage_events.clear()
+        self._validated_providers.clear()
 
     async def __aenter__(self) -> "ShreckLLMClient":
         return self
@@ -52,6 +55,7 @@ class ShreckLLMClient:
         return_metadata: bool = False,
     ) -> str | dict[str, Any]:
         target = self._coerce_target(model)
+        await self.ensure_provider_ready(target.provider)
         payload: dict[str, Any] = {
             "provider_id": target.provider,
             "model": target.name,
@@ -127,6 +131,33 @@ class ShreckLLMClient:
                 await asyncio.sleep(max(base_sleep, retry_after_s or 0.0))
 
         raise RuntimeError("Unreachable retry loop state in ShreckLLMClient.chat")
+
+    def _headers(self) -> dict[str, str]:
+        token = str(os.getenv("SHRECKLLM_INTERNAL_SERVICE_TOKEN") or "").strip()
+        return {"Authorization": f"Bearer {token}"} if token else {}
+
+    async def test_provider(self, provider_id: str) -> dict[str, Any]:
+        response = await self._http.post(f"/providers/{provider_id}/test", headers=self._headers())
+        response.raise_for_status()
+        data = response.json() if response.content else {}
+        return data if isinstance(data, dict) else {}
+
+    async def ensure_provider_ready(self, provider_id: str) -> None:
+        provider_key = provider_id.strip().lower()
+        if provider_key in self._validated_providers:
+            return
+        try:
+            payload = await self.test_provider(provider_key)
+        except Exception as exc:
+            raise RuntimeError(f"LLM provider {provider_key} failed validation: {exc}") from exc
+        provider = payload.get("provider") if isinstance(payload, dict) else None
+        active = bool(provider.get("active", provider.get("valid"))) if isinstance(provider, dict) else False
+        if not active:
+            reason = None
+            if isinstance(provider, dict):
+                reason = provider.get("last_validation_error") or provider.get("reason") or provider.get("last_error")
+            raise RuntimeError(f"LLM provider {provider_key} failed validation: {reason or 'provider validation failed'}")
+        self._validated_providers.add(provider_key)
 
     async def submit_chat_job(self, payload: dict[str, Any]) -> str:
         response = await self._http.post("/chat/jobs", json=payload)

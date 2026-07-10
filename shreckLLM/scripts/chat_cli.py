@@ -8,19 +8,18 @@ from typing import Any
 import httpx
 
 
-def _pick_provider(default_provider_id: str, providers: dict[str, Any]) -> str:
+def _pick_provider(providers: dict[str, Any]) -> str:
     ids = sorted([str(k) for k in providers.keys()])
     if not ids:
         print("No providers returned by API.")
-        return default_provider_id
+        return ""
     print("Providers:")
     for idx, provider_id in enumerate(ids, start=1):
-        marker = " (default)" if provider_id == default_provider_id else ""
-        print(f"  {idx}. {provider_id}{marker}")
+        print(f"  {idx}. {provider_id}")
     while True:
-        raw = input(f"Select provider [1-{len(ids)}] (Enter=default): ").strip()
+        raw = input(f"Select provider [1-{len(ids)}] (Enter={ids[0]}): ").strip()
         if not raw:
-            return default_provider_id or ids[0]
+            return ids[0]
         if raw.isdigit():
             pos = int(raw)
             if 1 <= pos <= len(ids):
@@ -30,22 +29,21 @@ def _pick_provider(default_provider_id: str, providers: dict[str, Any]) -> str:
         print("Invalid selection. Try again.")
 
 
-def _pick_model(default_model: str, models: list[str], provider_id: str) -> str:
+def _pick_model(models: list[str], provider_id: str) -> str:
     if not models:
         typed = input(
-            f"No catalog models returned for provider '{provider_id}'. Enter model id (Enter={default_model}): "
+            f"No catalog models returned for provider '{provider_id}'. Enter model id: "
         ).strip()
-        return typed or default_model
+        return typed
 
     print(f"Available models for provider '{provider_id}':")
     for idx, model in enumerate(models, start=1):
-        marker = " (default)" if model == default_model else ""
-        print(f"  {idx}. {model}{marker}")
+        print(f"  {idx}. {model}")
 
     while True:
-        raw = input(f"Select model [1-{len(models)}] (Enter=default {default_model}): ").strip()
+        raw = input(f"Select model [1-{len(models)}] (Enter={models[0]}): ").strip()
         if not raw:
-            return default_model or models[0]
+            return models[0]
         if raw.isdigit():
             pos = int(raw)
             if 1 <= pos <= len(models):
@@ -57,17 +55,6 @@ def _pick_model(default_model: str, models: list[str], provider_id: str) -> str:
 
 def _build_config_patch(args: argparse.Namespace) -> dict[str, Any]:
     patch: dict[str, Any] = {}
-    if args.set_default_provider_id is not None:
-        patch["default_provider_id"] = args.set_default_provider_id
-    if args.set_provider_default_model:
-        # format: provider_id=model
-        item = str(args.set_provider_default_model)
-        if "=" in item:
-            provider_id, model = item.split("=", 1)
-            provider_id = provider_id.strip()
-            model = model.strip()
-            if provider_id and model:
-                patch["provider_defaults"] = {provider_id: {"default_model": model}}
     return patch
 
 
@@ -118,7 +105,6 @@ async def _show_config_if_requested(client: httpx.AsyncClient, admin_token: str 
     print("config> current runtime config:")
     print(
         {
-            "default_provider_id": cfg.get("default_provider_id"),
             "providers": list((cfg.get("provider_defaults") or {}).keys()),
         }
     )
@@ -139,20 +125,18 @@ async def run(args: argparse.Namespace) -> int:
             return 1
 
         models_payload = await _load_models(client)
-        default_provider_id = str(models_payload.get("default_provider_id") or "")
         providers = models_payload.get("providers") if isinstance(models_payload.get("providers"), dict) else {}
 
-        selected_provider_id = args.provider_id or _pick_provider(default_provider_id, providers)
+        selected_provider_id = args.provider_id or _pick_provider(providers)
 
         provider_payload = providers.get(selected_provider_id) if isinstance(providers, dict) else {}
         if not isinstance(provider_payload, dict):
             provider_payload = {}
 
-        default_model = str(provider_payload.get("default_model") or "")
         model_list = provider_payload.get("models") if isinstance(provider_payload.get("models"), list) else []
         cleaned_models = [str(item) for item in model_list if isinstance(item, str)]
 
-        selected_model = args.model or _pick_model(default_model, cleaned_models, selected_provider_id)
+        selected_model = args.model or _pick_model(cleaned_models, selected_provider_id)
 
         conv_id = args.conversation_id or f"cli-{uuid.uuid4().hex[:10]}"
         print(f"Using provider_id: {selected_provider_id}")
@@ -199,9 +183,6 @@ def main() -> int:
 
     parser.add_argument("--admin-token", default=None, help="Shrecknet admin/world_builder bearer token")
     parser.add_argument("--show-config", action="store_true")
-    parser.add_argument("--set-default-provider-id", default=None)
-    parser.add_argument("--set-provider-default-model", default=None, help="format: provider_id=model")
-
     args = parser.parse_args()
     return asyncio.run(run(args))
 

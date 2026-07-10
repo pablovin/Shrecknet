@@ -17,6 +17,7 @@ async def lifespan(app: FastAPI):
     app.state.chat_service = ChatService(settings)
     app.state.chat_service.ensure_background_tasks()
     try:
+        await app.state.chat_service.revalidate_all_providers()
         await app.state.chat_service.prewarm_active_providers()
         yield
     finally:

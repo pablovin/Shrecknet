@@ -31,7 +31,6 @@ Response includes execution details:
 - `provider_request_id`
 
 ## Runtime config model
-- `default_provider_id`
 - `provider_defaults` map keyed by provider id (`ollama`, `openai`, `anthropic`)
 - runtime limits and timeouts
 

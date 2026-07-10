@@ -9,13 +9,12 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 from app.celery_app import celery_app
-from app.core.config_store import get_settings
+from app.core.config_store import LLMModelTarget, get_settings
 from app.db.session import AsyncSessionMaker
 from app.graph.neo4j import get_driver
 from app.integrations.llm.model_policy import ModelPolicy
 from app.integrations.llm.runtime_control import (
     fetch_shreckllm_runtime,
-    resolve_provider_default_target,
 )
 from app.integrations.llm.shreckllm_client import ShreckLLMClient
 from app.integrations.retrieval.neo4j_retriever import HybridNeo4jGraphRetriever, Neo4jGraphRetriever
@@ -375,11 +374,7 @@ async def _run_turn(
         except Exception:
             runtime_config = {}
             logger.warning("companion_turn_step job_id=%s step=runtime_config status=failed", job_id, exc_info=True)
-        default_target = (
-            resolve_provider_default_target(runtime_config)
-            if runtime_config
-            else settings.model_orchestrator_routing
-        )
+        default_target = settings.model_orchestrator_routing or LLMModelTarget(provider="openai", name="gpt-5-nano")
         logger.info(
             "companion_turn_step job_id=%s step=model_policy default_provider=%s default_model=%s",
             job_id,

@@ -8,6 +8,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.agent_feature_gate import require_ai_agents_enabled
 from app.api.deps import get_current_user, get_db_session, get_media_service
 from app.db.jobs_session import get_jobs_session
 from app.core.config_store import get_settings
@@ -171,6 +172,7 @@ async def queue_orchestrator_turn(
         get_herald_orchestrator_service
     ),
 ) -> CompanionOrchestratorTurnQueuedResponse:
+    require_ai_agents_enabled()
     companion = await companion_service.get_for_user(current_user.id)
     session_payload = get_session(current_user.id, session_id)
     if session_payload is None:

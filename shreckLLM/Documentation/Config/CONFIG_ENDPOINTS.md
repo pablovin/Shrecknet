@@ -12,15 +12,14 @@ Returns current runtime config with masked secrets.
 Response example:
 ```json
 {
-  "default_provider_id": "ollama",
   "provider_defaults": {
     "ollama": {
-      "default_model": "gemma3:4b",
+      "models": ["gemma3:4b"],
       "base_url": "http://host.docker.internal:11434",
       "api_key": null
     },
     "openai": {
-      "default_model": "gpt-5-nano",
+      "models": ["gpt-5-nano"],
       "base_url": null,
       "api_key": "sk-...abcd"
     }
@@ -39,10 +38,9 @@ Updates runtime config in sqlite and applies immediately.
 Request body (partial patch supported):
 ```json
 {
-  "default_provider_id": "openai",
   "provider_defaults": {
     "openai": {
-      "default_model": "gpt-5-nano",
+      "models": ["gpt-5-nano"],
       "base_url": null,
       "api_key": "sk-..."
     }

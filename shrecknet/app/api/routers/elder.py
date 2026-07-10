@@ -8,14 +8,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db_session
 from app.api.agent_feature_gate import require_ai_agents_enabled
-from app.core.config_store import get_settings, is_shreckllm_configured
+from app.core.config_store import LLMModelTarget, get_settings, is_shreckllm_configured
 from app.graphrag.embedding_runtime import EmbeddingRuntimeError
 from app.graph.neo4j import get_driver
 from app.integrations.llm.model_policy import ModelPolicy
 from app.integrations.llm.runtime_control import (
     fetch_shreckllm_runtime,
     resolve_effective_architect_concurrency,
-    resolve_provider_default_target,
 )
 from app.integrations.llm.shreckllm_client import ShreckLLMClient
 from app.integrations.retrieval.neo4j_retriever import (
@@ -63,15 +62,13 @@ async def get_model_policy() -> ModelPolicy:
     """Dependency to get model policy."""
     settings = get_settings()
 
-    runtime_config = await fetch_shreckllm_runtime(settings)
-    default_target = resolve_provider_default_target(runtime_config)
+    default_target = settings.model_elder or LLMModelTarget(provider="openai", name="gpt-5-nano")
     model_policy = ModelPolicy(
         default_model=default_target,
         architect_extract_model=default_target,
     )
-    settings = get_settings()
-    setattr(model_policy, "model_elder", settings.model_elder or default_target)
-    repair_target = getattr(settings, "model_agents_repair_json", default_target) or default_target
+    setattr(model_policy, "model_elder", default_target)
+    repair_target = settings.model_agents_repair_json or default_target
     setattr(model_policy, "model_agents_repair_json", repair_target)
     return model_policy
 
@@ -80,7 +77,7 @@ async def get_elder_llm_concurrency() -> int:
     settings = get_settings()
     try:
         runtime_config = await fetch_shreckllm_runtime(settings)
-        target = resolve_provider_default_target(runtime_config)
+        target = settings.model_elder or LLMModelTarget(provider="openai", name="gpt-5-nano")
         return resolve_effective_architect_concurrency(
             runtime_config,
             provider_id=target.provider,

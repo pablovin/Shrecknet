@@ -12,4 +12,7 @@ Use `python_sdk/examples/05_shreckllm_management/01_shreckllm_setup.py`.
 ## Endpoints surfaced by SDK
 
 - Shrecknet side: `/llm_status/`
-- shreckLLM side: `/health`, `/ready`, `/models`, `/status`, `/config`, `/config/reload`
+- Read `shreckllm_operational` from `/llm_status/` when deciding whether LLM-backed
+  features can run.
+- shreckLLM side: `/health`, `/ready`, `/models`, `/status`, `/config`, `/config/reload`,
+  `/providers/{provider_id}/test`

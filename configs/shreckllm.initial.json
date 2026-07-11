@@ -17,7 +17,7 @@
   "bootstrap_provider_defaults": {
     "ollama": {
       "models": ["gemma4:e2b"],
-      "base_url": "http://host.docker.internal:11434",
+      "base_url": "",
       "api_key": null,
       "provider_type": "needs_baseurl",
       "website_url": "https://ollama.com/download"

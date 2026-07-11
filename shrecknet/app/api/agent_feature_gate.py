@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import HTTPException, status
 
 from app.core.config_store import get_settings
-from app.services.shreckllm_status_service import get_shreckllm_status
+from app.services.shreckllm_status_service import get_all_provider_validations
 
 AGENTS_DISABLED_DETAIL = "Agents are disabled. Enable Agents in runtime configuration before starting agent jobs."
 AGENTS_ENABLE_REQUIRES_SHRECKLLM_DETAIL = (
@@ -14,10 +14,10 @@ AGENTS_ENABLE_REQUIRES_SHRECKLLM_DETAIL = (
 
 async def require_shreckllm_operational_for_agents_enable() -> None:
     settings = get_settings()
-    status = await get_shreckllm_status(settings)
-    if status.get("operational") is True:
+    validations = await get_all_provider_validations(settings)
+    if validations.get("shreckllm_operational") is True:
         return
-    error = status.get("error")
+    error = validations.get("error")
     suffix = f" Current shreckLLM status: {error}." if error else ""
     raise HTTPException(
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

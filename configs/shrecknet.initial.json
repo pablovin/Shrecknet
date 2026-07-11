@@ -33,52 +33,52 @@
   "shreckllm_base_url": "http://shreckllm:8110",
   "enable_ai_agents": false,
   "model_architect_scene_chunking": {
-    "provider": "ollama",
-    "name": "gemma3:4b"
+    "provider": "",
+    "name": ""
   },
   "model_architect_entity_proposal": {
-    "provider": "ollama",
-    "name": "gemma3:4b"
+    "provider": "",
+    "name": ""
   },
   "model_architect_milestone_proposal": {
-    "provider": "ollama",
-    "name": "gemma3:4b"
+    "provider": "",
+    "name": ""
   },
   "model_architect_entity_generation": {
-    "provider": "ollama",
-    "name": "gemma3:4b"
+    "provider": "",
+    "name": ""
   },
   "model_agents_repair_json": {
-    "provider": "ollama",
-    "name": "gemma3:4b"
+    "provider": "",
+    "name": ""
   },
   "model_elder": {
-    "provider": "ollama",
-    "name": "gemma3:4b"
+    "provider": "",
+    "name": ""
   },
   "model_novelist_planning": {
-    "provider": "ollama",
-    "name": "gemma3:4b"
+    "provider": "",
+    "name": ""
   },
   "model_novelist_prose": {
-    "provider": "ollama",
-    "name": "gemma3:4b"
+    "provider": "",
+    "name": ""
   },
   "model_novelist_critic": {
-    "provider": "ollama",
-    "name": "gemma3:4b"
+    "provider": "",
+    "name": ""
   },
   "model_librarian": {
-    "provider": "ollama",
-    "name": "gemma3:4b"
+    "provider": "",
+    "name": ""
   },
   "model_orchestrator_routing": {
-    "provider": "ollama",
-    "name": "gemma3:4b"
+    "provider": "",
+    "name": ""
   },
   "model_orchestrator_synthesis": {
-    "provider": "ollama",
-    "name": "gemma3:4b"
+    "provider": "",
+    "name": ""
   },
   "default_top_k": 20,
   "embedding_model_id": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",

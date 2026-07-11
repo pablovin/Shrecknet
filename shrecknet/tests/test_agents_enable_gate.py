@@ -31,6 +31,7 @@ async def test_enable_agents_requires_operational_shreckllm(monkeypatch) -> None
     monkeypatch.setattr(configurations, "get_settings", fake_get_settings)
     monkeypatch.setattr(agent_feature_gate, "get_settings", fake_get_settings)
     monkeypatch.setattr(agent_feature_gate, "get_all_provider_validations", fake_provider_validations)
+    monkeypatch.setattr(configurations, "get_all_provider_validations", fake_provider_validations)
     monkeypatch.setattr(configurations, "update_settings", fake_update_settings)
 
     with pytest.raises(HTTPException) as exc_info:
@@ -52,7 +53,12 @@ async def test_enable_agents_persists_when_shreckllm_operational(monkeypatch) ->
         return {
             "shreckllm_operational": True,
             "operational_provider_ids": ["openai"],
-            "providers": {},
+            "providers": {
+                "openai": {
+                    "active": True,
+                    "models": [{"model": "gpt-5-nano", "available": True}],
+                }
+            },
             "error": None,
         }
 
@@ -63,13 +69,30 @@ async def test_enable_agents_persists_when_shreckllm_operational(monkeypatch) ->
     monkeypatch.setattr(configurations, "get_settings", fake_get_settings)
     monkeypatch.setattr(agent_feature_gate, "get_settings", fake_get_settings)
     monkeypatch.setattr(agent_feature_gate, "get_all_provider_validations", fake_provider_validations)
+    monkeypatch.setattr(configurations, "get_all_provider_validations", fake_provider_validations)
     monkeypatch.setattr(configurations, "update_settings", fake_update_settings)
     monkeypatch.setattr(configurations, "configure_celery_app", lambda: None)
 
     payload = await configurations._put_config_payload({"enable_ai_agents": True})
 
     assert payload["enable_ai_agents"] is True
-    assert persisted_updates == [{"enable_ai_agents": True}]
+    assert persisted_updates == [
+        {
+            "enable_ai_agents": True,
+            "model_architect_scene_chunking": {"provider": "openai", "name": "gpt-5-nano"},
+            "model_architect_entity_proposal": {"provider": "openai", "name": "gpt-5-nano"},
+            "model_architect_milestone_proposal": {"provider": "openai", "name": "gpt-5-nano"},
+            "model_architect_entity_generation": {"provider": "openai", "name": "gpt-5-nano"},
+            "model_agents_repair_json": {"provider": "openai", "name": "gpt-5-nano"},
+            "model_elder": {"provider": "openai", "name": "gpt-5-nano"},
+            "model_novelist_planning": {"provider": "openai", "name": "gpt-5-nano"},
+            "model_novelist_prose": {"provider": "openai", "name": "gpt-5-nano"},
+            "model_novelist_critic": {"provider": "openai", "name": "gpt-5-nano"},
+            "model_librarian": {"provider": "openai", "name": "gpt-5-nano"},
+            "model_orchestrator_routing": {"provider": "openai", "name": "gpt-5-nano"},
+            "model_orchestrator_synthesis": {"provider": "openai", "name": "gpt-5-nano"},
+        }
+    ]
 
 
 @pytest.mark.asyncio

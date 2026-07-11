@@ -14,11 +14,14 @@ from app.api.deps import get_current_active_admin_or_world_builder, get_current_
 from app.celery_app import configure_celery_app
 from app.core.config_store import (
     BOOTSTRAP_ENV_FIELDS,
+    LLM_TARGET_FIELDS,
+    LLMModelTarget,
     Settings,
     get_settings,
     reload_settings,
     update_settings,
 )
+from app.services.shreckllm_status_service import get_all_provider_validations
 
 router = APIRouter(prefix="/config", tags=["config"])
 logger = logging.getLogger(__name__)
@@ -26,6 +29,63 @@ logger = logging.getLogger(__name__)
 MAX_GOOGLE_SERVICE_ACCOUNT_BYTES = 1024 * 1024
 GOOGLE_SERVICE_DIR = Path("secrets") / "google"
 GOOGLE_SERVICE_FILENAME = "service_account.json"
+
+
+def _first_available_llm_target(provider_validations: dict[str, Any]) -> LLMModelTarget | None:
+    """Return the first active provider/model pair reported usable by shreckLLM."""
+    providers = provider_validations.get("providers")
+    if not isinstance(providers, dict):
+        return None
+
+    for provider_id in provider_validations.get("operational_provider_ids", []):
+        provider_key = str(provider_id)
+        provider = providers.get(provider_key)
+        if not isinstance(provider, dict) or provider.get("active") is not True:
+            continue
+        models = provider.get("models")
+        if not isinstance(models, list):
+            continue
+        for model in models:
+            if isinstance(model, dict) and model.get("available") is True:
+                name = str(model.get("model") or "").strip()
+                if name:
+                    return LLMModelTarget(provider=provider_key, name=name)
+    return None
+
+
+def _reconcile_llm_targets(
+    current: Settings,
+    updates: dict[str, Any],
+    provider_validations: dict[str, Any],
+) -> dict[str, Any]:
+    """Replace only invalid configured targets with a known working target."""
+    fallback = _first_available_llm_target(provider_validations)
+    if fallback is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Enable Agents requires an active shreckLLM provider with an available model.",
+        )
+
+    available_pairs = {
+        (str(provider_id), str(model.get("model")))
+        for provider_id, provider in provider_validations.get("providers", {}).items()
+        if isinstance(provider, dict) and provider.get("active") is True
+        for model in provider.get("models", [])
+        if isinstance(model, dict) and model.get("available") is True and str(model.get("model") or "").strip()
+    }
+    reconciled = dict(updates)
+    for field_name in LLM_TARGET_FIELDS:
+        raw_target = reconciled.get(field_name, getattr(current, field_name, None))
+        if isinstance(raw_target, LLMModelTarget):
+            provider, name = raw_target.provider, raw_target.name
+        elif isinstance(raw_target, dict):
+            provider = str(raw_target.get("provider") or "").strip()
+            name = str(raw_target.get("name") or "").strip()
+        else:
+            provider, name = "", ""
+        if (provider, name) not in available_pairs:
+            reconciled[field_name] = fallback.model_dump()
+    return reconciled
 
 SETTINGS_GROUPS: list[dict[str, Any]] = [
     {
@@ -455,8 +515,11 @@ async def _put_config_payload(payload: dict[str, Any]) -> dict[str, Any]:
         )
     updates = _validate_updates(payload)
     updates = {k: v for k, v in updates.items() if k not in BOOTSTRAP_ENV_FIELDS}
-    if updates.get("enable_ai_agents") is True and not get_settings().enable_ai_agents:
+    current_settings = get_settings()
+    if updates.get("enable_ai_agents") is True and not current_settings.enable_ai_agents:
         await require_shreckllm_operational_for_agents_enable()
+        provider_validations = await get_all_provider_validations(current_settings)
+        updates = _reconcile_llm_targets(current_settings, updates, provider_validations)
     settings = update_settings(updates)
     configure_celery_app()
     filtered = settings.model_dump()

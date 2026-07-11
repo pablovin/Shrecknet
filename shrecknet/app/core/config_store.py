@@ -501,6 +501,11 @@ def update_settings(updates: dict[str, Any]) -> Settings:
             elif isinstance(raw_value, dict):
                 provider = str(raw_value.get("provider") or "").strip()
                 name = str(raw_value.get("name") or "").strip()
+                # A blank target is the intentional pre-provider startup state.
+                # It is filled when Agents is enabled and shreckLLM has a usable model.
+                if not provider and not name:
+                    settings_dict[field_name] = LLMModelTarget(provider="", name="").model_dump()
+                    continue
                 if (provider or "openai") == "openai" and (name or "gpt-5-nano") not in ALLOWED_OPENAI_MODELS:
                     name = "gpt-5-nano"
                 settings_dict[field_name] = LLMModelTarget(

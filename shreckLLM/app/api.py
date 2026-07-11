@@ -568,7 +568,7 @@ async def get_providers_validate(
     service: ChatService = Depends(get_service),
     _user=Depends(get_admin_or_world_builder),
 ) -> dict[str, object]:
-    return await get_providers(service=service, _user=_user)
+    return await get_providers(service=service)
 
 
 @router.get("/providers/{provider_id}/validate", status_code=status.HTTP_200_OK)

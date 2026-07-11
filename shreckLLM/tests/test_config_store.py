@@ -94,7 +94,9 @@ def test_legacy_compose_ollama_url_migrates_to_external_host(monkeypatch, tmp_pa
 
     assert ollama.base_url == EXTERNAL_OLLAMA_BASE_URL
     assert ollama.models == ["custom-model", "another-model"]
-    assert ollama.api_key == "local-secret"
+    assert ollama.api_key is None
+    assert ollama.provider_type == "needs_baseurl"
+    assert ollama.website_url == "https://ollama.com/download"
     assert ollama.kind == "local"
     assert ollama.auth_strategy == "none"
 

@@ -19,8 +19,30 @@ MIGRATION_OLLAMA_CLOUD_MODELS_V4_KEY = "migration_ollama_cloud_models_v4_applied
 MIGRATION_EXTERNAL_OLLAMA_URL_V5_KEY = "migration_external_ollama_url_v5_applied"
 MIGRATION_REMOVE_DEFAULT_PROVIDER_MODEL_V6_KEY = "migration_remove_default_provider_model_v6_applied"
 MIGRATION_PROVIDER_ACTIVE_STATE_V7_KEY = "migration_provider_active_state_v7_applied"
+MIGRATION_PROVIDER_METADATA_V8_KEY = "migration_provider_metadata_v8_applied"
 LEGACY_COMPOSE_OLLAMA_BASE_URL = "http://ollama:11434"
 EXTERNAL_OLLAMA_BASE_URL = "http://host.docker.internal:11434"
+
+# These capabilities and help links are product metadata, rather than values an
+# administrator should be able to override at runtime.
+PROVIDER_METADATA: dict[str, dict[str, str]] = {
+    "openai": {
+        "provider_type": "needs_api",
+        "website_url": "https://platform.openai.com/api-keys",
+    },
+    "anthropic": {
+        "provider_type": "needs_api",
+        "website_url": "https://console.anthropic.com/settings/keys",
+    },
+    "ollama_cloud": {
+        "provider_type": "needs_api",
+        "website_url": "https://ollama.com/settings/keys",
+    },
+    "ollama": {
+        "provider_type": "needs_baseurl",
+        "website_url": "https://ollama.com/download",
+    },
+}
 
 _cache: "RuntimeConfig | None" = None
 _lock = threading.Lock()
@@ -33,6 +55,9 @@ class ProviderDefaults(BaseModel):
     models: list[str] = Field(default_factory=list)
     base_url: str | None = None
     api_key: str | None = None
+    # UI capability metadata.  This is configuration-owned, not user-editable.
+    provider_type: str | None = None
+    website_url: str | None = None
 
 
 class ProviderState(BaseModel):
@@ -138,6 +163,8 @@ def _bootstrap_defaults(settings: Settings) -> RuntimeConfig:
             models=models,
             base_url=raw.get("base_url") if isinstance(raw.get("base_url"), str) or raw.get("base_url") is None else None,
             api_key=raw.get("api_key") if isinstance(raw.get("api_key"), str) or raw.get("api_key") is None else None,
+            provider_type=raw.get("provider_type") if isinstance(raw.get("provider_type"), str) else None,
+            website_url=raw.get("website_url") if isinstance(raw.get("website_url"), str) else None,
         )
         provider_states[provider_id] = ProviderState(active=False)
 
@@ -252,6 +279,31 @@ def _normalize_provider_active_state(payload: dict[str, Any]) -> tuple[dict[str,
     if normalized != states:
         changed = True
     return {**payload, "provider_states": normalized}, changed
+
+
+def _apply_provider_metadata(payload: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+    providers = payload.get("provider_defaults")
+    if not isinstance(providers, dict):
+        return payload, False
+    normalized: dict[str, Any] = {}
+    changed = False
+    for provider_id, raw in providers.items():
+        if not isinstance(raw, dict):
+            normalized[provider_id] = raw
+            continue
+        row = dict(raw)
+        metadata = PROVIDER_METADATA.get(provider_id)
+        if metadata:
+            for key, value in metadata.items():
+                if row.get(key) != value:
+                    row[key] = value
+                    changed = True
+            # Ollama is deliberately unauthenticated; remove any old stored key.
+            if provider_id == "ollama" and row.get("api_key") is not None:
+                row["api_key"] = None
+                changed = True
+        normalized[provider_id] = row
+    return {**payload, "provider_defaults": normalized}, changed
 
 
 def _has_legacy_provider_valid_state(payload: dict[str, Any]) -> bool:
@@ -675,6 +727,32 @@ def load_runtime_config() -> RuntimeConfig:
             )
             conn.commit()
             merged = {**updated_payload, MIGRATION_PROVIDER_ACTIVE_STATE_V7_KEY: True}
+
+        provider_metadata_migration_applied = bool(current.get(MIGRATION_PROVIDER_METADATA_V8_KEY))
+        if not provider_metadata_migration_applied:
+            enriched_merged, changed = _apply_provider_metadata(merged)
+            runtime = RuntimeConfig(**enriched_merged)
+            updated_payload = runtime.model_dump()
+            ts = _now()
+            if changed:
+                conn.executemany(
+                    f"""
+                    INSERT INTO {CONFIG_TABLE} (key, value, updated_at)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at
+                    """,
+                    [(k, _serialize(v), ts) for k, v in updated_payload.items()],
+                )
+            conn.execute(
+                f"""
+                INSERT INTO {CONFIG_TABLE} (key, value, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at
+                """,
+                (MIGRATION_PROVIDER_METADATA_V8_KEY, _serialize(True), ts),
+            )
+            conn.commit()
+            merged = {**updated_payload, MIGRATION_PROVIDER_METADATA_V8_KEY: True}
     finally:
         conn.close()
 

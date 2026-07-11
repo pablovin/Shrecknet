@@ -126,6 +126,8 @@ async def _validate_provider_models_before_save(
         models=[str(model) for model in configured_models],
         base_url=candidate.base_url,
         api_key=candidate.api_key,
+        provider_type=candidate.provider_type,
+        website_url=candidate.website_url,
     )
 
 
@@ -139,6 +141,10 @@ async def _update_provider(
     if current is None:
         raise HTTPException(status_code=404, detail=f"provider not found: {provider_key}")
     updates = payload.model_dump(exclude_none=True)
+    if current.provider_type == "needs_api" and "base_url" in updates:
+        raise HTTPException(status_code=400, detail="base_url is managed by the provider default and cannot be changed")
+    if current.provider_type == "needs_baseurl" and "api_key" in updates:
+        raise HTTPException(status_code=400, detail="api_key is not supported for this provider")
     providers = service._runtime.provider_defaults.copy()
     candidate = ProviderDefaults(
         kind=str(updates.get("kind", current.kind)).strip() or current.kind,
@@ -147,6 +153,8 @@ async def _update_provider(
         models=updates.get("models", current.models),
         base_url=updates.get("base_url", current.base_url),
         api_key=updates.get("api_key", current.api_key),
+        provider_type=current.provider_type,
+        website_url=current.website_url,
     )
     try:
         providers[provider_key] = await _validate_provider_models_before_save(provider_key, candidate, service)
@@ -342,18 +350,13 @@ async def put_openai_token(
             kind="cloud",
             auth_strategy="api_key",
             models=["gpt-5-nano"],
-            base_url=None,
+            base_url="https://api.openai.com/v1",
             api_key=payload.api_key,
+            provider_type="needs_api",
+            website_url="https://platform.openai.com/api-keys",
         )
     else:
-        openai_defaults = ProviderDefaults(
-            kind=openai_defaults.kind,
-            auth_strategy=openai_defaults.auth_strategy,
-            healthcheck_path=openai_defaults.healthcheck_path,
-            models=openai_defaults.models,
-            base_url=openai_defaults.base_url,
-            api_key=payload.api_key,
-        )
+        openai_defaults = openai_defaults.model_copy(update={"api_key": payload.api_key})
     providers["openai"] = openai_defaults
 
     update_runtime_config({"provider_defaults": providers})
@@ -379,18 +382,13 @@ async def delete_openai_token(
             kind="cloud",
             auth_strategy="api_key",
             models=["gpt-5-nano"],
-            base_url=None,
+            base_url="https://api.openai.com/v1",
             api_key="",
+            provider_type="needs_api",
+            website_url="https://platform.openai.com/api-keys",
         )
     else:
-        openai_defaults = ProviderDefaults(
-            kind=openai_defaults.kind,
-            auth_strategy=openai_defaults.auth_strategy,
-            healthcheck_path=openai_defaults.healthcheck_path,
-            models=openai_defaults.models,
-            base_url=openai_defaults.base_url,
-            api_key="",
-        )
+        openai_defaults = openai_defaults.model_copy(update={"api_key": ""})
     providers["openai"] = openai_defaults
 
     update_runtime_config({"provider_defaults": providers})
@@ -432,16 +430,11 @@ async def put_anthropic_token(
             models=["claude-3-haiku-20240307", "claude-opus-4-1-20250805"],
             base_url="https://api.anthropic.com",
             api_key=payload.api_key,
+            provider_type="needs_api",
+            website_url="https://console.anthropic.com/settings/keys",
         )
     else:
-        current = ProviderDefaults(
-            kind=current.kind,
-            auth_strategy=current.auth_strategy,
-            healthcheck_path=current.healthcheck_path,
-            models=current.models,
-            base_url=current.base_url,
-            api_key=payload.api_key,
-        )
+        current = current.model_copy(update={"api_key": payload.api_key})
     providers["anthropic"] = current
     update_runtime_config({"provider_defaults": providers})
     reload_runtime_config()
@@ -465,16 +458,11 @@ async def delete_anthropic_token(
             models=["claude-3-haiku-20240307", "claude-opus-4-1-20250805"],
             base_url="https://api.anthropic.com",
             api_key="",
+            provider_type="needs_api",
+            website_url="https://console.anthropic.com/settings/keys",
         )
     else:
-        current = ProviderDefaults(
-            kind=current.kind,
-            auth_strategy=current.auth_strategy,
-            healthcheck_path=current.healthcheck_path,
-            models=current.models,
-            base_url=current.base_url,
-            api_key="",
-        )
+        current = current.model_copy(update={"api_key": ""})
     providers["anthropic"] = current
     update_runtime_config({"provider_defaults": providers})
     reload_runtime_config()
@@ -499,16 +487,11 @@ async def put_ollama_cloud_token(
             models=PROVIDER_MODEL_FALLBACKS["ollama_cloud"],
             base_url="https://ollama.com",
             api_key=payload.api_key,
+            provider_type="needs_api",
+            website_url="https://ollama.com/settings/keys",
         )
     else:
-        current = ProviderDefaults(
-            kind=current.kind,
-            auth_strategy=current.auth_strategy,
-            healthcheck_path=current.healthcheck_path,
-            models=current.models,
-            base_url=current.base_url,
-            api_key=payload.api_key,
-        )
+        current = current.model_copy(update={"api_key": payload.api_key})
     providers["ollama_cloud"] = current
     update_runtime_config({"provider_defaults": providers})
     reload_runtime_config()
@@ -532,16 +515,11 @@ async def delete_ollama_cloud_token(
             models=PROVIDER_MODEL_FALLBACKS["ollama_cloud"],
             base_url="https://ollama.com",
             api_key="",
+            provider_type="needs_api",
+            website_url="https://ollama.com/settings/keys",
         )
     else:
-        current = ProviderDefaults(
-            kind=current.kind,
-            auth_strategy=current.auth_strategy,
-            healthcheck_path=current.healthcheck_path,
-            models=current.models,
-            base_url=current.base_url,
-            api_key="",
-        )
+        current = current.model_copy(update={"api_key": ""})
     providers["ollama_cloud"] = current
     update_runtime_config({"provider_defaults": providers})
     reload_runtime_config()
@@ -688,6 +666,8 @@ async def add_provider_model(
         models=updated_models,
         base_url=current.base_url,
         api_key=current.api_key,
+        provider_type=current.provider_type,
+        website_url=current.website_url,
     )
     try:
         providers[provider_key] = await _validate_provider_models_before_save(provider_key, candidate, service)
@@ -732,6 +712,8 @@ async def remove_provider_model(
         models=remaining_models,
         base_url=current.base_url,
         api_key=current.api_key,
+        provider_type=current.provider_type,
+        website_url=current.website_url,
     )
 
     update_runtime_config({"provider_defaults": providers})

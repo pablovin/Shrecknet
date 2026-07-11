@@ -17,23 +17,31 @@
   "bootstrap_provider_defaults": {
     "ollama": {
       "models": ["gemma4:e2b"],
-      "base_url": "",
-      "api_key": null
+      "base_url": "http://host.docker.internal:11434",
+      "api_key": null,
+      "provider_type": "needs_baseurl",
+      "website_url": "https://ollama.com/download"
     },
     "ollama_cloud": {
       "models": ["gemma4:31b"],
       "base_url": "https://ollama.com",
-      "api_key": ""
+      "api_key": "",
+      "provider_type": "needs_api",
+      "website_url": "https://ollama.com/settings/keys"
     },
     "openai": {
       "models": ["gpt-5-nano", "gpt-5", "gpt-4o-mini"],
-      "base_url": null,
-      "api_key": ""
+      "base_url": "https://api.openai.com/v1",
+      "api_key": "",
+      "provider_type": "needs_api",
+      "website_url": "https://platform.openai.com/api-keys"
     },
     "anthropic": {
       "models": ["claude-3-haiku-20240307", "claude-opus-4-1-20250805"],
       "base_url": "https://api.anthropic.com",
-      "api_key": ""
+      "api_key": "",
+      "provider_type": "needs_api",
+      "website_url": "https://console.anthropic.com/settings/keys"
     }
   },
   "bootstrap_memory_ttl_seconds": 3600,

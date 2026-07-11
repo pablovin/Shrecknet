@@ -74,6 +74,30 @@ async def test_provider_status_includes_base_url_and_api_key_presence() -> None:
 
 
 @pytest.mark.asyncio
+async def test_provider_status_exposes_ui_capabilities_and_help_link() -> None:
+    service = _service(
+        RuntimeConfig(
+            provider_defaults={
+                "ollama": ProviderDefaults(
+                    kind="local",
+                    models=["gemma3:4b"],
+                    base_url="http://localhost:11434",
+                    provider_type="needs_baseurl",
+                    website_url="https://ollama.com/download",
+                )
+            },
+            provider_states={"ollama": ProviderState(active=True)},
+        ),
+        [FakeAdapter("ollama", ["gemma3:4b"])],
+    )
+
+    payload = await service.provider_validation_status("ollama")
+
+    assert payload["provider_type"] == "needs_baseurl"
+    assert payload["website_url"] == "https://ollama.com/download"
+
+
+@pytest.mark.asyncio
 async def test_models_only_returns_active_providers() -> None:
     service = _service(
         RuntimeConfig(

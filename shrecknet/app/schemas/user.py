@@ -4,7 +4,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
 
-from app.models.user import UserRole
+from app.models.user import UserApprovalStatus, UserRole
+from app.core.config_store import UserCreationMode
 
 
 class UserBase(BaseModel):
@@ -14,6 +15,9 @@ class UserBase(BaseModel):
     timezone: str
     role: UserRole = UserRole.PLAYER
     avatar_url: str | None = None
+    approval_status: UserApprovalStatus = UserApprovalStatus.APPROVED
+    approval_decided_by_user_id: int | None = None
+    approval_decided_at: datetime | None = None
     entity_ids: list[int] = Field(default_factory=list)
 
 
@@ -87,3 +91,9 @@ class UserAvailabilityResponse(BaseModel):
 
 class UserBootstrapStatus(BaseModel):
     has_users: bool
+
+
+class PublicRegistrationConfig(BaseModel):
+    """The only registration setting safe to disclose before authentication."""
+
+    user_creation_mode: UserCreationMode

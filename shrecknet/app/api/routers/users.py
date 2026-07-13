@@ -32,7 +32,7 @@ from app.schemas.user import (
 )
 from app.services.audit_service import AuditService
 from app.services.media_service import ImageValidationError, MediaService
-from app.services.user_service import UserService
+from app.services.user_service import UserCreationStoppedError, UserService
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -55,6 +55,10 @@ async def register_user(
 ) -> UserRead:
     try:
         user = await service.register_user(payload.model_dump())
+    except UserCreationStoppedError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)
+        ) from exc
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail=str(exc)
@@ -109,6 +113,85 @@ async def list_users(
 ) -> list[UserRead]:
     users = await service.list_users()
     return [UserRead.model_validate(user) for user in users]
+
+
+@router.get(
+    "/pending",
+    response_model=list[UserRead],
+    dependencies=[Depends(require_roles(UserRole.ADMIN))],
+)
+async def list_pending_users(
+    service: UserService = Depends(get_user_service),
+) -> list[UserRead]:
+    users = await service.list_pending_users()
+    return [UserRead.model_validate(user) for user in users]
+
+
+async def _decide_pending_user(
+    user_id: int,
+    *,
+    approved: bool,
+    service: UserService,
+    current_user: User,
+    audit_service: AuditService,
+) -> UserRead:
+    user = await service.get_user(user_id)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
+        )
+    try:
+        updated = await service.decide_registration(
+            user, approved=approved, actor=current_user
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=str(exc)
+        ) from exc
+
+    decision = "approved" if approved else "rejected"
+    await audit_service.log_action(
+        actor_type=AuditActorType.USER,
+        actor_user_id=current_user.id,
+        action=AuditAction.UPDATE,
+        entity_type=AuditEntityType.USER,
+        entity_id=user_id,
+        payload={"approval_status": decision},
+        description=f"User registration {decision}",
+    )
+    return UserRead.model_validate(updated)
+
+
+@router.post("/{user_id}/approve", response_model=UserRead)
+async def approve_pending_user(
+    user_id: int,
+    service: UserService = Depends(get_user_service),
+    current_user: User = Depends(require_roles(UserRole.ADMIN)),
+    audit_service: AuditService = Depends(get_audit_service),
+) -> UserRead:
+    return await _decide_pending_user(
+        user_id,
+        approved=True,
+        service=service,
+        current_user=current_user,
+        audit_service=audit_service,
+    )
+
+
+@router.post("/{user_id}/reject", response_model=UserRead)
+async def reject_pending_user(
+    user_id: int,
+    service: UserService = Depends(get_user_service),
+    current_user: User = Depends(require_roles(UserRole.ADMIN)),
+    audit_service: AuditService = Depends(get_audit_service),
+) -> UserRead:
+    return await _decide_pending_user(
+        user_id,
+        approved=False,
+        service=service,
+        current_user=current_user,
+        audit_service=audit_service,
+    )
 
 
 @router.get("/me", response_model=UserRead)

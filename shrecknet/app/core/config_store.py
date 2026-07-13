@@ -6,6 +6,7 @@ import os
 import sqlite3
 import threading
 from datetime import datetime, timezone
+from enum import Enum
 from pathlib import Path
 from typing import Any
 
@@ -66,6 +67,12 @@ class LLMModelTarget(BaseModel):
     def from_legacy(cls, model_name: str) -> "LLMModelTarget":
         normalized = str(model_name or "").strip() or "gpt-5-nano"
         return cls(provider="openai", name=normalized)
+
+
+class UserCreationMode(str, Enum):
+    STOPPED = "stopped"
+    MODERATED = "moderated"
+    ALLOWED = "allowed"
 
 
 def _can_write_directory(path: Path) -> bool:
@@ -161,6 +168,7 @@ class Settings(BaseSettings):
     shreckllm_request_timeout_s: float = 60.0
     shreckllm_max_retries: int = 2
     enable_ai_agents: bool = False
+    user_creation_mode: UserCreationMode = UserCreationMode.MODERATED
     model_architect_scene_chunking: LLMModelTarget = Field(
         default_factory=lambda: LLMModelTarget(provider="openai", name="gpt-5")
     )

@@ -21,6 +21,10 @@ from app.services.user_service import UserService
 
 def _reset_runtime_state() -> None:
     config_store._settings_cache = None
+    # The data-directory resolver is also cached.  Clear it before each test
+    # that changes SHRECKNET_DATA_DIR so test settings never reach the local
+    # runtime database.
+    config_store._data_dir_cache = None
     db_session._engine = None
     db_session._sessionmaker = None
     db_session._engine_key = None
@@ -195,6 +199,7 @@ async def test_graphrag_index_status_uses_config_store_settings(
             "embedding_dimension": 123,
         }
     )
+    assert (tmp_path / "shrecknet_config.db").is_file()
 
     async def _fake_ensure_vector_index(self, index_name: str) -> bool:
         assert index_name == "entity_text_vec_idx"

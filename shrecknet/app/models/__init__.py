@@ -23,12 +23,13 @@ from app.models.ontology import (
     PropertyDataType,
 )
 from app.models.personal_companion_agent import PersonalCompanionAgent
-from app.models.user import User, UserRole, user_entities
+from app.models.user import User, UserApprovalStatus, UserRole, user_entities
 from app.models.world import World
 
 __all__ = [
     "User",
     "UserRole",
+    "UserApprovalStatus",
     "user_entities",
     "World",
     "Ontology",

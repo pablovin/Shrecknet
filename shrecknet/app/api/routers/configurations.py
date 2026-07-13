@@ -22,6 +22,7 @@ from app.core.config_store import (
     update_settings,
 )
 from app.services.shreckllm_status_service import get_all_provider_validations
+from app.schemas.user import PublicRegistrationConfig
 
 router = APIRouter(prefix="/config", tags=["config"])
 logger = logging.getLogger(__name__)
@@ -95,6 +96,7 @@ SETTINGS_GROUPS: list[dict[str, Any]] = [
             "app_name",
             "debug",
             "enable_ai_agents",
+            "user_creation_mode",
             "cors_allow_origins",
             "cors_allow_origin_regex",
             "cors_allow_credentials",
@@ -215,6 +217,7 @@ FIELD_UI_META: dict[str, dict[str, Any]] = {
     "app_name": {"type": "string", "help": "Application name shown in logs and diagnostics."},
     "debug": {"type": "boolean", "help": "Enable debug behavior and verbose internals."},
     "enable_ai_agents": {"type": "boolean", "label": "Enable Agents", "help": "Global toggle for agent jobs. Can only be turned on when shreckLLM is operational."},
+    "user_creation_mode": {"type": "enum", "label": "User creation mode", "options": ["stopped", "moderated", "allowed"], "help": "Controls whether new accounts are blocked, require approval, or are immediately approved."},
     "cors_allow_origins": {"type": "string_list", "multiline": True, "help": "Allowed CORS origins."},
     "cors_allow_origin_regex": {"type": "string", "help": "Regex for allowed dynamic origins."},
     "cors_allow_credentials": {"type": "boolean", "help": "Allow CORS credentials."},
@@ -407,6 +410,12 @@ def _get_config_payload() -> dict[str, Any]:
     return payload
 
 
+@router.get("/public", response_model=PublicRegistrationConfig)
+def get_public_registration_config() -> PublicRegistrationConfig:
+    """Expose the registration mode without disclosing protected configuration."""
+    return PublicRegistrationConfig(user_creation_mode=get_settings().user_creation_mode)
+
+
 def _google_service_account_metadata(settings: Settings) -> dict[str, Any]:
     path = _google_service_account_path(settings)
     exists = path.exists() and path.is_file()
@@ -453,6 +462,7 @@ def get_config_schema() -> dict[str, Any]:
 
     group_definitions: list[dict[str, Any]] = [
         {"id": "app_runtime", "label": "App Runtime", "fields": ["app_name", "debug", "event_publisher_mode", "event_webhook_url"]},
+        {"id": "user_access", "label": "User Access", "fields": ["user_creation_mode"]},
         {"id": "media_uploads", "label": "Media & Uploads", "fields": ["media_root", "media_base_url", "media_public_url", "max_image_upload_bytes", "image_max_width", "image_max_height", "max_pdf_upload_bytes", "library_max_pdf_bytes"]},
         {"id": "background_workers", "label": "Background Workers", "fields": ["celery_task_always_eager", "celery_expires_architect_seconds", "celery_expires_novelist_seconds", "celery_expires_reconciliation_seconds", "celery_stale_reaper_enabled", "celery_stale_reaper_interval_seconds", "celery_stale_reaper_max_task_age_seconds"]},
         {"id": "ai_agents", "label": "AI Agents", "fields": ["enable_ai_agents", "shreckllm_base_url"]},

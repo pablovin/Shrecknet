@@ -3,7 +3,9 @@ from __future__ import annotations
 from enum import Enum
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Column, Enum as SqlEnum, ForeignKey, Integer, String, Table
+from datetime import datetime
+
+from sqlalchemy import Column, DateTime, Enum as SqlEnum, ForeignKey, Integer, String, Table
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -19,6 +21,17 @@ class UserRole(str, Enum):
     WORLD_BUILDER = "world_builder"
     WRITER = "writer"
     PLAYER = "player"
+
+
+class UserApprovalStatus(str, Enum):
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+
+
+def _enum_values(enum_class: type[Enum]) -> list[str]:
+    """Persist enum values, rather than Python member names, in the database."""
+    return [member.value for member in enum_class]
 
 
 user_entities = Table(
@@ -52,6 +65,17 @@ class User(Base):
         SqlEnum(UserRole), nullable=False, default=UserRole.PLAYER
     )
     avatar_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    approval_status: Mapped[UserApprovalStatus] = mapped_column(
+        SqlEnum(UserApprovalStatus, values_callable=_enum_values),
+        nullable=False,
+        default=UserApprovalStatus.APPROVED,
+    )
+    approval_decided_by_user_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    approval_decided_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     entities: Mapped[list["OntologyEntity"]] = relationship(
         "OntologyEntity",

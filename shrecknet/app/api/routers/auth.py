@@ -42,7 +42,7 @@ async def issue_token(
     if user is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect username/email or password",
+            detail="Incorrect username/email or password, or account is not approved",
             headers={"WWW-Authenticate": "Bearer"},
         )
     role = user.role.value if hasattr(user.role, "value") else str(user.role)

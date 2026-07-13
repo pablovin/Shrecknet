@@ -239,6 +239,42 @@ def migrate_ontology_rpg_system_column(sync_conn) -> None:
         text("ALTER TABLE ontologies ADD COLUMN rpg_system VARCHAR(255)")
     )
 
+
+def migrate_user_approval_columns(sync_conn) -> None:
+    """Add persisted registration approval state and approve legacy users."""
+    inspector = inspect(sync_conn)
+    if "users" not in inspector.get_table_names():
+        return
+
+    columns = {column["name"] for column in inspector.get_columns("users")}
+    if "approval_status" not in columns:
+        logger.info("Adding approval_status column to users table")
+        sync_conn.execute(
+            text(
+                "ALTER TABLE users ADD COLUMN approval_status "
+                "VARCHAR(20) NOT NULL DEFAULT 'approved'"
+            )
+        )
+    if "approval_decided_by_user_id" not in columns:
+        logger.info("Adding approval_decided_by_user_id column to users table")
+        sync_conn.execute(
+            text("ALTER TABLE users ADD COLUMN approval_decided_by_user_id INTEGER")
+        )
+    if "approval_decided_at" not in columns:
+        logger.info("Adding approval_decided_at column to users table")
+        sync_conn.execute(
+            text("ALTER TABLE users ADD COLUMN approval_decided_at DATETIME")
+        )
+
+    # Rows created before this feature must remain able to authenticate.
+    sync_conn.execute(
+        text(
+            "UPDATE users SET approval_status = 'approved' "
+            "WHERE approval_status IS NULL OR approval_status NOT IN "
+            "('pending', 'approved', 'rejected')"
+        )
+    )
+
 async def migrate_novelist_runs(engine: AsyncEngine) -> None:
     """Ensure novelist_runs table exists when upgrading."""
     async with engine.begin() as conn:

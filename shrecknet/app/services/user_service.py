@@ -1,14 +1,19 @@
 from __future__ import annotations
 
+import asyncio
+from datetime import datetime, timezone
 from typing import Iterable
 
 from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import get_password_hash, verify_password
+from app.core.config_store import UserCreationMode, get_settings
 from app.models.ontology import OntologyEntity
-from app.models.user import User, UserRole, user_entities
+from app.models.user import User, UserApprovalStatus, UserRole, user_entities
 from app.repositories.user_repository import UserRepository
+
+_registration_lock = asyncio.Lock()
 
 
 class UserService:
@@ -19,6 +24,12 @@ class UserService:
         self.repository = UserRepository(session)
 
     async def register_user(self, data: dict) -> User:
+        # Prevent two in-process requests from both observing an empty user table.
+        # The first account is a bootstrap escape hatch and must be the sole admin.
+        async with _registration_lock:
+            return await self._register_user(data)
+
+    async def _register_user(self, data: dict) -> User:
         username = data["username"]
         email = data["email"]
         password = data.pop("password")
@@ -27,6 +38,18 @@ class UserService:
         is_first_user = not await self.repository.has_any()
         if is_first_user:
             data["role"] = UserRole.ADMIN
+            data["approval_status"] = UserApprovalStatus.APPROVED
+        else:
+            mode = get_settings().user_creation_mode
+            if mode == UserCreationMode.STOPPED:
+                raise UserCreationStoppedError("User creation is currently stopped")
+            # Self-registration never grants an elevated role.
+            data["role"] = UserRole.PLAYER
+            data["approval_status"] = (
+                UserApprovalStatus.PENDING
+                if mode == UserCreationMode.MODERATED
+                else UserApprovalStatus.APPROVED
+            )
 
         await self._ensure_unique_constraints(username=username, email=email)
 
@@ -61,6 +84,11 @@ class UserService:
         if not verify_password(password, user.hashed_password):
             return None
 
+        # SQLAlchemy column defaults are populated on flush, so preserve legacy
+        # in-memory model compatibility while persisted rows are always explicit.
+        if (user.approval_status or UserApprovalStatus.APPROVED) != UserApprovalStatus.APPROVED:
+            return None
+
         return user
 
     async def list_users(self) -> list[User]:
@@ -69,6 +97,10 @@ class UserService:
 
     async def list_users_by_ids(self, user_ids: Iterable[int]) -> list[User]:
         users = await self.repository.list_by_ids(user_ids)
+        return list(users)
+
+    async def list_pending_users(self) -> list[User]:
+        users = await self.repository.list_by_approval_status(UserApprovalStatus.PENDING)
         return list(users)
 
     async def has_any_users(self) -> bool:
@@ -120,6 +152,32 @@ class UserService:
         await self.repository.remove(user)
         await self.session.commit()
 
+    async def decide_registration(
+        self,
+        user: User,
+        *,
+        approved: bool,
+        actor: User,
+    ) -> User:
+        if user.approval_status != UserApprovalStatus.PENDING:
+            raise ValueError("Only pending users can be approved or rejected")
+
+        updated = await self.repository.update(
+            user,
+            {
+                "approval_status": (
+                    UserApprovalStatus.APPROVED
+                    if approved
+                    else UserApprovalStatus.REJECTED
+                ),
+                "approval_decided_by_user_id": actor.id,
+                "approval_decided_at": datetime.now(timezone.utc),
+            },
+        )
+        await self.session.commit()
+        await self.session.refresh(updated, attribute_names=["entities"])
+        return updated
+
     async def _apply_entity_assignments(
         self, user: User, entity_ids: Iterable[int]
     ) -> None:
@@ -155,3 +213,7 @@ class UserService:
             existing_email = await self.repository.get_by_email(email)
             if existing_email:
                 raise ValueError("Email already exists")
+
+
+class UserCreationStoppedError(PermissionError):
+    """Raised when public registration is disabled by global configuration."""

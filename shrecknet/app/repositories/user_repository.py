@@ -6,7 +6,7 @@ from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.user import User
+from app.models.user import User, UserApprovalStatus
 from app.repositories.base import BaseRepository
 
 
@@ -28,6 +28,17 @@ class UserRepository(BaseRepository):
             select(User)
             .options(selectinload(User.entities))
             .where(User.id.in_(ids))
+        )
+        return result.scalars().all()
+
+    async def list_by_approval_status(
+        self, approval_status: UserApprovalStatus
+    ) -> Sequence[User]:
+        result = await self.session.execute(
+            select(User)
+            .options(selectinload(User.entities))
+            .where(User.approval_status == approval_status)
+            .order_by(User.id)
         )
         return result.scalars().all()
 

@@ -38,11 +38,17 @@ async def issue_token(
             detail="username/email and password are required",
         )
 
-    user = await service.authenticate_user(str(identifier), str(password))
+    user, failure_code = await service.authenticate_user_with_reason(str(identifier), str(password))
     if user is None:
+        messages = {
+            "invalid_credentials": "Incorrect username/email or password.",
+            "pending_approval": "Your account is waiting for moderation approval.",
+            "account_not_approved": "Your account is not approved for sign-in.",
+            "email_not_verified": "Confirm your email address before signing in.",
+        }
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect username/email or password, or account is not approved",
+            status_code=(status.HTTP_401_UNAUTHORIZED if failure_code == "invalid_credentials" else status.HTTP_403_FORBIDDEN),
+            detail={"code": failure_code or "invalid_credentials", "message": messages.get(failure_code or "", "Unable to sign in.")},
             headers={"WWW-Authenticate": "Bearer"},
         )
     role = user.role.value if hasattr(user.role, "value") else str(user.role)

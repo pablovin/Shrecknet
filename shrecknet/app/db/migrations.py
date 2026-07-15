@@ -275,6 +275,57 @@ def migrate_user_approval_columns(sync_conn) -> None:
         )
     )
 
+
+def migrate_user_email_verification_columns(sync_conn) -> None:
+    """Add optional email-verification state without changing existing users."""
+    inspector = inspect(sync_conn)
+    if "users" not in inspector.get_table_names():
+        return
+    columns = {column["name"] for column in inspector.get_columns("users")}
+    additions = {
+        "email_verification_token_hash": "VARCHAR(128)",
+        "email_verification_expires_at": "DATETIME",
+        "email_verified_at": "DATETIME",
+    }
+    for name, definition in additions.items():
+        if name not in columns:
+            logger.info("Adding %s column to users table", name)
+            sync_conn.execute(text(f"ALTER TABLE users ADD COLUMN {name} {definition}"))
+
+
+def migrate_existing_users_email_verified(sync_conn) -> None:
+    """One-time opt-in migration for accounts created before verification was required."""
+    inspector = inspect(sync_conn)
+    if "users" not in inspector.get_table_names():
+        return
+    sync_conn.execute(
+        text(
+            "CREATE TABLE IF NOT EXISTS schema_migration_markers "
+            "(name VARCHAR(128) PRIMARY KEY, applied_at DATETIME NOT NULL)"
+        )
+    )
+    marker = "mark_existing_users_email_verified_v1"
+    applied = sync_conn.execute(
+        text("SELECT 1 FROM schema_migration_markers WHERE name = :name"),
+        {"name": marker},
+    ).first()
+    if applied:
+        return
+    result = sync_conn.execute(
+        text(
+            "UPDATE users SET email_verified_at = CURRENT_TIMESTAMP "
+            "WHERE email_verified_at IS NULL"
+        )
+    )
+    sync_conn.execute(
+        text(
+            "INSERT INTO schema_migration_markers (name, applied_at) "
+            "VALUES (:name, CURRENT_TIMESTAMP)"
+        ),
+        {"name": marker},
+    )
+    logger.info("Marked %s existing user account(s) as email verified", result.rowcount)
+
 async def migrate_novelist_runs(engine: AsyncEngine) -> None:
     """Ensure novelist_runs table exists when upgrading."""
     async with engine.begin() as conn:

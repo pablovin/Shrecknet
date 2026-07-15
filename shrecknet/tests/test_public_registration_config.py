@@ -19,4 +19,7 @@ async def test_public_registration_config_is_available_without_authentication(
     response = await client.get("/config/public")
 
     assert response.status_code == 200
-    assert response.json() == {"user_creation_mode": "moderated"}
+    assert response.json() == {
+        "user_creation_mode": "moderated",
+        "email_verification_required": False,
+    }

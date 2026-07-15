@@ -169,6 +169,19 @@ class Settings(BaseSettings):
     shreckllm_max_retries: int = 2
     enable_ai_agents: bool = False
     user_creation_mode: UserCreationMode = UserCreationMode.MODERATED
+    email_verification_enabled: bool = False
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_username: str = ""
+    smtp_password: str = ""
+    smtp_tls_mode: str = "starttls"
+    smtp_sender_email: str = ""
+    smtp_sender_name: str = "Shrecknet"
+    smtp_service_token: str = ""
+    email_verification_frontend_url: str = ""
+    email_verification_subject: str = "Confirm your Shrecknet account"
+    email_verification_text_template: str = "Hello {{username}},\n\nConfirm your email address: {{verification_url}}"
+    email_verification_html_template: str = "<p>Hello {{username}},</p><p><a href=\"{{verification_url}}\">Confirm your email address</a></p>"
     model_architect_scene_chunking: LLMModelTarget = Field(
         default_factory=lambda: LLMModelTarget(provider="openai", name="gpt-5")
     )

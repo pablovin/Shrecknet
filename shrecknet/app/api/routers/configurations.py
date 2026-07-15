@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import secrets
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +23,7 @@ from app.core.config_store import (
     update_settings,
 )
 from app.services.shreckllm_status_service import get_all_provider_validations
+from app.services.email_service import EmailDeliveryError, EmailService, get_email_service_status
 from app.schemas.user import PublicRegistrationConfig
 
 router = APIRouter(prefix="/config", tags=["config"])
@@ -30,6 +32,7 @@ logger = logging.getLogger(__name__)
 MAX_GOOGLE_SERVICE_ACCOUNT_BYTES = 1024 * 1024
 GOOGLE_SERVICE_DIR = Path("secrets") / "google"
 GOOGLE_SERVICE_FILENAME = "service_account.json"
+SECRET_CONFIG_FIELDS = {"smtp_password", "smtp_service_token"}
 
 
 def _first_available_llm_target(provider_validations: dict[str, Any]) -> LLMModelTarget | None:
@@ -97,6 +100,19 @@ SETTINGS_GROUPS: list[dict[str, Any]] = [
             "debug",
             "enable_ai_agents",
             "user_creation_mode",
+            "email_verification_enabled",
+            "email_service_configured",
+            "smtp_host",
+            "smtp_port",
+            "smtp_username",
+            "smtp_password",
+            "smtp_tls_mode",
+            "smtp_sender_email",
+            "smtp_sender_name",
+            "email_verification_frontend_url",
+            "email_verification_subject",
+            "email_verification_text_template",
+            "email_verification_html_template",
             "cors_allow_origins",
             "cors_allow_origin_regex",
             "cors_allow_credentials",
@@ -218,6 +234,20 @@ FIELD_UI_META: dict[str, dict[str, Any]] = {
     "debug": {"type": "boolean", "help": "Enable debug behavior and verbose internals."},
     "enable_ai_agents": {"type": "boolean", "label": "Enable Agents", "help": "Global toggle for agent jobs. Can only be turned on when shreckLLM is operational."},
     "user_creation_mode": {"type": "enum", "label": "User creation mode", "options": ["stopped", "moderated", "allowed"], "help": "Controls whether new accounts are blocked, require approval, or are immediately approved."},
+    "email_verification_enabled": {"type": "boolean", "label": "Require email verification", "help": "Require public registrants to confirm their email before sign-in."},
+    "email_service_configured": {"type": "boolean", "frontend_editable": False, "change_impact": "locked", "label": "Email Service Configured", "help": "Whether Shrecknet can currently connect to and authenticate with the configured SMTP server."},
+    "smtp_host": {"type": "string", "label": "SMTP host"},
+    "smtp_port": {"type": "integer", "label": "SMTP port"},
+    "smtp_username": {"type": "string", "label": "SMTP username"},
+    "smtp_password": {"type": "string", "label": "SMTP password", "secret": True},
+    "smtp_tls_mode": {"type": "enum", "label": "SMTP TLS", "options": ["starttls", "ssl", "none"]},
+    "smtp_sender_email": {"type": "string", "label": "Sender email"},
+    "smtp_sender_name": {"type": "string", "label": "Sender name"},
+    "smtp_service_token": {"type": "string", "label": "SMTP service token", "secret": True, "frontend_editable": False, "change_impact": "locked", "help": "Credential used by trusted services to submit email through Shrecknet."},
+    "email_verification_frontend_url": {"type": "string", "label": "Verification page URL"},
+    "email_verification_subject": {"type": "string", "label": "Verification email subject"},
+    "email_verification_text_template": {"type": "string", "label": "Verification text template", "multiline": True},
+    "email_verification_html_template": {"type": "string", "label": "Verification HTML template", "multiline": True},
     "cors_allow_origins": {"type": "string_list", "multiline": True, "help": "Allowed CORS origins."},
     "cors_allow_origin_regex": {"type": "string", "help": "Regex for allowed dynamic origins."},
     "cors_allow_credentials": {"type": "boolean", "help": "Allow CORS credentials."},
@@ -299,6 +329,8 @@ FIELD_UI_META: dict[str, dict[str, Any]] = {
 # Settings that should not be editable from the frontend runtime config UI because they
 # are bootstrap/infrastructure concerns and typically require service re-provisioning.
 FRONTEND_LOCKED_FIELDS: set[str] = {
+    "email_service_configured",
+    "smtp_service_token",
     "cors_allow_origins",
     "cors_allow_origin_regex",
     "cors_allow_credentials",
@@ -349,6 +381,15 @@ def _validate_updates(payload: dict[str, Any]) -> dict[str, Any]:
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Unknown config keys: {', '.join(sorted(unknown))}",
         )
+    merged = get_settings().model_dump()
+    merged.update(payload)
+    if merged["email_verification_enabled"]:
+        required = ("smtp_host", "smtp_sender_email", "email_verification_frontend_url")
+        missing = [field for field in required if not str(merged[field]).strip()]
+        if missing:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Email verification requires: {', '.join(missing)}")
+        if merged["smtp_tls_mode"] not in {"starttls", "ssl", "none"}:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="smtp_tls_mode must be starttls, ssl, or none")
     return payload
 
 
@@ -407,13 +448,18 @@ def _get_config_payload() -> dict[str, Any]:
     payload = get_settings().model_dump()
     for key in BOOTSTRAP_ENV_FIELDS:
         payload.pop(key, None)
+    for key in SECRET_CONFIG_FIELDS:
+        if key in payload:
+            payload[key] = ""
+    payload["email_service_configured"] = bool(get_email_service_status()["configured"])
     return payload
 
 
 @router.get("/public", response_model=PublicRegistrationConfig)
 def get_public_registration_config() -> PublicRegistrationConfig:
     """Expose the registration mode without disclosing protected configuration."""
-    return PublicRegistrationConfig(user_creation_mode=get_settings().user_creation_mode)
+    settings = get_settings()
+    return PublicRegistrationConfig(user_creation_mode=settings.user_creation_mode, email_verification_required=getattr(settings, "email_verification_enabled", False))
 
 
 def _google_service_account_metadata(settings: Settings) -> dict[str, Any]:
@@ -444,13 +490,42 @@ def get_config() -> dict[str, Any]:
     return _get_config_payload()
 
 
+@router.get("/email-service/status", dependencies=[Depends(get_current_admin_user)])
+def get_email_service_config_status() -> dict[str, object]:
+    return get_email_service_status()
+
+
+@router.post("/email-service/test", dependencies=[Depends(get_current_admin_user)])
+async def test_email_service() -> dict[str, object]:
+    settings = get_settings()
+    result = await EmailService(settings).validate_and_record_status()
+    if settings.email_verification_enabled and not result["configured"]:
+        update_settings({"email_verification_enabled": False})
+    return result
+
+
+@router.get("/email-service/token", dependencies=[Depends(get_current_admin_user)])
+def get_email_service_token() -> dict[str, str | bool]:
+    """Reveal the service credential only to an authenticated administrator."""
+    token = str(get_settings().smtp_service_token or "")
+    return {"configured": bool(token), "token": token}
+
+
+@router.post("/email-service/token", dependencies=[Depends(get_current_admin_user)])
+def generate_email_service_token() -> dict[str, str | bool]:
+    """Replace the service credential and return it once for secure copying."""
+    token = secrets.token_urlsafe(32)
+    update_settings({"smtp_service_token": token})
+    return {"configured": True, "token": token}
+
+
 @router.get(
     "/schema",
     dependencies=[Depends(get_current_admin_user)],
     status_code=status.HTTP_200_OK,
 )
 def get_config_schema() -> dict[str, Any]:
-    all_fields = set(Settings.model_fields)
+    all_fields = set(Settings.model_fields) | {"email_service_configured"}
     visible_fields = all_fields - set(BOOTSTRAP_ENV_FIELDS)
     grouped_fields: set[str] = set()
     for group in SETTINGS_GROUPS:
@@ -462,7 +537,7 @@ def get_config_schema() -> dict[str, Any]:
 
     group_definitions: list[dict[str, Any]] = [
         {"id": "app_runtime", "label": "App Runtime", "fields": ["app_name", "debug", "event_publisher_mode", "event_webhook_url"]},
-        {"id": "user_access", "label": "User Access", "fields": ["user_creation_mode"]},
+        {"id": "user_access", "label": "User Access", "fields": ["user_creation_mode", "email_verification_enabled", "email_service_configured", "smtp_host", "smtp_port", "smtp_username", "smtp_password", "smtp_tls_mode", "smtp_sender_email", "smtp_sender_name", "email_verification_frontend_url", "email_verification_subject", "email_verification_text_template", "email_verification_html_template"]},
         {"id": "media_uploads", "label": "Media & Uploads", "fields": ["media_root", "media_base_url", "media_public_url", "max_image_upload_bytes", "image_max_width", "image_max_height", "max_pdf_upload_bytes", "library_max_pdf_bytes"]},
         {"id": "background_workers", "label": "Background Workers", "fields": ["celery_task_always_eager", "celery_expires_architect_seconds", "celery_expires_novelist_seconds", "celery_expires_reconciliation_seconds", "celery_stale_reaper_enabled", "celery_stale_reaper_interval_seconds", "celery_stale_reaper_max_task_age_seconds"]},
         {"id": "ai_agents", "label": "AI Agents", "fields": ["enable_ai_agents", "shreckllm_base_url"]},
@@ -523,19 +598,38 @@ async def _put_config_payload(payload: dict[str, Any]) -> dict[str, Any]:
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Config payload must be an object",
         )
+    # A blank secret returned by GET means "keep the stored secret", not erase it.
+    payload = dict(payload)
+    if payload.get("smtp_password") == "":
+        payload.pop("smtp_password")
     updates = _validate_updates(payload)
     updates = {k: v for k, v in updates.items() if k not in BOOTSTRAP_ENV_FIELDS}
     current_settings = get_settings()
+    candidate = current_settings.model_copy(update=updates)
+    smtp_fields = {"smtp_host", "smtp_port", "smtp_username", "smtp_password", "smtp_tls_mode", "smtp_sender_email"}
+    if smtp_fields.intersection(updates) or updates.get("email_verification_enabled") is True:
+        status_result = await EmailService(candidate).validate_and_record_status()
+        if updates.get("email_verification_enabled") is True and not status_result["configured"]:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="SMTP configuration could not be verified; email verification was not enabled.",
+            )
+        if not status_result["configured"] and current_settings.email_verification_enabled:
+            # SMTP changes must never leave verification enabled without a working
+            # delivery path. Keep the edited SMTP values, but disable verification.
+            updates["email_verification_enabled"] = False
     if updates.get("enable_ai_agents") is True and not current_settings.enable_ai_agents:
         await require_shreckllm_operational_for_agents_enable()
         provider_validations = await get_all_provider_validations(current_settings)
         updates = _reconcile_llm_targets(current_settings, updates, provider_validations)
     settings = update_settings(updates)
     configure_celery_app()
-    filtered = settings.model_dump()
-    for key in BOOTSTRAP_ENV_FIELDS:
-        filtered.pop(key, None)
-    return filtered
+    # Recheck after saving so the global state always describes the active config.
+    if smtp_fields.intersection(updates) or updates.get("email_verification_enabled") is not None:
+        status_result = await EmailService(settings).validate_and_record_status()
+        if settings.email_verification_enabled and not status_result["configured"]:
+            update_settings({"email_verification_enabled": False})
+    return _get_config_payload()
 
 
 @router.put(
@@ -562,13 +656,13 @@ async def put_config(payload: dict[str, Any]) -> dict[str, Any]:
     dependencies=[Depends(get_current_admin_user)],
     status_code=status.HTTP_200_OK,
 )
-def reload_config() -> dict[str, Any]:
+async def reload_config() -> dict[str, Any]:
     settings = reload_settings()
     configure_celery_app()
-    payload = settings.model_dump()
-    for key in BOOTSTRAP_ENV_FIELDS:
-        payload.pop(key, None)
-    return payload
+    status_result = await EmailService(settings).validate_and_record_status()
+    if settings.email_verification_enabled and not status_result["configured"]:
+        update_settings({"email_verification_enabled": False})
+    return _get_config_payload()
 
 
 @router.post(

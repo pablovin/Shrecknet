@@ -21,6 +21,7 @@ from app.api.routers import (
     ontology_instances,
     personal_companion_agents,
     setup,
+    service_email,
     users,
     worlds,
 )
@@ -48,6 +49,7 @@ __all__ = [
     "ontology_instances",
     "personal_companion_agents",
     "setup",
+    "service_email",
     "users",
     "worlds",
 ]

@@ -10,6 +10,8 @@ from app.db.migrations import (
     migrate_ontology_rpg_system_column,
     migrate_personal_companion_agents_table,
     migrate_user_approval_columns,
+    migrate_user_email_verification_columns,
+    migrate_existing_users_email_verified,
 )
 from app.db.session import get_engine, get_sessionmaker
 
@@ -23,6 +25,8 @@ def init_db() -> None:
         migrate_personal_companion_agents_table(conn)
         migrate_ontology_rpg_system_column(conn)
         migrate_user_approval_columns(conn)
+        migrate_user_email_verification_columns(conn)
+        migrate_existing_users_email_verified(conn)
 
     sessionmaker = get_sessionmaker()
     with sessionmaker() as session:

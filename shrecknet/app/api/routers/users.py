@@ -27,12 +27,14 @@ from app.schemas.user import (
     UserAvailabilityResponse,
     UserBootstrapStatus,
     UserCreate,
+    EmailVerificationRequest,
+    EmailVerificationResendRequest,
     UserRead,
     UserUpdate,
 )
 from app.services.audit_service import AuditService
 from app.services.media_service import ImageValidationError, MediaService
-from app.services.user_service import UserCreationStoppedError, UserService
+from app.services.user_service import EmailServiceUnavailableError, UserCreationStoppedError, UserService
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -59,6 +61,10 @@ async def register_user(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)
         ) from exc
+    except EmailServiceUnavailableError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
+        ) from exc
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail=str(exc)
@@ -73,6 +79,19 @@ async def register_user(
         description="User registration",
     )
     return UserRead.model_validate(user)
+
+
+@router.post("/verify-email")
+async def verify_email(payload: EmailVerificationRequest, service: UserService = Depends(get_user_service)) -> dict[str, bool]:
+    if not await service.verify_email(payload.token):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired verification link")
+    return {"verified": True}
+
+
+@router.post("/resend-verification")
+async def resend_email_verification(payload: EmailVerificationResendRequest, service: UserService = Depends(get_user_service)) -> dict[str, bool]:
+    await service.resend_verification(str(payload.email))
+    return {"accepted": True}
 
 
 @router.get("/availability", response_model=UserAvailabilityResponse)

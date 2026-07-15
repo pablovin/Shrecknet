@@ -60,6 +60,8 @@ class UserRead(BaseModel):
     timezone: str
     role: UserRole
     avatar_url: str | None = None
+    email_verified_at: datetime | None = None
+    verification_email_sent: bool | None = None
     entity_ids: list[int] = Field(default_factory=list)
 
     @model_validator(mode="after")
@@ -97,3 +99,18 @@ class PublicRegistrationConfig(BaseModel):
     """The only registration setting safe to disclose before authentication."""
 
     user_creation_mode: UserCreationMode
+    email_verification_required: bool = False
+
+
+class EmailVerificationRequest(BaseModel):
+    token: str = Field(min_length=1, max_length=512)
+
+
+class EmailVerificationResendRequest(BaseModel):
+    email: EmailStr
+
+
+class ServiceEmailSendRequest(BaseModel):
+    user_id: int = Field(gt=0)
+    subject: str = Field(min_length=1, max_length=998)
+    message: str = Field(min_length=1, max_length=100_000)

@@ -76,6 +76,9 @@ class User(Base):
     approval_decided_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    email_verification_token_hash: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    email_verification_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    email_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     entities: Mapped[list["OntologyEntity"]] = relationship(
         "OntologyEntity",

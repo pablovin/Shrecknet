@@ -34,11 +34,12 @@ from app.api.routers import (
     ontology_instances,
     personal_companion_agents,
     setup,
+    service_email,
     users,
     worlds,
 )
 from app.services.pdf_embedding_service import PdfEmbeddingService
-from app.core.config_store import get_settings
+from app.core.config_store import get_settings, update_settings
 from app.core.config_store import LLMModelTarget
 from app.celery_queue_reaper import reset_jobs_and_queues_on_startup
 from app.db.init_db import init_db_async
@@ -296,6 +297,10 @@ async def lifespan(_: FastAPI):
     except Exception:
         logger.exception("Unable to run startup Celery cleanup")
     settings = get_settings()
+    from app.services.email_service import EmailService
+    email_status = await EmailService(settings).validate_and_record_status()
+    if settings.email_verification_enabled and not email_status["configured"]:
+        update_settings({"email_verification_enabled": False})
     _start_embedding_prewarm()
     _start_llm_prewarm()
     try:
@@ -377,6 +382,7 @@ app.include_router(contracts.router)
 app.include_router(backups.router)
 app.include_router(llm_status.router)
 app.include_router(setup.router)
+app.include_router(service_email.router)
 
 
 @app.get("/health")

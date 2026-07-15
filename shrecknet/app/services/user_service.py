@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
+import hashlib
+import logging
+import secrets
+from datetime import datetime, timedelta, timezone
 from typing import Iterable
 
 from sqlalchemy import select, delete
@@ -12,8 +15,16 @@ from app.core.config_store import UserCreationMode, get_settings
 from app.models.ontology import OntologyEntity
 from app.models.user import User, UserApprovalStatus, UserRole, user_entities
 from app.repositories.user_repository import UserRepository
+from app.services.email_service import EmailDeliveryError, EmailService, get_email_service_status
 
 _registration_lock = asyncio.Lock()
+_resend_requests: dict[str, datetime] = {}
+_resend_lock = asyncio.Lock()
+logger = logging.getLogger(__name__)
+
+
+class EmailServiceUnavailableError(RuntimeError):
+    pass
 
 
 class UserService:
@@ -53,6 +64,9 @@ class UserService:
 
         await self._ensure_unique_constraints(username=username, email=email)
 
+        if not is_first_user and getattr(get_settings(), "email_verification_enabled", False) and not get_email_service_status()["configured"]:
+            raise EmailServiceUnavailableError("Email verification is temporarily unavailable")
+
         user = await self.repository.create(
             {
                 **data,
@@ -65,10 +79,17 @@ class UserService:
 
         await self.session.commit()
         await self.session.refresh(user, attribute_names=["entities"])
+        user.verification_email_sent = None
+        if not is_first_user and getattr(get_settings(), "email_verification_enabled", False):
+            user.verification_email_sent = await self._issue_and_send_verification(user)
         return user
 
     async def authenticate_user(self, username: str, password: str) -> User | None:
-        """Authenticate user by username or email with password."""
+        user, _ = await self.authenticate_user_with_reason(username, password)
+        return user
+
+    async def authenticate_user_with_reason(self, username: str, password: str) -> tuple[User | None, str | None]:
+        """Authenticate and return a frontend-safe reason when credentials are valid but blocked."""
         # Try to find user by username first
         user = await self.repository.get_by_username(username)
 
@@ -78,18 +99,75 @@ class UserService:
 
         # If still not found, authentication fails
         if not user:
-            return None
+            return None, "invalid_credentials"
 
         # Verify password
         if not verify_password(password, user.hashed_password):
-            return None
+            return None, "invalid_credentials"
 
         # SQLAlchemy column defaults are populated on flush, so preserve legacy
         # in-memory model compatibility while persisted rows are always explicit.
-        if (user.approval_status or UserApprovalStatus.APPROVED) != UserApprovalStatus.APPROVED:
-            return None
+        approval_status = user.approval_status or UserApprovalStatus.APPROVED
+        if approval_status == UserApprovalStatus.PENDING:
+            return None, "pending_approval"
+        if approval_status != UserApprovalStatus.APPROVED:
+            return None, "account_not_approved"
+        if getattr(get_settings(), "email_verification_enabled", False) and user.email_verified_at is None:
+            return None, "email_not_verified"
 
-        return user
+        return user, None
+
+    async def verify_email(self, token: str) -> bool:
+        if not token or len(token) > 512:
+            return False
+        user = await self.repository.get_by_verification_token_hash(_token_hash(token))
+        now = datetime.now(timezone.utc)
+        if not user or user.email_verified_at is not None or not user.email_verification_expires_at:
+            return False
+        expiry = user.email_verification_expires_at
+        if expiry.tzinfo is None:
+            expiry = expiry.replace(tzinfo=timezone.utc)
+        if expiry <= now:
+            return False
+        await self.repository.update(user, {
+            "email_verified_at": now,
+            "email_verification_token_hash": None,
+            "email_verification_expires_at": None,
+        })
+        await self.session.commit()
+        return True
+
+    async def resend_verification(self, email: str) -> None:
+        normalized = email.strip().lower()
+        async with _resend_lock:
+            now = datetime.now(timezone.utc)
+            previous = _resend_requests.get(normalized)
+            if previous and (now - previous).total_seconds() < 60:
+                return
+            _resend_requests[normalized] = now
+        if not getattr(get_settings(), "email_verification_enabled", False):
+            return
+        user = await self.repository.get_by_email(normalized)
+        if user and user.email_verified_at is None:
+            await self._issue_and_send_verification(user)
+
+    async def _issue_and_send_verification(self, user: User) -> bool:
+        token = secrets.token_urlsafe(32)
+        now = datetime.now(timezone.utc)
+        await self.repository.update(user, {
+            "email_verification_token_hash": _token_hash(token),
+            "email_verification_expires_at": now.replace(microsecond=0) + timedelta(hours=24),
+        })
+        await self.session.commit()
+        settings = get_settings()
+        separator = "&" if "?" in settings.email_verification_frontend_url else "?"
+        url = f"{settings.email_verification_frontend_url}{separator}token={token}"
+        try:
+            await EmailService(settings).send_verification(recipient=user.email, username=user.username, verification_url=url)
+            return True
+        except EmailDeliveryError:
+            logger.exception("Verification email delivery failed for user id=%s", user.id)
+            return False
 
     async def list_users(self) -> list[User]:
         users = await self.repository.list()
@@ -217,3 +295,7 @@ class UserService:
 
 class UserCreationStoppedError(PermissionError):
     """Raised when public registration is disabled by global configuration."""
+
+
+def _token_hash(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()

@@ -62,6 +62,14 @@ class UserRepository(BaseRepository):
         )
         return result.scalar_one_or_none()
 
+    async def get_by_verification_token_hash(self, token_hash: str) -> User | None:
+        result = await self.session.execute(
+            select(User).options(selectinload(User.entities)).where(
+                User.email_verification_token_hash == token_hash
+            )
+        )
+        return result.scalar_one_or_none()
+
     async def create(self, data: dict[str, Any]) -> User:
         user = User(**data)
         await self.save(user)

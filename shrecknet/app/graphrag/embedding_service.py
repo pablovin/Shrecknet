@@ -19,6 +19,21 @@ from app.core.config_store import get_settings
 
 logger = logging.getLogger(__name__)
 
+DOCUMENT_EMBEDDING_PREFIX = "passage: "
+QUERY_EMBEDDING_PREFIX = "query: "
+
+
+def document_embedding_text(text: str) -> str:
+    """Return E5's required document-side representation exactly once."""
+    text = (text or "").strip()
+    return text if text.startswith(DOCUMENT_EMBEDDING_PREFIX) else f"{DOCUMENT_EMBEDDING_PREFIX}{text}"
+
+
+def query_embedding_text(text: str) -> str:
+    """Return E5's required query-side representation exactly once."""
+    text = (text or "").strip()
+    return text if text.startswith(QUERY_EMBEDDING_PREFIX) else f"{QUERY_EMBEDDING_PREFIX}{text}"
+
 
 # Thread-safe model loading
 _model_lock = threading.Lock()
@@ -34,7 +49,24 @@ _inference_inflight_count: int = 0
 
 def _current_model_key() -> tuple[str, str]:
     settings = get_settings()
-    return (settings.embedding_model_id, settings.embedding_device)
+    return (settings.embedding_model_id, _resolve_embedding_device(settings.embedding_device))
+
+
+def _resolve_embedding_device(configured_device: str) -> str:
+    """Use CUDA when explicitly requested and available; otherwise remain usable on CPU."""
+    requested = (configured_device or "cpu").strip().lower()
+    if not requested.startswith("cuda"):
+        return requested or "cpu"
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            return requested
+    except Exception as exc:  # pragma: no cover - defensive startup fallback
+        logger.warning("CUDA availability check failed; using CPU: %s", exc)
+        return "cpu"
+    logger.warning("CUDA requested for embeddings but unavailable; using CPU")
+    return "cpu"
 
 
 def get_embedding_model_id() -> str:
@@ -574,6 +606,7 @@ class EmbeddingService:
         """
         global _cached_model, _cached_model_key
 
+        texts = [document_embedding_text(text) for text in texts]
         model = get_embedding_model(diagnostic_request_id=diagnostic_request_id)
         inference_gate = get_embedding_inference_semaphore()
         max_retries = 3

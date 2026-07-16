@@ -12,6 +12,9 @@ from app.core.config_store import get_settings
 from app.graph.neo4j import get_driver
 from app.models.background_job import AuthorType, JobType
 from app.repositories.library_repository import LibraryRepository
+from app.repositories.ontology_repository import OntologyRepository
+from app.services.docling_ingestion_service import DoclingIngestionService
+from app.services.legacy_pdf_ingestion_service import LegacyPdfIngestionService
 from app.services.pdf_embedding_service import PdfEmbeddingService
 from app.utils.async_helpers import run_async
 from app.utils.job_tracking import (
@@ -27,6 +30,160 @@ logger = logging.getLogger(__name__)
 
 @celery_app.task(name="library.embed_pdf_book")
 def embed_pdf_book(
+    library_item_id: int,
+    ontology_id: int,
+    author_type: str = "user",
+    author_id: str = "system",
+) -> dict[str, Any]:
+    """Run the active, structured Docling ingestion pipeline."""
+    logger.info(
+        "librarian_embedding_received library_item_id=%s ontology_id=%s task_id=%s",
+        library_item_id,
+        ontology_id,
+        embed_pdf_book.request.id,
+    )
+    print(
+        f"[LIBRARIAN_EMBED] step=task_received library_item_id={library_item_id} "
+        f"ontology_id={ontology_id} task_id={embed_pdf_book.request.id}"
+    )
+    job_id = run_async(
+        create_background_job(
+            author_type=AuthorType(author_type),
+            author_id=author_id,
+            job_type=JobType.PDF_BOOK_EMBEDDING,
+            description=f"Docling ingestion for PDF book (library item {library_item_id})",
+            celery_task_id=embed_pdf_book.request.id,
+            details={
+                "library_item_id": library_item_id,
+                "ontology_id": ontology_id,
+                "pipeline": "docling",
+            },
+            ontology_id=_coerce_ontology_id(ontology_id),
+        )
+    )
+    try:
+        run_async(mark_job_running(job_id))
+        run_async(update_job_progress(job_id, 0.05, {"status": "Preparing Docling ingestion"}))
+        result = run_async(
+            _run_docling_ingestion(
+                library_item_id=library_item_id,
+                ontology_id=ontology_id,
+                job_id=job_id,
+            )
+        )
+        run_async(mark_job_done(job_id, result))
+        return {"job_id": job_id, "status": "success", "result": result}
+    except Exception as exc:
+        logger.exception(
+            "docling_embedding_task_failed library_item_id=%s job_id=%s",
+            library_item_id,
+            job_id,
+        )
+        # The previous active graph and SQL readiness flag remain intact on failure.
+        run_async(mark_job_failed(job_id, str(exc)))
+        raise
+
+
+async def _run_docling_ingestion(
+    *, library_item_id: int, ontology_id: int, job_id: int
+) -> dict[str, Any]:
+    from datetime import datetime, timezone
+
+    from app.db.session import AsyncSessionMaker
+
+    settings = get_settings()
+    async with AsyncSessionMaker() as session:
+        library_repo = LibraryRepository(session)
+        ontology_repo = OntologyRepository(session)
+        item = await library_repo.get_item_by_id(library_item_id)
+        ontology = await ontology_repo.get(ontology_id)
+        if item is None or int(item.ontology_id) != int(ontology_id):
+            raise ValueError(f"Library item {library_item_id} not found in ontology {ontology_id}")
+        if ontology is None:
+            raise ValueError(f"Ontology {ontology_id} not found")
+        if not item.pdf_path:
+            raise ValueError(f"Library item {library_item_id} has no PDF file")
+        pdf_path = Path(settings.media_root) / item.pdf_path
+        if not pdf_path.exists():
+            raise FileNotFoundError(f"PDF file not found: {pdf_path}")
+        book_title = item.title
+        rpg_system = (ontology.rpg_system or "Unknown").strip() or "Unknown"
+
+    await update_job_progress(job_id, 0.12, {"status": "Parsing PDF with Docling"})
+    print(
+        f"[LIBRARIAN_EMBED] step=book_resolved book={book_title!r} library_item_id={library_item_id} "
+        f"pdf_path={pdf_path} percent=0"
+    )
+    driver = get_driver()
+    async with driver.session(database=settings.neo4j_database) as graph_session:
+        retrieval_service = PdfEmbeddingService(graph_session)
+        await retrieval_service.ensure_vector_index()
+        service = DoclingIngestionService(graph_session)
+
+        async def report_progress(percent: float, status: str, details: dict[str, Any]) -> None:
+            await update_job_progress(
+                job_id,
+                percent,
+                {"status": status, **details},
+            )
+
+        result = await service.ingest(
+            library_item_id=library_item_id,
+            ontology_id=ontology_id,
+            pdf_path=pdf_path,
+            book_title=book_title,
+            rpg_system=rpg_system,
+            progress_callback=report_progress,
+        )
+        status_text = (
+            "Repairing SQL state for the existing ingestion"
+            if result.get("status") == "already_active"
+            else "Activating structured document"
+        )
+        await update_job_progress(job_id, 0.9, {"status": status_text})
+        try:
+            async with AsyncSessionMaker() as session:
+                repo = LibraryRepository(session)
+                current = await repo.get_item_by_id(library_item_id)
+                if current is None:
+                    raise ValueError(f"Library item {library_item_id} disappeared during ingestion")
+                await repo.update_item(
+                    current,
+                    {"vectorized": True, "last_vectorized_at": datetime.now(timezone.utc)},
+                )
+                await session.commit()
+        except Exception as exc:
+            if result.get("status") != "already_active":
+                await service.compensate_activation(
+                    library_item_id,
+                    str(result["ingestion_id"]),
+                    result.get("previous_ingestion_id"),
+                )
+                if result.get("manifest_path"):
+                    service.mark_manifest_compensated(str(result["manifest_path"]), exc)
+            raise
+
+        try:
+            await service.cleanup_retired(library_item_id, str(result["ingestion_id"]))
+            service.cleanup_parsed_directories(pdf_path, str(result["ingestion_id"]))
+        except Exception:
+            # Activation and SQL state are already committed. Cleanup is safe to retry
+            # on the next ingestion and must not turn a usable version into a failed job.
+            logger.exception(
+                "docling_retired_cleanup_failed library_item_id=%s ingestion_id=%s",
+                library_item_id,
+                result["ingestion_id"],
+            )
+        await update_job_progress(job_id, 1.0, {"status": "Docling ingestion complete"})
+        print(
+            f"[LIBRARIAN_EMBED] step=complete book={book_title!r} library_item_id={library_item_id} "
+            f"children={result.get('chunks_created', 0)} percent=100"
+        )
+        return result
+
+
+@celery_app.task(name="library.embed_pdf_book_old")
+def embed_pdf_book_old(
     library_item_id: int,
     ontology_id: int,
     author_type: str = "user",
@@ -59,7 +216,7 @@ def embed_pdf_book(
             author_id=author_id,
             job_type=JobType.PDF_BOOK_EMBEDDING,
             description=f"Embedding PDF book (library item {library_item_id})",
-            celery_task_id=embed_pdf_book.request.id,
+            celery_task_id=embed_pdf_book_old.request.id,
             details={
                 "library_item_id": library_item_id,
                 "ontology_id": ontology_id,
@@ -134,7 +291,7 @@ def embed_pdf_book(
         async def embed_pdf():
             driver = get_driver()
             async with driver.session(database=settings.neo4j_database) as graph_session:
-                service = PdfEmbeddingService(graph_session)
+                service = LegacyPdfIngestionService(graph_session)
 
                 # Always remove previous chunks first to guarantee single-version state.
                 await update_job_progress(

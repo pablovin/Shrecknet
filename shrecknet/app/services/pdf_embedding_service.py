@@ -104,11 +104,22 @@ class PdfEmbeddingService:
             fulltext_status = "created"
             logger.info("Created fulltext index %s", fulltext_index_name)
 
+        # Additive v2 index: keep the legacy c.text index available for rollback.
+        await self.graph_session.run(
+            """
+            CREATE FULLTEXT INDEX pdf_chunk_context_fulltext_v2_idx IF NOT EXISTS
+            FOR (c:PdfChunk)
+            ON EACH [c.book_title, c.rpg_system, c.heading_path_text,
+                     c.primary_heading, c.display_text]
+            """
+        )
+
         return {
             "index_name": index_name,
             "fulltext_index_name": fulltext_index_name,
             "exists": exists,
             "fulltext_status": fulltext_status,
+            "v2_fulltext_index_name": "pdf_chunk_context_fulltext_v2_idx",
             "embedding_model": model,
             "embedding_dim": dims,
         }
@@ -603,11 +614,14 @@ class PdfEmbeddingService:
             Number of chunks deleted
         """
         query = """
-        MATCH (c:PdfChunk {library_item_id: $library_item_id})
-        WITH collect(c) as chunks
-        WITH chunks, size(chunks) as total
-        UNWIND chunks as c
-        DETACH DELETE c
+        MATCH (n)
+        WHERE n.library_item_id = $library_item_id
+          AND (n:PdfChunk OR n:PdfChunkCandidate OR n:PdfChunkRetired
+               OR n:PdfDocument OR n:PdfPage OR n:PdfSection OR n:PdfBlock
+               OR n:PdfIngestionLock)
+        WITH collect(n) AS nodes,
+             count(CASE WHEN n:PdfChunk OR n:PdfChunkCandidate OR n:PdfChunkRetired THEN 1 END) AS total
+        FOREACH (node IN nodes | DETACH DELETE node)
         RETURN total
         """
 
@@ -637,13 +651,14 @@ class PdfEmbeddingService:
         """
         if library_item_ids:
             query = """
-            MATCH (c:PdfChunk)
-            WHERE c.ontology_id = $ontology_id
-               OR c.library_item_id IN $library_item_ids
-            WITH collect(c) AS chunks
-            WITH chunks, size(chunks) AS total
-            UNWIND chunks AS c
-            DETACH DELETE c
+            MATCH (n)
+            WHERE (n.ontology_id = $ontology_id OR n.library_item_id IN $library_item_ids)
+              AND (n:PdfChunk OR n:PdfChunkCandidate OR n:PdfChunkRetired
+                   OR n:PdfDocument OR n:PdfPage OR n:PdfSection OR n:PdfBlock
+                   OR n:PdfIngestionLock)
+            WITH collect(n) AS nodes,
+                 count(CASE WHEN n:PdfChunk OR n:PdfChunkCandidate OR n:PdfChunkRetired THEN 1 END) AS total
+            FOREACH (node IN nodes | DETACH DELETE node)
             RETURN total
             """
             params: dict[str, Any] = {
@@ -652,11 +667,13 @@ class PdfEmbeddingService:
             }
         else:
             query = """
-            MATCH (c:PdfChunk {ontology_id: $ontology_id})
-            WITH collect(c) AS chunks
-            WITH chunks, size(chunks) AS total
-            UNWIND chunks AS c
-            DETACH DELETE c
+            MATCH (n {ontology_id: $ontology_id})
+            WHERE n:PdfChunk OR n:PdfChunkCandidate OR n:PdfChunkRetired
+               OR n:PdfDocument OR n:PdfPage OR n:PdfSection OR n:PdfBlock
+               OR n:PdfIngestionLock
+            WITH collect(n) AS nodes,
+                 count(CASE WHEN n:PdfChunk OR n:PdfChunkCandidate OR n:PdfChunkRetired THEN 1 END) AS total
+            FOREACH (node IN nodes | DETACH DELETE node)
             RETURN total
             """
             params = {"ontology_id": ontology_id}
@@ -680,11 +697,13 @@ class PdfEmbeddingService:
             Number of chunks deleted
         """
         query = """
-        MATCH (c:PdfChunk)
-        WITH collect(c) AS chunks
-        WITH chunks, size(chunks) AS total
-        UNWIND chunks AS c
-        DETACH DELETE c
+        MATCH (n)
+        WHERE n:PdfChunk OR n:PdfChunkCandidate OR n:PdfChunkRetired
+           OR n:PdfDocument OR n:PdfPage OR n:PdfSection OR n:PdfBlock
+           OR n:PdfIngestionLock
+        WITH collect(n) AS nodes,
+             count(CASE WHEN n:PdfChunk OR n:PdfChunkCandidate OR n:PdfChunkRetired THEN 1 END) AS total
+        FOREACH (node IN nodes | DETACH DELETE node)
         RETURN total
         """
         result = await self.graph_session.run(query)
@@ -766,6 +785,8 @@ class PdfEmbeddingService:
             $query_embedding
         )
         YIELD node as c, score
+        WHERE coalesce(c.is_active, true) = true
+          AND coalesce(c.chunk_role, 'child') = 'child'
         RETURN properties(c) as props, score
         ORDER BY score DESC
         """
@@ -848,6 +869,8 @@ class PdfEmbeddingService:
         query = """
         CALL db.index.fulltext.queryNodes('pdf_chunk_text_fulltext_idx', $fulltext_query)
         YIELD node as c, score
+        WHERE coalesce(c.is_active, true) = true
+          AND coalesce(c.chunk_role, 'child') = 'child'
         RETURN properties(c) as props, score
         ORDER BY score DESC
         LIMIT $limit
@@ -946,8 +969,16 @@ class PdfEmbeddingService:
                     return None
             except (TypeError, ValueError):
                 return None
+        # Legacy chunks have neither property and remain readable until their first
+        # successful Docling activation. Structured parents and inactive versions
+        # must never enter the current child retrieval path.
+        if props.get("is_active") is False:
+            return None
+        if props.get("chunk_role") not in (None, "child"):
+            return None
         page = int(
-            props.get("primary_page_number")
+            props.get("primary_physical_page_number")
+            or props.get("primary_page_number")
             or props.get("page_number")
             or props.get("start_page_number")
             or 1
@@ -966,7 +997,7 @@ class PdfEmbeddingService:
             "end_page_number": props.get("end_page_number") or page,
             "page_numbers": page_numbers,
             "chunk_type": props.get("chunk_type") or "text",
-            "text": props.get("text") or "",
+            "text": props.get("display_text") or props.get("text") or "",
             "vector_score": raw_score if score_key == "vector_score" else 0.0,
             "fulltext_score": raw_score if score_key == "fulltext_score" else 0.0,
             "score": raw_score,

@@ -1,0 +1,44 @@
+# Optional NVIDIA GPU acceleration for local Docling and E5 processing.
+# Start with: docker compose -f docker-compose.yml -f docker-compose.gpu.yml up --build
+services:
+  shrecknet_api:
+    build:
+      args:
+        TORCH_INDEX_URL: https://download.pytorch.org/whl/cu126
+    environment:
+      SHRECKNET_EMBEDDING_DEVICE: cuda
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  shrecknet_worker:
+    build:
+      args:
+        TORCH_INDEX_URL: https://download.pytorch.org/whl/cu126
+    environment:
+      SHRECKNET_EMBEDDING_DEVICE: cuda
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  shrecknet_model_prefetch:
+    build:
+      args:
+        TORCH_INDEX_URL: https://download.pytorch.org/whl/cu126
+    environment:
+      SHRECKNET_EMBEDDING_DEVICE: cuda
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

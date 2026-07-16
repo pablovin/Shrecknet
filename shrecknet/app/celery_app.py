@@ -111,6 +111,29 @@ def _warmup_embedding_model_if_enabled() -> None:
     thread.start()
 
 
+def _clear_librarian_ingestion_locks_on_worker_start() -> None:
+    """A job reset also invalidates locks left by interrupted PDF ingestion."""
+    try:
+        from app.graph.neo4j import get_driver
+        from app.utils.async_helpers import run_async
+
+        async def _clear() -> int:
+            settings = get_settings()
+            driver = get_driver()
+            async with driver.session(database=settings.neo4j_database) as session:
+                result = await session.run(
+                    "MATCH (lock:PdfIngestionLock) DELETE lock RETURN count(lock) AS deleted"
+                )
+                record = await result.single()
+                return int(record["deleted"] if record else 0)
+
+        deleted = run_async(_clear())
+        if deleted:
+            logger.warning("Cleared %s stale Librarian ingestion locks on worker startup", deleted)
+    except Exception:  # pragma: no cover - startup must not prevent worker boot
+        logger.exception("Unable to clear Librarian ingestion locks on worker startup")
+
+
 @worker_ready.connect
 def _start_stale_reaper(sender=None, **_kwargs) -> None:  # pragma: no cover - startup hook
     global _stale_reaper_thread_started
@@ -120,6 +143,7 @@ def _start_stale_reaper(sender=None, **_kwargs) -> None:  # pragma: no cover - s
         reset_jobs_and_queues_on_startup()
     except Exception:  # pragma: no cover - defensive startup logic
         logger.exception("Startup job/queue reset failed")
+    _clear_librarian_ingestion_locks_on_worker_start()
     _warmup_embedding_model_if_enabled()
     _run_stale_reaper_once()
     with _stale_reaper_lock:

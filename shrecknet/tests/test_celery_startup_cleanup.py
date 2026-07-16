@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from app.celery_queue_reaper import reset_jobs_and_queues_on_startup
 
 
-def test_reset_jobs_and_queues_on_startup_marks_jobs_failed_and_purges_queues(
+def test_reset_jobs_and_queues_on_startup_deletes_jobs_and_purges_queues(
     tmp_path, monkeypatch
 ) -> None:
     jobs_db = tmp_path / "jobs.db"
@@ -40,7 +40,7 @@ def test_reset_jobs_and_queues_on_startup_marks_jobs_failed_and_purges_queues(
 
     class FakeRedisClient:
         def __init__(self) -> None:
-            self.queues = {"ontology_linking": ["a", "b"], "architect": ["c"]}
+            self.queues = {"ontology_linking": ["a", "b"], "architect": ["c"], "celery": []}
 
         def llen(self, queue: str) -> int:
             return len(self.queues.get(queue, []))
@@ -58,20 +58,12 @@ def test_reset_jobs_and_queues_on_startup_marks_jobs_failed_and_purges_queues(
 
     stats = reset_jobs_and_queues_on_startup()
 
-    assert stats["failed_jobs"] == 2
+    assert stats["jobs_deleted"] == 3
     assert stats["queued_messages_inspected"] == 3
-    assert stats["queues_purged"] == 2
+    assert stats["queues_purged"] == 3
 
     verify_conn = sqlite3.connect(jobs_db.as_posix())
-    rows = verify_conn.execute(
-        "SELECT id, status, error_message, completed_at FROM background_jobs ORDER BY id"
-    ).fetchall()
+    rows = verify_conn.execute("SELECT id FROM background_jobs ORDER BY id").fetchall()
     verify_conn.close()
 
-    assert rows[0][1] == "failed"
-    assert rows[0][2]
-    assert rows[0][3]
-    assert rows[1][1] == "failed"
-    assert rows[1][2]
-    assert rows[1][3]
-    assert rows[2][1] == "done"
+    assert rows == []

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -68,6 +68,16 @@ class RetrievedChunk(BaseModel):
     page_url: str | None = None
     book_title: str | None = None
     book_authors: str | None = None
+    source_id: str | None = None
+    chunk_id: str | None = None
+    parent_chunk_id: str | None = None
+    physical_page_numbers: list[int] = Field(default_factory=list)
+    displayed_page_labels: list[str | None] = Field(default_factory=list)
+    display_page_label: str | None = None
+    bounding_boxes: list[dict[str, Any]] = Field(default_factory=list)
+    matched_child_text: str | None = None
+    expansion_mode: str | None = None
+    incomplete_evidence: bool = False
 
 
 class LibrarianQueryResponse(BaseModel):

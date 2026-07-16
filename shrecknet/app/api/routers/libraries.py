@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -11,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import Select, delete, or_, select, update
 
 from app.api.deps import get_current_user, require_roles
+from app.celery_queue_reaper import clear_all_jobs_and_queues
 from app.core.config_store import get_settings
 from app.db.jobs_session import JobsSessionMaker
 from app.db.session import AsyncSessionCompat, get_db_session
@@ -286,6 +288,22 @@ def _library_pdf_relative_path(ontology_id: int, item_id: int) -> Path:
     return Path("library") / str(ontology_id) / str(item_id) / "content.pdf"
 
 
+def _remove_library_item_artifacts(ontology_id: int, item_id: int, *, include_source_pdf: bool) -> None:
+    """Remove derived Docling data, or the complete directory when deleting a book."""
+    item_dir = Path(get_settings().media_root) / "library" / str(ontology_id) / str(item_id)
+    target = item_dir if include_source_pdf else item_dir / "parsed"
+    try:
+        shutil.rmtree(target, ignore_errors=True)
+        if include_source_pdf and item_dir.parent.exists() and not item_dir.exists():
+            logger.info("Removed all library media for ontology=%s item=%s", ontology_id, item_id)
+        elif not include_source_pdf:
+            logger.info("Removed derived Librarian artifacts for ontology=%s item=%s", ontology_id, item_id)
+    except OSError:
+        # Clearing the retrieval graph must remain reliable even if an operator
+        # has made the media directory read-only.
+        logger.exception("Unable to remove Librarian media at %s", target)
+
+
 async def _write_pdf(upload: UploadFile, relative_path: Path) -> None:
     settings = get_settings()
     absolute_path = Path(settings.media_root) / relative_path
@@ -491,6 +509,7 @@ async def delete_library_item(
 ) -> Response:
     item = await _get_item_or_404(session, ontology_id, item_id)
     await _delete_library_item_embeddings([item.id])
+    _remove_library_item_artifacts(ontology_id, item.id, include_source_pdf=True)
     await session.delete(item)
     await session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -517,6 +536,7 @@ async def bulk_delete_library_items(
     ).scalars().all()
     await _delete_library_item_embeddings([row.id for row in rows])
     for row in rows:
+        _remove_library_item_artifacts(ontology_id, row.id, include_source_pdf=True)
         await session.delete(row)
     await session.commit()
     return {"deleted": len(rows)}
@@ -543,6 +563,8 @@ async def replace_library_item_content(
 
         pdf_service = PdfEmbeddingService(graph_session)
         await pdf_service.delete_embeddings(item.id)
+
+    _remove_library_item_artifacts(ontology_id, item.id, include_source_pdf=False)
 
     relative_path = _library_pdf_relative_path(ontology_id, item.id)
     await _write_pdf(file, relative_path)
@@ -625,6 +647,8 @@ async def clear_library_item_embeddings(
         pdf_service = PdfEmbeddingService(graph_session)
         deleted_count = await pdf_service.delete_embeddings(item.id)
 
+    _remove_library_item_artifacts(ontology_id, item.id, include_source_pdf=False)
+
     item.vectorized = False
     item.last_vectorized_at = None
     session.add(item)
@@ -673,6 +697,8 @@ async def clear_all_library_embeddings(
         )
 
     item_ids = [item.id for item in items]
+    for item in items:
+        _remove_library_item_artifacts(item.ontology_id, item.id, include_source_pdf=False)
     if ontology_id is not None:
         await session.execute(
             update(LibraryItem)
@@ -683,21 +709,14 @@ async def clear_all_library_embeddings(
         await session.execute(update(LibraryItem).values(vectorized=False, last_vectorized_at=None))
     await session.commit()
 
-    jobs_deleted = 0
-    ontology_filter = _job_ontology_id(ontology_id) if ontology_id is not None else None
     try:
-        async with JobsSessionMaker() as jobs_session:
-            query = delete(BackgroundJob).where(
-                BackgroundJob.job_type == JobType.PDF_BOOK_EMBEDDING,
-                BackgroundJob.status.in_([JobStatus.QUEUED, JobStatus.RUNNING]),
-            )
-            if ontology_filter is not None:
-                query = query.where(BackgroundJob.ontology_id == ontology_filter)
-            result = await jobs_session.execute(query)
-            jobs_deleted = int(result.rowcount or 0)
-            await jobs_session.commit()
+        # Queue isolation is not possible safely with the shared Celery broker.
+        # Clearing embeddings is an explicit reset operation, so clear every job
+        # record and all queued/active broker tasks together.
+        job_cleanup = clear_all_jobs_and_queues()
     except Exception:
-        logger.exception("Unable to clear queued/running embedding jobs")
+        logger.exception("Unable to clear jobs and Celery queues with embeddings")
+        job_cleanup = {"jobs_deleted": 0, "tasks_revoked": 0, "queues_purged": 0}
 
     return {
         "message": f"Cleared embeddings for {len(item_ids)} library items",
@@ -705,7 +724,9 @@ async def clear_all_library_embeddings(
         "ontology_id": ontology_id,
         "chunks_deleted": total_deleted,
         "orphan_chunks_deleted": orphan_deleted,
-        "jobs_deleted": jobs_deleted,
+        "jobs_deleted": int(job_cleanup["jobs_deleted"]),
+        "tasks_revoked": int(job_cleanup["tasks_revoked"]),
+        "queues_purged": int(job_cleanup["queues_purged"]),
     }
 
 

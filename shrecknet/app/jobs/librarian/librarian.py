@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config_store import LLMModelTarget
 from app.integrations.llm.shreckllm_client import ShreckLLMClient
+from app.jobs.librarian.debug_artifacts import LibrarianDebugArtifacts, debug_value
 from app.jobs.librarian.prompts import SIMPLIFIED_ANSWER_STYLE_PROMPT
 from app.jobs.librarian.schemas import (
     LibrarianQueryRequest,
@@ -20,6 +21,11 @@ from app.jobs.librarian.schemas import (
 )
 from app.models.agent import Agent
 from app.services.pdf_embedding_service import PdfEmbeddingService
+from app.jobs.librarian.retrieval_strategies import (
+    LegacyLibrarianRetrievalStrategy,
+    LibrarianRetrievalStrategyV2,
+)
+from app.core.config_store import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +81,16 @@ class LibrarianOrchestrator:
         self.max_chars_per_chunk_for_answer = 1200
         self._prewarm_cache_ttl_s = 300.0
         self._last_model_prewarm_at: dict[str, float] = {}
+        configured_strategy = get_settings().librarian_retrieval_strategy.casefold()
+        # Lightweight test/integration adapters historically implement only the
+        # legacy service contract; production always injects PdfEmbeddingService.
+        self.retrieval_strategy_name = (
+            configured_strategy
+            if isinstance(pdf_embedding_service, PdfEmbeddingService)
+            else "legacy"
+        )
+        self.v2_retrieval = LibrarianRetrievalStrategyV2()
+        self.legacy_retrieval = LegacyLibrarianRetrievalStrategy(self._retrieve_planned_chunks)
 
     async def execute(
         self,
@@ -99,10 +115,18 @@ class LibrarianOrchestrator:
             Query response with answer and/or chunks
         """
         trace: list[dict[str, Any]] = [] if request.include_trace else []
-        top_k = request.top_k or self.default_top_k
+        top_k = request.top_k or (
+            6 if self.retrieval_strategy_name != "legacy" else self.default_top_k
+        )
+        debug = LibrarianDebugArtifacts.create()
 
         # Get ontology IDs from agent
         ontology_ids = [ont.id for ont in agent.ontologies]
+        debug.write(
+            "query_request_and_scope",
+            input={"agent_id": agent.id, "request": debug_value(request)},
+            output={"ontology_ids": ontology_ids, "effective_top_k": top_k},
+        )
 
         # Step 1: Retrieve top chunks across all library items in ontology
         all_chunks = []
@@ -115,6 +139,19 @@ class LibrarianOrchestrator:
             plan = self._plan_retrieval(
                 query=request.query,
                 rpg_system=self._format_rpg_system_context(agent),
+            )
+            debug.write(
+                f"retrieval_plan_ontology_{ontology_id}",
+                input={"query": request.query, "ontology_id": ontology_id},
+                output={
+                    "subqueries": plan.subqueries,
+                    "exhaustive": plan.exhaustive,
+                    "table_like": plan.table_like,
+                    "named_terms": plan.named_terms,
+                    "page_anchors": plan.page_anchors,
+                    "neighbor_radius": plan.neighbor_radius,
+                    "active_library_item_ids": allowed_item_ids,
+                },
             )
             if trace is not None:
                 trace.append(
@@ -130,19 +167,23 @@ class LibrarianOrchestrator:
                         },
                     }
                 )
-            chunks = await self._retrieve_planned_chunks(
-                plan=plan,
-                ontology_id=ontology_id,
-                library_item_ids=request.library_item_ids,
-                active_library_item_ids=allowed_item_ids,
-                top_k=top_k,
-                trace=trace,
-                score_threshold=request.score_threshold if request.score_threshold is not None else 0.3,
-                candidate_limit=request.candidate_limit,
-                hybrid_rerank=request.hybrid_rerank,
-                max_chunks_per_item=request.max_chunks_per_item,
-                dynamic_score_floor=request.dynamic_score_floor,
-            )
+            if self.retrieval_strategy_name == "legacy":
+                chunks = await self.legacy_retrieval.retrieve(
+                    plan=plan, ontology_id=ontology_id,
+                    library_item_ids=request.library_item_ids,
+                    active_library_item_ids=allowed_item_ids, top_k=top_k, trace=trace,
+                    score_threshold=request.score_threshold if request.score_threshold is not None else 0.3,
+                    candidate_limit=request.candidate_limit, hybrid_rerank=request.hybrid_rerank,
+                    max_chunks_per_item=request.max_chunks_per_item,
+                    dynamic_score_floor=request.dynamic_score_floor, debug=debug,
+                )
+            else:
+                chunks = await self.v2_retrieval.retrieve(
+                    query=request.query, ontology_id=ontology_id,
+                    library_item_ids=request.library_item_ids,
+                    active_library_item_ids=allowed_item_ids, top_k=top_k,
+                    trace=trace, table_like=plan.table_like,
+                )
             all_chunks.extend(chunks)
 
         # Sort by score and take top_k across all ontologies
@@ -150,7 +191,13 @@ class LibrarianOrchestrator:
         # If scaling to many ontologies, consider using heapq.nlargest for better performance.
         all_chunks = self._dedupe_chunk_dicts(all_chunks)
         all_chunks.sort(key=lambda x: x["score"], reverse=True)
-        all_chunks = all_chunks[:top_k]
+        effective_top_k = min(8, max(5, top_k)) if self.retrieval_strategy_name != "legacy" else top_k
+        all_chunks = all_chunks[:effective_top_k]
+        debug.write(
+            "final_retrieval_selection",
+            input={"top_k": top_k, "ontology_ids": ontology_ids},
+            output={"chunk_count": len(all_chunks), "chunks": all_chunks},
+        )
 
         # Fetch library metadata for the chunks we retrieved
         library_item_ids = list({chunk["library_item_id"] for chunk in all_chunks})
@@ -160,7 +207,7 @@ class LibrarianOrchestrator:
 
         # Convert to schema objects
         retrieved_chunks = []
-        for chunk in all_chunks:
+        for source_number, chunk in enumerate(all_chunks, 1):
             metadata_for_item = library_metadata.get(chunk["library_item_id"], {})
             if not metadata_for_item.get("vectorized", False):
                 continue
@@ -174,6 +221,16 @@ class LibrarianOrchestrator:
                     page_url=chunk.get("page_url"),
                     book_title=metadata_for_item.get("title"),
                     book_authors=metadata_for_item.get("authors"),
+                    source_id=f"source-{source_number}",
+                    chunk_id=chunk.get("chunk_id"),
+                    parent_chunk_id=chunk.get("parent_chunk_id"),
+                    physical_page_numbers=chunk.get("physical_page_numbers") or chunk.get("page_numbers") or [chunk["page_number"]],
+                    displayed_page_labels=chunk.get("displayed_page_labels") or [],
+                    display_page_label=chunk.get("display_page_label"),
+                    bounding_boxes=chunk.get("bounding_boxes") or [],
+                    matched_child_text=chunk.get("matched_child_text"),
+                    expansion_mode=chunk.get("expansion_mode"),
+                    incomplete_evidence=bool(chunk.get("incomplete_evidence", False)),
                 )
             )
 
@@ -209,11 +266,23 @@ class LibrarianOrchestrator:
                     writing_style=agent.writing_style,
                     rpg_system=self._format_rpg_system_context(agent),
                     trace=trace,
+                    debug=debug,
                 )
 
                 # Extract sources that were actually used in the answer
                 sources_used = self._extract_sources_from_answer(raw_answer, retrieved_chunks)
                 answer = self._render_inline_book_citations(raw_answer, retrieved_chunks)
+                debug.write(
+                    "citation_rendering",
+                    input={
+                        "raw_answer": raw_answer,
+                        "retrieved_chunks": [c.model_dump() for c in retrieved_chunks],
+                    },
+                    output={
+                        "answer": answer,
+                        "sources_used": [c.model_dump() for c in sources_used],
+                    },
+                )
 
         # Get unique library items used
         library_items_used = list({chunk.library_item_id for chunk in sources_used})
@@ -246,7 +315,7 @@ class LibrarianOrchestrator:
             )
 
         # Return response based on mode
-        return LibrarianQueryResponse(
+        response = LibrarianQueryResponse(
             agent_id=agent.id,
             mode=request.mode,
             query=request.query,
@@ -257,6 +326,13 @@ class LibrarianOrchestrator:
             library_items_used=library_items_used,
             trace=trace if request.include_trace else None,
         )
+        debug.write(
+            "final_response",
+            input={"mode": request.mode},
+            output=response.model_dump(),
+        )
+        logger.info("librarian_debug_artifacts_written output_dir=%s", debug.output_dir)
+        return response
 
     async def _retrieve_chunks(
         self,
@@ -271,6 +347,7 @@ class LibrarianOrchestrator:
         hybrid_rerank: bool = True,
         max_chunks_per_item: int | None = None,
         dynamic_score_floor: bool = False,
+        debug: LibrarianDebugArtifacts | None = None,
     ) -> list[dict[str, Any]]:
         """
         Retrieve relevant chunks from PDFs.
@@ -285,6 +362,18 @@ class LibrarianOrchestrator:
         Returns:
             List of retrieved chunk dictionaries
         """
+        retrieval_input = {
+            "query": query,
+            "ontology_id": ontology_id,
+            "library_item_ids": library_item_ids,
+            "active_library_item_ids": active_library_item_ids,
+            "top_k": top_k,
+            "score_threshold": score_threshold if score_threshold is not None else 0.3,
+            "candidate_limit": candidate_limit,
+            "hybrid_rerank": hybrid_rerank,
+            "max_chunks_per_item": max_chunks_per_item,
+            "dynamic_score_floor": dynamic_score_floor,
+        }
         chunks = await self.pdf_embedding_service.search_chunks(
             query_text=query,
             ontology_id=ontology_id,
@@ -297,11 +386,24 @@ class LibrarianOrchestrator:
             max_chunks_per_item=max_chunks_per_item,
             dynamic_score_floor=dynamic_score_floor,
         )
+        found_chunks = [dict(chunk) for chunk in chunks]
+        if debug:
+            debug.write(
+                "chunks_found",
+                input=retrieval_input,
+                output={"chunk_count": len(found_chunks), "chunks": found_chunks},
+            )
 
         # Enrich chunks with neighbor pages to improve context quality
         if not self.fast_mode:
             chunks = await self.pdf_embedding_service.enrich_chunks_with_neighbors(
                 chunks
+            )
+        if debug:
+            debug.write(
+                "enhanced_chunks",
+                input={"fast_mode": self.fast_mode, "chunks": found_chunks},
+                output={"chunk_count": len(chunks), "chunks": chunks},
             )
 
         if trace is not None:
@@ -406,6 +508,7 @@ class LibrarianOrchestrator:
         writing_style: str | None,
         rpg_system: str,
         trace: list[dict[str, Any]],
+        debug: LibrarianDebugArtifacts | None = None,
     ) -> str:
         """
         Generate answer with proper citations and applied writing style.
@@ -425,10 +528,16 @@ class LibrarianOrchestrator:
         for i, chunk in enumerate(chunks, 1):
             book_title = chunk.book_title or f"Book #{chunk.library_item_id}"
             chunk_text = (chunk.text or "").strip()
-            if len(chunk_text) > self.max_chars_per_chunk_for_answer:
+            if chunk.incomplete_evidence:
+                chunk_text = (
+                    "[INCOMPLETE EVIDENCE: the complete list/table parent exceeds "
+                    "the safe synthesis context. Do not infer or present a partial list.]"
+                )
+            if self.retrieval_strategy_name == "legacy" and len(chunk_text) > self.max_chars_per_chunk_for_answer:
                 chunk_text = chunk_text[: self.max_chars_per_chunk_for_answer].rstrip() + " ..."
             chunks_text += (
-                f"\n--- Source {i}: {book_title}, Page {chunk.page_number} "
+                f"\n--- Source {i} (source_id={chunk.source_id or f'source-{i}'}): "
+                f"{book_title}, Page {chunk.display_page_label or chunk.page_number} "
                 f"(library_item_id={chunk.library_item_id}) ---\n"
                 f"{chunk_text}\n"
             )
@@ -445,10 +554,29 @@ class LibrarianOrchestrator:
         system_msg = (
             f"You are a knowledgeable librarian expert on the {rpg_system} RPG system. "
             "Answer using ONLY the provided excerpts. "
-            "For EVERY piece of information, wrap the cited text like "
-            '[text]{cite library_item_id=ID library_item_name="TITLE" page=PAGE}. '
+            "For EVERY piece of information, cite only the stable source identifier like "
+            "[text]{cite source_id=source-N}. "
             "Apply the writing style while preserving all facts."
         )
+        if debug:
+            debug.write(
+                "llm_context_window",
+                input={
+                    "query": query,
+                    "writing_style": style_text,
+                    "rpg_system": rpg_system,
+                    "chunks": [chunk.model_dump() for chunk in chunks],
+                },
+                output={
+                    "model": str(self.answer_model),
+                    "temperature": 0.2,
+                    "messages": [
+                        {"role": "system", "content": system_msg},
+                        {"role": "user", "content": prompt},
+                    ],
+                    "prompt_character_count": len(system_msg) + len(prompt),
+                },
+            )
         await self._maybe_prewarm_model(self.answer_model)
 
         try:
@@ -482,6 +610,16 @@ class LibrarianOrchestrator:
                         ),
                     },
                 }
+            )
+
+        if debug:
+            debug.write(
+                "llm_synthesis",
+                input={
+                    "model": str(self.answer_model),
+                    "messages": [system_msg, prompt],
+                },
+                output={"raw_answer": answer},
             )
 
         return answer
@@ -595,6 +733,7 @@ class LibrarianOrchestrator:
         hybrid_rerank: bool = True,
         max_chunks_per_item: int | None = None,
         dynamic_score_floor: bool = False,
+        debug: LibrarianDebugArtifacts | None = None,
     ) -> list[dict[str, Any]]:
         per_query_k = max(top_k, 12 if plan.exhaustive or plan.table_like else top_k)
         # Neo4j async sessions are not safe for concurrent run() calls from gather().
@@ -614,6 +753,7 @@ class LibrarianOrchestrator:
                 hybrid_rerank=hybrid_rerank,
                 max_chunks_per_item=max_chunks_per_item,
                 dynamic_score_floor=dynamic_score_floor,
+                debug=debug,
             )
             results.append(result)
         chunks = self._dedupe_chunk_dicts([chunk for group in results for chunk in group])
@@ -637,6 +777,7 @@ class LibrarianOrchestrator:
 
         if plan.neighbor_radius and chunks:
             before = len(chunks)
+            chunks_before_neighbor_expansion = [dict(chunk) for chunk in chunks]
             chunks = await self.pdf_embedding_service.expand_chunks_by_page_neighbors(
                 chunks,
                 radius=plan.neighbor_radius,
@@ -644,6 +785,15 @@ class LibrarianOrchestrator:
                 library_item_ids=library_item_ids,
                 active_library_item_ids=active_library_item_ids,
             )
+            if debug:
+                debug.write(
+                    "page_neighbor_expansion",
+                    input={
+                        "radius": plan.neighbor_radius,
+                        "chunks": chunks_before_neighbor_expansion,
+                    },
+                    output={"chunk_count": len(chunks), "chunks": chunks},
+                )
             if trace is not None:
                 trace.append(
                     {
@@ -735,7 +885,11 @@ class LibrarianOrchestrator:
         if not answer:
             return []
 
-        # Extract all library_item_id and page combinations from cite wrappers
+        source_ids = set(re.findall(r"\{cite[^}]*source_id\s*=\s*([A-Za-z0-9_-]+)[^}]*\}", answer))
+        if source_ids:
+            return [chunk for chunk in all_chunks if chunk.source_id in source_ids]
+
+        # Backward-compatible legacy wrappers.
         # Pattern handles attributes in any order inside {cite ...}
         pattern = r'\{cite[^}]*library_item_id\s*=\s*(\d+)[^}]*page\s*=\s*(\d+)[^}]*\}'
         matches = re.findall(pattern, answer)
@@ -766,8 +920,11 @@ class LibrarianOrchestrator:
             return answer
 
         chunk_index: dict[tuple[int, int], RetrievedChunk] = {}
+        source_index: dict[str, RetrievedChunk] = {}
         for chunk in all_chunks:
             chunk_index[(int(chunk.library_item_id), int(chunk.page_number))] = chunk
+            if chunk.source_id:
+                source_index[chunk.source_id] = chunk
 
         pattern = re.compile(r"\[(?P<text>.*?)\]\{cite(?P<attrs>[^}]*)\}", re.DOTALL)
 
@@ -796,12 +953,18 @@ class LibrarianOrchestrator:
             item_id = _extract_int(attrs, "library_item_id")
             page = _extract_int(attrs, "page")
             title = _extract_str(attrs, "library_item_name")
+            source_id = _extract_str(attrs, "source_id")
 
-            chunk = chunk_index.get((item_id, page)) if item_id is not None and page is not None else None
+            chunk = source_index.get(source_id or "")
+            if chunk is None and item_id is not None and page is not None:
+                chunk = chunk_index.get((item_id, page))
+            if chunk is not None:
+                item_id = chunk.library_item_id
+                page = chunk.page_number
             resolved_title = title or (chunk.book_title if chunk else None) or (
                 f"Book #{item_id}" if item_id is not None else "Book"
             )
-            page_label = page if page is not None else (chunk.page_number if chunk else None)
+            page_label = (chunk.display_page_label if chunk else None) or page or (chunk.page_number if chunk else None)
             page_url = chunk.page_url if chunk else None
 
             if page_url and page_label is not None:
@@ -813,4 +976,3 @@ class LibrarianOrchestrator:
         rendered = pattern.sub(_replace, answer)
         rendered = re.sub(r"\n{3,}", "\n\n", rendered).strip()
         return rendered
-

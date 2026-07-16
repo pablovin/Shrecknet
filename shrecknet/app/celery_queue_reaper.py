@@ -137,45 +137,56 @@ def reap_stale_celery_messages() -> dict[str, int]:
     return stats
 
 
-def fail_non_terminal_background_jobs(reason: str | None = None) -> int:
+def clear_all_background_jobs() -> dict[str, Any]:
+    """Delete every persisted job and return Celery task IDs that must be revoked."""
     settings = get_settings()
     jobs_conn = _open_sqlite(settings.jobs_database_url)
     if jobs_conn is None or not _sqlite_table_exists(jobs_conn, "background_jobs"):
         if jobs_conn is not None:
             jobs_conn.close()
-        return 0
-
-    failure_reason = (
-        reason
-        or "Job failed during startup cleanup because a previous worker/session ended unexpectedly."
-    )
-    completed_at = datetime.now(timezone.utc).isoformat()
+        return {"deleted_jobs": 0, "celery_task_ids": []}
     try:
-        cursor = jobs_conn.execute(
-            """
-            UPDATE background_jobs
-            SET
-                status = 'failed',
-                error_message = CASE
-                    WHEN error_message IS NULL OR TRIM(error_message) = ''
-                    THEN ?
-                    ELSE error_message
-                END,
-                completed_at = COALESCE(completed_at, ?)
-            WHERE status IN ('queued', 'running')
-            """,
-            (failure_reason, completed_at),
+        columns = {
+            str(row[1])
+            for row in jobs_conn.execute("PRAGMA table_info(background_jobs)").fetchall()
+        }
+        rows = (
+            jobs_conn.execute(
+                "SELECT celery_task_id FROM background_jobs WHERE celery_task_id IS NOT NULL"
+            ).fetchall()
+            if "celery_task_id" in columns
+            else []
         )
+        cursor = jobs_conn.execute("DELETE FROM background_jobs")
         jobs_conn.commit()
-        return int(cursor.rowcount or 0)
+        return {
+            "deleted_jobs": int(cursor.rowcount or 0),
+            "celery_task_ids": [str(row["celery_task_id"]) for row in rows if row["celery_task_id"]],
+        }
     finally:
         jobs_conn.close()
+
+
+def revoke_celery_tasks(task_ids: list[str]) -> int:
+    """Broadcast revocation for known running jobs before purging queued messages."""
+    unique_ids = list(dict.fromkeys(task_ids))
+    if not unique_ids:
+        return 0
+    try:
+        from app.celery_app import celery_app
+
+        for task_id in unique_ids:
+            celery_app.control.revoke(task_id, terminate=True, signal="SIGTERM")
+        return len(unique_ids)
+    except Exception:
+        logger.exception("Failed revoking Celery tasks during job cleanup")
+        return 0
 
 
 def purge_celery_queues(queue_names: tuple[str, ...] | None = None) -> dict[str, int]:
     settings = get_settings()
     redis_client = redis.Redis.from_url(settings.celery_broker_url, decode_responses=True)
-    queues = queue_names or ("ontology_linking", "architect")
+    queues = queue_names or ("ontology_linking", "architect", "celery")
 
     purged = 0
     inspected = 0
@@ -185,19 +196,41 @@ def purge_celery_queues(queue_names: tuple[str, ...] | None = None) -> dict[str,
             purged += int(redis_client.delete(queue) or 0)
         except Exception:
             logger.exception("Failed purging Celery queue '%s'", queue)
+    # Redis transport keeps reserved messages outside their queue list. Those
+    # entries are restored after a worker restart unless they are removed too.
+    try:
+        stale_keys = {"unacked", "unacked_index"}
+        scan_iter = getattr(redis_client, "scan_iter", None)
+        if callable(scan_iter):
+            stale_keys.update(
+                str(key)
+                for key in scan_iter(match="*unacked*")
+                if "unacked" in str(key)
+            )
+        for key in stale_keys:
+            purged += int(redis_client.delete(key) or 0)
+    except Exception:
+        logger.exception("Failed purging Celery reserved-message keys")
     return {"inspected": inspected, "purged_keys": purged}
 
 
 def reset_jobs_and_queues_on_startup() -> dict[str, int]:
-    failed_jobs = fail_non_terminal_background_jobs()
+    cleared_jobs = clear_all_background_jobs()
+    revoked_tasks = revoke_celery_tasks(cleared_jobs["celery_task_ids"])
     purge_stats = purge_celery_queues()
     stats = {
-        "failed_jobs": failed_jobs,
+        "jobs_deleted": int(cleared_jobs["deleted_jobs"]),
+        "tasks_revoked": revoked_tasks,
         "queued_messages_inspected": purge_stats["inspected"],
         "queues_purged": purge_stats["purged_keys"],
     }
-    if failed_jobs > 0 or purge_stats["inspected"] > 0:
+    if stats["jobs_deleted"] > 0 or revoked_tasks > 0 or purge_stats["inspected"] > 0:
         logger.warning("Startup Celery cleanup applied: %s", stats)
     else:
         logger.info("Startup Celery cleanup found no stale jobs/messages")
     return stats
+
+
+def clear_all_jobs_and_queues() -> dict[str, int]:
+    """User-invoked destructive cleanup of job history and all broker queues."""
+    return reset_jobs_and_queues_on_startup()

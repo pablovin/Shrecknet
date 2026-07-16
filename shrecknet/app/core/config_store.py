@@ -34,6 +34,8 @@ BOOTSTRAP_ENV_FIELDS = frozenset(
         "neo4j_password",
         "neo4j_database",
         "media_root",
+        # Lets a deployment choose CUDA without mutating persistent config.
+        "embedding_device",
     }
 )
 
@@ -57,6 +59,8 @@ LLM_TARGET_FIELDS = (
     "model_orchestrator_synthesis",
 )
 ALLOWED_OPENAI_MODELS = frozenset({"gpt-5", "gpt-5-nano", "gpt-4o-mini"})
+LEGACY_EMBEDDING_MODEL_ID = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+ACTIVE_EMBEDDING_MODEL_ID = "intfloat/multilingual-e5-small"
 
 
 class LLMModelTarget(BaseModel):
@@ -212,6 +216,7 @@ class Settings(BaseSettings):
     model_librarian: LLMModelTarget = Field(
         default_factory=lambda: LLMModelTarget(provider="openai", name="gpt-5-nano")
     )
+    librarian_retrieval_strategy: str = "v2"
     model_orchestrator_routing: LLMModelTarget = Field(
         default_factory=lambda: LLMModelTarget(provider="openai", name="gpt-5-nano")
     )
@@ -220,7 +225,7 @@ class Settings(BaseSettings):
     )
     companion_agent_trace_enabled: bool = False
     default_top_k: int = 20
-    embedding_model_id: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+    embedding_model_id: str = "intfloat/multilingual-e5-small"
     embedding_dimension: int = 384
     embedding_device: str = "cpu"
     # A value of 1 can introduce queueing under concurrent elder or embedding workloads.
@@ -477,12 +482,31 @@ def _normalize_legacy_llm_targets(conn: sqlite3.Connection) -> None:
         conn.commit()
 
 
+def _migrate_embedding_model(conn: sqlite3.Connection) -> None:
+    """Move the former default to E5 while preserving an explicit custom model."""
+    current_values = _load_settings_from_db(conn)
+    if current_values.get("embedding_model_id") != LEGACY_EMBEDDING_MODEL_ID:
+        return
+    timestamp = _current_timestamp()
+    conn.execute(
+        f"""
+        INSERT INTO {CONFIG_TABLE} (key, value, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at
+        """,
+        ("embedding_model_id", _serialize_value(ACTIVE_EMBEDDING_MODEL_ID), timestamp),
+    )
+    conn.commit()
+    logger.info("Migrated embedding_model_id from %s to %s", LEGACY_EMBEDDING_MODEL_ID, ACTIVE_EMBEDDING_MODEL_ID)
+
+
 def load_settings() -> Settings:
     conn = _connect()
     try:
         _ensure_schema(conn)
         _normalize_legacy_database_urls(conn)
         _normalize_legacy_llm_targets(conn)
+        _migrate_embedding_model(conn)
         merged = _seed_defaults_if_needed(conn)
     finally:
         conn.close()

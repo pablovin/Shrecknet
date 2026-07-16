@@ -306,6 +306,14 @@ async def lifespan(_: FastAPI):
     try:
         driver = get_driver()
         async with driver.session(database=settings.neo4j_database) as neo4j_session:
+            # Startup intentionally clears all jobs/queues. Any lock from a
+            # terminated Librarian ingestion is therefore stale as well.
+            lock_result = await neo4j_session.run(
+                "MATCH (lock:PdfIngestionLock) DELETE lock RETURN count(lock) AS deleted"
+            )
+            lock_record = await lock_result.single()
+            if lock_record and int(lock_record["deleted"] or 0):
+                logger.warning("Cleared %s stale Librarian ingestion locks on startup", lock_record["deleted"])
             await ensure_temporal_graph_constraints(neo4j_session)
             await ensure_elder_hybrid_indexes(neo4j_session)
             await PdfEmbeddingService(neo4j_session).ensure_vector_index()

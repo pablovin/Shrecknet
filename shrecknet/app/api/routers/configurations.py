@@ -311,6 +311,7 @@ FIELD_UI_META: dict[str, dict[str, Any]] = {
     "model_novelist_prose": {"type": "llm_target", "help": "Provider/model target for novelist prose stages (step5+step7)."},
     "model_novelist_critic": {"type": "llm_target", "help": "Provider/model target for novelist critic stage (step6)."},
     "model_librarian": {"type": "llm_target", "help": "Provider/model target for librarian."},
+    "librarian_retrieval_strategy": {"type": "string", "help": "Librarian retrieval implementation: v2 (RRF/parent expansion) or legacy."},
     "model_orchestrator_routing": {"type": "llm_target", "help": "Provider/model target for companion orchestrator routing classifier."},
     "model_orchestrator_synthesis": {"type": "llm_target", "help": "Provider/model target for companion orchestrator final synthesis."},
     "max_image_upload_bytes": {"type": "integer", "help": "Maximum image upload size in bytes."},
@@ -544,7 +545,7 @@ def get_config_schema() -> dict[str, Any]:
         {"id": "architect", "label": "Architect Agent", "fields": ["model_architect_scene_chunking", "model_architect_entity_proposal", "model_architect_milestone_proposal", "model_architect_entity_generation", "model_agents_repair_json"]},
         {"id": "elder", "label": "Elder Agent", "fields": ["model_elder", "default_top_k", "elder_embedding_inference_concurrency", "elder_query_embedding_timeout_s", "elder_embedding_warmup_on_worker_start", "elder_embedding_manager_enabled", "elder_embedding_queue_max_size", "elder_embedding_batch_max_size", "elder_embedding_batch_wait_ms", "elder_embedding_cache_size", "elder_embedding_request_timeout_s", "embedding_runtime_enabled", "embedding_runtime_queue_max_size", "embedding_runtime_batch_max_size", "embedding_runtime_batch_wait_ms", "embedding_runtime_cache_size", "embedding_runtime_request_timeout_s", "embedding_runtime_startup_timeout_s", "embedding_runtime_fail_open_health", "embedding_model_id", "embedding_dimension", "embedding_device", "embedding_chunk_size", "embedding_chunk_overlap"]},
         {"id": "novelist", "label": "Novelist Agent", "fields": ["model_novelist_planning", "model_novelist_prose", "model_novelist_critic"]},
-        {"id": "librarian", "label": "Librarian Agent", "fields": ["model_librarian"]},
+        {"id": "librarian", "label": "Librarian Agent", "fields": ["model_librarian", "librarian_retrieval_strategy"]},
         {"id": "security_tokens", "label": "Security Tokens", "fields": ["jwt_issuer", "jwt_audience", "jwt_kid", "jwt_access_token_expiry_minutes"]},
         {"id": "legacy_migration", "label": "Legacy Migration", "fields": ["old_database_url"]},
     ]

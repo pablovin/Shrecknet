@@ -73,6 +73,7 @@
     "provider": "",
     "name": ""
   },
+  "librarian_retrieval_strategy": "v2",
   "model_orchestrator_routing": {
     "provider": "",
     "name": ""
@@ -82,7 +83,7 @@
     "name": ""
   },
   "default_top_k": 20,
-  "embedding_model_id": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+  "embedding_model_id": "intfloat/multilingual-e5-small",
   "embedding_dimension": 384,
   "embedding_device": "cpu",
   "elder_embedding_inference_concurrency": 2,

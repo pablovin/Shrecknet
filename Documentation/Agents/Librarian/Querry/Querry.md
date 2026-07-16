@@ -2,6 +2,11 @@
 
 This document describes the Librarian query API behavior.
 
+Retrieval v2 responses expose stable `source_id`, child and parent chunk IDs,
+physical pages, displayed page labels, bounding boxes, matched-child text, and
+the parent expansion mode. Rendered citations prefer displayed page labels and
+fall back to physical page numbers.
+
 ## Endpoint
 
 - `POST /jobs/librarian/{agent_id}/query`

@@ -10,7 +10,11 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
 from app.core.config_store import get_settings
-from app.graphrag.embedding_service import get_embedding_model, get_embedding_model_id
+from app.graphrag.embedding_service import (
+    get_embedding_model,
+    get_embedding_model_id,
+    query_embedding_text,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -316,7 +320,10 @@ class EmbeddingRuntime:
     @staticmethod
     def _encode_batch(texts: list[str]) -> list[list[float]]:
         model = get_embedding_model()
-        vectors = model.encode(texts, normalize_embeddings=True)
+        vectors = model.encode(
+            [query_embedding_text(text) for text in texts],
+            normalize_embeddings=True,
+        )
         return [list(map(float, row)) for row in vectors]
 
 

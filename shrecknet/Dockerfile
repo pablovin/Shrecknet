@@ -11,6 +11,8 @@ WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       curl \
+      libgl1 \
+      libglib2.0-0 \
       tesseract-ocr \
     && groupadd --gid 1000 appuser \
     && useradd --uid 1000 --gid 1000 --create-home --shell /bin/bash appuser \
@@ -22,7 +24,9 @@ COPY pyproject.toml ./
 RUN python -m pip install --upgrade "pip>=24.3.1" setuptools wheel
 
 ARG TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu
-RUN pip install --prefer-binary --index-url "$TORCH_INDEX_URL" "torch>=2,<3"
+RUN pip install --prefer-binary --index-url "$TORCH_INDEX_URL" \
+      "torch>=2,<3" \
+      "torchvision>=0.17,<1"
 
 COPY app ./app
 COPY default ./default

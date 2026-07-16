@@ -2,8 +2,10 @@ name: Shrecknet
 
 x-shrecknet-env: &shrecknet-env
   PYTHONUNBUFFERED: "1"
+  SHRECKNET_EMBEDDING_DEVICE: ${SHRECKNET_EMBEDDING_DEVICE:-cpu}
   HF_HOME: /hf-cache
   SENTENCE_TRANSFORMERS_HOME: /hf-cache/sentence_transformers
+  DOCLING_ARTIFACTS_PATH: /hf-cache/docling
   SHRECKNET_CONFIG_SEED_FILE: /configs/shrecknet.initial.json
 
 x-shreckllm-env: &shreckllm-env
@@ -45,7 +47,7 @@ services:
         from huggingface_hub.errors import LocalEntryNotFoundError
         from sentence_transformers import SentenceTransformer
 
-        model_id = os.getenv("SHRECKNET_EMBEDDING_MODEL_ID", "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
+        model_id = os.getenv("SHRECKNET_EMBEDDING_MODEL_ID", "intfloat/multilingual-e5-small")
         device = os.getenv("SHRECKNET_EMBEDDING_DEVICE", "cpu")
         hf_home = Path(os.getenv("HF_HOME", "/hf-cache"))
         hf_home.mkdir(parents=True, exist_ok=True)
@@ -219,6 +221,9 @@ services:
         m.encode(["prefetch warmup"], normalize_embeddings=True)
         print("[MODEL_PREFETCH] warmup_done")
         PY
+        echo "[MODEL_PREFETCH] downloading Docling layout and table artifacts"
+        docling-tools models download layout tableformer -o /hf-cache/docling
+        chown -R "$${SHRECKNET_CONTAINER_UID:-1000}:$${SHRECKNET_CONTAINER_GID:-1000}" /hf-cache/docling
 
   shrecknet_permissions:
     image: alpine:3.20

@@ -26,6 +26,7 @@ dependencies = [
   "PyPDF2>=3.0,<4",
   "PyMuPDF>=1.23,<2",
   "pytesseract>=0.3.10,<0.4",
+  "docling>=2.81,<3",
 ]
 
 [project.optional-dependencies]

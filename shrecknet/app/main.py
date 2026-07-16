@@ -58,6 +58,7 @@ from app.graph.neo4j import (
 )
 from app.integrations.llm.runtime_control import fetch_shreckllm_runtime
 from app.integrations.llm.shreckllm_client import ShreckLLMClient
+from app.jobs.librarian.retrieval_strategies import preload_librarian_reranker
 
 
 logger = logging.getLogger(__name__)
@@ -303,6 +304,11 @@ async def lifespan(_: FastAPI):
         update_settings({"email_verification_enabled": False})
     _start_embedding_prewarm()
     _start_llm_prewarm()
+    try:
+        await preload_librarian_reranker()
+    except Exception:
+        # Retrieval remains available through deterministic RRF fallback.
+        logger.exception("Unable to preload Librarian cross-encoder; using RRF fallback")
     try:
         driver = get_driver()
         async with driver.session(database=settings.neo4j_database) as neo4j_session:

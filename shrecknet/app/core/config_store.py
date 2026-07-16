@@ -216,7 +216,7 @@ class Settings(BaseSettings):
     model_librarian: LLMModelTarget = Field(
         default_factory=lambda: LLMModelTarget(provider="openai", name="gpt-5-nano")
     )
-    librarian_retrieval_strategy: str = "v2"
+    librarian_debug_artifacts_enabled: bool = False
     model_orchestrator_routing: LLMModelTarget = Field(
         default_factory=lambda: LLMModelTarget(provider="openai", name="gpt-5-nano")
     )

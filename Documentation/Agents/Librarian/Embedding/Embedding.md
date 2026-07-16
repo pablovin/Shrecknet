@@ -4,6 +4,10 @@ Librarian uses a local Docling pipeline to ingest PDF books as structured,
 versioned document graphs. The PDF is never flattened to page text before
 chunking.
 
+This is the active embedding source for Librarian Query v2. Its E5 child
+vectors provide precise matches, while the parent/child graph reconstructs the
+complete display evidence used by coverage validation and final synthesis.
+
 ## Entry Points
 
 The existing frontend and API contracts are unchanged:

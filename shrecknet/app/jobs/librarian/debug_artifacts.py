@@ -26,12 +26,15 @@ def debug_value(value: Any) -> Any:
 class LibrarianDebugArtifacts:
     """Write ordered input/output snapshots without affecting query execution."""
 
-    def __init__(self, output_dir: Path):
+    def __init__(self, output_dir: Path | None):
         self.output_dir = output_dir
         self._sequence = 0
+        self._files: list[str] = []
 
     @classmethod
-    def create(cls) -> "LibrarianDebugArtifacts":
+    def create(cls, *, enabled: bool = True) -> "LibrarianDebugArtifacts":
+        if not enabled:
+            return cls(None)
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S_%fZ")
         run_name = f"querry_{timestamp}"
         data_root = os.getenv("SHRECKNET_DATA_DIR", "/data")
@@ -55,6 +58,8 @@ class LibrarianDebugArtifacts:
 
     def write(self, step: str, *, input: Any, output: Any) -> str | None:
         """Persist one stage. Serialization and I/O errors are non-fatal."""
+        if self.output_dir is None:
+            return None
         self._sequence += 1
         safe_step = re.sub(r"[^a-z0-9]+", "_", step.lower()).strip("_") or "step"
         path = self.output_dir / f"{self._sequence:02d}_{safe_step}.json"
@@ -69,7 +74,29 @@ class LibrarianDebugArtifacts:
                 json.dumps(payload, ensure_ascii=False, indent=2, default=str),
                 encoding="utf-8",
             )
+            self._files.append(path.name)
             return str(path)
         except (OSError, TypeError, ValueError) as exc:
             logger.warning("librarian_debug_artifact_write_failed path=%s error=%s", path, exc)
+            return None
+
+    def write_manifest(self, **values: Any) -> str | None:
+        """Write a stable run index after all numbered stage artifacts."""
+        if self.output_dir is None:
+            return None
+        path = self.output_dir / "manifest.json"
+        payload = {
+            "pipeline_version": "v2",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "artifacts": list(self._files),
+            **values,
+        }
+        try:
+            path.write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2, default=str),
+                encoding="utf-8",
+            )
+            return str(path)
+        except (OSError, TypeError, ValueError) as exc:
+            logger.warning("librarian_debug_manifest_write_failed path=%s error=%s", path, exc)
             return None

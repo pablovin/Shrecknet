@@ -29,7 +29,6 @@ from app.repositories.agent_repository import AgentRepository
 from app.repositories.personal_companion_agent_repository import (
     PersonalCompanionAgentRepository,
 )
-from app.services.pdf_embedding_service import PdfEmbeddingService
 from app.utils.async_helpers import run_async
 from app.utils.companion_orchestrator_store import append_chat_message, get_session
 from app.utils.job_tracking import (
@@ -209,13 +208,11 @@ async def _run_librarian_agent(
                 "error": "invalid_job_type",
             }
         async with driver.session(database=settings.neo4j_database) as graph_session:
-            pdf_embedding_service = PdfEmbeddingService(graph_session)
             orchestrator = LibrarianOrchestrator(
                 llm_client=llm_client,
-                pdf_embedding_service=pdf_embedding_service,
-                default_top_k=settings.default_top_k,
                 answer_model=settings.model_librarian,
-                style_model=settings.model_librarian,
+                repair_json_model=settings.model_agents_repair_json,
+                debug_artifacts_enabled=settings.librarian_debug_artifacts_enabled,
             )
             request = LibrarianQueryRequest(
                 query=query,

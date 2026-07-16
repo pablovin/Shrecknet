@@ -3,20 +3,17 @@
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from neo4j import AsyncSession as AsyncNeo4jSession
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db_session
 from app.api.agent_feature_gate import require_ai_agents_enabled
 from app.core.config_store import get_settings, is_shreckllm_configured
 from app.graphrag.embedding_runtime import EmbeddingRuntimeError
-from app.graph.neo4j import get_neo4j_session
 from app.integrations.llm.shreckllm_client import ShreckLLMClient
 from app.jobs.librarian.librarian import LibrarianOrchestrator
 from app.jobs.librarian.schemas import LibrarianQueryRequest, LibrarianQueryResponse
 from app.models.user import User
 from app.repositories.agent_repository import AgentRepository
-from app.services.pdf_embedding_service import PdfEmbeddingService
 
 logger = logging.getLogger(__name__)
 
@@ -45,26 +42,17 @@ async def get_llm_client():
         await client.aclose()
 
 
-async def get_pdf_embedding_service(
-    graph_session: AsyncNeo4jSession = Depends(get_neo4j_session),
-) -> PdfEmbeddingService:
-    """Dependency to get PDF embedding service."""
-    return PdfEmbeddingService(graph_session)
-
-
 async def get_librarian_orchestrator(
     llm_client: ShreckLLMClient = Depends(get_llm_client),
-    pdf_embedding_service: PdfEmbeddingService = Depends(get_pdf_embedding_service),
 ) -> LibrarianOrchestrator:
     """Dependency to get Librarian orchestrator."""
     settings = get_settings()
 
     return LibrarianOrchestrator(
         llm_client=llm_client,
-        pdf_embedding_service=pdf_embedding_service,
-        default_top_k=settings.default_top_k,
         answer_model=settings.model_librarian,
-        style_model=settings.model_librarian,
+        repair_json_model=settings.model_agents_repair_json,
+        debug_artifacts_enabled=settings.librarian_debug_artifacts_enabled,
     )
 
 

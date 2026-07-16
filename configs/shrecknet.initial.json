@@ -73,7 +73,7 @@
     "provider": "",
     "name": ""
   },
-  "librarian_retrieval_strategy": "v2",
+  "librarian_debug_artifacts_enabled": false,
   "model_orchestrator_routing": {
     "provider": "",
     "name": ""

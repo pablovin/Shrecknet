@@ -29,3 +29,12 @@ def test_librarian_debug_artifacts_write_numbered_input_output_files(tmp_path) -
     assert payload["input"]["query"] == "How does armor work?"
     assert payload["output"]["chunks"][0]["page_number"] == 42
     assert payload["created_at"]
+
+
+def test_disabled_librarian_debug_artifacts_do_not_write_files(tmp_path) -> None:
+    artifacts = LibrarianDebugArtifacts.create(enabled=False)
+
+    assert artifacts.output_dir is None
+    assert artifacts.write("stage", input={"a": 1}, output={"b": 2}) is None
+    assert artifacts.write_manifest(status="success") is None
+    assert list(tmp_path.iterdir()) == []

@@ -3,17 +3,14 @@
 This document is the implementation reference for Librarian PDF retrieval,
 parent expansion, synthesis evidence, provenance, and cleanup behavior.
 
-## Strategy Selection
-
-`librarian_retrieval_strategy` selects the runtime implementation:
-
-- `v2` is the production default.
-- `legacy` restores the former multi-query additive hybrid strategy.
-
-The public Librarian query API does not expose strategy selection. This keeps
-rollback under server configuration control.
+Query v2 is the only supported Librarian retrieval strategy.
 
 ## Retrieval v2 Pipeline
+
+This retriever is the active evidence provider for Query v2. Query v2 invokes
+it once per planned information need and may invoke it for up to two sets of
+validator-requested follow-up needs. Ranking and graph expansion remain local
+to each need; the orchestrator performs cross-need evidence deduplication.
 
 For each ontology attached to the Librarian agent, v2 performs the following
 pipeline:
@@ -178,13 +175,10 @@ compatibility.
 `PdfEmbeddingService.ensure_vector_index()` maintains:
 
 - vector index `pdf_chunk_text_vec_idx`;
-- legacy full-text index `pdf_chunk_text_fulltext_idx` over `text`;
 - v2 full-text index `pdf_chunk_context_fulltext_v2_idx` over the five
   contextual properties.
 
 The v2 strategy also creates its full-text index idempotently before retrieval.
-The legacy index is intentionally retained so configuration rollback does not
-require an index migration.
 
 ## Trace and Debug Data
 
@@ -200,21 +194,6 @@ When tracing is enabled, v2 records:
 
 Existing Librarian debug artifacts also capture the request scope, final
 retrieval selection, synthesis context, citation resolution, and response.
-
-## Legacy Retrieval
-
-`LegacyLibrarianRetrievalStrategy` preserves the former behavior:
-
-- heuristic multi-query planning;
-- vector search through `PdfEmbeddingService.search_chunks(...)`;
-- fuzzy full-text search through `pdf_chunk_text_fulltext_idx`;
-- additive vector, full-text, and lexical scoring;
-- optional dynamic score floors and per-book caps;
-- page-anchor and neighboring-page expansion for broad list/table requests;
-- optional neighbor enrichment when fast mode is disabled.
-
-Legacy retrieval exists only as a rollback path. New retrieval quality changes
-should target v2 and must not reintroduce raw-score addition there.
 
 ## Clear and Cleanup Operations
 
@@ -250,4 +229,4 @@ Focused tests cover:
 - complete-parent, sibling-window, and list/table expansion;
 - `display_text`-only synthesis;
 - page-label, bounding-box, and stable-source citation provenance;
-- v2/legacy strategy selection and index definitions.
+- v2 index definitions and retrieval behavior.

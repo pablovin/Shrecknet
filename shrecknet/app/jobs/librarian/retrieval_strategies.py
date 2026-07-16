@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import re
+import threading
 from collections import defaultdict
 from contextlib import asynccontextmanager
 from difflib import SequenceMatcher
@@ -23,18 +24,14 @@ RERANK_LIMIT = 25
 DEFAULT_FINAL_K = 6
 MAX_PARENT_CHARS = 12_000
 SIBLING_WINDOW_CHARS = 8_000
+RERANKER_MODEL_ID = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 
 
-class LegacyLibrarianRetrievalStrategy:
-    """Adapter retaining the pre-v2 orchestrator retrieval implementation."""
-
-    name = "legacy"
-
-    def __init__(self, retrieve: Callable[..., Any]) -> None:
-        self._retrieve = retrieve
-
-    async def retrieve(self, **kwargs: Any) -> list[dict[str, Any]]:
-        return await self._retrieve(**kwargs)
+def is_table_like_query(query: str) -> bool:
+    return bool(re.search(
+        r"\b(table|list|chart|occupation|occupations|skills?|weapons?|spells?|items?|equipment|character creation|creation)\b",
+        query.casefold(),
+    ))
 
 
 class LibrarianRetrievalStrategyV2:
@@ -48,6 +45,7 @@ class LibrarianRetrievalStrategyV2:
         self._session_factory = session_factory
         self._cross_encoder: Any | None = None
         self._reranker_unavailable = False
+        self._reranker_lock = threading.Lock()
 
     @asynccontextmanager
     async def _session(self) -> AsyncIterator[Any]:
@@ -103,9 +101,13 @@ class LibrarianRetrievalStrategyV2:
           AND {alias}.library_item_id IN $active_ids
         """
 
-    async def _rows(self, query: str, **params: Any) -> list[dict[str, Any]]:
+    async def _rows(self, cypher: str, **params: Any) -> list[dict[str, Any]]:
         async with self._session() as session:
-            result = await session.run(query, **params)
+            # Neo4j's run() first argument is also named ``query``. Passing a
+            # Lucene parameter named ``query`` through **params collides with
+            # that Python argument before Cypher executes, so always pass the
+            # complete Cypher parameter map as the second positional argument.
+            result = await session.run(cypher, params)
             return [dict(record) async for record in result]
 
     async def _vector(self, embedding: list[float], scope: dict[str, Any]) -> list[dict[str, Any]]:
@@ -170,8 +172,9 @@ class LibrarianRetrievalStrategyV2:
             try:
                 from sentence_transformers import CrossEncoder
                 self._cross_encoder = CrossEncoder(
-                    "cross-encoder/ms-marco-MiniLM-L-6-v2",
+                    RERANKER_MODEL_ID,
                     device=self.settings.embedding_device,
+                    automodel_args={"low_cpu_mem_usage": False},
                 )
             except Exception as exc:
                 self._reranker_unavailable = True
@@ -189,7 +192,7 @@ class LibrarianRetrievalStrategyV2:
             context = "\n".join(filter(None, [props.get("book_title"), props.get("heading_path_text"), props.get("primary_heading"), props.get("display_text")]))
             pairs.append((query, context))
         try:
-            scores = await asyncio.to_thread(model.predict, pairs)
+            scores = await asyncio.to_thread(self._predict, model, pairs)
         except Exception as exc:
             logger.warning("librarian_v2_rerank_failed error=%s", exc)
             return candidates, True
@@ -197,6 +200,11 @@ class LibrarianRetrievalStrategyV2:
             candidate["rerank_score"] = float(score)
         window.sort(key=lambda item: (-item["rerank_score"], -item["rrf_score"], item["chunk_id"]))
         return window + candidates[RERANK_LIMIT:], False
+
+    def _predict(self, model: Any, pairs: list[tuple[str, str]]) -> Any:
+        """Serialize inference on the shared model; PyTorch modules are not request-thread safe."""
+        with self._reranker_lock:
+            return model.predict(pairs)
 
     @staticmethod
     def _diverse(candidates: list[dict[str, Any]], target: int) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
@@ -319,3 +327,34 @@ class LibrarianRetrievalStrategyV2:
                 {"step": "v2_diversity_expand", "data": {"effective_top_k": effective_k, "selected": len(selected), "exclusions": exclusions, "expansion_modes": [x["expansion_mode"] for x in expanded]}},
             ])
         return expanded
+
+
+_shared_strategy: LibrarianRetrievalStrategyV2 | None = None
+
+
+def get_librarian_retrieval_strategy() -> LibrarianRetrievalStrategyV2:
+    """Return the process-wide strategy so startup and requests share one reranker."""
+    global _shared_strategy
+    if _shared_strategy is None:
+        _shared_strategy = LibrarianRetrievalStrategyV2()
+    return _shared_strategy
+
+
+async def preload_librarian_reranker() -> bool:
+    """Load and warm the shared cross-encoder without making startup fatal."""
+    strategy = get_librarian_retrieval_strategy()
+    started = asyncio.get_running_loop().time()
+    model = await asyncio.to_thread(strategy._load_reranker)
+    if model is None:
+        logger.warning("librarian_reranker_prewarm_failed model=%s", RERANKER_MODEL_ID)
+        return False
+    try:
+        await asyncio.to_thread(strategy._predict, model, [("warmup query", "warmup passage")])
+    except Exception as exc:
+        strategy._reranker_unavailable = True
+        strategy._cross_encoder = None
+        logger.warning("librarian_reranker_prewarm_failed model=%s error=%s", RERANKER_MODEL_ID, exc)
+        return False
+    logger.info("librarian_reranker_prewarm_done model=%s elapsed_ms=%.1f",
+                RERANKER_MODEL_ID, (asyncio.get_running_loop().time() - started) * 1000)
+    return True

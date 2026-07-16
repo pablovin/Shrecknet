@@ -45,7 +45,7 @@ services:
         from huggingface_hub import HfApi
         from huggingface_hub import snapshot_download
         from huggingface_hub.errors import LocalEntryNotFoundError
-        from sentence_transformers import SentenceTransformer
+        from sentence_transformers import CrossEncoder, SentenceTransformer
 
         model_id = os.getenv("SHRECKNET_EMBEDDING_MODEL_ID", "intfloat/multilingual-e5-small")
         device = os.getenv("SHRECKNET_EMBEDDING_DEVICE", "cpu")
@@ -220,6 +220,15 @@ services:
         m = SentenceTransformer(model_id, device=device)
         m.encode(["prefetch warmup"], normalize_embeddings=True)
         print("[MODEL_PREFETCH] warmup_done")
+        reranker_id = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+        print(f"[MODEL_PREFETCH] loading Librarian reranker model={reranker_id}")
+        reranker = CrossEncoder(
+            reranker_id,
+            device=device,
+            automodel_args={"low_cpu_mem_usage": False},
+        )
+        reranker.predict([("warmup query", "warmup passage")])
+        print("[MODEL_PREFETCH] librarian_reranker_warmup_done")
         PY
         echo "[MODEL_PREFETCH] downloading Docling layout and table artifacts"
         docling-tools models download layout tableformer -o /hf-cache/docling

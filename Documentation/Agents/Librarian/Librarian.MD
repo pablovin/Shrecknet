@@ -1,64 +1,30 @@
 # Librarian Agent
 
-This document describes Librarian in production scope.
+Librarian is a PDF-grounded Query v2 pipeline over structured `PdfChunk`
+documents in Neo4j.
 
-## Jobs Overview
+## Runtime
 
-Librarian is a PDF-grounded question answering pipeline over embedded `PdfChunk` nodes in Neo4j.
+The only supported query path is:
 
-Main endpoint:
+1. Plan standalone information needs from the original question.
+2. Retrieve each need using vector, contextual full-text, and exact-term search.
+3. Fuse and rerank child matches, then expand them into complete graph evidence.
+4. Validate evidence coverage and run up to two follow-up retrieval passes.
+5. Synthesize once with the agent's style and stable source-ID citations.
 
-- `POST /jobs/librarian/{agent_id}/query`
+The endpoint is `POST /jobs/librarian/{agent_id}/query`. `context` mode skips
+only final synthesis; planning, retrieval, and validation still run.
 
-## Goal
+## Code Ownership
 
-Given a user question, Librarian retrieves relevant book excerpts and returns:
+- `librarian.py`: stable application entrypoint.
+- `query_v2.py`: evidence-loop orchestration.
+- `retrieval_strategies.py`: Neo4j retrieval, ranking, and graph expansion.
+- `prompts.py`: all Librarian LLM prompts.
+- `citations.py`: trusted citation extraction and rendering.
+- `schemas.py`: request, response, and evidence contracts.
+- `debug_artifacts.py`: numbered stage artifacts and run manifest.
 
-- grounded answer text
-- source chunks
-- library item usage metadata
-- page-precise navigation links (`pdf_url`, `page_url`)
-
-## Runtime Pipeline
-
-Current pipeline stages:
-
-1. Query validation and agent scope loading
-2. Retrieval from Neo4j vector index (`pdf_chunk_text_vec_idx`)
-3. Optional chunk context enrichment (neighbor pages when fast mode is off)
-4. LLM answer synthesis with inline citation wrappers
-5. Source extraction and response assembly
-
-## Freshness and Safety Guarantees
-
-Librarian now enforces hard freshness semantics:
-
-- Every embed run deletes prior chunks for that `library_item_id` before writing new chunks.
-- Replacing a PDF file deletes old chunks immediately and marks item as unvectorized.
-- Retrieval only uses SQL items with `vectorized = true`.
-- If embedding fails, item is forced to `vectorized = false` (no stale fallback path).
-
-## Source and Citation Behavior
-
-Retrieved chunks carry:
-
-- `library_item_id`
-- `page_number`
-- `text`
-- `score`
-- `pdf_url`
-- `page_url`
-- `book_title`
-- `book_authors`
-
-Answer generation is instructed to wrap sourced text with cite wrappers:
-
-- `[text]{cite library_item_id=ID library_item_name="BOOK_TITLE" page=PAGE}`
-
-`sources_used` is derived by parsing cited `(library_item_id, page)` pairs and matching returned chunks.
-
-## Related Docs
-
-- Embedding: [Embedding.md](Embedding/Embedding.md)
-- Querry: [Querry.md](Querry/Querry.md)
-- Retrieval: [Retrieval.md](Retrieval/Retrieval.md)
+See [Embedding](Embedding/Embedding.md), [Query](Querry/Querry.md), and
+[Retrieval](Retrieval/Retrieval.md) for detailed contracts.

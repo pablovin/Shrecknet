@@ -33,7 +33,7 @@ class _FakeGraphSession:
         del params
         if "CALL db.index.vector.queryNodes" in query:
             chunk = _FakeNode(
-                ["EntityChunk"],
+                ["SemanticDocument"],
                 chunk_id="c-1",
                 chunk_type="text",
                 chunk_index=0,
@@ -196,19 +196,16 @@ async def test_embedding_runtime_restarts_missing_worker():
 async def test_semantic_search_uses_embedding_runtime(monkeypatch):
     service = RetrievalService(_FakeGraphSession())
 
-    async def _skip_index():
-        return True
-
     class _Mgr:
-        async def embed_query(self, query: str, *, request_id: str):
+        async def embed_query(self, query: str, *, request_id: str, timeout_s: float | None = None):
             assert query == "Tamura vs giant"
             assert request_id
+            assert timeout_s == 10.0
             return [0.1, 0.2, 0.3]
 
     async def _mgr_start():
         return _Mgr()
 
-    monkeypatch.setattr(service.embedding_service, "ensure_chunk_vector_index", _skip_index)
     monkeypatch.setattr(
         "app.graphrag.retrieval_service.get_ready_embedding_runtime", _mgr_start
     )

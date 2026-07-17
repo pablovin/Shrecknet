@@ -1,0 +1,202 @@
+"""Deterministic renderers for ontology-aware semantic documents."""
+
+from __future__ import annotations
+
+import json
+from typing import Any
+
+from app.graphrag.embedding_service import document_embedding_text
+from app.graphrag.semantic_v2.chunking import LosslessTokenChunker
+from app.graphrag.semantic_v2.documents import SemanticDocument, stable_hash
+from app.utils.text_sanitization import visible_text
+
+
+def _text(value: Any) -> str:
+    return visible_text(value) if value not in (None, "") else ""
+
+
+def _json_map(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str) and value.strip():
+        try:
+            parsed = json.loads(value)
+            return parsed if isinstance(parsed, dict) else {}
+        except (TypeError, ValueError):
+            return {}
+    return {}
+
+
+class SemanticDocumentRenderer:
+    def __init__(self, chunker: LosslessTokenChunker, *, long_text_threshold: int) -> None:
+        self.chunker = chunker
+        self.long_text_threshold = max(32, int(long_text_threshold))
+
+    def ontology_entity_definition(self, definition: dict[str, Any]) -> SemanticDocument:
+        lines = [f"Entity type: {_text(definition['name'])}"]
+        if _text(definition.get("description")):
+            lines.append(f"Meaning: {_text(definition['description'])}")
+        properties = definition.get("properties") or []
+        if properties:
+            lines.append("Allowed properties:")
+            for prop in properties:
+                detail = "; ".join(
+                    part for part in (
+                        _text(prop.get("description")),
+                        f"type={_text(prop.get('data_type'))}" if prop.get("data_type") else "",
+                        f"cardinality={_text(prop.get('cardinality'))}" if prop.get("cardinality") else "",
+                    ) if part
+                )
+                lines.append(f"- {_text(prop.get('name'))}" + (f": {detail}" if detail else ""))
+        relationships = definition.get("relationships") or []
+        if relationships:
+            lines.append("Allowed relationships:")
+            for rel in relationships:
+                destination = _text(rel.get("destination_name")) or "unspecified entity type"
+                lines.append(f"- {_text(rel.get('name'))} -> {destination}")
+        display = "\n".join(lines)
+        ontology_id = int(definition["ontology_id"])
+        definition_id = int(definition["id"])
+        return SemanticDocument(
+            document_id=f"ontology-entity-definition:{ontology_id}:{definition_id}",
+            source_kind="ontology_entity_definition",
+            source_node_id=None,
+            ontology_id=ontology_id,
+            entity_definition_id=definition_id,
+            display_text=display,
+            embedding_text=document_embedding_text(display),
+        )
+
+    def ontology_relationship_definition(self, definition: dict[str, Any]) -> SemanticDocument:
+        direction = "bidirectional" if definition.get("bi_directional") else "directed"
+        display = "\n".join(
+            part for part in (
+                f"Relationship: {_text(definition['name'])}",
+                f"Source entity type: {_text(definition.get('source_name'))}",
+                f"Destination entity type: {_text(definition.get('destination_name')) or 'unspecified'}",
+                f"Direction: {direction}",
+                f"Meaning: {_text(definition.get('description'))}" if definition.get("description") else "",
+            ) if part
+        )
+        ontology_id = int(definition["ontology_id"])
+        rel_id = int(definition["id"])
+        return SemanticDocument(
+            document_id=f"ontology-relationship-definition:{ontology_id}:{rel_id}",
+            source_kind="ontology_relationship_definition",
+            source_node_id=None,
+            ontology_id=ontology_id,
+            entity_definition_id=int(definition["entity_id"]),
+            relationship_definition_id=rel_id,
+            display_text=display,
+            embedding_text=document_embedding_text(display),
+        )
+
+    def entity(self, node: dict[str, Any], definition: dict[str, Any]) -> list[SemanticDocument]:
+        node_id = _text(node["entity_instance_id"])
+        ontology_id = int(node["ontology_id"])
+        instance_id = _text(node.get("instance_id")) or None
+        definition_id = int(node["entity_definition_id"])
+        properties = _json_map(node.get("properties"))
+        property_defs = {str(item["id"]): item for item in definition.get("properties") or []}
+
+        profile_lines = [f"Entity: {_text(node.get('alias'))}", f"Ontology type: {_text(definition.get('name'))}"]
+        if definition.get("description"):
+            profile_lines.append(f"Type meaning: {_text(definition['description'])}")
+        long_fields: list[tuple[str, str, str]] = []
+        for field_name in ("text", "autogenerated_text"):
+            value = _text(node.get(field_name))
+            if not value:
+                continue
+            if self.chunker.token_count(document_embedding_text(value)) > self.long_text_threshold:
+                long_fields.append((field_name, field_name.replace("_", " ").title(), value))
+            else:
+                profile_lines.append(f"{field_name.replace('_', ' ').title()}: {value}")
+
+        for prop_id in sorted(properties, key=lambda value: (not value.isdigit(), value)):
+            value = properties[prop_id]
+            if value in (None, "", [], {}):
+                continue
+            prop = property_defs.get(prop_id) or {"name": f"Property {prop_id}"}
+            prop_name = _text(prop.get("name"))
+            value_text = visible_text(
+                json.dumps(value, ensure_ascii=False, sort_keys=True)
+                if isinstance(value, (list, dict)) else value
+            )
+            data_type = _text(prop.get("data_type")).lower()
+            if data_type.endswith("text") and self.chunker.token_count(document_embedding_text(value_text)) > self.long_text_threshold:
+                long_fields.append((f"property:{prop_id}", prop_name, value_text))
+            else:
+                profile_lines.append(f"{prop_name}: {value_text}")
+
+        profile = "\n".join(profile_lines)
+        documents = [SemanticDocument(
+            document_id=f"entity-profile:{node_id}", source_kind="entity_profile",
+            source_node_id=node_id, ontology_id=ontology_id, instance_id=instance_id,
+            entity_definition_id=definition_id, display_text=profile,
+            embedding_text=document_embedding_text(profile),
+            source_created_at=_text(node.get("created_date") or node.get("created_at")) or None,
+            source_updated_at=_text(node.get("last_updated_date") or node.get("updated_at")) or None,
+        )]
+        for source_field, label, value in long_fields:
+            header = f"Source entity: {_text(node.get('alias'))}\nOntology type: {_text(definition.get('name'))}\nSource field: {label}"
+            chunks = self.chunker.split(value, header=header)
+            source_hash = stable_hash(value)
+            for index, chunk in enumerate(chunks):
+                display = f"{header}\n\n{chunk}"
+                documents.append(SemanticDocument(
+                    document_id=f"entity-text:{node_id}:{source_field}:{index}",
+                    source_kind="entity_text_chunk", source_node_id=node_id,
+                    ontology_id=ontology_id, instance_id=instance_id,
+                    entity_definition_id=definition_id, source_field=source_field,
+                    source_text_hash=source_hash, chunk_index=index, chunk_count=len(chunks),
+                    display_text=display, embedding_text=document_embedding_text(display),
+                    source_created_at=_text(node.get("created_date") or node.get("created_at")) or None,
+                    source_updated_at=_text(node.get("last_updated_date") or node.get("updated_at")) or None,
+                ))
+        return documents
+
+    def scene(self, node: dict[str, Any]) -> SemanticDocument:
+        scene_id = _text(node["id"])
+        related = node.get("related_entities") or []
+        lines = [f"Scene: {_text(node.get('name'))}", _text(node.get("description"))]
+        derived_alias = _text(node.get("derived_alias"))
+        if derived_alias:
+            derived_type = _text(node.get("derived_type_name"))
+            lines.append(f"Derived from: {derived_alias}" + (f" ({derived_type})" if derived_type else ""))
+        aliases = sorted({_text(item.get("alias")) for item in related if _text(item.get("alias"))})
+        if aliases:
+            lines.append("Directly related entities: " + ", ".join(aliases))
+        display = "\n".join(line for line in lines if line)
+        return SemanticDocument(
+            document_id=f"scene:{scene_id}", source_kind="scene", source_node_id=scene_id,
+            ontology_id=int(node["ontology_id"]), instance_id=_text(node.get("instance_id")) or None,
+            scene_id=scene_id, related_entity_ids=[_text(item.get("id")) for item in related if item.get("id")],
+            derived_from_entity_id=_text(node.get("derived_id")) or None,
+            display_text=display, embedding_text=document_embedding_text(display),
+            source_created_at=_text(node.get("created_at")) or None,
+            source_updated_at=_text(node.get("updated_at")) or None,
+        )
+
+    def milestone(self, node: dict[str, Any]) -> SemanticDocument:
+        milestone_id = _text(node["id"])
+        related = node.get("related_entities") or []
+        lines = [
+            f"Milestone: {_text(node.get('name'))}", _text(node.get("description")),
+            f"Temporal type: {_text(node.get('temporal_type')) or 'other'}",
+            f"Boundary type: {_text(node.get('boundary_type')) or 'none'}",
+            f"Containing scene: {_text(node.get('scene_name')) or _text(node.get('scene_id'))}",
+        ]
+        aliases = sorted({_text(item.get("alias")) for item in related if _text(item.get("alias"))})
+        if aliases:
+            lines.append("Directly related entities: " + ", ".join(aliases))
+        display = "\n".join(line for line in lines if line)
+        return SemanticDocument(
+            document_id=f"milestone:{milestone_id}", source_kind="milestone", source_node_id=milestone_id,
+            ontology_id=int(node["ontology_id"]), instance_id=_text(node.get("instance_id")) or None,
+            scene_id=_text(node.get("scene_id")) or None,
+            related_entity_ids=[_text(item.get("id")) for item in related if item.get("id")],
+            derived_from_entity_id=_text(node.get("derived_id")) or None,
+            display_text=display, embedding_text=document_embedding_text(display),
+            source_created_at=_text(node.get("created_at")) or None,
+            source_updated_at=_text(node.get("updated_at")) or None,
+        )

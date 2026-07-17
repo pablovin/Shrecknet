@@ -31,6 +31,8 @@
   "celery_stale_reaper_interval_seconds": 300,
   "celery_stale_reaper_max_task_age_seconds": 7200,
   "shreckllm_base_url": "http://shreckllm:8110",
+  "llm_prewarm_on_startup": true,
+  "llm_prewarm_timeout_s": 300.0,
   "enable_ai_agents": false,
   "user_creation_mode": "moderated",
   "model_architect_scene_chunking": {
@@ -74,6 +76,7 @@
     "name": ""
   },
   "librarian_debug_artifacts_enabled": false,
+  "elder_debug_artifacts_enabled": true,
   "model_orchestrator_routing": {
     "provider": "",
     "name": ""
@@ -103,6 +106,11 @@
   "embedding_runtime_request_timeout_s": 10.0,
   "embedding_runtime_startup_timeout_s": 20.0,
   "embedding_runtime_fail_open_health": true,
+  "semantic_embedding_strategy": "v2",
+  "semantic_embedding_version": "semantic-v2.0",
+  "semantic_embedding_long_text_threshold_tokens": 512,
+  "semantic_embedding_chunk_target_tokens": 384,
+  "semantic_embedding_chunk_overlap_tokens": 64,
   "embedding_chunk_size": 900,
   "embedding_chunk_overlap": 150,
   "event_publisher_mode": "logging",

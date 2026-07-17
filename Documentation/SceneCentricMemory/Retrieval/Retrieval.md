@@ -1,6 +1,16 @@
-# Scene-Centric Retrieval
+# Scene-Centric Retrieval — Elder V2
 
 Purpose: concise technical reference for current retrieval behavior in GraphRAG and Elder.
+
+Elder v2 plans no more than five controlled operations, executes independent operations in
+parallel dependency waves, merges graph/full-text/vector/exact results, and hydrates every
+selected parent completely before synthesis. Retrieval may rank and select sources; after a
+source is selected, neither its canonical text nor its evidence documents are truncated.
+
+The unified evidence record includes a stable evidence ID, canonical node and kind, complete
+display text and properties, associated entities, provenance, temporal position, score, and
+all retrieval methods. Explicit adjacency and ontology temporal signals sort ahead of
+timestamps. Ordinary requests use one planning and one synthesis LLM call.
 
 ## Scope
 
@@ -21,7 +31,7 @@ Label-target filtering supports:
 
 ### 1. Query Construction
 
-- Elder decomposes user question into `1..10` intents.
+- Elder creates a bounded, topologically ordered retrieval plan.
 - Each intent includes:
   - `subquery`
   - `target_data_type`
@@ -33,7 +43,7 @@ Label-target filtering supports:
 ### 2. Candidate Generation
 
 - Query is embedded.
-- Neo4j vector search runs on `EntityChunk` vectors (`entity_chunk_vec_idx`).
+- Neo4j vector search runs on `SemanticDocument` vectors (`semantic_document_vec_idx`).
 - Candidate window controls:
   - `candidate_limit`
   - `rerank_limit`
@@ -96,7 +106,6 @@ Top-level GraphRAG response:
 
 Elder now returns source-grounded payload:
 
-- `intents[]`
   - includes per-intent retrieval links: `top_k_entities|top_k_scenes|top_k_milestones`
 - `sources[]` (node-backed evidence)
 - `memory_priors_applied[]`

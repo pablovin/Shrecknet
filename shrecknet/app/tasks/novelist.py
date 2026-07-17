@@ -411,6 +411,7 @@ async def _execute_run(
                             model_policy=model_policy,
                             graph_retriever=retriever,
                             default_top_k=getattr(settings, "default_top_k", 8),
+                            debug_artifacts_enabled=settings.elder_debug_artifacts_enabled,
                         )
                         response = await elder_orchestrator.execute(
                             agent,

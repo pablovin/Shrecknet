@@ -94,7 +94,7 @@ class RetrievalService:
                + CASE WHEN alias_lc CONTAINS $query_lower THEN 0.10 ELSE 0.0 END
                + CASE WHEN name_lc CONTAINS $query_lower THEN 0.08 ELSE 0.0 END
              ) AS score_base
-        OPTIONAL MATCH (parent)<-[:HAS_CHUNK]-(chunk:EntityChunk)
+        OPTIONAL MATCH (parent)-[:HAS_SEMANTIC_DOCUMENT]->(chunk:SemanticDocument)
         WITH parent, score_base, collect(chunk)[..1] AS top_chunks
         RETURN parent AS parent, top_chunks[0] AS chunk, score_base AS score
         ORDER BY score DESC, coalesce(parent['name'], parent['alias'], parent['id']) ASC
@@ -348,12 +348,8 @@ class RetrievalService:
             f"k={k} node_scope={node_scope} candidate_limit={candidate_limit} rerank_limit={rerank_limit}"
         )
 
-        # Ensure chunk index exists (best-effort)
+        # V2 indexes are maintained at startup and by the embedding service.
         t_index_start = time.monotonic()
-        try:
-            await self.embedding_service.ensure_chunk_vector_index()
-        except Exception:
-            pass
         t_index = time.monotonic() - t_index_start
         print(
             f"[RETRIEVAL] step=ensure_chunk_index duration_s={t_index:.3f}"
@@ -529,21 +525,22 @@ class RetrievalService:
                 candidate_k = max(k, candidate_limit)
 
             search_query = """
-            CALL db.index.vector.queryNodes('entity_chunk_vec_idx', $k, $query_embedding)
+            CALL db.index.vector.queryNodes('semantic_document_vec_idx', $k, $query_embedding)
             YIELD node, score
-            MATCH (node)<-[:HAS_CHUNK]-(parent)
+            MATCH (node)<-[:HAS_SEMANTIC_DOCUMENT]-(parent)
                 WHERE any(label IN labels(parent) WHERE label IN $allowed_labels)
               AND score >= $score_threshold
               AND ($ontology_id IS NULL OR toInteger(node['ontology_id']) = toInteger($ontology_id))
             RETURN node AS chunk, parent AS parent, score
             ORDER BY score DESC
-            LIMIT $k
+            LIMIT $result_limit
             """
 
             t_query_start = time.monotonic()
             result = await self.graph_session.run(
                 search_query,
-                k=candidate_k,
+                k=max(candidate_k * 3, candidate_k),
+                result_limit=candidate_k,
                 query_embedding=query_embedding,
                 score_threshold=score_threshold,
                 ontology_id=ontology_id,

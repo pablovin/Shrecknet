@@ -57,28 +57,6 @@ class TraceStep(BaseModel):
     data: dict[str, Any] = Field(default_factory=dict, description="Step data")
 
 
-class DecomposedIntent(BaseModel):
-    """Intent used by retrieval pipeline."""
-
-    subquery: str = Field(..., min_length=1)
-    target_data_type: Literal["entity", "scene", "milestone", "mixed"] = Field(
-        "mixed"
-    )
-    reason: str = Field(default="general")
-    top_k_entities: list[str] = Field(
-        default_factory=list,
-        description="Top-k retrieved EntityInstance node IDs for this subquery",
-    )
-    top_k_scenes: list[str] = Field(
-        default_factory=list,
-        description="Top-k retrieved Scene node IDs for this subquery",
-    )
-    top_k_milestones: list[str] = Field(
-        default_factory=list,
-        description="Top-k retrieved Milestone node IDs for this subquery",
-    )
-
-
 class SourceEvidenceChunk(BaseModel):
     """Evidence chunk attached to a source node."""
 
@@ -86,6 +64,7 @@ class SourceEvidenceChunk(BaseModel):
     chunk_type: Optional[str] = None
     score: float = 0.0
     text: Optional[str] = None
+    complete: bool = True
 
 
 class SourceNode(BaseModel):
@@ -99,6 +78,42 @@ class SourceNode(BaseModel):
     source_entity_instance_id: Optional[str] = None
     score: float = 0.0
     evidence_chunks: list[SourceEvidenceChunk] = Field(default_factory=list)
+    evidence_id: Optional[str] = None
+    provenance: dict[str, Any] = Field(default_factory=dict)
+    temporal_position: dict[str, Any] = Field(default_factory=dict)
+    retrieval_methods: list[str] = Field(default_factory=list)
+    complete: bool = True
+    canonical_text: Optional[str] = None
+    properties: dict[str, Any] = Field(default_factory=dict)
+
+
+class ElderRetrievalPlanStep(BaseModel):
+    """Frontend-safe v2 retrieval step without execution-only scope or identifiers."""
+
+    id: str
+    purpose: str
+    operation: str
+    query: Optional[str] = None
+    inputs: list[str] = Field(default_factory=list)
+    entity_refs: list[str] = Field(default_factory=list)
+    temporal: dict[str, Any] = Field(default_factory=dict)
+    traversal: dict[str, Any] = Field(default_factory=dict)
+    target_data_type: str
+    limit: int
+    hydration_mode: str
+    context_chunks_before: int
+    context_chunks_after: int
+    max_tokens_per_source: int
+
+
+class ElderRetrievalPlan(BaseModel):
+    """Stable public projection of the active v2 retrieval plan."""
+
+    answer_goal: str
+    response_scope: Literal["brief", "standard", "deep"]
+    evidence_budget_tokens: int
+    query_intent: dict[str, Any] = Field(default_factory=dict)
+    steps: list[ElderRetrievalPlanStep] = Field(default_factory=list)
 
 
 class ElderQueryRequest(BaseModel):
@@ -126,9 +141,17 @@ class ElderQueryRequest(BaseModel):
     chat_id: Optional[str] = Field(
         None, description="Optional chat ID to use conversation history as context"
     )
+    instance_id: Optional[str] = Field(
+        None, description="Optional active ontology instance used to scope retrieval"
+    )
     entities_hint: Optional[str] = Field(
         None,
         description="Optional pre-built list of ontology entities (name + description)",
+    )
+    grounding_definitions: Optional[list[dict[str, Any]]] = Field(
+        None,
+        description="Internal structured ontology definitions supplied by the API layer",
+        exclude=True,
     )
     node_scope: Literal["everything", "entity", "scene", "milestone", "mixed"] = Field(
         "everything",
@@ -155,7 +178,7 @@ class ElderQueryResponse(BaseModel):
     query: str = Field(..., description="Original query")
     answer: str = Field(..., description="Grounded synthesized answer")
     timings: dict[str, float] = Field(default_factory=dict)
-    intents: list[DecomposedIntent] = Field(default_factory=list)
+    retrieval_plan: ElderRetrievalPlan
     sources: list[SourceNode] = Field(default_factory=list)
     memory_priors_applied: list[dict[str, Any]] = Field(default_factory=list)
     trace_id: str = Field(..., description="Trace identifier for logs")
@@ -164,5 +187,14 @@ class ElderQueryResponse(BaseModel):
     )
     retrieval_debug: Optional[list[dict[str, Any]]] = Field(
         None,
-        description="Debug information about per-intent retrieval/counters",
+        description="Debug information about v2 retrieval steps and counters",
+    )
+    pipeline_version: Literal["elder-query-retrieval-v2"] = "elder-query-retrieval-v2"
+    llm_usage: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="Per-LLM-call token usage in execution order",
+    )
+    llm_usage_totals: dict[str, int] = Field(
+        default_factory=dict,
+        description="Total Elder LLM input, output, and combined tokens",
     )

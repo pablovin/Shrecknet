@@ -131,24 +131,6 @@ Response shape (current):
     "synthesize_ms": 201.3,
     "total_ms": 468.9
   },
-  "intents": [
-    {
-      "subquery": "Who discovered the sigil?",
-      "target_data_type": "entity",
-      "reason": "who-question",
-      "top_k_entities": ["ent_9b2", "ent_71a"],
-      "top_k_scenes": [],
-      "top_k_milestones": []
-    },
-    {
-      "subquery": "In what scene did the sigil discovery happen?",
-      "target_data_type": "scene",
-      "reason": "context-question",
-      "top_k_entities": [],
-      "top_k_scenes": ["scene_3f1"],
-      "top_k_milestones": ["mile_44c"]
-    }
-  ],
   "sources": [
     {
       "node_id": "ent_9b2",
@@ -182,16 +164,18 @@ Response shape (current):
 
 ### Chat stream-compatible entrypoint
 
-- `POST /jobs/elder/chat/messages/stream`
+- `POST /chat/messages/stream`
+
+The older `/jobs/elder/chat/messages/stream` spelling appeared in previous documentation but
+is not the registered route.
 
 Same retrieval controls apply (`top_k`, `candidate_limit`, `rerank_limit`, `chat_id`, `include_trace`).
+
+Both Elder endpoints use `elder-query-retrieval-v2` by default. `instance_id` is an optional,
+additive request field. Responses include `pipeline_version` plus optional
+complete-evidence provenance metadata on each source.
 
 ## Notes
 
 - Elder response is source-grounded and includes explicit provenance in `sources`.
-- `intents[].target_data_type` controls retrieval type focus (`entity|scene|milestone|mixed`).
-- `intents[]` includes per-intent retrieval links:
-  - `top_k_entities`
-  - `top_k_scenes`
-  - `top_k_milestones`
 - `trace_id` can be used to correlate frontend behavior with backend logs.

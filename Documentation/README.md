@@ -61,7 +61,7 @@ System architecture and design documentation
 Temporal modeling docs for canonical Scene and Milestone representation
 - [Scene-Centric Memory Overview](./SceneCentricMemory/README.md)
 - [Scene and Milestone Endpoints](./SceneCentricMemory/SCENE_MILESTONE_ENDPOINTS.md)
-- [Scene-Centric Embedding](./SceneCentricMemory/SCENE_EMBEDDING.md)
+- [Ontology-Aware Semantic Embedding V2](./SceneCentricMemory/Embedding/SCENE_EMBEDDING.md)
 
 ### [Graph](./Graph/)
 Legacy graph model documentation (historical)

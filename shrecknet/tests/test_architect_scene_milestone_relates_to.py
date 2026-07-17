@@ -84,9 +84,9 @@ async def test_create_scene_persists_scene_relates_to_edges(monkeypatch):
 
     monkeypatch.setattr(service, "get_scene", _fake_get_scene)
 
-    from app.tasks.neo4j_embedding import embed_ontology as embed_ontology_task
+    from app.tasks.neo4j_embedding import embed_reconciliation as embed_reconciliation_task
 
-    monkeypatch.setattr(embed_ontology_task, "delay", lambda **kwargs: None)
+    monkeypatch.setattr(embed_reconciliation_task, "apply_async", lambda **kwargs: None)
 
     payload = SceneCreate(
         id="scene-1",
@@ -140,9 +140,9 @@ async def test_create_milestone_persists_milestone_relates_to_edges(monkeypatch)
     monkeypatch.setattr(service, "_milestone_ids_for_scene", _fake_milestone_ids_for_scene)
     monkeypatch.setattr(service, "get_milestone", _fake_get_milestone)
 
-    from app.tasks.neo4j_embedding import embed_ontology as embed_ontology_task
+    from app.tasks.neo4j_embedding import embed_reconciliation as embed_reconciliation_task
 
-    monkeypatch.setattr(embed_ontology_task, "delay", lambda **kwargs: None)
+    monkeypatch.setattr(embed_reconciliation_task, "apply_async", lambda **kwargs: None)
 
     payload = MilestoneCreate(
         id="milestone-1",

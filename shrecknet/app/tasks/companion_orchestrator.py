@@ -113,6 +113,7 @@ async def _run_elder_agent(
         graph_retriever=graph_retriever,
         default_top_k=settings.default_top_k,
         llm_max_concurrency=2,
+        debug_artifacts_enabled=settings.elder_debug_artifacts_enabled,
     )
     request = ElderQueryRequest(
         query=query,
@@ -153,6 +154,8 @@ async def _run_elder_agent(
             "sources": [source.model_dump() for source in response.sources],
             "trace": response.trace if settings.companion_agent_trace_enabled else None,
             "timings": response.timings,
+            "llm_usage": response.llm_usage,
+            "llm_usage_totals": response.llm_usage_totals,
         }
     except Exception as exc:
         elapsed_ms = round((time.monotonic() - started) * 1000, 2)

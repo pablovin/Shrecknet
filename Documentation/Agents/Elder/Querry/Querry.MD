@@ -44,7 +44,7 @@ The decomposition stage returns intent objects:
   - `subquery`: original user query
   - `target_data_type`: `mixed`
   - `reason`: `fast_mode`
-- `route=deep`: decompose first, then retrieve (bounded to top 3 intents in current code)
+- `route=deep`: plan first, then execute bounded retrieval steps.
 - `route=auto`: fast-first pass, and expands to decomposition only when first-pass retrieval quality is low
 
 Backward compatibility in current implementation:
@@ -101,7 +101,6 @@ Top-level fields:
 - `query`
 - `answer`
 - `timings`
-- `intents`
 - `sources`
 - `memory_priors_applied`
 - `trace_id`

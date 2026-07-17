@@ -63,7 +63,6 @@ from app.jobs.librarian.retrieval_strategies import preload_librarian_reranker
 
 logger = logging.getLogger(__name__)
 _embedding_prewarm_task: asyncio.Task | None = None
-_llm_prewarm_task: asyncio.Task | None = None
 
 
 def _effective_cors_origins(origins: list[str]) -> list[str]:
@@ -206,6 +205,9 @@ def _target_key(target: LLMModelTarget | str) -> str:
 async def _run_llm_prewarm() -> None:
     started = asyncio.get_running_loop().time()
     settings = get_settings()
+    if not settings.llm_prewarm_on_startup:
+        logger.info("llm_prewarm_skipped reason=disabled")
+        return
     try:
         runtime_config = await fetch_shreckllm_runtime(settings)
     except Exception as exc:
@@ -222,23 +224,23 @@ async def _run_llm_prewarm() -> None:
         logger.info("llm_prewarm_skipped reason=no_active_providers")
         return
 
+    # Warm every agent model used by the Elder, Librarian, Architect, and
+    # Novelist pipelines. Duplicate provider/model targets are loaded once.
     targets: list[LLMModelTarget] = [
+        settings.model_elder,
+        settings.model_librarian,
+        settings.model_agents_repair_json,
         settings.model_architect_scene_chunking,
         settings.model_architect_entity_proposal,
         settings.model_architect_milestone_proposal,
         settings.model_architect_entity_generation,
-        settings.model_agents_repair_json,
-        settings.model_elder,
-        settings.model_librarian,
-        settings.model_orchestrator_routing,
-        settings.model_orchestrator_synthesis,
         settings.model_novelist_planning,
         settings.model_novelist_prose,
         settings.model_novelist_critic,
     ]
     unique: dict[str, LLMModelTarget] = {}
     for target in targets:
-        if target.provider not in active_provider_ids:
+        if not target.provider.strip() or not target.name.strip() or target.provider not in active_provider_ids:
             continue
         unique[_target_key(target)] = target
     if not unique:
@@ -252,7 +254,7 @@ async def _run_llm_prewarm() -> None:
     )
     client = ShreckLLMClient(
         base_url=settings.shreckllm_base_url,
-        timeout=max(12.0, settings.shreckllm_request_timeout_s),
+        timeout=max(settings.llm_prewarm_timeout_s, settings.shreckllm_request_timeout_s),
         max_retries=0,
     )
     try:
@@ -265,7 +267,7 @@ async def _run_llm_prewarm() -> None:
                         temperature=0.0,
                         usage_tag="startup_model_prewarm",
                     ),
-                    timeout=12.0,
+                    timeout=max(1.0, settings.llm_prewarm_timeout_s),
                 )
                 logger.info("llm_prewarm_done model=%s", key)
             except Exception as exc:
@@ -274,18 +276,6 @@ async def _run_llm_prewarm() -> None:
         await client.aclose()
     duration_s = asyncio.get_running_loop().time() - started
     logger.info("llm_prewarm_finished duration_s=%.3f", duration_s)
-
-
-def _start_llm_prewarm() -> asyncio.Task | None:
-    global _llm_prewarm_task
-    if _llm_prewarm_task is not None and not _llm_prewarm_task.done():
-        return _llm_prewarm_task
-    try:
-        _llm_prewarm_task = asyncio.create_task(_run_llm_prewarm())
-    except RuntimeError:
-        logger.warning("llm_prewarm_failed error=no_running_event_loop")
-        _llm_prewarm_task = None
-    return _llm_prewarm_task
 
 
 @asynccontextmanager
@@ -303,7 +293,9 @@ async def lifespan(_: FastAPI):
     if settings.email_verification_enabled and not email_status["configured"]:
         update_settings({"email_verification_enabled": False})
     _start_embedding_prewarm()
-    _start_llm_prewarm()
+    # Gate readiness on interactive query-model warmup. Failures are isolated
+    # inside the warmup and do not prevent the API from starting.
+    await _run_llm_prewarm()
     try:
         await preload_librarian_reranker()
     except Exception:

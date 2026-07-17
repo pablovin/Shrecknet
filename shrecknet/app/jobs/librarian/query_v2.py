@@ -20,7 +20,7 @@ from app.integrations.llm.shreckllm_client import ShreckLLMClient
 from app.jobs.librarian.citations import extract_sources, render_inline_citations
 from app.jobs.librarian.debug_artifacts import LibrarianDebugArtifacts, debug_value
 from app.jobs.librarian.prompts import (
-    EVIDENCE_WARNING_PROMPT, MODEL_PREWARM_PROMPT, SIMPLIFIED_ANSWER_STYLE_PROMPT,
+    EVIDENCE_WARNING_PROMPT, SIMPLIFIED_ANSWER_STYLE_PROMPT,
     SYNTHESIS_SYSTEM_PROMPT, planner_messages, validator_messages,
 )
 from app.jobs.librarian.retrieval_strategies import get_librarian_retrieval_strategy, is_table_like_query
@@ -52,7 +52,6 @@ class LibrarianQueryV2:
         self.repair_json_model = repair_json_model or answer_model
         self.debug_artifacts_enabled = bool(debug_artifacts_enabled)
         self.retrieval = get_librarian_retrieval_strategy()
-        self._prewarm_at = 0.0
 
     async def execute(self, agent: Agent, request: LibrarianQueryRequest,
                       db_session: AsyncSession) -> LibrarianQueryResponse:
@@ -226,7 +225,6 @@ class LibrarianQueryV2:
             writing_style=writing_style or "Use a clear, direct tone suitable for game masters.")
         if warning: prompt += EVIDENCE_WARNING_PROMPT.format(warning=warning)
         system = SYNTHESIS_SYSTEM_PROMPT.format(rpg_system=rpg_system)
-        await self._prewarm()
         try:
             answer = str(await self.llm_client.chat(model=self.answer_model,
                 messages=[{"role": "system", "content": system}, {"role": "user", "content": prompt}],
@@ -317,14 +315,3 @@ class LibrarianQueryV2:
     def _rpg_systems(agent: Agent) -> str:
         systems = list(dict.fromkeys(filter(None, ((getattr(item, "rpg_system", None) or "").strip() for item in agent.ontologies))))
         return ", ".join(systems) if systems else "relevant"
-
-    async def _prewarm(self) -> None:
-        if not isinstance(self.answer_model, LLMModelTarget) or self.answer_model.provider != "ollama": return
-        if time.monotonic() - self._prewarm_at < 300: return
-        try:
-            await asyncio.wait_for(self.llm_client.chat(model=self.answer_model,
-                messages=[{"role": "user", "content": MODEL_PREWARM_PROMPT}], temperature=0.0,
-                usage_tag="librarian_model_prewarm"), timeout=8)
-            self._prewarm_at = time.monotonic()
-        except Exception as exc:
-            logger.warning("librarian_model_prewarm_failed error=%s", exc)

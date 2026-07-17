@@ -30,11 +30,11 @@ class _FakeSession:
         self.queries.append(query)
         if "SHOW INDEXES" in query:
             return _FakeResult(self.indexes)
-        if "MATCH (chunk:EntityChunk)" in query:
+        if "MATCH (chunk:SemanticDocument)" in query:
             return _FakeResult(
                 [
                     {
-                        "entity_chunk_count": 7,
+                        "semantic_document_count": 7,
                         "chunks_missing_text_chunk": 1,
                         "chunks_missing_text_embedding": 2,
                         "entity_parent_count": 3,
@@ -48,19 +48,19 @@ class _FakeSession:
 
 def _vector_index() -> dict:
     return {
-        "name": "entity_chunk_vec_idx",
+        "name": "semantic_document_vec_idx",
         "type": "VECTOR",
-        "labelsOrTypes": ["EntityChunk"],
+        "labelsOrTypes": ["SemanticDocument"],
         "properties": ["text_embedding"],
     }
 
 
 def _fulltext_index() -> dict:
     return {
-        "name": "entity_chunk_fulltext_idx",
+        "name": "semantic_document_fulltext_idx",
         "type": "FULLTEXT",
-        "labelsOrTypes": ["EntityChunk"],
-        "properties": ["text_chunk"],
+        "labelsOrTypes": ["SemanticDocument"],
+        "properties": ["display_text", "embedding_text"],
     }
 
 

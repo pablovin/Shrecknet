@@ -160,20 +160,20 @@ def _index_matches(
 
 async def _collect_index_diagnostics(session: AsyncSession) -> dict[str, int]:
     query = """
-    MATCH (chunk:EntityChunk)
-    WITH count(chunk) AS entity_chunk_count,
-         count { MATCH (missing_text:EntityChunk)
+    MATCH (chunk:SemanticDocument)
+    WITH count(chunk) AS semantic_document_count,
+         count { MATCH (missing_text:SemanticDocument)
                  WHERE missing_text.text_chunk IS NULL OR trim(toString(missing_text.text_chunk)) = '' } AS chunks_missing_text_chunk,
-         count { MATCH (missing_embedding:EntityChunk)
+         count { MATCH (missing_embedding:SemanticDocument)
                  WHERE missing_embedding.text_embedding IS NULL } AS chunks_missing_text_embedding
-    OPTIONAL MATCH (entity:EntityInstance)-[:HAS_CHUNK]->(:EntityChunk)
-    WITH entity_chunk_count, chunks_missing_text_chunk, chunks_missing_text_embedding,
+    OPTIONAL MATCH (entity:EntityInstance)-[:HAS_SEMANTIC_DOCUMENT]->(:SemanticDocument)
+    WITH semantic_document_count, chunks_missing_text_chunk, chunks_missing_text_embedding,
          count(DISTINCT entity) AS entity_parent_count
-    OPTIONAL MATCH (scene:Scene)-[:HAS_CHUNK]->(:EntityChunk)
-    WITH entity_chunk_count, chunks_missing_text_chunk, chunks_missing_text_embedding,
+    OPTIONAL MATCH (scene:Scene)-[:HAS_SEMANTIC_DOCUMENT]->(:SemanticDocument)
+    WITH semantic_document_count, chunks_missing_text_chunk, chunks_missing_text_embedding,
          entity_parent_count, count(DISTINCT scene) AS scene_parent_count
-    OPTIONAL MATCH (milestone:Milestone)-[:HAS_CHUNK]->(:EntityChunk)
-    RETURN entity_chunk_count,
+    OPTIONAL MATCH (milestone:Milestone)-[:HAS_SEMANTIC_DOCUMENT]->(:SemanticDocument)
+    RETURN semantic_document_count,
            chunks_missing_text_chunk,
            chunks_missing_text_embedding,
            entity_parent_count,
@@ -184,7 +184,7 @@ async def _collect_index_diagnostics(session: AsyncSession) -> dict[str, int]:
     row = await result.single()
     if not row:
         return {
-            "entity_chunk_count": 0,
+            "semantic_document_count": 0,
             "chunks_missing_text_chunk": 0,
             "chunks_missing_text_embedding": 0,
             "entity_parent_count": 0,
@@ -192,7 +192,7 @@ async def _collect_index_diagnostics(session: AsyncSession) -> dict[str, int]:
             "milestone_parent_count": 0,
         }
     return {
-        "entity_chunk_count": int(row.get("entity_chunk_count") or 0),
+        "semantic_document_count": int(row.get("semantic_document_count") or 0),
         "chunks_missing_text_chunk": int(row.get("chunks_missing_text_chunk") or 0),
         "chunks_missing_text_embedding": int(row.get("chunks_missing_text_embedding") or 0),
         "entity_parent_count": int(row.get("entity_parent_count") or 0),
@@ -206,8 +206,8 @@ async def ensure_elder_hybrid_indexes(session: AsyncSession) -> dict[str, Any]:
     started = time.monotonic()
     settings = get_settings()
     database_name = settings.neo4j_database
-    vector_index_name = "entity_chunk_vec_idx"
-    fulltext_index_name = "entity_chunk_fulltext_idx"
+    vector_index_name = "semantic_document_vec_idx"
+    fulltext_index_name = "semantic_document_fulltext_idx"
     write_performed = False
     statuses = {
         "vector_index": "skipped",
@@ -237,7 +237,7 @@ async def ensure_elder_hybrid_indexes(session: AsyncSession) -> dict[str, Any]:
     if _index_matches(
         vector_index,
         expected_type="VECTOR",
-        expected_labels={"EntityChunk"},
+        expected_labels={"SemanticDocument"},
         expected_properties={"text_embedding"},
         expected_vector_dimension=settings.embedding_dimension,
     ):
@@ -250,7 +250,7 @@ async def ensure_elder_hybrid_indexes(session: AsyncSession) -> dict[str, Any]:
             )
             create_vector = f"""
             CREATE VECTOR INDEX {vector_index_name} IF NOT EXISTS
-            FOR (c:EntityChunk) ON (c.text_embedding)
+            FOR (c:SemanticDocument) ON (c.text_embedding)
             OPTIONS {{
                 indexConfig: {{
                     `vector.dimensions`: {settings.embedding_dimension},
@@ -281,8 +281,8 @@ async def ensure_elder_hybrid_indexes(session: AsyncSession) -> dict[str, Any]:
     if _index_matches(
         fulltext_index,
         expected_type="FULLTEXT",
-        expected_labels={"EntityChunk"},
-        expected_properties={"text_chunk"},
+        expected_labels={"SemanticDocument"},
+        expected_properties={"display_text", "embedding_text"},
     ):
         statuses["fulltext_index"] = "present"
     else:
@@ -293,7 +293,7 @@ async def ensure_elder_hybrid_indexes(session: AsyncSession) -> dict[str, Any]:
             )
             create_fulltext = f"""
             CREATE FULLTEXT INDEX {fulltext_index_name} IF NOT EXISTS
-            FOR (c:EntityChunk) ON EACH [c.text_chunk]
+            FOR (c:SemanticDocument) ON EACH [c.display_text, c.embedding_text]
             """
             await (await session.run(create_fulltext)).consume()
             statuses["fulltext_index"] = "created"
@@ -315,7 +315,7 @@ async def ensure_elder_hybrid_indexes(session: AsyncSession) -> dict[str, Any]:
                 )
 
     diagnostics = {
-        "entity_chunk_count": 0,
+        "semantic_document_count": 0,
         "chunks_missing_text_chunk": 0,
         "chunks_missing_text_embedding": 0,
         "entity_parent_count": 0,
@@ -345,14 +345,14 @@ async def ensure_elder_hybrid_indexes(session: AsyncSession) -> dict[str, Any]:
     )
     logger.info(
         "elder_hybrid_index_migration_done database=%s vector_index=%s fulltext_index=%s "
-        "write_performed=%s diagnostics_collected=%s entity_chunks=%d missing_text_chunk=%d missing_text_embedding=%d "
+        "write_performed=%s diagnostics_collected=%s semantic_documents=%d missing_text_chunk=%d missing_text_embedding=%d "
         "entity_parents=%d scene_parents=%d milestone_parents=%d duration_ms=%.2f",
         database_name,
         statuses["vector_index"],
         statuses["fulltext_index"],
         write_performed,
         diagnostics_collected,
-        diagnostics["entity_chunk_count"],
+        diagnostics["semantic_document_count"],
         diagnostics["chunks_missing_text_chunk"],
         diagnostics["chunks_missing_text_embedding"],
         diagnostics["entity_parent_count"],

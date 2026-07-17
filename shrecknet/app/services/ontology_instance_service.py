@@ -1163,7 +1163,7 @@ class OntologyInstanceService:
 
             await tx.run(
                 """
-                MATCH (i:OntologyInstance)-[:HAS_ENTITY]->(e:EntityInstance)-[:HAS_CHUNK]->(chunk:EntityChunk)
+                MATCH (i:OntologyInstance)-[:HAS_ENTITY]->(e:EntityInstance)-[:HAS_SEMANTIC_DOCUMENT]->(chunk:SemanticDocument)
                 WHERE i.instance_id IN $instance_ids
                 DETACH DELETE chunk
                 """,
@@ -1174,14 +1174,6 @@ class OntologyInstanceService:
                 MATCH (i:OntologyInstance)-[:HAS_ENTITY]->(e:EntityInstance)
                 WHERE i.instance_id IN $instance_ids
                 DETACH DELETE e
-                """,
-                instance_ids=instance_list,
-            )
-            await tx.run(
-                """
-                MATCH (i:OntologyInstance)-[:HAS_EVENT]->(event:Event)-[:HAS_CHUNK]->(chunk:EntityChunk)
-                WHERE i.instance_id IN $instance_ids
-                DETACH DELETE chunk
                 """,
                 instance_ids=instance_list,
             )
@@ -1301,8 +1293,8 @@ class OntologyInstanceService:
                     """
                     MATCH (e:EntityInstance)-[chunk_rel]->(chunk)
                     WHERE e.entity_instance_id IN $entity_ids
-                      AND type(chunk_rel) = 'HAS_CHUNK'
-                      AND 'EntityChunk' IN labels(chunk)
+                      AND type(chunk_rel) = 'HAS_SEMANTIC_DOCUMENT'
+                      AND 'SemanticDocument' IN labels(chunk)
                     RETURN count(chunk) AS chunk_count
                     """,
                     entity_ids=list(target_entity_ids),
@@ -1321,8 +1313,8 @@ class OntologyInstanceService:
                     """
                     MATCH (e:EntityInstance)-[chunk_rel]->(chunk)
                     WHERE e.entity_instance_id IN $entity_ids
-                      AND type(chunk_rel) = 'HAS_CHUNK'
-                      AND 'EntityChunk' IN labels(chunk)
+                      AND type(chunk_rel) = 'HAS_SEMANTIC_DOCUMENT'
+                      AND 'SemanticDocument' IN labels(chunk)
                     DETACH DELETE chunk
                     """,
                     entity_ids=list(target_entity_ids),
@@ -1398,52 +1390,10 @@ class OntologyInstanceService:
 
         tx = await self.graph_session.begin_transaction()
         try:
-            legacy_counts_result = await tx.run(
-                """
-                MATCH (i:OntologyInstance)
-                WHERE toInteger(i.ontology_id) = toInteger($ontology_id)
-                OPTIONAL MATCH (i)-[event_rel]->(event)
-                WHERE type(event_rel) = 'HAS_EVENT'
-                  AND 'Event' IN labels(event)
-                OPTIONAL MATCH (event)-[chunk_rel]->(chunk)
-                WHERE type(chunk_rel) = 'HAS_CHUNK'
-                  AND 'EntityChunk' IN labels(chunk)
-                RETURN
-                    count(DISTINCT event) AS legacy_event_count,
-                    count(DISTINCT chunk) AS legacy_chunk_count
-                """,
-                ontology_id=ontology_id,
-            )
-            legacy_counts_row = await legacy_counts_result.single()
-            legacy_event_count = int(
-                legacy_counts_row.get("legacy_event_count") if legacy_counts_row else 0
-            )
-            legacy_chunk_count = int(
-                legacy_counts_row.get("legacy_chunk_count") if legacy_counts_row else 0
-            )
-
-            await tx.run(
-                """
-                MATCH (i:OntologyInstance)-[event_rel]->(event)-[chunk_rel]->(chunk)
-                WHERE toInteger(i.ontology_id) = toInteger($ontology_id)
-                  AND type(event_rel) = 'HAS_EVENT'
-                  AND 'Event' IN labels(event)
-                  AND type(chunk_rel) = 'HAS_CHUNK'
-                  AND 'EntityChunk' IN labels(chunk)
-                DETACH DELETE chunk
-                """,
-                ontology_id=ontology_id,
-            )
-            await tx.run(
-                """
-                MATCH (i:OntologyInstance)-[event_rel]->(event)
-                WHERE toInteger(i.ontology_id) = toInteger($ontology_id)
-                  AND type(event_rel) = 'HAS_EVENT'
-                  AND 'Event' IN labels(event)
-                DETACH DELETE event
-                """,
-                ontology_id=ontology_id,
-            )
+            # Response keys remain additive-compatible; removed v1 stores are no
+            # longer inspected or maintained.
+            legacy_event_count = 0
+            legacy_chunk_count = 0
 
             milestones_count_result = await tx.run(
                 """
@@ -2778,8 +2728,8 @@ class OntologyInstanceService:
         if trigger_background_jobs:
             _enqueue_embed_reconciliation(
                 ontology_id=ontology_id,
-                instance_id=instance_id,
-                node_ids=[],
+                instance_id=None,
+                node_ids=[scene_id, *sorted(milestone_ids)],
                 author_id="scene-create",
             )
         return await self.get_scene(instance_id, scene_id)
@@ -2940,8 +2890,8 @@ class OntologyInstanceService:
         ontology_id = await self._get_instance_ontology_id(instance_id)
         _enqueue_embed_reconciliation(
             ontology_id=ontology_id,
-            instance_id=instance_id,
-            node_ids=[],
+            instance_id=None,
+            node_ids=[scene_id],
             author_id="scene-update",
         )
 
@@ -2973,8 +2923,8 @@ class OntologyInstanceService:
         ontology_id = await self._get_instance_ontology_id(instance_id)
         _enqueue_embed_reconciliation(
             ontology_id=ontology_id,
-            instance_id=instance_id,
-            node_ids=[],
+            instance_id=None,
+            node_ids=[scene_id],
             author_id="scene-delete",
         )
 
@@ -3181,8 +3131,8 @@ class OntologyInstanceService:
         if trigger_background_jobs:
             _enqueue_embed_reconciliation(
                 ontology_id=ontology_id,
-                instance_id=instance_id,
-                node_ids=[],
+                instance_id=None,
+                node_ids=[milestone_id],
                 author_id="milestone-create",
             )
 
@@ -3321,8 +3271,8 @@ class OntologyInstanceService:
         ontology_id = await self._get_instance_ontology_id(instance_id)
         _enqueue_embed_reconciliation(
             ontology_id=ontology_id,
-            instance_id=instance_id,
-            node_ids=[],
+            instance_id=None,
+            node_ids=[milestone_id],
             author_id="milestone-update",
         )
 
@@ -3361,8 +3311,8 @@ class OntologyInstanceService:
         ontology_id = await self._get_instance_ontology_id(instance_id)
         _enqueue_embed_reconciliation(
             ontology_id=ontology_id,
-            instance_id=instance_id,
-            node_ids=[],
+            instance_id=None,
+            node_ids=[milestone_id],
             author_id="milestone-delete",
         )
 

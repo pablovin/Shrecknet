@@ -171,6 +171,8 @@ class Settings(BaseSettings):
     shreckllm_base_url: str = "http://shreckllm:8110"
     shreckllm_request_timeout_s: float = 60.0
     shreckllm_max_retries: int = 2
+    llm_prewarm_on_startup: bool = True
+    llm_prewarm_timeout_s: float = 300.0
     enable_ai_agents: bool = False
     user_creation_mode: UserCreationMode = UserCreationMode.MODERATED
     email_verification_enabled: bool = False
@@ -217,6 +219,7 @@ class Settings(BaseSettings):
         default_factory=lambda: LLMModelTarget(provider="openai", name="gpt-5-nano")
     )
     librarian_debug_artifacts_enabled: bool = False
+    elder_debug_artifacts_enabled: bool = True
     model_orchestrator_routing: LLMModelTarget = Field(
         default_factory=lambda: LLMModelTarget(provider="openai", name="gpt-5-nano")
     )
@@ -246,6 +249,11 @@ class Settings(BaseSettings):
     embedding_runtime_request_timeout_s: float = 10.0
     embedding_runtime_startup_timeout_s: float = 20.0
     embedding_runtime_fail_open_health: bool = True
+    semantic_embedding_strategy: str = "v2"
+    semantic_embedding_version: str = "semantic-v2.0"
+    semantic_embedding_long_text_threshold_tokens: int = 512
+    semantic_embedding_chunk_target_tokens: int = 384
+    semantic_embedding_chunk_overlap_tokens: int = 64
     embedding_chunk_size: int = 900
     embedding_chunk_overlap: int = 150
     event_publisher_mode: str = "logging"

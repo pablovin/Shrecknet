@@ -10,7 +10,7 @@ from app.api.deps import (
 )
 from app.core.config_store import get_settings
 from app.graph.neo4j import get_neo4j_session
-from app.graphrag.embedding_service import EmbeddingService
+from app.graphrag.semantic_v2 import SemanticEmbeddingService
 from app.integrations.retrieval.neo4j_retriever import Neo4jGraphRetriever
 from app.models.user import User
 from app.schemas.graphrag import (
@@ -28,6 +28,9 @@ from app.schemas.graphrag import (
     ClearGraphResponse,
 )
 from neo4j import AsyncSession as AsyncNeo4jSession
+from sqlalchemy.orm import Session
+
+from app.db.session import get_session
 
 from app.services.graph_service import GraphMaintenanceService
 
@@ -38,6 +41,7 @@ router = APIRouter(prefix="/graphrag", tags=["graphrag"])
 async def embed_node(
     request: EmbedNodeRequest,
     graph_session: AsyncNeo4jSession = Depends(get_neo4j_session),
+    sql_session: Session = Depends(get_session),
     current_user: User = Depends(get_current_active_admin_or_world_builder),
 ) -> EmbedNodeResponse:
     """
@@ -45,11 +49,20 @@ async def embed_node(
 
     Requires admin or world_builder role.
     """
-    service = EmbeddingService(graph_session)
+    service = SemanticEmbeddingService(graph_session, sql_session)
 
     try:
-        result = await service.embed_node(request.node_id, request.ontology_id)
-        return EmbedNodeResponse(**result)
+        if request.ontology_id is None:
+            raise ValueError("ontology_id is required for V2 semantic embedding")
+        result = await service.embed_nodes(request.ontology_id, [request.node_id])
+        if not result.get("nodes_embedded"):
+            raise ValueError(f"Node {request.node_id} not found")
+        return EmbedNodeResponse(
+            node_id=request.node_id,
+            context_text="V2 semantic documents reconciled",
+            embedding_model=get_settings().embedding_model_id,
+            embedding_dim=get_settings().embedding_dimension,
+        )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     except Exception as e:
@@ -62,6 +75,7 @@ async def embed_node(
 async def embed_ontology(
     request: EmbedOntologyRequest,
     graph_session: AsyncNeo4jSession = Depends(get_neo4j_session),
+    sql_session: Session = Depends(get_session),
     current_user: User = Depends(get_current_active_admin_or_world_builder),
 ) -> EmbedOntologyResponse:
     """
@@ -70,10 +84,10 @@ async def embed_ontology(
     Requires admin or world_builder role.
     This operation may take several minutes for large ontologies.
     """
-    service = EmbeddingService(graph_session)
+    service = SemanticEmbeddingService(graph_session, sql_session)
 
     try:
-        result = await service.embed_ontology(request.ontology_id, request.batch_size)
+        result = await service.embed_ontology(request.ontology_id, batch_size=request.batch_size)
         return EmbedOntologyResponse(**result)
     except Exception as e:
         raise HTTPException(
@@ -187,12 +201,17 @@ async def ensure_index(
 
     Requires admin or world_builder role.
     """
-    service = EmbeddingService(graph_session)
-    index_name = "entity_text_vec_idx"
+    # The V2 service owns both vector and full-text semantic-document indexes.
+    index_name = "semantic_document_vec_idx"
     settings = get_settings()
 
     try:
-        exists = await service.ensure_vector_index(index_name)
+        await graph_session.run(
+            f"CREATE VECTOR INDEX {index_name} IF NOT EXISTS FOR (document:SemanticDocument) "
+            "ON (document.text_embedding) OPTIONS {indexConfig: {"
+            f"`vector.dimensions`: {settings.embedding_dimension}, `vector.similarity_function`: 'cosine'}}"
+        )
+        exists = True
         return IndexStatusResponse(
             index_name=index_name,
             exists=exists,
@@ -233,6 +252,7 @@ async def clear_neo4j_graph(
 async def backfill_chunks(
     request: EmbedOntologyRequest,
     graph_session: AsyncNeo4jSession = Depends(get_neo4j_session),
+    sql_session: Session = Depends(get_session),
     current_user: User = Depends(get_current_active_admin_or_world_builder),
 ) -> EmbedOntologyResponse:
     """
@@ -240,12 +260,9 @@ async def backfill_chunks(
 
     Requires admin or world_builder role.
     """
-    service = EmbeddingService(graph_session)
+    service = SemanticEmbeddingService(graph_session, sql_session)
     try:
-        await service.ensure_chunk_vector_index()
-        result = await service.backfill_chunks(
-            request.ontology_id, batch_size=request.batch_size
-        )
+        result = await service.embed_ontology(request.ontology_id, batch_size=request.batch_size)
         return EmbedOntologyResponse(**result)
     except Exception as e:
         raise HTTPException(
@@ -259,6 +276,7 @@ async def backfill_chunks(
 async def reset_embeddings(
     request: ResetOntologyEmbeddingsRequest,
     graph_session: AsyncNeo4jSession = Depends(get_neo4j_session),
+    sql_session: Session = Depends(get_session),
     current_user: User = Depends(get_current_active_admin_or_world_builder),
 ) -> ResetOntologyEmbeddingsResponse:
     """
@@ -266,9 +284,9 @@ async def reset_embeddings(
 
     Requires admin or world_builder role.
     """
-    service = EmbeddingService(graph_session)
+    service = SemanticEmbeddingService(graph_session, sql_session)
     try:
-        result = await service.reset_ontology_embeddings(request.ontology_id)
+        result = await service.reset_ontology(request.ontology_id)
         return ResetOntologyEmbeddingsResponse(**result)
     except Exception as e:
         raise HTTPException(

@@ -12,6 +12,9 @@ class _FakeResult:
     async def data(self):
         return self._rows
 
+    async def single(self):
+        return self._rows[0] if self._rows else None
+
 
 class _FakeNode(dict):
     def __init__(self, labels: list[str], **kwargs) -> None:
@@ -27,7 +30,7 @@ class _FakeSession:
         self.queries.append(query)
         if "db.index.vector.queryNodes" in query:
             chunk = _FakeNode(
-                ["EntityChunk"],
+                ["SemanticDocument"],
                 chunk_id="chunk-ent-1",
                 chunk_type="text",
                 chunk_index=0,
@@ -45,7 +48,7 @@ class _FakeSession:
             return _FakeResult([{"chunk": chunk, "parent": parent, "score": 0.92, "source": "vector"}])
         if "db.index.fulltext.queryNodes" in query:
             chunk = _FakeNode(
-                ["EntityChunk"],
+                ["SemanticDocument"],
                 chunk_id="chunk-scene-1",
                 chunk_type="scene_main",
                 text_chunk="Scene: Tamura remembers the old promise.",
@@ -72,7 +75,7 @@ class _FakeSession:
                 created_at="2026-01-02T00:00:00.000Z",
             )
             chunk = _FakeNode(
-                ["EntityChunk"],
+                ["SemanticDocument"],
                 chunk_id="chunk-scene-2",
                 chunk_type="scene_main",
                 text_chunk="Scene: Tamura acts on the promise.",
@@ -118,6 +121,10 @@ async def test_hybrid_retriever_does_not_run_index_checks(monkeypatch) -> None:
         ontology_ids=[4],
         top_k=5,
     )
+
+    expansion_query = next(query for query in session.queries if "UNWIND $anchors AS anchor" in query)
+    assert "CALL (a, anchor) {" in expansion_query
+    assert "CALL {\n            WITH a, anchor" not in expansion_query
 
     assert {chunk.node_label for chunk in chunks} >= {"EntityInstance", "Scene"}
     assert any(chunk.source == "hybrid_temporal_expansion" for chunk in chunks)

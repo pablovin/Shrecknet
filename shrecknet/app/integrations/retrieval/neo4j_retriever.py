@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import date, datetime, timezone
+import json
 import logging
 import re
 import time
@@ -99,6 +101,43 @@ class GraphRetriever(Protocol):
         max_milestones: int = 6,
     ) -> list[RetrievedChunk]:
         """Return graph-near scene/milestone candidates for retrieved entities."""
+        ...
+
+    async def hydrate_evidence_nodes(
+        self,
+        node_ids: list[str],
+        *,
+        ontology_ids: list[int],
+        instance_id: str | None = None,
+        matched_chunk_indexes: dict[str, list[int]] | None = None,
+        hydration_mode: str = "local_context",
+        context_chunks_before: int = 1,
+        context_chunks_after: int = 1,
+        max_tokens_per_source: int = 1200,
+    ) -> dict[str, dict[str, Any]]:
+        """Hydrate bounded local evidence while retaining complete-source opt-in."""
+        ...
+
+    async def run_bounded_read(
+        self, cypher: str, *, parameters: dict[str, Any]
+    ) -> list[RetrievedChunk]:
+        """Execute a prevalidated, scoped read query returning a parent as `node`."""
+        ...
+
+    async def select_nodes(
+        self, *, ontology_ids: list[int], instance_id: str | None,
+        entity_definition_ids: list[int], target_data_type: str,
+        temporal_mode: str, temporal_property_ids: list[int], limit: int,
+    ) -> list[RetrievedChunk]:
+        """Select canonical nodes using structural filters and deterministic ordering."""
+        ...
+
+    async def traverse_graph(
+        self, *, anchors: list[RetrievedChunk], ontology_ids: list[int],
+        instance_id: str | None, relationships: list[str], direction: str,
+        depth: int, limit: int,
+    ) -> list[RetrievedChunk]:
+        """Expand canonical graph neighbours from already selected anchors."""
         ...
 
 
@@ -453,6 +492,336 @@ class Neo4jGraphRetriever:
             if row.get("node_id")
         }
 
+    async def hydrate_evidence_nodes(
+        self,
+        node_ids: list[str],
+        *,
+        ontology_ids: list[int],
+        instance_id: str | None = None,
+        matched_chunk_indexes: dict[str, list[int]] | None = None,
+        hydration_mode: str = "local_context",
+        context_chunks_before: int = 1,
+        context_chunks_after: int = 1,
+        max_tokens_per_source: int = 1200,
+    ) -> dict[str, dict[str, Any]]:
+        unique_ids = list(dict.fromkeys(str(value).strip() for value in node_ids if str(value).strip()))
+        if not unique_ids:
+            return {}
+        selections = [
+            {"node_id": node_id, "chunk_index": index}
+            for node_id, indexes in (matched_chunk_indexes or {}).items()
+            for index in indexes
+        ]
+        query = """
+        MATCH (node)
+        WHERE (node:EntityInstance OR node:Scene OR node:Milestone)
+          AND coalesce(node.entity_instance_id, node.id) IN $node_ids
+          AND toInteger(node.ontology_id) IN $ontology_ids
+          AND (
+              $instance_id IS NULL
+              OR node.instance_id = $instance_id
+              OR EXISTS {
+                  MATCH (:OntologyInstance {instance_id: $instance_id})-[:HAS_ENTITY]->(node)
+              }
+          )
+        OPTIONAL MATCH (node)-[prov:DERIVED_FROM|RELATES_TO]-(entity:EntityInstance)
+        WITH node, collect(DISTINCT {
+            relation: type(prov), entity_id: entity.entity_instance_id, entity_name: entity.alias
+        })[0..12] AS provenance
+        OPTIONAL MATCH (node)-[:HAS_SEMANTIC_DOCUMENT]->(chunk:SemanticDocument)
+        WHERE $hydration_mode = 'complete_source'
+           OR ($hydration_mode <> 'metadata' AND any(selection IN $selections WHERE
+                selection.node_id = coalesce(node.entity_instance_id, node.id)
+                AND chunk.chunk_index >= selection.chunk_index - $chunks_before
+                AND chunk.chunk_index <= selection.chunk_index + $chunks_after))
+        RETURN coalesce(node.entity_instance_id, node.id) AS node_id,
+               labels(node) AS labels,
+               properties(node) AS properties,
+               provenance,
+               chunk.chunk_id AS chunk_id,
+               chunk.chunk_type AS chunk_type,
+               chunk.chunk_index AS chunk_index,
+               chunk.text AS chunk_text
+        ORDER BY node_id, chunk_index
+        """
+        async with self._acquire_session() as session:
+            if self._session_factory is None:
+                async with self._search_lock:
+                    result = await session.run(
+                        query, node_ids=unique_ids, ontology_ids=ontology_ids, instance_id=instance_id,
+                        hydration_mode=hydration_mode, selections=selections,
+                        chunks_before=0 if hydration_mode == "matched_excerpt" else context_chunks_before,
+                        chunks_after=0 if hydration_mode == "matched_excerpt" else context_chunks_after,
+                    )
+                    rows = await result.data()
+            else:
+                result = await session.run(
+                    query, node_ids=unique_ids, ontology_ids=ontology_ids, instance_id=instance_id,
+                    hydration_mode=hydration_mode, selections=selections,
+                    chunks_before=0 if hydration_mode == "matched_excerpt" else context_chunks_before,
+                    chunks_after=0 if hydration_mode == "matched_excerpt" else context_chunks_after,
+                )
+                rows = await result.data()
+        hydrated: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            node_id = str(row.get("node_id") or "")
+            props = row.get("properties") or {}
+            entry = hydrated.setdefault(
+                node_id,
+                {
+                    "source_kind": next(
+                        (label for label in row.get("labels") or [] if label in {"EntityInstance", "Scene", "Milestone"}),
+                        None,
+                    ),
+                    "display_name": props.get("name") or props.get("alias") or node_id,
+                    "properties": props,
+                    "chunks": [],
+                    "provenance": {"links": [item for item in row.get("provenance") or [] if item.get("relation")]},
+                    "associated_entities": [],
+                    "temporal_position": {
+                        key: props[key]
+                        for key in ("order", "sequence", "position", "created_at", "updated_at")
+                        if props.get(key) is not None
+                    },
+                },
+            )
+            entry["associated_entities"] = list(
+                dict.fromkeys(
+                    item.get("entity_id")
+                    for item in (entry["provenance"].get("links") or [])
+                    if item.get("entity_id")
+                )
+            )
+            if row.get("chunk_id") is not None or row.get("chunk_text") is not None:
+                entry["chunks"].append(
+                    {
+                        "chunk_id": row.get("chunk_id"),
+                        "chunk_type": row.get("chunk_type"),
+                        "chunk_index": row.get("chunk_index"),
+                        "text": str(row.get("chunk_text") or ""),
+                    }
+                )
+            header = "\n".join(
+                part for part in (
+                    f"Source: {entry['display_name']}",
+                    f"Source kind: {entry['source_kind']}" if entry.get("source_kind") else "",
+                ) if part
+            )
+            property_texts = []
+            if hydration_mode == "complete_source":
+                property_texts = [
+                    str(props.get(key) or "")
+                    for key in ("text", "description", "content", "story_text", "summary")
+                    if props.get(key)
+                ]
+            parts = list(dict.fromkeys(property_texts + [chunk["text"] for chunk in entry["chunks"]]))
+            entry["display_text"] = "\n\n".join([header] + [part for part in parts if part])
+            if hydration_mode != "complete_source":
+                from app.jobs.elder.context_budget import estimate_tokens
+                while len(parts) > 1 and estimate_tokens(entry["display_text"]) > max_tokens_per_source:
+                    parts.pop()
+                    entry["chunks"].pop()
+                    entry["display_text"] = "\n\n".join([header] + [part for part in parts if part])
+        return hydrated
+
+    async def run_bounded_read(
+        self, cypher: str, *, parameters: dict[str, Any]
+    ) -> list[RetrievedChunk]:
+        """Execute the v2 planner's exceptional read operation defensively."""
+        unsafe = re.compile(
+            r"\b(CREATE|MERGE|DELETE|DETACH|SET|REMOVE|DROP|ALTER|LOAD\s+CSV|FOREACH|CALL|APOC|DBMS)\b",
+            re.IGNORECASE,
+        )
+        if unsafe.search(cypher) or "$ontology_ids" not in cypher:
+            raise ValueError("unsafe or unscoped bounded read")
+        if not re.search(r"\bLIMIT\s+(\$limit|\d+)\b", cypher, re.IGNORECASE):
+            raise ValueError("bounded read requires LIMIT")
+        async with self._acquire_session() as session:
+            if self._session_factory is None:
+                async with self._search_lock:
+                    result = await session.run(cypher, **parameters)
+                    rows = await result.data()
+            else:
+                result = await session.run(cypher, **parameters)
+                rows = await result.data()
+        chunks: list[RetrievedChunk] = []
+        for row in rows:
+            node = row.get("node")
+            if node is None:
+                continue
+            props = dict(node)
+            labels = set(getattr(node, "labels", []) or [])
+            label = next((value for value in ("EntityInstance", "Scene", "Milestone") if value in labels), None)
+            node_id = str(props.get("entity_instance_id") or props.get("id") or "")
+            if not node_id or not label:
+                continue
+            text = str(
+                props.get("text") or props.get("description") or props.get("content")
+                or props.get("summary") or props.get("name") or props.get("alias") or node_id
+            )
+            score = float(row.get("score") or 0.5)
+            chunks.append(
+                RetrievedChunk(
+                    node_id=node_id,
+                    node_label=label,
+                    node_name=props.get("name") or props.get("alias") or node_id,
+                    instance_id=props.get("instance_id") or props.get("ontology_instance_id"),
+                    text=text,
+                    score=score,
+                    confidence_pct=round(score * 100, 2),
+                    source="elder_v2:bounded_read_cypher",
+                    properties=props,
+                )
+            )
+        return chunks
+
+    async def select_nodes(
+        self,
+        *,
+        ontology_ids: list[int],
+        instance_id: str | None,
+        entity_definition_ids: list[int],
+        target_data_type: str,
+        temporal_mode: str,
+        temporal_property_ids: list[int],
+        limit: int,
+    ) -> list[RetrievedChunk]:
+        """Select graph nodes without substituting semantic similarity for structure."""
+        label = {
+            "entity": "EntityInstance",
+            "scene": "Scene",
+            "milestone": "Milestone",
+        }.get(target_data_type)
+        if label is None:
+            raise ValueError(f"select_nodes requires a concrete target_data_type, got {target_data_type!r}")
+        if label != "EntityInstance" and entity_definition_ids:
+            raise ValueError("entity definition filters can only select EntityInstance nodes")
+
+        id_expression = "node.entity_instance_id" if label == "EntityInstance" else "node.id"
+        definition_filter = (
+            "AND toInteger(node.entity_definition_id) IN $entity_definition_ids"
+            if entity_definition_ids else ""
+        )
+        query = f"""
+        MATCH (node:{label})
+        WHERE toInteger(node.ontology_id) IN $ontology_ids
+          AND ($instance_id IS NULL OR node.instance_id = $instance_id)
+          {definition_filter}
+        RETURN node, {id_expression} AS node_id
+        ORDER BY coalesce(node.alias, node.name, {id_expression}) ASC
+        LIMIT $candidate_limit
+        """
+        async with self._acquire_session() as session:
+            if self._session_factory is None:
+                async with self._search_lock:
+                    result = await session.run(
+                        query,
+                        ontology_ids=ontology_ids,
+                        instance_id=instance_id,
+                        entity_definition_ids=entity_definition_ids,
+                        candidate_limit=max(limit, 1000) if temporal_mode != "none" else limit,
+                    )
+                    rows = await result.data()
+            else:
+                result = await session.run(
+                    query,
+                    ontology_ids=ontology_ids,
+                    instance_id=instance_id,
+                    entity_definition_ids=entity_definition_ids,
+                    candidate_limit=max(limit, 1000) if temporal_mode != "none" else limit,
+                )
+                rows = await result.data()
+
+        def _properties(props: dict[str, Any]) -> dict[str, Any]:
+            raw = props.get("properties")
+            if isinstance(raw, str):
+                try:
+                    parsed = json.loads(raw)
+                    return parsed if isinstance(parsed, dict) else {}
+                except (TypeError, ValueError):
+                    return {}
+            return raw if isinstance(raw, dict) else {}
+
+        def _date_value(props: dict[str, Any]) -> datetime | None:
+            values = _properties(props)
+            candidates = [values.get(str(prop_id), values.get(prop_id)) for prop_id in temporal_property_ids]
+            candidates.extend(props.get(key) for key in ("story_date", "date", "created_date", "created_at"))
+            for value in candidates:
+                if value in (None, ""):
+                    continue
+                if isinstance(value, datetime):
+                    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+                if isinstance(value, date):
+                    return datetime.combine(value, datetime.min.time(), tzinfo=timezone.utc)
+                try:
+                    parsed = datetime.fromisoformat(str(value).strip().replace("Z", "+00:00"))
+                    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+                except ValueError:
+                    continue
+            return None
+
+        if temporal_mode in {"latest", "earliest"}:
+            dated = [(row, _date_value(dict(row["node"]))) for row in rows]
+            dated = [item for item in dated if item[1] is not None]
+            dated.sort(key=lambda item: item[1], reverse=temporal_mode == "latest")
+            rows = [item[0] for item in dated]
+
+        chunks: list[RetrievedChunk] = []
+        for index, row in enumerate(rows[:limit]):
+            props = dict(row["node"])
+            node_id = str(row.get("node_id") or "")
+            if not node_id:
+                continue
+            name = str(props.get("alias") or props.get("name") or node_id)
+            text = str(
+                props.get("text") or props.get("description") or props.get("content")
+                or props.get("summary") or name
+            )
+            chunks.append(RetrievedChunk(
+                node_id=node_id,
+                node_label=label,
+                node_name=name,
+                instance_id=props.get("instance_id"),
+                text=text,
+                score=max(0.5, 1.0 - index * 0.01),
+                confidence_pct=max(50.0, 100.0 - index),
+                source="elder_v2:select_nodes",
+                properties={**props, "properties": _properties(props)},
+            ))
+        return chunks
+
+    async def traverse_graph(
+        self,
+        *,
+        anchors: list[RetrievedChunk],
+        ontology_ids: list[int],
+        instance_id: str | None,
+        relationships: list[str],
+        direction: str,
+        depth: int,
+        limit: int,
+    ) -> list[RetrievedChunk]:
+        """Expand Scene/Milestone provenance and containment around canonical anchors."""
+        if depth == 0:
+            return []
+        entity_scores = {
+            chunk.node_id: float(chunk.score)
+            for chunk in anchors
+            if chunk.node_label == "EntityInstance"
+        }
+        if not entity_scores:
+            return []
+        chunks = await self.expand_timeline_context(
+            query="graph traversal",
+            ontology_ids=ontology_ids,
+            entity_scores=entity_scores,
+            max_scenes=limit,
+            max_milestones=limit,
+        )
+        if instance_id:
+            chunks = [chunk for chunk in chunks if chunk.instance_id in {None, instance_id}]
+        return chunks[:limit]
+
     async def expand_timeline_context(
         self,
         *,
@@ -702,7 +1071,8 @@ class Neo4jGraphRetriever:
               OR toInteger(coalesce(entity['ontology_id'], -1)) = toInteger($ontology_id)
         RETURN coalesce(entity['entity_instance_id'], elementId(entity)) AS node_id,
                coalesce(entity['alias'], entity['name'], entity['entity_instance_id'], elementId(entity)) AS alias,
-               head(labels(entity)) AS ontology
+               head(labels(entity)) AS ontology,
+               toInteger(entity['entity_definition_id']) AS entity_definition_id
         ORDER BY alias, node_id
         SKIP $skip
         LIMIT $limit
@@ -745,6 +1115,7 @@ class Neo4jGraphRetriever:
                     "node_id": node_id,
                     "alias": alias,
                     "ontology": ontology_label,
+                    "entity_definition_id": record.get("entity_definition_id"),
                 }
             )
 
@@ -790,8 +1161,8 @@ class Neo4jGraphRetriever:
 class HybridNeo4jGraphRetriever(Neo4jGraphRetriever):
     """Elder retriever using hybrid chunk anchors plus Shrecknet temporal expansion."""
 
-    vector_index_name = "entity_chunk_vec_idx"
-    fulltext_index_name = "entity_chunk_fulltext_idx"
+    vector_index_name = "semantic_document_vec_idx"
+    fulltext_index_name = "semantic_document_fulltext_idx"
 
     def __init__(
         self,
@@ -1007,23 +1378,43 @@ class HybridNeo4jGraphRetriever(Neo4jGraphRetriever):
         candidate_k: int,
         rerank_limit: int,
     ) -> list[dict[str, Any]]:
+        vocabulary_result = await session.run(
+            f"""
+            CALL db.index.vector.queryNodes('{self.vector_index_name}', 8, $query_embedding)
+            YIELD node, score
+            WHERE node.source_kind IN ['ontology_entity_definition', 'ontology_relationship_definition']
+              AND ($ontology_id IS NULL OR toInteger(node.ontology_id) = toInteger($ontology_id))
+            RETURN collect(DISTINCT toInteger(node.entity_definition_id)) AS definition_ids
+            """,
+            query_embedding=query_embedding,
+            ontology_id=ontology_id,
+        )
+        vocabulary_row = await vocabulary_result.single()
+        vocabulary_definition_ids = [
+            int(value) for value in ((vocabulary_row.get("definition_ids") or []) if vocabulary_row else [])
+            if value is not None
+        ]
         vector_query = f"""
-        CALL db.index.vector.queryNodes('{self.vector_index_name}', $candidate_k, $query_embedding)
+        CALL db.index.vector.queryNodes('{self.vector_index_name}', $search_k, $query_embedding)
         YIELD node, score
-        MATCH (parent)-[:HAS_CHUNK]->(node)
+        MATCH (parent)-[:HAS_SEMANTIC_DOCUMENT]->(node)
         WHERE any(label IN labels(parent) WHERE label IN $allowed_labels)
           AND ($ontology_id IS NULL OR toInteger(node.ontology_id) = toInteger($ontology_id))
-        RETURN node AS chunk, parent AS parent, score AS score, 'vector' AS source
+        RETURN node AS chunk, parent AS parent,
+               score + CASE WHEN toInteger(parent.entity_definition_id) IN $vocabulary_definition_ids THEN 0.05 ELSE 0.0 END AS score,
+               'vector' AS source
         ORDER BY score DESC
         LIMIT $candidate_k
         """
         fulltext_query = f"""
-        CALL db.index.fulltext.queryNodes('{self.fulltext_index_name}', $fulltext_query)
+        CALL db.index.fulltext.queryNodes('{self.fulltext_index_name}', $fulltext_query, {{limit: $search_k}})
         YIELD node, score
-        MATCH (parent)-[:HAS_CHUNK]->(node)
+        MATCH (parent)-[:HAS_SEMANTIC_DOCUMENT]->(node)
         WHERE any(label IN labels(parent) WHERE label IN $allowed_labels)
           AND ($ontology_id IS NULL OR toInteger(node.ontology_id) = toInteger($ontology_id))
-        RETURN node AS chunk, parent AS parent, score AS score, 'fulltext' AS source
+        RETURN node AS chunk, parent AS parent,
+               score + CASE WHEN toInteger(parent.entity_definition_id) IN $vocabulary_definition_ids THEN 0.05 ELSE 0.0 END AS score,
+               'fulltext' AS source
         ORDER BY score DESC
         LIMIT $candidate_k
         """
@@ -1049,9 +1440,11 @@ class HybridNeo4jGraphRetriever(Neo4jGraphRetriever):
             result = await session.run(
                 vector_query,
                 candidate_k=candidate_k,
+                search_k=max(candidate_k * 3, candidate_k),
                 query_embedding=query_embedding,
                 ontology_id=ontology_id,
                 allowed_labels=allowed_labels,
+                vocabulary_definition_ids=vocabulary_definition_ids,
             )
             rows.extend(await result.data())
         except Exception as exc:
@@ -1061,9 +1454,11 @@ class HybridNeo4jGraphRetriever(Neo4jGraphRetriever):
             result = await session.run(
                 fulltext_query,
                 candidate_k=candidate_k,
+                search_k=max(candidate_k * 3, candidate_k),
                 fulltext_query=self._fulltext_query(query),
                 ontology_id=ontology_id,
                 allowed_labels=allowed_labels,
+                vocabulary_definition_ids=vocabulary_definition_ids,
             )
             rows.extend(await result.data())
         except Exception as exc:
@@ -1159,7 +1554,7 @@ class HybridNeo4jGraphRetriever(Neo4jGraphRetriever):
 
         settings = get_settings()
         retrieval_query = """
-        MATCH (parent)-[:HAS_CHUNK]->(node)
+        MATCH (parent)-[:HAS_SEMANTIC_DOCUMENT]->(node)
         WHERE any(label IN labels(parent) WHERE label IN $allowed_labels)
           AND ($ontology_id IS NULL OR toInteger(node.ontology_id) = toInteger($ontology_id))
         RETURN node AS chunk, parent AS parent, score AS score, 'hybrid_cypher' AS source
@@ -1308,45 +1703,37 @@ class HybridNeo4jGraphRetriever(Neo4jGraphRetriever):
             OR (anchor.label = 'Scene' AND a:Scene AND a.id = anchor.id)
             OR (anchor.label = 'Milestone' AND a:Milestone AND a.id = anchor.id)
         )
-        CALL {{
-            WITH a, anchor
+        CALL (a, anchor) {{
             OPTIONAL MATCH (scene:Scene)-[scene_rel:RELATES_TO|DERIVED_FROM]->(a)
             WHERE a:EntityInstance
             RETURN scene AS node, 'Scene' AS node_label, type(scene_rel) AS relation, anchor.score AS anchor_score
             UNION
-            WITH a, anchor
             OPTIONAL MATCH (scene:Scene)-[:CONTAINS]->(milestone:Milestone)-[mrel:RELATES_TO|DERIVED_FROM]->(a)
             WHERE a:EntityInstance
             RETURN milestone AS node, 'Milestone' AS node_label, type(mrel) AS relation, anchor.score AS anchor_score
             UNION
-            WITH a, anchor
             OPTIONAL MATCH (a:Scene)-[:CONTAINS]->(milestone:Milestone)
             RETURN milestone AS node, 'Milestone' AS node_label, 'CONTAINS' AS relation, anchor.score AS anchor_score
             UNION
-            WITH a, anchor
             OPTIONAL MATCH (a:Scene)-[rel:RELATES_TO|DERIVED_FROM]->(entity:EntityInstance)
             RETURN entity AS node, 'EntityInstance' AS node_label, type(rel) AS relation, anchor.score AS anchor_score
             UNION
-            WITH a, anchor
             OPTIONAL MATCH (a:Scene)-[rel:FOLLOWED_BY|PRECEDED_BY]->(neighbor:Scene)
             RETURN neighbor AS node, 'Scene' AS node_label, type(rel) AS relation, anchor.score AS anchor_score
             UNION
-            WITH a, anchor
             OPTIONAL MATCH (scene:Scene)-[:CONTAINS]->(a:Milestone)
             RETURN scene AS node, 'Scene' AS node_label, 'CONTAINS_PARENT' AS relation, anchor.score AS anchor_score
             UNION
-            WITH a, anchor
             OPTIONAL MATCH (a:Milestone)-[rel:RELATES_TO|DERIVED_FROM]->(entity:EntityInstance)
             RETURN entity AS node, 'EntityInstance' AS node_label, type(rel) AS relation, anchor.score AS anchor_score
             UNION
-            WITH a, anchor
             OPTIONAL MATCH (a:Milestone)-[rel:FOLLOWED_BY|PRECEDED_BY]->(neighbor:Milestone)
             RETURN neighbor AS node, 'Milestone' AS node_label, type(rel) AS relation, anchor.score AS anchor_score
         }}
         WITH DISTINCT node, node_label, relation, anchor_score
         WHERE node IS NOT NULL
           AND ($ontology_id IS NULL OR toInteger(node.ontology_id) = toInteger($ontology_id))
-        OPTIONAL MATCH (node)-[:HAS_CHUNK]->(chunk:EntityChunk)
+        OPTIONAL MATCH (node)-[:HAS_SEMANTIC_DOCUMENT]->(chunk:SemanticDocument)
         WITH node, node_label, relation, anchor_score,
              head(collect(chunk)) AS chunk,
              CASE WHEN EXISTS {{ MATCH (node)-[:FOLLOWED_BY|PRECEDED_BY]-() }} THEN 1 ELSE 0 END AS has_order_edge

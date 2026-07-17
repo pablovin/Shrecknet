@@ -103,16 +103,6 @@ def validator_messages(*, query: str, needs_json: str, evidence: str) -> list[di
     ]
 
 
-# ---------------------------------------------------------------------------
-# Step 3a: optional model prewarm
-# Used by: LibrarianQueryV2._prewarm immediately before synthesis, only for a
-# configured Ollama target whose previous warmup is older than five minutes.
-# Expected output: ignored. This is an operational latency warmup, not evidence
-# and not part of the answer or trace semantics.
-# ---------------------------------------------------------------------------
-
-MODEL_PREWARM_PROMPT = "ping"
-
 
 # ---------------------------------------------------------------------------
 # Step 3b: final grounded synthesis

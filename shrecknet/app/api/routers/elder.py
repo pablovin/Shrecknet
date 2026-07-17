@@ -23,6 +23,7 @@ from app.integrations.retrieval.neo4j_retriever import (
 )
 from app.jobs.elder.elder import ElderOrchestrator
 from app.jobs.elder.schemas import ElderQueryRequest, ElderQueryResponse
+from app.jobs.elder.v2_schemas import EvidenceCapacityError
 from app.models.user import User
 from app.repositories.agent_repository import AgentRepository
 
@@ -115,6 +116,7 @@ async def get_elder_orchestrator(
         graph_retriever=graph_retriever,
         default_top_k=settings.default_top_k,
         llm_max_concurrency=llm_max_concurrency,
+        debug_artifacts_enabled=settings.elder_debug_artifacts_enabled,
     )
 
 
@@ -165,6 +167,23 @@ async def query_elder(
             detail=f"Agent job type '{agent.job}' is not 'elder'",
         )
 
+    # Optional v2 world scope is additive and must belong to an ontology assigned
+    # to this Elder. Existing clients omit it and retain all-assigned-ontology scope.
+    if request.instance_id:
+        from sqlalchemy import select
+        from app.models.ontology_instance import OntologyInstance
+
+        assigned_ontology_ids = {ontology.id for ontology in (agent.ontologies or [])}
+        instance_result = await db_session.execute(
+            select(OntologyInstance).where(OntologyInstance.instance_id == request.instance_id)
+        )
+        active_instance = instance_result.scalar_one_or_none()
+        if active_instance is None or active_instance.ontology_id not in assigned_ontology_ids:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="instance_id is not available to this Elder agent",
+            )
+
     # Get chat history if chat_id is provided
     chat_history = None
     if request.chat_id:
@@ -185,31 +204,68 @@ async def query_elder(
             f"Executing Elder query for agent {agent_id} (user {_current_user.id}): {request.query[:100]}"
         )
 
-        # Build entities hint from SQL ontology definitions (names + descriptions)
+        # Build the complete readable ontology catalogue for v2 planning. This is
+        # grounding, not evidence, and intentionally contains no lossy substrings.
         try:
             from sqlalchemy import select
-            from app.models.ontology import OntologyEntity
+            from app.models.ontology import OntologyEntity, OntologyProperty, OntologyRelationship
 
             if agent.ontologies:
                 ontology_ids = [o.id for o in agent.ontologies]
-                stmt = select(OntologyEntity).where(
-                    OntologyEntity.ontology_id.in_(ontology_ids)
+                entity_result = await db_session.execute(
+                    select(OntologyEntity).where(OntologyEntity.ontology_id.in_(ontology_ids))
                 )
-                res = await db_session.execute(stmt)
-                entities = res.scalars().all()
-                lines = []
-                for ent in entities[:100]:  # cap for prompt size
-                    desc = (ent.description or "").strip().replace("\n", " ")
-                    if len(desc) > 200:
-                        desc = desc[:200] + "…"
-                    lines.append(f"- {ent.name}: {desc}")
-                entities_hint = "\n".join(lines) if lines else None
+                entities = entity_result.scalars().all()
+                entity_ids = [entity.id for entity in entities]
+                property_result = await db_session.execute(
+                    select(OntologyProperty).where(OntologyProperty.entity_id.in_(entity_ids))
+                )
+                relationship_result = await db_session.execute(
+                    select(OntologyRelationship).where(
+                        OntologyRelationship.entity_id.in_(entity_ids)
+                    )
+                )
+                properties_by_entity: dict[int, list] = {}
+                for prop in property_result.scalars().all():
+                    properties_by_entity.setdefault(prop.entity_id, []).append(prop)
+                relationships_by_entity: dict[int, list] = {}
+                for relationship in relationship_result.scalars().all():
+                    relationships_by_entity.setdefault(relationship.entity_id, []).append(relationship)
+                definitions: list[dict] = []
+                for ent in entities:
+                    definitions.append(
+                        {
+                            "definition_id": ent.id,
+                            "name": ent.name,
+                            "description": ent.description or "",
+                            "properties": [
+                                {
+                                    "property_id": prop.id,
+                                    "name": prop.name,
+                                    "description": prop.description or "",
+                                    "data_type": prop.data_type.value,
+                                    "cardinality": prop.cardinality.value,
+                                }
+                                for prop in properties_by_entity.get(ent.id, [])
+                            ],
+                            "relationships": [
+                                {
+                                    "relationship_definition_id": relationship.id,
+                                    "name": relationship.name,
+                                    "description": relationship.description or "",
+                                    "target_definition_id": relationship.destiny_entity_id,
+                                    "bi_directional": relationship.bi_directional,
+                                }
+                                for relationship in relationships_by_entity.get(ent.id, [])
+                            ],
+                        }
+                    )
             else:
-                entities_hint = None
+                definitions = []
         except Exception:
-            entities_hint = None
+            definitions = []
 
-        enriched_request = request.model_copy(update={"entities_hint": entities_hint})
+        enriched_request = request.model_copy(update={"grounding_definitions": definitions})
 
         response = await orchestrator.execute(agent, enriched_request, chat_history)
 
@@ -241,8 +297,12 @@ async def query_elder(
             meta: dict | None = {
                 "sources": [_to_plain(s) for s in (response.sources or [])],
                 "timings": _to_plain(response.timings),
+                "retrieval_plan": _to_plain(response.retrieval_plan),
                 "memory_priors_applied": _to_plain(response.memory_priors_applied),
                 "trace_id": response.trace_id,
+                "pipeline_version": response.pipeline_version,
+                "llm_usage": _to_plain(response.llm_usage),
+                "llm_usage_totals": _to_plain(response.llm_usage_totals),
             }
 
             if request.include_trace:
@@ -255,15 +315,12 @@ async def query_elder(
                         except Exception:
                             step_name = None
                             data = None
-                        if step_name == "decompose" and data:
-                            if "subqueries" in data:
-                                subqueries = data["subqueries"]
-                            elif "intents" in data and isinstance(data["intents"], list):
-                                subqueries = [
-                                    str(item.get("subquery") or "")
-                                    for item in data["intents"]
-                                    if isinstance(item, dict) and item.get("subquery")
-                                ]
+                        if step_name == "retrieval_plan" and data:
+                            subqueries = [
+                                str(item.get("query") or "")
+                                for item in data.get("steps") or []
+                                if isinstance(item, dict) and item.get("query")
+                            ]
                             break
                 meta.update(
                     {
@@ -287,6 +344,23 @@ async def query_elder(
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"Elder embedding unavailable: {str(e)}",
+        )
+    except EvidenceCapacityError as e:
+        logger.warning(
+            "Elder evidence exceeds model capacity agent_id=%s evidence_id=%s required=%s available=%s",
+            agent_id,
+            e.evidence_id,
+            e.required_tokens,
+            e.available_tokens,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail={
+                "code": "elder_evidence_capacity_exceeded",
+                "evidence_id": e.evidence_id,
+                "required_tokens": e.required_tokens,
+                "available_tokens": e.available_tokens,
+            },
         )
     except Exception as e:
         logger.error(f"Elder query failed for agent {agent_id}: {e}", exc_info=True)

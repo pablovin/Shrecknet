@@ -308,14 +308,50 @@ class ElderSourceEvidenceChunk(BaseModel):
     chunk_type: str | None = None
     score: float = 0.0
     text: str | None = None
+    complete: bool = True
 
 
 class ElderSourceNode(BaseModel):
     node_id: str
     node_label: str | None = None
     node_name: str | None = None
+    node_type: str | None = None
+    scene_id: str | None = None
+    source_entity_instance_id: str | None = None
     score: float = 0.0
     evidence_chunks: list[ElderSourceEvidenceChunk] = Field(default_factory=list)
+    evidence_id: str | None = None
+    provenance: dict[str, Any] = Field(default_factory=dict)
+    temporal_position: dict[str, Any] = Field(default_factory=dict)
+    retrieval_methods: list[str] = Field(default_factory=list)
+    complete: bool = True
+    canonical_text: str | None = None
+    properties: dict[str, Any] = Field(default_factory=dict)
+
+
+class ElderRetrievalPlanStep(BaseModel):
+    id: str
+    purpose: str
+    operation: str
+    query: str | None = None
+    inputs: list[str] = Field(default_factory=list)
+    entity_refs: list[str] = Field(default_factory=list)
+    temporal: dict[str, Any] = Field(default_factory=dict)
+    traversal: dict[str, Any] = Field(default_factory=dict)
+    target_data_type: str
+    limit: int
+    hydration_mode: str
+    context_chunks_before: int
+    context_chunks_after: int
+    max_tokens_per_source: int
+
+
+class ElderRetrievalPlan(BaseModel):
+    answer_goal: str
+    response_scope: str
+    evidence_budget_tokens: int
+    query_intent: dict[str, Any] = Field(default_factory=dict)
+    steps: list[ElderRetrievalPlanStep] = Field(default_factory=list)
 
 
 class ElderQueryResponse(BaseModel):
@@ -323,12 +359,15 @@ class ElderQueryResponse(BaseModel):
     query: str
     answer: str
     timings: dict[str, float] = Field(default_factory=dict)
-    intents: list[dict[str, Any]] = Field(default_factory=list)
+    retrieval_plan: ElderRetrievalPlan
     sources: list[ElderSourceNode] = Field(default_factory=list)
     memory_priors_applied: list[dict[str, Any]] = Field(default_factory=list)
     trace_id: str
     trace: list[dict[str, Any]] | None = None
     retrieval_debug: list[dict[str, Any]] | None = None
+    pipeline_version: str = "elder-query-retrieval-v2"
+    llm_usage: list[dict[str, Any]] = Field(default_factory=list)
+    llm_usage_totals: dict[str, int] = Field(default_factory=dict)
 
 
 class ElderChatCreate(BaseModel):

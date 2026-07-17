@@ -117,8 +117,8 @@ async def _get_safe_ontology_embedding_stats(
          count(CASE
              WHEN coalesce(n["is_embedded"], false) = true
              AND n["last_embedded_date"] IS NOT NULL
-             AND n["last_updated_date"] IS NOT NULL
-             AND n["last_updated_date"] > n["last_embedded_date"]
+             AND coalesce(n["last_updated_date"], n["updated_at"]) IS NOT NULL
+             AND coalesce(n["last_updated_date"], n["updated_at"]) > n["last_embedded_date"]
              THEN 1
          END) AS outdated
     RETURN node_type, total, embedded, unembedded, outdated

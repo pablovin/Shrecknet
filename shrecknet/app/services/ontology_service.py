@@ -68,6 +68,7 @@ class OntologyService:
         self._validate_author_payload(data)
         entity = await self.repository.add_entity(ontology_id, data)
         await self.session.commit()
+        self._enqueue_definition_embedding(ontology_id, [int(entity.id)])
         return entity
 
     async def list_entities(
@@ -95,11 +96,15 @@ class OntologyService:
         updated = await self.repository.update_entity(entity, data)
         await self.session.commit()
         await self.session.refresh(updated)
+        self._enqueue_definition_embedding(int(updated.ontology_id), [int(updated.id)])
         return updated
 
     async def delete_entity(self, entity: OntologyEntity) -> None:
+        ontology_id = int(entity.ontology_id)
+        definition_id = int(entity.id)
         await self.repository.remove_entity(entity)
         await self.session.commit()
+        self._enqueue_definition_embedding(ontology_id, [definition_id])
 
     # Properties --------------------------------------------------------
     async def add_property(
@@ -108,6 +113,7 @@ class OntologyService:
         self._validate_author_payload(data)
         prop = await self.repository.add_property(ontology_id, entity_id, data)
         await self.session.commit()
+        self._enqueue_definition_embedding(ontology_id, [entity_id])
         return prop
 
     async def list_properties(
@@ -135,11 +141,15 @@ class OntologyService:
         updated = await self.repository.update_property(prop, data)
         await self.session.commit()
         await self.session.refresh(updated)
+        self._enqueue_definition_embedding(int(updated.entity.ontology_id), [int(updated.entity_id)])
         return updated
 
     async def delete_property(self, prop: OntologyProperty) -> None:
+        ontology_id = int(prop.entity.ontology_id)
+        definition_id = int(prop.entity_id)
         await self.repository.remove_property(prop)
         await self.session.commit()
+        self._enqueue_definition_embedding(ontology_id, [definition_id])
 
     # Relationships -----------------------------------------------------
     async def add_relationship(
@@ -152,6 +162,10 @@ class OntologyService:
         rel = await self.repository.add_relationship(ontology_id, entity_id, data)
         await self._sync_bidirectional_relationship(ontology_id, rel)
         await self.session.commit()
+        self._enqueue_definition_embedding(
+            ontology_id,
+            [entity_id, *([int(rel.destiny_entity_id)] if rel.destiny_entity_id else [])],
+        )
         return rel
 
     async def list_relationships(
@@ -184,6 +198,9 @@ class OntologyService:
         self._validate_author_payload(data, allow_missing=True)
         ontology_id = relationship.entity.ontology_id
         entity_id = relationship.entity_id
+        previous_destination_id = (
+            int(relationship.destiny_entity_id) if relationship.destiny_entity_id else None
+        )
         await self._validate_relationship_entities(
             ontology_id, entity_id, data, allow_missing=True
         )
@@ -191,13 +208,37 @@ class OntologyService:
         await self._sync_bidirectional_relationship(ontology_id, updated)
         await self.session.commit()
         await self.session.refresh(updated)
+        self._enqueue_definition_embedding(
+            ontology_id,
+            [
+                entity_id,
+                *([previous_destination_id] if previous_destination_id else []),
+                *([int(updated.destiny_entity_id)] if updated.destiny_entity_id else []),
+            ],
+        )
         return updated
 
     async def delete_relationship(self, relationship: OntologyRelationship) -> None:
         ontology_id = relationship.entity.ontology_id
+        entity_id = int(relationship.entity_id)
+        destination_id = int(relationship.destiny_entity_id) if relationship.destiny_entity_id else None
         await self._remove_mirror_relationship(ontology_id, relationship)
         await self.repository.remove_relationship(relationship)
         await self.session.commit()
+        self._enqueue_definition_embedding(
+            int(ontology_id),
+            [entity_id, *([destination_id] if destination_id else [])],
+        )
+
+    @staticmethod
+    def _enqueue_definition_embedding(ontology_id: int, definition_ids: list[int]) -> None:
+        """Schedule V2 vocabulary/profile reconciliation only after SQL commit."""
+        from app.tasks.neo4j_embedding import embed_definitions
+
+        embed_definitions.delay(
+            ontology_id=int(ontology_id),
+            definition_ids=sorted({int(value) for value in definition_ids}),
+        )
 
     # Copy definitions -------------------------------------------------
     async def copy_definitions(

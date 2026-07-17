@@ -260,6 +260,11 @@ class ShreckLLMClient:
         safe_start = max(0, int(start_index))
         return self._summarize_usage_events(self._usage_events[safe_start:])
 
+    def get_usage_events_since(self, start_index: int) -> list[dict[str, Any]]:
+        """Return immutable-facing per-call usage rows for request-level accounting."""
+        safe_start = max(0, int(start_index))
+        return [dict(event) for event in self._usage_events[safe_start:]]
+
     def _summarize_usage_events(self, events: list[dict[str, Any]]) -> dict[str, Any]:
         by_model: dict[str, dict[str, Any]] = defaultdict(
             lambda: {

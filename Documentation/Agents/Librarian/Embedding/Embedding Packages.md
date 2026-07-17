@@ -1,0 +1,138 @@
+# Librarian Embedding Packages
+
+The Librarian embedding-package service moves one complete derived book
+embedding between Shrecknet installations without moving the source PDF, SQL
+library record, cover, bookmarks, or ontology.
+
+An embedding package is a ZIP response with media type
+`application/vnd.shrecknet.librarian-embedding+zip`. It contains
+`manifest.json` and `graph.json`. The graph contains the active document's
+pages, sections, blocks, parent chunks, child chunks, vectors, and provenance.
+This structure is necessary for retrieval, evidence reconstruction, and page
+citations; numeric vectors alone are not a usable Librarian embedding.
+
+## Placement and preserved data
+
+Import always takes `ontology_id` and `item_id` from the endpoint URL. Values in
+the uploaded package cannot select or overwrite the destination placement. A
+new ingestion ID and new page, section, block, and chunk IDs are generated to
+avoid collisions.
+
+The package preserves the source display text, embedding text, vectors, page
+provenance, headings, parser metadata, embedding model/version, source hash,
+and original embedded book/RPG-system context. Consequently, the destination
+SQL title may differ from the title encoded into the preserved embedding.
+
+Import verifies the archive shape, SHA-256 checksum, node counts, relationships,
+finite vector values, and a single compatible embedding model/dimension. The
+configured model ID and dimension must match the package. Replacement is one
+Neo4j transaction: the existing embedding remains available if validation or
+the transaction fails. On success, the destination SQL item is marked
+vectorized.
+
+Both endpoints require the `admin` or `world_builder` role. The maximum uploaded
+package size is 512 MiB.
+
+## Export endpoint
+
+```http
+GET /libraries/{ontology_id}/items/{item_id}/embedding/export
+Authorization: Bearer <token>
+```
+
+Example:
+
+```bash
+curl -f \
+  -H "Authorization: Bearer $TOKEN" \
+  -o book.shrecknet-embedding \
+  http://localhost:8100/libraries/12/items/84/embedding/export
+```
+
+Success is `200 OK` with an attachment response. `404` means the destination
+library item does not exist; `409` means it has no active structured embedding.
+
+Frontend example:
+
+```ts
+const response = await fetch(
+  `/libraries/${ontologyId}/items/${itemId}/embedding/export`,
+  { headers: { Authorization: `Bearer ${token}` } },
+);
+if (!response.ok) throw new Error((await response.json()).detail);
+const blob = await response.blob();
+const url = URL.createObjectURL(blob);
+const link = document.createElement("a");
+link.href = url;
+link.download = `${book.title}.shrecknet-embedding`;
+link.click();
+URL.revokeObjectURL(url);
+```
+
+## Import endpoint
+
+```http
+POST /libraries/{ontology_id}/items/{item_id}/embedding/import
+Authorization: Bearer <token>
+Content-Type: multipart/form-data
+
+file=<embedding package>
+```
+
+Example:
+
+```bash
+curl -f -X POST \
+  -H "Authorization: Bearer $TOKEN" \
+  -F "file=@book.shrecknet-embedding" \
+  http://localhost:8100/libraries/12/items/91/embedding/import
+```
+
+Success is `200 OK`:
+
+```json
+{
+  "message": "Librarian embedding imported and activated",
+  "library_item_id": 91,
+  "ontology_id": 12,
+  "ingestion_id": "c58716e8-a3f8-4ad7-b66c-07e9cd00498f",
+  "source": {
+    "library_item_id": 84,
+    "ontology_id": 12,
+    "book_title": "Original embedded title",
+    "source_sha256": "..."
+  },
+  "embedding": {
+    "model_id": "intfloat/multilingual-e5-small",
+    "dimension": 384,
+    "version": "docling-e5-context-v1"
+  },
+  "counts": {
+    "documents": 1,
+    "pages": 240,
+    "sections": 96,
+    "blocks": 4812,
+    "chunks": 1730
+  }
+}
+```
+
+The frontend should treat `413` as an oversized upload and `422` as an invalid,
+corrupt, or runtime-incompatible package. A `404` means the URL's destination
+book does not exist.
+
+```ts
+const body = new FormData();
+body.append("file", selectedFile);
+const response = await fetch(
+  `/libraries/${ontologyId}/items/${itemId}/embedding/import`,
+  {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body,
+  },
+);
+const result = await response.json();
+if (!response.ok) throw new Error(result.detail);
+```
+

@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+import io
 import json
 import logging
 import re
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import Select, delete, or_, select, update
 
@@ -754,6 +757,69 @@ async def trigger_embedding(
         "author_id": current_user.id,
         "celery_task_id": task.id,
     }
+
+
+@router.get("/{ontology_id}/items/{item_id}/embedding/export")
+async def export_book_embedding(
+    ontology_id: int,
+    item_id: int,
+    _: User = Depends(require_roles("admin", "world_builder")),
+    session: AsyncSessionCompat = Depends(get_db_session),
+) -> StreamingResponse:
+    item = await _get_item_or_404(session, ontology_id, item_id)
+    from app.services.librarian_embedding_package_service import (
+        EmbeddingPackageError,
+        LibrarianEmbeddingPackageService,
+    )
+
+    try:
+        async with get_driver().session(database=get_settings().neo4j_database) as graph_session:
+            package = await LibrarianEmbeddingPackageService(graph_session).export_package(
+                item.id, ontology_id
+            )
+    except EmbeddingPackageError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    safe_title = re.sub(r"[^A-Za-z0-9._-]+", "-", item.title).strip("-") or f"book-{item.id}"
+    filename = f"{safe_title}.shrecknet-embedding"
+    return StreamingResponse(
+        io.BytesIO(package),
+        media_type="application/vnd.shrecknet.librarian-embedding+zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.post("/{ontology_id}/items/{item_id}/embedding/import")
+async def import_book_embedding(
+    ontology_id: int,
+    item_id: int,
+    file: UploadFile = File(...),
+    _: User = Depends(require_roles("admin", "world_builder")),
+    session: AsyncSessionCompat = Depends(get_db_session),
+) -> dict[str, Any]:
+    item = await _get_item_or_404(session, ontology_id, item_id)
+    from app.services.librarian_embedding_package_service import (
+        MAX_PACKAGE_BYTES,
+        EmbeddingPackageError,
+        LibrarianEmbeddingPackageService,
+    )
+
+    package = await file.read(MAX_PACKAGE_BYTES + 1)
+    if len(package) > MAX_PACKAGE_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="Embedding package is too large",
+        )
+    try:
+        async with get_driver().session(database=get_settings().neo4j_database) as graph_session:
+            result = await LibrarianEmbeddingPackageService(graph_session).import_package(
+                package, library_item_id=item.id, ontology_id=ontology_id
+            )
+    except EmbeddingPackageError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    item.vectorized = True
+    item.last_vectorized_at = datetime.now(timezone.utc)
+    await session.commit()
+    return {"message": "Librarian embedding imported and activated", **result}
 
 
 @router.get("/{ontology_id}/items/{item_id}/embedding-status")

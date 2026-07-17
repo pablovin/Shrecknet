@@ -26,5 +26,5 @@ only final synthesis; planning, retrieval, and validation still run.
 - `schemas.py`: request, response, and evidence contracts.
 - `debug_artifacts.py`: numbered stage artifacts and run manifest.
 
-See [Embedding](Embedding/Embedding.md), [Query](Querry/Querry.md), and
+See [Embedding](Embedding/Embedding.md), [Embedding Packages](Embedding/Embedding%20Packages.md), [Query](Querry/Querry.md), and
 [Retrieval](Retrieval/Retrieval.md) for detailed contracts.

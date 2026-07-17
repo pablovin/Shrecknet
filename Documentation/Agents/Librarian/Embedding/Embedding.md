@@ -13,12 +13,17 @@ complete display evidence used by coverage validation and final synthesis.
 The existing frontend and API contracts are unchanged:
 
 - `POST /libraries/{ontology_id}/items/{item_id}/trigger-embedding`
+- `GET /libraries/{ontology_id}/items/{item_id}/embedding/export`
+- `POST /libraries/{ontology_id}/items/{item_id}/embedding/import`
 - upload flows with `auto_embed=true`
 - Celery task `library.embed_pdf_book`
 
-All of these invoke Docling. The former PyMuPDF pipeline is temporarily
-available as the non-UI rollback task `library.embed_pdf_book_old` through
-`LegacyPdfIngestionService`.
+The trigger and PDF upload flows invoke Docling. The former PyMuPDF pipeline is
+temporarily available as the non-UI rollback task `library.embed_pdf_book_old`
+through `LegacyPdfIngestionService`.
+
+Export and import operate on an already derived structured embedding and do not
+invoke Docling. See [Librarian Embedding Packages](Embedding%20Packages.md).
 
 ## Active Pipeline
 

@@ -88,34 +88,21 @@ curl -f -X POST \
   http://localhost:8100/libraries/12/items/91/embedding/import
 ```
 
-Success is `200 OK`:
+After the file has been fully received and staged, the endpoint returns `202 Accepted`:
 
 ```json
 {
-  "message": "Librarian embedding imported and activated",
+  "message": "Embedding file received; preparing the import in the background",
+  "status": "queued",
   "library_item_id": 91,
   "ontology_id": 12,
-  "ingestion_id": "c58716e8-a3f8-4ad7-b66c-07e9cd00498f",
-  "source": {
-    "library_item_id": 84,
-    "ontology_id": 12,
-    "book_title": "Original embedded title",
-    "source_sha256": "..."
-  },
-  "embedding": {
-    "model_id": "intfloat/multilingual-e5-small",
-    "dimension": 384,
-    "version": "docling-e5-context-v1"
-  },
-  "counts": {
-    "documents": 1,
-    "pages": 240,
-    "sections": 96,
-    "blocks": 4812,
-    "chunks": 1730
-  }
+  "celery_task_id": "f1d2d2f9-..."
 }
 ```
+
+Validation and graph activation continue as a background job. Its initial visible
+status is `File received; preparing import`; completion details contain the imported
+ingestion ID, source metadata, embedding metadata, and node counts.
 
 The frontend should treat `413` as an oversized upload and `422` as an invalid,
 corrupt, or runtime-incompatible package. A `404` means the URL's destination
@@ -135,4 +122,3 @@ const response = await fetch(
 const result = await response.json();
 if (!response.ok) throw new Error(result.detail);
 ```
-

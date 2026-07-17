@@ -5,6 +5,7 @@ import json
 import logging
 import re
 import shutil
+from uuid import uuid4
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -788,38 +789,59 @@ async def export_book_embedding(
     )
 
 
-@router.post("/{ontology_id}/items/{item_id}/embedding/import")
+@router.post(
+    "/{ontology_id}/items/{item_id}/embedding/import",
+    status_code=status.HTTP_202_ACCEPTED,
+)
 async def import_book_embedding(
     ontology_id: int,
     item_id: int,
     file: UploadFile = File(...),
-    _: User = Depends(require_roles("admin", "world_builder")),
+    current_user: User = Depends(require_roles("admin", "world_builder")),
     session: AsyncSessionCompat = Depends(get_db_session),
 ) -> dict[str, Any]:
     item = await _get_item_or_404(session, ontology_id, item_id)
-    from app.services.librarian_embedding_package_service import (
-        MAX_PACKAGE_BYTES,
-        EmbeddingPackageError,
-        LibrarianEmbeddingPackageService,
-    )
+    from app.services.librarian_embedding_package_service import MAX_PACKAGE_BYTES
+    from app.tasks.librarian_embedding_package import import_librarian_embedding_package
 
-    package = await file.read(MAX_PACKAGE_BYTES + 1)
-    if len(package) > MAX_PACKAGE_BYTES:
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail="Embedding package is too large",
-        )
+    staging_dir = Path(get_settings().media_root) / "embedding-imports"
+    staging_dir.mkdir(parents=True, exist_ok=True)
+    staged_path = staging_dir / f"{uuid4()}.shrecknet-embedding"
+    received = 0
     try:
-        async with get_driver().session(database=get_settings().neo4j_database) as graph_session:
-            result = await LibrarianEmbeddingPackageService(graph_session).import_package(
-                package, library_item_id=item.id, ontology_id=ontology_id
-            )
-    except EmbeddingPackageError as exc:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
-    item.vectorized = True
-    item.last_vectorized_at = datetime.now(timezone.utc)
-    await session.commit()
-    return {"message": "Librarian embedding imported and activated", **result}
+        with staged_path.open("xb") as output:
+            while chunk := await file.read(1024 * 1024):
+                received += len(chunk)
+                if received > MAX_PACKAGE_BYTES:
+                    raise HTTPException(
+                        status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                        detail="Embedding package is too large",
+                    )
+                output.write(chunk)
+    except Exception:
+        staged_path.unlink(missing_ok=True)
+        raise
+    finally:
+        await file.close()
+
+    try:
+        task = import_librarian_embedding_package.delay(
+            package_path=str(staged_path),
+            library_item_id=item.id,
+            ontology_id=ontology_id,
+            author_type="user",
+            author_id=str(current_user.id),
+        )
+    except Exception:
+        staged_path.unlink(missing_ok=True)
+        raise
+    return {
+        "message": "Embedding file received; preparing the import in the background",
+        "status": "queued",
+        "library_item_id": item.id,
+        "ontology_id": ontology_id,
+        "celery_task_id": task.id,
+    }
 
 
 @router.get("/{ontology_id}/items/{item_id}/embedding-status")

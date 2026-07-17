@@ -12,6 +12,7 @@ from . import (
     novelist,
     ontology_instance_clear,
     companion_orchestrator,
+    librarian_embedding_package,
 )
 
 __all__ = [
@@ -25,4 +26,5 @@ __all__ = [
     "novelist",
     "ontology_instance_clear",
     "companion_orchestrator",
+    "librarian_embedding_package",
 ]

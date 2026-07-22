@@ -58,6 +58,8 @@ from .models import (
     ProviderStatus,
     ProviderValidation,
     World,
+    CharacterAgentQueryRequest,
+    CharacterAgentQueryResponse,
 )
 
 
@@ -251,6 +253,7 @@ class AgentsAPI:
         data = await self._client.raw_request("POST", "/agents/", json=payload.model_dump(exclude_none=True))
         return AgentRead.model_validate(data)
 
+
     async def get(self, agent_id: str) -> AgentRead:
         data = await self._client.raw_request("GET", f"/agents/{agent_id}")
         return AgentRead.model_validate(data)
@@ -269,6 +272,21 @@ class AgentsAPI:
     async def detach_ontology(self, agent_id: str, ontology_id: int) -> AgentRead:
         data = await self._client.raw_request("DELETE", f"/agents/{agent_id}/ontologies/{ontology_id}")
         return AgentRead.model_validate(data)
+
+
+class CharacterAgentsAPI:
+    """Graph-backed CharacterAgent query endpoint."""
+
+    def __init__(self, client: AsyncShrecknetClient):
+        self._client = client
+
+    async def query(self, character_agent_id: str, payload: CharacterAgentQueryRequest) -> CharacterAgentQueryResponse:
+        data = await self._client.raw_request(
+            "POST",
+            f"/character-agents/{character_agent_id}/query",
+            json=payload.model_dump(mode="json", by_alias=True, exclude_none=True),
+        )
+        return CharacterAgentQueryResponse.model_validate(data)
 
 
 class PersonalCompanionAPI:

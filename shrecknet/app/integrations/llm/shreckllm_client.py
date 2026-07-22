@@ -53,6 +53,7 @@ class ShreckLLMClient:
         use_conversation_memory: bool = False,
         usage_tag: str | None = None,
         return_metadata: bool = False,
+        max_tokens: int | None = None,
     ) -> str | dict[str, Any]:
         target = self._coerce_target(model)
         await self.ensure_provider_ready(target.provider)
@@ -64,6 +65,7 @@ class ShreckLLMClient:
             "conversation_id": conversation_id,
             "use_conversation_memory": use_conversation_memory,
             "metadata": {"usage_tag": usage_tag} if usage_tag else None,
+            "max_tokens": max_tokens,
         }
         attempts = self.max_retries + 1
         for attempt in range(1, attempts + 1):

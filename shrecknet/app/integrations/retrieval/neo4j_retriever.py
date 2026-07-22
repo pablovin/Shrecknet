@@ -18,6 +18,7 @@ from neo4j import GraphDatabase
 from app.core.config_store import get_settings
 from app.graphrag.embedding_runtime import EmbeddingRuntimeError, get_ready_embedding_runtime
 from app.graphrag.retrieval_service import RetrievalService
+from app.graphrag.retrieval_policy import contains_excluded_label, safe_retrieval_labels
 from app.jobs.elder.schemas import RetrievedChunk
 
 logger = logging.getLogger(__name__)
@@ -564,6 +565,8 @@ class Neo4jGraphRetriever:
                 rows = await result.data()
         hydrated: dict[str, dict[str, Any]] = {}
         for row in rows:
+            if contains_excluded_label(row.get("labels") or []):
+                continue
             node_id = str(row.get("node_id") or "")
             props = row.get("properties") or {}
             entry = hydrated.setdefault(
@@ -651,6 +654,8 @@ class Neo4jGraphRetriever:
                 continue
             props = dict(node)
             labels = set(getattr(node, "labels", []) or [])
+            if contains_excluded_label(labels):
+                continue
             label = next((value for value in ("EntityInstance", "Scene", "Milestone") if value in labels), None)
             node_id = str(props.get("entity_instance_id") or props.get("id") or "")
             if not node_id or not label:
@@ -1260,7 +1265,9 @@ class HybridNeo4jGraphRetriever(Neo4jGraphRetriever):
         started = time.monotonic()
         self.last_errors = []
         self.last_search_stats = []
-        labels = allowed_labels or ["EntityInstance", "Scene", "Milestone"]
+        labels = safe_retrieval_labels(allowed_labels)
+        if not labels:
+            return []
         search_ontologies = ontology_ids if ontology_ids else [None]
         all_chunks: list[RetrievedChunk] = []
         mode = self.infer_temporal_mode(query)
@@ -1479,6 +1486,8 @@ class HybridNeo4jGraphRetriever(Neo4jGraphRetriever):
             parent_props = self._as_props(parent)
             chunk_props = self._as_props(chunk)
             labels = self._as_labels(parent)
+            if contains_excluded_label(labels):
+                continue
             node_id = self._node_id(parent_props)
             if not node_id:
                 continue
@@ -1812,6 +1821,8 @@ class HybridNeo4jGraphRetriever(Neo4jGraphRetriever):
                 continue
             props = self._as_props(node)
             labels = self._as_labels(node)
+            if contains_excluded_label(labels):
+                continue
             label = str(row.get("node_label") or self._primary_label(labels))
             node_id = self._node_id(props)
             if not node_id:

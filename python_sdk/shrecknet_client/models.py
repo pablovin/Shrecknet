@@ -28,6 +28,32 @@ class World(BaseModel):
     ontology_ids: list[int] = Field(default_factory=list)
 
 
+class CharacterQueryResponseFormat(BaseModel):
+    type: str = "text"
+    schema_: dict[str, Any] | None = Field(None, alias="schema")
+
+    model_config = {"populate_by_name": True}
+
+
+class CharacterQueryGeneration(BaseModel):
+    mode: str = "simulation"
+    temperature: float = 0.7
+    max_tokens: int = 500
+
+
+class CharacterAgentQueryRequest(BaseModel):
+    query: str
+    system_instruction: str | None = None
+    context: dict[str, Any] | None = None
+    response_format: CharacterQueryResponseFormat = Field(default_factory=CharacterQueryResponseFormat)
+    generation: CharacterQueryGeneration = Field(default_factory=CharacterQueryGeneration)
+
+
+class CharacterAgentQueryResponse(BaseModel):
+    type: str
+    content: Any
+
+
 class Ontology(BaseModel):
     id: int
     name: str

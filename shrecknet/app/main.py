@@ -17,6 +17,7 @@ from app.api.routers import (
     audit_logs,
     auth,
     backups,
+    character_agents,
     configurations,
     contracts,
     elder,
@@ -52,6 +53,7 @@ from app.graphrag.embedding_runtime import (
     stop_embedding_runtime,
 )
 from app.graph.neo4j import (
+    ensure_character_graph_constraints,
     ensure_elder_hybrid_indexes,
     ensure_temporal_graph_constraints,
     get_driver,
@@ -229,6 +231,9 @@ async def _run_llm_prewarm() -> None:
     targets: list[LLMModelTarget] = [
         settings.model_elder,
         settings.model_librarian,
+        getattr(settings, "model_character_agent_framing", settings.model_elder),
+        getattr(settings, "model_character_agent_deliberation", settings.model_elder),
+        getattr(settings, "model_character_agent_verification", settings.model_elder),
         settings.model_agents_repair_json,
         settings.model_architect_scene_chunking,
         settings.model_architect_entity_proposal,
@@ -313,6 +318,7 @@ async def lifespan(_: FastAPI):
             if lock_record and int(lock_record["deleted"] or 0):
                 logger.warning("Cleared %s stale Librarian ingestion locks on startup", lock_record["deleted"])
             await ensure_temporal_graph_constraints(neo4j_session)
+            await ensure_character_graph_constraints(neo4j_session)
             await ensure_elder_hybrid_indexes(neo4j_session)
             await PdfEmbeddingService(neo4j_session).ensure_vector_index()
     except Exception:
@@ -368,6 +374,9 @@ app.include_router(users.router)
 app.include_router(worlds.router)
 app.include_router(ontologies.router)
 app.include_router(agents.router)
+app.include_router(character_agents.router)
+app.include_router(character_agents.aspect_router)
+app.include_router(character_agents.goal_router)
 app.include_router(jobs.router)
 app.include_router(architect.router)
 app.include_router(elder.router)

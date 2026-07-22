@@ -2,6 +2,12 @@
 
 Welcome to the Shrecknet documentation! This directory contains all organized documentation for the project.
 
+## CharacterAgent
+
+- [CharacterAgent](./Agents/CharacterAgent/CharacterAgent.md)
+- [CharacterAgent Query](./Agents/CharacterAgent/Query/Query.md)
+- [CharacterAgent endpoints](./Agents/CharacterAgent/CharacterAgent%20-%20Endpoints.md)
+
 ## 📚 Documentation Structure
 
 ### [Getting Started](./GettingStarted/)
@@ -56,6 +62,11 @@ System architecture and design documentation
 - [Architect Word Chunking Examples](./Architecture/ARCHITECT_WORD_CHUNKING_EXAMPLES.md)
 - [Architect Monitoring](./Architecture/ARCHITECT_MONITORING.md)
 - [Architect Monitoring Quick Reference](./Architecture/ARCHITECT_MONITORING_QUICKREF.md)
+
+### [Engineering](./Engineering/)
+Repository-wide development and maintenance policy
+- [Change and Documentation Policy](./Engineering/CHANGE_AND_DOCUMENTATION_POLICY.md)
+  - Required code, test, and documentation updates for each kind of change
 
 ### [Scene-Centric Memory](./SceneCentricMemory/)
 Temporal modeling docs for canonical Scene and Milestone representation

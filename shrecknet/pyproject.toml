@@ -27,6 +27,7 @@ dependencies = [
   "PyMuPDF>=1.23,<2",
   "pytesseract>=0.3.10,<0.4",
   "docling>=2.81,<3",
+  "jsonschema>=4.18,<5",
 ]
 
 [project.optional-dependencies]

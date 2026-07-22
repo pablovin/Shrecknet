@@ -38,6 +38,11 @@ class AuditEntityType(str, Enum):
     ONTOLOGY_PROPERTY = "ontology_property"
     ONTOLOGY_RELATIONSHIP = "ontology_relationship"
     NOTIFICATION = "notification"
+    CHARACTER_AGENT = "character_agent"
+    CHARACTER_ASPECT = "character_aspect"
+    CHARACTER_GOAL = "character_goal"
+    CHARACTER_ASPECT_ASSIGNMENT = "character_aspect_assignment"
+    CHARACTER_GOAL_PURSUIT = "character_goal_pursuit"
 
 
 class AuditLog(Base):

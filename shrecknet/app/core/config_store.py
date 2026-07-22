@@ -55,6 +55,9 @@ LLM_TARGET_FIELDS = (
     "model_novelist_prose",
     "model_novelist_critic",
     "model_librarian",
+    "model_character_agent_framing",
+    "model_character_agent_deliberation",
+    "model_character_agent_verification",
     "model_orchestrator_routing",
     "model_orchestrator_synthesis",
 )
@@ -216,6 +219,15 @@ class Settings(BaseSettings):
         default_factory=lambda: LLMModelTarget(provider="openai", name="gpt-5-nano")
     )
     model_librarian: LLMModelTarget = Field(
+        default_factory=lambda: LLMModelTarget(provider="openai", name="gpt-5-nano")
+    )
+    model_character_agent_framing: LLMModelTarget = Field(
+        default_factory=lambda: LLMModelTarget(provider="openai", name="gpt-5-nano")
+    )
+    model_character_agent_deliberation: LLMModelTarget = Field(
+        default_factory=lambda: LLMModelTarget(provider="openai", name="gpt-5")
+    )
+    model_character_agent_verification: LLMModelTarget = Field(
         default_factory=lambda: LLMModelTarget(provider="openai", name="gpt-5-nano")
     )
     librarian_debug_artifacts_enabled: bool = False

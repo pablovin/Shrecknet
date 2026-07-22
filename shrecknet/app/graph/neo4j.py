@@ -116,6 +116,23 @@ async def ensure_temporal_graph_constraints(session: AsyncSession) -> None:
         await session.run(statement)
 
 
+async def ensure_character_graph_constraints(session: AsyncSession) -> None:
+    """Create idempotent constraints/indexes for ontology character data."""
+    statements = [
+        "CREATE CONSTRAINT character_agent_id_unique IF NOT EXISTS FOR (n:CharacterAgent) REQUIRE n.id IS UNIQUE",
+        "CREATE CONSTRAINT character_agent_entity_unique IF NOT EXISTS FOR (n:CharacterAgent) REQUIRE n.embodied_entity_instance_id IS UNIQUE",
+        "CREATE CONSTRAINT character_aspect_id_unique IF NOT EXISTS FOR (n:CharacterAspect) REQUIRE n.id IS UNIQUE",
+        "CREATE CONSTRAINT character_aspect_normalized_name_unique IF NOT EXISTS FOR (n:CharacterAspect) REQUIRE (n.ontology_id, n.normalized_name) IS UNIQUE",
+        "CREATE CONSTRAINT character_goal_id_unique IF NOT EXISTS FOR (n:CharacterGoal) REQUIRE n.id IS UNIQUE",
+        "CREATE INDEX character_agent_scope_idx IF NOT EXISTS FOR (n:CharacterAgent) ON (n.ontology_id)",
+        "CREATE INDEX character_aspect_scope_idx IF NOT EXISTS FOR (n:CharacterAspect) ON (n.ontology_id)",
+        "CREATE INDEX character_goal_scope_idx IF NOT EXISTS FOR (n:CharacterGoal) ON (n.ontology_id)",
+        "CREATE INDEX character_aspect_name_idx IF NOT EXISTS FOR (n:CharacterAspect) ON (n.ontology_id, n.normalized_name)",
+    ]
+    for statement in statements:
+        await session.run(statement)
+
+
 def _index_matches(
     index: dict[str, Any] | None,
     *,

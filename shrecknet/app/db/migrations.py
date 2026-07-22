@@ -224,6 +224,12 @@ def migrate_personal_companion_agents_table(sync_conn) -> None:
     )
 
 
+def migrate_remove_legacy_character_agents(sync_conn) -> None:
+    """Irreversibly remove the superseded SQL character-persona tables."""
+    sync_conn.execute(text("DROP TABLE IF EXISTS character_agent_allowed_users"))
+    sync_conn.execute(text("DROP TABLE IF EXISTS character_agents"))
+
+
 def migrate_ontology_rpg_system_column(sync_conn) -> None:
     """Ensure ontologies table has optional rpg_system column."""
     inspector = inspect(sync_conn)

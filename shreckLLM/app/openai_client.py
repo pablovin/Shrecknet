@@ -168,6 +168,7 @@ class OpenAIClient:
         model: str,
         messages: list[ChatMessage],
         temperature: float,
+        max_tokens: int | None = None,
     ) -> dict[str, Any]:
         if self._client is None:
             raise DependencyUnavailableError("openai is not configured")
@@ -181,6 +182,8 @@ class OpenAIClient:
         normalized_model = (model or "").strip().lower()
         if not normalized_model.startswith("gpt-5"):
             kwargs["temperature"] = float(temperature)
+        if max_tokens is not None:
+            kwargs["max_completion_tokens"] = int(max_tokens)
 
         try:
             resp = await self._client.chat.completions.create(**kwargs)

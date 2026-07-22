@@ -24,6 +24,7 @@ from app.graphrag.embedding_runtime import (
     get_ready_embedding_runtime,
 )
 from app.core.config_store import get_settings
+from app.graphrag.retrieval_policy import contains_excluded_label, safe_retrieval_labels
 
 
 def _normalize_value(value: Any) -> Any:
@@ -116,6 +117,8 @@ class RetrievalService:
         for record in records:
             chunk = record.get("chunk")
             parent = record.get("parent")
+            if contains_excluded_label(getattr(parent, "labels", ())):
+                continue
             score = float(record.get("score") or 0.0)
             if score < score_threshold:
                 continue
@@ -348,6 +351,28 @@ class RetrievalService:
             f"k={k} node_scope={node_scope} candidate_limit={candidate_limit} rerank_limit={rerank_limit}"
         )
 
+        node_scope = (node_scope or "everything").strip().lower()
+        effective_allowed_labels = safe_retrieval_labels(allowed_labels)
+        if allowed_labels is None:
+            if node_scope == "entity":
+                effective_allowed_labels = ["EntityInstance"]
+            elif node_scope == "scene":
+                effective_allowed_labels = ["Scene"]
+            elif node_scope == "milestone":
+                effective_allowed_labels = ["Milestone"]
+        if not effective_allowed_labels:
+            return {
+                "query": query,
+                "results": [],
+                "total": 0,
+                "ontology_id": ontology_id,
+                "node_scope": node_scope,
+                "debug_stats": {
+                    "retrieval_mode": "blocked_by_label_policy",
+                    "allowed_labels": [],
+                },
+            }
+
         # V2 indexes are maintained at startup and by the embedding service.
         t_index_start = time.monotonic()
         t_index = time.monotonic() - t_index_start
@@ -503,20 +528,6 @@ class RetrievalService:
                 raise
             raise EmbeddingRuntimeError(str(exc))
 
-        node_scope = (node_scope or "everything").strip().lower()
-        effective_allowed_labels = allowed_labels or [
-            "EntityInstance",
-            "Scene",
-            "Milestone",
-        ]
-        if allowed_labels is None:
-            if node_scope == "entity":
-                effective_allowed_labels = ["EntityInstance"]
-            elif node_scope == "scene":
-                effective_allowed_labels = ["Scene"]
-            elif node_scope == "milestone":
-                effective_allowed_labels = ["Milestone"]
-
         records: list[dict[str, Any]] = []
         nodes_from_fallback: list[dict[str, Any]] = []
         if query_embedding is not None:
@@ -663,6 +674,8 @@ class RetrievalService:
                 labels_list = list(parent.labels)
             except Exception:
                 labels_list = _get(parent, "labels", []) or []
+            if contains_excluded_label(labels_list):
+                continue
 
             try:
                 parent_props = dict(parent)

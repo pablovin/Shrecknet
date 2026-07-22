@@ -71,6 +71,7 @@ async def get_service_status(
             "elder": shreckllm_status["operational"],
             "librarian": shreckllm_status["operational"],
             "novelist": shreckllm_status["operational"],
+            "character_agent": shreckllm_status["operational"],
         },
         "providers": providers,
         "model_targets": {
@@ -84,5 +85,8 @@ async def get_service_status(
             "model_novelist_prose": _target_status(settings.model_novelist_prose),
             "model_novelist_critic": _target_status(settings.model_novelist_critic),
             "model_librarian": _target_status(settings.model_librarian),
+            "model_character_agent_framing": _target_status(getattr(settings, "model_character_agent_framing", settings.model_elder)),
+            "model_character_agent_deliberation": _target_status(getattr(settings, "model_character_agent_deliberation", settings.model_elder)),
+            "model_character_agent_verification": _target_status(getattr(settings, "model_character_agent_verification", settings.model_elder)),
         },
     }

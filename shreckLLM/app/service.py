@@ -1164,6 +1164,7 @@ class ChatService:
                 model=resolved_model,
                 messages=combined_messages,
                 temperature=request.temperature,
+                max_tokens=request.max_tokens,
             )
         else:
             limits = (self._runtime.provider_limits or {}).get(provider_id, {})
@@ -1188,6 +1189,7 @@ class ChatService:
                     model=resolved_model,
                     messages=combined_messages,
                     temperature=request.temperature,
+                    max_tokens=request.max_tokens,
                 )
             except ProviderOverloadedError:
                 cooldown_s = float(limits.get("cooldown_seconds_on_429", 10.0) or 10.0)

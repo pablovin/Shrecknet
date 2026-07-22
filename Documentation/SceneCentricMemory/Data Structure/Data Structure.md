@@ -32,23 +32,77 @@ Neo4j does not currently create graph nodes for the SQL `Ontology`, `OntologyEnt
 
 ## 2. Canonical Graph Shape
 
-```text
-(OntologyInstance)
-  |--[:HAS_ENTITY]-->(EntityInstance)
-  |                       |--[:RELATES_TO {definition metadata}]-->(EntityInstance)
-  |
-  |--[:HAS_SCENE]-->(Scene)
-                          |--[:DERIVED_FROM]-->(EntityInstance)
-                          |--[:RELATES_TO {label}]-->(EntityInstance)
-                          |--[:FOLLOWED_BY / :PRECEDED_BY]-->(Scene)
-                          |
-                          |--[:CONTAINS]-->(Milestone)
-                                                   |--[:DERIVED_FROM]-->(EntityInstance)
-                                                   |--[:RELATES_TO {label}]-->(EntityInstance)
-                                                   |--[:FOLLOWED_BY / :PRECEDED_BY]-->(Milestone)
+The diagram below shows both persistence layers. Blue nodes are definitions stored in SQL; green and amber nodes are canonical Neo4j world memory. Dashed arrows are governance references through stored IDs, not Neo4j relationships. Solid arrows are relationships physically stored in Neo4j.
+
+![Scene-Centric Memory graph structure and ontology governance](./scene-centric-memory-graph.png)
+
+<details>
+<summary>Editable Mermaid source</summary>
+
+```mermaid
+flowchart LR
+    subgraph SQL["SQL — ontology definition layer"]
+        direction TB
+        O["Ontology<br/><code>id</code>"]
+        OE["OntologyEntity<br/><code>id, ontology_id</code>"]
+        OP["OntologyProperty<br/><code>id, entity_id</code><br/>type + cardinality"]
+        OR["OntologyRelationship<br/><code>id, source_id, target_id</code><br/>directionality"]
+
+        O -->|defines entity types| OE
+        OE -->|allows properties| OP
+        OE -->|allows source/target links| OR
+    end
+
+    subgraph NEO["Neo4j — canonical world-memory layer"]
+        direction TB
+        OI(("OntologyInstance<br/><code>instance_id, ontology_id</code>"))
+        EI(("EntityInstance<br/><code>entity_instance_id</code><br/><code>entity_definition_id</code>"))
+        SC(["Scene<br/><code>id, instance_id, ontology_id</code>"])
+        MS(["Milestone<br/><code>id, scene_id, instance_id</code>"])
+
+        OI -->|HAS_ENTITY| EI
+        OI -->|HAS_SCENE| SC
+        SC -->|CONTAINS| MS
+
+        EI -->|"RELATES_TO<br/>relationship_definition_id"| EI
+        SC -->|"DERIVED_FROM<br/>exactly one"| EI
+        SC -->|"RELATES_TO<br/>label"| EI
+        MS -->|"DERIVED_FROM<br/>exactly one"| EI
+        MS -->|"RELATES_TO<br/>label"| EI
+
+        SC -->|"FOLLOWED_BY / PRECEDED_BY<br/>between scenes"| SC
+        MS -->|"FOLLOWED_BY / PRECEDED_BY<br/>within one scene"| MS
+    end
+
+    O -. "ontology_id governs every memory node" .-> OI
+    O -. "ontology_id" .-> EI
+    O -. "ontology_id" .-> SC
+    O -. "ontology_id" .-> MS
+    OE -. "entity_definition_id selects the entity shape" .-> EI
+    OP -. "property IDs validate the properties JSON" .-> EI
+    OR -. "relationship_definition_id validates entity links" .-> EI
+
+    classDef ontology fill:#dbeafe,stroke:#2563eb,color:#172554,stroke-width:2px;
+    classDef root fill:#dcfce7,stroke:#16a34a,color:#052e16,stroke-width:3px;
+    classDef memory fill:#ecfdf5,stroke:#059669,color:#022c22,stroke-width:2px;
+    classDef temporal fill:#fef3c7,stroke:#d97706,color:#451a03,stroke-width:2px;
+
+    class O,OE,OP,OR ontology;
+    class OI root;
+    class EI memory;
+    class SC,MS temporal;
 ```
 
-All canonical memory nodes carry enough scope information to identify the ontology and ontology instance to which they belong.
+</details>
+
+### How to read the diagram
+
+- SQL owns the vocabulary and validation rules. The blue definition records are not duplicated as Neo4j nodes.
+- `OntologyInstance` is the root of a concrete world. Its `HAS_ENTITY` and `HAS_SCENE` relationships establish canonical ownership.
+- `Scene` and `Milestone` are built-in temporal types. The ontology scopes them through `ontology_id`, but does not define their node type.
+- `EntityInstance` is ontology-shaped: its type, property keys, and entity-to-entity relationships must resolve to definitions belonging to the same SQL ontology.
+- `DERIVED_FROM` identifies provenance, while `RELATES_TO` identifies participants or other relevant entities; they are intentionally separate edges.
+- Every canonical memory node repeats `ontology_id` and instance scope, allowing the service to reject cross-ontology and cross-instance links.
 
 ## 3. `OntologyInstance`
 

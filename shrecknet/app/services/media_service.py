@@ -81,6 +81,7 @@ class MediaService:
 
         return self._build_url(relative_path)
 
+
     async def _read_limited(self, upload: UploadFile) -> bytes:
         data = await upload.read()
         if len(data) > self.max_size:

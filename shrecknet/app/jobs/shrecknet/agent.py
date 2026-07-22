@@ -42,20 +42,10 @@ async def validate_or_repair_json(
     usage_tag: str = "agents.json_repair",
 ) -> Any:
     text = str(raw_text or "").strip()
-    if not text:
-        return None
     try:
-        return json.loads(text)
-    except Exception:
+        return parse_json_deterministically(text)
+    except (TypeError, ValueError, json.JSONDecodeError):
         pass
-
-    match = re.search(r"\{.*\}|\[.*\]", text, flags=re.DOTALL)
-    if match:
-        candidate = match.group(0)
-        try:
-            return json.loads(candidate)
-        except Exception:
-            text = candidate
 
     repaired = await repair_invalid_json(
         llm_client=llm_client,
@@ -65,3 +55,27 @@ async def validate_or_repair_json(
         usage_tag=usage_tag,
     )
     return json.loads(repaired)
+
+
+def parse_json_deterministically(raw_text: str) -> Any:
+    """Parse a JSON value without invoking an LLM or changing its semantics."""
+    text = str(raw_text or "").strip()
+    if not text:
+        raise ValueError("empty JSON response")
+    fenced = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", text, flags=re.DOTALL | re.IGNORECASE)
+    if fenced:
+        text = fenced.group(1).strip()
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+
+    decoder = json.JSONDecoder()
+    starts = [index for index, char in enumerate(text) if char in "{["]
+    for start in starts:
+        try:
+            value, _ = decoder.raw_decode(text[start:])
+            return value
+        except json.JSONDecodeError:
+            continue
+    raise ValueError("response does not contain a complete JSON value")

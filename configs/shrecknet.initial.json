@@ -75,6 +75,18 @@
     "provider": "",
     "name": ""
   },
+  "model_character_agent_framing": {
+    "provider": "",
+    "name": ""
+  },
+  "model_character_agent_deliberation": {
+    "provider": "",
+    "name": ""
+  },
+  "model_character_agent_verification": {
+    "provider": "",
+    "name": ""
+  },
   "librarian_debug_artifacts_enabled": false,
   "elder_debug_artifacts_enabled": true,
   "model_orchestrator_routing": {

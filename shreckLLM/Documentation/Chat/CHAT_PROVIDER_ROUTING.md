@@ -1,5 +1,9 @@
 # Chat Provider Routing
 
+Chat requests may include an optional positive `max_tokens` value. shreckLLM
+forwards it using the selected provider's completion-token parameter. Omitting
+the field retains the provider's existing default.
+
 ## Strict v1 rule
 `POST /chat` requires explicit `provider_id`.
 

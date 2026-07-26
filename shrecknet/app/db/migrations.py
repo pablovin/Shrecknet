@@ -230,6 +230,21 @@ def migrate_remove_legacy_character_agents(sync_conn) -> None:
     sync_conn.execute(text("DROP TABLE IF EXISTS character_agents"))
 
 
+def migrate_scene_perspective_audit_types(sync_conn) -> None:
+    """Extend the PostgreSQL audit enum for perspective graph mutations."""
+    if sync_conn.dialect.name != "postgresql":
+        return
+    for label in (
+        "SCENE_PERSPECTIVE",
+        "EMOTIONAL_INTERPRETATION",
+        "CHARACTER_BELIEF",
+        "CHARACTER_IMPACT",
+    ):
+        sync_conn.execute(text(
+            f"ALTER TYPE auditentitytype ADD VALUE IF NOT EXISTS '{label}'"
+        ))
+
+
 def migrate_ontology_rpg_system_column(sync_conn) -> None:
     """Ensure ontologies table has optional rpg_system column."""
     inspector = inspect(sync_conn)
@@ -1023,3 +1038,16 @@ async def migrate_page_visits(engine: AsyncEngine) -> None:
                 )
             )
             logger.info("page_visit_stats table created")
+def migrate_character_embodiment_timeline_column(sync_conn) -> None:
+    """Add timeline projection storage to existing embodiment draft tables."""
+    inspector = inspect(sync_conn)
+    if "character_embodiment_drafts" not in inspector.get_table_names():
+        return
+    columns = {
+        column["name"]
+        for column in inspector.get_columns("character_embodiment_drafts")
+    }
+    if "timeline_projection" not in columns:
+        sync_conn.execute(text(
+            "ALTER TABLE character_embodiment_drafts ADD COLUMN timeline_projection TEXT"
+        ))

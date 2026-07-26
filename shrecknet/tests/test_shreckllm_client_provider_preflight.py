@@ -22,11 +22,11 @@ class _Response:
 class _HTTP:
     def __init__(self, payload: dict) -> None:
         self.payload = payload
-        self.posts: list[str] = []
+        self.gets: list[str] = []
 
-    async def post(self, path: str, **kwargs):
+    async def get(self, path: str, **kwargs):
         del kwargs
-        self.posts.append(path)
+        self.gets.append(path)
         return _Response(self.payload)
 
     async def aclose(self) -> None:
@@ -36,20 +36,22 @@ class _HTTP:
 @pytest.mark.asyncio
 async def test_provider_preflight_dedupes_success() -> None:
     client = ShreckLLMClient(base_url="http://test")
-    fake_http = _HTTP({"provider": {"active": True}})
+    fake_http = _HTTP({"providers": {"openai": {"active": True}}})
     client._http = fake_http  # type: ignore[assignment]
 
     await client.ensure_provider_ready("openai")
     await client.ensure_provider_ready("openai")
 
-    assert fake_http.posts == ["/providers/openai/test"]
+    assert fake_http.gets == ["/providers"]
     await client.aclose()
 
 
 @pytest.mark.asyncio
 async def test_provider_preflight_failure_raises_clear_message() -> None:
     client = ShreckLLMClient(base_url="http://test")
-    client._http = _HTTP({"provider": {"active": False, "last_validation_error": "missing_api_key"}})  # type: ignore[assignment]
+    client._http = _HTTP({"providers": {"openai": {
+        "active": False, "last_validation_error": "missing_api_key",
+    }}})  # type: ignore[assignment]
 
     with pytest.raises(RuntimeError, match="LLM provider openai failed validation: missing_api_key"):
         await client.ensure_provider_ready("openai")

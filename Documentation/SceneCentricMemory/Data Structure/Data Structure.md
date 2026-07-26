@@ -27,6 +27,8 @@ Neo4j stores actual world memory:
 - `EntityInstance` is one concrete occurrence of an SQL-defined entity type.
 - `Scene` is a bounded narrative segment inside an ontology instance.
 - `Milestone` is a temporal beat or anchor contained by a scene.
+- `ScenePerspective` is a CharacterAgent-owned subjective projection onto a
+  canonical scene; it does not modify that scene.
 
 Neo4j does not currently create graph nodes for the SQL `Ontology`, `OntologyEntity`, `OntologyProperty`, or `OntologyRelationship` definitions. Graph nodes and relationships refer back to those definitions through integer ID properties.
 
@@ -336,6 +338,10 @@ The active persistence service enforces these rules:
 - A milestone has a required `DERIVED_FROM` entity from the same instance.
 - Scene and milestone ordering is represented with paired `FOLLOWED_BY` and `PRECEDED_BY` relationships.
 - Scene IDs and milestone IDs have Neo4j uniqueness constraints.
+- A canonical scene may be projected by multiple CharacterAgents, but each
+  CharacterAgent may own at most one `ScenePerspective` for that scene.
+- Deleting a scene cascades its projecting `ScenePerspective` aggregates and
+  their owned emotions, beliefs, and impacts.
 
 The following stronger narrative rules are **not currently enforced** by the service:
 

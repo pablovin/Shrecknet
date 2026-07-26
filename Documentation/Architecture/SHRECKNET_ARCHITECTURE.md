@@ -29,3 +29,11 @@ Scenes and milestones are first-class records, not only annotations. New observa
 - and trigger ontology evolution when the schema needs to expand.
 
 This enables long-running campaigns to accumulate memory incrementally without flattening history.
+## Character identity chronology
+
+CharacterAgent embodiment is a source-boundary projection pipeline. SQL stores
+the reviewable generated timeline; acceptance atomically materializes the
+current CharacterAgent, immutable `CharacterIdentityRevision` snapshots,
+`CharacterIdentityChange` provenance, and ScenePerspectives in Neo4j. Revision
+0 contains entity evidence only, preventing later narrative facts from leaking
+into earlier perspectives.

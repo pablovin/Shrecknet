@@ -43,6 +43,10 @@ class AuditEntityType(str, Enum):
     CHARACTER_GOAL = "character_goal"
     CHARACTER_ASPECT_ASSIGNMENT = "character_aspect_assignment"
     CHARACTER_GOAL_PURSUIT = "character_goal_pursuit"
+    SCENE_PERSPECTIVE = "scene_perspective"
+    EMOTIONAL_INTERPRETATION = "emotional_interpretation"
+    CHARACTER_BELIEF = "character_belief"
+    CHARACTER_IMPACT = "character_impact"
 
 
 class AuditLog(Base):

@@ -58,6 +58,7 @@ LLM_TARGET_FIELDS = (
     "model_character_agent_framing",
     "model_character_agent_deliberation",
     "model_character_agent_verification",
+    "model_character_agent_embodiment",
     "model_orchestrator_routing",
     "model_orchestrator_synthesis",
 )
@@ -222,14 +223,20 @@ class Settings(BaseSettings):
         default_factory=lambda: LLMModelTarget(provider="openai", name="gpt-5-nano")
     )
     model_character_agent_framing: LLMModelTarget = Field(
-        default_factory=lambda: LLMModelTarget(provider="openai", name="gpt-5-nano")
+        default_factory=lambda: LLMModelTarget(provider="", name="")
     )
     model_character_agent_deliberation: LLMModelTarget = Field(
-        default_factory=lambda: LLMModelTarget(provider="openai", name="gpt-5")
+        default_factory=lambda: LLMModelTarget(provider="", name="")
     )
     model_character_agent_verification: LLMModelTarget = Field(
-        default_factory=lambda: LLMModelTarget(provider="openai", name="gpt-5-nano")
+        default_factory=lambda: LLMModelTarget(provider="", name="")
     )
+    model_character_agent_embodiment: LLMModelTarget = Field(
+        default_factory=lambda: LLMModelTarget(provider="", name="")
+    )
+    character_agent_embodiment_evidence_tokens: int = Field(12_000, ge=1_000, le=100_000)
+    character_agent_embodiment_max_aspects: int = Field(12, ge=0, le=50)
+    character_agent_embodiment_max_goals: int = Field(8, ge=0, le=50)
     librarian_debug_artifacts_enabled: bool = False
     elder_debug_artifacts_enabled: bool = True
     model_orchestrator_routing: LLMModelTarget = Field(
@@ -464,6 +471,8 @@ def _normalize_legacy_llm_targets(conn: sqlite3.Connection) -> None:
         if isinstance(raw_value, dict):
             provider = str(raw_value.get("provider") or "").strip()
             name = str(raw_value.get("name") or "").strip()
+            if not provider and not name:
+                continue
             if provider and name:
                 continue
             normalized = LLMModelTarget(
@@ -477,6 +486,10 @@ def _normalize_legacy_llm_targets(conn: sqlite3.Connection) -> None:
             continue
         provider = str(raw_value.get("provider") or "").strip() or "openai"
         name = str(raw_value.get("name") or "").strip() or "gpt-5-nano"
+        if not str(raw_value.get("provider") or "").strip() and not str(
+            raw_value.get("name") or ""
+        ).strip():
+            continue
         normalized_name = name
         if provider == "openai" and name not in ALLOWED_OPENAI_MODELS:
             normalized_name = "gpt-5-nano"

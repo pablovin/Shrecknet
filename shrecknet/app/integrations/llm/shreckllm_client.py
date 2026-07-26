@@ -138,8 +138,9 @@ class ShreckLLMClient:
         token = str(os.getenv("SHRECKLLM_INTERNAL_SERVICE_TOKEN") or "").strip()
         return {"Authorization": f"Bearer {token}"} if token else {}
 
-    async def test_provider(self, provider_id: str) -> dict[str, Any]:
-        response = await self._http.post(f"/providers/{provider_id}/test", headers=self._headers())
+    async def get_provider_statuses(self) -> dict[str, Any]:
+        """Read ShreckLLM's cached provider state without running a functional ping."""
+        response = await self._http.get("/providers", headers=self._headers())
         response.raise_for_status()
         data = response.json() if response.content else {}
         return data if isinstance(data, dict) else {}
@@ -149,10 +150,11 @@ class ShreckLLMClient:
         if provider_key in self._validated_providers:
             return
         try:
-            payload = await self.test_provider(provider_key)
+            payload = await self.get_provider_statuses()
         except Exception as exc:
             raise RuntimeError(f"LLM provider {provider_key} failed validation: {exc}") from exc
-        provider = payload.get("provider") if isinstance(payload, dict) else None
+        providers = payload.get("providers") if isinstance(payload, dict) else None
+        provider = providers.get(provider_key) if isinstance(providers, dict) else None
         active = bool(provider.get("active", provider.get("valid"))) if isinstance(provider, dict) else False
         if not active:
             reason = None

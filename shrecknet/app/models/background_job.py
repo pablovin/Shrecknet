@@ -38,6 +38,7 @@ class JobType(str, Enum):
     COMPANION_ORCHESTRATOR = "companion_orchestrator"
     ONTOLOGY_INSTANCE_ENTITY_TYPE_CLEAR = "ontology_instance_entity_type_clear"
     ONTOLOGY_INSTANCE_TIMELINE_CLEAR = "ontology_instance_timeline_clear"
+    CHARACTER_AGENT_EMBODIMENT = "character_agent_embodiment"
 
 
 class BackgroundJob(Base):

@@ -391,6 +391,7 @@ async def generate_entities_from_validated_proposals(
             "reviewed_pipeline_output": payload.reviewed_pipeline_output.model_dump(),
             "author_type": "agent",
             "author_id": agent_author_id,
+            "embody_agents": payload.embody_agents,
         },
         expires=max(60, int(settings.celery_expires_architect_seconds)),
     )

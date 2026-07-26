@@ -58,9 +58,9 @@ from app.graph.neo4j import (
     ensure_temporal_graph_constraints,
     get_driver,
 )
-from app.integrations.llm.runtime_control import fetch_shreckllm_runtime
 from app.integrations.llm.shreckllm_client import ShreckLLMClient
 from app.jobs.librarian.retrieval_strategies import preload_librarian_reranker
+from app.services.shreckllm_status_service import get_all_provider_validations
 
 
 logger = logging.getLogger(__name__)
@@ -211,16 +211,21 @@ async def _run_llm_prewarm() -> None:
         logger.info("llm_prewarm_skipped reason=disabled")
         return
     try:
-        runtime_config = await fetch_shreckllm_runtime(settings)
+        provider_validation = await get_all_provider_validations(settings)
     except Exception as exc:
         logger.warning("llm_prewarm_skipped reason=runtime_unavailable error=%s", exc)
         return
 
-    provider_states = runtime_config.get("provider_states") if isinstance(runtime_config, dict) else None
+    operational_provider_ids = (
+        provider_validation.get("operational_provider_ids")
+        if isinstance(provider_validation, dict)
+        else None
+    )
     active_provider_ids = {
-        provider_id
-        for provider_id, state in (provider_states.items() if isinstance(provider_states, dict) else [])
-        if isinstance(state, dict) and bool(state.get("active"))
+        str(provider_id)
+        for provider_id in (
+            operational_provider_ids if isinstance(operational_provider_ids, list) else []
+        )
     }
     if not active_provider_ids:
         logger.info("llm_prewarm_skipped reason=no_active_providers")
@@ -234,6 +239,7 @@ async def _run_llm_prewarm() -> None:
         getattr(settings, "model_character_agent_framing", settings.model_elder),
         getattr(settings, "model_character_agent_deliberation", settings.model_elder),
         getattr(settings, "model_character_agent_verification", settings.model_elder),
+        getattr(settings, "model_character_agent_embodiment", settings.model_elder),
         settings.model_agents_repair_json,
         settings.model_architect_scene_chunking,
         settings.model_architect_entity_proposal,

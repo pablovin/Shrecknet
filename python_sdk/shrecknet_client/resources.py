@@ -60,6 +60,27 @@ from .models import (
     World,
     CharacterAgentQueryRequest,
     CharacterAgentQueryResponse,
+    CharacterAgentRead,
+    CharacterAgentCreateRequest,
+    CharacterAgentUpdate,
+    CharacterIdentityRevisionRead,
+    CharacterIdentityChangeRead,
+    EmbodimentDraftCreate,
+    EmbodimentDraftRead,
+    EmbodimentDraftStart,
+    CharacterBeliefCreate,
+    CharacterBeliefRead,
+    CharacterBeliefUpdate,
+    CharacterImpactCreate,
+    CharacterImpactRead,
+    CharacterImpactUpdate,
+    EmotionalInterpretationCreate,
+    EmotionalInterpretationRead,
+    EmotionalInterpretationUpdate,
+    ScenePerspectiveAggregateRead,
+    ScenePerspectiveCreate,
+    ScenePerspectiveRead,
+    ScenePerspectiveUpdate,
 )
 
 
@@ -275,10 +296,48 @@ class AgentsAPI:
 
 
 class CharacterAgentsAPI:
-    """Graph-backed CharacterAgent query endpoint."""
+    """CharacterAgent query and administrator embodiment workflow."""
 
     def __init__(self, client: AsyncShrecknetClient):
         self._client = client
+
+    async def create(self, payload: CharacterAgentCreateRequest) -> CharacterAgentRead:
+        data = await self._client.raw_request(
+            "POST", "/character-agents",
+            json=payload.model_dump(mode="json", exclude_none=True),
+        )
+        return CharacterAgentRead.model_validate(data)
+
+    async def update(
+        self, character_agent_id: str, payload: CharacterAgentUpdate
+    ) -> CharacterAgentRead:
+        data = await self._client.raw_request(
+            "PATCH", f"/character-agents/{character_agent_id}",
+            json=payload.model_dump(mode="json", exclude_unset=True),
+        )
+        return CharacterAgentRead.model_validate(data)
+
+    async def list_revisions(
+        self, character_agent_id: str, *, skip: int = 0, limit: int = 100,
+    ) -> list[CharacterIdentityRevisionRead]:
+        data = await self._client.raw_request(
+            "GET", f"/character-agents/{character_agent_id}/revisions",
+            params={"skip": skip, "limit": limit},
+        )
+        return [CharacterIdentityRevisionRead.model_validate(item) for item in data]
+
+    async def list_identity_changes(
+        self, character_agent_id: str, *, change_type: str | None = None,
+        skip: int = 0, limit: int = 100,
+    ) -> list[CharacterIdentityChangeRead]:
+        params: dict[str, Any] = {"skip": skip, "limit": limit}
+        if change_type is not None:
+            params["change_type"] = change_type
+        data = await self._client.raw_request(
+            "GET", f"/character-agents/{character_agent_id}/identity-changes",
+            params=params,
+        )
+        return [CharacterIdentityChangeRead.model_validate(item) for item in data]
 
     async def query(self, character_agent_id: str, payload: CharacterAgentQueryRequest) -> CharacterAgentQueryResponse:
         data = await self._client.raw_request(
@@ -287,6 +346,250 @@ class CharacterAgentsAPI:
             json=payload.model_dump(mode="json", by_alias=True, exclude_none=True),
         )
         return CharacterAgentQueryResponse.model_validate(data)
+
+    async def start_embodiment(self, payload: EmbodimentDraftCreate) -> EmbodimentDraftStart:
+        data = await self._client.raw_request(
+            "POST", "/character-agents/embodiment-drafts",
+            json=payload.model_dump(exclude_none=True),
+        )
+        return EmbodimentDraftStart.model_validate(data)
+
+    async def get_embodiment(self, draft_id: str) -> EmbodimentDraftRead:
+        data = await self._client.raw_request(
+            "GET", f"/character-agents/embodiment-drafts/{draft_id}"
+        )
+        return EmbodimentDraftRead.model_validate(data)
+
+    @staticmethod
+    def _perspective_path(character_agent_id: str, perspective_id: str | None = None) -> str:
+        path = f"/character-agents/{character_agent_id}/perspectives"
+        return f"{path}/{perspective_id}" if perspective_id else path
+
+    async def list_perspectives(
+        self, character_agent_id: str, *, status: str | None = None,
+        skip: int = 0, limit: int = 50,
+    ) -> list[ScenePerspectiveRead]:
+        params: dict[str, Any] = {"skip": skip, "limit": limit}
+        if status is not None:
+            params["status"] = status
+        data = await self._client.raw_request(
+            "GET", self._perspective_path(character_agent_id), params=params
+        )
+        return [ScenePerspectiveRead.model_validate(item) for item in data]
+
+    async def create_perspective(
+        self, character_agent_id: str, payload: ScenePerspectiveCreate
+    ) -> ScenePerspectiveAggregateRead:
+        data = await self._client.raw_request(
+            "POST", self._perspective_path(character_agent_id),
+            json=payload.model_dump(exclude_none=True),
+        )
+        return ScenePerspectiveAggregateRead.model_validate(data)
+
+    async def get_perspective(
+        self, character_agent_id: str, perspective_id: str
+    ) -> ScenePerspectiveAggregateRead:
+        data = await self._client.raw_request(
+            "GET", self._perspective_path(character_agent_id, perspective_id)
+        )
+        return ScenePerspectiveAggregateRead.model_validate(data)
+
+    async def update_perspective(
+        self, character_agent_id: str, perspective_id: str,
+        payload: ScenePerspectiveUpdate,
+    ) -> ScenePerspectiveAggregateRead:
+        data = await self._client.raw_request(
+            "PATCH", self._perspective_path(character_agent_id, perspective_id),
+            json=payload.model_dump(exclude_unset=True),
+        )
+        return ScenePerspectiveAggregateRead.model_validate(data)
+
+    async def delete_perspective(
+        self, character_agent_id: str, perspective_id: str
+    ) -> None:
+        await self._client.raw_request(
+            "DELETE", self._perspective_path(character_agent_id, perspective_id)
+        )
+
+    def _child_path(
+        self, character_agent_id: str, perspective_id: str, kind: str,
+        child_id: str | None = None,
+    ) -> str:
+        path = f"{self._perspective_path(character_agent_id, perspective_id)}/{kind}"
+        return f"{path}/{child_id}" if child_id else path
+
+    async def _list_children(
+        self, character_agent_id: str, perspective_id: str, kind: str, model: Any
+    ) -> list[Any]:
+        data = await self._client.raw_request(
+            "GET", self._child_path(character_agent_id, perspective_id, kind)
+        )
+        return [model.model_validate(item) for item in data]
+
+    async def _create_child(
+        self, character_agent_id: str, perspective_id: str, kind: str,
+        payload: Any, model: Any,
+    ) -> Any:
+        data = await self._client.raw_request(
+            "POST", self._child_path(character_agent_id, perspective_id, kind),
+            json=payload.model_dump(exclude_none=True),
+        )
+        return model.model_validate(data)
+
+    async def _get_child(
+        self, character_agent_id: str, perspective_id: str, kind: str,
+        child_id: str, model: Any,
+    ) -> Any:
+        data = await self._client.raw_request(
+            "GET", self._child_path(
+                character_agent_id, perspective_id, kind, child_id
+            )
+        )
+        return model.model_validate(data)
+
+    async def _update_child(
+        self, character_agent_id: str, perspective_id: str, kind: str,
+        child_id: str, payload: Any, model: Any,
+    ) -> Any:
+        data = await self._client.raw_request(
+            "PATCH", self._child_path(
+                character_agent_id, perspective_id, kind, child_id
+            ),
+            json=payload.model_dump(exclude_unset=True),
+        )
+        return model.model_validate(data)
+
+    async def _delete_child(
+        self, character_agent_id: str, perspective_id: str, kind: str,
+        child_id: str,
+    ) -> None:
+        await self._client.raw_request(
+            "DELETE", self._child_path(
+                character_agent_id, perspective_id, kind, child_id
+            )
+        )
+
+    async def list_emotions(
+        self, character_agent_id: str, perspective_id: str
+    ) -> list[EmotionalInterpretationRead]:
+        return await self._list_children(
+            character_agent_id, perspective_id, "emotions",
+            EmotionalInterpretationRead,
+        )
+
+    async def create_emotion(
+        self, character_agent_id: str, perspective_id: str,
+        payload: EmotionalInterpretationCreate,
+    ) -> EmotionalInterpretationRead:
+        return await self._create_child(
+            character_agent_id, perspective_id, "emotions", payload,
+            EmotionalInterpretationRead,
+        )
+
+    async def get_emotion(
+        self, character_agent_id: str, perspective_id: str, emotion_id: str
+    ) -> EmotionalInterpretationRead:
+        return await self._get_child(
+            character_agent_id, perspective_id, "emotions", emotion_id,
+            EmotionalInterpretationRead,
+        )
+
+    async def update_emotion(
+        self, character_agent_id: str, perspective_id: str, emotion_id: str,
+        payload: EmotionalInterpretationUpdate,
+    ) -> EmotionalInterpretationRead:
+        return await self._update_child(
+            character_agent_id, perspective_id, "emotions", emotion_id, payload,
+            EmotionalInterpretationRead,
+        )
+
+    async def delete_emotion(
+        self, character_agent_id: str, perspective_id: str, emotion_id: str
+    ) -> None:
+        await self._delete_child(
+            character_agent_id, perspective_id, "emotions", emotion_id
+        )
+
+    async def list_beliefs(
+        self, character_agent_id: str, perspective_id: str
+    ) -> list[CharacterBeliefRead]:
+        return await self._list_children(
+            character_agent_id, perspective_id, "beliefs", CharacterBeliefRead
+        )
+
+    async def create_belief(
+        self, character_agent_id: str, perspective_id: str,
+        payload: CharacterBeliefCreate,
+    ) -> CharacterBeliefRead:
+        return await self._create_child(
+            character_agent_id, perspective_id, "beliefs", payload,
+            CharacterBeliefRead,
+        )
+
+    async def get_belief(
+        self, character_agent_id: str, perspective_id: str, belief_id: str
+    ) -> CharacterBeliefRead:
+        return await self._get_child(
+            character_agent_id, perspective_id, "beliefs", belief_id,
+            CharacterBeliefRead,
+        )
+
+    async def update_belief(
+        self, character_agent_id: str, perspective_id: str, belief_id: str,
+        payload: CharacterBeliefUpdate,
+    ) -> CharacterBeliefRead:
+        return await self._update_child(
+            character_agent_id, perspective_id, "beliefs", belief_id, payload,
+            CharacterBeliefRead,
+        )
+
+    async def delete_belief(
+        self, character_agent_id: str, perspective_id: str, belief_id: str
+    ) -> None:
+        await self._delete_child(
+            character_agent_id, perspective_id, "beliefs", belief_id
+        )
+
+    async def list_impacts(
+        self, character_agent_id: str, perspective_id: str
+    ) -> list[CharacterImpactRead]:
+        return await self._list_children(
+            character_agent_id, perspective_id, "impacts", CharacterImpactRead
+        )
+
+    async def create_impact(
+        self, character_agent_id: str, perspective_id: str,
+        payload: CharacterImpactCreate,
+    ) -> CharacterImpactRead:
+        return await self._create_child(
+            character_agent_id, perspective_id, "impacts", payload,
+            CharacterImpactRead,
+        )
+
+    async def get_impact(
+        self, character_agent_id: str, perspective_id: str, impact_id: str
+    ) -> CharacterImpactRead:
+        return await self._get_child(
+            character_agent_id, perspective_id, "impacts", impact_id,
+            CharacterImpactRead,
+        )
+
+    async def update_impact(
+        self, character_agent_id: str, perspective_id: str, impact_id: str,
+        payload: CharacterImpactUpdate,
+    ) -> CharacterImpactRead:
+        return await self._update_child(
+            character_agent_id, perspective_id, "impacts", impact_id, payload,
+            CharacterImpactRead,
+        )
+
+    async def delete_impact(
+        self, character_agent_id: str, perspective_id: str, impact_id: str
+    ) -> None:
+        await self._delete_child(
+            character_agent_id, perspective_id, "impacts", impact_id
+        )
+
 
 
 class PersonalCompanionAPI:

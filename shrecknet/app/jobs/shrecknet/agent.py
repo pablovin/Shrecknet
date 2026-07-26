@@ -18,8 +18,9 @@ async def repair_invalid_json(
     usage_tag: str = "agents.json_repair",
 ) -> str:
     schema_hint_block = ""
-    if schema_hint and str(schema_hint).strip():
-        schema_hint_block = f"Expected schema hint:\n{schema_hint.strip()}\n"
+    hint_str = str(schema_hint).strip() if schema_hint else ""
+    if hint_str:
+        schema_hint_block = f"Expected schema hint:\n{hint_str}\n"
     prompt = REPAIR_INVALID_JSON_PROMPT.format(
         schema_hint_block=schema_hint_block,
         malformed_json=str(malformed_text or ""),

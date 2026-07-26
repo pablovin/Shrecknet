@@ -46,7 +46,7 @@ def _settings(elder: str = "shared", librarian: str = "shared") -> SimpleNamespa
 
 
 async def _runtime(_settings):
-    return {"provider_states": {"ollama": {"active": True}}}
+    return {"operational_provider_ids": ["ollama"]}
 
 
 @pytest.mark.asyncio
@@ -56,7 +56,7 @@ async def test_llm_prewarm_dedupes_identical_targets(monkeypatch):
 
     monkeypatch.setattr(main, "get_settings", lambda: fake_settings)
     monkeypatch.setattr(main, "ShreckLLMClient", lambda **kwargs: fake_client)
-    monkeypatch.setattr(main, "fetch_shreckllm_runtime", _runtime)
+    monkeypatch.setattr(main, "get_all_provider_validations", _runtime)
 
     await main._run_llm_prewarm()
 
@@ -70,7 +70,7 @@ async def test_llm_prewarm_warms_each_unique_target(monkeypatch):
 
     monkeypatch.setattr(main, "get_settings", lambda: fake_settings)
     monkeypatch.setattr(main, "ShreckLLMClient", lambda **kwargs: fake_client)
-    monkeypatch.setattr(main, "fetch_shreckllm_runtime", _runtime)
+    monkeypatch.setattr(main, "get_all_provider_validations", _runtime)
 
     await main._run_llm_prewarm()
 
@@ -90,7 +90,7 @@ async def test_llm_prewarm_includes_architect_and_novelist_targets(monkeypatch):
     fake_client = _FakeClient()
     monkeypatch.setattr(main, "get_settings", lambda: fake_settings)
     monkeypatch.setattr(main, "ShreckLLMClient", lambda **kwargs: fake_client)
-    monkeypatch.setattr(main, "fetch_shreckllm_runtime", _runtime)
+    monkeypatch.setattr(main, "get_all_provider_validations", _runtime)
 
     await main._run_llm_prewarm()
 
@@ -108,7 +108,7 @@ async def test_llm_prewarm_failure_isolated_per_model(monkeypatch):
 
     monkeypatch.setattr(main, "get_settings", lambda: fake_settings)
     monkeypatch.setattr(main, "ShreckLLMClient", lambda **kwargs: fake_client)
-    monkeypatch.setattr(main, "fetch_shreckllm_runtime", _runtime)
+    monkeypatch.setattr(main, "get_all_provider_validations", _runtime)
 
     await main._run_llm_prewarm()
 
@@ -125,7 +125,7 @@ async def test_llm_prewarm_can_be_disabled(monkeypatch):
     fake_client = _FakeClient()
     monkeypatch.setattr(main, "get_settings", lambda: fake_settings)
     monkeypatch.setattr(main, "ShreckLLMClient", lambda **kwargs: fake_client)
-    monkeypatch.setattr(main, "fetch_shreckllm_runtime", _runtime)
+    monkeypatch.setattr(main, "get_all_provider_validations", _runtime)
 
     await main._run_llm_prewarm()
 

@@ -105,6 +105,9 @@ class OntologyInstanceEntityRead(BaseModel):
     last_updated_date: datetime
     author_type: AuthorType
     author_id: str
+    has_agent: bool = False
+    agent_id: str | None = None
+    agent_name: str | None = None
     properties: list[OntologyInstancePropertyValue] = Field(default_factory=list)
     relationships: list[OntologyInstanceRelationshipRead] = Field(default_factory=list)
 

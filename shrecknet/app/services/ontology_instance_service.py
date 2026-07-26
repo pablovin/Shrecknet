@@ -931,6 +931,38 @@ class OntologyInstanceService:
                 "relationships": [],
             }
 
+        # Enrich entities with CharacterAgent info
+        agent_result = await self.graph_session.run(
+            """
+            MATCH (agent:CharacterAgent)-[:EMBODIES]->(entity:EntityInstance)
+            WHERE entity.instance_id = $instance_id
+            RETURN entity.entity_instance_id AS entity_id,
+                   agent.id AS agent_id,
+                   agent.name AS agent_name
+            """,
+            instance_id=instance_id,
+        )
+        agent_rows = await agent_result.data()
+        agent_map: dict[str, dict[str, Any]] = {}
+        for row in agent_rows:
+            eid = row["entity_id"]
+            agent_map[eid] = {
+                "has_agent": True,
+                "agent_id": row["agent_id"],
+                "agent_name": row["agent_name"],
+            }
+        for entity_data in entities_map.values():
+            eid = entity_data["entity_instance_id"]
+            info = agent_map.get(eid)
+            if info:
+                entity_data["has_agent"] = True
+                entity_data["agent_id"] = info["agent_id"]
+                entity_data["agent_name"] = info["agent_name"]
+            else:
+                entity_data["has_agent"] = False
+                entity_data["agent_id"] = None
+                entity_data["agent_name"] = None
+
         relationships_result = await self.graph_session.run(
             """
             MATCH (i:OntologyInstance {instance_id: $instance_id})-[:HAS_ENTITY]->(source:EntityInstance)
@@ -988,6 +1020,9 @@ class OntologyInstanceService:
                     "last_updated_date": entity_data["last_updated_date"],
                     "author_type": entity_data["author_type"],
                     "author_id": entity_data["author_id"],
+                    "has_agent": entity_data.get("has_agent", False),
+                    "agent_id": entity_data.get("agent_id"),
+                    "agent_name": entity_data.get("agent_name"),
                     "properties": [
                         {
                             "definition_id": int(prop_id),
@@ -1410,6 +1445,26 @@ class OntologyInstanceService:
             milestones_count_row = await milestones_count_result.single()
             milestones_count = int(
                 milestones_count_row.get("milestones_count") if milestones_count_row else 0
+            )
+
+            await tx.run(
+                """
+                MATCH (i:OntologyInstance)-[:HAS_SCENE]->(scene:Scene)
+                      <-[:PROJECTS_ON]-(perspective:ScenePerspective)
+                WHERE toInteger(i.ontology_id) = toInteger($ontology_id)
+                OPTIONAL MATCH (perspective)-[:EVOKES|FORMS_BELIEF|HAS_IMPACT]->(child)
+                DETACH DELETE child
+                """,
+                ontology_id=ontology_id,
+            )
+            await tx.run(
+                """
+                MATCH (i:OntologyInstance)-[:HAS_SCENE]->(scene:Scene)
+                      <-[:PROJECTS_ON]-(perspective:ScenePerspective)
+                WHERE toInteger(i.ontology_id) = toInteger($ontology_id)
+                DETACH DELETE perspective
+                """,
+                ontology_id=ontology_id,
             )
 
             await tx.run(
@@ -2562,6 +2617,27 @@ class OntologyInstanceService:
         now_str = _format_dt(datetime.utcnow())
         tx = await self.graph_session.begin_transaction()
         try:
+            await tx.run(
+                """
+                MATCH (:OntologyInstance {instance_id:$instance_id})-[:HAS_SCENE]->
+                      (scene:Scene {id:$scene_id})<-[:PROJECTS_ON]-
+                      (perspective:ScenePerspective)
+                OPTIONAL MATCH (perspective)-[:EVOKES|FORMS_BELIEF|HAS_IMPACT]->(child)
+                DETACH DELETE child
+                """,
+                instance_id=instance_id,
+                scene_id=scene_id,
+            )
+            await tx.run(
+                """
+                MATCH (:OntologyInstance {instance_id:$instance_id})-[:HAS_SCENE]->
+                      (scene:Scene {id:$scene_id})<-[:PROJECTS_ON]-
+                      (perspective:ScenePerspective)
+                DETACH DELETE perspective
+                """,
+                instance_id=instance_id,
+                scene_id=scene_id,
+            )
             await tx.run(
                 """
                 MATCH (inst:OntologyInstance {instance_id: $instance_id})

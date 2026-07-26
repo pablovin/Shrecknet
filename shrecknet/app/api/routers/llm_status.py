@@ -88,5 +88,6 @@ async def get_service_status(
             "model_character_agent_framing": _target_status(getattr(settings, "model_character_agent_framing", settings.model_elder)),
             "model_character_agent_deliberation": _target_status(getattr(settings, "model_character_agent_deliberation", settings.model_elder)),
             "model_character_agent_verification": _target_status(getattr(settings, "model_character_agent_verification", settings.model_elder)),
+            "model_character_agent_embodiment": _target_status(getattr(settings, "model_character_agent_embodiment", settings.model_elder)),
         },
     }

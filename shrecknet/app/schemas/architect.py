@@ -328,6 +328,11 @@ class ArchitectGenerationRequest(BaseModel):
     reviewed_pipeline_output: ArchitectReviewedPipelineOutput
     author_type: str = Field(default="user")
     author_id: str
+    embody_agents: bool = Field(
+        default=False,
+        description="If True, run character agent embodiment for agents whose entities are "
+        "related_to newly created scenes, using the architect's source entity as context.",
+    )
 
     @model_validator(mode="after")
     def ensure_run_matches(cls, values: "ArchitectGenerationRequest") -> "ArchitectGenerationRequest":

@@ -87,6 +87,10 @@
     "provider": "",
     "name": ""
   },
+  "model_character_agent_embodiment": {
+    "provider": "",
+    "name": ""
+  },
   "librarian_debug_artifacts_enabled": false,
   "elder_debug_artifacts_enabled": true,
   "model_orchestrator_routing": {

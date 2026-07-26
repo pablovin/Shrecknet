@@ -13,6 +13,7 @@ from . import (
     ontology_instance_clear,
     companion_orchestrator,
     librarian_embedding_package,
+    character_embodiment,
 )
 
 __all__ = [
@@ -27,4 +28,5 @@ __all__ = [
     "ontology_instance_clear",
     "companion_orchestrator",
     "librarian_embedding_package",
+    "character_embodiment",
 ]

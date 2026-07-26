@@ -21,8 +21,28 @@ from app.integrations.llm.model_policy import ModelPolicy
 from app.integrations.llm.shreckllm_client import ShreckLLMClient
 from app.integrations.llm.runtime_control import fetch_shreckllm_runtime, resolve_effective_architect_concurrency
 from app.jobs.architect.entity_generator import EntityGenerator
+from app.jobs.character_agent.embody_agent import EmbodyAgent
+from app.jobs.character_agent.embody_agent_prompts import PROMPT_VERSION
 from app.models.ontology import AuthorType as OntologyAuthorType
 from app.models.architect import ArchitectProposalStatus, ArchitectProposalType, ArchitectRunStatus
+from app.services.character_agent_service import CharacterAgentService
+from app.services.character_embodiment_service import CharacterEmbodimentService
+from app.schemas.character_agent import (
+    CharacterIdentityRevisionProjection,
+    CharacterSourceProjection,
+    CharacterTimelineProjection,
+    EmbodimentAxisProposal,
+    EmbodimentAspectProposal,
+    EmbodimentGoalProposal,
+    ProjectedScenePerspective,
+    SceneInput,
+    SubtitleChangeProposal,
+)
+from app.tasks.character_embodiment import (
+    _apply_axis_updates,
+    _apply_aspect_ops,
+    _apply_goal_ops,
+)
 from app.models.background_job import AuthorType, JobType
 from app.repositories.architect_repository import ArchitectRepository
 from app.repositories.background_job_repository import BackgroundJobRepository
@@ -122,6 +142,7 @@ def generate_entities(
     author_type: str = "agent",
     author_id: str = "system",
     retry_enrichment_only: bool = False,
+    embody_agents: bool = False,
 ) -> dict[str, Any]:
     """Generate entities/scenes/milestones and perform enrichment updates."""
 
@@ -153,6 +174,7 @@ def generate_entities(
                 author_id=author_id,
                 author_type=author_type,
                 retry_enrichment_only=retry_enrichment_only,
+                embody_agents=embody_agents,
             )
         )
         run_async(mark_job_done(job_id, result))
@@ -186,6 +208,7 @@ async def _execute_generation(
     author_id: str,
     author_type: str,
     retry_enrichment_only: bool = False,
+    embody_agents: bool = False,
 ) -> dict[str, Any]:
     total_started_at = perf_counter()
     settings = get_settings()
@@ -1039,6 +1062,329 @@ async def _execute_generation(
                 bool(impacted_entity_ids),
             )
 
+            # --- Embody agents for entities related to new scenes ---
+            embodied_agent_count = 0
+            embodiment_errors = 0
+            if embody_agents and not retry_enrichment_only and created_scene_ids:
+                await update_job_progress(job_id, 0.915, {"status": "Embodying agents"})
+                embodiment_started_at = perf_counter()
+
+                scene_related_entity_ids: set[str] = set()
+                for ref_ids in scene_ref_to_entities.values():
+                    scene_related_entity_ids |= ref_ids
+
+                if scene_related_entity_ids:
+                    agent_rows = await graph_session.run(
+                        """
+                        MATCH (agent:CharacterAgent)-[:EMBODIES]->(entity:EntityInstance)
+                        WHERE entity.entity_instance_id IN $entity_ids
+                        RETURN agent.id AS agent_id, agent.name AS agent_name,
+                               entity.entity_instance_id AS entity_id
+                        """,
+                        entity_ids=list(scene_related_entity_ids),
+                    )
+                    agent_entity_pairs: list[tuple[str, str, str]] = [
+                        (row["agent_id"], row["agent_name"], row["entity_id"])
+                        async for row in agent_rows
+                    ]
+
+                    if agent_entity_pairs:
+                        client = ShreckLLMClient(
+                            base_url=settings.shreckllm_base_url,
+                            timeout=settings.shreckllm_request_timeout_s,
+                            max_retries=settings.shreckllm_max_retries,
+                        )
+                        try:
+                            for agent_id, agent_name, entity_id in agent_entity_pairs:
+                                existing = await graph_session.run(
+                                    """
+                                    MATCH (agent:CharacterAgent {id:$agent_id})-[:HAS_REVISION]->
+                                          (revision:CharacterIdentityRevision)-[:CONSOLIDATED_FROM]->
+                                          (:EntityInstance {entity_instance_id:$source_id})
+                                    RETURN revision.id LIMIT 1
+                                    """,
+                                    agent_id=agent_id,
+                                    source_id=default_source_entity_id,
+                                )
+                                if await existing.single():
+                                    continue
+
+                                try:
+                                    await update_job_progress(
+                                        job_id, 0.92,
+                                        {"status": f"Embodying {agent_name}"},
+                                    )
+
+                                    svc = CharacterEmbodimentService(session, graph_session)
+                                    inputs = await svc.load_embodiment_input(
+                                        source_entity_id=entity_id,
+                                        ontology_id=ontology_id,
+                                    )
+
+                                    target_group = next(
+                                        (g for g in inputs.get("source_groups", [])
+                                         if g.get("source_id") == default_source_entity_id),
+                                        None,
+                                    )
+                                    if not target_group:
+                                        continue
+
+                                    scene_inputs = [
+                                        SceneInput(
+                                            scene_id=s["scene_id"],
+                                            name=s.get("name", ""),
+                                            description=s.get("description", ""),
+                                            created_at=s.get("created_at"),
+                                        )
+                                        for s in target_group["scenes"]
+                                    ]
+
+                                    runner = EmbodyAgent(
+                                        llm_client=client,
+                                        model=settings.model_character_agent_embodiment,
+                                        max_goals=settings.character_agent_embodiment_max_goals,
+                                        max_aspects=settings.character_agent_embodiment_max_aspects,
+                                    )
+
+                                    bundle_result = await runner.run(
+                                        source_entity_id=default_source_entity_id,
+                                        source_entity_alias=str(
+                                            target_group.get("source_alias")
+                                            or default_source_entity_id
+                                        ),
+                                        canonical_identity=inputs["canonical_identity"],
+                                        current_behavioural_axes=inputs["current_axes"],
+                                        current_aspects=inputs["current_aspects"],
+                                        current_goals=inputs["current_goals"],
+                                        scenes=scene_inputs,
+                                    )
+
+                                    from app.services.character_agent_service import _normalize_name
+
+                                    alias = str(
+                                        inputs["canonical_identity"].get("alias")
+                                        or inputs.get("source_entity_alias", entity_id)
+                                    )
+                                    initial_subtitle = (
+                                        inputs["canonical_identity"].get("subtitle") or None
+                                    )
+                                    cum_axes = dict(inputs["current_axes"])
+                                    cum_aspects = [dict(a) for a in inputs["current_aspects"]]
+                                    cum_goals = [dict(g) for g in inputs["current_goals"]]
+                                    cum_subtitle = initial_subtitle
+
+                                    def _tid(kind: str, name: str) -> str:
+                                        return f"{kind}:{_normalize_name(name)}"
+
+                                    def _map_axis(a) -> EmbodimentAxisProposal:
+                                        return EmbodimentAxisProposal(
+                                            axis=a.axis, value=a.new_value,
+                                            justification=a.justification,
+                                            confidence=a.confidence,
+                                            evidence_ids=a.evidence_ids or ["generated"],
+                                        )
+
+                                    def _map_aspect(a: dict) -> EmbodimentAspectProposal:
+                                        return EmbodimentAspectProposal(
+                                            suggestion_id=_tid("aspect", a.get("name", "")),
+                                            name=a.get("name", ""),
+                                            category=a.get("category", "identity"),
+                                            description=a.get("description"),
+                                            importance=a.get("importance", 3),
+                                            intensity=a.get("intensity"),
+                                            justification=(
+                                                a.get("justification") or "Proposed aspect."
+                                            ),
+                                            confidence=a.get("confidence") or 0.5,
+                                            evidence_ids=(
+                                                a.get("evidence_ids") or ["generated"]
+                                            ),
+                                        )
+
+                                    def _map_goal(g: dict) -> EmbodimentGoalProposal:
+                                        return EmbodimentGoalProposal(
+                                            suggestion_id=_tid("goal", g.get("title", "")),
+                                            title=g.get("title", ""),
+                                            description=(
+                                                g.get("description") or g.get("title", "")
+                                            ),
+                                            goal_type=g.get("goal_type", "desire"),
+                                            priority=g.get("priority", 50),
+                                            commitment=g.get("commitment", 50),
+                                            justification=(
+                                                g.get("justification") or "Proposed goal."
+                                            ),
+                                            confidence=g.get("confidence") or 0.5,
+                                            evidence_ids=(
+                                                g.get("evidence_ids") or ["generated"]
+                                            ),
+                                            basis="inferred",
+                                        )
+
+                                    rev0 = CharacterIdentityRevisionProjection(
+                                        revision_number=0,
+                                        name=alias,
+                                        subtitle=initial_subtitle,
+                                        trait_adherence=80,
+                                        behavioural_axes=dict(cum_axes),
+                                        active_aspects=[
+                                            _map_aspect(a) for a in cum_aspects if a.get("name")
+                                        ],
+                                        active_goals=[
+                                            _map_goal(g) for g in cum_goals if g.get("title")
+                                        ],
+                                    )
+
+                                    _apply_axis_updates(cum_axes, bundle_result.axis_updates)
+                                    _apply_aspect_ops(
+                                        cum_aspects, bundle_result.aspect_updates
+                                    )
+                                    _apply_goal_ops(cum_goals, bundle_result.goal_updates)
+
+                                    br_sub = bundle_result.subtitle_change
+                                    if br_sub.operation == "set":
+                                        cum_subtitle = br_sub.subtitle
+                                    elif br_sub.operation == "clear":
+                                        cum_subtitle = None
+
+                                    rev1 = CharacterIdentityRevisionProjection(
+                                        revision_number=1,
+                                        source_group_id=default_source_entity_id,
+                                        name=alias,
+                                        subtitle=cum_subtitle,
+                                        trait_adherence=80,
+                                        behavioural_axes=dict(cum_axes),
+                                        active_aspects=[
+                                            _map_aspect(a) for a in cum_aspects if a.get("name")
+                                        ],
+                                        active_goals=[
+                                            _map_goal(g) for g in cum_goals if g.get("title")
+                                        ],
+                                    )
+
+                                    b_axes = [_map_axis(a) for a in bundle_result.axis_updates]
+                                    b_aspects: list[EmbodimentAspectProposal] = []
+                                    for upd in bundle_result.aspect_updates:
+                                        if upd.operation.value in ("add", "update"):
+                                            b_aspects.append(EmbodimentAspectProposal(
+                                                suggestion_id=_tid("aspect", upd.name),
+                                                name=upd.name,
+                                                category=upd.category or "identity",
+                                                description=upd.description,
+                                                importance=upd.importance or 3,
+                                                intensity=upd.intensity,
+                                                justification=upd.justification,
+                                                confidence=upd.confidence,
+                                                evidence_ids=list(
+                                                    upd.evidence_ids or ["generated"]
+                                                ),
+                                            ))
+
+                                    b_goals: list[EmbodimentGoalProposal] = []
+                                    for upd in bundle_result.goal_updates:
+                                        if upd.operation.value in ("add", "update"):
+                                            b_goals.append(EmbodimentGoalProposal(
+                                                suggestion_id=_tid("goal", upd.title),
+                                                title=upd.title,
+                                                description=upd.description or upd.title,
+                                                goal_type=upd.goal_type or "desire",
+                                                priority=upd.priority or 50,
+                                                commitment=upd.commitment or 50,
+                                                justification=upd.justification,
+                                                confidence=upd.confidence,
+                                                evidence_ids=list(
+                                                    upd.evidence_ids or ["generated"]
+                                                ),
+                                                basis=upd.basis or "inferred",
+                                            ))
+
+                                    source_projection = CharacterSourceProjection(
+                                        source_group_id=default_source_entity_id,
+                                        starting_revision_number=0,
+                                        perspectives=[
+                                            ProjectedScenePerspective(
+                                                scene_id=p.scene_id,
+                                                source_type=p.source_type,
+                                                awareness_level=p.awareness_level,
+                                                confidence=p.confidence,
+                                                summary=p.summary,
+                                                interpretation=p.interpretation,
+                                                memory_strength=p.memory_strength,
+                                                importance=p.importance,
+                                                status=p.status,
+                                            )
+                                            for p in bundle_result.perspectives
+                                        ],
+                                        axis_changes=b_axes,
+                                        aspects=b_aspects,
+                                        goals=b_goals,
+                                        subtitle_change=(
+                                            bundle_result.subtitle_change
+                                            or SubtitleChangeProposal()
+                                        ),
+                                        resulting_revision=rev1,
+                                    )
+
+                                    timeline = CharacterTimelineProjection(
+                                        revisions=[rev0, rev1],
+                                        source_projections=[source_projection],
+                                    )
+
+                                    agent_node_row = await graph_session.run(
+                                        "MATCH (agent:CharacterAgent {id:$agent_id}) RETURN agent",
+                                        agent_id=agent_id,
+                                    )
+                                    agent_node = dict(
+                                        (await agent_node_row.single())["agent"]
+                                    )
+
+                                    timestamp = datetime.now(timezone.utc).isoformat()
+
+                                    async def _embodiment_persist(
+                                        tx, _agent=agent_node,
+                                        _tl=timeline, _ts=timestamp,
+                                    ):
+                                        agent_svc = CharacterAgentService(
+                                            session, graph_session
+                                        )
+                                        await agent_svc._persist_timeline_tx(
+                                            tx, _agent, _tl, _ts,
+                                            provider=str(
+                                                settings
+                                                .model_character_agent_embodiment
+                                                .provider
+                                            ),
+                                            model=str(
+                                                settings
+                                                .model_character_agent_embodiment
+                                                .name
+                                            ),
+                                            prompt_version=PROMPT_VERSION,
+                                        )
+
+                                    await graph_session.execute_write(
+                                        _embodiment_persist
+                                    )
+                                    embodied_agent_count += 1
+
+                                except Exception as exc:
+                                    embodiment_errors += 1
+                                    logger.warning(
+                                        "architect.generate run=%s embody failed "
+                                        "agent=%s entity=%s: %s",
+                                        run_id, agent_name, entity_id,
+                                        exc, exc_info=True,
+                                    )
+                        finally:
+                            await client.aclose()
+
+                logger.info(
+                    "architect.generate run=%s embody_agents done "
+                    "count=%d errors=%d elapsed=%ss",
+                    run_id, embodied_agent_count, embodiment_errors,
+                    _elapsed_seconds(embodiment_started_at),
+                )
+
             await _sync_entity_proposal_states(
                 repo=repo,
                 proposals=run.proposals,
@@ -1088,7 +1434,10 @@ async def _execute_generation(
                 "generation_metadata": {
                     "reviewed_pipeline_output": reviewed_pipeline_output,
                     "retry_enrichment_only": retry_enrichment_only,
+                    "embody_agents": embody_agents,
                 },
+                "embodied_agent_count": embodied_agent_count,
+                "embodiment_errors": embodiment_errors,
                 # Frontend reconciliation: real persisted IDs keyed by proposal/ref.
                 "entity_reconciliation": [
                     {"proposal_index": proposal_index, "entity_instance_id": entity_instance_id}

@@ -186,6 +186,20 @@ def test_config_store_rejects_legacy_string_model_updates(monkeypatch, tmp_path)
         update_settings({"model_elder": "legacy-elder-model"})
 
 
+def test_blank_model_targets_remain_blank_after_reload(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("SHRECKNET_DATA_DIR", str(tmp_path))
+    _reset_runtime_state()
+
+    update_settings({
+        "model_character_agent_embodiment": {"provider": "", "name": ""},
+    })
+
+    reloaded = reload_settings()
+    assert reloaded.model_character_agent_embodiment == LLMModelTarget(
+        provider="", name=""
+    )
+
+
 @pytest.mark.asyncio
 async def test_graphrag_index_status_uses_config_store_settings(
     monkeypatch, tmp_path

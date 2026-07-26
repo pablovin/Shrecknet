@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 
 import pytest
+from fastapi import HTTPException
 
 from app.core.config_store import LLMModelTarget, Settings
 from app.jobs.character_agent.query import CharacterAgentQueryJob, CharacterGenerationError
@@ -121,9 +122,10 @@ def test_character_agent_defaults_and_configuration_targets():
     agent = CharacterAgentCreate(ontology_id=1, entity_instance_id="entity")
     assert agent.trait_adherence == 80
     settings = Settings()
-    assert settings.model_character_agent_framing.name
-    assert settings.model_character_agent_deliberation.name
-    assert settings.model_character_agent_verification.name
+    assert settings.model_character_agent_framing == LLMModelTarget(provider="", name="")
+    assert settings.model_character_agent_deliberation == LLMModelTarget(provider="", name="")
+    assert settings.model_character_agent_verification == LLMModelTarget(provider="", name="")
+    assert settings.model_character_agent_embodiment == LLMModelTarget(provider="", name="")
 
 
 class _Result:
@@ -144,6 +146,26 @@ class _Graph:
         return _Result(self.row)
 
 
+class _EmptyResult:
+    async def single(self):
+        return None
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        raise StopAsyncIteration
+
+
+class _EmptyGraph:
+    def __init__(self):
+        self.calls = []
+
+    async def run(self, statement, **params):
+        self.calls.append((statement, params))
+        return _EmptyResult()
+
+
 @pytest.mark.asyncio
 async def test_snapshot_is_one_operation_and_omits_backend_identifiers():
     row = {
@@ -152,12 +174,47 @@ async def test_snapshot_is_one_operation_and_omits_backend_identifiers():
         "aspects": SNAPSHOT["aspects"], "goals": SNAPSHOT["goals"],
     }
     graph = _Graph(row)
-    snapshot = await CharacterAgentService(object(), graph).load_query_snapshot("agent-1")
+    snapshot = await CharacterAgentService(object(), graph).load_query_snapshot(
+        "agent-1", public_only=True
+    )
     assert len(graph.calls) == 1
+    assert "coalesce(agent.visibility, 'private') = 'public'" in graph.calls[0][0]
+    assert graph.calls[0][1]["public_only"] is True
     assert "ORDER BY assignment.importance DESC" in graph.calls[0][0]
     assert "ORDER BY goal.priority DESC" in graph.calls[0][0]
     assert "id" not in snapshot["character_agent"]
     assert snapshot["character_agent"]["trait_adherence"] == 80
+
+
+@pytest.mark.asyncio
+async def test_public_reads_treat_legacy_agents_as_private():
+    graph = _Graph(None)
+    service = CharacterAgentService(object(), graph)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await service.get_agent("legacy-agent", public_only=True)
+
+    assert exc_info.value.status_code == 404
+    statement, params = graph.calls[0]
+    assert "coalesce(node.visibility, 'private') = 'public'" in statement
+    assert params["public_only"] is True
+
+
+@pytest.mark.asyncio
+async def test_public_list_filters_visibility_in_the_graph_query():
+    graph = _EmptyGraph()
+
+    result = await CharacterAgentService(object(), graph).list_agents(
+        ontology_id=None,
+        agent_status=None,
+        entity_id=None,
+        skip=0,
+        limit=50,
+        public_only=True,
+    )
+
+    assert result == []
+    assert "coalesce(agent.visibility, 'private') = 'public'" in graph.calls[0][0]
 
 
 @pytest.mark.asyncio

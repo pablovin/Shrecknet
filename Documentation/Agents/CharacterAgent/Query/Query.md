@@ -18,6 +18,8 @@ Text responses use `{"type":"text","content":"..."}`. For structured output,
 set the type to `json` and optionally supply a JSON Schema in `schema`; `content`
 must validate against it.
 
-The endpoint is admin-only in Phase 1. It returns `404` for a missing character,
-`409` for an inactive character, `422` for invalid input, `502` for invalid
-generation output, and `503` when agents or shreckLLM are unavailable.
+The endpoint requires authentication. Administrators may query any active
+CharacterAgent; other authenticated users may query only active public agents.
+It returns `404` for a missing character or a character that is not visible to
+the caller, `409` for an inactive character, `422` for invalid input, `502` for
+invalid generation output, and `503` when agents or shreckLLM are unavailable.

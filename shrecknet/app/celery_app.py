@@ -23,10 +23,12 @@ def configure_celery_app() -> None:
     celery_app.conf.task_queues = (
         Queue("ontology_linking"),
         Queue("architect"),
+        Queue("character_agent"),
     )
     celery_app.conf.task_routes = {
         "architect.analyze_instance": {"queue": "architect"},
         "architect.generate_entities": {"queue": "architect"},
+        "character_agent.generate_embodiment": {"queue": "character_agent"},
     }
     celery_app.conf.task_always_eager = settings.celery_task_always_eager
     celery_app.conf.task_eager_propagates = True

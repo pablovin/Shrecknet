@@ -54,6 +54,276 @@ class CharacterAgentQueryResponse(BaseModel):
     content: Any
 
 
+class EmbodimentDraftCreate(BaseModel):
+    ontology_id: int
+    entity_instance_id: str
+
+
+class EmbodimentDraftStart(BaseModel):
+    draft_id: str
+    job_id: int
+    status: str
+    draft_url: str
+    job_url: str
+
+
+class EmbodimentDraftRead(BaseModel):
+    id: str
+    ontology_id: int
+    source_entity_id: str
+    target_character_agent_id: str | None = None
+    status: str
+    background_job_id: int | None = None
+    generation_revision: int
+    evidence: list[dict[str, Any]] = Field(default_factory=list)
+    source_evidence_ids: list[str] = Field(default_factory=list)
+    observations: dict[str, Any] | None = None
+    proposal: dict[str, Any] | None = None
+    timeline: dict[str, Any] | None = None
+    provider: str | None = None
+    model: str | None = None
+    prompt_version: str | None = None
+    error_message: str | None = None
+    generated_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class CharacterAgentEmbeddedAspect(BaseModel):
+    suggestion_id: str | None = None
+    name: str
+    category: str
+    description: str | None = None
+    importance: int
+    intensity: int | None = None
+    justification: str | None = None
+    evidence_ids: list[str] = Field(default_factory=list)
+    confidence: float | None = None
+
+
+class CharacterAgentEmbeddedGoal(BaseModel):
+    suggestion_id: str | None = None
+    title: str
+    description: str | None = None
+    goal_type: str
+    status: str = "active"
+    priority: int = 50
+    commitment: int = 50
+    justification: str | None = None
+    basis: str | None = None
+    evidence_ids: list[str] = Field(default_factory=list)
+    confidence: float | None = None
+
+
+class CharacterAgentCreateRequest(BaseModel):
+    ontology_id: int
+    entity_instance_id: str
+    embodiment_draft_id: str | None = None
+    name: str | None = None
+    subtitle: str | None = None
+    background_story: str | None = None
+    image_url: str | None = None
+    status: str = "active"
+    visibility: str = "private"
+    calm_aggressive: int = 50
+    cautious_reckless: int = 50
+    compassionate_ruthless: int = 50
+    trusting_suspicious: int = 50
+    honest_deceptive: int = 50
+    patient_impulsive: int = 50
+    humble_proud: int = 50
+    cooperative_dominating: int = 50
+    trait_adherence: int = 80
+    aspects: list[CharacterAgentEmbeddedAspect] = Field(default_factory=list)
+    goals: list[CharacterAgentEmbeddedGoal] = Field(default_factory=list)
+
+
+class CharacterAgentRead(BaseModel):
+    id: str
+    ontology_id: int
+    entity_instance_id: str
+    embodied_entity_instance_id: str
+    name: str
+    subtitle: str | None = None
+    background_story: str
+    image_url: str | None = None
+    status: str
+    visibility: str
+    created_by_user_id: int
+    created_at: datetime
+    updated_at: datetime
+    model_config = {"extra": "allow"}
+
+
+class CharacterAgentUpdate(BaseModel):
+    name: str | None = None
+    subtitle: str | None = None
+    background_story: str | None = None
+    image_url: str | None = None
+    status: str | None = None
+    visibility: str | None = None
+    calm_aggressive: int | None = None
+    cautious_reckless: int | None = None
+    compassionate_ruthless: int | None = None
+    trusting_suspicious: int | None = None
+    honest_deceptive: int | None = None
+    patient_impulsive: int | None = None
+    humble_proud: int | None = None
+    cooperative_dominating: int | None = None
+    trait_adherence: int | None = None
+
+
+class CharacterIdentityRevisionRead(BaseModel):
+    id: str
+    character_agent_id: str
+    revision_number: int
+    source_group_id: str | None = None
+    last_processed_scene_id: str | None = None
+    name: str
+    subtitle: str | None = None
+    trait_adherence: int
+    behavioural_axes: dict[str, int]
+    active_aspect_ids: list[str] = Field(default_factory=list)
+    active_goal_ids: list[str] = Field(default_factory=list)
+    provenance_type: str
+    provider: str | None = None
+    model: str | None = None
+    prompt_version: str | None = None
+    created_at: datetime
+
+
+class CharacterIdentityChangeRead(BaseModel):
+    id: str
+    character_agent_id: str
+    revision_number: int
+    source_group_id: str | None = None
+    change_type: str
+    field_name: str
+    previous_value: Any = None
+    new_value: Any = None
+    confidence: float | None = None
+    justification: str | None = None
+    evidence_ids: list[str] = Field(default_factory=list)
+    provenance_type: str
+    created_at: datetime
+
+
+class ScenePerspectiveCreate(BaseModel):
+    scene_id: str
+    source_type: str
+    awareness_level: int
+    confidence: int
+    summary: str
+    interpretation: str
+    memory_strength: int
+    importance: int
+    status: str = "active"
+
+
+class ScenePerspectiveUpdate(BaseModel):
+    source_type: str | None = None
+    awareness_level: int | None = None
+    confidence: int | None = None
+    summary: str | None = None
+    interpretation: str | None = None
+    memory_strength: int | None = None
+    importance: int | None = None
+    status: str | None = None
+
+
+class EmotionalInterpretationCreate(BaseModel):
+    arousal: int
+    valence: int
+    description: str
+
+
+class EmotionalInterpretationUpdate(BaseModel):
+    arousal: int | None = None
+    valence: int | None = None
+    description: str | None = None
+
+
+class EmotionalInterpretationRead(EmotionalInterpretationCreate):
+    id: str
+    ontology_id: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class CharacterBeliefCreate(BaseModel):
+    statement: str
+    confidence: int
+    status: str
+
+
+class CharacterBeliefUpdate(BaseModel):
+    statement: str | None = None
+    confidence: int | None = None
+    status: str | None = None
+
+
+class CharacterBeliefRead(CharacterBeliefCreate):
+    id: str
+    ontology_id: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class CharacterImpactCreate(BaseModel):
+    impact_type: str
+    direction: str
+    magnitude: int
+    description: str
+    target_id: str
+    caused_by_milestone_id: str | None = None
+
+
+class CharacterImpactUpdate(BaseModel):
+    direction: str | None = None
+    magnitude: int | None = None
+    description: str | None = None
+    caused_by_milestone_id: str | None = None
+
+
+class CharacterImpactRead(BaseModel):
+    id: str
+    ontology_id: int
+    impact_type: str
+    direction: str
+    magnitude: int
+    description: str
+    target_id: str
+    target_type: str
+    caused_by_milestone_id: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class ScenePerspectiveRead(BaseModel):
+    id: str
+    ontology_id: int
+    character_agent_id: str
+    scene_id: str
+    generated_with_revision_id: str | None = None
+    source_group_id: str | None = None
+    source_type: str
+    awareness_level: int
+    confidence: int
+    summary: str
+    interpretation: str
+    memory_strength: int
+    importance: int
+    status: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class ScenePerspectiveAggregateRead(ScenePerspectiveRead):
+    emotions: list[EmotionalInterpretationRead] = Field(default_factory=list)
+    beliefs: list[CharacterBeliefRead] = Field(default_factory=list)
+    impacts: list[CharacterImpactRead] = Field(default_factory=list)
+
+
 class Ontology(BaseModel):
     id: int
     name: str

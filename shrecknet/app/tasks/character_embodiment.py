@@ -527,7 +527,14 @@ async def _generate(*, draft_id: str, revision: int, job_id: int) -> dict:
         )
         draft.evidence_cutoff = datetime.now(timezone.utc).isoformat()
 
-        obs_dict = merged_obs.model_dump(mode="json") if merged_obs else {}
+        # ``subtitle_change`` is an orchestration-only result.  It is projected
+        # into the timeline/proposal below, but is not part of the persisted
+        # EmbodimentObservations API contract.
+        obs_dict = (
+            merged_obs.model_dump(mode="json", exclude={"subtitle_change"})
+            if merged_obs
+            else {}
+        )
         obs_dict["identity_description"] = {
             "text": str(inputs["canonical_identity"].get("alias", "Character")),
             "evidence_ids": [f"scene:{s.scene_id}" for s in all_scene_inputs[:1]] if all_scene_inputs else [],

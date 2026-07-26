@@ -1,6 +1,7 @@
 import asyncio
 import json
-from datetime import timezone
+from datetime import datetime, timezone
+from uuid import uuid4
 
 import pytest
 from neo4j.time import DateTime
@@ -340,6 +341,26 @@ def test_embodiment_draft_table_contains_review_and_provenance_state():
         "generated_proposal", "timeline_projection",
         "generation_revision", "background_job_id", "active_entity_key",
     } <= columns
+
+
+def test_read_embodiment_draft_ignores_legacy_subtitle_change_in_observations():
+    now = datetime.now(timezone.utc)
+    draft = CharacterEmbodimentDraft(
+        id=str(uuid4()), ontology_id=1, source_entity_id="entity-mara",
+        created_by_user_id=1, status="ready", generation_revision=1,
+        observations=json.dumps({
+            "identity_description": {
+                "text": "Mara", "evidence_ids": ["scene:one"],
+            },
+            "subtitle_change": None,
+        }),
+        created_at=now, updated_at=now,
+    )
+
+    result = CharacterEmbodimentService.read(draft)
+
+    assert result.observations is not None
+    assert result.observations.identity_description.text == "Mara"
 
 
 def test_normal_create_contract_accepts_optional_draft_aspects_and_goals():

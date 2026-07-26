@@ -459,6 +459,13 @@ class CharacterEmbodimentService:
 
     @staticmethod
     def read(draft: CharacterEmbodimentDraft) -> EmbodimentDraftRead:
+        observations = _json(draft.observations, None)
+        # A short-lived worker version persisted the optional orchestration
+        # field in this public, strict observations payload.  Ignore it when
+        # reading those completed drafts so they remain reviewable after the
+        # deploy that corrects future writes.
+        if isinstance(observations, dict):
+            observations.pop("subtitle_change", None)
         return EmbodimentDraftRead(
             id=draft.id, ontology_id=draft.ontology_id, source_entity_id=draft.source_entity_id,
             target_character_agent_id=draft.target_character_agent_id, status=draft.status,
@@ -466,7 +473,7 @@ class CharacterEmbodimentService:
             evidence=_json(draft.evidence_snapshot, []),
             source_evidence_ids=_json(draft.source_evidence_ids, []),
             evidence_cutoff=draft.evidence_cutoff,
-            observations=_json(draft.observations, None),
+            observations=observations,
             proposal=_json(draft.generated_proposal, None),
             timeline=_json(draft.timeline_projection, None),
             provider=draft.provider, model=draft.model, prompt_version=draft.prompt_version,

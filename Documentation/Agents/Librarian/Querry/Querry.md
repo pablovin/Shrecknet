@@ -24,6 +24,19 @@ supported Librarian query pipeline.
 `context` performs planning, retrieval, and validation but skips synthesis.
 `nl` and `both` perform the complete pipeline.
 
+### Synthesis evidence budget
+
+Before natural-language synthesis, consolidated evidence is ordered by retrieval
+score and admitted up to an estimated `30,000` evidence-token budget. If the
+next complete evidence chunk crosses the budget, that one chunk is retained and
+no later evidence is included. This preserves source and citation boundaries
+instead of truncating evidence mid-chunk.
+
+The budget applies only to evidence sent to the synthesis model; `context` and
+`both` responses retain the complete retrieved chunk set. The optional trace
+includes `v2_synthesis_evidence_budget` with candidate and selected chunk
+counts and the estimated evidence-token total.
+
 When `include_trace=true`, ordered trace entries cover planning, retrieval
 passes and per-need results, evidence merges, coverage validation, retry
 decisions, synthesis context, and citation rendering. File-based local-test

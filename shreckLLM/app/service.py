@@ -87,7 +87,7 @@ class ChatService:
         self._job_queue: asyncio.Queue[str] = asyncio.Queue(maxsize=max(1, int(self._runtime.chat_job_queue_max_size)))
         self._chat_jobs: dict[str, dict[str, Any]] = {}
         self._job_events: dict[str, asyncio.Event] = {}
-        self._job_worker_task: asyncio.Task[Any] | None = None
+        self._job_worker_tasks: list[asyncio.Task[Any]] = []
         self._job_gc_task: asyncio.Task[Any] | None = None
 
     def _init_provider_limiters(self) -> None:
@@ -167,8 +167,8 @@ class ChatService:
         raise DependencyUnavailableError(f"provider_not_bound:{provider_key}")
 
     async def aclose(self) -> None:
-        if self._job_worker_task is not None:
-            self._job_worker_task.cancel()
+        for task in self._job_worker_tasks:
+            task.cancel()
         if self._job_gc_task is not None:
             self._job_gc_task.cancel()
         closers = [self.redis.aclose()]
@@ -182,7 +182,7 @@ class ChatService:
             closers.append(self._anthropic.aclose())
         await asyncio.gather(*closers, return_exceptions=True)
         await asyncio.gather(
-            *(task for task in [self._job_worker_task, self._job_gc_task] if task is not None),
+            *(task for task in [*self._job_worker_tasks, self._job_gc_task] if task is not None),
             return_exceptions=True,
         )
 
@@ -212,9 +212,15 @@ class ChatService:
         return self._runtime
 
     def ensure_background_tasks(self) -> None:
-        if self._job_worker_task is None or self._job_worker_task.done():
-            self._job_worker_task = asyncio.create_task(self._job_worker_loop())
-            logger.info("chat_job_worker_started")
+        self._job_worker_tasks = [task for task in self._job_worker_tasks if not task.done()]
+        # The global request limiter remains authoritative.  A worker pool lets
+        # independent jobs reach that limiter instead of serialising every
+        # provider call behind one queue consumer.
+        desired_workers = max(1, int(self._runtime.max_concurrent_requests))
+        while len(self._job_worker_tasks) < desired_workers:
+            worker_number = len(self._job_worker_tasks) + 1
+            self._job_worker_tasks.append(asyncio.create_task(self._job_worker_loop()))
+            logger.info("chat_job_worker_started worker=%s pool_size=%s", worker_number, desired_workers)
         if self._job_gc_task is None or self._job_gc_task.done():
             self._job_gc_task = asyncio.create_task(self._job_gc_loop())
             logger.info("chat_job_gc_started")
@@ -957,8 +963,10 @@ class ChatService:
             "job_id": job_id,
             "status": "queued",
             "created_at": now,
-            "started_at": None,
-            "finished_at": None,
+                "started_at": None,
+                "finished_at": None,
+                "queue_wait_ms": None,
+                "execution_ms": None,
             "expires_at": None,
             "provider_id": request.provider_id,
             "resolved_model": None,
@@ -994,6 +1002,8 @@ class ChatService:
             resolved_model=row.get("resolved_model"),
             requested_model=row.get("requested_model"),
             retry_count=int(row.get("retry_count") or 0),
+            queue_wait_ms=row.get("queue_wait_ms"),
+            execution_ms=row.get("execution_ms"),
             error=row.get("error"),
         )
 
@@ -1029,6 +1039,7 @@ class ChatService:
                 continue
             row["status"] = "running"
             row["started_at"] = time.time()
+            row["queue_wait_ms"] = round((float(row["started_at"]) - float(row["created_at"])) * 1000, 2)
             request = row.get("request")
             logger.info(
                 "chat_job_started job_id=%s provider=%s model=%s queue_depth=%s",
@@ -1049,14 +1060,17 @@ class ChatService:
                 row["error"] = str(exc)
             finally:
                 row["finished_at"] = time.time()
+                row["execution_ms"] = round((float(row["finished_at"]) - float(row["started_at"] or row["finished_at"])) * 1000, 2)
                 row["expires_at"] = row["finished_at"] + max(1, int(self._runtime.chat_job_result_ttl_seconds))
                 logger.info(
-                    "chat_job_finished job_id=%s status=%s provider=%s model=%s elapsed_ms=%s error=%s",
+                    "chat_job_finished job_id=%s status=%s provider=%s model=%s queue_wait_ms=%s execution_ms=%s total_ms=%s error=%s",
                     job_id,
                     row.get("status"),
                     row.get("provider_id") or getattr(request, "provider_id", None),
                     row.get("resolved_model") or getattr(request, "model", None),
-                    round((float(row["finished_at"]) - float(row["started_at"] or row["finished_at"])) * 1000, 2),
+                    row["queue_wait_ms"],
+                    row["execution_ms"],
+                    round((float(row["finished_at"]) - float(row["created_at"])) * 1000, 2),
                     row.get("error"),
                 )
                 event = self._job_events.get(job_id)
@@ -1185,6 +1199,14 @@ class ChatService:
                 async with self._provider_lock:
                     self._provider_waiting[provider_id] = max(0, self._provider_waiting.get(provider_id, 1) - 1)
             try:
+                provider_wait_s = time.monotonic() - provider_call_start
+                if provider_wait_s > 0.01:
+                    logger.info(
+                        "provider_slot_acquired provider=%s model=%s wait_ms=%s",
+                        provider_id,
+                        resolved_model,
+                        round(provider_wait_s * 1000, 2),
+                    )
                 payload = await adapter.chat(
                     model=resolved_model,
                     messages=combined_messages,

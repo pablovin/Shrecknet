@@ -13,7 +13,8 @@ Standalone LLM gateway service for Shrecknet-compatible chat semantics.
 - FastAPI API (`/health`, `/ready`, `/chat`, `/models`, `/status`, `/config`)
 - Multi-provider explicit routing via `provider_id` (`ollama`, `openai`, `anthropic`)
 - Redis-backed conversation memory with TTL + trimming
-- Concurrent request support with queue wait timeout
+- Bounded concurrent chat-job worker pool, with global and per-provider limits
+- Queue, provider-slot, and execution timing telemetry for chat jobs
 - Per-conversation in-process locking for ordering consistency
 
 ## Chat contract

@@ -133,3 +133,42 @@ async def test_synthesis_formats_evidence_validation_contract(tmp_path):
     synthesis_prompt = llm.calls[0]["messages"][1]["content"]
     assert '"missing_needs": [' in synthesis_prompt
     assert "Armor exceptions" in synthesis_prompt
+
+
+def test_synthesis_evidence_budget_keeps_one_chunk_that_crosses_the_limit(monkeypatch):
+    from app.jobs.librarian.query_v2 import LibrarianQueryV2
+    from app.jobs.librarian.schemas import RetrievedChunk
+
+    def fake_estimate(value: str) -> int:
+        if "at-budget" in value:
+            return 30_000
+        if "near-budget" in value:
+            return 29_000
+        if "crosses-budget" in value:
+            return 11_000
+        return 500
+
+    monkeypatch.setattr("app.jobs.librarian.query_v2.estimate_tokens", fake_estimate)
+    chunks = [
+        RetrievedChunk(
+            library_item_id=index,
+            page_number=index,
+            text=text,
+            score=1.0 - index / 10,
+            source_id=f"source-{index}",
+        )
+        for index, text in enumerate(["near-budget", "crosses-budget", "must-not-be-included"], 1)
+    ]
+
+    selected, estimated_tokens = LibrarianQueryV2._select_synthesis_evidence(chunks)
+
+    assert [chunk.text for chunk in selected] == ["near-budget", "crosses-budget"]
+    assert estimated_tokens == 40_000
+
+    at_budget, exact_tokens = LibrarianQueryV2._select_synthesis_evidence([
+        chunks[0].model_copy(update={"text": "at-budget"}),
+        chunks[1],
+        chunks[2],
+    ])
+    assert [chunk.text for chunk in at_budget] == ["at-budget", "crosses-budget"]
+    assert exact_tokens == 41_000

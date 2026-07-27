@@ -25,10 +25,17 @@ SQL title may differ from the title encoded into the preserved embedding.
 
 Import verifies the archive shape, SHA-256 checksum, node counts, relationships,
 finite vector values, and a single compatible embedding model/dimension. The
-configured model ID and dimension must match the package. Replacement is one
-Neo4j transaction: the existing embedding remains available if validation or
-the transaction fails. On success, the destination SQL item is marked
-vectorized.
+configured model ID and dimension must match the package. It does not invoke
+Docling or regenerate vectors.
+
+The destination writes the graph in bounded Neo4j transactions (500 rows per
+batch), using inactive `PdfChunkCandidate` nodes. After staged-vector
+validation succeeds, a short activation transaction promotes the candidates to
+active `PdfChunk` nodes. This avoids one large transaction holding every book
+node, relationship, and vector in memory. If staging or validation fails, the
+new inactive ingestion is removed; an existing active embedding is left
+available. On success, the destination SQL item is marked `vectorized` and any
+replaced ingestion is removed.
 
 Both endpoints require the `admin` or `world_builder` role. The maximum uploaded
 package size is 512 MiB.

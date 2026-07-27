@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import logging
 import math
 import zipfile
 from datetime import datetime, timezone
@@ -14,10 +15,14 @@ from uuid import NAMESPACE_URL, uuid4, uuid5
 from app.core.config_store import get_settings
 
 
+logger = logging.getLogger(__name__)
+
+
 PACKAGE_FORMAT = "shrecknet-librarian-embedding"
 PACKAGE_VERSION = 1
 MAX_PACKAGE_BYTES = 512 * 1024 * 1024
 NODE_GROUPS = ("documents", "pages", "sections", "blocks", "chunks")
+IMPORT_BATCH_SIZE = 500
 
 
 class EmbeddingPackageError(ValueError):
@@ -99,7 +104,29 @@ class LibrarianEmbeddingPackageService:
         remapped, ingestion_id = self._remap_graph(
             graph, library_item_id=library_item_id, ontology_id=ontology_id
         )
-        await self._replace_graph(remapped, library_item_id, ontology_id, ingestion_id)
+        await self._stage_graph(remapped, library_item_id, ontology_id, ingestion_id)
+        try:
+            await self._validate_staged_graph(ingestion_id)
+            previous_ingestion_id = await self._activate_staged_graph(
+                library_item_id, ingestion_id
+            )
+        except Exception:
+            # Staging is deliberately committed in small batches. A failed
+            # import must not leave an inactive graph consuming storage or
+            # interfere with a later retry.
+            await self._delete_ingestion_graph(ingestion_id)
+            raise
+        if previous_ingestion_id:
+            try:
+                await self._delete_ingestion_graph(previous_ingestion_id)
+            except Exception:
+                # The new graph is already active. Retired-graph cleanup is
+                # safe to retry and must not report the completed import as a
+                # failure.
+                logger.exception(
+                    "librarian_embedding_import_cleanup_failed ingestion_id=%s",
+                    previous_ingestion_id,
+                )
         return {
             "library_item_id": library_item_id,
             "ontology_id": ontology_id,
@@ -238,114 +265,124 @@ class LibrarianEmbeddingPackageService:
                 remapped[group].append(row)
         return remapped, ingestion_id
 
-    async def _replace_graph(
+    @staticmethod
+    def _batches(rows: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
+        return [rows[index:index + IMPORT_BATCH_SIZE]
+                for index in range(0, len(rows), IMPORT_BATCH_SIZE)]
+
+    async def _write_batches(self, cypher: str, rows: list[dict[str, Any]], **params: Any) -> None:
+        """Write independent graph rows in bounded transactions.
+
+        A package can contain many thousands of vectors and relationships.
+        Keeping all of those writes in one transaction made imports slow and
+        prone to exhausting the destination Neo4j transaction memory.
+        """
+        for batch in self._batches(rows):
+            async def write(tx: Any, batch: list[dict[str, Any]] = batch) -> None:
+                await tx.run(cypher, rows=batch, **params)
+            await self.graph_session.execute_write(write)
+
+    async def _stage_graph(
         self, graph: dict[str, list[dict[str, Any]]], library_item_id: int,
         ontology_id: int, ingestion_id: str,
     ) -> None:
-        async def write(tx: Any) -> None:
-            await tx.run(
-                """MATCH (old) WHERE old.library_item_id = $item_id AND
-                (old:PdfDocument OR old:PdfPage OR old:PdfSection OR old:PdfBlock OR
-                 old:PdfChunk OR old:PdfChunkCandidate OR old:PdfChunkRetired)
-                DETACH DELETE old""",
-                item_id=library_item_id,
+        await self._write_batches(
+            "MERGE (li:LibraryItem {library_item_id: $item_id}) SET li.ontology_id = $ontology_id",
+            [{}], item_id=library_item_id, ontology_id=ontology_id,
+        )
+        await self._write_batches(
+            """UNWIND $rows AS row MATCH (li:LibraryItem {library_item_id: $item_id})
+            CREATE (d:PdfDocument) SET d = row, d.is_active = false
+            CREATE (li)-[:HAS_DOCUMENT]->(d)""", graph["documents"], item_id=library_item_id,
+        )
+        for group, label, relation in (("pages", "PdfPage", "HAS_PAGE"), ("sections", "PdfSection", "HAS_SECTION")):
+            await self._write_batches(
+                f"""UNWIND $rows AS row MATCH (d:PdfDocument {{ingestion_id: $ingestion_id}})
+                CREATE (n:{label}) SET n = row CREATE (d)-[:{relation}]->(n)""",
+                graph[group], ingestion_id=ingestion_id,
             )
-            await tx.run(
-                "MERGE (li:LibraryItem {library_item_id: $item_id}) SET li.ontology_id = $ontology_id",
-                item_id=library_item_id, ontology_id=ontology_id,
+        await self._write_batches(
+            """UNWIND $rows AS row MATCH (s:PdfSection {section_id: row.section_id})
+            CREATE (b:PdfBlock) SET b = row CREATE (s)-[:CONTAINS_BLOCK]->(b)""", graph["blocks"],
+        )
+        nested_sections = [row for row in graph["sections"] if row.get("parent_section_id")]
+        await self._write_batches(
+            """UNWIND $rows AS row MATCH (s:PdfSection {section_id: row.section_id}),
+            (p:PdfSection {section_id: row.parent_section_id}) CREATE (p)-[:HAS_SUBSECTION]->(s)""", nested_sections,
+        )
+        ordered_blocks = sorted(graph["blocks"], key=lambda row: (int(row.get("reading_order", 0)), str(row["block_id"])))
+        block_pairs = [{"left": left["block_id"], "right": right["block_id"]}
+                       for left, right in zip(ordered_blocks, ordered_blocks[1:])]
+        await self._write_batches(
+            """UNWIND $rows AS row MATCH (a:PdfBlock {block_id: row.left}),
+            (b:PdfBlock {block_id: row.right}) CREATE (a)-[:NEXT_BLOCK]->(b)""", block_pairs,
+        )
+        block_page_links = [{"block_id": row["block_id"], "page": page}
+                            for row in graph["blocks"] for page in row.get("page_numbers", [])]
+        await self._write_batches(
+            """UNWIND $rows AS row MATCH (b:PdfBlock {block_id: row.block_id}),
+            (p:PdfPage {ingestion_id: $ingestion_id, physical_page_number: row.page})
+            CREATE (b)-[:ON_PAGE]->(p)""", block_page_links, ingestion_id=ingestion_id,
+        )
+        await self._write_batches(
+            """UNWIND $rows AS row CREATE (c:PdfChunkRecord:PdfChunkCandidate) SET c = row,
+            c.is_active = false""", graph["chunks"],
+        )
+        parent_chunks = [row for row in graph["chunks"] if row.get("chunk_role") == "parent"]
+        await self._write_batches(
+            """UNWIND $rows AS row MATCH (s:PdfSection {section_id: row.parent_section_id}),
+            (c:PdfChunkCandidate {chunk_id: row.chunk_id}) CREATE (s)-[:HAS_PARENT_CHUNK]->(c)""", parent_chunks,
+        )
+        children = [row for row in graph["chunks"] if row.get("chunk_role") == "child"]
+        await self._write_batches(
+            """UNWIND $rows AS row MATCH (c:PdfChunkCandidate {chunk_id: row.chunk_id}),
+            (p:PdfChunkCandidate {chunk_id: row.parent_chunk_id}) CREATE (c)-[:CHILD_OF]->(p)""", children,
+        )
+        derivations = [{"chunk_id": row["chunk_id"], "block_id": block_id}
+                       for row in graph["chunks"] for block_id in row.get("source_block_ids", [])]
+        await self._write_batches(
+            """UNWIND $rows AS row MATCH (c:PdfChunkCandidate {chunk_id: row.chunk_id}),
+            (b:PdfBlock {block_id: row.block_id}) CREATE (c)-[:DERIVED_FROM]->(b)""", derivations,
+        )
+        page_links = [{"chunk_id": row["chunk_id"], "page": page}
+                      for row in graph["chunks"] for page in row.get("physical_page_numbers", [])]
+        await self._write_batches(
+            """UNWIND $rows AS row MATCH (c:PdfChunkCandidate {chunk_id: row.chunk_id}),
+            (p:PdfPage {ingestion_id: $ingestion_id, physical_page_number: row.page})
+            CREATE (c)-[:ON_PAGE]->(p)""", page_links, ingestion_id=ingestion_id,
+        )
+
+    async def _validate_staged_graph(self, ingestion_id: str) -> None:
+        result = await self.graph_session.run(
+            """MATCH (child:PdfChunkCandidate {ingestion_id: $ingestion_id, chunk_role: 'child'})
+            WITH count(child) AS children,
+                 count(CASE WHEN size(child.text_embedding) = $dimension THEN 1 END) AS vectors
+            WHERE children > 0 AND children = vectors RETURN children""",
+            ingestion_id=ingestion_id, dimension=get_settings().embedding_dimension,
+        )
+        if not await result.single():
+            raise EmbeddingPackageError("Imported graph failed staged vector validation")
+
+    async def _activate_staged_graph(self, library_item_id: int, ingestion_id: str) -> str | None:
+        async def activate(tx: Any) -> str | None:
+            result = await tx.run(
+                """OPTIONAL MATCH (old:PdfDocument {library_item_id: $item_id, is_active: true})
+                WITH old, old.ingestion_id AS previous_id
+                FOREACH (_ IN CASE WHEN old IS NULL THEN [] ELSE [1] END |
+                  SET old.is_active = false, old.retired_at = datetime())
+                WITH previous_id MATCH (new:PdfDocument {ingestion_id: $ingestion_id})
+                SET new.is_active = true, new.activated_at = datetime()
+                WITH previous_id MATCH (candidate:PdfChunkCandidate {ingestion_id: $ingestion_id})
+                REMOVE candidate:PdfChunkCandidate SET candidate:PdfChunk, candidate.is_active = true
+                RETURN previous_id""",
+                item_id=library_item_id, ingestion_id=ingestion_id,
             )
-            await tx.run(
-                """UNWIND $rows AS row MATCH (li:LibraryItem {library_item_id: $item_id})
-                CREATE (d:PdfDocument) SET d = row, d.is_active = true,
-                d.activated_at = datetime() CREATE (li)-[:HAS_DOCUMENT]->(d)""",
-                rows=graph["documents"], item_id=library_item_id,
-            )
-            for group, label, relation in (
-                ("pages", "PdfPage", "HAS_PAGE"),
-                ("sections", "PdfSection", "HAS_SECTION"),
-            ):
-                await tx.run(
-                    f"""UNWIND $rows AS row MATCH (d:PdfDocument {{ingestion_id: $ingestion_id}})
-                    CREATE (n:{label}) SET n = row CREATE (d)-[:{relation}]->(n)""",
-                    rows=graph[group], ingestion_id=ingestion_id,
-                )
-            await tx.run(
-                """UNWIND $rows AS row MATCH (s:PdfSection {section_id: row.section_id})
-                CREATE (b:PdfBlock) SET b = row CREATE (s)-[:CONTAINS_BLOCK]->(b)""",
-                rows=graph["blocks"],
-            )
-            nested_sections = [row for row in graph["sections"] if row.get("parent_section_id")]
-            await tx.run(
-                """UNWIND $rows AS row MATCH (s:PdfSection {section_id: row.section_id}),
-                (p:PdfSection {section_id: row.parent_section_id}) CREATE (p)-[:HAS_SUBSECTION]->(s)""",
-                rows=nested_sections,
-            )
-            ordered_blocks = sorted(
-                graph["blocks"], key=lambda row: (int(row.get("reading_order", 0)), str(row["block_id"]))
-            )
-            block_pairs = [
-                {"left": left["block_id"], "right": right["block_id"]}
-                for left, right in zip(ordered_blocks, ordered_blocks[1:])
-            ]
-            await tx.run(
-                """UNWIND $rows AS row MATCH (a:PdfBlock {block_id: row.left}),
-                (b:PdfBlock {block_id: row.right}) CREATE (a)-[:NEXT_BLOCK]->(b)""",
-                rows=block_pairs,
-            )
-            block_page_links = [
-                {"block_id": row["block_id"], "page": page}
-                for row in graph["blocks"] for page in row.get("page_numbers", [])
-            ]
-            await tx.run(
-                """UNWIND $rows AS row MATCH (b:PdfBlock {block_id: row.block_id}),
-                (p:PdfPage {ingestion_id: $ingestion_id, physical_page_number: row.page})
-                CREATE (b)-[:ON_PAGE]->(p)""",
-                rows=block_page_links, ingestion_id=ingestion_id,
-            )
-            await tx.run(
-                """UNWIND $rows AS row CREATE (c:PdfChunkRecord:PdfChunk) SET c = row,
-                c.is_active = true""",
-                rows=graph["chunks"],
-            )
-            await tx.run(
-                """UNWIND $rows AS row MATCH (s:PdfSection {section_id: row.parent_section_id}),
-                (c:PdfChunk {chunk_id: row.chunk_id})
-                FOREACH (_ IN CASE WHEN row.chunk_role = 'parent' THEN [1] ELSE [] END |
-                  CREATE (s)-[:HAS_PARENT_CHUNK]->(c))""",
-                rows=graph["chunks"],
-            )
-            children = [row for row in graph["chunks"] if row.get("chunk_role") == "child"]
-            await tx.run(
-                """UNWIND $rows AS row MATCH (c:PdfChunk {chunk_id: row.chunk_id}),
-                (p:PdfChunk {chunk_id: row.parent_chunk_id}) CREATE (c)-[:CHILD_OF]->(p)""",
-                rows=children,
-            )
-            derivations = [
-                {"chunk_id": row["chunk_id"], "block_id": block_id}
-                for row in graph["chunks"] for block_id in row.get("source_block_ids", [])
-            ]
-            await tx.run(
-                """UNWIND $rows AS row MATCH (c:PdfChunk {chunk_id: row.chunk_id}),
-                (b:PdfBlock {block_id: row.block_id}) CREATE (c)-[:DERIVED_FROM]->(b)""",
-                rows=derivations,
-            )
-            page_links = [
-                {"chunk_id": row["chunk_id"], "page": page}
-                for row in graph["chunks"] for page in row.get("physical_page_numbers", [])
-            ]
-            await tx.run(
-                """UNWIND $rows AS row MATCH (c:PdfChunk {chunk_id: row.chunk_id}),
-                (p:PdfPage {ingestion_id: $ingestion_id, physical_page_number: row.page})
-                CREATE (c)-[:ON_PAGE]->(p)""",
-                rows=page_links, ingestion_id=ingestion_id,
-            )
-            validation_result = await tx.run(
-                """MATCH (child:PdfChunk {ingestion_id: $ingestion_id, chunk_role: 'child'})
-                WITH count(child) AS children,
-                     count(CASE WHEN size(child.text_embedding) = $dimension THEN 1 END) AS vectors
-                WHERE children > 0 AND children = vectors RETURN children""",
-                ingestion_id=ingestion_id, dimension=get_settings().embedding_dimension,
-            )
-            if not await validation_result.single():
-                raise EmbeddingPackageError("Imported graph failed transactional vector validation")
-        await self.graph_session.execute_write(write)
+            record = await result.single()
+            return record["previous_id"] if record else None
+        return await self.graph_session.execute_write(activate)
+
+    async def _delete_ingestion_graph(self, ingestion_id: str) -> None:
+        await self.graph_session.run(
+            "MATCH (node {ingestion_id: $ingestion_id}) DETACH DELETE node",
+            ingestion_id=ingestion_id,
+        )

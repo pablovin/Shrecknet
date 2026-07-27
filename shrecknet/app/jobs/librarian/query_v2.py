@@ -25,11 +25,14 @@ from app.jobs.librarian.prompts import (
 )
 from app.jobs.librarian.retrieval_strategies import get_librarian_retrieval_strategy, is_table_like_query
 from app.jobs.librarian.schemas import LibrarianQueryRequest, LibrarianQueryResponse, RetrievedChunk
+from app.jobs.elder.context_budget import estimate_tokens
 from app.jobs.shrecknet import validate_or_repair_json
 from app.models.agent import Agent
 from app.models.library import LibraryItem
 
 logger = logging.getLogger(__name__)
+
+SYNTHESIS_EVIDENCE_TOKEN_BUDGET = 30_000
 
 
 @dataclass(slots=True)
@@ -109,8 +112,20 @@ class LibrarianQueryV2:
             if not chunks:
                 answer = "I couldn't find any relevant information in the available books to answer your question."
             else:
+                synthesis_chunks, evidence_tokens = self._select_synthesis_evidence(chunks)
+                trace.append({"step": "v2_synthesis_evidence_budget", "data": {
+                    "candidate_chunks": len(chunks),
+                    "selected_chunks": len(synthesis_chunks),
+                    "estimated_evidence_tokens": evidence_tokens,
+                    "budget_tokens": SYNTHESIS_EVIDENCE_TOKEN_BUDGET,
+                    "overflow_chunk_allowed": evidence_tokens > SYNTHESIS_EVIDENCE_TOKEN_BUDGET,
+                }})
+                logger.info(
+                    "librarian_v2_synthesis_evidence_budget run_id=%s candidate_chunks=%s selected_chunks=%s estimated_evidence_tokens=%s budget_tokens=%s",
+                    run_id, len(chunks), len(synthesis_chunks), evidence_tokens, SYNTHESIS_EVIDENCE_TOKEN_BUDGET,
+                )
                 raw = await self._synthesize(
-                    request.query, chunks, agent.writing_style, rpg_system, trace, debug,
+                    request.query, synthesis_chunks, agent.writing_style, rpg_system, trace, debug,
                     validation=validation,
                     warning=None if validation.adequate else validation.reason or stop,
                 )
@@ -236,6 +251,25 @@ class LibrarianQueryV2:
         trace.append({"step": "answer_with_style", "data": {"chunks_used": len(chunks)}})
         debug.write("llm_synthesis", input={"messages": [system, prompt]}, output={"raw_answer": answer})
         return answer
+
+    @staticmethod
+    def _select_synthesis_evidence(chunks: list[RetrievedChunk]) -> tuple[list[RetrievedChunk], int]:
+        """Keep ranked evidence through one budget-crossing chunk for synthesis."""
+        selected: list[RetrievedChunk] = []
+        total_tokens = 0
+        overflow_chunk_added = False
+        for number, chunk in enumerate(chunks, 1):
+            if overflow_chunk_added:
+                break
+            rendered = (
+                f"\n--- Source {number} (source_id={chunk.source_id}): {chunk.book_title or 'Book'}, "
+                f"Page {chunk.display_page_label or chunk.page_number} ---\n"
+                f"{'[INCOMPLETE EVIDENCE: do not infer a partial list.]' if chunk.incomplete_evidence else chunk.text}\n"
+            )
+            total_tokens += estimate_tokens(rendered)
+            selected.append(chunk)
+            overflow_chunk_added = total_tokens > SYNTHESIS_EVIDENCE_TOKEN_BUDGET
+        return selected, total_tokens
 
     @staticmethod
     def _merge(current: list[dict[str, Any]], incoming: list[dict[str, Any]]) -> list[dict[str, Any]]:

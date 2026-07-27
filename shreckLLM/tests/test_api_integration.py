@@ -559,6 +559,62 @@ async def test_chat_jobs_continue_after_runtime_refresh(monkeypatch, tmp_path) -
 
 
 @pytest.mark.asyncio
+async def test_chat_job_worker_pool_executes_independent_jobs_concurrently(monkeypatch, tmp_path) -> None:
+    import app.config_store as config_store
+
+    settings = Settings(
+        redis_url="redis://localhost:6379/15",
+        data_dir=str(tmp_path),
+        bootstrap_max_concurrent_requests=2,
+        ollama_prewarm_on_startup=False,
+    )
+    config_store._cache = None
+    monkeypatch.setattr(config_store, "get_settings", lambda: settings)
+    service = ChatService(settings)
+    both_started = asyncio.Event()
+    release = asyncio.Event()
+    running = 0
+
+    async def fake_execute(request: ChatRequest) -> ChatResponse:
+        nonlocal running
+        running += 1
+        if running == 2:
+            both_started.set()
+        await release.wait()
+        return ChatResponse(
+            text="ok",
+            provider_id=request.provider_id,
+            requested_model=request.model,
+            resolved_model=request.model,
+            provider_request_id=None,
+            model=request.model,
+            usage=ChatUsage(prompt_tokens=1, completion_tokens=1, total_tokens=2),
+            latency_ms=1.0,
+            conversation_id=None,
+            memory_applied=False,
+            metadata=None,
+        )
+
+    monkeypatch.setattr(service, "_execute_chat_request", fake_execute)
+    monkeypatch.setattr(service, "_effective_provider_active", lambda *_args: (True, None))
+    request = ChatRequest(provider_id="ollama", model="gemma3:4b", messages=[{"role": "user", "content": "hello"}])
+    try:
+        first = await service.submit_chat_job(request)
+        second = await service.submit_chat_job(request)
+        await asyncio.wait_for(both_started.wait(), timeout=1.0)
+        release.set()
+        await asyncio.gather(
+            service.wait_for_chat_job_result(first.job_id, timeout_s=1.0),
+            service.wait_for_chat_job_result(second.job_id, timeout_s=1.0),
+        )
+        assert service.get_chat_job_status(first.job_id).queue_wait_ms is not None
+        assert service.get_chat_job_status(second.job_id).execution_ms is not None
+    finally:
+        release.set()
+        await service.aclose()
+
+
+@pytest.mark.asyncio
 async def test_prewarm_only_runs_for_active_providers(monkeypatch, tmp_path) -> None:
     import app.config_store as config_store
 

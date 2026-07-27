@@ -13,6 +13,7 @@ from app.services.librarian_embedding_package_service import (
     PACKAGE_FORMAT,
     PACKAGE_VERSION,
 )
+import app.services.librarian_embedding_package_service as package_module
 
 
 def _graph() -> dict:
@@ -90,3 +91,23 @@ def test_validation_rejects_non_finite_vectors() -> None:
     with pytest.raises(EmbeddingPackageError, match="invalid child vector"):
         LibrarianEmbeddingPackageService._validate_graph(graph, check_runtime=False)
 
+
+@pytest.mark.asyncio
+async def test_graph_writes_are_split_into_bounded_transactions(monkeypatch) -> None:
+    captured: list[list[dict]] = []
+
+    class Transaction:
+        async def run(self, _cypher, **params):
+            captured.append(params["rows"])
+
+    class Session:
+        async def execute_write(self, callback):
+            await callback(Transaction())
+
+    monkeypatch.setattr(package_module, "IMPORT_BATCH_SIZE", 2)
+    service = LibrarianEmbeddingPackageService(Session())
+    rows = [{"id": index} for index in range(5)]
+
+    await service._write_batches("UNWIND $rows AS row RETURN row", rows)
+
+    assert captured == [rows[:2], rows[2:4], rows[4:]]

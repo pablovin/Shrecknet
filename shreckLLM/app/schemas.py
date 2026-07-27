@@ -60,6 +60,8 @@ class ChatJobStatusResponse(BaseModel):
     resolved_model: str | None = None
     requested_model: str | None = None
     retry_count: int = 0
+    queue_wait_ms: float | None = None
+    execution_ms: float | None = None
     error: str | None = None
 
 

@@ -37,3 +37,10 @@ current CharacterAgent, immutable `CharacterIdentityRevision` snapshots,
 `CharacterIdentityChange` provenance, and ScenePerspectives in Neo4j. Revision
 0 contains entity evidence only, preventing later narrative facts from leaking
 into earlier perspectives.
+
+CharacterAgent queries use durable SQL `BackgroundJob` records and the
+`character_agent` Celery queue. The HTTP submission validates access and
+returns immediately; the worker reloads current graph identity, runs compact
+framing and deliberation stages, and records safe stage progress and terminal
+output. shreckLLM owns provider retries, while Shrecknet polls each submitted
+shreckLLM job without a pipeline-level HTTP deadline.

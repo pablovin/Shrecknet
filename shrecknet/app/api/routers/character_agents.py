@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from neo4j import AsyncSession
 from sqlalchemy import delete
@@ -16,10 +18,11 @@ from app.api.deps import (
 from app.api.agent_feature_gate import require_ai_agents_enabled
 from app.core.config_store import get_settings, is_shreckllm_configured
 from app.db.session import AsyncSessionCompat
+from app.db.jobs_session import get_jobs_session
 from app.graph.neo4j import get_neo4j_session
 from app.models.audit import AuditAction, AuditActorType, AuditEntityType
 from app.models.user import User
-from app.models.background_job import AuthorType, JobType
+from app.models.background_job import AuthorType, JobStatus, JobType
 from app.models.character_embodiment import CharacterEmbodimentDraft, CharacterEmbodimentDraftStatus
 from app.schemas.character_agent import (
     CharacterAgentCreateRequest, CharacterAgentRead, CharacterAgentStatus, CharacterAgentUpdate,
@@ -28,7 +31,7 @@ from app.schemas.character_agent import (
     CharacterAspectUpdate, CharacterGoalAssignmentCreate, CharacterGoalCreate,
     CharacterGoalRead, CharacterGoalUpdate,
     CharacterEmbodimentCandidatePage,
-    CharacterAgentQueryRequest, CharacterAgentQueryResponse,
+    CharacterAgentQueryJobRead, CharacterAgentQueryQueued, CharacterAgentQueryRequest,
     EmbodimentDraftCreate, EmbodimentDraftRead, EmbodimentDraftStart,
     CharacterBeliefCreate, CharacterBeliefRead, CharacterBeliefUpdate,
     CharacterImpactCreate, CharacterImpactRead, CharacterImpactUpdate,
@@ -38,12 +41,12 @@ from app.schemas.character_agent import (
     ScenePerspectiveUpdate,
     CharacterIdentityRevisionRead, CharacterIdentityChangeRead,
 )
-from app.integrations.llm.shreckllm_client import ShreckLLMClient
-from app.jobs.character_agent import CharacterAgentQueryJob, CharacterGenerationError
 from app.services.audit_service import AuditService
+from app.services.background_job_service import BackgroundJobService
 from app.services.character_agent_service import CharacterAgentService
 from app.services.character_embodiment_service import CharacterEmbodimentService
 from app.tasks.character_embodiment import generate_character_embodiment
+from app.tasks.character_agent_query import run_character_agent_query
 from app.utils.job_tracking import create_background_job
 from uuid import uuid4
 
@@ -61,27 +64,6 @@ def _is_admin(user: User) -> bool:
 def service(sql_session: AsyncSessionCompat = Depends(get_db_session),
             graph_session: AsyncSession = Depends(get_neo4j_session)) -> CharacterAgentService:
     return CharacterAgentService(sql_session, graph_session)
-
-
-async def query_job():
-    require_ai_agents_enabled()
-    settings = get_settings()
-    if not is_shreckllm_configured(settings):
-        raise HTTPException(status_code=503, detail="shreckLLM is not configured")
-    client = ShreckLLMClient(
-        base_url=settings.shreckllm_base_url,
-        timeout=settings.shreckllm_request_timeout_s,
-        max_retries=settings.shreckllm_max_retries,
-    )
-    try:
-        yield CharacterAgentQueryJob(
-            llm_client=client,
-            framing_model=settings.model_character_agent_framing,
-            deliberation_model=settings.model_character_agent_deliberation,
-            verification_model=settings.model_character_agent_verification,
-        )
-    finally:
-        await client.aclose()
 
 
 async def audit_event(audit: AuditService, actor: User, action: AuditAction,
@@ -238,24 +220,90 @@ async def list_identity_changes(
     )
 
 
-@router.post("/{agent_id}/query", response_model=CharacterAgentQueryResponse)
+@router.post(
+    "/{agent_id}/query",
+    response_model=CharacterAgentQueryQueued,
+    status_code=202,
+)
 async def query_character_agent(
     agent_id: str,
     payload: CharacterAgentQueryRequest,
     actor: User = Depends(get_current_user),
     svc: CharacterAgentService = Depends(service),
-    job: CharacterAgentQueryJob = Depends(query_job),
 ):
+    require_ai_agents_enabled()
+    settings = get_settings()
+    if not is_shreckllm_configured(settings):
+        raise HTTPException(status_code=503, detail="shreckLLM is not configured")
     public_only = not _is_admin(actor)
-    snapshot = None
-    if payload.use_character_identity:
-        snapshot = await svc.load_query_snapshot(agent_id, public_only=public_only)
-    else:
-        await svc.ensure_queryable(agent_id, public_only=public_only)
+    await svc.ensure_queryable(agent_id, public_only=public_only)
+    job_id = await create_background_job(
+        author_type=AuthorType.USER,
+        author_id=str(actor.id),
+        job_type=JobType.CHARACTER_AGENT_QUERY,
+        description=f"Query CharacterAgent {agent_id}",
+        details={
+            "character_agent_id": agent_id,
+            "stage": "queued",
+            "result": None,
+            "error": None,
+        },
+    )
+    run_character_agent_query.delay(
+        job_id=job_id,
+        agent_id=agent_id,
+        request_payload=payload.model_dump(mode="json", by_alias=True),
+        public_only=public_only,
+    )
+    return CharacterAgentQueryQueued(
+        job_id=job_id,
+        status_url=f"/character-agents/{agent_id}/query-jobs/{job_id}",
+    )
+
+
+@router.get(
+    "/{agent_id}/query-jobs/{job_id}",
+    response_model=CharacterAgentQueryJobRead,
+)
+async def get_character_agent_query_job(
+    agent_id: str,
+    job_id: int,
+    actor: User = Depends(get_current_user),
+    jobs_session=Depends(get_jobs_session),
+):
+    job = await BackgroundJobService(jobs_session).get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="CharacterAgent query job not found")
+    if job.job_type != JobType.CHARACTER_AGENT_QUERY:
+        raise HTTPException(status_code=404, detail="CharacterAgent query job not found")
+    if not _is_admin(actor) and (
+        job.author_type != AuthorType.USER or str(job.author_id) != str(actor.id)
+    ):
+        raise HTTPException(status_code=403, detail="Not authorized to read this query job")
     try:
-        return await job.run(payload, snapshot)
-    except CharacterGenerationError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        details = json.loads(job.details or "{}")
+    except (TypeError, ValueError):
+        details = {}
+    if details.get("character_agent_id") != agent_id:
+        raise HTTPException(status_code=404, detail="CharacterAgent query job not found")
+    status_value = job.status.value if hasattr(job.status, "value") else str(job.status)
+    stage = str(details.get("stage") or (
+        "completed" if status_value == JobStatus.DONE.value
+        else "failed" if status_value == JobStatus.FAILED.value
+        else status_value
+    ))
+    return CharacterAgentQueryJobRead(
+        job_id=job.id,
+        character_agent_id=agent_id,
+        status=status_value,
+        stage=stage,
+        progress=job.progress,
+        result=details.get("result"),
+        error=details.get("error"),
+        created_at=job.started_at,
+        updated_at=job.updated_at,
+        completed_at=job.completed_at,
+    )
 
 
 @router.get("/{agent_id}/perspectives", response_model=list[ScenePerspectiveRead])

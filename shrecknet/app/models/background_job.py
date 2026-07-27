@@ -39,6 +39,7 @@ class JobType(str, Enum):
     ONTOLOGY_INSTANCE_ENTITY_TYPE_CLEAR = "ontology_instance_entity_type_clear"
     ONTOLOGY_INSTANCE_TIMELINE_CLEAR = "ontology_instance_timeline_clear"
     CHARACTER_AGENT_EMBODIMENT = "character_agent_embodiment"
+    CHARACTER_AGENT_QUERY = "character_agent_query"
 
 
 class BackgroundJob(Base):

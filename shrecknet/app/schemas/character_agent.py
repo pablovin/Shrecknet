@@ -897,9 +897,39 @@ class CharacterAgentQueryRequest(_StrictModel):
         return value
 
 
-class CharacterAgentQueryResponse(_StrictModel):
+class CharacterAgentQueryResult(_StrictModel):
     type: Literal["text", "json"]
     content: Any
+    decision_basis: str
+
+
+class CharacterAgentQueryQueued(_StrictModel):
+    job_id: int
+    status: Literal["queued"] = "queued"
+    stage: Literal["queued"] = "queued"
+    progress: float = 0.0
+    status_url: str
+
+
+class CharacterAgentQueryError(_StrictModel):
+    code: str
+    message: str
+
+
+class CharacterAgentQueryJobRead(_StrictModel):
+    job_id: int
+    character_agent_id: str
+    status: Literal["queued", "running", "done", "failed"]
+    stage: Literal[
+        "queued", "loading_identity", "framing", "deliberating",
+        "repairing", "validating", "completed", "failed",
+    ]
+    progress: float = Field(ge=0.0, le=1.0)
+    result: CharacterAgentQueryResult | None = None
+    error: CharacterAgentQueryError | None = None
+    created_at: datetime
+    updated_at: datetime
+    completed_at: datetime | None = None
 
 
 # ── EmbodyAgent atomic service schemas ──────────────────────────────────

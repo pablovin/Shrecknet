@@ -24,10 +24,12 @@ class ShreckLLMClient:
         base_url: str,
         timeout: float = 60.0,
         max_retries: int = 2,
+        poll_without_deadline: bool = False,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.timeout = float(timeout)
         self.max_retries = max(0, int(max_retries))
+        self.poll_without_deadline = bool(poll_without_deadline)
         self._max_backoff_s = 20.0
         self._http = httpx.AsyncClient(base_url=self.base_url, timeout=self.timeout)
         self._usage_events: list[dict[str, Any]] = []
@@ -81,7 +83,7 @@ class ShreckLLMClient:
                 )
                 data = await self.wait_for_chat_job(
                     job_id,
-                    timeout_s=self.timeout,
+                    timeout_s=None if self.poll_without_deadline else self.timeout,
                     poll_interval_s=1.0,
                 )
                 text = str(data.get("text") or "")
@@ -176,7 +178,7 @@ class ShreckLLMClient:
         self,
         job_id: str,
         *,
-        timeout_s: float,
+        timeout_s: float | None,
         poll_interval_s: float,
     ) -> dict[str, Any]:
         start = asyncio.get_running_loop().time()
@@ -206,7 +208,9 @@ class ShreckLLMClient:
             if status_value == "failed":
                 error = (status_data or {}).get("error")
                 raise RuntimeError(f"chat job failed job_id={job_id} error={error}")
-            if (asyncio.get_running_loop().time() - start) >= max(0.1, float(timeout_s)):
+            if timeout_s is not None and (
+                asyncio.get_running_loop().time() - start
+            ) >= max(0.1, float(timeout_s)):
                 raise httpx.TimeoutException(f"chat job timed out job_id={job_id}")
             await asyncio.sleep(interval)
 

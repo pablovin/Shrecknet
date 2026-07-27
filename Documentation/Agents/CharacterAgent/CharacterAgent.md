@@ -254,10 +254,11 @@ The service also enforces these rules:
 
 ## Query projection
 
-`POST /character-agents/{character_agent_id}/query` loads the complete active
-identity in one Neo4j operation, then performs exactly three normal LLM calls:
-task framing, character deliberation, and grounding verification/rendering.
-Calls two and three receive only evidence selected during framing.
+`POST /character-agents/{character_agent_id}/query` creates a background job.
+The worker loads the complete active identity in one Neo4j operation, then
+normally performs two LLM calls: compact task/identity framing followed by
+deliberation and rendering. The final call receives only identity selected
+during framing. Invalid final JSON may trigger one repair call.
 
 The snapshot contains:
 
@@ -270,20 +271,21 @@ Perspectives, emotions, beliefs, and impacts are intentionally not part of the
 current query snapshot.
 
 Aspects are ordered by assignment importance, intensity, then ID. Goals are
-ordered by priority, commitment, status, then ID. Backend node identifiers for
-the CharacterAgent itself are not passed to the LLM.
+ordered by priority, commitment, status, then ID. The background story and
+backend CharacterAgent identifier are omitted from the framing prompt and all
+later query stages.
 
 The caller's `system_instruction` controls the task, tone, constraints, and
 output shape below the immutable service rules. It cannot replace the identity,
 request internal reasoning, override security, or authorize external actions.
 
 Trait names must use the fixed axes. Aspect and goal IDs must come from the
-snapshot. Missing information remains uncertainty, unsupported claims are
-rejected, and this job never adds a fourth JSON-repair LLM call.
+snapshot. Missing information remains uncertainty. Final output is validated
+deterministically and may use at most one JSON-repair LLM call.
 
 The stages use `model_character_agent_framing`,
 `model_character_agent_deliberation`, and
-`model_character_agent_verification`, exposed through the existing config API.
+`model_character_agent_verification` as the repair target, exposed through the existing config API.
 All CharacterAgent model targets default to an empty `provider` and `name`.
 They remain unselected during pre-provider startup and must be populated by an
 administrator or by model reconciliation when AI agents are enabled.
@@ -297,9 +299,7 @@ unpublishing are graph property updates and do not copy or move an agent.
 A later query revision may select perspective aggregates dynamically and allow
 the caller to include or omit perspectives, emotions, beliefs, and impacts for
 a particular task. That future projection must preserve the distinction
-between canonical scene facts and subjective character claims. This version
-adds persistence and CRUD infrastructure and does not change query input,
-prompt contracts, or LLM call count.
+between canonical scene facts and subjective character claims.
 
 ## Related documentation
 

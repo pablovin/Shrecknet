@@ -214,17 +214,20 @@ agent, or projected canonical scene cascades perspective-owned children.
 ## Query
 
 `POST /character-agents/{character_agent_id}/query` requires authentication and
-enabled AI agents. Non-administrators may query only public agents, while
-administrators may query public or private agents. The agent must be active.
-`use_character_identity` defaults to `true`; this mode performs one Neo4j
-identity snapshot operation and exactly three normal LLM calls. When
-`use_character_identity` is `false`, the operation performs only a minimal
-Neo4j access/status check and one generic LLM call. The generic call receives no
-CharacterAgent identity, traits, aspects, goals, or graph metadata. Neither mode
-has graph write side effects or persists internal generation state. The query
-calls do not pass an explicit output token cap to shreckLLM. `generation`
-contains only `temperature`; requests that still contain the removed
-`generation.mode` or `generation.max_tokens` fields return `422`.
+enabled AI agents and returns `202` with a background job ID and `status_url`.
+Poll `GET /character-agents/{character_agent_id}/query-jobs/{job_id}` until its
+status is `done` or `failed`. Non-administrators may submit and read only their
+own jobs for public agents; administrators may use public or private agents.
+The agent must be active.
+
+`use_character_identity` defaults to `true` and normally performs two LLM calls:
+compact identity framing followed by deliberation/rendering. Invalid final JSON
+may trigger one repair call. Generic mode normally performs one call and
+receives no CharacterAgent identity. shreckLLM owns provider retries; Shrecknet
+polls the submitted shreckLLM job without a whole-stage deadline.
+
+`generation` contains only `temperature`; removed `generation.mode` and
+`generation.max_tokens` fields return `422`.
 
 See [CharacterAgent Query](Query/Query.md) for request and response contracts.
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from datetime import datetime, timezone
 
 import pytest
 from pydantic import ValidationError
@@ -14,6 +15,7 @@ from app.api.routers.character_agents import (
     list_agent_goals,
     list_agents,
     query_character_agent,
+    get_character_agent_query_job,
 )
 from app.schemas.character_agent import (
     CharacterAgentCreate,
@@ -25,6 +27,7 @@ from app.schemas.character_agent import (
     CharacterAspectRead,
     CharacterGoalCreate,
     CharacterGoalRead,
+    CharacterAgentQueryRequest,
 )
 
 
@@ -180,23 +183,31 @@ class _ReadService:
         self.calls.append(("queryable", args, kwargs))
 
 
-class _QueryJob:
-    async def run(self, payload, snapshot):
-        return {"type": "text", "content": "response"}
-
-
 @pytest.mark.asyncio
-async def test_authenticated_reads_are_public_only_while_admin_reads_are_unrestricted():
+async def test_authenticated_reads_are_public_only_while_admin_reads_are_unrestricted(
+    monkeypatch,
+):
+    import app.api.routers.character_agents as router
+
+    async def create_job(**_kwargs):
+        return 41
+
+    monkeypatch.setattr(router, "require_ai_agents_enabled", lambda: None)
+    monkeypatch.setattr(router, "is_shreckllm_configured", lambda _settings: True)
+    monkeypatch.setattr(router, "create_background_job", create_job)
+    monkeypatch.setattr(
+        router.run_character_agent_query, "delay", lambda **_kwargs: None
+    )
     service = _ReadService()
-    user = SimpleNamespace(role="player")
-    admin = SimpleNamespace(role="admin")
+    user = SimpleNamespace(id=1, role="player")
+    admin = SimpleNamespace(id=2, role="admin")
 
     await list_agents(None, None, None, 0, 50, user, service)
     await get_agent("agent-1", user, service)
     await list_agent_aspects("agent-1", user, service)
     await list_agent_goals("agent-1", user, service)
     await query_character_agent(
-        "agent-1", SimpleNamespace(use_character_identity=True), user, service, _QueryJob()
+        "agent-1", CharacterAgentQueryRequest(query="Reply"), user, service
     )
     await list_agents(None, None, None, 0, 50, admin, service)
     await get_agent("agent-2", admin, service)
@@ -211,13 +222,68 @@ async def test_authenticated_reads_are_public_only_while_admin_reads_are_unrestr
 
 
 @pytest.mark.asyncio
-async def test_generic_query_checks_access_without_loading_character_identity():
-    service = _ReadService()
-    user = SimpleNamespace(role="player")
-    payload = SimpleNamespace(use_character_identity=False)
+async def test_generic_query_checks_access_without_loading_character_identity(monkeypatch):
+    import app.api.routers.character_agents as router
 
-    await query_character_agent("agent-1", payload, user, service, _QueryJob())
+    async def create_job(**_kwargs):
+        return 42
+
+    monkeypatch.setattr(router, "require_ai_agents_enabled", lambda: None)
+    monkeypatch.setattr(router, "is_shreckllm_configured", lambda _settings: True)
+    monkeypatch.setattr(router, "create_background_job", create_job)
+    monkeypatch.setattr(
+        router.run_character_agent_query, "delay", lambda **_kwargs: None
+    )
+    service = _ReadService()
+    user = SimpleNamespace(id=1, role="player")
+    payload = CharacterAgentQueryRequest(query="Reply", use_character_identity=False)
+
+    response = await query_character_agent("agent-1", payload, user, service)
 
     assert service.calls == [
         ("queryable", ("agent-1",), {"public_only": True})
     ]
+    assert response.job_id == 42
+    assert response.status == "queued"
+
+
+@pytest.mark.asyncio
+async def test_query_job_polling_enforces_owner_and_returns_terminal_result(monkeypatch):
+    import app.api.routers.character_agents as router
+
+    row = SimpleNamespace(
+        id=42,
+        author_type="user",
+        author_id="1",
+        job_type="character_agent_query",
+        status="done",
+        progress=1.0,
+        details=(
+            '{"character_agent_id":"agent-1","stage":"completed",'
+            '"result":{"type":"json","content":{"choice_id":"accept"},'
+            '"decision_basis":"The evidence favors acceptance."},"error":null}'
+        ),
+        started_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+        completed_at=datetime.now(timezone.utc),
+    )
+
+    class Jobs:
+        def __init__(self, _session):
+            pass
+
+        async def get_job(self, _job_id):
+            return row
+
+    monkeypatch.setattr(router, "BackgroundJobService", Jobs)
+    result = await get_character_agent_query_job(
+        "agent-1", 42, SimpleNamespace(id=1, role="player"), object()
+    )
+    assert result.status == "done"
+    assert result.result.content == {"choice_id": "accept"}
+
+    with pytest.raises(Exception) as exc_info:
+        await get_character_agent_query_job(
+            "agent-1", 42, SimpleNamespace(id=2, role="player"), object()
+        )
+    assert exc_info.value.status_code == 403

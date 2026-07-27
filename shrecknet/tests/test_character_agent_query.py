@@ -12,7 +12,6 @@ from app.jobs.character_agent.prompts import (
     DELIBERATION_PROMPT,
     FRAME_PROMPT,
     GENERIC_QUERY_PROMPT,
-    VERIFY_PROMPT,
 )
 from app.jobs.shrecknet.agent import parse_json_deterministically
 from app.schemas.character_agent import (
@@ -54,35 +53,34 @@ class FakeLLM:
 
 def _frame(**changes):
     value = {
-        "task_type": "dialogue", "task_summary": "Reply", "mandatory_instructions": [],
-        "relevant_trait_axes": [{"trait": "trusting_suspicious", "relevance": 90, "reason": "Threat"}],
+        "context_summary": "A threat must be answered.",
+        "relevant_trait_axes": ["trusting_suspicious"],
         "relevant_aspect_ids": ["aspect-1"], "relevant_goal_ids": ["goal-1"],
-        "character_conflicts": [], "unknowns": [], "explicit_options": [],
+        "conflicts": [], "unknowns": [],
     }
     value.update(changes)
     return json.dumps(value)
 
 
 DELIBERATION = json.dumps({
-    "interpretation": "A threat", "candidate_responses": [{
-        "candidate": "Refuse", "goal_alignment": 90, "aspect_alignment": 70,
-        "trait_alignment": 80, "feasibility": 60, "overall_preference": 82,
-        "supporting_ids": ["goal-1"],
-    }], "preferred_response": "Refuse", "internal_conflict": None,
-    "decision_basis": ["Protect villagers"], "confidence": 82,
+    "content": {"spoken_response": "I refuse.", "confidence": 82},
+    "decision_basis": "Protecting the villagers is the priority.",
 })
 
 
 @pytest.mark.asyncio
-async def test_query_uses_exactly_three_calls_and_validates_json_contract():
-    verified = json.dumps({
-        "claim_assessments": [{"claim": "I refuse.", "classification": "creative_expression", "supporting_ids": []}],
-        "unsupported_claims_removed": [],
-        "rendered_response": {"spoken_response": "I refuse.", "confidence": 82},
-    })
-    llm = FakeLLM([_frame(), DELIBERATION, verified])
+async def test_query_uses_exactly_two_calls_and_passes_lean_stage_two_payload():
+    llm = FakeLLM([_frame(), DELIBERATION])
+    stages = []
+
+    async def report(stage, progress):
+        stages.append((stage, progress))
+
     target = LLMModelTarget(provider="test", name="model")
-    job = CharacterAgentQueryJob(llm_client=llm, framing_model=target, deliberation_model=target, verification_model=target)
+    job = CharacterAgentQueryJob(
+        llm_client=llm, framing_model=target, deliberation_model=target,
+        verification_model=target, report_stage=report,
+    )
     request = CharacterAgentQueryRequest.model_validate({
         "query": "Answer the threat", "response_format": {"type": "json", "schema": {
             "type": "object", "required": ["spoken_response", "confidence"],
@@ -92,10 +90,30 @@ async def test_query_uses_exactly_three_calls_and_validates_json_contract():
     })
     result = await job.run(request, SNAPSHOT)
     assert result.content["confidence"] == 82
-    assert len(llm.calls) == 3
+    assert result.decision_basis == "Protecting the villagers is the priority."
+    assert len(llm.calls) == 2
+    assert [stage for stage, _ in stages] == [
+        "framing", "deliberating", "validating"
+    ]
     assert llm.calls[1]["temperature"] == 0.7
     assert all("max_tokens" not in call for call in llm.calls)
-    assert "complete_character_profile" not in llm.calls[1]["messages"][1]["content"]
+    framing = json.loads(llm.calls[0]["messages"][1]["content"])
+    assert set(framing) == {"query", "context", "agent_profile"}
+    assert framing["agent_profile"]["active_aspects"] == [
+        {"id": "aspect-1", "name": "Negotiator"}
+    ]
+    deliberation = json.loads(llm.calls[1]["messages"][1]["content"])
+    assert set(deliberation) == {
+        "query", "context_summary", "system_instruction", "relevant_trait_axes",
+        "relevant_aspect_names", "relevant_goal_names", "conflicts", "unknowns",
+        "response_format",
+    }
+    encoded = json.dumps(deliberation)
+    for excluded in (
+        "background_story", "trait_adherence", "aspect-1", "goal-1",
+        "Skilled at negotiation", "Protect villagers\":",
+    ):
+        assert excluded not in encoded
 
 
 @pytest.mark.parametrize("removed_field", ["mode", "max_tokens"])
@@ -109,7 +127,10 @@ def test_query_rejects_removed_generation_fields(removed_field):
 
 @pytest.mark.asyncio
 async def test_query_without_character_identity_uses_one_generic_text_call():
-    llm = FakeLLM(["A neutral response."])
+    llm = FakeLLM([json.dumps({
+        "content": "A neutral response.",
+        "decision_basis": "The supplied facts support a neutral assessment.",
+    })])
     target = LLMModelTarget(provider="test", name="model")
     job = CharacterAgentQueryJob(
         llm_client=llm,
@@ -126,7 +147,11 @@ async def test_query_without_character_identity_uses_one_generic_text_call():
 
     result = await job.run(request)
 
-    assert result.model_dump() == {"type": "text", "content": "A neutral response."}
+    assert result.model_dump() == {
+        "type": "text",
+        "content": "A neutral response.",
+        "decision_basis": "The supplied facts support a neutral assessment.",
+    }
     assert len(llm.calls) == 1
     assert llm.calls[0]["model"] == target
     assert llm.calls[0]["usage_tag"] == "character_agent.generic"
@@ -139,7 +164,10 @@ async def test_query_without_character_identity_uses_one_generic_text_call():
 
 @pytest.mark.asyncio
 async def test_query_without_character_identity_validates_json_contract():
-    llm = FakeLLM(['```json\n{"choice":"accept"}\n```'])
+    llm = FakeLLM([json.dumps({
+        "content": {"choice": "accept"},
+        "decision_basis": "Accept is best supported.",
+    })])
     target = LLMModelTarget(provider="test", name="model")
     job = CharacterAgentQueryJob(
         llm_client=llm,
@@ -177,6 +205,34 @@ async def test_query_rejects_invented_evidence_without_repair_call():
     assert len(llm.calls) == 1
 
 
+@pytest.mark.asyncio
+async def test_query_repairs_final_output_once_and_validates_repair():
+    repaired = json.dumps({
+        "content": {"choice": "accept"},
+        "decision_basis": "Accept is best supported.",
+    })
+    llm = FakeLLM([_frame(), "not json", repaired])
+    target = LLMModelTarget(provider="test", name="model")
+    job = CharacterAgentQueryJob(
+        llm_client=llm, framing_model=target,
+        deliberation_model=target, verification_model=target,
+    )
+    request = CharacterAgentQueryRequest.model_validate({
+        "query": "Choose",
+        "response_format": {"type": "json", "schema": {
+            "type": "object", "required": ["choice"],
+            "properties": {"choice": {"enum": ["accept", "reject"]}},
+        }},
+    })
+    result = await job.run(request, SNAPSHOT)
+    assert result.content == {"choice": "accept"}
+    assert [call["usage_tag"] for call in llm.calls] == [
+        "character_agent.frame",
+        "character_agent.deliberate",
+        "character_agent.repair",
+    ]
+
+
 def test_deterministic_json_parser_handles_fences_and_prefixes():
     assert parse_json_deterministically("```json\n{\"ok\": true}\n```") == {"ok": True}
     assert parse_json_deterministically("Result: {\"ok\": true} trailing") == {"ok": True}
@@ -184,15 +240,12 @@ def test_deterministic_json_parser_handles_fences_and_prefixes():
 
 def test_prompts_embed_complete_stage_contracts():
     assert "general-purpose backend response generator" in GENERIC_QUERY_PROMPT
-    assert "Stage 1 of 3" in FRAME_PROMPT
-    assert '"complete_character_profile"' in FRAME_PROMPT
+    assert "Stage 1 of 2" in FRAME_PROMPT
+    assert '"agent_profile"' in FRAME_PROMPT
     assert '"relevant_goal_ids"' in FRAME_PROMPT
-    assert "Stage 2 of 3" in DELIBERATION_PROMPT
-    assert '"relevant_character_evidence"' in DELIBERATION_PROMPT
-    assert '"overall_preference"' in DELIBERATION_PROMPT
-    assert "Stage 3 of 3" in VERIFY_PROMPT
-    assert '"supporting_evidence"' in VERIFY_PROMPT
-    assert '"rendered_response"' in VERIFY_PROMPT
+    assert "Stage 2 of 2" in DELIBERATION_PROMPT
+    assert '"context_summary"' in DELIBERATION_PROMPT
+    assert '"decision_basis"' in DELIBERATION_PROMPT
 
 
 def test_character_agent_defaults_and_configuration_targets():

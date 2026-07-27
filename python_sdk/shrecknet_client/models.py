@@ -48,9 +48,36 @@ class CharacterAgentQueryRequest(BaseModel):
     generation: CharacterQueryGeneration = Field(default_factory=CharacterQueryGeneration)
 
 
-class CharacterAgentQueryResponse(BaseModel):
+class CharacterAgentQueryResult(BaseModel):
     type: str
     content: Any
+    decision_basis: str
+
+
+class CharacterAgentQueryQueued(BaseModel):
+    job_id: int
+    status: str
+    stage: str
+    progress: float
+    status_url: str
+
+
+class CharacterAgentQueryError(BaseModel):
+    code: str
+    message: str
+
+
+class CharacterAgentQueryJobRead(BaseModel):
+    job_id: int
+    character_agent_id: str
+    status: str
+    stage: str
+    progress: float
+    result: CharacterAgentQueryResult | None = None
+    error: CharacterAgentQueryError | None = None
+    created_at: datetime
+    updated_at: datetime
+    completed_at: datetime | None = None
 
 
 class EmbodimentDraftCreate(BaseModel):

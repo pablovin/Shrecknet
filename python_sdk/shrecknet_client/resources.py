@@ -59,7 +59,8 @@ from .models import (
     ProviderValidation,
     World,
     CharacterAgentQueryRequest,
-    CharacterAgentQueryResponse,
+    CharacterAgentQueryJobRead,
+    CharacterAgentQueryQueued,
     CharacterAgentRead,
     CharacterAgentCreateRequest,
     CharacterAgentUpdate,
@@ -339,13 +340,37 @@ class CharacterAgentsAPI:
         )
         return [CharacterIdentityChangeRead.model_validate(item) for item in data]
 
-    async def query(self, character_agent_id: str, payload: CharacterAgentQueryRequest) -> CharacterAgentQueryResponse:
+    async def query(
+        self, character_agent_id: str, payload: CharacterAgentQueryRequest
+    ) -> CharacterAgentQueryQueued:
         data = await self._client.raw_request(
             "POST",
             f"/character-agents/{character_agent_id}/query",
             json=payload.model_dump(mode="json", by_alias=True, exclude_none=True),
         )
-        return CharacterAgentQueryResponse.model_validate(data)
+        return CharacterAgentQueryQueued.model_validate(data)
+
+    async def get_query_job(
+        self, character_agent_id: str, job_id: int
+    ) -> CharacterAgentQueryJobRead:
+        data = await self._client.raw_request(
+            "GET",
+            f"/character-agents/{character_agent_id}/query-jobs/{job_id}",
+        )
+        return CharacterAgentQueryJobRead.model_validate(data)
+
+    async def wait_for_query(
+        self,
+        character_agent_id: str,
+        job_id: int,
+        *,
+        poll_interval: float = 1.0,
+    ) -> CharacterAgentQueryJobRead:
+        while True:
+            job = await self.get_query_job(character_agent_id, job_id)
+            if job.status in {"done", "failed"}:
+                return job
+            await asyncio.sleep(max(0.05, poll_interval))
 
     async def start_embodiment(self, payload: EmbodimentDraftCreate) -> EmbodimentDraftStart:
         data = await self._client.raw_request(

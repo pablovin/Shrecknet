@@ -29,6 +29,7 @@ def configure_celery_app() -> None:
         "architect.analyze_instance": {"queue": "architect"},
         "architect.generate_entities": {"queue": "architect"},
         "character_agent.generate_embodiment": {"queue": "character_agent"},
+        "character_agent.query": {"queue": "character_agent"},
     }
     celery_app.conf.task_always_eager = settings.celery_task_always_eager
     celery_app.conf.task_eager_propagates = True

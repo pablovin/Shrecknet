@@ -5,13 +5,19 @@ from shrecknet_client import Shrecknet
 from shrecknet_client.models import CharacterAgentQueryRequest
 
 async with Shrecknet(token="...") as sdk:
-    response = await sdk.character_agents.query(
+    queued = await sdk.character_agents.query(
         "character-agent-id",
         CharacterAgentQueryRequest(
             query="Write a brief in-character reply to the accusation."
         ),
     )
-    print(response.content)
+    job = await sdk.character_agents.wait_for_query(
+        "character-agent-id", queued.job_id
+    )
+    if job.status == "failed":
+        raise RuntimeError(job.error.message)
+    print(job.result.content)
+    print(job.result.decision_basis)
 ```
 
 By default, the query uses the CharacterAgent's identity, traits, aspects, and
@@ -19,7 +25,7 @@ goals. Set `use_character_identity=False` to make one generic LLM call without
 sending CharacterAgent profile data:
 
 ```python
-response = await sdk.character_agents.query(
+queued = await sdk.character_agents.query(
     "character-agent-id",
     CharacterAgentQueryRequest(
         query="Give a neutral assessment of the accusation.",

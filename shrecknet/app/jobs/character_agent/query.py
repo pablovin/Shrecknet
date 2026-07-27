@@ -1,8 +1,9 @@
-"""Three-call, graph-grounded CharacterAgent query orchestration."""
+"""Two-stage, graph-grounded CharacterAgent query orchestration."""
 
 from __future__ import annotations
 
 import json
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from jsonschema import Draft202012Validator, SchemaError, ValidationError
@@ -14,11 +15,24 @@ from app.jobs.character_agent.prompts import (
     DELIBERATION_PROMPT,
     FRAME_PROMPT,
     GENERIC_QUERY_PROMPT,
-    VERIFY_PROMPT,
 )
-from app.jobs.character_agent.schemas import CharacterDeliberation, CharacterQueryFrame, VerifiedRendering
-from app.jobs.shrecknet.agent import parse_json_deterministically
-from app.schemas.character_agent import CharacterAgentQueryRequest, CharacterAgentQueryResponse
+from app.jobs.character_agent.schemas import CharacterDeliberation, CharacterQueryFrame
+from app.jobs.shrecknet.agent import parse_json_deterministically, repair_invalid_json
+from app.schemas.character_agent import CharacterAgentQueryRequest, CharacterAgentQueryResult
+
+
+StageReporter = Callable[[str, float], Awaitable[None]]
+
+TRAIT_EXPLANATIONS = {
+    "calm_aggressive": "0 means calm; 100 means aggressive.",
+    "cautious_reckless": "0 means cautious; 100 means reckless.",
+    "compassionate_ruthless": "0 means compassionate; 100 means ruthless.",
+    "trusting_suspicious": "0 means trusting; 100 means suspicious.",
+    "honest_deceptive": "0 means honest; 100 means deceptive.",
+    "patient_impulsive": "0 means patient; 100 means impulsive.",
+    "humble_proud": "0 means humble; 100 means proud.",
+    "cooperative_dominating": "0 means cooperative; 100 means dominating.",
+}
 
 
 class CharacterGenerationError(RuntimeError):
@@ -26,58 +40,38 @@ class CharacterGenerationError(RuntimeError):
 
 
 class CharacterAgentQueryJob:
-    def __init__(self, *, llm_client: ShreckLLMClient, framing_model: LLMModelTarget,
-                 deliberation_model: LLMModelTarget, verification_model: LLMModelTarget) -> None:
+    def __init__(
+        self,
+        *,
+        llm_client: ShreckLLMClient,
+        framing_model: LLMModelTarget,
+        deliberation_model: LLMModelTarget,
+        verification_model: LLMModelTarget,
+        report_stage: StageReporter | None = None,
+    ) -> None:
         self.llm = llm_client
         self.framing_model = framing_model
         self.deliberation_model = deliberation_model
-        self.verification_model = verification_model
+        # Preserve the configured verification target as the JSON repair target.
+        self.repair_model = verification_model
+        self.report_stage = report_stage
 
-    @staticmethod
-    def _parse(model_type, raw: str, stage: str):
-        try:
-            return model_type.model_validate(parse_json_deterministically(raw))
-        except (ValueError, PydanticValidationError) as exc:
-            raise CharacterGenerationError(f"{stage} returned invalid structured output") from exc
+    async def _report(self, stage: str, progress: float) -> None:
+        if self.report_stage is not None:
+            await self.report_stage(stage, progress)
 
     @staticmethod
     def _json(data: Any) -> str:
         return json.dumps(data, ensure_ascii=False, separators=(",", ":"))
 
     @staticmethod
-    def _validate_refs(frame: CharacterQueryFrame, snapshot: dict[str, Any]) -> None:
-        aspect_ids = {item["id"] for item in snapshot["aspects"]}
-        goal_ids = {item["id"] for item in snapshot["goals"]}
-        if not set(frame.relevant_aspect_ids) <= aspect_ids or not set(frame.relevant_goal_ids) <= goal_ids:
-            raise CharacterGenerationError("task framing referenced unknown character evidence")
-
-    @staticmethod
-    def _validate_options(frame: CharacterQueryFrame, request: CharacterAgentQueryRequest) -> None:
-        supplied = json.dumps(
-            {"query": request.query, "context": request.context}, ensure_ascii=False
-        ).casefold()
-        if any(option.casefold() not in supplied for option in frame.explicit_options):
-            raise CharacterGenerationError("task framing invented an option not supplied by the caller")
-
-    @staticmethod
-    def _evidence(frame: CharacterQueryFrame, snapshot: dict[str, Any]) -> dict[str, Any]:
-        selected_aspects = set(frame.relevant_aspect_ids)
-        selected_goals = set(frame.relevant_goal_ids)
-        selected_traits = {item.trait for item in frame.relevant_trait_axes}
-        character = snapshot["character_agent"]
-        return {
-            "character": {
-                "name": character["name"],
-                "background_story": character["background_story"],
-                "trait_adherence": character["trait_adherence"],
-                "behavioural_traits": {
-                    key: value for key, value in character["behavioural_traits"].items()
-                    if key in selected_traits
-                },
-            },
-            "aspects": [item for item in snapshot["aspects"] if item["id"] in selected_aspects],
-            "goals": [item for item in snapshot["goals"] if item["id"] in selected_goals],
-        }
+    def _parse_frame(raw: str) -> CharacterQueryFrame:
+        try:
+            return CharacterQueryFrame.model_validate(parse_json_deterministically(raw))
+        except (ValueError, PydanticValidationError) as exc:
+            raise CharacterGenerationError(
+                "task framing returned invalid structured output"
+            ) from exc
 
     @staticmethod
     def _validate_content(request: CharacterAgentQueryRequest, content: Any) -> None:
@@ -95,9 +89,126 @@ class CharacterAgentQueryJob:
                     "final response does not satisfy the requested schema"
                 ) from exc
 
+    @classmethod
+    def _parse_final(
+        cls, request: CharacterAgentQueryRequest, raw: str
+    ) -> CharacterDeliberation:
+        try:
+            value = CharacterDeliberation.model_validate(
+                parse_json_deterministically(raw)
+            )
+            cls._validate_content(request, value.content)
+            return value
+        except (ValueError, PydanticValidationError, CharacterGenerationError) as exc:
+            raise CharacterGenerationError(
+                "final response returned invalid structured output"
+            ) from exc
+
+    @staticmethod
+    def _frame_profile(snapshot: dict[str, Any]) -> dict[str, Any]:
+        character = snapshot["character_agent"]
+        return {
+            "name": character["name"],
+            "behavioural_traits": character["behavioural_traits"],
+            "trait_adherence": character["trait_adherence"],
+            "active_aspects": [
+                {"id": item["id"], "name": item["name"]}
+                for item in snapshot["aspects"]
+            ],
+            "active_goals": [
+                {
+                    "id": item["id"],
+                    "name": item.get("title") or item.get("name") or "",
+                    "description": item.get("description") or "",
+                }
+                for item in snapshot["goals"]
+            ],
+        }
+
+    @staticmethod
+    def _validate_selectors(
+        frame: CharacterQueryFrame, snapshot: dict[str, Any]
+    ) -> None:
+        aspect_ids = {item["id"] for item in snapshot["aspects"]}
+        goal_ids = {item["id"] for item in snapshot["goals"]}
+        if not set(frame.relevant_aspect_ids) <= aspect_ids:
+            raise CharacterGenerationError("task framing referenced unknown aspects")
+        if not set(frame.relevant_goal_ids) <= goal_ids:
+            raise CharacterGenerationError("task framing referenced unknown goals")
+
+    @staticmethod
+    def _deliberation_input(
+        request: CharacterAgentQueryRequest,
+        frame: CharacterQueryFrame,
+        snapshot: dict[str, Any],
+    ) -> dict[str, Any]:
+        selected_aspects = set(frame.relevant_aspect_ids)
+        selected_goals = set(frame.relevant_goal_ids)
+        traits = snapshot["character_agent"]["behavioural_traits"]
+        return {
+            "query": request.query,
+            "context_summary": frame.context_summary,
+            "system_instruction": request.system_instruction,
+            "relevant_trait_axes": [
+                {
+                    "name": name,
+                    "value": traits[name],
+                    "explanation": TRAIT_EXPLANATIONS[name],
+                }
+                for name in frame.relevant_trait_axes
+            ],
+            "relevant_aspect_names": [
+                item["name"]
+                for item in snapshot["aspects"]
+                if item["id"] in selected_aspects
+            ],
+            "relevant_goal_names": [
+                item.get("title") or item.get("name") or ""
+                for item in snapshot["goals"]
+                if item["id"] in selected_goals
+            ],
+            "conflicts": frame.conflicts,
+            "unknowns": frame.unknowns,
+            "response_format": request.response_format.model_dump(
+                mode="json", by_alias=True
+            ),
+        }
+
+    def _repair_schema_hint(self, request: CharacterAgentQueryRequest) -> str:
+        return self._json({
+            "envelope": CharacterDeliberation.model_json_schema(),
+            "content_contract": request.response_format.model_dump(
+                mode="json", by_alias=True
+            ),
+        })
+
+    async def _parse_or_repair(
+        self, request: CharacterAgentQueryRequest, raw: str
+    ) -> CharacterDeliberation:
+        await self._report("validating", 0.85)
+        try:
+            return self._parse_final(request, raw)
+        except CharacterGenerationError:
+            await self._report("repairing", 0.9)
+            repaired = await repair_invalid_json(
+                llm_client=self.llm,
+                model=self.repair_model,
+                malformed_text=raw,
+                schema_hint=self._repair_schema_hint(request),
+                usage_tag="character_agent.repair",
+            )
+            await self._report("validating", 0.95)
+            try:
+                return self._parse_final(request, repaired)
+            except CharacterGenerationError as exc:
+                raise CharacterGenerationError(
+                    "the repaired response does not satisfy the requested schema"
+                ) from exc
+
     async def _run_generic(
         self, request: CharacterAgentQueryRequest
-    ) -> CharacterAgentQueryResponse:
+    ) -> CharacterAgentQueryResult:
+        await self._report("deliberating", 0.35)
         raw = await self.llm.chat(
             model=self.deliberation_model,
             messages=[
@@ -105,7 +216,7 @@ class CharacterAgentQueryJob:
                 {"role": "user", "content": self._json({
                     "query": request.query,
                     "context": request.context,
-                    "task_instruction": request.system_instruction,
+                    "system_instruction": request.system_instruction,
                     "response_format": request.response_format.model_dump(
                         mode="json", by_alias=True
                     ),
@@ -114,83 +225,57 @@ class CharacterAgentQueryJob:
             temperature=request.generation.temperature,
             usage_tag="character_agent.generic",
         )
-        if request.response_format.type == "text":
-            content: Any = str(raw)
-        else:
-            try:
-                content = parse_json_deterministically(str(raw))
-            except ValueError as exc:
-                raise CharacterGenerationError(
-                    "generic query returned invalid JSON output"
-                ) from exc
-        self._validate_content(request, content)
-        return CharacterAgentQueryResponse(
-            type=request.response_format.type, content=content
+        result = await self._parse_or_repair(request, str(raw))
+        return CharacterAgentQueryResult(
+            type=request.response_format.type,
+            content=result.content,
+            decision_basis=result.decision_basis,
         )
 
     async def run(
         self,
         request: CharacterAgentQueryRequest,
         snapshot: dict[str, Any] | None = None,
-    ) -> CharacterAgentQueryResponse:
+    ) -> CharacterAgentQueryResult:
         if not request.use_character_identity:
             return await self._run_generic(request)
         if snapshot is None:
             raise CharacterGenerationError(
                 "character identity snapshot is required for identity-grounded queries"
             )
-        public_request = request.model_dump(mode="json", by_alias=True)
+
+        await self._report("framing", 0.2)
         frame_raw = await self.llm.chat(
             model=self.framing_model,
-            messages=[{"role": "system", "content": FRAME_PROMPT}, {"role": "user", "content": self._json({
-                "request": public_request, "complete_character_profile": snapshot,
-                "required_output": CharacterQueryFrame.model_json_schema(),
-            })}],
+            messages=[
+                {"role": "system", "content": FRAME_PROMPT},
+                {"role": "user", "content": self._json({
+                    "query": request.query,
+                    "context": request.context,
+                    "agent_profile": self._frame_profile(snapshot),
+                })},
+            ],
             temperature=0.0,
             usage_tag="character_agent.frame",
         )
-        frame = self._parse(CharacterQueryFrame, str(frame_raw), "task framing")
-        self._validate_refs(frame, snapshot)
-        self._validate_options(frame, request)
-        evidence = self._evidence(frame, snapshot)
+        frame = self._parse_frame(str(frame_raw))
+        self._validate_selectors(frame, snapshot)
 
+        await self._report("deliberating", 0.55)
         deliberation_raw = await self.llm.chat(
             model=self.deliberation_model,
-            messages=[{"role": "system", "content": DELIBERATION_PROMPT}, {"role": "user", "content": self._json({
-                "query": request.query, "context": request.context, "frame": frame.model_dump(),
-                "relevant_character_evidence": evidence,
-                "required_output": CharacterDeliberation.model_json_schema(),
-            })}],
+            messages=[
+                {"role": "system", "content": DELIBERATION_PROMPT},
+                {"role": "user", "content": self._json(
+                    self._deliberation_input(request, frame, snapshot)
+                )},
+            ],
             temperature=request.generation.temperature,
             usage_tag="character_agent.deliberate",
         )
-        deliberation = self._parse(CharacterDeliberation, str(deliberation_raw), "character deliberation")
-        permitted_ids = set(frame.relevant_aspect_ids) | set(frame.relevant_goal_ids)
-        if any(not set(candidate.supporting_ids) <= permitted_ids for candidate in deliberation.candidate_responses):
-            raise CharacterGenerationError("character deliberation referenced unknown evidence")
-
-        verification_raw = await self.llm.chat(
-            model=self.verification_model,
-            messages=[{"role": "system", "content": VERIFY_PROMPT}, {"role": "user", "content": self._json({
-                "query": request.query, "context": request.context,
-                "task_instruction": request.system_instruction,
-                "response_format": request.response_format.model_dump(mode="json", by_alias=True),
-                "deliberation": deliberation.model_dump(), "supporting_evidence": evidence,
-                "required_output": VerifiedRendering.model_json_schema(),
-            })}],
-            temperature=0.0,
-            usage_tag="character_agent.verify",
+        result = await self._parse_or_repair(request, str(deliberation_raw))
+        return CharacterAgentQueryResult(
+            type=request.response_format.type,
+            content=result.content,
+            decision_basis=result.decision_basis,
         )
-        verified = self._parse(VerifiedRendering, str(verification_raw), "verification")
-        if any(not set(item.supporting_ids) <= permitted_ids for item in verified.claim_assessments):
-            raise CharacterGenerationError("verification referenced unknown evidence")
-        unsupported = {
-            item.claim for item in verified.claim_assessments
-            if item.classification == "unsupported_claim"
-        }
-        if not unsupported <= set(verified.unsupported_claims_removed):
-            raise CharacterGenerationError("verification did not mark every unsupported claim as removed")
-
-        content = verified.rendered_response
-        self._validate_content(request, content)
-        return CharacterAgentQueryResponse(type=request.response_format.type, content=content)

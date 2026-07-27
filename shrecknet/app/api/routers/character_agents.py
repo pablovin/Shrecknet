@@ -246,7 +246,12 @@ async def query_character_agent(
     svc: CharacterAgentService = Depends(service),
     job: CharacterAgentQueryJob = Depends(query_job),
 ):
-    snapshot = await svc.load_query_snapshot(agent_id, public_only=not _is_admin(actor))
+    public_only = not _is_admin(actor)
+    snapshot = None
+    if payload.use_character_identity:
+        snapshot = await svc.load_query_snapshot(agent_id, public_only=public_only)
+    else:
+        await svc.ensure_queryable(agent_id, public_only=public_only)
     try:
         return await job.run(payload, snapshot)
     except CharacterGenerationError as exc:

@@ -877,6 +877,7 @@ class CharacterQueryGeneration(_StrictModel):
 
 class CharacterAgentQueryRequest(_StrictModel):
     query: str = Field(..., min_length=1, max_length=20_000)
+    use_character_identity: bool = True
     system_instruction: str | None = Field(None, max_length=10_000)
     context: dict[str, Any] | None = None
     response_format: CharacterQueryResponseFormat = Field(default_factory=CharacterQueryResponseFormat)

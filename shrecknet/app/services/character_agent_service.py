@@ -556,6 +556,22 @@ class CharacterAgentService:
             "goals": [dict(item) for item in row["goals"]],
         }
 
+    async def ensure_queryable(self, node_id: str, public_only: bool = False) -> None:
+        """Enforce query visibility and active status without loading identity data."""
+        row = await self._one(
+            """
+            MATCH (agent:CharacterAgent {id: $node_id})
+            WHERE NOT $public_only OR coalesce(agent.visibility, 'private') = 'public'
+            RETURN agent.status AS status
+            """,
+            node_id=node_id,
+            public_only=public_only,
+        )
+        if not row:
+            raise HTTPException(status_code=404, detail="CharacterAgent not found")
+        if row["status"] != "active":
+            raise HTTPException(status_code=409, detail="CharacterAgent is not active")
+
     async def update_agent(self, node_id: str, payload: CharacterAgentUpdate) -> CharacterAgentRead:
         changes = payload.model_dump(exclude_unset=True, mode="json")
         timestamp = _now()

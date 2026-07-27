@@ -176,6 +176,9 @@ class _ReadService:
         self.calls.append(("query", args, kwargs))
         return {"character_agent": {}, "aspects": [], "goals": []}
 
+    async def ensure_queryable(self, *args, **kwargs):
+        self.calls.append(("queryable", args, kwargs))
+
 
 class _QueryJob:
     async def run(self, payload, snapshot):
@@ -192,7 +195,9 @@ async def test_authenticated_reads_are_public_only_while_admin_reads_are_unrestr
     await get_agent("agent-1", user, service)
     await list_agent_aspects("agent-1", user, service)
     await list_agent_goals("agent-1", user, service)
-    await query_character_agent("agent-1", object(), user, service, _QueryJob())
+    await query_character_agent(
+        "agent-1", SimpleNamespace(use_character_identity=True), user, service, _QueryJob()
+    )
     await list_agents(None, None, None, 0, 50, admin, service)
     await get_agent("agent-2", admin, service)
 
@@ -203,3 +208,16 @@ async def test_authenticated_reads_are_public_only_while_admin_reads_are_unrestr
     assert service.calls[4][2]["public_only"] is True
     assert service.calls[5][2]["public_only"] is False
     assert service.calls[6][2]["public_only"] is False
+
+
+@pytest.mark.asyncio
+async def test_generic_query_checks_access_without_loading_character_identity():
+    service = _ReadService()
+    user = SimpleNamespace(role="player")
+    payload = SimpleNamespace(use_character_identity=False)
+
+    await query_character_agent("agent-1", payload, user, service, _QueryJob())
+
+    assert service.calls == [
+        ("queryable", ("agent-1",), {"public_only": True})
+    ]

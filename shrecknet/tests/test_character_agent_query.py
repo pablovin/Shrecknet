@@ -7,7 +7,12 @@ from fastapi import HTTPException
 
 from app.core.config_store import LLMModelTarget, Settings
 from app.jobs.character_agent.query import CharacterAgentQueryJob, CharacterGenerationError
-from app.jobs.character_agent.prompts import DELIBERATION_PROMPT, FRAME_PROMPT, VERIFY_PROMPT
+from app.jobs.character_agent.prompts import (
+    DELIBERATION_PROMPT,
+    FRAME_PROMPT,
+    GENERIC_QUERY_PROMPT,
+    VERIFY_PROMPT,
+)
 from app.jobs.shrecknet.agent import parse_json_deterministically
 from app.schemas.character_agent import (
     CharacterAgentCreate,
@@ -92,6 +97,65 @@ async def test_query_uses_exactly_three_calls_and_validates_json_contract():
 
 
 @pytest.mark.asyncio
+async def test_query_without_character_identity_uses_one_generic_text_call():
+    llm = FakeLLM(["A neutral response."])
+    target = LLMModelTarget(provider="test", name="model")
+    job = CharacterAgentQueryJob(
+        llm_client=llm,
+        framing_model=target,
+        deliberation_model=target,
+        verification_model=target,
+    )
+    request = CharacterAgentQueryRequest(
+        query="Assess the treaty",
+        use_character_identity=False,
+        context={"supply_days": 14},
+        system_instruction="Be concise.",
+    )
+
+    result = await job.run(request)
+
+    assert result.model_dump() == {"type": "text", "content": "A neutral response."}
+    assert len(llm.calls) == 1
+    assert llm.calls[0]["model"] == target
+    assert llm.calls[0]["usage_tag"] == "character_agent.generic"
+    prompt_input = llm.calls[0]["messages"][1]["content"]
+    assert '"query":"Assess the treaty"' in prompt_input
+    assert "character_agent" not in prompt_input
+    assert "background_story" not in prompt_input
+
+
+@pytest.mark.asyncio
+async def test_query_without_character_identity_validates_json_contract():
+    llm = FakeLLM(['```json\n{"choice":"accept"}\n```'])
+    target = LLMModelTarget(provider="test", name="model")
+    job = CharacterAgentQueryJob(
+        llm_client=llm,
+        framing_model=target,
+        deliberation_model=target,
+        verification_model=target,
+    )
+    request = CharacterAgentQueryRequest.model_validate({
+        "query": "Choose",
+        "use_character_identity": False,
+        "response_format": {
+            "type": "json",
+            "schema": {
+                "type": "object",
+                "required": ["choice"],
+                "properties": {"choice": {"enum": ["accept", "reject"]}},
+                "additionalProperties": False,
+            },
+        },
+    })
+
+    result = await job.run(request)
+
+    assert result.content == {"choice": "accept"}
+    assert len(llm.calls) == 1
+
+
+@pytest.mark.asyncio
 async def test_query_rejects_invented_evidence_without_repair_call():
     llm = FakeLLM([_frame(relevant_goal_ids=["invented-goal"])])
     target = LLMModelTarget(provider="test", name="model")
@@ -107,6 +171,7 @@ def test_deterministic_json_parser_handles_fences_and_prefixes():
 
 
 def test_prompts_embed_complete_stage_contracts():
+    assert "general-purpose backend response generator" in GENERIC_QUERY_PROMPT
     assert "Stage 1 of 3" in FRAME_PROMPT
     assert '"complete_character_profile"' in FRAME_PROMPT
     assert '"relevant_goal_ids"' in FRAME_PROMPT
@@ -121,6 +186,7 @@ def test_prompts_embed_complete_stage_contracts():
 def test_character_agent_defaults_and_configuration_targets():
     agent = CharacterAgentCreate(ontology_id=1, entity_instance_id="entity")
     assert agent.trait_adherence == 80
+    assert CharacterAgentQueryRequest(query="Reply").use_character_identity is True
     settings = Settings()
     assert settings.model_character_agent_framing == LLMModelTarget(provider="", name="")
     assert settings.model_character_agent_deliberation == LLMModelTarget(provider="", name="")
@@ -184,6 +250,37 @@ async def test_snapshot_is_one_operation_and_omits_backend_identifiers():
     assert "ORDER BY goal.priority DESC" in graph.calls[0][0]
     assert "id" not in snapshot["character_agent"]
     assert snapshot["character_agent"]["trait_adherence"] == 80
+
+
+@pytest.mark.asyncio
+async def test_generic_access_check_loads_no_character_identity():
+    graph = _Graph({"status": "active"})
+
+    await CharacterAgentService(object(), graph).ensure_queryable(
+        "agent-1", public_only=True
+    )
+
+    assert len(graph.calls) == 1
+    statement, params = graph.calls[0]
+    assert "RETURN agent.status AS status" in statement
+    assert "background_story" not in statement
+    assert "HAS_ASPECT" not in statement
+    assert "PURSUES" not in statement
+    assert params == {"node_id": "agent-1", "public_only": True}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("row", "expected_status"),
+    [(None, 404), ({"status": "inactive"}, 409)],
+)
+async def test_generic_access_check_preserves_query_errors(row, expected_status):
+    with pytest.raises(HTTPException) as exc_info:
+        await CharacterAgentService(object(), _Graph(row)).ensure_queryable(
+            "agent-1", public_only=False
+        )
+
+    assert exc_info.value.status_code == expected_status
 
 
 @pytest.mark.asyncio

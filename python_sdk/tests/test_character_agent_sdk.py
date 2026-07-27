@@ -16,6 +16,17 @@ class Client:
 @pytest.mark.asyncio
 async def test_character_agent_query_sdk_contract():
     client = Client()
-    response = await CharacterAgentsAPI(client).query("character-1", CharacterAgentQueryRequest(query="Reply"))
+    response = await CharacterAgentsAPI(client).query(
+        "character-1",
+        CharacterAgentQueryRequest(
+            query="Reply",
+            use_character_identity=False,
+        ),
+    )
     assert response.content == "I refuse."
     assert client.call[0:2] == ("POST", "/character-agents/character-1/query")
+    assert client.call[2]["json"]["use_character_identity"] is False
+
+
+def test_character_agent_query_uses_identity_by_default():
+    assert CharacterAgentQueryRequest(query="Reply").use_character_identity is True

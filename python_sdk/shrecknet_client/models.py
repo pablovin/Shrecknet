@@ -43,6 +43,7 @@ class CharacterQueryGeneration(BaseModel):
 
 class CharacterAgentQueryRequest(BaseModel):
     query: str
+    use_character_identity: bool = True
     system_instruction: str | None = None
     context: dict[str, Any] | None = None
     response_format: CharacterQueryResponseFormat = Field(default_factory=CharacterQueryResponseFormat)

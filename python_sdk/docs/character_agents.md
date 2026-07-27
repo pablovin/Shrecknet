@@ -14,6 +14,22 @@ async with Shrecknet(token="...") as sdk:
     print(response.content)
 ```
 
+By default, the query uses the CharacterAgent's identity, traits, aspects, and
+goals. Set `use_character_identity=False` to make one generic LLM call without
+sending CharacterAgent profile data:
+
+```python
+response = await sdk.character_agents.query(
+    "character-agent-id",
+    CharacterAgentQueryRequest(
+        query="Give a neutral assessment of the accusation.",
+        use_character_identity=False,
+    ),
+)
+```
+
+The referenced CharacterAgent must still be visible to the caller and active.
+
 ## Administrator embodiment workflow
 
 ```python

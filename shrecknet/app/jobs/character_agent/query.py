@@ -10,7 +10,12 @@ from pydantic import ValidationError as PydanticValidationError
 
 from app.core.config_store import LLMModelTarget
 from app.integrations.llm.shreckllm_client import ShreckLLMClient
-from app.jobs.character_agent.prompts import DELIBERATION_PROMPT, FRAME_PROMPT, VERIFY_PROMPT
+from app.jobs.character_agent.prompts import (
+    DELIBERATION_PROMPT,
+    FRAME_PROMPT,
+    GENERIC_QUERY_PROMPT,
+    VERIFY_PROMPT,
+)
 from app.jobs.character_agent.schemas import CharacterDeliberation, CharacterQueryFrame, VerifiedRendering
 from app.jobs.shrecknet.agent import parse_json_deterministically
 from app.schemas.character_agent import CharacterAgentQueryRequest, CharacterAgentQueryResponse
@@ -74,7 +79,67 @@ class CharacterAgentQueryJob:
             "goals": [item for item in snapshot["goals"] if item["id"] in selected_goals],
         }
 
-    async def run(self, request: CharacterAgentQueryRequest, snapshot: dict[str, Any]) -> CharacterAgentQueryResponse:
+    @staticmethod
+    def _validate_content(request: CharacterAgentQueryRequest, content: Any) -> None:
+        if request.response_format.type == "text":
+            if not isinstance(content, str):
+                raise CharacterGenerationError("text response did not render as text")
+            return
+        schema = request.response_format.schema_
+        if schema is not None:
+            try:
+                Draft202012Validator.check_schema(schema)
+                Draft202012Validator(schema).validate(content)
+            except (SchemaError, ValidationError) as exc:
+                raise CharacterGenerationError(
+                    "final response does not satisfy the requested schema"
+                ) from exc
+
+    async def _run_generic(
+        self, request: CharacterAgentQueryRequest
+    ) -> CharacterAgentQueryResponse:
+        raw = await self.llm.chat(
+            model=self.deliberation_model,
+            messages=[
+                {"role": "system", "content": GENERIC_QUERY_PROMPT},
+                {"role": "user", "content": self._json({
+                    "query": request.query,
+                    "context": request.context,
+                    "task_instruction": request.system_instruction,
+                    "response_format": request.response_format.model_dump(
+                        mode="json", by_alias=True
+                    ),
+                })},
+            ],
+            temperature=request.generation.temperature,
+            max_tokens=request.generation.max_tokens,
+            usage_tag="character_agent.generic",
+        )
+        if request.response_format.type == "text":
+            content: Any = str(raw)
+        else:
+            try:
+                content = parse_json_deterministically(str(raw))
+            except ValueError as exc:
+                raise CharacterGenerationError(
+                    "generic query returned invalid JSON output"
+                ) from exc
+        self._validate_content(request, content)
+        return CharacterAgentQueryResponse(
+            type=request.response_format.type, content=content
+        )
+
+    async def run(
+        self,
+        request: CharacterAgentQueryRequest,
+        snapshot: dict[str, Any] | None = None,
+    ) -> CharacterAgentQueryResponse:
+        if not request.use_character_identity:
+            return await self._run_generic(request)
+        if snapshot is None:
+            raise CharacterGenerationError(
+                "character identity snapshot is required for identity-grounded queries"
+            )
         public_request = request.model_dump(mode="json", by_alias=True)
         frame_raw = await self.llm.chat(
             model=self.framing_model,
@@ -125,15 +190,5 @@ class CharacterAgentQueryJob:
             raise CharacterGenerationError("verification did not mark every unsupported claim as removed")
 
         content = verified.rendered_response
-        if request.response_format.type == "text":
-            if not isinstance(content, str):
-                raise CharacterGenerationError("text response did not render as text")
-        else:
-            schema = request.response_format.schema_
-            if schema is not None:
-                try:
-                    Draft202012Validator.check_schema(schema)
-                    Draft202012Validator(schema).validate(content)
-                except (SchemaError, ValidationError) as exc:
-                    raise CharacterGenerationError("final response does not satisfy the requested schema") from exc
+        self._validate_content(request, content)
         return CharacterAgentQueryResponse(type=request.response_format.type, content=content)

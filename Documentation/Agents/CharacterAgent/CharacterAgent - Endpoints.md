@@ -215,10 +215,13 @@ agent, or projected canonical scene cascades perspective-owned children.
 
 `POST /character-agents/{character_agent_id}/query` requires authentication and
 enabled AI agents. Non-administrators may query only public agents, while
-administrators may query public or private agents. The agent must be active. The
-operation performs one Neo4j snapshot operation and exactly three normal LLM
-calls, has no graph write side effects, and does not persist internal framing or
-deliberation.
+administrators may query public or private agents. The agent must be active.
+`use_character_identity` defaults to `true`; this mode performs one Neo4j
+identity snapshot operation and exactly three normal LLM calls. When
+`use_character_identity` is `false`, the operation performs only a minimal
+Neo4j access/status check and one generic LLM call. The generic call receives no
+CharacterAgent identity, traits, aspects, goals, or graph metadata. Neither mode
+has graph write side effects or persists internal generation state.
 
 See [CharacterAgent Query](Query/Query.md) for request and response contracts.
 

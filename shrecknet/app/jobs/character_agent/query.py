@@ -112,7 +112,6 @@ class CharacterAgentQueryJob:
                 })},
             ],
             temperature=request.generation.temperature,
-            max_tokens=request.generation.max_tokens,
             usage_tag="character_agent.generic",
         )
         if request.response_format.type == "text":
@@ -146,7 +145,8 @@ class CharacterAgentQueryJob:
             messages=[{"role": "system", "content": FRAME_PROMPT}, {"role": "user", "content": self._json({
                 "request": public_request, "complete_character_profile": snapshot,
                 "required_output": CharacterQueryFrame.model_json_schema(),
-            })}], temperature=0.0, max_tokens=min(request.generation.max_tokens, 1500),
+            })}],
+            temperature=0.0,
             usage_tag="character_agent.frame",
         )
         frame = self._parse(CharacterQueryFrame, str(frame_raw), "task framing")
@@ -160,7 +160,8 @@ class CharacterAgentQueryJob:
                 "query": request.query, "context": request.context, "frame": frame.model_dump(),
                 "relevant_character_evidence": evidence,
                 "required_output": CharacterDeliberation.model_json_schema(),
-            })}], temperature=request.generation.temperature, max_tokens=request.generation.max_tokens,
+            })}],
+            temperature=request.generation.temperature,
             usage_tag="character_agent.deliberate",
         )
         deliberation = self._parse(CharacterDeliberation, str(deliberation_raw), "character deliberation")
@@ -176,7 +177,8 @@ class CharacterAgentQueryJob:
                 "response_format": request.response_format.model_dump(mode="json", by_alias=True),
                 "deliberation": deliberation.model_dump(), "supporting_evidence": evidence,
                 "required_output": VerifiedRendering.model_json_schema(),
-            })}], temperature=0.0, max_tokens=request.generation.max_tokens,
+            })}],
+            temperature=0.0,
             usage_tag="character_agent.verify",
         )
         verified = self._parse(VerifiedRendering, str(verification_raw), "verification")

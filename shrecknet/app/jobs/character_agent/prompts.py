@@ -77,9 +77,7 @@ INPUT JSON PARAMETERS:
       "schema": "optional caller JSON Schema object or null"
     },
     "generation": {
-      "mode": "simulation",
-      "temperature": "number from 0 through 2",
-      "max_tokens": "integer from 32 through 8192"
+      "temperature": "number from 0 through 2"
     }
   },
   "complete_character_profile": {

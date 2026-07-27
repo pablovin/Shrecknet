@@ -4,6 +4,7 @@ import json
 
 import pytest
 from fastapi import HTTPException
+from pydantic import ValidationError as PydanticValidationError
 
 from app.core.config_store import LLMModelTarget, Settings
 from app.jobs.character_agent.query import CharacterAgentQueryJob, CharacterGenerationError
@@ -93,7 +94,17 @@ async def test_query_uses_exactly_three_calls_and_validates_json_contract():
     assert result.content["confidence"] == 82
     assert len(llm.calls) == 3
     assert llm.calls[1]["temperature"] == 0.7
+    assert all("max_tokens" not in call for call in llm.calls)
     assert "complete_character_profile" not in llm.calls[1]["messages"][1]["content"]
+
+
+@pytest.mark.parametrize("removed_field", ["mode", "max_tokens"])
+def test_query_rejects_removed_generation_fields(removed_field):
+    with pytest.raises(PydanticValidationError):
+        CharacterAgentQueryRequest.model_validate({
+            "query": "Reply briefly",
+            "generation": {removed_field: "simulation" if removed_field == "mode" else 32},
+        })
 
 
 @pytest.mark.asyncio
@@ -119,6 +130,7 @@ async def test_query_without_character_identity_uses_one_generic_text_call():
     assert len(llm.calls) == 1
     assert llm.calls[0]["model"] == target
     assert llm.calls[0]["usage_tag"] == "character_agent.generic"
+    assert "max_tokens" not in llm.calls[0]
     prompt_input = llm.calls[0]["messages"][1]["content"]
     assert '"query":"Assess the treaty"' in prompt_input
     assert "character_agent" not in prompt_input

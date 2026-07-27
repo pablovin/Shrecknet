@@ -36,9 +36,7 @@ class CharacterQueryResponseFormat(BaseModel):
 
 
 class CharacterQueryGeneration(BaseModel):
-    mode: str = "simulation"
     temperature: float = 0.7
-    max_tokens: int = 500
 
 
 class CharacterAgentQueryRequest(BaseModel):

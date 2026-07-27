@@ -221,7 +221,10 @@ identity snapshot operation and exactly three normal LLM calls. When
 `use_character_identity` is `false`, the operation performs only a minimal
 Neo4j access/status check and one generic LLM call. The generic call receives no
 CharacterAgent identity, traits, aspects, goals, or graph metadata. Neither mode
-has graph write side effects or persists internal generation state.
+has graph write side effects or persists internal generation state. The query
+calls do not pass an explicit output token cap to shreckLLM. `generation`
+contains only `temperature`; requests that still contain the removed
+`generation.mode` or `generation.max_tokens` fields return `422`.
 
 See [CharacterAgent Query](Query/Query.md) for request and response contracts.
 

@@ -26,6 +26,8 @@ async def test_character_agent_query_sdk_contract():
     assert response.content == "I refuse."
     assert client.call[0:2] == ("POST", "/character-agents/character-1/query")
     assert client.call[2]["json"]["use_character_identity"] is False
+    assert "max_tokens" not in client.call[2]["json"]["generation"]
+    assert "mode" not in client.call[2]["json"]["generation"]
 
 
 def test_character_agent_query_uses_identity_by_default():

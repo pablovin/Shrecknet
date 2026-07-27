@@ -870,9 +870,7 @@ class CharacterQueryResponseFormat(_StrictModel):
 
 
 class CharacterQueryGeneration(_StrictModel):
-    mode: Literal["simulation"] = "simulation"
     temperature: float = Field(0.7, ge=0.0, le=2.0)
-    max_tokens: int = Field(500, ge=32, le=8_192)
 
 
 class CharacterAgentQueryRequest(_StrictModel):

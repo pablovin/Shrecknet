@@ -25,7 +25,7 @@ not turn the route into an unscoped general LLM endpoint.
   "system_instruction": "Use a short first-person declaration.",
   "context": {"location": "The royal hall"},
   "response_format": {"type": "text"},
-  "generation": {"mode": "simulation", "temperature": 0.7, "max_tokens": 500}
+  "generation": {"temperature": 0.7}
 }
 ```
 
@@ -37,7 +37,8 @@ operation and performs exactly three normal LLM calls:
 3. Verify grounding and render the public response.
 
 The service does not persist the frame, deliberation, or response and makes no
-graph writes.
+graph writes. The service does not pass an explicit output token cap to
+shreckLLM for framing, deliberation, or verification.
 
 ## Generic request
 
@@ -48,7 +49,7 @@ graph writes.
   "system_instruction": "Give a neutral answer in three bullet points.",
   "context": {"city_supply_days": 14},
   "response_format": {"type": "text"},
-  "generation": {"mode": "simulation", "temperature": 0.3, "max_tokens": 500}
+  "generation": {"temperature": 0.3}
 }
 ```
 
@@ -62,8 +63,11 @@ The operation has no graph write side effects.
 
 Only `query` is required. `use_character_identity` defaults to `true`;
 `response_format.type` defaults to `text`; and `generation` defaults to
-`{"mode":"simulation","temperature":0.7,"max_tokens":500}`. The only supported
-generation mode is `simulation`.
+`{"temperature":0.7}`.
+
+The service supplies no explicit output token budget. Requests containing the
+removed `generation.mode` or `generation.max_tokens` fields are rejected with
+`422`.
 
 Text responses use `{"type":"text","content":"..."}`. For structured output,
 set the type to `json` and optionally supply a JSON Schema in `schema`; `content`

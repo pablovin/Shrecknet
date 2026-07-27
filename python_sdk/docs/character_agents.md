@@ -29,6 +29,8 @@ response = await sdk.character_agents.query(
 ```
 
 The referenced CharacterAgent must still be visible to the caller and active.
+The public `generation` object contains only `temperature`. CharacterAgent query
+calls do not send an explicit output token cap to shreckLLM.
 
 ## Administrator embodiment workflow
 

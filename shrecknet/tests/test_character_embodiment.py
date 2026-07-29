@@ -607,6 +607,65 @@ def test_profile_update_accepts_sparse_unique_nonzero_axis_deltas():
         ProfileUpdateOutput.model_validate(duplicate)
 
 
+def test_structured_outputs_drop_only_items_without_evidence():
+    from app.jobs.character_agent.embody_agent import _drop_ungrounded_output_items
+    from app.schemas.character_agent import EmbodimentObservationsOutput
+
+    observations = {
+        "contradictions": [
+            {"text": "No contradictions observed.", "evidence_ids": []},
+            {"text": "Grounded contradiction.", "evidence_ids": ["scene:s1"]},
+        ],
+        "evidence_gaps": [
+            {"text": "Unsupported gap."},
+        ],
+        "subtitle_change": {
+            "operation": "set",
+            "subtitle": "Unsupported",
+            "justification": "No citation.",
+            "confidence": 0.8,
+            "evidence_ids": [],
+        },
+    }
+    dropped = _drop_ungrounded_output_items(
+        observations, schema=EmbodimentObservationsOutput,
+    )
+    assert dropped == 3
+    assert observations["contradictions"] == [{
+        "text": "Grounded contradiction.", "evidence_ids": ["scene:s1"],
+    }]
+    assert observations["evidence_gaps"] == []
+    assert "subtitle_change" not in observations
+
+    profile = {
+        "behavioural_axis_updates": [
+            {
+                "axis": "cautious_reckless", "delta": -2,
+                "justification": "Unsupported.", "confidence": 0.5,
+                "evidence_ids": [],
+            },
+            {
+                "axis": "trusting_suspicious", "delta": 2,
+                "justification": "Grounded.", "confidence": 0.8,
+                "evidence_ids": ["scene:s1"],
+            },
+        ],
+        "aspect_updates": [{
+            "operation": "add", "name": "Unsupported",
+            "justification": "No citation.", "confidence": 0.5,
+        }],
+        "goal_updates": [],
+    }
+    dropped = _drop_ungrounded_output_items(
+        profile, schema=ProfileUpdateOutput,
+    )
+    assert dropped == 2
+    assert [item["axis"] for item in profile["behavioural_axis_updates"]] == [
+        "trusting_suspicious"
+    ]
+    assert profile["aspect_updates"] == []
+
+
 def test_profile_update_enforces_configured_aspect_and_goal_limits():
     agent = _agent(FakeLLM({}))
     update = json.loads(_profile_update_output())

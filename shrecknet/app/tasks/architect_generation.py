@@ -1129,6 +1129,13 @@ async def _execute_generation(
                                     if not target_group:
                                         continue
 
+                                    bundle_scenes = _select_created_bundle_scenes(
+                                        target_group.get("scenes", []),
+                                        created_scene_ids,
+                                    )
+                                    if not bundle_scenes:
+                                        continue
+
                                     scene_inputs = [
                                         SceneInput(
                                             scene_id=s["scene_id"],
@@ -1136,7 +1143,7 @@ async def _execute_generation(
                                             description=s.get("description", ""),
                                             created_at=s.get("created_at"),
                                         )
-                                        for s in target_group["scenes"]
+                                        for s in bundle_scenes
                                     ]
 
                                     runner = EmbodyAgent(
@@ -2542,3 +2549,20 @@ def _collect_scene_linked_entity_ids(scene_ref_to_entities: dict[str, set[str]])
     for entity_ids in scene_ref_to_entities.values():
         linked_ids |= set(entity_ids or set())
     return linked_ids
+
+
+def _select_created_bundle_scenes(
+    source_group_scenes: list[dict[str, Any]],
+    created_scene_ids: list[str],
+) -> list[dict[str, Any]]:
+    """Select only this generate job's scenes, preserving creation order."""
+    scenes_by_id = {
+        str(scene.get("scene_id")): scene
+        for scene in source_group_scenes
+        if scene.get("scene_id")
+    }
+    return [
+        scenes_by_id[scene_id]
+        for scene_id in created_scene_ids
+        if scene_id in scenes_by_id
+    ]

@@ -153,6 +153,12 @@ class EmbodyAgent:
     def _parse(schema: type[BaseModel], raw: str, stage: str) -> BaseModel:
         try:
             parsed = parse_json_deterministically(raw)
+            dropped = _drop_ungrounded_output_items(parsed, schema=schema)
+            if dropped:
+                logger.warning(
+                    "embodiment_ungrounded_items_dropped stage=%s count=%d",
+                    stage, dropped,
+                )
             return schema.model_validate(parsed)
         except (TypeError, ValueError, ValidationError) as exc:
             raise EmbodimentGenerationError(f"invalid {stage} output") from exc
@@ -675,6 +681,60 @@ def _collect_evidence_ids(data: Any) -> set[str]:
         for item in data:
             ids.update(_collect_evidence_ids(item))
     return ids
+
+
+_OBSERVATION_EVIDENCE_LISTS = {
+    "recurring_behaviours", "motivations", "values", "fears", "conflicts",
+    "relationships", "contradictions", "evidence_gaps",
+}
+_PROFILE_EVIDENCE_LISTS = {
+    "behavioural_axis_updates", "aspect_updates", "goal_updates",
+}
+
+
+def _drop_ungrounded_output_items(
+    parsed: Any, *, schema: type[BaseModel],
+) -> int:
+    """Drop only output-list entries that cannot cite any evidence.
+
+    Unknown non-empty references remain present and are rejected by semantic
+    validation. This normalization handles no-op placeholders such as
+    ``{"text": "No contradictions", "evidence_ids": []}``.
+    """
+    if not isinstance(parsed, dict):
+        return 0
+    fields: set[str]
+    if schema is EmbodimentObservationsOutput:
+        fields = _OBSERVATION_EVIDENCE_LISTS
+    elif schema is ProfileUpdateOutput:
+        fields = _PROFILE_EVIDENCE_LISTS
+    else:
+        return 0
+
+    dropped = 0
+    for field in fields:
+        items = parsed.get(field)
+        if not isinstance(items, list):
+            continue
+        grounded: list[Any] = []
+        for item in items:
+            evidence_ids = item.get("evidence_ids") if isinstance(item, dict) else None
+            if not isinstance(evidence_ids, list) or not evidence_ids:
+                dropped += 1
+                continue
+            grounded.append(item)
+        parsed[field] = grounded
+
+    if schema is EmbodimentObservationsOutput:
+        subtitle = parsed.get("subtitle_change")
+        if (
+            isinstance(subtitle, dict)
+            and subtitle.get("operation") in {"set", "clear"}
+            and not subtitle.get("evidence_ids")
+        ):
+            parsed.pop("subtitle_change", None)
+            dropped += 1
+    return dropped
 
 
 def _canonical_evidence_id(value: str) -> str:

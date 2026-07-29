@@ -49,7 +49,10 @@ gateway policy equally for every provider and model; there are no
 model-specific retry caps. A value of `0` means one total attempt, `1` means at
 most two total attempts, and so on. The job status `retry_count` is updated
 before each retry. Only retryable provider overload, timeout, and dependency
-failures consume this policy.
+failures consume this policy. When a provider overload activates its configured
+cooldown, the retry delay is never shorter than the remaining cooldown. This
+prevents configured attempts from being consumed while the provider is still
+locally unavailable.
 
 `GET /config/schema` exposes `chat_job_max_retries` as a hot,
 frontend-editable field. Administrators and world builders can update it with:

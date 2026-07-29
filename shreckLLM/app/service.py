@@ -64,6 +64,23 @@ def _chat_job_attempt_limit(*, configured_retries: int) -> int:
     return max(1, int(configured_retries) + 1)
 
 
+def _chat_job_retry_delay(
+    *,
+    attempt: int,
+    provider_id: str,
+    provider_cooldown_until: dict[str, float],
+    now: float,
+    jitter: float,
+) -> float:
+    """Return a backoff that never retries before an active provider cooldown ends."""
+    exponential_backoff = min(10.0, (2 ** attempt) + jitter)
+    cooldown_remaining = max(
+        0.0,
+        float(provider_cooldown_until.get(provider_id, 0.0)) - now,
+    )
+    return max(exponential_backoff, cooldown_remaining)
+
+
 class ChatService:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
@@ -1237,7 +1254,15 @@ class ChatService:
                     attempts - 1,
                     exc,
                 )
-                await asyncio.sleep(min(10.0, (2 ** attempt) + random.uniform(0.1, 0.8)))
+                await asyncio.sleep(
+                    _chat_job_retry_delay(
+                        attempt=attempt,
+                        provider_id=request.provider_id,
+                        provider_cooldown_until=self._provider_cooldown_until,
+                        now=time.monotonic(),
+                        jitter=random.uniform(0.1, 0.8),
+                    )
+                )
 
     async def _chat_with_memory_lock(self, request: ChatRequest, start: float) -> ChatResponse:
         if not request.conversation_id:

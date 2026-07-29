@@ -20,6 +20,7 @@ from app.tasks.architect_generation import (
     _proposal_alias_keys,
     _resolve_related_target_entity_id,
     _resolve_maintained_entity_id,
+    _select_created_bundle_scenes,
 )
 
 
@@ -87,6 +88,24 @@ def test_merge_ref_lists_keeps_order_and_deduplicates() -> None:
     merged = _merge_ref_lists(["chunk_0_scene_1", "chunk_0_scene_2"], ["chunk_0_scene_2", "chunk_0_scene_3"])
 
     assert merged == ["chunk_0_scene_1", "chunk_0_scene_2", "chunk_0_scene_3"]
+
+
+def test_select_created_bundle_scenes_excludes_historical_scenes() -> None:
+    source_group_scenes = [
+        {"scene_id": "historical", "name": "Old"},
+        {"scene_id": "created-2", "name": "Second"},
+        {"scene_id": "created-1", "name": "First"},
+    ]
+
+    selected = _select_created_bundle_scenes(
+        source_group_scenes,
+        ["created-1", "created-2"],
+    )
+
+    assert [scene["scene_id"] for scene in selected] == [
+        "created-1",
+        "created-2",
+    ]
 
 
 def test_canonicalize_entity_proposals_applies_effective_fields() -> None:

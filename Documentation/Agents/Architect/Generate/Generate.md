@@ -2,6 +2,14 @@
 
 This document describes the Architect generation job that persists validated proposals into the graph.
 
+## Character embodiment scope
+
+When `embody_agents` is enabled, the generate job embodies CharacterAgents related
+to scenes created by that job. The embodiment source group is the `DERIVED_FROM`
+entity used by the generation bundle, and the scene input contains only scene IDs
+created during the current generate job. Historical scenes associated with the
+same CharacterAgent or `DERIVED_FROM` entity are not reinterpreted.
+
 ## Goal
 
 The generate job takes frontend-reviewed Architect output and applies it to the ontology instance in a strict, auditable order:

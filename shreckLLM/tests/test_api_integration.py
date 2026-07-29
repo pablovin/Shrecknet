@@ -11,7 +11,7 @@ from app.config import Settings
 from app.config_store import ProviderDefaults, ProviderState
 from app.schemas import ChatRequest, ChatResponse, ChatUsage
 from app.service import ChatService
-from app.service import _chat_job_attempt_limit
+from app.service import _chat_job_attempt_limit, _chat_job_retry_delay
 
 
 class FakeService:
@@ -233,6 +233,24 @@ def test_all_chat_jobs_follow_configured_retry_count() -> None:
     assert _chat_job_attempt_limit(configured_retries=0) == 1
     assert _chat_job_attempt_limit(configured_retries=1) == 2
     assert _chat_job_attempt_limit(configured_retries=2) == 3
+
+
+def test_chat_job_retry_delay_honors_active_provider_cooldown() -> None:
+    assert _chat_job_retry_delay(
+        attempt=1,
+        provider_id="openrouter",
+        provider_cooldown_until={"openrouter": 110.0},
+        now=100.0,
+        jitter=0.5,
+    ) == 10.0
+
+    assert _chat_job_retry_delay(
+        attempt=2,
+        provider_id="openrouter",
+        provider_cooldown_until={"openrouter": 100.0},
+        now=100.0,
+        jitter=0.5,
+    ) == 4.5
 
 
 @pytest.fixture

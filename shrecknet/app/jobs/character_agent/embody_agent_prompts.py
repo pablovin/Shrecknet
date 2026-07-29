@@ -9,7 +9,7 @@ across source groups. Step 4 runs in chronological source order against the
 latest cumulative profile.
 """
 
-PROMPT_VERSION = "character-embodiment-v9-sparse-axis-deltas"
+PROMPT_VERSION = "character-embodiment-v10-grounded-list-items"
 
 PERSPECTIVE_PROMPT = r"""You are incorporating a character's identity into canonical objective scenes.
 
@@ -103,6 +103,9 @@ OBSERVATIONS_PROMPT = r"""You are distilling character observations from canonic
 Given canonical scenes, grounded interpretations, and immediate psychological enrichment, produce grounded
 observations. Every observation must cite at least one scene evidence_id from the perspectives.
 Expressive character_reflection text is presentation-only and is never supplied as evidence.
+For every observation category, return [] when there are no grounded findings.
+Never return placeholder items such as "none observed", "unknown", or "not
+applicable". Omit every item that cannot cite at least one allowed evidence ID.
 
 EVIDENCE ID FORMAT: use only an exact value from allowed_evidence_ids. Never
 invent an ID, copy a scene name as an ID, or cite a scene outside this source bundle.
@@ -147,6 +150,7 @@ OUTPUT:
 }
 subtitle_change is OPTIONAL. Only include it when the scenes clearly warrant a new or cleared subtitle.
 When omitted or operation is "retain", the character's subtitle stays unchanged.
+Omit subtitle_change when a set or clear operation has no allowed evidence ID.
 
 Return JSON only. required_output is authoritative if this description and the schema differ."""
 
@@ -170,6 +174,9 @@ Return only axes that change. Omit unchanged axes entirely. For each changed
 axis return a signed integer delta from -5 through -1 or 1 through 5. Never
 return delta 0. The backend applies and clamps the delta; do not return a final
 axis value. Return an empty behavioural_axis_updates list when no axis changes.
+For behavioural_axis_updates, aspect_updates, and goal_updates, omit every item
+that cannot cite at least one allowed evidence ID. Return [] when a category has
+no grounded updates; never return placeholder or zero-effect update items.
 
 An aspect is a stable, high-impact identity fact, role, state, physical characteristic, capability,
 knowledge, preference, attitude, or history. A goal is an active persistent driver, not a completed

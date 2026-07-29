@@ -327,6 +327,12 @@ values, and an empty list means no behavioural-axis change. The backend applies
 and clamps each delta; generated proposals still expose the existing absolute
 `{axis, value, ...}` contract.
 
+Every grounded observation and profile-update list item requires at least one
+`evidence_ids` value. Items with missing or empty evidence are omitted
+individually, leaving valid siblings intact; a category with no remaining items
+is `[]`. Evidence-free subtitle changes are treated as `retain`. Non-empty
+unknown or cross-source evidence IDs still fail validation.
+
 The existing background-job response contract is unchanged. During generation,
 its details report `status` and `active_stages`: incorporation `[1]`,
 psychological enrichment `[2]`, observations `[3]`, atomic profile updates

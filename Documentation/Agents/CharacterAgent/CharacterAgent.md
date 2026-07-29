@@ -361,11 +361,16 @@ boundary deltas, and converts the result to the absolute values used by the
 timeline and final proposal. Prompts receive
 an explicit source-local `allowed_evidence_ids` list. Bare Scene IDs are
 canonicalized to `scene:<id>`; invented and cross-source references are rejected.
+Within grounded observation lists and profile update lists, an item with a
+missing or empty `evidence_ids` list is deterministically omitted while valid
+siblings are preserved. This converts unsupported “none observed” placeholders
+to the intended empty category list. Evidence-free subtitle `set` or `clear`
+operations are omitted and therefore retain the current subtitle. Each omission
+is logged by stage and count; non-empty unknown references are never pruned.
 When structurally valid output contains invalid references, the worker may make
 `character_agent_embodiment_semantic_correction_attempts` targeted correction
 calls (default `1`). A correction receives the rejected output, exact offending
-and allowed IDs, and the unchanged output contract. Invalid claims are never
-silently removed.
+and allowed IDs, and the unchanged output contract.
 
 Each validated analysis stage is stored in
 `character_embodiment_checkpoints`, keyed by draft revision, source position,

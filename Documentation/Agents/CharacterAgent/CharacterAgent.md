@@ -341,7 +341,8 @@ presentation-only `character_reflection` per Scene. Psychological enrichment
 then returns zero or more emotions, beliefs, and impacts on stable existing
 goal/aspect IDs. Cross-scene observations consume canonical Scene facts,
 structured interpretations, and enrichment—but never reflections. One atomic
-profile-update call then returns all eight axes plus aspect and goal operations.
+profile-update call then returns sparse behavioural-axis deltas plus aspect and
+goal operations. Unchanged axes are omitted.
 
 The first three calls use the profile snapshot captured when draft generation
 starts. Snapshot analysis runs concurrently across source groups, bounded by
@@ -352,7 +353,12 @@ ordered update while later source analyses continue. Set concurrency to `1`
 to minimize provider load; snapshot semantics remain unchanged.
 
 The backend validates exact Scene order, stable impact targets, observation and
-update evidence IDs, all eight axes, and configured list limits. Prompts receive
+update evidence IDs, unique sparse axis updates, and configured list limits.
+Each returned axis delta must be an integer from `-5` through `-1` or `1`
+through `5`; zero-delta entries are invalid and unchanged axes are omitted.
+The backend clamps `current + delta` to `0..100`, rejects ineffective
+boundary deltas, and converts the result to the absolute values used by the
+timeline and final proposal. Prompts receive
 an explicit source-local `allowed_evidence_ids` list. Bare Scene IDs are
 canonicalized to `scene:<id>`; invented and cross-source references are rejected.
 When structurally valid output contains invalid references, the worker may make

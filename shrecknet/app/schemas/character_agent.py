@@ -1042,6 +1042,26 @@ class AxisChangeOutput(_StrictModel):
     behavioural_axes: list[AxisChangeData] = Field(default_factory=list)
 
 
+class AxisDeltaUpdateData(_StrictModel):
+    """Sparse LLM instruction for a bounded behavioural-axis change."""
+
+    axis: Literal[
+        "calm_aggressive", "cautious_reckless", "compassionate_ruthless",
+        "trusting_suspicious", "honest_deceptive", "patient_impulsive",
+        "humble_proud", "cooperative_dominating",
+    ]
+    delta: int = Field(..., ge=-5, le=5)
+    justification: str = Field(..., min_length=1)
+    confidence: float = Field(..., ge=0, le=1)
+    evidence_ids: list[str] = Field(..., min_length=1)
+
+    @model_validator(mode="after")
+    def reject_zero_delta(self) -> "AxisDeltaUpdateData":
+        if self.delta == 0:
+            raise ValueError("zero-delta axis updates must be omitted")
+        return self
+
+
 class AspectUpdateOperationType(str, Enum):
     ADD = "add"
     UPDATE = "update"
@@ -1091,17 +1111,17 @@ class GoalUpdateOutput(_StrictModel):
 class ProfileUpdateOutput(_StrictModel):
     """One atomic, validated update of the persistent character profile."""
 
-    behavioural_axes: list[AxisChangeData] = Field(..., min_length=8, max_length=8)
+    behavioural_axis_updates: list[AxisDeltaUpdateData] = Field(
+        default_factory=list, max_length=8
+    )
     aspect_updates: list[AspectUpdateData] = Field(default_factory=list)
     goal_updates: list[GoalUpdateData] = Field(default_factory=list)
 
     @model_validator(mode="after")
-    def validate_all_axes_once(self) -> "ProfileUpdateOutput":
-        axis_names = [item.axis for item in self.behavioural_axes]
+    def validate_unique_axis_updates(self) -> "ProfileUpdateOutput":
+        axis_names = [item.axis for item in self.behavioural_axis_updates]
         if len(set(axis_names)) != len(axis_names):
-            raise ValueError("behavioural_axes must contain each axis exactly once")
-        if set(axis_names) != set(BEHAVIOURAL_AXES):
-            raise ValueError("behavioural_axes must contain all eight axes")
+            raise ValueError("behavioural_axis_updates must contain unique axes")
         return self
 
 

@@ -32,6 +32,7 @@ from app.schemas.character_agent import (
     EmbodyAgentAnalysis,
     EmbodimentObservationsOutput,
     EmbodyAgentResult,
+    AxisChangeData,
     LLMCallRecord,
     ProfileUpdateOutput,
     SceneInput,
@@ -550,8 +551,10 @@ class EmbodyAgent:
             usage_tag="character_agent.embodiment.profile_update",
             max_tokens=6_000,
             model=self.character_update_model,
-            semantic_validator=lambda value: _validate_and_normalize_evidence(
-                value, allowed_ids=analysis.evidence_ids, stage="profile updates",
+            semantic_validator=lambda value: _validate_profile_update(
+                value,
+                allowed_ids=analysis.evidence_ids,
+                current_axes=current_behavioural_axes,
             ),
             source_entity_id=analysis.source_entity_id,
             source_entity_alias=analysis.source_entity_alias,
@@ -562,8 +565,16 @@ class EmbodyAgent:
             profile_result=profile_result,
         )
         axis_updates = [
-            update for update in profile_result.behavioural_axes
-            if update.new_value != current_behavioural_axes[update.axis]
+            AxisChangeData(
+                axis=update.axis,
+                new_value=max(
+                    0, min(100, current_behavioural_axes[update.axis] + update.delta)
+                ),
+                justification=update.justification,
+                confidence=update.confidence,
+                evidence_ids=update.evidence_ids,
+            )
+            for update in profile_result.behavioural_axis_updates
         ]
 
         return EmbodyAgentResult(
@@ -711,5 +722,31 @@ def _validate_and_normalize_evidence(
             stage=stage,
             offending_ids=offending,
             allowed_ids=allowed_ids,
+        )
+
+
+def _validate_profile_update(
+    value: BaseModel,
+    *,
+    allowed_ids: set[str],
+    current_axes: dict[str, int],
+) -> None:
+    _validate_and_normalize_evidence(
+        value, allowed_ids=allowed_ids, stage="profile updates",
+    )
+    profile = value
+    ineffective = {
+        update.axis
+        for update in profile.behavioural_axis_updates
+        if max(0, min(100, current_axes[update.axis] + update.delta))
+        == current_axes[update.axis]
+    }
+    if ineffective:
+        raise EmbodimentGenerationError(
+            "profile updates contained ineffective boundary deltas",
+            category="semantic_update",
+            stage="profile updates",
+            offending_ids=ineffective,
+            allowed_ids=set(current_axes),
         )
     ProfileUpdateOutput,

@@ -121,34 +121,31 @@ class DelayedDynamicLLM:
         self.profile_current_values.append(current["cautious_reckless"])
         evidence_id = payload["observations"]["recurring_behaviours"][0]["evidence_ids"][0]
         return json.dumps({
-            "behavioural_axes": [{
-                "axis": axis,
-                "new_value": (
-                    current[axis] + 1 if axis == "cautious_reckless" else current[axis]
-                ),
+            "behavioural_axis_updates": [{
+                "axis": "cautious_reckless",
+                "delta": 1,
                 "justification": "Ordered cumulative update.",
                 "confidence": 0.7,
                 "evidence_ids": [evidence_id],
-            } for axis in BEHAVIOURAL_AXES],
+            }],
             "aspect_updates": [],
             "goal_updates": [],
         })
 
 
-def _profile_update_output(*, changed_axis: str | None = None) -> str:
+def _profile_update_output(
+    *, changed_axis: str | None = None, delta: int = -5,
+) -> str:
     return json.dumps({
-        "behavioural_axes": [
-            {
-                "axis": axis,
-                "new_value": 30 if axis == changed_axis else 50,
-                "justification": (
-                    "Grounded change." if axis == changed_axis else "No change warranted."
-                ),
+        "behavioural_axis_updates": (
+            [{
+                "axis": changed_axis,
+                "delta": delta,
+                "justification": "Grounded change.",
                 "confidence": 0.6,
                 "evidence_ids": ["scene:s1"],
-            }
-            for axis in BEHAVIOURAL_AXES
-        ],
+            }] if changed_axis else []
+        ),
         "aspect_updates": [],
         "goal_updates": [],
     })
@@ -253,7 +250,7 @@ async def test_embodiment_pipeline_is_four_calls_with_atomic_profile_update():
     assert len(result.observations.recurring_behaviours) == 1
     assert len(result.axis_updates) == 1
     assert result.axis_updates[0].axis == "cautious_reckless"
-    assert result.axis_updates[0].new_value == 30
+    assert result.axis_updates[0].new_value == 45
     tags = [call["usage_tag"] for call in llm.calls]
     assert "character_agent.embodiment.character_incorporation" in tags
     assert "character_agent.embodiment.scene_interpretation" in tags
@@ -583,22 +580,30 @@ async def test_embodiment_pipeline_records_llm_stats():
     }
 
 
-def test_profile_update_requires_all_eight_unique_axes():
+def test_profile_update_accepts_sparse_unique_nonzero_axis_deltas():
     valid = json.loads(_profile_update_output())
-    assert len(ProfileUpdateOutput.model_validate(valid).behavioural_axes) == 8
+    assert ProfileUpdateOutput.model_validate(valid).behavioural_axis_updates == []
 
-    missing = {**valid, "behavioural_axes": valid["behavioural_axes"][:-1]}
+    changed = json.loads(_profile_update_output(
+        changed_axis="cautious_reckless", delta=-3,
+    ))
+    parsed = ProfileUpdateOutput.model_validate(changed)
+    assert parsed.behavioural_axis_updates[0].delta == -3
+
+    zero = json.loads(_profile_update_output(
+        changed_axis="cautious_reckless", delta=0,
+    ))
     with pytest.raises(ValueError):
-        ProfileUpdateOutput.model_validate(missing)
+        ProfileUpdateOutput.model_validate(zero)
 
     duplicate = {
-        **valid,
-        "behavioural_axes": [
-            *valid["behavioural_axes"][:-1],
-            valid["behavioural_axes"][0],
+        **changed,
+        "behavioural_axis_updates": [
+            *changed["behavioural_axis_updates"],
+            changed["behavioural_axis_updates"][0],
         ],
     }
-    with pytest.raises(ValueError, match="exactly once"):
+    with pytest.raises(ValueError, match="unique axes"):
         ProfileUpdateOutput.model_validate(duplicate)
 
 

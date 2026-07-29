@@ -320,6 +320,13 @@ order against cumulative state. Draft acceptance atomically materializes revisio
 perspectives, reflections, emotion/belief children, and impacts linked to their
 active goal/aspect targets.
 
+The profile-update LLM contract uses `behavioural_axis_updates`, a sparse list
+of `{axis, delta, justification, confidence, evidence_ids}`. `delta` is a
+nonzero signed integer from `-5` through `5`. Omitted axes retain their current
+values, and an empty list means no behavioural-axis change. The backend applies
+and clamps each delta; generated proposals still expose the existing absolute
+`{axis, value, ...}` contract.
+
 The existing background-job response contract is unchanged. During generation,
 its details report `status` and `active_stages`: incorporation `[1]`,
 psychological enrichment `[2]`, observations `[3]`, atomic profile updates

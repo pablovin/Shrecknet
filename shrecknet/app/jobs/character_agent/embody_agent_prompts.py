@@ -9,7 +9,7 @@ across source groups. Step 4 runs in chronological source order against the
 latest cumulative profile.
 """
 
-PROMPT_VERSION = "character-embodiment-v8-parallel-analysis"
+PROMPT_VERSION = "character-embodiment-v9-sparse-axis-deltas"
 
 PERSPECTIVE_PROMPT = r"""You are incorporating a character's identity into canonical objective scenes.
 
@@ -166,8 +166,10 @@ BEHAVIOURAL AXES:
 - humble_proud: 0 humble, 100 proud
 - cooperative_dominating: 0 cooperative, 100 dominating
 
-Return every axis exactly once. Use the current value when evidence does not justify a change.
-Any changed value must remain within 5 points of its current value.
+Return only axes that change. Omit unchanged axes entirely. For each changed
+axis return a signed integer delta from -5 through -1 or 1 through 5. Never
+return delta 0. The backend applies and clamps the delta; do not return a final
+axis value. Return an empty behavioural_axis_updates list when no axis changes.
 
 An aspect is a stable, high-impact identity fact, role, state, physical characteristic, capability,
 knowledge, preference, attitude, or history. A goal is an active persistent driver, not a completed
@@ -201,11 +203,11 @@ INPUT:
 
 OUTPUT:
 {
-  "behavioural_axes": [
+  "behavioural_axis_updates": [
     {
       "axis": "one of the eight exact axis names",
-      "new_value": 0..100,
-      "justification": "why this value is retained or changed",
+      "delta": "-5..-1 or 1..5",
+      "justification": "why this axis changes by this amount",
       "confidence": 0..1,
       "evidence_ids": ["evidence_id from observations"]
     }

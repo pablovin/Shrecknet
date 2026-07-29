@@ -58,7 +58,11 @@ Identity mode normally performs two LLM calls.
    behavioral-axis values, trait adherence, active aspects as `{id,name}`, and
    active goals as `{id,name,description}`. It returns a one-paragraph
    `context_summary`, relevant trait names, aspect IDs, goal IDs, conflicts,
-   and unknowns. The backend rejects unknown selectors.
+   and unknowns. The backend keeps supplied active IDs and may resolve a
+   selector returned as a name only when it exactly matches one active aspect
+   or goal after case and whitespace normalization. Unknown or ambiguous
+   selectors are discarded, allowing deliberation to continue without them.
+   Model-returned selector text is never passed directly to deliberation.
 2. **Deliberation** receives only the original query, context summary, system
    instruction, selected axes as name/value/scale explanation, selected aspect
    names, selected goal names, conflicts, unknowns, and response-format

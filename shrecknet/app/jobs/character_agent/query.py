@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import json
+import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -36,6 +37,7 @@ TRAIT_EXPLANATIONS = {
     "cooperative_dominating": "0 means cooperative; 100 means dominating.",
 }
 RATIONALE_MAX_CHARACTERS = 2_000
+logger = logging.getLogger(__name__)
 
 
 class CharacterGenerationError(RuntimeError):
@@ -178,15 +180,69 @@ class CharacterAgentQueryJob:
         }
 
     @staticmethod
+    def _normalize_selector_name(value: str) -> str:
+        return " ".join(value.split()).casefold()
+
+    @classmethod
+    def _resolve_selectors(
+        cls,
+        selectors: list[str],
+        items: list[dict[str, Any]],
+        *,
+        name_fields: tuple[str, ...],
+        selector_type: str,
+    ) -> list[str]:
+        """Keep grounded IDs, resolve unique exact names, and discard the rest."""
+        ids = {str(item["id"]) for item in items}
+        ids_by_name: dict[str, set[str]] = {}
+        for item in items:
+            item_id = str(item["id"])
+            for field in name_fields:
+                value = item.get(field)
+                if isinstance(value, str) and value.strip():
+                    normalized = cls._normalize_selector_name(value)
+                    ids_by_name.setdefault(normalized, set()).add(item_id)
+
+        resolved: list[str] = []
+        for selector in selectors:
+            selected_id: str | None = selector if selector in ids else None
+            if selected_id is None:
+                matches = ids_by_name.get(cls._normalize_selector_name(selector), set())
+                if len(matches) == 1:
+                    selected_id = next(iter(matches))
+                    logger.info(
+                        "character_query_selector_resolved type=%s selector=%r id=%s",
+                        selector_type,
+                        selector,
+                        selected_id,
+                    )
+                else:
+                    logger.warning(
+                        "character_query_selector_discarded type=%s selector=%r matches=%d",
+                        selector_type,
+                        selector,
+                        len(matches),
+                    )
+            if selected_id is not None and selected_id not in resolved:
+                resolved.append(selected_id)
+        return resolved
+
+    @classmethod
     def _validate_selectors(
-        frame: CharacterQueryFrame, snapshot: dict[str, Any]
+        cls, frame: CharacterQueryFrame, snapshot: dict[str, Any]
     ) -> None:
-        aspect_ids = {item["id"] for item in snapshot["aspects"]}
-        goal_ids = {item["id"] for item in snapshot["goals"]}
-        if not set(frame.relevant_aspect_ids) <= aspect_ids:
-            raise CharacterGenerationError("task framing referenced unknown aspects")
-        if not set(frame.relevant_goal_ids) <= goal_ids:
-            raise CharacterGenerationError("task framing referenced unknown goals")
+        frame.relevant_aspect_ids = cls._resolve_selectors(
+            frame.relevant_aspect_ids,
+            snapshot["aspects"],
+            name_fields=("name",),
+            selector_type="aspect",
+        )
+        frame.relevant_goal_ids = cls._resolve_selectors(
+            frame.relevant_goal_ids,
+            snapshot["goals"],
+            name_fields=("title", "name"),
+            selector_type="goal",
+        )
 
     @staticmethod
     def _validate_generic_frame(frame: CharacterQueryFrame) -> None:

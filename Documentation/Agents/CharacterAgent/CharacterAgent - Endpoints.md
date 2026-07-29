@@ -230,6 +230,9 @@ compact identity framing followed by deliberation/rendering. Invalid final JSON
 may receive one repair attempt through `model_agents_repair_json`. Generic mode
 also performs framing followed by deliberation, but neither call receives
 CharacterAgent identity. Generic framing receives only the query and context.
+Identity framing keeps active selector IDs, resolves exact unambiguous
+aspect/goal names to their active IDs, and discards unknown or ambiguous
+selectors instead of failing the query.
 shreckLLM owns provider retries; Shrecknet
 polls the submitted shreckLLM job without a whole-stage deadline.
 

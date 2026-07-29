@@ -67,6 +67,10 @@ DELIBERATION = json.dumps({
     "content": {"spoken_response": "I refuse.", "confidence": 82},
     "decision_basis": "Protecting the villagers is the priority.",
 })
+TEXT_DELIBERATION = json.dumps({
+    "content": "I refuse.",
+    "decision_basis": "Protecting the villagers is the priority.",
+})
 
 
 @pytest.mark.asyncio
@@ -240,16 +244,65 @@ async def test_query_without_character_identity_rejects_identity_selectors():
 
 
 @pytest.mark.asyncio
-async def test_query_rejects_invented_evidence_without_repair_call():
-    llm = FakeLLM([_frame(relevant_goal_ids=["invented-goal"])])
+async def test_query_discards_unknown_identity_selectors_and_continues():
+    llm = FakeLLM([
+        _frame(
+            relevant_aspect_ids=["invented-aspect"],
+            relevant_goal_ids=["invented-goal"],
+        ),
+        TEXT_DELIBERATION,
+    ])
     target = LLMModelTarget(provider="test", name="model")
     job = CharacterAgentQueryJob(
         llm_client=llm, framing_model=target, deliberation_model=target,
         repair_model=target,
     )
-    with pytest.raises(CharacterGenerationError):
-        await job.run(CharacterAgentQueryRequest(query="Write a letter"), SNAPSHOT)
-    assert len(llm.calls) == 1
+    result = await job.run(CharacterAgentQueryRequest(query="Write a letter"), SNAPSHOT)
+
+    assert result.content == "I refuse."
+    deliberation = json.loads(llm.calls[1]["messages"][1]["content"])
+    assert deliberation["relevant_aspect_names"] == []
+    assert deliberation["relevant_goal_names"] == []
+    assert len(llm.calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_query_resolves_unique_exact_identity_names_to_active_ids():
+    llm = FakeLLM([
+        _frame(
+            relevant_aspect_ids=["  NEGOTIATOR "],
+            relevant_goal_ids=["protect   VILLAGERS"],
+        ),
+        TEXT_DELIBERATION,
+    ])
+    target = LLMModelTarget(provider="test", name="model")
+    job = CharacterAgentQueryJob(
+        llm_client=llm, framing_model=target, deliberation_model=target,
+        repair_model=target,
+    )
+
+    await job.run(CharacterAgentQueryRequest(query="Write a letter"), SNAPSHOT)
+
+    deliberation = json.loads(llm.calls[1]["messages"][1]["content"])
+    assert deliberation["relevant_aspect_names"] == ["Negotiator"]
+    assert deliberation["relevant_goal_names"] == ["Protect villagers"]
+
+
+def test_query_does_not_infer_ambiguous_goal_name():
+    snapshot = {
+        **SNAPSHOT,
+        "goals": [
+            {**SNAPSHOT["goals"][0], "id": "goal-1"},
+            {**SNAPSHOT["goals"][0], "id": "goal-2"},
+        ],
+    }
+    frame = CharacterAgentQueryJob._parse_frame(
+        _frame(relevant_goal_ids=["Protect villagers"])
+    )
+
+    CharacterAgentQueryJob._validate_selectors(frame, snapshot)
+
+    assert frame.relevant_goal_ids == []
 
 
 @pytest.mark.asyncio

@@ -67,6 +67,7 @@ class ShreckLLMClient:
         payload: dict[str, Any] = {
             "provider_id": target.provider,
             "model": target.name,
+            "reasoning": target.reasoning,
             "messages": messages,
             "temperature": temperature,
             "conversation_id": conversation_id,
@@ -253,7 +254,8 @@ class ShreckLLMClient:
         if isinstance(model, dict):
             provider = str(model.get("provider") or "openai").strip() or "openai"
             name = str(model.get("name") or "gpt-5-nano").strip() or "gpt-5-nano"
-            return LLMModelTarget(provider=provider, name=name)
+            reasoning = model.get("reasoning", False)
+            return LLMModelTarget(provider=provider, name=name, reasoning=reasoning)
         return LLMModelTarget(provider="openai", name="gpt-5-nano")
 
     @staticmethod

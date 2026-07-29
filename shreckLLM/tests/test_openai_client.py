@@ -178,7 +178,7 @@ async def test_openai_chat_does_not_send_deepinfra_service_tier(monkeypatch) -> 
         ("anthropic/claude-sonnet-4:NITRO", "anthropic/claude-sonnet-4:nitro"),
     ],
 )
-async def test_openrouter_chat_always_uses_nitro_routing(
+async def test_openrouter_chat_uses_nitro_routing_and_native_reasoning_flag(
     monkeypatch, selected_model, execution_model
 ) -> None:
     captured = {}
@@ -212,7 +212,48 @@ async def test_openrouter_chat_always_uses_nitro_routing(
         model=selected_model,
         messages=[ChatMessage(role="user", content="hello")],
         temperature=0.3,
+        reasoning=True,
     )
 
     assert captured["model"] == execution_model
-    assert "extra_body" not in captured
+    assert captured["extra_body"] == {
+        "reasoning": {"enabled": True, "effort": "high"}
+    }
+
+
+@pytest.mark.asyncio
+async def test_openrouter_chat_disables_reasoning_by_default(monkeypatch) -> None:
+    captured = {}
+
+    class Response:
+        choices = []
+        usage = None
+        id = "request-1"
+
+    class Completions:
+        async def create(self, **kwargs):
+            captured.update(kwargs)
+            return Response()
+
+    class Chat:
+        completions = Completions()
+
+    class FakeAsyncOpenAI:
+        def __init__(self, **_kwargs):
+            self.chat = Chat()
+
+    monkeypatch.setattr(openai_client, "AsyncOpenAI", FakeAsyncOpenAI)
+    client = openai_client.OpenAIClient(
+        api_key="secret",
+        timeout_s=300,
+        base_url="https://openrouter.ai/api/v1",
+        provider_id="openrouter",
+    )
+
+    await client.chat(
+        model="anthropic/claude-sonnet-4",
+        messages=[ChatMessage(role="user", content="hello")],
+        temperature=0.3,
+    )
+
+    assert captured["extra_body"] == {"reasoning": {"enabled": False}}

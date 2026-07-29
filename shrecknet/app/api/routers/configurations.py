@@ -53,7 +53,7 @@ def _first_available_llm_target(provider_validations: dict[str, Any]) -> LLMMode
             if isinstance(model, dict) and model.get("available") is True:
                 name = str(model.get("model") or "").strip()
                 if name:
-                    return LLMModelTarget(provider=provider_key, name=name)
+                    return LLMModelTarget(provider=provider_key, name=name, reasoning=False)
     return None
 
 
@@ -207,6 +207,7 @@ SETTINGS_GROUPS: list[dict[str, Any]] = [
             "model_novelist_planning",
             "model_novelist_prose",
             "model_novelist_critic",
+            "model_novelist_chapter_writer",
             "model_librarian_planner",
             "model_librarian_synthesis",
             "model_librarian_character_incorporation",
@@ -218,6 +219,7 @@ SETTINGS_GROUPS: list[dict[str, Any]] = [
             "character_agent_embodiment_evidence_tokens",
             "character_agent_embodiment_max_aspects",
             "character_agent_embodiment_max_goals",
+            "character_agent_embodiment_source_concurrency",
             "model_orchestrator_routing",
             "model_orchestrator_synthesis",
         ],
@@ -298,9 +300,9 @@ FIELD_UI_META: dict[str, dict[str, Any]] = {
     "shreckllm_max_retries": {"type": "integer", "help": "Retry attempts for shreckLLM calls."},
     "llm_prewarm_on_startup": {"type": "boolean", "help": "Warm Elder, Librarian, Architect, and Novelist LLM targets before the API becomes ready."},
     "llm_prewarm_timeout_s": {"type": "number", "help": "Maximum startup warmup time per unique interactive LLM model."},
-    "model_architect_scene_chunking": {"type": "llm_target", "help": "Provider/model target for scene chunking."},
-    "model_architect_entity_proposal": {"type": "llm_target", "help": "Provider/model target for architect entity proposal."},
-    "model_architect_milestone_proposal": {"type": "llm_target", "help": "Provider/model target for architect milestone proposal."},
+    "model_architect_scene_chunking": {"type": "llm_target", "help": "Canonical provider/model target for Architect analysis: scene, entity, and milestone proposals."},
+    "model_architect_entity_proposal": {"type": "llm_target", "help": "Deprecated compatibility setting; active Architect analysis uses model_architect_scene_chunking."},
+    "model_architect_milestone_proposal": {"type": "llm_target", "help": "Deprecated compatibility setting; active Architect analysis uses model_architect_scene_chunking."},
     "model_architect_entity_generation": {"type": "llm_target", "help": "Provider/model target for architect entity generation."},
     "model_agents_repair_json": {"type": "llm_target", "help": "Provider/model target for shared JSON repair."},
     "model_elder_planner": {"type": "llm_target", "help": "Provider/model target for Elder retrieval planning."},
@@ -334,8 +336,9 @@ FIELD_UI_META: dict[str, dict[str, Any]] = {
     "embedding_chunk_size": {"type": "integer", "help": "Chunk size for embedding pipeline."},
     "embedding_chunk_overlap": {"type": "integer", "help": "Chunk overlap for embedding pipeline."},
     "model_novelist_planning": {"type": "llm_target", "help": "Provider/model target for novelist planning stages (step2+step4)."},
-    "model_novelist_prose": {"type": "llm_target", "help": "Provider/model target for novelist prose stages (step5+step7)."},
+    "model_novelist_prose": {"type": "llm_target", "help": "Provider/model target for per-scene novelist prose (step5)."},
     "model_novelist_critic": {"type": "llm_target", "help": "Provider/model target for novelist critic stage (step6)."},
+    "model_novelist_chapter_writer": {"type": "llm_target", "help": "Dedicated provider/model target for the final full-chapter rewrite (step7)."},
     "model_librarian_planner": {"type": "llm_target", "help": "Provider/model target for Librarian information-needs planning."},
     "model_librarian_synthesis": {"type": "llm_target", "help": "Provider/model target for Librarian cited answer synthesis."},
     "model_librarian_character_incorporation": {"type": "llm_target", "help": "Provider/model target for Librarian language and character rendering."},
@@ -347,6 +350,7 @@ FIELD_UI_META: dict[str, dict[str, Any]] = {
     "character_agent_embodiment_evidence_tokens": {"type": "integer", "help": "Evidence budget converted deterministically at ten characters per configured token."},
     "character_agent_embodiment_max_aspects": {"type": "integer", "help": "Maximum generated aspect suggestions per embodiment draft."},
     "character_agent_embodiment_max_goals": {"type": "integer", "help": "Maximum generated goal suggestions per embodiment draft."},
+    "character_agent_embodiment_source_concurrency": {"type": "integer", "help": "Maximum source groups whose snapshot interpretation may run concurrently; ordered profile updates remain sequential."},
     "librarian_debug_artifacts_enabled": {"type": "boolean", "help": "Write Librarian local-test JSON artifacts and manifests."},
     "elder_debug_artifacts_enabled": {"type": "boolean", "help": "Write Elder prompts, LLM responses, retrieval, evidence, and manifests under local_tests/elder."},
     "model_orchestrator_routing": {"type": "llm_target", "help": "Provider/model target for companion orchestrator routing classifier."},
@@ -581,9 +585,9 @@ def get_config_schema() -> dict[str, Any]:
         {"id": "ai_agents", "label": "AI Agents", "fields": ["enable_ai_agents", "shreckllm_base_url"]},
         {"id": "architect", "label": "Architect Agent", "fields": ["model_architect_scene_chunking", "model_architect_entity_proposal", "model_architect_milestone_proposal", "model_architect_entity_generation", "model_agents_repair_json"]},
         {"id": "elder", "label": "Elder Agent", "fields": ["model_elder_planner", "model_elder_synthesis", "model_elder_character_incorporation", "elder_debug_artifacts_enabled", "elder_query_embedding_timeout_s", "embedding_runtime_enabled", "embedding_runtime_queue_max_size", "embedding_runtime_batch_max_size", "embedding_runtime_batch_wait_ms", "embedding_runtime_cache_size", "embedding_runtime_request_timeout_s", "embedding_runtime_startup_timeout_s", "embedding_runtime_fail_open_health", "embedding_model_id", "embedding_dimension", "embedding_device", "semantic_embedding_strategy", "semantic_embedding_version", "semantic_embedding_long_text_threshold_tokens", "semantic_embedding_chunk_target_tokens", "semantic_embedding_chunk_overlap_tokens"]},
-        {"id": "novelist", "label": "Novelist Agent", "fields": ["model_novelist_planning", "model_novelist_prose", "model_novelist_critic"]},
+        {"id": "novelist", "label": "Novelist Agent", "fields": ["model_novelist_planning", "model_novelist_prose", "model_novelist_critic", "model_novelist_chapter_writer"]},
         {"id": "librarian", "label": "Librarian Agent", "fields": ["model_librarian_planner", "model_librarian_synthesis", "model_librarian_character_incorporation", "librarian_debug_artifacts_enabled"]},
-        {"id": "character_agent", "label": "Character Agent", "fields": ["model_character_agent_framing", "model_character_agent_deliberation", "model_character_agent_character_incorporation", "model_character_agent_scene_interpretation", "model_character_agent_update", "character_agent_embodiment_evidence_tokens", "character_agent_embodiment_max_aspects", "character_agent_embodiment_max_goals"]},
+        {"id": "character_agent", "label": "Character Agent", "fields": ["model_character_agent_framing", "model_character_agent_deliberation", "model_character_agent_character_incorporation", "model_character_agent_scene_interpretation", "model_character_agent_update", "character_agent_embodiment_evidence_tokens", "character_agent_embodiment_max_aspects", "character_agent_embodiment_max_goals", "character_agent_embodiment_source_concurrency"]},
         {"id": "security_tokens", "label": "Security Tokens", "fields": ["jwt_issuer", "jwt_audience", "jwt_kid", "jwt_access_token_expiry_minutes"]},
         {"id": "legacy_migration", "label": "Legacy Migration", "fields": ["old_database_url"]},
     ]
@@ -606,6 +610,19 @@ def get_config_schema() -> dict[str, Any]:
         )
 
     field_meta = dict(FIELD_UI_META)
+    for field_name in LLM_TARGET_FIELDS:
+        row = dict(field_meta.get(field_name, {}))
+        row["value_fields"] = {
+            "provider": {"type": "string", "required": True},
+            "name": {"type": "string", "required": True},
+            "reasoning": {
+                "type": "boolean",
+                "default": False,
+                "label": "Reasoning",
+                "help": "Request provider-native model reasoning when supported.",
+            },
+        }
+        field_meta[field_name] = row
     for field in runtime_changeable_fields:
         row = dict(field_meta.get(field, {}))
         row["change_impact"] = "hot"

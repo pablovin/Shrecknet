@@ -1,15 +1,15 @@
-"""Six-call atomic CharacterAgent embodiment prompts.
+"""Four-call split-phase CharacterAgent embodiment prompts.
 
 Pipeline per source group:
   Step 1 incorporation -> Step 2 enrichment -> Step 3 observations
-                                              /    |     \
-                                        Step 4a  4b     4c
-                                        axes  aspects  goals
+                                             -> Step 4 profile update
 
-The three Step 4 update calls run in parallel.
+Steps 1-3 analyze an immutable starting-profile snapshot and may run concurrently
+across source groups. Step 4 runs in chronological source order against the
+latest cumulative profile.
 """
 
-PROMPT_VERSION = "character-embodiment-v7-six-call"
+PROMPT_VERSION = "character-embodiment-v8-parallel-analysis"
 
 PERSPECTIVE_PROMPT = r"""You are incorporating a character's identity into canonical objective scenes.
 
@@ -104,11 +104,13 @@ Given canonical scenes, grounded interpretations, and immediate psychological en
 observations. Every observation must cite at least one scene evidence_id from the perspectives.
 Expressive character_reflection text is presentation-only and is never supplied as evidence.
 
-EVIDENCE ID FORMAT: use scene:{scene_id} to reference any scene perspective below.
+EVIDENCE ID FORMAT: use only an exact value from allowed_evidence_ids. Never
+invent an ID, copy a scene name as an ID, or cite a scene outside this source bundle.
 
 INPUT:
 {
   "identity": {"alias":"...","subtitle":null,"entity_type":"...","entity_type_description":null,"properties":{}},
+  "allowed_evidence_ids": ["scene:exact-scene-id"],
   "scene_bundles": [
     {
       "scene": {"scene_id":"id","name":"...","description":"...","created_at":null},
@@ -148,15 +150,13 @@ When omitted or operation is "retain", the character's subtitle stays unchanged.
 
 Return JSON only. required_output is authoritative if this description and the schema differ."""
 
-AXES_UPDATE_PROMPT = r"""You are updating behavioural axes based on new observations.
+PROFILE_UPDATE_PROMPT = r"""You are applying one chronological source's observations to a character's persistent profile.
 
-Review the current axis values against the observations. Change an axis only when the observations
-provide consistent, important evidence that the current value is no longer accurate. An isolated
-reaction is not enough. Each axis change must be within ±5 points of the current value — larger
-shifts require proportionally stronger evidence across multiple scenes. For unchanged axes, omit
-them from the output.
+Return one atomic update covering behavioural axes, aspects, and goals. The current profile already
+contains updates from every earlier source. Default to retaining it unless the observations provide
+clear evidence for a change.
 
-Axis definitions (0=left pole, 50=neutral, 100=right pole):
+BEHAVIOURAL AXES:
 - calm_aggressive: 0 calm, 100 aggressive
 - cautious_reckless: 0 cautious, 100 reckless
 - compassionate_ruthless: 0 compassionate, 100 ruthless
@@ -166,9 +166,24 @@ Axis definitions (0=left pole, 50=neutral, 100=right pole):
 - humble_proud: 0 humble, 100 proud
 - cooperative_dominating: 0 cooperative, 100 dominating
 
+Return every axis exactly once. Use the current value when evidence does not justify a change.
+Any changed value must remain within 5 points of its current value.
+
+An aspect is a stable, high-impact identity fact, role, state, physical characteristic, capability,
+knowledge, preference, attitude, or history. A goal is an active persistent driver, not a completed
+one-time action.
+
 INPUT:
 {
-  "current_axes": {"axis_name": value_0_100},
+  "current_profile": {
+    "behavioural_axes": {"axis_name": 0..100},
+    "aspects": [
+      {"name": "name", "category": "category", "description": "text or null", "importance": 1..5, "intensity": 0..100 or null}
+    ],
+    "goals": [
+      {"title": "title", "description": "text", "goal_type": "type", "priority": 0..100, "commitment": 0..100}
+    ]
+  },
   "observations": {
     "recurring_behaviours": [...],
     "motivations": [...],
@@ -179,52 +194,22 @@ INPUT:
     "contradictions": [...],
     "evidence_gaps": [...]
   },
-  "required_output": "<AxisChangeOutput schema>"
+  "allowed_evidence_ids": ["scene:exact-scene-id"],
+  "limits": {"max_aspects": 0..50, "max_goals": 0..50},
+  "required_output": "<ProfileUpdateOutput schema>"
 }
 
-OUTPUT — return only the axes that should change:
+OUTPUT:
 {
   "behavioural_axes": [
     {
-      "axis": "axis_name",
+      "axis": "one of the eight exact axis names",
       "new_value": 0..100,
-      "justification": "why this value changed",
+      "justification": "why this value is retained or changed",
       "confidence": 0..1,
       "evidence_ids": ["evidence_id from observations"]
     }
-  ]
-}
-Include only axes that actually change. Return JSON only."""
-
-ASPECTS_UPDATE_PROMPT = r"""You are updating character aspects based on new observations.
-
-Review the current aspects against the observations. Default to no change unless observations
-clearly support adding a new stable aspect, updating an existing one, or removing one that has
-been invalidated.
-
-An aspect is a stable, high-impact identity fact, role, state, physical characteristic, capability,
-knowledge, preference, attitude, or history.
-
-INPUT:
-{
-  "current_aspects": [
-    {"name": "aspect name", "category": "category", "description": "description or null", "importance": 1..5, "intensity": 0..100 or null}
   ],
-  "observations": {
-    "recurring_behaviours": [...],
-    "motivations": [...],
-    "values": [...],
-    "fears": [...],
-    "conflicts": [...],
-    "relationships": [...],
-    "contradictions": [...],
-    "evidence_gaps": [...]
-  },
-  "required_output": "<AspectUpdateOutput schema>"
-}
-
-OUTPUT — return aspect update operations:
-{
   "aspect_updates": [
     {
       "operation": "add | update | remove",
@@ -237,39 +222,7 @@ OUTPUT — return aspect update operations:
       "confidence": 0..1,
       "evidence_ids": ["evidence_id from observations"]
     }
-  ]
-}
-For remove, name and justification are required; all other fields are ignored.
-Return JSON only."""
-
-GOALS_UPDATE_PROMPT = r"""You are updating character goals based on new observations.
-
-Review the current goals against the observations. Default to no change unless observations
-clearly support adding a new persistent goal, updating an existing one, marking one as complete,
-or removing one that has been abandoned or superseded.
-
-A goal is an active persistent driver, not a completed one-time action.
-
-INPUT:
-{
-  "current_goals": [
-    {"title": "goal title", "description": "description", "goal_type": "type", "priority": 0..100, "commitment": 0..100}
   ],
-  "observations": {
-    "recurring_behaviours": [...],
-    "motivations": [...],
-    "values": [...],
-    "fears": [...],
-    "conflicts": [...],
-    "relationships": [...],
-    "contradictions": [...],
-    "evidence_gaps": [...]
-  },
-  "required_output": "<GoalUpdateOutput schema>"
-}
-
-OUTPUT — return goal update operations:
-{
   "goal_updates": [
     {
       "operation": "add | update | remove | complete",
@@ -285,5 +238,7 @@ OUTPUT — return goal update operations:
     }
   ]
 }
-For remove and complete, title and justification are required; all other fields are ignored.
-Return JSON only."""
+
+For remove or complete operations, the stable name/title and justification are required; fields that
+describe the resulting active item are ignored. Every evidence_ids value must
+come exactly from allowed_evidence_ids. Return JSON only."""

@@ -37,11 +37,18 @@ In the active analysis path:
 1. Scene segmentation runs first and does not produce milestones.
 2. Entity discovery runs per final scene.
 3. Scene proposals are built with `related_to` entities.
-4. `_run_milestone_proposal_phase` sends final scenes to `ARCHITECT_MILESTONE_BATCH_PROMPT` in batches of at most 2 scenes.
+4. `_run_milestone_proposal_phase` submits one call per final scene to ShreckLLM.
+   All calls are created together so ShreckLLM can fill provider concurrency.
 5. Returned milestones are mapped back by `scene_ref`.
 6. Boundaries are normalized so each retained scene has at least one `begin` and one `end` milestone.
 
-The milestone prompt receives only final scene payloads and allowed scene entities. It must not introduce entities outside the scene-local allowed entity list.
+The milestone prompt receives the complete reconstructed `scene_text`, final scene
+metadata, and allowed scene entities. It must not introduce entities outside the
+scene-local allowed entity list.
+
+The active model is the canonical Architect analysis target,
+`settings.model_architect_scene_chunking`. Calls request strict native JSON-schema
+output, with parsing and JSON repair retained as compatibility fallbacks.
 
 ## Prompt Contract
 

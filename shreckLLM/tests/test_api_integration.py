@@ -704,6 +704,47 @@ async def test_chat_jobs_continue_after_runtime_refresh(monkeypatch, tmp_path) -
 
 
 @pytest.mark.asyncio
+async def test_chat_service_forwards_reasoning_to_provider_adapter(monkeypatch, tmp_path) -> None:
+    import app.config_store as config_store
+
+    settings = Settings(
+        redis_url="redis://localhost:6379/15",
+        data_dir=str(tmp_path),
+        ollama_prewarm_on_startup=False,
+    )
+    config_store._cache = None
+    monkeypatch.setattr(config_store, "get_settings", lambda: settings)
+    service = ChatService(settings)
+    captured = {}
+
+    async def fake_chat(**kwargs):
+        captured.update(kwargs)
+        return {
+            "text": "ok",
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+            "provider_request_id": None,
+        }
+
+    monkeypatch.setattr(service, "_effective_provider_active", lambda *_args: (True, None))
+    assert service._ollama is not None
+    monkeypatch.setattr(service._ollama, "chat", fake_chat)
+
+    try:
+        await service._run_chat(
+            ChatRequest(
+                provider_id="ollama",
+                model="gemma3:4b",
+                reasoning=True,
+                messages=[{"role": "user", "content": "hello"}],
+            ),
+            history=[],
+        )
+        assert captured["reasoning"] is True
+    finally:
+        await service.aclose()
+
+
+@pytest.mark.asyncio
 async def test_chat_job_worker_pool_executes_independent_jobs_concurrently(monkeypatch, tmp_path) -> None:
     import app.config_store as config_store
 
@@ -760,6 +801,65 @@ async def test_chat_job_worker_pool_executes_independent_jobs_concurrently(monke
 
 
 @pytest.mark.asyncio
+async def test_provider_limit_allows_independent_adapter_calls_in_parallel(monkeypatch, tmp_path) -> None:
+    import app.config_store as config_store
+
+    settings = Settings(
+        redis_url="redis://localhost:6379/15",
+        data_dir=str(tmp_path),
+        bootstrap_max_concurrent_requests=2,
+        ollama_prewarm_on_startup=False,
+    )
+    config_store._cache = None
+    monkeypatch.setattr(config_store, "get_settings", lambda: settings)
+    service = ChatService(settings)
+    service._runtime.provider_limits["ollama"]["max_concurrent"] = 2
+    service._init_provider_limiters()
+    both_started = asyncio.Event()
+    release = asyncio.Event()
+    running = 0
+    peak_running = 0
+
+    async def fake_chat(**_kwargs):
+        nonlocal running, peak_running
+        running += 1
+        peak_running = max(peak_running, running)
+        if running == 2:
+            both_started.set()
+        try:
+            await release.wait()
+            return {
+                "text": "ok",
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+                "provider_request_id": None,
+            }
+        finally:
+            running -= 1
+
+    monkeypatch.setattr(service, "_effective_provider_active", lambda *_args: (True, None))
+    assert service._ollama is not None
+    monkeypatch.setattr(service._ollama, "chat", fake_chat)
+    request = ChatRequest(provider_id="ollama", model="gemma3:4b", messages=[{"role": "user", "content": "hello"}])
+
+    try:
+        first = await service.submit_chat_job(request.model_copy(deep=True))
+        second = await service.submit_chat_job(request.model_copy(deep=True))
+        await asyncio.wait_for(both_started.wait(), timeout=1.0)
+        assert service.limiter.in_flight == 2
+        assert service._provider_semaphores["ollama"]._value == 0
+        assert service._provider_waiting["ollama"] == 0
+        release.set()
+        await asyncio.gather(
+            service.wait_for_chat_job_result(first.job_id, timeout_s=1.0),
+            service.wait_for_chat_job_result(second.job_id, timeout_s=1.0),
+        )
+        assert peak_running == 2
+    finally:
+        release.set()
+        await service.aclose()
+
+
+@pytest.mark.asyncio
 async def test_prewarm_only_runs_for_active_providers(monkeypatch, tmp_path) -> None:
     import app.config_store as config_store
 
@@ -806,4 +906,48 @@ async def test_prewarm_only_runs_for_active_providers(monkeypatch, tmp_path) -> 
         await service.prewarm_active_providers()
         assert active_calls == [service._runtime.provider_defaults["ollama"].models[0]]
     finally:
+        await service.aclose()
+
+
+@pytest.mark.asyncio
+async def test_prewarm_runs_all_configured_models_in_parallel(monkeypatch, tmp_path) -> None:
+    import app.config_store as config_store
+
+    settings = Settings(
+        redis_url="redis://localhost:6379/15",
+        data_dir=str(tmp_path),
+        bootstrap_max_concurrent_requests=3,
+        ollama_prewarm_on_startup=True,
+    )
+    config_store._cache = None
+    monkeypatch.setattr(config_store, "get_settings", lambda: settings)
+    service = ChatService(settings)
+    models = ["model-a", "model-b", "model-c"]
+    service._runtime.provider_defaults["ollama"].models = models
+    service._runtime.provider_limits["ollama"]["max_concurrent"] = 3
+    await service._set_provider_state("ollama", active=True, last_error=None)
+    all_started = asyncio.Event()
+    release = asyncio.Event()
+    started: list[str] = []
+
+    async def fake_chat(**kwargs):
+        started.append(kwargs["model"])
+        if len(started) == len(models):
+            all_started.set()
+        await release.wait()
+        return None
+
+    try:
+        assert service._ollama is not None
+        monkeypatch.setattr(service._ollama, "chat", fake_chat)
+        warm_task = asyncio.create_task(service.prewarm_active_providers())
+        await asyncio.wait_for(all_started.wait(), timeout=1.0)
+        assert set(started) == set(models)
+        release.set()
+        await warm_task
+        state = service._runtime.provider_states["ollama"]
+        assert state.active is True
+        assert state.last_warmed_at is not None
+    finally:
+        release.set()
         await service.aclose()

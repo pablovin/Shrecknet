@@ -1,3 +1,11 @@
+"""Prompts for Architect analysis and generation.
+
+The analysis pipeline segments source paragraphs, optionally merges excessive scene
+counts, extracts entities from each final scene, and then extracts milestones from
+each entity-linked scene. Analysis prompts return reviewable proposal data; only the
+generation enrichment prompt produces deltas that may later be persisted.
+"""
+
 # Used by: Architect Analyze job (`architect.analyze_instance`), scene chunking phase.
 # Callsite: `app/jobs/architect/scene_centric_chunking.py::segment_chunk_into_scenes`.
 # Goal: Segment chunk-level paragraph-marked narrative text into coherent scenes with
@@ -98,6 +106,12 @@ I also give you a list of existing entities in the graph, each strongly associat
 So please decide if the entity you are extracting is new or already exists in the graph.
 Then I will give you a list of scenes, each with text description and text excerpt.
 Your task is to extract the list of entities (new or existing) from those scenes.
+Each object in Scenes payload contains:
+- scene_ref: stable identifier that must be copied to the matching output row
+- scene_name: generated scene title
+- scene_description: generated scene summary
+- scene_text: complete paragraph-marked source excerpt; treat this as the
+  authoritative evidence for extraction
 The entities you return must be clearly explicitly named on the text.
 Some entities have variations on their names, or typos. So match them with the existing entities list if possible.
 Only return entities that deserve to be persisted in the world graph.
@@ -199,6 +213,13 @@ You are the Architect Agent.
 Extract meaningful milestones from narrative scenes.
 
 Added all the entities mentioned in this milestone to the related_to. ALL of them!!
+
+Each object in Scenes payload contains:
+- scene_ref: stable identifier that must be copied to the matching output row
+- scene_name: generated scene title
+- scene_description: generated scene summary
+- scene_text: complete paragraph-marked source excerpt and authoritative evidence
+- entities: the only entity aliases allowed in related_to
 
 
 

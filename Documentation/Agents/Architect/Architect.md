@@ -19,11 +19,14 @@ Background tasks:
 
 ## Model Configuration
 
-Architect uses step-specific model targets from runtime settings:
+Architect analysis uses one canonical model target from runtime settings:
 
-- `model_architect_scene_chunking`: scene segmentation/chunking stage.
-- `model_architect_entity_proposal`: entity proposal/discovery stage.
-- `model_architect_milestone_proposal`: milestone proposal/discovery stage.
+- `model_architect_scene_chunking`: scene segmentation, conditional scene merging,
+  entity proposal, and milestone proposal stages.
+- `model_architect_entity_proposal`: deprecated compatibility setting; ignored by
+  the active analysis pipeline.
+- `model_architect_milestone_proposal`: deprecated compatibility setting; ignored
+  by the active analysis pipeline.
 - `model_architect_entity_generation`: generate/enrichment stage.
 - `model_agents_repair_json`: shared JSON repair model used when model output is malformed JSON.
 
@@ -56,10 +59,13 @@ High-level flow:
 4. Segment each 30-paragraph chunk with one scene-only LLM call.
 5. Parse scene JSON with strict parsing, JSON repair retry, and single-scene fallback if parsing still fails.
 6. Reconstruct scene text from global paragraph ids returned by the LLM (no scene dedup/merge step).
-7. Extract scene-level entities in batched calls (current batch size: `3` scenes per call), using existing aliases and ontology names only.
+7. Submit one entity-extraction call per scene to the ShreckLLM queue, including
+   the complete reconstructed `scene_text`, existing aliases, and ontology names.
 8. Resolve existing entity matches back to internal ids deterministically, then deduplicate entity proposals.
 9. Build scene proposals with `related_to`, `preceded_by`, and `followed_by`.
-10. Generate milestone proposals after entity discovery with `ARCHITECT_MILESTONE_BATCH_PROMPT` (current batch size: `2` scenes per call).
+10. Submit one milestone-extraction call per scene to the ShreckLLM queue after
+    entity discovery. Each call receives complete `scene_text` and produces the
+    scene's complete milestone set.
 11. Normalize boundaries and deduplicate adjacent duplicate boundary milestones.
 12. Build consolidated pipeline output payload and persist it in background job details.
 13. Complete run status/progress updates.

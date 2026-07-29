@@ -17,7 +17,6 @@ from app.celery_app import celery_app
 from app.core.config_store import LLMModelTarget, get_settings, is_shreckllm_configured
 from app.graph.neo4j import get_driver
 from app.integrations.llm.shreckllm_client import ShreckLLMClient
-from app.integrations.llm.runtime_control import fetch_shreckllm_runtime, resolve_effective_architect_concurrency
 from app.jobs.shrecknet import validate_or_repair_json
 from app.integrations.retrieval.neo4j_retriever import Neo4jGraphRetriever
 from app.jobs.architect import prompts as architect_prompts
@@ -29,6 +28,12 @@ from app.jobs.architect.scene_centric_chunking import (
     build_scene_chunks_from_sources,
     extract_paragraphs_from_sources,
     segment_chunk_into_scenes,
+)
+from app.jobs.architect.structured_output import (
+    ENTITY_EXTRACTION_RESPONSE_FORMAT,
+    MILESTONE_EXTRACTION_RESPONSE_FORMAT,
+    SCENE_MERGE_RESPONSE_FORMAT,
+    chat_with_structured_output,
 )
 from app.models.architect import ArchitectProposalType, ArchitectRunStatus
 from app.models.background_job import AuthorType, JobType
@@ -48,10 +53,6 @@ from app.db.session import AsyncSessionMaker
 
 logger = logging.getLogger(__name__)
 
-ENTITY_PROPOSAL_BATCH_SIZE = 3
-ENTITY_SCENE_TEXT_MAX_CHARS = 1_400
-MILESTONE_BATCH_SIZE = 2
-MILESTONE_SCENE_TEXT_MAX_CHARS = 2_400
 _ARCHITECT_CONCURRENCY: int | None = None
 MAX_SCENES_AFTER_MERGE = 20
 
@@ -59,6 +60,11 @@ MAX_SCENES_AFTER_MERGE = 20
 def initialize_architect_concurrency(*, concurrency: int) -> None:
     global _ARCHITECT_CONCURRENCY
     _ARCHITECT_CONCURRENCY = max(1, int(concurrency))
+
+
+def _architect_analysis_model(settings: Any) -> LLMModelTarget:
+    """Return the single configured model target used by all Architect analysis stages."""
+    return settings.model_architect_scene_chunking
 
 
 def _scene_entity_extraction_concurrency() -> int:
@@ -906,9 +912,9 @@ async def _run_scene_merge_phase(
     run_id: str,
     llm_client: ShreckLLMClient,
     model: str | LLMModelTarget,
-    repair_model: str | LLMModelTarget,
     chunk_results: list[dict[str, Any]],
     max_scenes_after_merge: int = MAX_SCENES_AFTER_MERGE,
+    repair_model: str | LLMModelTarget | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     max_scenes_after_merge = max(1, int(max_scenes_after_merge or MAX_SCENES_AFTER_MERGE))
     scene_inputs = _flatten_scene_inputs(chunk_results)
@@ -939,15 +945,17 @@ async def _run_scene_merge_phase(
         max_scenes_after_merge=max_scenes_after_merge,
         scenes_payload=json.dumps(scenes_payload, ensure_ascii=False)
     )
-    response_text = await llm_client.chat(
+    response_text = await chat_with_structured_output(
+        llm_client=llm_client,
         model=model,
         messages=[{"role": "user", "content": prompt}],
         temperature=0.1,
         usage_tag="architect.scene_merging",
+        response_format=SCENE_MERGE_RESPONSE_FORMAT,
     )
     parsed = await validate_or_repair_json(
         llm_client=llm_client,
-        model=repair_model,
+        model=repair_model or model,
         raw_text=response_text if isinstance(response_text, str) else json.dumps(response_text, ensure_ascii=False),
         schema_hint='{"scenes":[{"scene_ref":"merged_1","name":"...","description":"...","source_scene_refs":["..."]}]}',
         usage_tag="agents.json_repair",
@@ -1185,15 +1193,13 @@ async def _extract_scene_entities(
     run_id: str,
     llm_client: ShreckLLMClient,
     model: str | LLMModelTarget,
-    repair_model: str | LLMModelTarget,
     ontology_definitions: str,
     allowed_ontology_names: dict[str, str],
     existing_nodes: list[dict[str, Any]],
     scenes: list[dict[str, Any]],
     instructions: str | None = None,
+    repair_model: str | LLMModelTarget | None = None,
 ) -> list[dict[str, Any]]:
-    concurrency = _scene_entity_extraction_concurrency()
-    semaphore = asyncio.Semaphore(concurrency)
     existing_catalogue = _build_existing_entity_prompt_catalogue(
         existing_nodes,
         allowed_ontology_names=allowed_ontology_names,
@@ -1326,6 +1332,7 @@ async def _extract_scene_entities(
                 "scene_ref": scene.get("scene_ref"),
                 "scene_name": scene.get("scene_name"),
                 "scene_description": scene.get("scene_description"),
+                "scene_text": scene.get("scene_text"),
             }
             for scene in batch
         ]
@@ -1336,34 +1343,35 @@ async def _extract_scene_entities(
             [scene.get("scene_ref") for scene in batch],
         )
         try:
-            async with semaphore:
-                entity_prompt_template = getattr(
-                    architect_prompts,
-                    "ARCHITECT_ENTITY_PROPOSAL_PROMPT",
-                    "",
+            entity_prompt_template = getattr(
+                architect_prompts,
+                "ARCHITECT_ENTITY_PROPOSAL_PROMPT",
+                "",
+            )
+            prompt = str(entity_prompt_template).format(
+                ontology_definitions=ontology_definitions,
+                existing_entities=json.dumps(existing_catalogue, ensure_ascii=False),
+                scenes_payload=json.dumps(scenes_payload, ensure_ascii=False),
+                # Backward compatibility for old templates during partial deploys.
+                scene_name=batch[0].get("scene_name", "") if batch else "",
+                scene_description=batch[0].get("scene_description", "") if batch else "",
+                scene_text=batch[0].get("scene_text", "") if batch else "",
+                chunk_text=batch[0].get("scene_text", "") if batch else "",
+            )
+            instructions_text = str(instructions or "").strip()
+            if instructions_text:
+                prompt = (
+                    f"{prompt}\n\nFrontend instructions (authoritative constraints):\n"
+                    f"{instructions_text}"
                 )
-                prompt = str(entity_prompt_template).format(
-                    ontology_definitions=ontology_definitions,
-                    existing_entities=json.dumps(existing_catalogue, ensure_ascii=False),
-                    scenes_payload=json.dumps(scenes_payload, ensure_ascii=False),
-                    # Backward compatibility for old templates during partial deploys.
-                    scene_name=batch[0].get("scene_name", "") if batch else "",
-                    scene_description=batch[0].get("scene_description", "") if batch else "",
-                    scene_text="",
-                    chunk_text="",
-                )
-                instructions_text = str(instructions or "").strip()
-                if instructions_text:
-                    prompt = (
-                        f"{prompt}\n\nFrontend instructions (authoritative constraints):\n"
-                        f"{instructions_text}"
-                    )
-                response_text = await llm_client.chat(
-                    model=model,
-                    messages=[{"role": "user", "content": prompt}],
-                    temperature=0.1,
-                    usage_tag="architect.entity_extraction",
-                )
+            response_text = await chat_with_structured_output(
+                llm_client=llm_client,
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.1,
+                usage_tag="architect.entity_extraction",
+                response_format=ENTITY_EXTRACTION_RESPONSE_FORMAT,
+            )
 
             response_payload = (
                 response_text
@@ -1372,7 +1380,7 @@ async def _extract_scene_entities(
             )
             parsed = await _parse_scene_entity_batch_extraction_with_repair(
                 llm_client=llm_client,
-                repair_model=repair_model,
+                repair_model=repair_model or model,
                 response_text=response_payload,
             )
             rows_by_ref = {
@@ -1696,10 +1704,10 @@ async def _run_entity_proposal_phase(
 ) -> dict[str, Any]:
     scene_inputs = _flatten_scene_inputs(chunk_results)
     logger.info(
-        "scene_entity_extraction_start: run_id=%s scene_count=%d concurrency=%d",
+        "scene_entity_extraction_start: run_id=%s scene_count=%d calls_submitted=%d queue_owner=shreckllm",
         run_id,
         len(scene_inputs),
-        _scene_entity_extraction_concurrency(),
+        len(scene_inputs),
     )
 
     started = perf_counter()
@@ -2075,21 +2083,17 @@ async def _run_milestone_proposal_phase(
     run_id: str,
     llm_client: ShreckLLMClient,
     model: str | LLMModelTarget,
-    repair_model: str | LLMModelTarget,
     proposed_scenes: list[dict[str, Any]],
     author_id: str,
     instructions: str | None = None,
+    repair_model: str | LLMModelTarget | None = None,
 ) -> dict[str, Any]:
     started = perf_counter()
-    concurrency = _milestone_extraction_concurrency()
-    semaphore = asyncio.Semaphore(concurrency)
-
     logger.info(
-        "milestone_proposal_start: run_id=%s scene_count=%d batch_size=%d concurrency=%d",
+        "milestone_proposal_start: run_id=%s scene_count=%d calls_submitted=%d queue_owner=shreckllm",
         run_id,
         len(proposed_scenes),
-        MILESTONE_BATCH_SIZE,
-        concurrency,
+        len(proposed_scenes),
     )
 
     def _scene_entity_aliases(scene: dict[str, Any]) -> list[str]:
@@ -2149,71 +2153,73 @@ async def _run_milestone_proposal_phase(
         return milestones
 
     async def _process_batch(batch: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        async with semaphore:
-            scenes_payload = [
+        scenes_payload = [
+            {
+                "scene_ref": scene.get("scene_ref"),
+                "scene_name": scene.get("scene_name"),
+                "scene_description": scene.get("scene_description"),
+                "scene_text": scene.get("scene_text"),
+                "entities": _scene_entity_aliases(scene),
+            }
+            for scene in batch
+        ]
+        milestone_prompt_template = getattr(
+            architect_prompts,
+            "ARCHITECT_MILESTONE_BATCH_PROMPT",
+            "",
+        )
+        prompt = str(milestone_prompt_template).format(
+            scenes_payload=json.dumps(scenes_payload, ensure_ascii=False)
+        )
+        instructions_text = str(instructions or "").strip()
+        if instructions_text:
+            prompt = (
+                f"{prompt}\n\nFrontend instructions (authoritative constraints):\n"
+                f"{instructions_text}"
+            )
+
+        try:
+            response = await chat_with_structured_output(
+                llm_client=llm_client,
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.1,
+                usage_tag="architect.milestone_proposal",
+                response_format=MILESTONE_EXTRACTION_RESPONSE_FORMAT,
+            )
+            response_payload = response if isinstance(response, str) else json.dumps(response, ensure_ascii=False)
+            raw_by_ref = await _parse_batched_milestone_extraction_with_repair(
+                llm_client=llm_client,
+                repair_model=repair_model or model,
+                response_text=response_payload,
+            )
+        except Exception as exc:
+            logger.warning(
+                "milestone_proposal_batch_error: run_id=%s scene_refs=%s error=%s",
+                run_id,
+                [scene.get("scene_ref") for scene in batch],
+                exc,
+            )
+            raw_by_ref = {}
+
+        rows: list[dict[str, Any]] = []
+        for scene in batch:
+            scene_ref = str(scene.get("scene_ref") or "")
+            milestones = _normalize_raw_milestones(scene, raw_by_ref.get(scene_ref, []))
+            logger.info(
+                "milestone_proposal_scene_total: run_id=%s scene_ref=%s milestone_count=%d",
+                run_id,
+                scene_ref,
+                len(milestones),
+            )
+            rows.append(
                 {
-                    "scene_ref": scene.get("scene_ref"),
-                    "scene_name": scene.get("scene_name"),
-                    "scene_description": scene.get("scene_description"),
-                    "entities": _scene_entity_aliases(scene),
+                    "scene_ref": scene_ref,
+                    "scene_id": str(scene.get("scene_id") or ""),
+                    "milestones": milestones,
                 }
-                for scene in batch
-            ]
-            milestone_prompt_template = getattr(
-                architect_prompts,
-                "ARCHITECT_MILESTONE_BATCH_PROMPT",
-                "",
             )
-            prompt = str(milestone_prompt_template).format(
-                scenes_payload=json.dumps(scenes_payload, ensure_ascii=False)
-            )
-            instructions_text = str(instructions or "").strip()
-            if instructions_text:
-                prompt = (
-                    f"{prompt}\n\nFrontend instructions (authoritative constraints):\n"
-                    f"{instructions_text}"
-                )
-
-            try:
-                response = await llm_client.chat(
-                    model=model,
-                    messages=[{"role": "user", "content": prompt}],
-                    temperature=0.1,
-                    usage_tag="architect.milestone_proposal",
-                )
-                response_payload = response if isinstance(response, str) else json.dumps(response, ensure_ascii=False)
-                raw_by_ref = await _parse_batched_milestone_extraction_with_repair(
-                    llm_client=llm_client,
-                    repair_model=repair_model,
-                    response_text=response_payload,
-                )
-            except Exception as exc:
-                logger.warning(
-                    "milestone_proposal_batch_error: run_id=%s scene_refs=%s error=%s",
-                    run_id,
-                    [scene.get("scene_ref") for scene in batch],
-                    exc,
-                )
-                raw_by_ref = {}
-
-            rows: list[dict[str, Any]] = []
-            for scene in batch:
-                scene_ref = str(scene.get("scene_ref") or "")
-                milestones = _normalize_raw_milestones(scene, raw_by_ref.get(scene_ref, []))
-                logger.info(
-                    "milestone_proposal_scene_total: run_id=%s scene_ref=%s milestone_count=%d",
-                    run_id,
-                    scene_ref,
-                    len(milestones),
-                )
-                rows.append(
-                    {
-                        "scene_ref": scene_ref,
-                        "scene_id": str(scene.get("scene_id") or ""),
-                        "milestones": milestones,
-                    }
-                )
-            return rows
+        return rows
 
     # One scene per milestone extraction call for stronger scene-local fidelity.
     batches = [[scene] for scene in proposed_scenes]
@@ -2476,16 +2482,10 @@ async def _execute_architect_pipeline(
             await session.flush()
 
             llm_client = ShreckLLMClient(base_url=settings.shreckllm_base_url, timeout=settings.shreckllm_request_timeout_s, max_retries=settings.shreckllm_max_retries)
-            runtime_config = await fetch_shreckllm_runtime(settings)
-            scene_chunking_model = settings.model_architect_scene_chunking
-            entity_proposal_model = settings.model_architect_entity_proposal
-            milestone_proposal_model = settings.model_architect_milestone_proposal
+            scene_chunking_model = _architect_analysis_model(settings)
+            entity_proposal_model = scene_chunking_model
+            milestone_proposal_model = scene_chunking_model
             repair_json_model = getattr(settings, "model_agents_repair_json", scene_chunking_model) or scene_chunking_model
-            global _ARCHITECT_CONCURRENCY
-            _ARCHITECT_CONCURRENCY = resolve_effective_architect_concurrency(
-                runtime_config,
-                provider_id=entity_proposal_model.provider,
-            )
 
             existing_nodes = _existing_nodes_from_instance(ontology_instance)
             # Always merge with graph catalogue so reconciliation sees persisted entities

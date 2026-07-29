@@ -12,6 +12,10 @@ from app.core.config_store import LLMModelTarget
 from app.integrations.llm.shreckllm_client import ShreckLLMClient
 from app.jobs.shrecknet import validate_or_repair_json
 from app.jobs.architect import prompts as architect_prompts
+from app.jobs.architect.structured_output import (
+    SCENE_SEGMENTATION_RESPONSE_FORMAT,
+    chat_with_structured_output,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -740,11 +744,13 @@ async def segment_chunk_into_scenes(
             f"{instructions_text}"
         )
 
-    response_text = await llm_client.chat(
+    response_text = await chat_with_structured_output(
+        llm_client=llm_client,
         model=model,
         messages=[{"role": "user", "content": prompt}],
         temperature=0.1,
         usage_tag="architect.scene_discovery",
+        response_format=SCENE_SEGMENTATION_RESPONSE_FORMAT,
     )
 
     used_json_repair = False

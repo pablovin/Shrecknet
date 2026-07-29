@@ -7,7 +7,8 @@
 # {
 #   "scene_id": "chunk-001",
 #   "scene_name": "Merged Chunk 1",
-#   "scene_summary": "..."
+#   "scene_summary": "...",
+#   "source_rawtext": "complete raw scene excerpt"
 # }
 NOVELIST_STEP_2_RETRIEVAL_QUESTION_PLANNER_PROMPT = """You are planning retrieval questions for a graph-based memory system.
 
@@ -15,6 +16,7 @@ Goal:
 - Generate 2 to 3 high-value questions that retrieve prior context needed to understand the CURRENT scene/chunk.
 - Questions must target motivations, historical tensions, relationship history, personality pressures, and unresolved commitments.
 - Questions must reference concrete scene entities/events when available.
+- Treat source_rawtext as the authoritative evidence; use the summary only as orientation.
 - Avoid generic/meta questions.
 
 Return ONLY valid JSON in this exact shape:
@@ -34,12 +36,13 @@ Return ONLY valid JSON in this exact shape:
 # {
 #   "scene_name": "...",
 #   "scene_description": "...",
+#   "source_rawtext": "complete raw scene excerpt",
 #   "prior_knowledge": {"question": "answer"}
 # }
 NOVELIST_STEP_4_CONTEXT_BUILD_PROMPT = """You are synthesizing graph-retrieved context into one narrative-focused summary.
 
 Task:
-- Use ONLY the given scene information and retrieved graph-memory Q/A.
+- Use ONLY the complete source_rawtext, scene information, and retrieved graph-memory Q/A.
 - Produce compact writing context focused on continuity, character dynamics, tensions, and style cues.
 
 Return ONLY valid JSON in this exact shape:
@@ -60,14 +63,16 @@ Return ONLY valid JSON in this exact shape:
 #   "scene_id": "chunk-001",
 #   "scene_name": "Merged Chunk 1",
 #   "scene_summary": "...",
+#   "source_rawtext": "complete raw scene excerpt",
 #   "instruction": "Write the merged chunk prose using prior scene context from this conversation."
 # }
-NOVELIST_STEP_5_DRAFT_PROMPT = """You are writing one narrative chapter in third-person prose based on a summarized scene and its prior context.
+NOVELIST_STEP_5_DRAFT_PROMPT = """You are writing one narrative chapter in third-person prose based on complete raw scene evidence and its prior context.
 
 Strict rules:
 - Output full HTML only.
 - Use only <p> and <blockquote> tags.
 - Keep chronology of the scene.
+- Treat source_rawtext as authoritative evidence and do not invent events that contradict it.
 - Output a maximum of five paragraphs total.
 - Include several dialogue exchanges between characters to display their personalities, relationships and emotional states.
 - Make character choices explicit: what is chosen, what is risked, and why now.
@@ -87,14 +92,15 @@ Task:
 - Inspect continuity, duplication, transitions, voice, pacing, contradictions, and exposition balance across the full chapter.
 - Do not rewrite prose.
 - Provide editorial feedback that can drive a full rewrite pass.
-- `by_scene` keys MUST be scene titles exactly as they appear in `<h1>...</h1>` blocks.
+- Every `scene_name` MUST exactly match a title from an `<h1>...</h1>` block.
 - Each paragraph was written by an independent AI pass, so expect and identify style/voice drift and structural issues between them.
 
 Return ONLY valid JSON in this exact shape:
 {
   "global_notes": ["..."],
-  "by_scene": {
-    "Scene Title": {
+  "scenes": [
+    {
+      "scene_name": "Scene Title",
       "continuity_issues": ["..."],
       "duplication": ["..."],
       "missing_transitions": ["..."],
@@ -103,7 +109,7 @@ Return ONLY valid JSON in this exact shape:
       "graph_contradictions": ["..."],
       "exposition_problems": ["..."]
     }
-  }
+  ]
 }"""
 
 # Used by: Novelist orchestrator, final revision stage (`step_7`).

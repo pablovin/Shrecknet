@@ -180,6 +180,7 @@ class OpenAIClient:
         model: str,
         messages: list[ChatMessage],
         temperature: float,
+        reasoning: bool = False,
         max_tokens: int | None = None,
         response_format: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
@@ -204,7 +205,12 @@ class OpenAIClient:
             kwargs["max_completion_tokens"] = int(max_tokens)
         if response_format is not None:
             kwargs["response_format"] = response_format
-        if self.provider_id == "deepinfra":
+        if self.provider_id == "openrouter":
+            reasoning_config: dict[str, Any] = {"enabled": bool(reasoning)}
+            if reasoning:
+                reasoning_config["effort"] = "high"
+            kwargs["extra_body"] = {"reasoning": reasoning_config}
+        elif self.provider_id == "deepinfra":
             # DeepInfra calls its normal, non-surcharged service tier "default".
             # Keep this explicit so requests never opt into priority inference.
             kwargs["extra_body"] = {"service_tier": "default"}

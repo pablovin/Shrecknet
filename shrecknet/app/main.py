@@ -253,6 +253,11 @@ async def _run_llm_prewarm() -> None:
         settings.model_novelist_planning,
         settings.model_novelist_prose,
         settings.model_novelist_critic,
+        getattr(
+            settings,
+            "model_novelist_chapter_writer",
+            settings.model_novelist_prose,
+        ),
     ]
     unique: dict[str, LLMModelTarget] = {}
     for target in targets:

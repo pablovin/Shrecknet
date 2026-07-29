@@ -17,6 +17,11 @@ semaphore wait time (`provider_slot_acquired`) and provider request latency.
 These values distinguish gateway queueing, provider-specific queueing, and
 model execution when investigating a timeout.
 
+`GET /status` exposes global `in_flight_requests` and `waiting_requests`, plus
+`provider_limiters.<provider_id>.active_requests` and `queue_depth`.
+`queue_depth` counts only calls waiting for a provider slot; it is normally
+zero while calls execute in parallel below the configured limit.
+
 The runtime `request_timeout_seconds` setting is the authoritative timeout for
 one provider attempt across every provider. DeepInfra and OpenRouter do not
 have separate hard-coded generation deadlines. Shrecknet callers poll queued
@@ -74,6 +79,11 @@ Conversation-memory calls may be further serialized by `conversation_id` to
 preserve message ordering. Task-local batching may submit fewer calls, but
 cannot bypass or raise the gateway provider limit.
 
+At startup, every configured model of every active provider receives a
+one-token warm-up request. Warm-ups run concurrently while respecting the
+global and per-provider concurrency settings. The provider is marked warmed
+only after all its configured model warm-ups succeed.
+
 ## Strict v1 rule
 `POST /chat` requires explicit `provider_id`.
 
@@ -95,11 +105,21 @@ the response's `requested_model`/`resolved_model` remain the catalog model ID.
 The suffix is idempotent and requests throughput-based endpoint sorting; it
 does not guarantee TPS.
 
+Every OpenRouter request also sends the request's boolean `reasoning` choice in
+the provider's native `reasoning` body field. Enabled requests send
+`{"enabled": true, "effort": "high"}` so reasoning-capable models use
+OpenRouter's high-effort normalization. Disabled requests send
+`{"enabled": false}`. The public default is `false`. OpenRouter may translate
+`high` to a model's supported effort level or reasoning-token budget; the exact
+reasoning behavior and token use remain model-dependent. Provider adapters that
+do not support a native reasoning control accept the public flag and ignore it.
+
 ## Request schema
 ```json
 {
   "provider_id": "ollama|ollama_cloud|openai|anthropic|deepinfra|openrouter",
   "model": "optional explicit model",
+  "reasoning": false,
   "messages": [{"role": "user", "content": "..."}],
   "temperature": 0.7,
   "max_tokens": 512,
@@ -117,6 +137,12 @@ OpenAI-compatible providers receive `response_format` unchanged. Ollama receives
 the nested JSON Schema through its native `format` field. Providers without
 structured-output support reject the option with HTTP 400 so callers can retry
 without it.
+
+`reasoning` is valid for every provider and defaults to `false`. It expresses
+caller intent without claiming that every provider or model can honor it.
+OpenRouter receives its native control with high effort when enabled.
+Unsupported adapters ignore the flag rather than rejecting an otherwise valid
+request.
 
 ## Shared memory across providers
 If the same `conversation_id` is used across multiple providers, history remains shared.

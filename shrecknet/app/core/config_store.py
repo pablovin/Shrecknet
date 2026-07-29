@@ -56,6 +56,7 @@ LLM_TARGET_FIELDS = (
     "model_novelist_planning",
     "model_novelist_prose",
     "model_novelist_critic",
+    "model_novelist_chapter_writer",
     "model_librarian_planner",
     "model_librarian_synthesis",
     "model_librarian_character_incorporation",
@@ -75,6 +76,7 @@ ACTIVE_EMBEDDING_MODEL_ID = "intfloat/multilingual-e5-small"
 class LLMModelTarget(BaseModel):
     provider: str = "openai"
     name: str = "gpt-5-nano"
+    reasoning: bool = False
 
     @classmethod
     def from_legacy(cls, model_name: str) -> "LLMModelTarget":
@@ -230,6 +232,9 @@ class Settings(BaseSettings):
     model_novelist_critic: LLMModelTarget = Field(
         default_factory=lambda: LLMModelTarget(provider="openai", name="gpt-5-nano")
     )
+    model_novelist_chapter_writer: LLMModelTarget = Field(
+        default_factory=lambda: LLMModelTarget(provider="openai", name="gpt-5")
+    )
     model_librarian_planner: LLMModelTarget = Field(
         default_factory=lambda: LLMModelTarget(provider="", name="")
     )
@@ -257,6 +262,10 @@ class Settings(BaseSettings):
     character_agent_embodiment_evidence_tokens: int = Field(12_000, ge=1_000, le=100_000)
     character_agent_embodiment_max_aspects: int = Field(12, ge=0, le=50)
     character_agent_embodiment_max_goals: int = Field(8, ge=0, le=50)
+    character_agent_embodiment_source_concurrency: int = Field(4, ge=1, le=16)
+    character_agent_embodiment_semantic_correction_attempts: int = Field(
+        1, ge=0, le=3
+    )
     librarian_debug_artifacts_enabled: bool = True
     elder_debug_artifacts_enabled: bool = True
     model_orchestrator_routing: LLMModelTarget = Field(
@@ -481,7 +490,7 @@ def _normalize_legacy_database_urls(conn: sqlite3.Connection) -> None:
 
 def _normalize_legacy_llm_targets(conn: sqlite3.Connection) -> None:
     current_values = _load_settings_from_db(conn)
-    updates: dict[str, dict[str, str]] = {}
+    updates: dict[str, dict[str, Any]] = {}
     for field_name in LLM_TARGET_FIELDS:
         raw_value = current_values.get(field_name)
         if isinstance(raw_value, str):
@@ -490,13 +499,15 @@ def _normalize_legacy_llm_targets(conn: sqlite3.Connection) -> None:
         if isinstance(raw_value, dict):
             provider = str(raw_value.get("provider") or "").strip()
             name = str(raw_value.get("name") or "").strip()
+            reasoning = raw_value.get("reasoning", False)
             if not provider and not name:
                 continue
-            if provider and name:
+            if provider and name and "reasoning" in raw_value:
                 continue
             normalized = LLMModelTarget(
                 provider=provider or "openai",
                 name=name or "gpt-5-nano",
+                reasoning=reasoning,
             )
             updates[field_name] = normalized.model_dump()
     for field_name in LLM_TARGET_FIELDS:
@@ -512,7 +523,11 @@ def _normalize_legacy_llm_targets(conn: sqlite3.Connection) -> None:
         normalized_name = name
         if provider == "openai" and name not in ALLOWED_OPENAI_MODELS:
             normalized_name = "gpt-5-nano"
-        normalized = LLMModelTarget(provider=provider, name=normalized_name).model_dump()
+        normalized = LLMModelTarget(
+            provider=provider,
+            name=normalized_name,
+            reasoning=raw_value.get("reasoning", False),
+        ).model_dump()
         if raw_value != normalized:
             updates[field_name] = normalized
 
@@ -608,6 +623,7 @@ def update_settings(updates: dict[str, Any]) -> Settings:
                 settings_dict[field_name] = LLMModelTarget(
                     provider=provider or "openai",
                     name=name or "gpt-5-nano",
+                    reasoning=raw_value.get("reasoning", False),
                 ).model_dump()
         updated = Settings(**settings_dict).model_dump()
         # Env-only bootstrap fields must never be persisted in runtime DB settings.

@@ -62,11 +62,13 @@ async def test_provider_preflight_failure_raises_clear_message() -> None:
 @pytest.mark.asyncio
 async def test_elder_call_logs_preflight_header_and_records_wait(capsys, monkeypatch) -> None:
     client = ShreckLLMClient(base_url="http://test")
+    submitted_payload = {}
 
     async def ready(_provider_id: str) -> None:
         return None
 
-    async def submit(_payload: dict) -> str:
+    async def submit(payload: dict) -> str:
+        submitted_payload.update(payload)
         return "job-1"
 
     async def wait(_job_id: str, **_kwargs) -> dict:
@@ -82,12 +84,13 @@ async def test_elder_call_logs_preflight_header_and_records_wait(capsys, monkeyp
     monkeypatch.setattr(client, "wait_for_chat_job", wait)
 
     answer = await client.chat(
-        model={"provider": "deepinfra", "name": "Qwen/Qwen3"},
+        model={"provider": "deepinfra", "name": "Qwen/Qwen3", "reasoning": True},
         messages=[{"role": "user", "content": "A substantial Elder question"}],
         usage_tag="elder.v2.trace-1.synthesize",
     )
 
     assert answer == "answer"
+    assert submitted_payload["reasoning"] is True
     console = capsys.readouterr().out
     assert "[ELDER_LLM_REQUEST] stage=synthesize" in console
     assert "input_tokens_est=" in console

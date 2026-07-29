@@ -313,15 +313,32 @@ entity properties or Scene provenance are represented as ISO-8601 strings.
 Revision 0 uses entity evidence only. Related Scenes are grouped by their
 required `DERIVED_FROM` source; groups and Scenes use `created_at` with stable
 ID tie-breakers. Each source runs character incorporation, psychological
-enrichment, cross-scene observations, then parallel axes, aspects, and goals
-updates. Draft acceptance atomically materializes revisions, change records,
+enrichment, cross-scene observations, then one atomic axes/aspects/goals
+update. The first three stages use the generation-start profile snapshot and
+may run concurrently across sources. Profile updates always run in source
+order against cumulative state. Draft acceptance atomically materializes revisions, change records,
 perspectives, reflections, emotion/belief children, and impacts linked to their
 active goal/aspect targets.
 
 The existing background-job response contract is unchanged. During generation,
 its details report `status` and `active_stages`: incorporation `[1]`,
-psychological enrichment `[2]`, observations `[3]`, parallel profile updates
-`[4]`, and validation/merge an empty active-stage array.
+psychological enrichment `[2]`, observations `[3]`, atomic profile updates
+`[4]`, and validation/merge an empty active-stage array. Concurrent progress
+writes are serialized; every source independently reports pending, processing,
+done, or failed state and elapsed time. Bundle details add
+`checkpointed_stages` and `reused_stages`. On failure, job details add
+`failure_category`, `failed_stage`, `failed_source_id`,
+`failed_source_alias`, `attempt`, `retryable`, `offending_ids`, and
+`allowed_ids`. These fields are additive; successful proposal payloads are
+unchanged. The draft `error_message` contains the same concise categorized
+diagnostic.
+
+Validated incorporation, interpretation, and observation outputs are
+checkpointed per draft revision and source. A retry reuses a checkpoint only
+when its prompt version, model target, source evidence, and starting profile
+still match. Profile updates always rerun in chronological order. Removing the
+checkpoint table rolls back resumability only; existing drafts remain readable
+and regenerate normally.
 
 The old manual creation payload remains valid. `embodiment_draft_id`, `aspects`,
 and `goals` are optional additions.
@@ -391,7 +408,7 @@ Configuration:
   single repair attempt.
 - `model_character_agent_character_incorporation`: perspectives and expressive reflections.
 - `model_character_agent_scene_interpretation`: psychological enrichment and observations.
-- `model_character_agent_update`: parallel axis, aspect, and goal updates.
+- `model_character_agent_update`: one atomic axis, aspect, and goal update.
 - Every CharacterAgent model target defaults to
   `{"provider": "", "name": ""}`. Empty targets remain empty until an
   administrator selects a target or enabling AI agents reconciles them against
@@ -402,3 +419,9 @@ Configuration:
 - `character_agent_embodiment_evidence_tokens`: bounded evidence budget; default `12000`.
 - `character_agent_embodiment_max_aspects`: default `12`.
 - `character_agent_embodiment_max_goals`: default `8`.
+- `character_agent_embodiment_source_concurrency`: concurrent source snapshot
+  analyses; default `4`, allowed range `1` through `16`. Profile updates remain
+  sequential regardless of this value. Use `1` to reduce provider load.
+- `character_agent_embodiment_semantic_correction_attempts`: targeted retries
+  for structurally valid output containing invalid evidence references; default
+  `1`, allowed range `0` through `3`. Set `0` for immediate strict failure.

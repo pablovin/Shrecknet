@@ -86,6 +86,13 @@ async def get_service_status(
             "model_novelist_planning": _target_status(settings.model_novelist_planning),
             "model_novelist_prose": _target_status(settings.model_novelist_prose),
             "model_novelist_critic": _target_status(settings.model_novelist_critic),
+            "model_novelist_chapter_writer": _target_status(
+                getattr(
+                    settings,
+                    "model_novelist_chapter_writer",
+                    settings.model_novelist_prose,
+                )
+            ),
             "model_librarian_planner": _target_status(settings.model_librarian_planner),
             "model_librarian_synthesis": _target_status(settings.model_librarian_synthesis),
             "model_librarian_character_incorporation": _target_status(getattr(settings, "model_librarian_character_incorporation", settings.model_librarian_synthesis)),

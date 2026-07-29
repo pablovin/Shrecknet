@@ -8,7 +8,7 @@ Entity proposal runs after scene chunking output is finalized and before scene p
 
 Current goals:
 
-- Extract candidate entities from final scene outputs in batches of up to 3 scenes.
+- Extract candidate entities with one queued LLM call per final scene.
 - Let the LLM classify each extracted entity as `existing` or `new` using existing entity aliases and ontology names only.
 - Keep graph ids out of the LLM prompt.
 - Resolve `existing` matches back to internal node ids deterministically by alias and ontology after the LLM response.
@@ -23,8 +23,8 @@ Current goals:
 - Flattened scene inputs from chunking phase:
   - `scene_ref`
   - `scene_name`
-  - `scene_description`
-  - `scene_text`
+- `scene_description`
+- `scene_text`
 - Ontology definitions (auto-generatable entity names and descriptions)
 - Existing entity prompt catalogue:
   - `alias`
@@ -35,8 +35,9 @@ The internal existing-node catalogue still includes `node_id`, but `node_id` is 
 ## Prompt and Model
 
 - Extraction and reconciliation prompt: `ARCHITECT_ENTITY_PROPOSAL_PROMPT`
-- Model: `settings.model_architect_entity_proposal`
-- Batch size: `ENTITY_PROPOSAL_BATCH_SIZE = 3`
+- Model: canonical Architect analysis target
+  `settings.model_architect_scene_chunking`
+- Call unit: one scene per LLM call
 
 LLM extraction parses to `SceneEntityBatchExtractionResponse` and expects:
 
@@ -55,10 +56,15 @@ The entity extraction prompt does not ask for milestones, milestone links, menti
 
 ## Parallel Execution
 
-- Concurrency: runtime-configured via `resolve_effective_architect_concurrency` (initialized in `initialize_architect_concurrency`).
-- Batch size: `3` scenes per LLM call.
-- Mechanism: `asyncio.Semaphore(effective_concurrency)` plus `asyncio.gather(...)`.
-- Failure isolation: batch-level failures produce empty entities for affected scenes and continue
+- Architect creates all scene coroutines with `asyncio.gather(...)` so every
+  request is submitted promptly to ShreckLLM.
+- ShreckLLM owns queueing and enforces the configured global/provider concurrency.
+- Each request contains the complete reconstructed `scene_text`; Architect does
+  not apply a character limit.
+- Scene-level failures produce empty entities for the affected scene and do not
+  cancel other scenes.
+- Calls request strict native JSON-schema output. Existing parse and repair logic
+  remains as a fallback for unsupported or invalid structured output.
 
 ## Deduplication and Reconciliation
 

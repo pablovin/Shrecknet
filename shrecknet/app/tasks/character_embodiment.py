@@ -2,20 +2,33 @@
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import json
+import logging
 import re
 import time
 from datetime import datetime, timezone
+from typing import Any
 from uuid import uuid4
+
+from sqlalchemy import delete, select
 
 from app.celery_app import celery_app
 from app.core.config_store import get_settings
 from app.db.session import AsyncSessionMaker
 from app.graph.neo4j import get_driver
 from app.integrations.llm.shreckllm_client import ShreckLLMClient
-from app.jobs.character_agent.embody_agent import EmbodyAgent
+from app.jobs.character_agent.embody_agent import (
+    EmbodyAgent,
+    EmbodimentGenerationError,
+)
 from app.jobs.character_agent.embody_agent_prompts import PROMPT_VERSION
-from app.models.character_embodiment import CharacterEmbodimentDraft, CharacterEmbodimentDraftStatus
+from app.models.character_embodiment import (
+    CharacterEmbodimentCheckpoint,
+    CharacterEmbodimentDraft,
+    CharacterEmbodimentDraftStatus,
+)
 from app.services.character_embodiment_service import CharacterEmbodimentService
 from app.schemas.character_agent import (
     CharacterIdentityRevisionProjection,
@@ -68,9 +81,96 @@ def generate_character_embodiment(*, draft_id: str, revision: int, job_id: int) 
         run_async(mark_job_done(job_id, result))
         return result
     except Exception as exc:
-        run_async(_fail(draft_id, revision, str(exc)))
-        run_async(mark_job_failed(job_id, str(exc)))
+        details = (
+            exc.details()
+            if isinstance(exc, EmbodimentGenerationError)
+            else {
+                "failure_category": "unexpected",
+                "retryable": False,
+            }
+        )
+        error_message = _public_error_message(exc)
+        run_async(_fail(draft_id, revision, error_message))
+        run_async(mark_job_failed(job_id, error_message, details))
         raise
+
+
+def _public_error_message(exc: Exception) -> str:
+    if not isinstance(exc, EmbodimentGenerationError):
+        return str(exc)
+    stage_key = (exc.stage or "generation").replace("-", " ").replace(" ", "_")
+    detail = {
+        "code": f"{stage_key}_validation_failed",
+        **exc.details(),
+    }
+    return json.dumps(detail, sort_keys=True)
+
+
+def _checkpoint_cache_key(
+    *,
+    revision: int,
+    source_group: dict,
+    canonical_identity: dict,
+    axes: dict,
+    aspects: list,
+    goals: list,
+    model_targets: dict[str, str],
+) -> str:
+    material = {
+        "revision": revision,
+        "prompt_version": PROMPT_VERSION,
+        "source_group": source_group,
+        "canonical_identity": canonical_identity,
+        "profile": {"axes": axes, "aspects": aspects, "goals": goals},
+        "model_targets": model_targets,
+    }
+    encoded = json.dumps(
+        material, ensure_ascii=False, sort_keys=True, default=str,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+async def _save_checkpoint(
+    *,
+    draft_id: str,
+    revision: int,
+    source_index: int,
+    source_entity_id: str,
+    stage: str,
+    cache_key: str,
+    model_target: str,
+    payload: dict,
+) -> None:
+    async with AsyncSessionMaker() as checkpoint_sql:
+        existing = await checkpoint_sql.scalar(select(
+            CharacterEmbodimentCheckpoint
+        ).where(
+            CharacterEmbodimentCheckpoint.draft_id == draft_id,
+            CharacterEmbodimentCheckpoint.generation_revision == revision,
+            CharacterEmbodimentCheckpoint.source_index == source_index,
+            CharacterEmbodimentCheckpoint.stage == stage,
+        ))
+        if existing is None:
+            existing = CharacterEmbodimentCheckpoint(
+                id=str(uuid4()),
+                draft_id=draft_id,
+                generation_revision=revision,
+                source_index=source_index,
+                source_entity_id=source_entity_id,
+                stage=stage,
+                cache_key=cache_key,
+                payload=json.dumps(payload, ensure_ascii=False),
+                prompt_version=PROMPT_VERSION,
+                model_target=model_target,
+            )
+            checkpoint_sql.add(existing)
+        else:
+            existing.source_entity_id = source_entity_id
+            existing.cache_key = cache_key
+            existing.payload = json.dumps(payload, ensure_ascii=False)
+            existing.prompt_version = PROMPT_VERSION
+            existing.model_target = model_target
+        await checkpoint_sql.commit()
 
 
 def _build_timeline(
@@ -232,43 +332,85 @@ def _build_timeline(
     ).model_dump_json()
 
 
-def _make_on_stage(
-    job_id: int, draft_id: str, bundles: list[dict], bi: int,
-    source_alias: str, total: int, bundle_start: list[float],
-    state: dict,
-) -> Any:
-    """Return an on_stage callback that captures loop variables by value for proper async closure."""
-    done_accum: set[int] = set()
-    prev_active: list[int] = []
+class _EmbodimentProgress:
+    """Serialize concurrent bundle progress writes and keep progress monotonic."""
 
-    async def on_stage(stage_label: str, active_stages: list[int]) -> None:
-        nonlocal done_accum, prev_active
-        if prev_active:
-            done_accum.update(prev_active)
-        prev_active = active_stages
+    def __init__(
+        self, *, job_id: int, draft_id: str, bundles: list[dict],
+        source_groups: list[dict],
+    ) -> None:
+        self.job_id = job_id
+        self.draft_id = draft_id
+        self.bundles = bundles
+        self.source_groups = source_groups
+        self.total = len(source_groups)
+        self.starts: dict[int, float] = {}
+        self.active: dict[int, list[int]] = {}
+        self.done: dict[int, set[int]] = {i: set() for i in range(self.total)}
+        self.lock = asyncio.Lock()
+        self.last_progress = 0.10
 
-        step_progress = {(1,): 0.20, (2,): 0.50, (3, 4, 5): 0.85}
-        pct = step_progress.get(tuple(active_stages) if active_stages else (0,), 0.5)
-        per_bundle = 0.80 / max(total, 1)
-        overall = 0.10 + bi * per_bundle + per_bundle * pct
+    def callback(self, index: int):
+        async def on_stage(_stage_label_value: str, active_stages: list[int]) -> None:
+            await self.stage(index, active_stages)
+        return on_stage
 
-        elapsed = time.monotonic() - bundle_start[0]
+    async def stage(self, index: int, active_stages: list[int]) -> None:
+        async with self.lock:
+            self.starts.setdefault(index, time.monotonic())
+            previous = self.active.get(index, [])
+            self.done[index].update(previous)
+            self.active[index] = list(active_stages)
+            await self._publish(index, "processing")
 
-        bundles[bi] = {
-            "index": bi + 1,
+    async def analysis_ready(self, index: int) -> None:
+        async with self.lock:
+            self.done[index].update(self.active.get(index, []))
+            self.active[index] = []
+            await self._publish(index, "processing", stage="Waiting for ordered profile update")
+
+    async def complete(self, index: int) -> None:
+        async with self.lock:
+            self.done[index].update({1, 2, 3, 4})
+            self.active[index] = []
+            await self._publish(index, "done", stage="Source complete")
+
+    async def failed(self, index: int) -> None:
+        async with self.lock:
+            self.done[index].update(self.active.get(index, []))
+            self.active[index] = []
+            await self._publish(index, "failed", stage="Source failed")
+
+    async def _publish(
+        self, index: int, status: str, *, stage: str | None = None,
+    ) -> None:
+        source_alias = self.source_groups[index]["source_alias"]
+        started = self.starts.get(index, time.monotonic())
+        self.bundles[index] = {
+            "index": index + 1,
             "source_name": source_alias,
-            "status": "processing" if active_stages else "done",
-            "active_steps": list(active_stages),
-            "done_steps": sorted(done_accum),
-            "elapsed_seconds": round(elapsed, 1),
+            "status": status,
+            "active_steps": list(self.active.get(index, [])),
+            "done_steps": sorted(self.done[index]),
+            "elapsed_seconds": round(time.monotonic() - started, 1),
+            "checkpointed_stages": list(
+                self.bundles[index].get("checkpointed_stages", [])
+            ),
+            "reused_stages": list(self.bundles[index].get("reused_stages", [])),
         }
-        await update_job_progress(job_id, overall, {
-            "stage": _stage_label(source_alias, active_stages),
-            "draft_id": draft_id,
-            "bundles": list(bundles),
+        completed = sum(len(steps) for steps in self.done.values())
+        active_credit = sum(0.5 for steps in self.active.values() if steps)
+        calculated = 0.10 + 0.80 * (
+            (completed + active_credit) / max(self.total * 4, 1)
+        )
+        self.last_progress = min(0.90, max(self.last_progress, calculated))
+        await update_job_progress(self.job_id, self.last_progress, {
+            "stage": stage or _stage_label(
+                source_alias, self.active.get(index, [])
+            ),
+            "draft_id": self.draft_id,
+            "bundles": list(self.bundles),
         })
-
-    return on_stage, done_accum, prev_active
 
 
 def _apply_axis_updates(
@@ -365,6 +507,7 @@ def _merge_observations(target: Any, source: Any) -> Any:
 
 
 async def _generate(*, draft_id: str, revision: int, job_id: int) -> dict:
+    generation_started = time.monotonic()
     settings = get_settings()
     async with AsyncSessionMaker() as sql:
         draft = await sql.get(CharacterEmbodimentDraft, draft_id)
@@ -372,6 +515,11 @@ async def _generate(*, draft_id: str, revision: int, job_id: int) -> dict:
             return {"draft_id": draft_id, "status": "superseded"}
         draft.status = CharacterEmbodimentDraftStatus.GENERATING
         draft.error_message = None
+        await sql.commit()
+        await sql.execute(delete(CharacterEmbodimentCheckpoint).where(
+            CharacterEmbodimentCheckpoint.draft_id == draft_id,
+            CharacterEmbodimentCheckpoint.generation_revision != revision,
+        ))
         await sql.commit()
         await update_job_progress(job_id, 0.05, {
             "stage": "Loading embodiment input",
@@ -398,6 +546,8 @@ async def _generate(*, draft_id: str, revision: int, job_id: int) -> dict:
                 "active_steps": [],
                 "done_steps": [],
                 "elapsed_seconds": None,
+                "checkpointed_stages": [],
+                "reused_stages": [],
             }
             for i, g in enumerate(source_groups)
         ]
@@ -430,6 +580,7 @@ async def _generate(*, draft_id: str, revision: int, job_id: int) -> dict:
         all_goal_updates: list = []
         total_llm_calls = 0
         total_tokens_est = 0
+        total_semantic_corrections = 0
         per_bundle_results: list = []
 
         client = ShreckLLMClient(
@@ -437,65 +588,157 @@ async def _generate(*, draft_id: str, revision: int, job_id: int) -> dict:
             timeout=settings.shreckllm_request_timeout_s,
             max_retries=settings.shreckllm_max_retries,
         )
-        try:
-            agent = EmbodyAgent(
-                llm_client=client,
-                character_incorporation_model=settings.model_character_agent_character_incorporation,
-                scene_interpretation_model=settings.model_character_agent_scene_interpretation,
-                character_update_model=settings.model_character_agent_update,
-                max_goals=settings.character_agent_embodiment_max_goals,
-                max_aspects=settings.character_agent_embodiment_max_aspects,
+        progress = _EmbodimentProgress(
+            job_id=job_id,
+            draft_id=draft_id,
+            bundles=bundles,
+            source_groups=source_groups,
+        )
+        analysis_limit = asyncio.Semaphore(
+            settings.character_agent_embodiment_source_concurrency
+        )
+        snapshot_axes = dict(current_axes)
+        snapshot_aspects = [dict(item) for item in current_aspects]
+        snapshot_goals = [dict(item) for item in current_goals]
+        stage_model_targets = {
+            "character_incorporation": (
+                f"{settings.model_character_agent_character_incorporation.provider}:"
+                f"{settings.model_character_agent_character_incorporation.name}"
+            ),
+            "scene_interpretation": (
+                f"{settings.model_character_agent_scene_interpretation.provider}:"
+                f"{settings.model_character_agent_scene_interpretation.name}"
+            ),
+            "observations": (
+                f"{settings.model_character_agent_scene_interpretation.provider}:"
+                f"{settings.model_character_agent_scene_interpretation.name}"
+            ),
+        }
+        checkpoint_keys = [
+            _checkpoint_cache_key(
+                revision=revision,
+                source_group=group,
+                canonical_identity=inputs["canonical_identity"],
+                axes=snapshot_axes,
+                aspects=snapshot_aspects,
+                goals=snapshot_goals,
+                model_targets=stage_model_targets,
             )
-
-            for bi, group in enumerate(source_groups):
-                source_alias = group["source_alias"]
-                source_id = group["source_id"] or draft.source_entity_id
-                scene_inputs = [
-                    SceneInput(scene_id=s["scene_id"], name=s["name"],
-                               description=s["description"], created_at=s["created_at"])
-                    for s in group["scenes"]
-                ]
-
-                bundle_start: list[float] = [time.monotonic()]
-                on_stage, _done_accum, _prev_active = _make_on_stage(
-                    job_id, draft_id, bundles, bi,
-                    source_alias, total, bundle_start, {},
+            for group in source_groups
+        ]
+        checkpoint_rows = (
+            await sql.execute(select(CharacterEmbodimentCheckpoint).where(
+                CharacterEmbodimentCheckpoint.draft_id == draft_id,
+                CharacterEmbodimentCheckpoint.generation_revision == revision,
+            ))
+        ).scalars().all()
+        checkpoints_by_source: list[dict[str, dict]] = [
+            {} for _group in source_groups
+        ]
+        for checkpoint in checkpoint_rows:
+            index = checkpoint.source_index
+            if (
+                0 <= index < total
+                and checkpoint.cache_key == checkpoint_keys[index]
+                and checkpoint.prompt_version == PROMPT_VERSION
+                and checkpoint.model_target == stage_model_targets.get(checkpoint.stage)
+            ):
+                checkpoints_by_source[index][checkpoint.stage] = json.loads(
+                    checkpoint.payload
                 )
+        for index, reused in enumerate(checkpoints_by_source):
+            bundles[index]["reused_stages"] = sorted(reused)
+        agents: list[EmbodyAgent] = []
+        analysis_tasks: list[asyncio.Task] = []
 
-                result = await agent.run(
-                    source_entity_id=source_id,
-                    source_entity_alias=source_alias,
-                    canonical_identity=inputs["canonical_identity"],
-                    current_behavioural_axes=current_axes,
-                    current_aspects=current_aspects,
-                    current_goals=current_goals,
-                    scenes=scene_inputs,
-                    on_stage=on_stage,
+        async def analyze_source(index: int):
+            group = source_groups[index]
+            source_alias = group["source_alias"]
+            source_id = group["source_id"] or draft.source_entity_id
+            scene_inputs = [
+                SceneInput(
+                    scene_id=scene["scene_id"],
+                    name=scene["name"],
+                    description=scene["description"],
+                    created_at=scene["created_at"],
                 )
+                for scene in group["scenes"]
+            ]
+            async with analysis_limit:
+                try:
+                    async def save_stage(stage: str, value: Any) -> None:
+                        await _save_checkpoint(
+                            draft_id=draft_id,
+                            revision=revision,
+                            source_index=index,
+                            source_entity_id=str(source_id),
+                            stage=stage,
+                            cache_key=checkpoint_keys[index],
+                            model_target=stage_model_targets[stage],
+                            payload=value.model_dump(mode="json"),
+                        )
+                        bundles[index]["checkpointed_stages"] = sorted({
+                            *bundles[index].get("checkpointed_stages", []),
+                            stage,
+                        })
 
-                # Mark bundle done
-                if _prev_active:
-                    _done_accum.update(_prev_active)
-                elapsed = time.monotonic() - bundle_start[0]
-                bundles[bi] = {
-                    "index": bi + 1,
-                    "source_name": source_alias,
-                    "status": "done",
-                    "active_steps": [],
-                    "done_steps": [1, 2, 3, 4],
-                    "elapsed_seconds": round(elapsed, 1),
-                }
+                    analysis = await agents[index].analyze(
+                        source_entity_id=source_id,
+                        source_entity_alias=source_alias,
+                        canonical_identity=inputs["canonical_identity"],
+                        current_behavioural_axes=snapshot_axes,
+                        current_aspects=snapshot_aspects,
+                        current_goals=snapshot_goals,
+                        scenes=scene_inputs,
+                        on_stage=progress.callback(index),
+                        stage_checkpoints=checkpoints_by_source[index],
+                        on_checkpoint=save_stage,
+                    )
+                    await progress.analysis_ready(index)
+                    return analysis
+                except Exception:
+                    await progress.failed(index)
+                    raise
 
-                # Merge perspectives
-                all_perspectives.extend(result.perspectives)
+        try:
+            agents = [
+                EmbodyAgent(
+                    llm_client=client,
+                    character_incorporation_model=(
+                        settings.model_character_agent_character_incorporation
+                    ),
+                    scene_interpretation_model=(
+                        settings.model_character_agent_scene_interpretation
+                    ),
+                    character_update_model=settings.model_character_agent_update,
+                    max_goals=settings.character_agent_embodiment_max_goals,
+                    max_aspects=settings.character_agent_embodiment_max_aspects,
+                    semantic_correction_attempts=(
+                        settings.character_agent_embodiment_semantic_correction_attempts
+                    ),
+                )
+                for _group in source_groups
+            ]
+            analysis_tasks = [
+                asyncio.create_task(analyze_source(index))
+                for index in range(total)
+            ]
 
-                # Merge observations
-                if merged_obs is None:
-                    merged_obs = result.observations
-                else:
-                    merged_obs = _merge_observations(merged_obs, result.observations)
+            for bi, analysis_task in enumerate(analysis_tasks):
+                analysis = await analysis_task
+                try:
+                    result = await agents[bi].apply_profile_update(
+                        analysis=analysis,
+                        current_behavioural_axes=current_axes,
+                        current_aspects=current_aspects,
+                        current_goals=current_goals,
+                        on_stage=progress.callback(bi),
+                    )
+                except Exception:
+                    await progress.failed(bi)
+                    raise
 
-                # Apply cumulative state updates
+                # Apply cumulative state updates in source order.
                 _apply_axis_updates(current_axes, result.axis_updates)
                 _apply_aspect_ops(current_aspects, result.aspect_updates)
                 _apply_goal_ops(current_goals, result.goal_updates)
@@ -505,14 +748,29 @@ async def _generate(*, draft_id: str, revision: int, job_id: int) -> dict:
                 elif br_sub.operation == "clear":
                     current_subtitle = None
 
+                await progress.complete(bi)
+
+                all_perspectives.extend(result.perspectives)
+                if merged_obs is None:
+                    merged_obs = result.observations
+                else:
+                    merged_obs = _merge_observations(
+                        merged_obs, result.observations
+                    )
                 all_axis_updates.extend(result.axis_updates)
                 all_aspect_updates.extend(result.aspect_updates)
                 all_goal_updates.extend(result.goal_updates)
                 total_llm_calls += result.total_llm_calls
                 total_tokens_est += result.total_tokens_est
+                total_semantic_corrections += agents[bi].semantic_correction_count
                 per_bundle_results.append(result)
 
         finally:
+            for task in analysis_tasks:
+                if not task.done():
+                    task.cancel()
+            if analysis_tasks:
+                await asyncio.gather(*analysis_tasks, return_exceptions=True)
             await client.aclose()
 
         await update_job_progress(job_id, 0.95, {
@@ -627,20 +885,37 @@ async def _generate(*, draft_id: str, revision: int, job_id: int) -> dict:
         draft.generated_at = datetime.now(timezone.utc)
         draft.status = CharacterEmbodimentDraftStatus.READY
         await sql.commit()
+        await sql.execute(delete(CharacterEmbodimentCheckpoint).where(
+            CharacterEmbodimentCheckpoint.draft_id == draft_id,
+            CharacterEmbodimentCheckpoint.generation_revision == revision,
+        ))
+        await sql.commit()
         await update_job_progress(job_id, 1.0, {
             "stage": "Complete",
             "draft_id": draft_id,
             "bundles": bundles,
         })
-        import logging
+        elapsed_seconds = time.monotonic() - generation_started
+        stage_seconds: dict[str, float] = {}
+        for agent in agents:
+            for stage, elapsed in agent.stage_elapsed_seconds.items():
+                stage_seconds[stage] = stage_seconds.get(stage, 0.0) + elapsed
         logger = logging.getLogger(__name__)
         logger.info(
-            "Embodiment complete for draft=%s: %d bundles, %d LLM calls, ~%d total tokens",
+            "Embodiment complete for draft=%s: %d bundles, %d LLM calls, "
+            "~%d total tokens, %d semantic corrections, %.2fs wall time, "
+            "stage_seconds=%s",
             draft_id, total, total_llm_calls, total_tokens_est,
+            total_semantic_corrections,
+            elapsed_seconds, {key: round(value, 2) for key, value in stage_seconds.items()},
         )
         return {
             "draft_id": draft_id, "status": "ready", "revision": revision,
             "llm_calls": total_llm_calls, "total_tokens_est": total_tokens_est,
+            "semantic_corrections": total_semantic_corrections,
+            "reused_checkpoint_stages": sum(
+                len(bundle.get("reused_stages", [])) for bundle in bundles
+            ),
         }
 
 

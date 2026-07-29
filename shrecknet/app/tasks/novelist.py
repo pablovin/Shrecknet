@@ -378,6 +378,9 @@ async def _execute_run(
             configured_novelist_planning_target = settings.model_novelist_planning
             configured_novelist_prose_target = settings.model_novelist_prose
             configured_novelist_critic_target = settings.model_novelist_critic
+            configured_novelist_chapter_writer_target = (
+                settings.model_novelist_chapter_writer
+            )
             configured_elder_planner_target = settings.model_elder_planner
             configured_elder_synthesis_target = settings.model_elder_synthesis
             configured_architect_target = settings.model_architect_scene_chunking
@@ -395,6 +398,11 @@ async def _execute_run(
             setattr(model_policy, "model_novelist_planning", configured_novelist_planning_target)
             setattr(model_policy, "model_novelist_prose", configured_novelist_prose_target)
             setattr(model_policy, "model_novelist_critic", configured_novelist_critic_target)
+            setattr(
+                model_policy,
+                "model_novelist_chapter_writer",
+                configured_novelist_chapter_writer_target,
+            )
             setattr(model_policy, "model_elder_planner", configured_elder_planner_target)
             setattr(model_policy, "model_elder_synthesis", configured_elder_synthesis_target)
             setattr(

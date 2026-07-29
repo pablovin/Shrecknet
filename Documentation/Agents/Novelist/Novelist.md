@@ -13,14 +13,17 @@ Primary implementation:
 Novelist uses dedicated model targets for grouped stages:
 
 - `model_novelist_planning`: planning stages (step 2 + step 4).
-- `model_novelist_prose`: prose generation stages (step 5 + step 7).
+- `model_novelist_prose`: per-scene prose generation (step 5).
 - `model_novelist_critic`: critic stage (step 6).
+- `model_novelist_chapter_writer`: exclusive final chapter rewrite model (step 7).
 
 Compatibility/fallback behavior:
 
 - `model_novelist_planning` falls back to `LLMTask.SYNTHESIS` policy target.
 - `model_novelist_prose` falls back to `LLMTask.SYNTHESIS` policy target.
 - `model_novelist_critic` falls back to `LLMTask.SYNTHESIS` policy target.
+- `model_novelist_chapter_writer` falls back to `model_novelist_prose` when no
+  dedicated target is attached to a legacy runtime policy.
 
 ## Jobs Overview
 
@@ -65,10 +68,17 @@ Internal stage progression:
 
 Current flow per scene:
 
-- Step 2 plans retrieval questions (2-3) from scene title + description.
+- Step 2 plans retrieval questions (2-3) from scene title, description, and the
+  complete raw scene excerpt. All scene calls are submitted together.
 - Step 3 retrieves elder context and stores retrieval traces.
-- Step 4 builds compact narrative context JSON from scene metadata + prior knowledge Q/A.
-- Step 5 generates scene prose HTML using step 4 context memory.
+- Steps 4 and 5 form one scene-local bundle: Step 4 builds strict context JSON
+  from complete raw evidence plus prior-knowledge Q/A, then Step 5 generates prose
+  using the same isolated conversation and the raw evidence again.
+- Independent Step 4→5 bundles run concurrently. A failed bundle is retried once
+  with a fresh conversation id; a second failure fails the run.
+
+ShreckLLM owns LLM queueing and provider concurrency. Novelist does not locally
+throttle Stage 2, Elder question submission, or active Stage 4→5 bundles.
 
 Per-step usage is tracked in:
 
@@ -80,13 +90,21 @@ Per-step usage is tracked in:
 - Code-side paragraph clipping is removed.
 - Novelist keeps full LLM HTML output after readability normalization.
 - Paragraph/length control is prompt-driven at the LLM layer.
+- Complete raw scene evidence is included without application-level clipping.
 
-### Steps 6-7 editorial lane
+### Steps 6-7 editorial passes
 
 - Steps 6 and 7 execute after all scene threads complete.
-- They use a dedicated conversation lane (`step6_7`) isolated from scene-level chats.
-- Step 6 (`critic`): no-memory call, input is only the concatenated draft text.
-- Step 7 (`revision`): same dedicated conversation id with memory enabled, using step 6 critic feedback.
+- Both calls are memory-free. Their conversation identifier is retained only for
+  request correlation and does not load or persist ShreckLLM conversation history.
+- Step 6 (`critic`): input is only the concatenated draft text.
+- Step 7 (`revision`): uses `model_novelist_chapter_writer` and explicitly receives
+  both the complete bounded draft and the normalized step 6 critic feedback.
+- Step 7 requests an output allowance of up to `15,000` tokens.
+
+Steps 2, 4, and 6 request strict native JSON-schema output. Providers that
+explicitly reject structured output fall back to plain JSON plus the shared repair
+model.
 
 ### Final HTML assembly
 

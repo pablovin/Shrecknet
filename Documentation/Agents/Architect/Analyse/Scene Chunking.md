@@ -141,17 +141,20 @@ Each scene receives a `text` field reconstructed from the per-entity global para
 8. Scene merge/dedup is not part of the active pipeline.
 9. Chunk results feed entity discovery per final scene.
 10. Scene proposals are built with `related_to` entities.
-11. `ARCHITECT_MILESTONE_BATCH_PROMPT` runs after entity discovery, batched at 2 scenes per LLM call.
+11. `ARCHITECT_MILESTONE_BATCH_PROMPT` runs after entity discovery with one queued
+    call per scene.
 12. Debug `chunk_results` are included in the final pipeline output.
 
-## Downstream Batch Sizes (Current)
+## Downstream Call Units (Current)
 
 After scene chunking, downstream analysis stages currently use:
 
-- `ENTITY_PROPOSAL_BATCH_SIZE = 3` scenes per entity extraction call.
-- `MILESTONE_BATCH_SIZE = 2` scenes per milestone extraction call.
+- One scene per entity extraction call.
+- One scene per milestone extraction call; the response contains the scene's full
+  milestone set.
 
-These values are defined in `shrecknet/app/tasks/architect_analysis.py` and are part of the active pipeline contract.
+Every call receives complete reconstructed scene text. Architect submits all calls
+for each phase promptly; ShreckLLM owns queueing and provider concurrency.
 
 ## Artifacts
 

@@ -186,6 +186,30 @@ def test_config_store_rejects_legacy_string_model_updates(monkeypatch, tmp_path)
         update_settings({"model_elder_planner": "legacy-elder-model"})
 
 
+def test_agent_model_reasoning_defaults_false_and_persists(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("SHRECKNET_DATA_DIR", str(tmp_path))
+    _reset_runtime_state()
+
+    initial = get_settings()
+    assert initial.model_elder_planner.reasoning is False
+
+    updated = update_settings(
+        {
+            "model_elder_planner": {
+                "provider": "openrouter",
+                "name": "anthropic/claude-sonnet-4",
+                "reasoning": True,
+            }
+        }
+    )
+    assert updated.model_elder_planner.reasoning is True
+    assert reload_settings().model_elder_planner == LLMModelTarget(
+        provider="openrouter",
+        name="anthropic/claude-sonnet-4",
+        reasoning=True,
+    )
+
+
 def test_blank_model_targets_remain_blank_after_reload(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("SHRECKNET_DATA_DIR", str(tmp_path))
     _reset_runtime_state()

@@ -7,21 +7,20 @@ import pytest
 from neo4j.time import DateTime
 from sqlalchemy import create_engine, inspect
 
-from app.core.config_store import LLMModelTarget
+from app.core.config_store import LLMModelTarget, Settings
 from app.jobs.character_agent.embody_agent import EmbodyAgent, EmbodimentGenerationError
 from app.jobs.character_agent.embody_agent_prompts import (
-    ASPECTS_UPDATE_PROMPT,
-    AXES_UPDATE_PROMPT,
-    GOALS_UPDATE_PROMPT,
     ENRICHMENT_PROMPT,
     OBSERVATIONS_PROMPT,
     PERSPECTIVE_PROMPT,
+    PROFILE_UPDATE_PROMPT,
     PROMPT_VERSION,
 )
 from app.schemas.character_agent import (
     BEHAVIOURAL_AXES,
     CharacterAgentCreateRequest, CharacterAgentRead, CharacterAgentUpdate,
     EmbodimentEvidence, EmbodimentProposal,
+    ProfileUpdateOutput,
     SceneInput, ScenePerspectiveOutput,
     CharacterTimelineProjection,
 )
@@ -47,7 +46,7 @@ def _canonical(overrides=None):
     return data
 
 
-def _agent(llm):
+def _agent(llm, *, semantic_correction_attempts=1):
     target = LLMModelTarget()
     return EmbodyAgent(
         llm_client=llm,
@@ -56,6 +55,7 @@ def _agent(llm):
         character_update_model=target,
         max_aspects=4,
         max_goals=3,
+        semantic_correction_attempts=semantic_correction_attempts,
     )
 
 
@@ -69,25 +69,89 @@ class FakeLLM:
         return self.outputs_by_tag[kwargs["usage_tag"]]
 
 
-class ParallelStepLLM(FakeLLM):
-    def __init__(self, outputs_by_tag):
-        super().__init__(outputs_by_tag)
-        self.step3_started = asyncio.Event()
-        self.steps_345_running: set[str] = set()
+class DelayedDynamicLLM:
+    def __init__(self, delay: float = 0.03):
+        self.delay = delay
+        self.calls = []
+        self.analysis_running = 0
+        self.max_analysis_running = 0
+        self.profile_current_values = []
 
     async def chat(self, **kwargs):
         self.calls.append(kwargs)
         tag = kwargs["usage_tag"]
-        if tag in (
-            "character_agent.embodiment.axes",
-            "character_agent.embodiment.aspects",
-            "character_agent.embodiment.goals",
-        ):
-            self.steps_345_running.add(tag)
-            if len(self.steps_345_running) == 3:
-                self.step3_started.set()
-            await asyncio.wait_for(self.step3_started.wait(), timeout=1)
-        return self.outputs_by_tag[tag]
+        payload = json.loads(kwargs["messages"][1]["content"])
+        if tag != "character_agent.embodiment.profile_update":
+            self.analysis_running += 1
+            self.max_analysis_running = max(
+                self.max_analysis_running, self.analysis_running
+            )
+            scene_id = (
+                payload.get("scenes", [{}])[0].get("scene_id")
+                or payload.get("scene_bundles", [{}])[0].get("scene", {}).get("scene_id")
+            )
+            extra = self.delay if scene_id == "s1" else 0
+            await asyncio.sleep(self.delay + extra)
+            self.analysis_running -= 1
+        if tag == "character_agent.embodiment.character_incorporation":
+            scene_id = payload["scenes"][0]["scene_id"]
+            return json.dumps({"perspectives": [{
+                "scene_id": scene_id, "source_type": "participated",
+                "awareness_level": 50, "confidence": 50,
+                "summary": "Scene.", "interpretation": "Grounded.",
+                "character_reflection": "I remember.",
+                "memory_strength": 50, "importance": 3,
+            }]})
+        if tag == "character_agent.embodiment.scene_interpretation":
+            scene_id = payload["scenes"][0]["scene_id"]
+            return json.dumps({"scene_enrichments": [{
+                "scene_id": scene_id, "emotions": [], "beliefs": [], "impacts": [],
+            }]})
+        if tag == "character_agent.embodiment.observations":
+            scene_id = payload["scene_bundles"][0]["scene"]["scene_id"]
+            return json.dumps({
+                "recurring_behaviours": [{
+                    "text": f"Observed {scene_id}.",
+                    "evidence_ids": [f"scene:{scene_id}"],
+                }],
+                "motivations": [], "values": [], "fears": [], "conflicts": [],
+                "relationships": [], "contradictions": [], "evidence_gaps": [],
+            })
+        current = payload["current_profile"]["behavioural_axes"]
+        self.profile_current_values.append(current["cautious_reckless"])
+        evidence_id = payload["observations"]["recurring_behaviours"][0]["evidence_ids"][0]
+        return json.dumps({
+            "behavioural_axes": [{
+                "axis": axis,
+                "new_value": (
+                    current[axis] + 1 if axis == "cautious_reckless" else current[axis]
+                ),
+                "justification": "Ordered cumulative update.",
+                "confidence": 0.7,
+                "evidence_ids": [evidence_id],
+            } for axis in BEHAVIOURAL_AXES],
+            "aspect_updates": [],
+            "goal_updates": [],
+        })
+
+
+def _profile_update_output(*, changed_axis: str | None = None) -> str:
+    return json.dumps({
+        "behavioural_axes": [
+            {
+                "axis": axis,
+                "new_value": 30 if axis == changed_axis else 50,
+                "justification": (
+                    "Grounded change." if axis == changed_axis else "No change warranted."
+                ),
+                "confidence": 0.6,
+                "evidence_ids": ["scene:s1"],
+            }
+            for axis in BEHAVIOURAL_AXES
+        ],
+        "aspect_updates": [],
+        "goal_updates": [],
+    })
 
 
 # ── Prompt contract tests ─────────────────────────────────────────────
@@ -107,15 +171,11 @@ def test_prompts_document_complete_contracts():
     assert "contradictions" in OBSERVATIONS_PROMPT
     assert "evidence_gaps" in OBSERVATIONS_PROMPT
 
-    assert "calm_aggressive" in AXES_UPDATE_PROMPT
-    assert "cooperative_dominating" in AXES_UPDATE_PROMPT
-    assert "confidence" in AXES_UPDATE_PROMPT
-
-    assert "add | update | remove" in ASPECTS_UPDATE_PROMPT
-    assert "category" in ASPECTS_UPDATE_PROMPT
-
-    assert "add | update | remove | complete" in GOALS_UPDATE_PROMPT
-    assert "goal_type" in GOALS_UPDATE_PROMPT
+    assert "calm_aggressive" in PROFILE_UPDATE_PROMPT
+    assert "cooperative_dominating" in PROFILE_UPDATE_PROMPT
+    assert "add | update | remove" in PROFILE_UPDATE_PROMPT
+    assert "add | update | remove | complete" in PROFILE_UPDATE_PROMPT
+    assert "current_profile" in PROFILE_UPDATE_PROMPT
 
     assert PROMPT_VERSION
 
@@ -123,8 +183,8 @@ def test_prompts_document_complete_contracts():
 # ── Pipeline tests ────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
-async def test_embodiment_pipeline_is_six_calls_with_parallel_profile_updates():
-    llm = ParallelStepLLM({
+async def test_embodiment_pipeline_is_four_calls_with_atomic_profile_update():
+    llm = FakeLLM({
         "character_agent.embodiment.character_incorporation": json.dumps({
             "perspectives": [{
                 "scene_id": "s1", "source_type": "participated",
@@ -155,19 +215,9 @@ async def test_embodiment_pipeline_is_six_calls_with_parallel_profile_updates():
             "motivations": [], "values": [], "fears": [], "conflicts": [],
             "relationships": [], "contradictions": [], "evidence_gaps": [],
         }),
-        "character_agent.embodiment.axes": json.dumps({
-            "behavioural_axes": [{
-                "axis": "cautious_reckless", "new_value": 30,
-                "justification": "Exploration was cautious.",
-                "confidence": 0.6, "evidence_ids": ["scene:s1"],
-            }],
-        }),
-        "character_agent.embodiment.aspects": json.dumps({
-            "aspect_updates": [],
-        }),
-        "character_agent.embodiment.goals": json.dumps({
-            "goal_updates": [],
-        }),
+        "character_agent.embodiment.profile_update": _profile_update_output(
+            changed_axis="cautious_reckless"
+        ),
     })
     agent = _agent(llm)
     scenes = [
@@ -189,10 +239,10 @@ async def test_embodiment_pipeline_is_six_calls_with_parallel_profile_updates():
         }],
         scenes=scenes,
     )
-    assert len(llm.calls) == 6
-    assert result.total_llm_calls == 6
+    assert len(llm.calls) == 4
+    assert result.total_llm_calls == 4
     assert result.total_tokens_est > 0
-    assert len(result.llm_calls) == 6
+    assert len(result.llm_calls) == 4
     assert result.source_entity_id == "source-a"
     assert result.source_entity_alias == "Source A"
     assert len(result.perspectives) == 1
@@ -203,6 +253,7 @@ async def test_embodiment_pipeline_is_six_calls_with_parallel_profile_updates():
     assert len(result.observations.recurring_behaviours) == 1
     assert len(result.axis_updates) == 1
     assert result.axis_updates[0].axis == "cautious_reckless"
+    assert result.axis_updates[0].new_value == 30
     tags = [call["usage_tag"] for call in llm.calls]
     assert "character_agent.embodiment.character_incorporation" in tags
     assert "character_agent.embodiment.scene_interpretation" in tags
@@ -210,9 +261,7 @@ async def test_embodiment_pipeline_is_six_calls_with_parallel_profile_updates():
     assert tags.index("character_agent.embodiment.character_incorporation") < tags.index(
         "character_agent.embodiment.observations"
     )
-    for t in ("character_agent.embodiment.axes", "character_agent.embodiment.aspects",
-              "character_agent.embodiment.goals"):
-        assert t in tags
+    assert "character_agent.embodiment.profile_update" in tags
     incorporation_payload = json.loads(llm.calls[0]["messages"][1]["content"])
     assert "authored_text" not in json.dumps(incorporation_payload)
     enrichment_call = next(
@@ -225,6 +274,102 @@ async def test_embodiment_pipeline_is_six_calls_with_parallel_profile_updates():
     )
     assert "character_reflection" not in enrichment_call["messages"][1]["content"]
     assert "character_reflection" not in observations_call["messages"][1]["content"]
+
+
+@pytest.mark.asyncio
+async def test_snapshot_analysis_is_bounded_and_updates_remain_ordered():
+    from app.tasks.character_embodiment import _apply_axis_updates
+
+    llm = DelayedDynamicLLM()
+    agents = [_agent(llm) for _ in range(4)]
+    semaphore = asyncio.Semaphore(2)
+    completion_order = []
+    initial_axes = {axis: 50 for axis in BEHAVIOURAL_AXES}
+
+    async def analyze(index):
+        async with semaphore:
+            result = await agents[index].analyze(
+                source_entity_id=f"source-{index}",
+                source_entity_alias=f"Source {index}",
+                canonical_identity=_canonical(),
+                current_behavioural_axes=initial_axes,
+                current_aspects=[],
+                current_goals=[],
+                scenes=[SceneInput(
+                    scene_id=f"s{index + 1}",
+                    name=f"Scene {index + 1}",
+                    description="Evidence.",
+                )],
+            )
+            completion_order.append(index)
+            return result
+
+    started = asyncio.get_running_loop().time()
+    analyses = await asyncio.gather(*(analyze(index) for index in range(4)))
+    analysis_elapsed = asyncio.get_running_loop().time() - started
+
+    current_axes = dict(initial_axes)
+    for index, analysis in enumerate(analyses):
+        result = await agents[index].apply_profile_update(
+            analysis=analysis,
+            current_behavioural_axes=current_axes,
+            current_aspects=[],
+            current_goals=[],
+        )
+        _apply_axis_updates(current_axes, result.axis_updates)
+
+    assert llm.max_analysis_running == 2
+    assert analysis_elapsed < 0.30  # Sequential baseline is at least 0.36s.
+    assert completion_order != [0, 1, 2, 3]
+    assert llm.profile_current_values == [50, 51, 52, 53]
+    assert current_axes["cautious_reckless"] == 54
+
+
+@pytest.mark.asyncio
+async def test_concurrent_progress_writes_are_serialized(monkeypatch):
+    from app.tasks import character_embodiment as task_module
+
+    writes_running = 0
+    max_writes_running = 0
+    payloads = []
+
+    async def fake_update_job_progress(job_id, progress, details):
+        nonlocal writes_running, max_writes_running
+        writes_running += 1
+        max_writes_running = max(max_writes_running, writes_running)
+        await asyncio.sleep(0.01)
+        payloads.append((job_id, progress, details))
+        writes_running -= 1
+
+    monkeypatch.setattr(
+        task_module, "update_job_progress", fake_update_job_progress
+    )
+    groups = [
+        {"source_alias": "Source 1"},
+        {"source_alias": "Source 2"},
+    ]
+    bundles = [
+        {
+            "index": index + 1, "source_name": group["source_alias"],
+            "status": "pending", "active_steps": [], "done_steps": [],
+            "elapsed_seconds": None,
+        }
+        for index, group in enumerate(groups)
+    ]
+    progress = task_module._EmbodimentProgress(
+        job_id=9, draft_id="draft-1", bundles=bundles, source_groups=groups
+    )
+
+    await asyncio.gather(progress.stage(0, [1]), progress.stage(1, [1]))
+    await asyncio.gather(progress.analysis_ready(0), progress.failed(1))
+    await progress.stage(0, [4])
+    await progress.complete(0)
+
+    assert max_writes_running == 1
+    assert bundles[0]["status"] == "done"
+    assert bundles[0]["done_steps"] == [1, 2, 3, 4]
+    assert bundles[1]["status"] == "failed"
+    assert [item[1] for item in payloads] == sorted(item[1] for item in payloads)
 
 
 @pytest.mark.asyncio
@@ -263,6 +408,13 @@ async def test_embodiment_rejects_unknown_evidence_in_observations():
             "motivations": [], "values": [], "fears": [], "conflicts": [],
             "relationships": [], "contradictions": [], "evidence_gaps": [],
         }),
+        "character_agent.embodiment.observations.semantic_correction": json.dumps({
+            "recurring_behaviours": [{
+                "text": "Mara digs.", "evidence_ids": ["scene:still-missing"],
+            }],
+            "motivations": [], "values": [], "fears": [], "conflicts": [],
+            "relationships": [], "contradictions": [], "evidence_gaps": [],
+        }),
     })
     agent = _agent(llm)
     with pytest.raises(EmbodimentGenerationError, match="unknown evidence"):
@@ -273,6 +425,55 @@ async def test_embodiment_rejects_unknown_evidence_in_observations():
             current_aspects=[], current_goals=[],
             scenes=[SceneInput(scene_id="s1", name="Scene", description="", created_at=None)],
         )
+
+
+@pytest.mark.asyncio
+async def test_embodiment_corrects_semantic_evidence_and_canonicalizes_bare_id():
+    valid_perspective = json.dumps({"perspectives": [{
+        "scene_id": "s1", "source_type": "participated",
+        "awareness_level": 50, "confidence": 50,
+        "summary": "Scene.", "interpretation": "Ok.",
+        "character_reflection": "I remember.",
+        "memory_strength": 50, "importance": 3,
+    }]})
+    llm = FakeLLM({
+        "character_agent.embodiment.character_incorporation": valid_perspective,
+        "character_agent.embodiment.scene_interpretation": json.dumps({
+            "scene_enrichments": [{
+                "scene_id": "s1", "emotions": [], "beliefs": [], "impacts": [],
+            }],
+        }),
+        "character_agent.embodiment.observations": json.dumps({
+            "recurring_behaviours": [{
+                "text": "Unsupported.", "evidence_ids": ["invented"],
+            }],
+        }),
+        "character_agent.embodiment.observations.semantic_correction": json.dumps({
+            "recurring_behaviours": [{
+                "text": "Grounded.", "evidence_ids": ["s1"],
+            }],
+        }),
+        "character_agent.embodiment.profile_update": _profile_update_output(),
+    })
+
+    result = await _agent(llm).run(
+        source_entity_id="source-1", source_entity_alias="Source",
+        canonical_identity=_canonical(),
+        current_behavioural_axes={axis: 50 for axis in BEHAVIOURAL_AXES},
+        current_aspects=[], current_goals=[],
+        scenes=[SceneInput(scene_id="s1", name="Scene", description="Evidence.")],
+    )
+
+    assert result.observations.recurring_behaviours[0].evidence_ids == ["scene:s1"]
+    correction_call = next(
+        call for call in llm.calls
+        if call["usage_tag"].endswith(".semantic_correction")
+    )
+    correction_payload = json.loads(correction_call["messages"][1]["content"])
+    assert correction_payload["validation_error"]["offending_ids"] == [
+        "scene:invented"
+    ]
+    assert correction_payload["validation_error"]["allowed_ids"] == ["scene:s1"]
 
 
 @pytest.mark.asyncio
@@ -356,9 +557,7 @@ async def test_embodiment_pipeline_records_llm_stats():
             "motivations": [], "values": [], "fears": [], "conflicts": [],
             "relationships": [], "contradictions": [], "evidence_gaps": [],
         }),
-        "character_agent.embodiment.axes": json.dumps({"behavioural_axes": []}),
-        "character_agent.embodiment.aspects": json.dumps({"aspect_updates": []}),
-        "character_agent.embodiment.goals": json.dumps({"goal_updates": []}),
+        "character_agent.embodiment.profile_update": _profile_update_output(),
     })
     agent = _agent(llm)
     result = await agent.run(
@@ -368,17 +567,119 @@ async def test_embodiment_pipeline_records_llm_stats():
         current_aspects=[], current_goals=[],
         scenes=[SceneInput(scene_id="s1", name="Scene", description="", created_at=None)],
     )
-    assert result.total_llm_calls == 6
+    assert result.total_llm_calls == 4
     assert result.total_tokens_est >= 5
     for record in result.llm_calls:
         assert record.stage in (
             "character incorporation", "scene psychological enrichment",
-            "cross-scene observations",
-            "axis updates", "aspect updates", "goal updates",
+            "cross-scene observations", "profile updates",
         )
         assert record.usage_tag.startswith("character_agent.embodiment.")
         assert record.input_chars > 0
         assert record.output_chars > 0
+    assert set(agent.stage_elapsed_seconds) == {
+        "character incorporation", "scene psychological enrichment",
+        "cross-scene observations", "profile updates",
+    }
+
+
+def test_profile_update_requires_all_eight_unique_axes():
+    valid = json.loads(_profile_update_output())
+    assert len(ProfileUpdateOutput.model_validate(valid).behavioural_axes) == 8
+
+    missing = {**valid, "behavioural_axes": valid["behavioural_axes"][:-1]}
+    with pytest.raises(ValueError):
+        ProfileUpdateOutput.model_validate(missing)
+
+    duplicate = {
+        **valid,
+        "behavioural_axes": [
+            *valid["behavioural_axes"][:-1],
+            valid["behavioural_axes"][0],
+        ],
+    }
+    with pytest.raises(ValueError, match="exactly once"):
+        ProfileUpdateOutput.model_validate(duplicate)
+
+
+def test_profile_update_enforces_configured_aspect_and_goal_limits():
+    agent = _agent(FakeLLM({}))
+    update = json.loads(_profile_update_output())
+    update["aspect_updates"] = [{
+        "operation": "add", "name": "Fifth aspect", "category": "identity",
+        "justification": "Grounded.", "confidence": 0.8,
+        "evidence_ids": ["scene:s1"],
+    }]
+    profile_result = ProfileUpdateOutput.model_validate(update)
+    with pytest.raises(EmbodimentGenerationError, match="aspect limit"):
+        agent._validate_profile_limits(
+            current_aspects=[
+                {"name": f"Aspect {index}"} for index in range(agent.max_aspects)
+            ],
+            current_goals=[],
+            profile_result=profile_result,
+        )
+
+    update["aspect_updates"] = []
+    update["goal_updates"] = [{
+        "operation": "add", "title": "Fourth goal", "goal_type": "desire",
+        "justification": "Grounded.", "confidence": 0.8,
+        "evidence_ids": ["scene:s1"],
+    }]
+    profile_result = ProfileUpdateOutput.model_validate(update)
+    with pytest.raises(EmbodimentGenerationError, match="goal limit"):
+        agent._validate_profile_limits(
+            current_aspects=[],
+            current_goals=[
+                {"title": f"Goal {index}"} for index in range(agent.max_goals)
+            ],
+            profile_result=profile_result,
+        )
+
+
+def test_embodiment_source_concurrency_defaults_and_bounds():
+    assert Settings().character_agent_embodiment_source_concurrency == 4
+    assert Settings(
+        character_agent_embodiment_source_concurrency=1
+    ).character_agent_embodiment_source_concurrency == 1
+    with pytest.raises(ValueError):
+        Settings(character_agent_embodiment_source_concurrency=0)
+    with pytest.raises(ValueError):
+        Settings(character_agent_embodiment_source_concurrency=17)
+    assert Settings().character_agent_embodiment_semantic_correction_attempts == 1
+    assert Settings(
+        character_agent_embodiment_semantic_correction_attempts=0
+    ).character_agent_embodiment_semantic_correction_attempts == 0
+    with pytest.raises(ValueError):
+        Settings(character_agent_embodiment_semantic_correction_attempts=4)
+
+
+def test_embodiment_checkpoint_key_invalidates_changed_evidence_or_model():
+    from app.tasks.character_embodiment import _checkpoint_cache_key
+
+    common = {
+        "revision": 2,
+        "canonical_identity": _canonical(),
+        "axes": {axis: 50 for axis in BEHAVIOURAL_AXES},
+        "aspects": [],
+        "goals": [],
+        "model_targets": {"observations": "openrouter:model-a"},
+    }
+    first = _checkpoint_cache_key(
+        **common,
+        source_group={"source_id": "src", "scenes": [{"scene_id": "s1"}]},
+    )
+    changed_evidence = _checkpoint_cache_key(
+        **common,
+        source_group={"source_id": "src", "scenes": [{"scene_id": "s2"}]},
+    )
+    changed_model = _checkpoint_cache_key(
+        **{**common, "model_targets": {"observations": "openrouter:model-b"}},
+        source_group={"source_id": "src", "scenes": [{"scene_id": "s1"}]},
+    )
+
+    assert first != changed_evidence
+    assert first != changed_model
 
 
 # ── Schema tests ───────────────────────────────────────────────────────
@@ -436,6 +737,17 @@ def test_embodiment_draft_table_contains_review_and_provenance_state():
         "generated_proposal", "timeline_projection",
         "generation_revision", "background_job_id", "active_entity_key",
     } <= columns
+    assert "character_embodiment_checkpoints" in inspect(engine).get_table_names()
+    checkpoint_columns = {
+        column["name"]
+        for column in inspect(engine).get_columns(
+            "character_embodiment_checkpoints"
+        )
+    }
+    assert {
+        "draft_id", "generation_revision", "source_index", "stage",
+        "cache_key", "payload", "prompt_version", "model_target",
+    } <= checkpoint_columns
 
 
 def test_read_embodiment_draft_ignores_legacy_subtitle_change_in_observations():

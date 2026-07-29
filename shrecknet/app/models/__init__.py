@@ -9,7 +9,11 @@ from app.models.architect import (
 )
 from app.models.audit import AuditAction, AuditActorType, AuditEntityType, AuditLog
 from app.models.background_job import AuthorType, BackgroundJob, JobStatus, JobType
-from app.models.character_embodiment import CharacterEmbodimentDraft, CharacterEmbodimentDraftStatus
+from app.models.character_embodiment import (
+    CharacterEmbodimentCheckpoint,
+    CharacterEmbodimentDraft,
+    CharacterEmbodimentDraftStatus,
+)
 from app.models.elder_chat import ElderChat, ElderChatHistory
 from app.models.library import LibraryBookmark, LibraryItem
 from app.models.media_item import MediaItem
@@ -51,6 +55,7 @@ __all__ = [
     "JobStatus",
     "JobType",
     "CharacterEmbodimentDraft",
+    "CharacterEmbodimentCheckpoint",
     "CharacterEmbodimentDraftStatus",
     "MediaItem",
     "LibraryItem",

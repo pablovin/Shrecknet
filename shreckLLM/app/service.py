@@ -973,47 +973,72 @@ class ChatService:
         return await self.provider_validation_status(provider_key)
 
     async def prewarm_active_providers(self) -> None:
-        active_provider_ids: list[str] = []
+        targets: list[tuple[str, str]] = []
         for provider_id, state in self._runtime.provider_states.items():
             cfg = self._runtime.provider_defaults.get(provider_id)
             if cfg is None:
                 continue
             effective_active, _ = self._effective_provider_active(provider_id, cfg, state)
             if effective_active:
-                active_provider_ids.append(provider_id)
-        if not active_provider_ids:
+                targets.extend(
+                    (provider_id, model)
+                    for model in self.normalize_provider_models(list(cfg.models))
+                )
+        if not targets:
             logger.info("[SHRECKLLM_PREWARM] step=skipped reason=no_active_providers")
             return
-        logger.info("[SHRECKLLM_PREWARM] step=start active_provider_ids=%s", active_provider_ids)
-        for provider_id in active_provider_ids:
+        logger.info("[SHRECKLLM_PREWARM] step=start targets=%s", targets)
+        global_gate = asyncio.Semaphore(max(1, int(self._runtime.max_concurrent_requests)))
+        provider_gates = {
+            provider_id: asyncio.Semaphore(
+                max(
+                    1,
+                    int(
+                        (self._runtime.provider_limits.get(provider_id) or {}).get(
+                            "max_concurrent",
+                            1,
+                        )
+                    ),
+                )
+            )
+            for provider_id, _model in targets
+        }
+
+        async def warm_target(provider_id: str, model: str) -> tuple[str, str, Exception | None]:
             adapter = self.registry.get(provider_id)
-            cfg = self._runtime.provider_defaults.get(provider_id)
             if adapter is None:
-                await self._set_provider_state(provider_id, active=False, last_error="provider_not_bound")
                 logger.info("[SHRECKLLM_PREWARM] step=skipped provider=%s reason=provider_not_bound", provider_id)
-                continue
-            model = str((cfg.models or [""])[0] if cfg else "").strip()
-            if not model:
-                await self._set_provider_state(provider_id, active=False, last_error="missing_prewarm_model")
-                logger.info("[SHRECKLLM_PREWARM] step=skipped provider=%s reason=missing_prewarm_model", provider_id)
-                continue
+                return provider_id, model, DependencyUnavailableError("provider_not_bound")
             logger.info("[SHRECKLLM_PREWARM] step=provider_start provider=%s model=%s", provider_id, model)
             try:
-                await adapter.chat(
-                    model=model,
-                    messages=[ChatMessage(role="user", content="ping")],
-                    temperature=0.0,
-                )
-                await self._set_provider_state(
-                    provider_id,
-                    active=True,
-                    last_warmed_at=_utc_now(),
-                    last_error=None,
-                )
+                async with global_gate, provider_gates[provider_id]:
+                    await adapter.chat(
+                        model=model,
+                        messages=[ChatMessage(role="user", content="ping")],
+                        temperature=0.0,
+                        max_tokens=1,
+                    )
                 logger.info("[SHRECKLLM_PREWARM] step=provider_done provider=%s model=%s", provider_id, model)
+                return provider_id, model, None
             except Exception as exc:
-                await self._set_provider_state(provider_id, active=False, last_error=str(exc))
                 logger.warning("[SHRECKLLM_PREWARM] step=provider_failed provider=%s model=%s error=%s", provider_id, model, exc)
+                return provider_id, model, exc
+
+        results = await asyncio.gather(
+            *(warm_target(provider_id, model) for provider_id, model in targets)
+        )
+        for provider_id in dict.fromkeys(provider_id for provider_id, _model in targets):
+            failures = [
+                f"{model}: {exc}"
+                for result_provider_id, model, exc in results
+                if result_provider_id == provider_id and exc is not None
+            ]
+            await self._set_provider_state(
+                provider_id,
+                active=not failures,
+                last_warmed_at=_utc_now() if not failures else None,
+                last_error="; ".join(failures) if failures else None,
+            )
 
     async def chat(self, request: ChatRequest) -> ChatResponse:
         job = await self.submit_chat_job(request)
@@ -1111,6 +1136,7 @@ class ChatService:
             job_id = await self._job_queue.get()
             row = self._chat_jobs.get(job_id)
             if row is None:
+                self._job_queue.task_done()
                 continue
             row["status"] = "running"
             row["started_at"] = time.time()
@@ -1151,6 +1177,7 @@ class ChatService:
                 event = self._job_events.get(job_id)
                 if event is not None:
                     event.set()
+                self._job_queue.task_done()
 
     async def _job_gc_loop(self) -> None:
         while True:
@@ -1265,6 +1292,7 @@ class ChatService:
             "model": resolved_model,
             "messages": combined_messages,
             "temperature": request.temperature,
+            "reasoning": request.reasoning,
             "max_tokens": request.max_tokens,
         }
         if request.response_format is not None:

@@ -29,12 +29,15 @@ Transform unstructured narrative/session text into:
 
 ### Stage 2: retrieval question planning (`step_2`)
 
-- Generate 2-3 retrieval questions per scene from scene title + description.
+- Generate 2-3 retrieval questions per scene from scene title, description, and
+  complete raw scene text.
+- Submit every scene planning call together; ShreckLLM owns provider concurrency.
 - This stage prepares retrieval intents only.
 
 ### Stage 3: retrieval context (`step_3`)
 
 - Retrieve scene-specific prior context via Elder integration.
+- Submit all scene-question lookups together without local LLM concurrency gates.
 - Output includes retrieval query/answer traces used to build prior knowledge.
 
 ### Stage 4: context build (`step_4`)
@@ -42,6 +45,7 @@ Transform unstructured narrative/session text into:
 - Build compact context JSON per scene from:
   - `scene_name`
   - `scene_description`
+  - complete `source_rawtext`
   - `prior_knowledge` (`{question: answer}`)
 - Output fields:
   - `prior_events`
@@ -55,22 +59,29 @@ Transform unstructured narrative/session text into:
 
 - Generates per-scene prose HTML.
 - Uses conversation memory from step 4 for each scene thread.
+- Receives complete raw scene text explicitly.
+- Steps 4 and 5 execute sequentially inside each scene bundle, while all scene
+  bundles run concurrently.
+- A failed bundle retries once with a fresh conversation id and then fails the run.
 
 ### Stage 6: critic (`step_6`)
 
 - Runs after all scene threads complete.
-- Uses a dedicated step6_7 conversation lane.
-- Step 6 call is no-memory.
+- Does not load or persist ShreckLLM conversation memory.
+- Retains an editorial conversation identifier only for request correlation.
 - Input is only the concatenated full draft text.
-- Output JSON includes:
+- Uses strict native JSON-schema output and normalizes it to:
   - `global_notes`
   - `by_scene` keyed by scene title.
 
 ### Stage 7: revision (`step_7`)
 
-- Runs in same dedicated step6_7 conversation id, with memory enabled.
-- Input includes draft text + step 6 critic summary.
+- Uses the dedicated `model_novelist_chapter_writer` target.
+- Does not load Stage 6 conversation history or persist conversation memory.
+- Explicit input includes the complete bounded draft text and normalized Step 6
+  critic summary, so the chapter writer has no implicit dependency on prior turns.
 - Returns full revised HTML.
+- Requests up to `15,000` output tokens.
 
 ### Merging
 

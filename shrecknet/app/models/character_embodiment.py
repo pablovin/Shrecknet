@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from enum import Enum
 
-from sqlalchemy import DateTime, Integer, String, Text, func
+from sqlalchemy import DateTime, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -51,4 +51,34 @@ class CharacterEmbodimentDraft(Base):
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class CharacterEmbodimentCheckpoint(Base):
+    """Validated, resumable output from one source-analysis stage."""
+
+    __tablename__ = "character_embodiment_checkpoints"
+    __table_args__ = (
+        UniqueConstraint(
+            "draft_id", "generation_revision", "source_index", "stage",
+            name="uq_character_embodiment_checkpoint_stage",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    draft_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    generation_revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    source_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    source_entity_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    stage: Mapped[str] = mapped_column(String(64), nullable=False)
+    cache_key: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    payload: Mapped[str] = mapped_column(Text, nullable=False)
+    prompt_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    model_target: Mapped[str] = mapped_column(String(512), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(),
+        onupdate=func.now(), nullable=False,
     )

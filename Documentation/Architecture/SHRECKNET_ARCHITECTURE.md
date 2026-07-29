@@ -44,3 +44,20 @@ returns immediately; the worker reloads current graph identity, runs compact
 framing and deliberation stages, and records safe stage progress and terminal
 output. shreckLLM owns provider retries, while Shrecknet polls each submitted
 shreckLLM job without a pipeline-level HTTP deadline.
+
+## Agent model targets
+
+Every agent-stage model setting uses the same `LLMModelTarget` contract:
+
+```json
+{"provider": "openrouter", "name": "anthropic/claude-sonnet-4", "reasoning": false}
+```
+
+`reasoning` is editable with the provider and model through `GET/PUT /config/`
+and is advertised to configuration frontends by `GET /config/schema`. It
+defaults to `false` for existing and new targets. Shrecknet includes the value
+in every shreckLLM chat request. shreckLLM maps it to a provider-native
+parameter when the selected adapter supports one (currently OpenRouter's
+`reasoning.enabled`, with `reasoning.effort: "high"` when enabled) and otherwise
+ignores it. Changing the value is a hot configuration update and requires no
+persistence migration or service restart.

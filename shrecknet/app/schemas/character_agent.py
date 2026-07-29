@@ -1057,7 +1057,7 @@ class AspectUpdateData(_StrictModel):
     intensity: int | None = Field(None, ge=0, le=100)
     justification: str = Field(..., min_length=1)
     confidence: float = Field(..., ge=0, le=1)
-    evidence_ids: list[str] = Field(default_factory=list)
+    evidence_ids: list[str] = Field(..., min_length=1)
 
 
 class AspectUpdateOutput(_StrictModel):
@@ -1081,11 +1081,28 @@ class GoalUpdateData(_StrictModel):
     basis: Literal["explicit", "inferred"] | None = None
     justification: str = Field(..., min_length=1)
     confidence: float = Field(..., ge=0, le=1)
-    evidence_ids: list[str] = Field(default_factory=list)
+    evidence_ids: list[str] = Field(..., min_length=1)
 
 
 class GoalUpdateOutput(_StrictModel):
     goal_updates: list[GoalUpdateData] = Field(default_factory=list)
+
+
+class ProfileUpdateOutput(_StrictModel):
+    """One atomic, validated update of the persistent character profile."""
+
+    behavioural_axes: list[AxisChangeData] = Field(..., min_length=8, max_length=8)
+    aspect_updates: list[AspectUpdateData] = Field(default_factory=list)
+    goal_updates: list[GoalUpdateData] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_all_axes_once(self) -> "ProfileUpdateOutput":
+        axis_names = [item.axis for item in self.behavioural_axes]
+        if len(set(axis_names)) != len(axis_names):
+            raise ValueError("behavioural_axes must contain each axis exactly once")
+        if set(axis_names) != set(BEHAVIOURAL_AXES):
+            raise ValueError("behavioural_axes must contain all eight axes")
+        return self
 
 
 class LLMCallRecord(_StrictModel):
@@ -1098,6 +1115,18 @@ class LLMCallRecord(_StrictModel):
     input_tokens_est: int
     output_tokens_est: int
     total_tokens_est: int
+
+
+class EmbodyAgentAnalysis(_StrictModel):
+    """Snapshot-based source interpretation before ordered profile mutation."""
+
+    source_entity_id: str
+    source_entity_alias: str
+    perspectives: list[ScenePerspectiveBundleOutput]
+    observations: EmbodimentObservationsOutput
+    subtitle_change: SubtitleChangeProposal = Field(default_factory=SubtitleChangeProposal)
+    evidence_ids: set[str] = Field(default_factory=set)
+    llm_calls: list[LLMCallRecord]
 
 
 class EmbodyAgentResult(_StrictModel):

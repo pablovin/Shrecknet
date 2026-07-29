@@ -26,6 +26,7 @@ from app.schemas.character_agent import (
 )
 from app.services.character_embodiment_service import CharacterEmbodimentService, _json_safe
 from app.services.character_agent_service import CharacterAgentService
+from app.tasks.character_embodiment import _apply_aspect_ops, _apply_goal_ops
 from app.db.base import Base
 from app.models.character_embodiment import CharacterEmbodimentDraft  # noqa: F401
 
@@ -666,39 +667,85 @@ def test_structured_outputs_drop_only_items_without_evidence():
     assert profile["aspect_updates"] == []
 
 
-def test_profile_update_enforces_configured_aspect_and_goal_limits():
-    agent = _agent(FakeLLM({}))
+def test_profile_update_enforces_per_bundle_operation_caps():
     update = json.loads(_profile_update_output())
-    update["aspect_updates"] = [{
-        "operation": "add", "name": "Fifth aspect", "category": "identity",
+    aspect = {
+        "operation": "add", "name": "Aspect", "category": "identity",
         "justification": "Grounded.", "confidence": 0.8,
         "evidence_ids": ["scene:s1"],
+    }
+    goal = {
+        "operation": "add", "title": "Goal", "goal_type": "desire",
+        "justification": "Grounded.", "confidence": 0.8,
+        "evidence_ids": ["scene:s1"],
+    }
+    update["aspect_updates"] = [
+        {**aspect, "name": f"Aspect {index}"} for index in range(3)
+    ]
+    with pytest.raises(ValueError, match="at most 2"):
+        ProfileUpdateOutput.model_validate(update)
+
+    update["aspect_updates"] = []
+    update["goal_updates"] = [
+        {**goal, "title": f"Goal {index}"} for index in range(2)
+    ]
+    with pytest.raises(ValueError, match="at most 1"):
+        ProfileUpdateOutput.model_validate(update)
+
+
+def test_profile_capacity_retains_importance_then_recency():
+    update = json.loads(_profile_update_output())
+    update["aspect_updates"] = [{
+        "operation": "add", "name": "New modest aspect", "category": "identity",
+        "importance": 3, "justification": "Grounded.", "confidence": 0.8,
+        "evidence_ids": ["scene:s1"],
     }]
-    profile_result = ProfileUpdateOutput.model_validate(update)
-    with pytest.raises(EmbodimentGenerationError, match="aspect limit"):
-        agent._validate_profile_limits(
-            current_aspects=[
-                {"name": f"Aspect {index}"} for index in range(agent.max_aspects)
-            ],
-            current_goals=[],
-            profile_result=profile_result,
-        )
+    profile = ProfileUpdateOutput.model_validate(update)
+    aspects = [
+        {"name": "Old vital aspect", "importance": 5, "created_at": "2020-01-01"},
+        {"name": "Old weak aspect", "importance": 2, "created_at": "2020-01-01"},
+    ]
+    _apply_aspect_ops(aspects, profile.aspect_updates, max_active=2)
+    assert [item["name"] for item in aspects] == [
+        "Old vital aspect", "New modest aspect",
+    ]
 
     update["aspect_updates"] = []
     update["goal_updates"] = [{
-        "operation": "add", "title": "Fourth goal", "goal_type": "desire",
-        "justification": "Grounded.", "confidence": 0.8,
+        "operation": "add", "title": "New equal goal", "goal_type": "desire",
+        "priority": 40, "justification": "Grounded.", "confidence": 0.8,
         "evidence_ids": ["scene:s1"],
     }]
-    profile_result = ProfileUpdateOutput.model_validate(update)
-    with pytest.raises(EmbodimentGenerationError, match="goal limit"):
-        agent._validate_profile_limits(
-            current_aspects=[],
-            current_goals=[
-                {"title": f"Goal {index}"} for index in range(agent.max_goals)
-            ],
-            profile_result=profile_result,
-        )
+    profile = ProfileUpdateOutput.model_validate(update)
+    goals = [
+        {"title": "Old important goal", "priority": 90, "created_at": "2020-01-01"},
+        {"title": "Old equal goal", "priority": 40, "created_at": "2020-01-01"},
+    ]
+    _apply_goal_ops(goals, profile.goal_updates, max_active=2)
+    assert [item["title"] for item in goals] == [
+        "Old important goal", "New equal goal",
+    ]
+
+
+def test_complete_goal_and_remove_aspect_make_them_inactive_in_projection():
+    update = json.loads(_profile_update_output())
+    update["aspect_updates"] = [{
+        "operation": "remove", "name": "Former role",
+        "justification": "No longer applies.", "confidence": 0.8,
+        "evidence_ids": ["scene:s1"],
+    }]
+    update["goal_updates"] = [{
+        "operation": "complete", "title": "Find the key",
+        "justification": "The key was found.", "confidence": 0.9,
+        "evidence_ids": ["scene:s1"],
+    }]
+    profile = ProfileUpdateOutput.model_validate(update)
+    aspects = [{"name": "former  ROLE", "importance": 3}]
+    goals = [{"title": "find THE key", "priority": 80}]
+    _apply_aspect_ops(aspects, profile.aspect_updates, max_active=8)
+    _apply_goal_ops(goals, profile.goal_updates, max_active=8)
+    assert aspects == []
+    assert goals == []
 
 
 def test_embodiment_source_concurrency_defaults_and_bounds():
@@ -992,6 +1039,17 @@ async def test_timeline_persists_removed_impact_target_as_inactive_assignment():
         if "rel.status='inactive'" in query and "HAS_ASPECT" in query
     )
     assert inactive_assignment["agent_id"] == "agent-1"
+    final_aspect_status = next(
+        params for query, params in tx.calls
+        if "WHEN aspect.id IN $active_ids" in query
+    )
+    final_goal_status = next(
+        params for query, params in tx.calls
+        if "WHEN goal.id IN $active_ids" in query
+    )
+    assert final_aspect_status["active_ids"] == []
+    assert final_goal_status["active_ids"] == []
+    assert final_goal_status["completed_titles"] == []
     impact = next(
         params for query, params in tx.calls if "RETURN target.id AS target_id" in query
     )

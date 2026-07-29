@@ -769,6 +769,7 @@ class CharacterSourceProjection(_StrictModel):
     axis_changes: list[EmbodimentAxisProposal] = Field(default_factory=list)
     aspects: list[EmbodimentAspectProposal] = Field(default_factory=list)
     goals: list[EmbodimentGoalProposal] = Field(default_factory=list)
+    completed_goal_titles: list[str] = Field(default_factory=list)
     subtitle_change: SubtitleChangeProposal = Field(default_factory=SubtitleChangeProposal)
     llm_calls: list["LLMCallRecord"] = Field(default_factory=list)
     resulting_revision: CharacterIdentityRevisionProjection
@@ -1114,8 +1115,8 @@ class ProfileUpdateOutput(_StrictModel):
     behavioural_axis_updates: list[AxisDeltaUpdateData] = Field(
         default_factory=list, max_length=8
     )
-    aspect_updates: list[AspectUpdateData] = Field(default_factory=list)
-    goal_updates: list[GoalUpdateData] = Field(default_factory=list)
+    aspect_updates: list[AspectUpdateData] = Field(default_factory=list, max_length=2)
+    goal_updates: list[GoalUpdateData] = Field(default_factory=list, max_length=1)
 
     @model_validator(mode="after")
     def validate_unique_axis_updates(self) -> "ProfileUpdateOutput":

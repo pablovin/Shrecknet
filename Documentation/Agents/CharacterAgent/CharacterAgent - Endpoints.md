@@ -435,6 +435,13 @@ Configuration:
 - `character_agent_embodiment_evidence_tokens`: bounded evidence budget; default `12000`.
 - `character_agent_embodiment_max_aspects`: default `12`.
 - `character_agent_embodiment_max_goals`: default `8`.
+  These are maximum active profile sizes. Capacity is resolved by retaining
+  higher-importance aspects or higher-priority goals, then newer items for
+  ties; exceeding a limit with a valid proposal does not fail the job.
+- Each source bundle returns at most two aspect operations and one goal
+  operation. Achieved goals become `completed`, capacity-evicted or removed
+  goals become `superseded`, and removed aspects become `inactive`; their
+  historical graph records remain available.
 - `character_agent_embodiment_source_concurrency`: concurrent source snapshot
   analyses; default `4`, allowed range `1` through `16`. Profile updates remain
   sequential regardless of this value. Use `1` to reduce provider load.

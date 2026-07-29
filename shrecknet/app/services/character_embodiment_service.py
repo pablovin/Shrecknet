@@ -260,8 +260,10 @@ class CharacterEmbodimentService:
           canonical_identity: dict with alias, entity_type, entity_type_description,
                               properties, authored_text, generated_text, avatar_url
           current_axes: dict of 8 axis name -> int value (defaults 50 if no agent)
-          current_aspects: list of {name, category, description, importance, intensity}
-          current_goals: list of {title, description, goal_type, priority, commitment}
+          current_aspects: list of {name, category, description, importance,
+                           intensity, created_at}
+          current_goals: list of {title, description, goal_type, priority,
+                         commitment, created_at}
           source_entity_alias: str
           scenes: list of {scene_id, name, description, created_at}
           agent_id: str | None
@@ -367,26 +369,32 @@ class CharacterEmbodimentService:
                     MATCH (agent:CharacterAgent {id:$agent_id})
                     CALL {
                       WITH agent
-                      OPTIONAL MATCH (agent)-[:HAS_ASPECT]->(aspect:CharacterAspect)
+                      OPTIONAL MATCH (agent)-[assignment:HAS_ASPECT]->
+                                     (aspect:CharacterAspect)
+                      WHERE coalesce(assignment.status, 'active') = 'active'
                       RETURN collect({
                         id: aspect.id,
                         name: aspect.name,
                         category: aspect.category,
                         description: aspect.description,
-                        importance: aspect.importance,
-                        intensity: aspect.intensity
+                        importance: assignment.importance,
+                        intensity: assignment.intensity,
+                        created_at: assignment.created_at
                       }) AS aspects
                     }
                     CALL {
                       WITH agent
-                      OPTIONAL MATCH (agent)-[:PURSUES]->(goal:CharacterGoal)
+                      OPTIONAL MATCH (agent)-[pursuit:PURSUES]->
+                                     (goal:CharacterGoal)
+                      WHERE coalesce(pursuit.status, goal.status, 'active') = 'active'
                       RETURN collect({
                         id: goal.id,
                         title: goal.title,
                         description: goal.description,
                         goal_type: goal.goal_type,
-                        priority: goal.priority,
-                        commitment: goal.commitment
+                        priority: coalesce(pursuit.priority, goal.priority),
+                        commitment: coalesce(pursuit.commitment, goal.commitment),
+                        created_at: pursuit.created_at
                       }) AS goals
                     }
                     RETURN aspects, goals
@@ -395,8 +403,12 @@ class CharacterEmbodimentService:
                 )
             ).single()
             if aux:
-                current_aspects = [a for a in (aux["aspects"] or []) if a]
-                current_goals = [g for g in (aux["goals"] or []) if g]
+                current_aspects = [
+                    a for a in (aux["aspects"] or []) if a and a.get("name")
+                ]
+                current_goals = [
+                    g for g in (aux["goals"] or []) if g and g.get("title")
+                ]
 
         # 4. Source entity alias
         source_alias = str(

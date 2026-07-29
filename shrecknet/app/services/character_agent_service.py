@@ -881,6 +881,56 @@ class CharacterAgentService:
                         )
             previous = revision
 
+        final_revision = timeline.revisions[-1]
+        final_aspect_ids = [
+            profile_target_ids.get(
+                str(item.suggestion_id or item.name),
+                str(item.suggestion_id or item.name),
+            )
+            for item in final_revision.active_aspects
+        ]
+        final_goal_ids = [
+            profile_target_ids.get(
+                str(item.suggestion_id or item.title),
+                str(item.suggestion_id or item.title),
+            )
+            for item in final_revision.active_goals
+        ]
+        completed_goal_titles = {
+            _normalize_name(title)
+            for projection in timeline.source_projections
+            for title in projection.completed_goal_titles
+        }
+        await tx.run(
+            """
+            MATCH (agent:CharacterAgent {id:$agent_id})-[rel:HAS_ASPECT]->
+                  (aspect:CharacterAspect)
+            SET rel.status = CASE
+              WHEN aspect.id IN $active_ids THEN 'active' ELSE 'inactive'
+            END,
+            rel.updated_at=$timestamp
+            """,
+            agent_id=agent["id"],
+            active_ids=final_aspect_ids,
+            timestamp=timestamp,
+        )
+        await tx.run(
+            """
+            MATCH (agent:CharacterAgent {id:$agent_id})-[rel:PURSUES]->
+                  (goal:CharacterGoal)
+            SET rel.status = CASE
+              WHEN goal.id IN $active_ids THEN 'active'
+              WHEN toLower(trim(goal.title)) IN $completed_titles THEN 'completed'
+              ELSE 'superseded'
+            END,
+            rel.updated_at=$timestamp
+            """,
+            agent_id=agent["id"],
+            active_ids=final_goal_ids,
+            completed_titles=sorted(completed_goal_titles),
+            timestamp=timestamp,
+        )
+
         for projection in timeline.source_projections:
             starting_revision_id = revision_ids[projection.starting_revision_number]
             for item in projection.perspectives:

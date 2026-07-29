@@ -354,6 +354,28 @@ to minimize provider load; snapshot semantics remain unchanged.
 
 The backend validates exact Scene order, stable impact targets, observation and
 update evidence IDs, unique sparse axis updates, and configured list limits.
+Each source bundle may return at most two aspect operations and one goal
+operation. A goal `complete` operation and an aspect `remove` operation remove
+that item from the next active identity revision. When the timeline is
+persisted, profile relationships present in the final revision are marked
+`active`. Achieved goal pursuits are marked `completed`, capacity-evicted or
+removed goal pursuits are marked `superseded`, and omitted aspect assignments
+are marked `inactive`. All remain available for history.
+
+The configured aspect and goal limits apply to active items. If applying a
+grounded new item would exceed a limit, generation does not fail. The active
+set is reduced deterministically: aspects with higher assignment `importance`
+are retained first and goals with higher pursuit `priority` are retained first.
+For equal values, newer assignments or pursuits are retained before older
+ones. Items created during the current generation are treated as newer than
+the starting profile. This allows a strong new item to replace an older,
+lower-value item while preserving high-value long-term profile state.
+
+Only active `HAS_ASPECT` and `PURSUES` relationships are loaded into a later
+embodiment snapshot. Aspect importance, intensity, and age come from the
+character-specific `HAS_ASPECT` relationship. Goal priority, commitment, and
+age come from the character-specific `PURSUES` relationship, with legacy goal
+node values used as fallbacks for priority and commitment.
 Each returned axis delta must be an integer from `-5` through `-1` or `1`
 through `5`; zero-delta entries are invalid and unchanged axes are omitted.
 The backend clamps `current + delta` to `0..100`, rejects ineffective

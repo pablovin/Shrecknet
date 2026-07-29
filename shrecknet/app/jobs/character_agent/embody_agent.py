@@ -535,13 +535,15 @@ class EmbodyAgent:
                     "aspects": [
                         {"name": a.get("name", ""), "category": a.get("category", ""),
                          "description": a.get("description"),
-                         "importance": a.get("importance"), "intensity": a.get("intensity")}
+                         "importance": a.get("importance"), "intensity": a.get("intensity"),
+                         "created_at": a.get("created_at")}
                         for a in current_aspects
                     ],
                     "goals": [
                         {"title": g.get("title", ""), "description": g.get("description", ""),
                          "goal_type": g.get("goal_type", ""),
-                         "priority": g.get("priority"), "commitment": g.get("commitment")}
+                         "priority": g.get("priority"), "commitment": g.get("commitment"),
+                         "created_at": g.get("created_at")}
                         for g in current_goals
                     ],
                 },
@@ -564,11 +566,6 @@ class EmbodyAgent:
             ),
             source_entity_id=analysis.source_entity_id,
             source_entity_alias=analysis.source_entity_alias,
-        )
-        self._validate_profile_limits(
-            current_aspects=current_aspects,
-            current_goals=current_goals,
-            profile_result=profile_result,
         )
         axis_updates = [
             AxisChangeData(
@@ -594,43 +591,6 @@ class EmbodyAgent:
             subtitle_change=analysis.subtitle_change,
             llm_calls=list(self.llm_calls),
         )
-
-    def _validate_profile_limits(
-        self,
-        *,
-        current_aspects: list[dict[str, Any]],
-        current_goals: list[dict[str, Any]],
-        profile_result: ProfileUpdateOutput,
-    ) -> None:
-        aspect_names = {
-            str(item.get("name") or "") for item in current_aspects
-            if item.get("name")
-        }
-        starting_aspects = len(aspect_names)
-        for update in profile_result.aspect_updates:
-            if update.operation.value == "remove":
-                aspect_names.discard(update.name)
-            else:
-                aspect_names.add(update.name)
-        if len(aspect_names) > self.max_aspects and len(aspect_names) > starting_aspects:
-            raise EmbodimentGenerationError(
-                "profile updates exceed configured aspect limit"
-            )
-
-        goal_titles = {
-            str(item.get("title") or "") for item in current_goals
-            if item.get("title")
-        }
-        starting_goals = len(goal_titles)
-        for update in profile_result.goal_updates:
-            if update.operation.value in ("remove", "complete"):
-                goal_titles.discard(update.title)
-            else:
-                goal_titles.add(update.title)
-        if len(goal_titles) > self.max_goals and len(goal_titles) > starting_goals:
-            raise EmbodimentGenerationError(
-                "profile updates exceed configured goal limit"
-            )
 
     async def run(
         self,

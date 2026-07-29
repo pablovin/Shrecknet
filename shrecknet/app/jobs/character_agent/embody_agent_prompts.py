@@ -9,7 +9,7 @@ across source groups. Step 4 runs in chronological source order against the
 latest cumulative profile.
 """
 
-PROMPT_VERSION = "character-embodiment-v10-grounded-list-items"
+PROMPT_VERSION = "character-embodiment-v11-profile-lifecycle"
 
 PERSPECTIVE_PROMPT = r"""You are incorporating a character's identity into canonical objective scenes.
 
@@ -182,15 +182,26 @@ An aspect is a stable, high-impact identity fact, role, state, physical characte
 knowledge, preference, attitude, or history. A goal is an active persistent driver, not a completed
 one-time action.
 
+Return at most two aspect_updates and at most one goal_update for this source.
+When evidence shows that a current goal was achieved, return a "complete"
+operation so it is no longer active. When a current aspect no longer applies,
+return a "remove" operation. Use the exact current name/title for update,
+remove, and complete operations.
+
+The limits are maximum ACTIVE profile sizes, not a reason to fail or omit a
+well-supported new item. The backend resolves capacity after applying this
+source: higher aspect importance and goal priority are retained first, and
+newer items are retained before older equally ranked items.
+
 INPUT:
 {
   "current_profile": {
     "behavioural_axes": {"axis_name": 0..100},
     "aspects": [
-      {"name": "name", "category": "category", "description": "text or null", "importance": 1..5, "intensity": 0..100 or null}
+      {"name": "name", "category": "category", "description": "text or null", "importance": 1..5, "intensity": 0..100 or null, "created_at": "ISO-8601 datetime or null"}
     ],
     "goals": [
-      {"title": "title", "description": "text", "goal_type": "type", "priority": 0..100, "commitment": 0..100}
+      {"title": "title", "description": "text", "goal_type": "type", "priority": 0..100, "commitment": 0..100, "created_at": "ISO-8601 datetime or null"}
     ]
   },
   "observations": {

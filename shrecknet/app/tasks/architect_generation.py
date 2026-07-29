@@ -1246,9 +1246,13 @@ async def _execute_generation(
 
                                     _apply_axis_updates(cum_axes, bundle_result.axis_updates)
                                     _apply_aspect_ops(
-                                        cum_aspects, bundle_result.aspect_updates
+                                        cum_aspects, bundle_result.aspect_updates,
+                                        max_active=settings.character_agent_embodiment_max_aspects,
                                     )
-                                    _apply_goal_ops(cum_goals, bundle_result.goal_updates)
+                                    _apply_goal_ops(
+                                        cum_goals, bundle_result.goal_updates,
+                                        max_active=settings.character_agent_embodiment_max_goals,
+                                    )
 
                                     br_sub = bundle_result.subtitle_change
                                     if br_sub.operation == "set":
@@ -1331,6 +1335,11 @@ async def _execute_generation(
                                         axis_changes=b_axes,
                                         aspects=b_aspects,
                                         goals=b_goals,
+                                        completed_goal_titles=[
+                                            upd.title
+                                            for upd in bundle_result.goal_updates
+                                            if upd.operation.value == "complete"
+                                        ],
                                         subtitle_change=(
                                             bundle_result.subtitle_change
                                             or SubtitleChangeProposal()

@@ -9,6 +9,7 @@ from httpx import ASGITransport, AsyncClient
 from app.api import router
 from app.config import Settings
 from app.config_store import ProviderDefaults, ProviderState
+from app.errors import ProviderOverloadedError
 from app.schemas import ChatRequest, ChatResponse, ChatUsage
 from app.service import ChatService
 from app.service import _chat_job_attempt_limit, _chat_job_retry_delay
@@ -242,7 +243,7 @@ def test_chat_job_retry_delay_honors_active_provider_cooldown() -> None:
         provider_cooldown_until={"openrouter": 110.0},
         now=100.0,
         jitter=0.5,
-    ) == 10.0
+    ) == 10.75
 
     assert _chat_job_retry_delay(
         attempt=2,
@@ -874,6 +875,96 @@ async def test_provider_limit_allows_independent_adapter_calls_in_parallel(monke
         assert peak_running == 2
     finally:
         release.set()
+        await service.aclose()
+
+
+@pytest.mark.asyncio
+async def test_provider_cooldown_is_checked_inside_slot_without_provider_attempt(
+    monkeypatch, tmp_path
+) -> None:
+    import app.config_store as config_store
+    import app.service as service_module
+
+    settings = Settings(
+        redis_url="redis://localhost:6379/15",
+        data_dir=str(tmp_path),
+        bootstrap_max_concurrent_requests=1,
+        ollama_prewarm_on_startup=False,
+    )
+    config_store._cache = None
+    monkeypatch.setattr(config_store, "get_settings", lambda: settings)
+    monkeypatch.setattr(
+        service_module, "PROVIDER_COOLDOWN_SAFETY_MARGIN_SECONDS", 0.01
+    )
+    monkeypatch.setattr(
+        service_module, "PROVIDER_COOLDOWN_JITTER_SECONDS", 0.0
+    )
+    service = ChatService(settings)
+    service._runtime.provider_limits["ollama"]["max_concurrent"] = 1
+    service._init_provider_limiters()
+    service._provider_cooldown_until["ollama"] = (
+        service_module.time.monotonic() + 0.03
+    )
+    provider_called = asyncio.Event()
+
+    async def fake_chat(**_kwargs):
+        provider_called.set()
+        return {
+            "text": "ok",
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+            "provider_request_id": None,
+        }
+
+    assert service._ollama is not None
+    monkeypatch.setattr(service._ollama, "chat", fake_chat)
+    request = ChatRequest(
+        provider_id="ollama",
+        model="gemma3:4b",
+        messages=[{"role": "user", "content": "hello"}],
+    )
+
+    try:
+        task = asyncio.create_task(service._run_chat(request, history=[]))
+        await asyncio.sleep(0.01)
+        assert provider_called.is_set() is False
+        await asyncio.wait_for(task, timeout=0.2)
+        assert provider_called.is_set() is True
+    finally:
+        await service.aclose()
+
+
+@pytest.mark.asyncio
+async def test_provider_retry_after_extends_shared_cooldown(monkeypatch, tmp_path) -> None:
+    import app.config_store as config_store
+    import app.service as service_module
+
+    settings = Settings(
+        redis_url="redis://localhost:6379/15",
+        data_dir=str(tmp_path),
+        ollama_prewarm_on_startup=False,
+    )
+    config_store._cache = None
+    monkeypatch.setattr(config_store, "get_settings", lambda: settings)
+    service = ChatService(settings)
+    request = ChatRequest(
+        provider_id="ollama",
+        model="gemma3:4b",
+        messages=[{"role": "user", "content": "hello"}],
+    )
+
+    async def rate_limited(**_kwargs):
+        raise ProviderOverloadedError(
+            "ollama rate limited", retry_after_seconds=30.0
+        )
+
+    assert service._ollama is not None
+    monkeypatch.setattr(service._ollama, "chat", rate_limited)
+    before = service_module.time.monotonic()
+    try:
+        with pytest.raises(ProviderOverloadedError):
+            await service._run_chat(request, history=[])
+        assert service._provider_cooldown_until["ollama"] >= before + 30.0
+    finally:
         await service.aclose()
 
 

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from typing import Any
 
 from openai import APIConnectionError, APITimeoutError, AsyncOpenAI, RateLimitError
@@ -17,6 +19,37 @@ from app.errors import (
 from app.schemas import ChatMessage
 
 logger = logging.getLogger(__name__)
+
+
+def _retry_after_seconds(exc: Exception, *, now: datetime | None = None) -> float | None:
+    """Read an HTTP Retry-After delay from an OpenAI SDK exception."""
+    response = getattr(exc, "response", None)
+    headers = getattr(response, "headers", None)
+    if headers is None:
+        return None
+    raw = headers.get("retry-after")
+    if raw is None:
+        return None
+    value = str(raw).strip()
+    try:
+        return max(0.0, float(value))
+    except ValueError:
+        pass
+    try:
+        retry_at = parsedate_to_datetime(value)
+        if retry_at.tzinfo is None:
+            retry_at = retry_at.replace(tzinfo=timezone.utc)
+        current = now or datetime.now(timezone.utc)
+        return max(0.0, (retry_at - current).total_seconds())
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
+def _rate_limit_error(provider_id: str, exc: Exception) -> ProviderOverloadedError:
+    return ProviderOverloadedError(
+        f"{provider_id} rate limited",
+        retry_after_seconds=_retry_after_seconds(exc),
+    )
 
 
 def _openrouter_nitro_model(model: str) -> str:
@@ -160,7 +193,7 @@ class OpenAIClient:
         except APITimeoutError as exc:
             raise ProviderTimeoutError(f"{self.provider_id} request timed out") from exc
         except RateLimitError as exc:
-            raise ProviderOverloadedError(f"{self.provider_id} rate limited") from exc
+            raise _rate_limit_error(self.provider_id, exc) from exc
         except APIConnectionError as exc:
             raise DependencyUnavailableError(f"{self.provider_id} is unreachable") from exc
         except Exception as exc:
@@ -220,7 +253,7 @@ class OpenAIClient:
         except APITimeoutError as exc:
             raise ProviderTimeoutError(f"{self.provider_id} request timed out") from exc
         except RateLimitError as exc:
-            raise ProviderOverloadedError(f"{self.provider_id} rate limited") from exc
+            raise _rate_limit_error(self.provider_id, exc) from exc
         except APIConnectionError as exc:
             raise DependencyUnavailableError(f"{self.provider_id} is unreachable") from exc
         except Exception as exc:
@@ -238,7 +271,7 @@ class OpenAIClient:
             if status_code == 403:
                 raise ProviderPermissionError(f"{self.provider_id} permission denied") from exc
             if status_code == 429:
-                raise ProviderOverloadedError(f"{self.provider_id} rate limited") from exc
+                raise _rate_limit_error(self.provider_id, exc) from exc
             if status_code == 400:
                 raise ProviderBadRequestError(f"{self.provider_id} rejected request") from exc
             raise DependencyUnavailableError(f"{self.provider_id} request failed") from exc

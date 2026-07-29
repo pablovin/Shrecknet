@@ -50,9 +50,19 @@ model-specific retry caps. A value of `0` means one total attempt, `1` means at
 most two total attempts, and so on. The job status `retry_count` is updated
 before each retry. Only retryable provider overload, timeout, and dependency
 failures consume this policy. When a provider overload activates its configured
-cooldown, the retry delay is never shorter than the remaining cooldown. This
-prevents configured attempts from being consumed while the provider is still
-locally unavailable.
+cooldown, shreckLLM preserves a provider `Retry-After` response when one is
+available and otherwise uses the provider's `cooldown_seconds_on_429` limit
+(default `10` seconds). The retry delay is never shorter than the remaining
+cooldown plus a safety margin and randomized jitter.
+
+The provider cooldown is checked again after the request acquires its
+provider-specific semaphore. A request that encounters an active local
+cooldown waits while holding that slot; it does not call the provider and does
+not consume a configured retry. The safety margin and jitter prevent a group
+of concurrent jobs from waking at the same instant and producing another
+rate-limit burst. Provider concurrency still defines the maximum number of
+simultaneous upstream calls; it does not override an upstream account or model
+rate limit.
 
 `GET /config/schema` exposes `chat_job_max_retries` as a hot,
 frontend-editable field. Administrators and world builders can update it with:

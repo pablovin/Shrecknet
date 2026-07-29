@@ -239,8 +239,8 @@ async def chat(payload: ChatRequest, service: ChatService = Depends(get_service)
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except ProviderOverloadedError as exc:
         detail = str(exc)
-        retry_after = None
-        if "retry_after=" in detail:
+        retry_after = exc.retry_after_seconds
+        if retry_after is None and "retry_after=" in detail:
             try:
                 retry_after = float(detail.split("retry_after=", 1)[1].split()[0])
             except Exception:

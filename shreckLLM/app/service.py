@@ -57,6 +57,8 @@ PROVIDER_MODEL_FALLBACKS: dict[str, list[str]] = {
 }
 
 CLOUD_API_KEY_PROVIDERS = {"openai", "anthropic", "deepinfra", "openrouter", "ollama_cloud"}
+PROVIDER_COOLDOWN_SAFETY_MARGIN_SECONDS = 0.25
+PROVIDER_COOLDOWN_JITTER_SECONDS = 0.75
 
 
 def _chat_job_attempt_limit(*, configured_retries: int) -> int:
@@ -78,7 +80,12 @@ def _chat_job_retry_delay(
         0.0,
         float(provider_cooldown_until.get(provider_id, 0.0)) - now,
     )
-    return max(exponential_backoff, cooldown_remaining)
+    guarded_cooldown = (
+        cooldown_remaining + PROVIDER_COOLDOWN_SAFETY_MARGIN_SECONDS + jitter
+        if cooldown_remaining > 0
+        else 0.0
+    )
+    return max(exponential_backoff, guarded_cooldown)
 
 
 class ChatService:
@@ -1305,13 +1312,6 @@ class ChatService:
         if not resolved_model:
             raise InvalidModelError(f"model is required for provider_id: {provider_id}")
 
-        now = time.monotonic()
-        cooldown_until = self._provider_cooldown_until.get(provider_id, 0.0)
-        if cooldown_until > now:
-            raise ProviderOverloadedError(
-                f"provider cooldown active provider={provider_id} retry_after={round(cooldown_until - now, 2)}"
-            )
-
         combined_messages = [*history, *request.messages]
         adapter_kwargs: dict[str, Any] = {
             "model": resolved_model,
@@ -1345,6 +1345,7 @@ class ChatService:
                 async with self._provider_lock:
                     self._provider_waiting[provider_id] = max(0, self._provider_waiting.get(provider_id, 1) - 1)
             try:
+                await self._wait_for_provider_cooldown(provider_id)
                 provider_wait_s = time.monotonic() - provider_call_start
                 if provider_wait_s > 0.01:
                     logger.info(
@@ -1354,9 +1355,21 @@ class ChatService:
                         round(provider_wait_s * 1000, 2),
                     )
                 payload = await adapter.chat(**adapter_kwargs)
-            except ProviderOverloadedError:
-                cooldown_s = float(limits.get("cooldown_seconds_on_429", 10.0) or 10.0)
-                self._provider_cooldown_until[provider_id] = time.monotonic() + max(1.0, cooldown_s)
+            except ProviderOverloadedError as exc:
+                configured_cooldown_s = float(
+                    limits.get("cooldown_seconds_on_429", 10.0) or 10.0
+                )
+                retry_after_s = exc.retry_after_seconds
+                cooldown_s = (
+                    max(0.0, retry_after_s)
+                    if retry_after_s is not None
+                    else max(1.0, configured_cooldown_s)
+                )
+                async with self._provider_lock:
+                    self._provider_cooldown_until[provider_id] = max(
+                        self._provider_cooldown_until.get(provider_id, 0.0),
+                        time.monotonic() + cooldown_s,
+                    )
                 raise
             finally:
                 sem.release()
@@ -1374,6 +1387,25 @@ class ChatService:
             "resolved_model": resolved_model,
             "result": payload,
         }
+
+    async def _wait_for_provider_cooldown(self, provider_id: str) -> None:
+        """Wait inside the provider slot without consuming a provider attempt."""
+        while True:
+            cooldown_until = self._provider_cooldown_until.get(provider_id, 0.0)
+            remaining = cooldown_until - time.monotonic()
+            if remaining <= 0:
+                return
+            delay = (
+                remaining
+                + PROVIDER_COOLDOWN_SAFETY_MARGIN_SECONDS
+                + random.uniform(0.0, PROVIDER_COOLDOWN_JITTER_SECONDS)
+            )
+            logger.info(
+                "provider_cooldown_wait provider=%s wait_seconds=%.3f",
+                provider_id,
+                delay,
+            )
+            await asyncio.sleep(delay)
 
     def _log_backend_usage(
         self,

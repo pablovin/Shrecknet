@@ -135,6 +135,13 @@ returned by `GET /config` and submit the updated map:
 `GET /config/schema` marks `provider_limits` as `frontend_editable: true`.
 Values below `1` are rejected with HTTP `422`.
 
+When an upstream provider returns HTTP `429`, shreckLLM uses its
+`Retry-After` header as the cooldown duration. If the header is absent or
+invalid, `provider_limits.<provider_id>.cooldown_seconds_on_429` is used, with
+a default of 10 seconds. Cooldown waits happen after provider-slot acquisition
+and do not consume a chat-job retry. A short safety margin and randomized
+jitter spread resumed requests across time.
+
 Frontends should normally use the provider-scoped endpoints instead of
 replacing the complete map:
 

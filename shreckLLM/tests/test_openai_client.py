@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 import pytest
 
 from app import openai_client
@@ -257,3 +259,18 @@ async def test_openrouter_chat_disables_reasoning_by_default(monkeypatch) -> Non
     )
 
     assert captured["extra_body"] == {"reasoning": {"enabled": False}}
+
+
+def test_retry_after_seconds_supports_seconds_and_http_dates() -> None:
+    class Response:
+        headers = {"retry-after": "12.5"}
+
+    exc = RuntimeError()
+    exc.response = Response()
+    assert openai_client._retry_after_seconds(exc) == 12.5
+
+    Response.headers = {"retry-after": "Wed, 21 Oct 2015 07:28:10 GMT"}
+    assert openai_client._retry_after_seconds(
+        exc,
+        now=datetime(2015, 10, 21, 7, 28, 0, tzinfo=timezone.utc),
+    ) == 10.0

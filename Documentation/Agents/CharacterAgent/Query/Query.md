@@ -68,10 +68,23 @@ Stage 2 never receives the original context, background story, trait adherence,
 identity IDs, aspect descriptions, or goal descriptions. Final output is
 parsed and validated locally. If it is malformed or violates the caller schema,
 one JSON-repair LLM call is allowed; repaired output must validate or the job
-fails. Stage 1 is never repaired.
+fails. The repair call receives the required top-level `content` and
+`decision_basis` envelope schema, with `content` constrained by the caller's
+response schema. Stage 1 is never repaired.
 
-Generic mode receives no CharacterAgent identity and uses one normal generation
-call, with the same deterministic validation and optional final repair.
+For JSON content, Shrecknet owns the length policy for every string field named
+`rationale`: the effective schema allows up to 2,000 characters, regardless of
+a lower caller-provided `maxLength`. Returned rationale text longer than 2,000
+characters is deterministically truncated before schema validation. Exceeding
+this cap does not trigger repair and does not fail the job; all other caller
+schema constraints continue to validate normally.
+
+Generic mode also uses two normal calls. Neutral framing receives only the
+original query and caller context and must return empty identity-selector
+arrays. Generic deliberation receives the validated context summary, conflicts,
+unknowns, system instruction, and response-format contract. Neither call
+receives or simulates CharacterAgent identity. It uses the same deterministic
+validation and optional final repair.
 Shrecknet does not resubmit timed-out stages; shreckLLM owns provider retries.
 
 ## Polling
@@ -81,7 +94,9 @@ initiating user or an administrator. A job is visible only under its owning
 CharacterAgent.
 
 Stages are `queued`, `loading_identity`, `framing`, `deliberating`,
-`repairing`, `validating`, `completed`, and `failed`. Polling a failed job still
+`repairing`, `validating`, `completed`, and `failed`. Invalid model output may
+receive one repair attempt through the global `model_agents_repair_json` target.
+Polling a failed job still
 returns HTTP `200`; failure is represented by `status=failed` and the typed
 `error`.
 

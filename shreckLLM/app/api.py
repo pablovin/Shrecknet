@@ -31,16 +31,28 @@ from app.service import PROVIDER_MODEL_FALLBACKS
 router = APIRouter()
 
 CONFIG_FIELD_META: dict[str, dict[str, object]] = {
-    "provider_limits": {"type": "object", "help": "Per-provider concurrency and queue limit overrides.", "category": "Providers"},
+    "provider_limits": {"type": "object", "help": "Per-provider limits. max_concurrent is required, positive, and always enforced.", "category": "Providers"},
     "memory_ttl_seconds": {"type": "integer", "help": "Conversation memory TTL in seconds.", "category": "Memory"},
     "memory_max_messages": {"type": "integer", "help": "Maximum messages stored per conversation.", "category": "Memory"},
     "max_concurrent_requests": {"type": "integer", "help": "Global concurrent request limit.", "category": "Concurrency"},
-    "request_timeout_seconds": {"type": "number", "help": "Per-request timeout in seconds.", "category": "Concurrency"},
+    "request_timeout_seconds": {
+        "type": "number",
+        "help": "Authoritative provider-attempt timeout in seconds for every LLM provider.",
+        "category": "Concurrency",
+        "frontend_editable": True,
+        "derived_from_profile": False,
+    },
     "max_queue_wait_seconds": {"type": "number", "help": "Maximum queue wait before rejection.", "category": "Concurrency"},
     "chat_job_queue_max_size": {"type": "integer", "help": "Maximum queued chat jobs.", "category": "Concurrency"},
     "chat_job_result_ttl_seconds": {"type": "integer", "help": "How long completed chat job results are retained.", "category": "Concurrency"},
     "chat_job_poll_default_interval_ms": {"type": "integer", "help": "Suggested polling interval for chat job status.", "category": "Concurrency"},
-    "chat_job_max_retries": {"type": "integer", "help": "Retry attempts for chat jobs on retryable provider failures.", "category": "Concurrency"},
+    "chat_job_max_retries": {
+        "type": "integer",
+        "help": "Authoritative retry count for retryable chat failures, applied equally to every model.",
+        "category": "Concurrency",
+        "frontend_editable": True,
+        "derived_from_profile": False,
+    },
 }
 
 CONFIG_GROUPS: list[dict[str, object]] = [
@@ -65,6 +77,10 @@ CONFIG_GROUPS: list[dict[str, object]] = [
 
 class ProviderModelMutationRequest(BaseModel):
     model: str = Field(min_length=1)
+
+
+class ProviderConcurrencyUpdateRequest(BaseModel):
+    max_concurrent: int = Field(ge=1)
 
 
 class ProviderMetadataUpdateRequest(BaseModel):
@@ -295,7 +311,7 @@ async def get_config_schema(
         row = dict(field_meta.get(field, {}))
         row.setdefault("change_impact", "hot")
         row.setdefault("frontend_editable", True)
-        if field in {"provider_limits", "memory_ttl_seconds", "memory_max_messages", "max_concurrent_requests", "request_timeout_seconds", "max_queue_wait_seconds", "chat_job_queue_max_size", "chat_job_result_ttl_seconds", "chat_job_poll_default_interval_ms", "chat_job_max_retries"}:
+        if field in {"memory_ttl_seconds", "memory_max_messages", "max_concurrent_requests", "max_queue_wait_seconds", "chat_job_queue_max_size", "chat_job_result_ttl_seconds", "chat_job_poll_default_interval_ms"}:
             row.setdefault("frontend_editable", False)
             row.setdefault("derived_from_profile", True)
         field_meta[field] = row
@@ -541,6 +557,112 @@ async def get_anthropic_validate(
     return AnthropicValidationResponse.model_validate(payload)
 
 
+@router.put("/config/deepinfra-token", status_code=status.HTTP_200_OK)
+async def put_deepinfra_token(
+    payload: OpenAITokenUpdateRequest,
+    service: ChatService = Depends(get_service),
+    _user=Depends(get_admin_or_world_builder),
+) -> dict[str, object]:
+    providers = service._runtime.provider_defaults.copy()
+    current = providers.get("deepinfra") or ProviderDefaults(
+        kind="cloud",
+        auth_strategy="api_key",
+        models=[],
+        base_url="https://api.deepinfra.com/v1/openai",
+        api_key="",
+        provider_type="needs_api",
+        website_url="https://deepinfra.com/dash/api_keys",
+    )
+    providers["deepinfra"] = current.model_copy(update={"api_key": payload.api_key})
+    update_runtime_config({"provider_defaults": providers})
+    reload_runtime_config()
+    await service.refresh_runtime()
+    if current.models:
+        validation = await service.test_provider_functionality("deepinfra", ping=True)
+    else:
+        validation = await service.deepinfra_validation_status()
+        await service.deactivate_provider("deepinfra")
+    return {"stored": True, "deepinfra": validation}
+
+
+@router.delete("/config/deepinfra-token", status_code=status.HTTP_200_OK)
+async def delete_deepinfra_token(
+    service: ChatService = Depends(get_service),
+    _user=Depends(get_admin_or_world_builder),
+) -> dict[str, object]:
+    providers = service._runtime.provider_defaults.copy()
+    current = providers.get("deepinfra")
+    if current is None:
+        raise HTTPException(status_code=404, detail="provider not found: deepinfra")
+    providers["deepinfra"] = current.model_copy(update={"api_key": ""})
+    update_runtime_config({"provider_defaults": providers})
+    reload_runtime_config()
+    await service.refresh_runtime()
+    await service.deactivate_provider("deepinfra")
+    return {"stored": False, "deepinfra": await service.deepinfra_validation_status()}
+
+
+@router.get("/providers/deepinfra/validate", status_code=status.HTTP_200_OK)
+async def get_deepinfra_validate(
+    service: ChatService = Depends(get_service),
+    _user=Depends(get_admin_or_world_builder),
+) -> dict[str, object]:
+    return await service.deepinfra_validation_status()
+
+
+@router.put("/config/openrouter-token", status_code=status.HTTP_200_OK)
+async def put_openrouter_token(
+    payload: OpenAITokenUpdateRequest,
+    service: ChatService = Depends(get_service),
+    _user=Depends(get_admin_or_world_builder),
+) -> dict[str, object]:
+    providers = service._runtime.provider_defaults.copy()
+    current = providers.get("openrouter") or ProviderDefaults(
+        kind="cloud",
+        auth_strategy="api_key",
+        models=[],
+        base_url="https://openrouter.ai/api/v1",
+        api_key="",
+        provider_type="needs_api",
+        website_url="https://openrouter.ai/settings/keys",
+    )
+    providers["openrouter"] = current.model_copy(update={"api_key": payload.api_key})
+    update_runtime_config({"provider_defaults": providers})
+    reload_runtime_config()
+    await service.refresh_runtime()
+    if current.models:
+        validation = await service.test_provider_functionality("openrouter", ping=True)
+    else:
+        validation = await service.openrouter_validation_status()
+        await service.deactivate_provider("openrouter")
+    return {"stored": True, "openrouter": validation}
+
+
+@router.delete("/config/openrouter-token", status_code=status.HTTP_200_OK)
+async def delete_openrouter_token(
+    service: ChatService = Depends(get_service),
+    _user=Depends(get_admin_or_world_builder),
+) -> dict[str, object]:
+    providers = service._runtime.provider_defaults.copy()
+    current = providers.get("openrouter")
+    if current is None:
+        raise HTTPException(status_code=404, detail="provider not found: openrouter")
+    providers["openrouter"] = current.model_copy(update={"api_key": ""})
+    update_runtime_config({"provider_defaults": providers})
+    reload_runtime_config()
+    await service.refresh_runtime()
+    await service.deactivate_provider("openrouter")
+    return {"stored": False, "openrouter": await service.openrouter_validation_status()}
+
+
+@router.get("/providers/openrouter/validate", status_code=status.HTTP_200_OK)
+async def get_openrouter_validate(
+    service: ChatService = Depends(get_service),
+    _user=Depends(get_admin_or_world_builder),
+) -> dict[str, object]:
+    return await service.openrouter_validation_status()
+
+
 @router.get("/providers/validate", status_code=status.HTTP_200_OK)
 async def get_providers_validate(
     service: ChatService = Depends(get_service),
@@ -563,6 +685,24 @@ async def get_providers(
     service: ChatService = Depends(get_service),
 ) -> dict[str, object]:
     return await service.all_provider_validation_statuses()
+
+
+@router.get("/providers/{provider_id}/models", status_code=status.HTTP_200_OK)
+async def get_provider_models(
+    provider_id: str,
+    service: ChatService = Depends(get_service),
+    _user=Depends(get_admin_or_world_builder),
+) -> dict[str, object]:
+    provider_key = provider_id.strip().lower()
+    if provider_key not in service._runtime.provider_defaults:
+        raise HTTPException(status_code=404, detail=f"provider not found: {provider_key}")
+    try:
+        return await service.provider_model_catalog(provider_key)
+    except DependencyUnavailableError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "provider_model_catalog_unavailable", "provider_id": provider_key},
+        ) from exc
 
 
 @router.get("/providers/{provider_id}", status_code=status.HTTP_200_OK)
@@ -625,6 +765,50 @@ async def deactivate_provider(
     except InvalidModelError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return {"activated": False, "provider": status_payload}
+
+
+def _provider_limit_payload(provider_id: str, service: ChatService) -> dict[str, object]:
+    provider_key = provider_id.strip().lower()
+    if provider_key not in service._runtime.provider_defaults:
+        raise HTTPException(status_code=404, detail=f"provider not found: {provider_key}")
+    limits = service._runtime.provider_limits.get(provider_key, {})
+    max_concurrent = int(limits["max_concurrent"])
+    return {
+        "provider_id": provider_key,
+        "max_concurrent": max_concurrent,
+        "global_max_concurrent": service._runtime.max_concurrent_requests,
+        "effective_max_concurrent": min(service._runtime.max_concurrent_requests, max_concurrent),
+    }
+
+
+@router.get("/config/providers/{provider_id}/limits", status_code=status.HTTP_200_OK)
+async def get_provider_limits(
+    provider_id: str,
+    service: ChatService = Depends(get_service),
+    _user=Depends(get_admin_or_world_builder),
+) -> dict[str, object]:
+    return _provider_limit_payload(provider_id, service)
+
+
+@router.put("/config/providers/{provider_id}/limits", status_code=status.HTTP_200_OK)
+async def put_provider_limits(
+    provider_id: str,
+    payload: ProviderConcurrencyUpdateRequest,
+    service: ChatService = Depends(get_service),
+    _user=Depends(get_admin_or_world_builder),
+) -> dict[str, object]:
+    provider_key = provider_id.strip().lower()
+    if provider_key not in service._runtime.provider_defaults:
+        raise HTTPException(status_code=404, detail=f"provider not found: {provider_key}")
+    provider_limits = {
+        configured_provider: dict(limits)
+        for configured_provider, limits in service._runtime.provider_limits.items()
+    }
+    provider_limits.setdefault(provider_key, {})["max_concurrent"] = payload.max_concurrent
+    update_runtime_config({"provider_limits": provider_limits})
+    reload_runtime_config()
+    await service.refresh_runtime()
+    return _provider_limit_payload(provider_key, service)
 
 
 @router.put("/config/providers/{provider_id}", status_code=status.HTTP_200_OK)

@@ -1,47 +1,38 @@
-"""Five-call atomic CharacterAgent embodiment prompts.
+"""Six-call atomic CharacterAgent embodiment prompts.
 
 Pipeline per source group:
-  Step 1 (perspectives) -> Step 2 (observations)
-                          /    |     \
-                    Step 3   Step 4   Step 5
-                    (axes)  (aspects) (goals)
+  Step 1 incorporation -> Step 2 enrichment -> Step 3 observations
+                                              /    |     \
+                                        Step 4a  4b     4c
+                                        axes  aspects  goals
 
-Steps 3-5 run in parallel after Step 2 completes.
+The three Step 4 update calls run in parallel.
 """
 
-PROMPT_VERSION = "character-embodiment-v6-atomic"
+PROMPT_VERSION = "character-embodiment-v7-six-call"
 
-PERSPECTIVE_PROMPT = r"""You are projecting one character through one chronologically ordered scene group.
+PERSPECTIVE_PROMPT = r"""You are incorporating a character's identity into canonical objective scenes.
 
-The character's canonical identity and current profile follow. Scenes are listed from earliest to latest.
-For each scene, produce one perspective describing how the character experiences it.
+Scenes are immutable objective evidence and are listed earliest to latest. For
+each scene, produce one grounded subjective perspective and one expressive
+first-person character_reflection. Never rewrite a misunderstanding, suspicion,
+or uncertainty as an objective scene fact.
 
 Return every perspective in the same order as the input scenes, using the exact scene_id for each.
 
-OPTIONAL extras per scene:
-- emotional_interpretation: only when the scene clearly provokes a specific emotional response.
-- belief: only when the scene clearly establishes or changes a specific belief.
-- impact: only when the scene clearly advances, threatens, creates, reinforces, or invalidates a specific goal or aspect.
-
-When an extra is not warranted, omit it entirely (do not include with null).
-
-EVIDENCE ID FORMAT: use scene:{scene_id} to reference any scene below.
-
 INPUT:
 {
-  "canonical_identity": {
-    "entity_instance_id": "entity identifier",
+  "identity": {
     "alias": "name or alias",
+    "subtitle": "subtitle or null",
     "entity_type": "ontology type",
     "entity_type_description": "type description or null",
-    "properties": {"property": "value"},
-    "authored_text": "authored description or null",
-    "generated_text": "generated description or null"
+    "properties": {"property": "value"}
   },
   "current_profile": {
     "behavioural_axes": {"axis_name": value_0_100},
-    "aspects": [{"name": "...", "category": "...", "description": "..."}],
-    "goals": [{"title": "...", "description": "...", "goal_type": "..."}]
+    "aspects": [{"id": "stable id", "name": "...", "category": "...", "description": "..."}],
+    "goals": [{"id": "stable id", "title": "...", "description": "...", "goal_type": "..."}]
   },
   "scenes": [
     {"scene_id": "id", "name": "scene name", "description": "scene description", "created_at": "ISO timestamp or null"}
@@ -58,60 +49,77 @@ OUTPUT — return an object with exactly one key "perspectives":
       "awareness_level": 0..100,
       "confidence": 0..100,
       "summary": "concise factual summary",
-      "interpretation": "character's subjective interpretation",
+      "interpretation": "grounded subjective interpretation",
+      "character_reflection": "expressive first-person reflection in character voice",
       "memory_strength": 0..100,
-      "importance": 1..5,
-      "status": "active",
-      "emotional_interpretation": {
-        "arousal": 0..100,
-        "valence": -100..100,
-        "description": "non-empty description"
-      },
-      "belief": {
-        "statement": "non-empty statement",
-        "confidence": 0..100,
-        "status": "suspected | believed | confirmed | doubted | disproven | superseded"
-      },
-      "impact": {
-        "impact_type": "goal_change | aspect_change",
-        "direction": "advanced | threatened | created | reinforced | invalidated",
-        "magnitude": 0..100,
-        "description": "non-empty description"
-      }
+      "importance": 1..5
     }
   ]
 }
-emotional_interpretation, belief, and impact are optional per perspective. Omit when not clearly warranted.
 
 Return JSON only. required_output is authoritative if this description and the schema differ."""
 
-OBSERVATIONS_PROMPT = r"""You are distilling character observations from scene perspectives and canonical identity.
 
-Given the character's canonical identity and the scene perspectives from Step 1, produce grounded
+ENRICHMENT_PROMPT = r"""You are enriching grounded scene perspectives with immediate psychological effects.
+
+Canonical scenes remain objective. Interpretations are subjective evidence.
+The presentation-only character_reflection is intentionally absent. For every
+input scene return exactly one same-order result. Return empty lists when an
+effect is not warranted. Do not create or update profile state.
+
+Impacts may target only stable IDs supplied in current_profile. Goal impacts
+allow advanced or threatened. Aspect impacts allow created, reinforced, or
+invalidated.
+
+INPUT:
+{
+  "scenes": [{"scene_id":"id","name":"...","description":"...","created_at":null}],
+  "perspectives": [{
+    "scene_id":"id","source_type":"participated | witnessed | heard_about | read_about | inferred | unknown",
+    "awareness_level":0..100,"confidence":0..100,"summary":"...","interpretation":"...",
+    "memory_strength":0..100,"importance":1..5
+  }],
+  "current_profile": {
+    "aspects": [{"id":"stable id","name":"..."}],
+    "goals": [{"id":"stable id","title":"..."}]
+  }
+}
+
+OUTPUT:
+{
+  "scene_enrichments": [{
+    "scene_id":"exact input scene_id",
+    "emotions":[{"arousal":0..100,"valence":-100..100,"description":"..."}],
+    "beliefs":[{"statement":"...","confidence":0..100,"status":"suspected | believed | confirmed | doubted | disproven | superseded"}],
+    "impacts":[{"impact_type":"goal_change | aspect_change","target_id":"supplied stable id","direction":"advanced | threatened | created | reinforced | invalidated","magnitude":0..100,"description":"..."}]
+  }]
+}
+
+Return JSON only. required_output is authoritative if this description and the schema differ."""
+
+
+OBSERVATIONS_PROMPT = r"""You are distilling character observations from canonical scene bundles.
+
+Given canonical scenes, grounded interpretations, and immediate psychological enrichment, produce grounded
 observations. Every observation must cite at least one scene evidence_id from the perspectives.
+Expressive character_reflection text is presentation-only and is never supplied as evidence.
 
 EVIDENCE ID FORMAT: use scene:{scene_id} to reference any scene perspective below.
 
 INPUT:
 {
-  "canonical_identity": {
-    "entity_instance_id": "...",
-    "alias": "...",
-    "entity_type": "...",
-    "entity_type_description": "...",
-    "properties": {...},
-    "authored_text": "...",
-    "generated_text": "..."
-  },
-  "scene_perspectives": [
+  "identity": {"alias":"...","subtitle":null,"entity_type":"...","entity_type_description":null,"properties":{}},
+  "scene_bundles": [
     {
-      "scene_id": "id",
-      "source_type": "...",
-      "summary": "...",
-      "interpretation": "...",
-      "emotional_interpretation": {...} or null,
-      "belief": {...} or null,
-      "impact": {...} or null
+      "scene": {"scene_id":"id","name":"...","description":"...","created_at":null},
+      "perspective": {
+        "scene_id":"id","source_type":"...","awareness_level":0..100,
+        "confidence":0..100,"summary":"...","interpretation":"...",
+        "memory_strength":0..100,"importance":1..5
+      },
+      "emotions": [...],
+      "beliefs": [...],
+      "impacts": [...]
     }
   ],
   "required_output": "<EmbodimentObservationsOutput schema>"

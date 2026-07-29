@@ -55,7 +55,15 @@
     "provider": "",
     "name": ""
   },
-  "model_elder": {
+  "model_elder_planner": {
+    "provider": "",
+    "name": ""
+  },
+  "model_elder_synthesis": {
+    "provider": "",
+    "name": ""
+  },
+  "model_elder_character_incorporation": {
     "provider": "",
     "name": ""
   },
@@ -71,7 +79,15 @@
     "provider": "",
     "name": ""
   },
-  "model_librarian": {
+  "model_librarian_planner": {
+    "provider": "",
+    "name": ""
+  },
+  "model_librarian_synthesis": {
+    "provider": "",
+    "name": ""
+  },
+  "model_librarian_character_incorporation": {
     "provider": "",
     "name": ""
   },
@@ -83,15 +99,19 @@
     "provider": "",
     "name": ""
   },
-  "model_character_agent_verification": {
+  "model_character_agent_character_incorporation": {
     "provider": "",
     "name": ""
   },
-  "model_character_agent_embodiment": {
+  "model_character_agent_scene_interpretation": {
     "provider": "",
     "name": ""
   },
-  "librarian_debug_artifacts_enabled": false,
+  "model_character_agent_update": {
+    "provider": "",
+    "name": ""
+  },
+  "librarian_debug_artifacts_enabled": true,
   "elder_debug_artifacts_enabled": true,
   "model_orchestrator_routing": {
     "provider": "",
@@ -101,7 +121,6 @@
     "provider": "",
     "name": ""
   },
-  "default_top_k": 20,
   "embedding_model_id": "intfloat/multilingual-e5-small",
   "embedding_dimension": 384,
   "embedding_device": "cpu",

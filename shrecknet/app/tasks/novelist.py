@@ -378,7 +378,8 @@ async def _execute_run(
             configured_novelist_planning_target = settings.model_novelist_planning
             configured_novelist_prose_target = settings.model_novelist_prose
             configured_novelist_critic_target = settings.model_novelist_critic
-            configured_elder_target = settings.model_elder
+            configured_elder_planner_target = settings.model_elder_planner
+            configured_elder_synthesis_target = settings.model_elder_synthesis
             configured_architect_target = settings.model_architect_scene_chunking
             configured_repair_json_target = getattr(settings, "model_agents_repair_json", configured_architect_target) or configured_architect_target
             default_target = configured_novelist_prose_target or LLMModelTarget(provider="openai", name="gpt-5")
@@ -394,7 +395,13 @@ async def _execute_run(
             setattr(model_policy, "model_novelist_planning", configured_novelist_planning_target)
             setattr(model_policy, "model_novelist_prose", configured_novelist_prose_target)
             setattr(model_policy, "model_novelist_critic", configured_novelist_critic_target)
-            setattr(model_policy, "model_elder", configured_elder_target or default_target)
+            setattr(model_policy, "model_elder_planner", configured_elder_planner_target)
+            setattr(model_policy, "model_elder_synthesis", configured_elder_synthesis_target)
+            setattr(
+                model_policy,
+                "model_elder_character_incorporation",
+                settings.model_elder_character_incorporation,
+            )
             setattr(model_policy, "model_agents_repair_json", configured_repair_json_target)
 
             async def elder_query_runner(agent: Agent, query: str) -> list[dict[str, Any]]:
@@ -410,7 +417,6 @@ async def _execute_run(
                             llm_client=elder_llm_client,
                             model_policy=model_policy,
                             graph_retriever=retriever,
-                            default_top_k=getattr(settings, "default_top_k", 8),
                             debug_artifacts_enabled=settings.elder_debug_artifacts_enabled,
                         )
                         response = await elder_orchestrator.execute(
@@ -418,10 +424,7 @@ async def _execute_run(
                             ElderQueryRequest(
                                 query=query,
                                 mode="context",
-                                top_k=6,
                                 include_trace=False,
-                                fast=True,
-                                route="fast",
                             ),
                         )
                 except Exception:

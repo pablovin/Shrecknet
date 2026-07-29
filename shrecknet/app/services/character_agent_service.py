@@ -360,6 +360,7 @@ class CharacterAgentService:
                 """, entity_id=entity_id, props=agent_props,
             )
             created_agent = _props(await created.single(), "agent")
+            profile_target_ids: dict[str, str] = {}
             for item in aspects:
                 normalized = _normalize_name(item["name"])
                 aspect_id = str(uuid4())
@@ -373,7 +374,7 @@ class CharacterAgentService:
                     "confidence": item.get("confidence"),
                     "justification": item.get("justification"),
                 }
-                await tx.run(
+                aspect_result = await tx.run(
                     """
                     MATCH (agent:CharacterAgent {id:$agent_id})
                     MERGE (aspect:CharacterAspect {ontology_id:$ontology_id, normalized_name:$normalized})
@@ -383,12 +384,18 @@ class CharacterAgentService:
                       rel.status='active', rel.created_at=$timestamp, rel.updated_at=$timestamp,
                       rel.evidence_ids=$evidence_ids, rel.confidence=$confidence,
                       rel.justification=$justification
+                    RETURN aspect.id AS id
                     """, agent_id=node_id, ontology_id=ontology_id, normalized=normalized,
                     props=definition_props, importance=item["importance"],
                     intensity=item.get("intensity"), timestamp=timestamp,
                     evidence_ids=json.dumps(item["evidence_ids"]), confidence=item.get("confidence"),
                     justification=item.get("justification"),
                 )
+                aspect_row = await aspect_result.single()
+                if aspect_row:
+                    profile_target_ids[
+                        str(item.get("suggestion_id") or item["name"])
+                    ] = str(aspect_row["id"])
             for item in goals:
                 normalized = _normalize_name(item["title"])
                 goal_id = str(uuid4())
@@ -430,12 +437,16 @@ class CharacterAgentService:
                     status=item["status"], priority=item["priority"],
                     commitment=item["commitment"],
                 )
+                profile_target_ids[
+                    str(item.get("suggestion_id") or item["title"])
+                ] = goal_id
             if timeline:
                 await self._persist_timeline_tx(
                     tx, created_agent, timeline, timestamp,
                     provider=draft.provider if draft else None,
                     model=draft.model if draft else None,
                     prompt_version=draft.prompt_version if draft else None,
+                    profile_target_ids=profile_target_ids,
                 )
             else:
                 await self._create_revision_tx(
@@ -682,7 +693,113 @@ class CharacterAgentService:
         self, tx, agent: dict[str, Any], timeline: CharacterTimelineProjection,
         timestamp: str, *, provider: str | None, model: str | None,
         prompt_version: str | None,
+        profile_target_ids: dict[str, str] | None = None,
     ) -> None:
+        profile_target_ids = profile_target_ids or {}
+        for revision in timeline.revisions:
+            for item in revision.active_aspects:
+                generated_id = str(item.suggestion_id or item.name)
+                if generated_id in profile_target_ids:
+                    continue
+                normalized = _normalize_name(item.name)
+                definition_id = str(uuid4())
+                result = await tx.run(
+                    """
+                    MATCH (agent:CharacterAgent {id:$agent_id})
+                    MERGE (aspect:CharacterAspect {
+                      ontology_id:$ontology_id, normalized_name:$normalized
+                    })
+                    ON CREATE SET aspect=$props
+                    MERGE (agent)-[rel:HAS_ASPECT]->(aspect)
+                    ON CREATE SET rel.importance=$importance, rel.intensity=$intensity,
+                      rel.status='inactive', rel.created_at=$timestamp,
+                      rel.updated_at=$timestamp, rel.evidence_ids=$evidence_ids,
+                      rel.confidence=$confidence, rel.justification=$justification
+                    RETURN aspect.id AS id
+                    """,
+                    agent_id=agent["id"],
+                    ontology_id=agent["ontology_id"],
+                    normalized=normalized,
+                    props={
+                        "id": definition_id,
+                        "ontology_id": agent["ontology_id"],
+                        "name": item.name,
+                        "normalized_name": normalized,
+                        "category": item.category.value,
+                        "description": item.description,
+                        "status": "active",
+                        "created_at": timestamp,
+                        "updated_at": timestamp,
+                    },
+                    importance=item.importance,
+                    intensity=item.intensity,
+                    timestamp=timestamp,
+                    evidence_ids=json.dumps(item.evidence_ids),
+                    confidence=item.confidence,
+                    justification=item.justification,
+                )
+                row = await result.single()
+                if row:
+                    profile_target_ids[generated_id] = str(row["id"])
+            for item in revision.active_goals:
+                generated_id = str(item.suggestion_id or item.title)
+                if generated_id in profile_target_ids:
+                    continue
+                normalized = _normalize_name(item.title)
+                goal_id = str(uuid4())
+                existing = await tx.run(
+                    """
+                    MATCH (goal:CharacterGoal {ontology_id:$ontology_id})
+                    WHERE toLower(trim(goal.title))=$normalized
+                    RETURN goal.id AS id ORDER BY goal.created_at, goal.id LIMIT 1
+                    """,
+                    ontology_id=agent["ontology_id"],
+                    normalized=normalized,
+                )
+                row = await existing.single()
+                if row:
+                    goal_id = str(row["id"])
+                else:
+                    await tx.run(
+                        "CREATE (goal:CharacterGoal) SET goal=$props",
+                        props={
+                            "id": goal_id,
+                            "ontology_id": agent["ontology_id"],
+                            "title": item.title,
+                            "description": item.description,
+                            "goal_type": item.goal_type.value,
+                            "status": item.status.value,
+                            "priority": item.priority,
+                            "commitment": item.commitment,
+                            "created_at": timestamp,
+                            "updated_at": timestamp,
+                            "evidence_ids": json.dumps(item.evidence_ids),
+                            "confidence": item.confidence,
+                            "basis": item.basis,
+                            "justification": item.justification,
+                        },
+                    )
+                await tx.run(
+                    """
+                    MATCH (agent:CharacterAgent {id:$agent_id}),
+                          (goal:CharacterGoal {id:$goal_id})
+                    MERGE (agent)-[rel:PURSUES]->(goal)
+                    ON CREATE SET rel.created_at=$timestamp,
+                      rel.updated_at=$timestamp, rel.evidence_ids=$evidence_ids,
+                      rel.confidence=$confidence, rel.justification=$justification,
+                      rel.status='inactive', rel.priority=$priority,
+                      rel.commitment=$commitment
+                    """,
+                    agent_id=agent["id"],
+                    goal_id=goal_id,
+                    timestamp=timestamp,
+                    evidence_ids=json.dumps(item.evidence_ids),
+                    confidence=item.confidence,
+                    justification=item.justification,
+                    priority=item.priority,
+                    commitment=item.commitment,
+                )
+                profile_target_ids[generated_id] = goal_id
         revision_ids: dict[int, str] = {}
         previous = None
         projections = {
@@ -698,10 +815,18 @@ class CharacterAgentService:
                 **revision.behavioural_axes,
             }
             aspect_ids = [
-                str(item.suggestion_id or item.name) for item in revision.active_aspects
+                profile_target_ids.get(
+                    str(item.suggestion_id or item.name),
+                    str(item.suggestion_id or item.name),
+                )
+                for item in revision.active_aspects
             ]
             goal_ids = [
-                str(item.suggestion_id or item.title) for item in revision.active_goals
+                profile_target_ids.get(
+                    str(item.suggestion_id or item.title),
+                    str(item.suggestion_id or item.title),
+                )
+                for item in revision.active_goals
             ]
             await self._create_revision_tx(
                 tx, snapshot, revision_id, revision.revision_number, timestamp,
@@ -765,7 +890,10 @@ class CharacterAgentService:
                     "character_agent_id": agent["id"], "scene_id": item.scene_id,
                     "generated_with_revision_id": starting_revision_id,
                     "source_group_id": projection.source_group_id,
-                    **item.model_dump(mode="json", exclude={"scene_id"}),
+                    **item.model_dump(
+                        mode="json",
+                        exclude={"scene_id", "emotions", "beliefs", "impacts"},
+                    ),
                     "created_at": timestamp, "updated_at": timestamp,
                 }
                 await tx.run(
@@ -781,6 +909,80 @@ class CharacterAgentService:
                     agent_id=agent["id"], scene_id=item.scene_id,
                     revision_id=starting_revision_id, props=props,
                 )
+                for emotion in item.emotions:
+                    child_props = {
+                        "id": str(uuid4()),
+                        "ontology_id": agent["ontology_id"],
+                        **emotion.model_dump(mode="json"),
+                        "created_at": timestamp,
+                        "updated_at": timestamp,
+                    }
+                    await tx.run(
+                        """
+                        MATCH (perspective:ScenePerspective {id:$perspective_id})
+                        CREATE (node:EmotionalInterpretation) SET node=$props
+                        CREATE (perspective)-[:EVOKES]->(node)
+                        """,
+                        perspective_id=perspective_id,
+                        props=child_props,
+                    )
+                for belief in item.beliefs:
+                    child_props = {
+                        "id": str(uuid4()),
+                        "ontology_id": agent["ontology_id"],
+                        **belief.model_dump(mode="json"),
+                        "created_at": timestamp,
+                        "updated_at": timestamp,
+                    }
+                    await tx.run(
+                        """
+                        MATCH (perspective:ScenePerspective {id:$perspective_id})
+                        CREATE (node:CharacterBelief) SET node=$props
+                        CREATE (perspective)-[:FORMS_BELIEF]->(node)
+                        """,
+                        perspective_id=perspective_id,
+                        props=child_props,
+                    )
+                for impact in item.impacts:
+                    impact_data = impact.model_dump(mode="json")
+                    generated_target_id = impact_data.pop("target_id")
+                    target_id = profile_target_ids.get(
+                        generated_target_id, generated_target_id
+                    )
+                    target_label = (
+                        "CharacterGoal"
+                        if impact.impact_type.value == "goal_change"
+                        else "CharacterAspect"
+                    )
+                    assignment = (
+                        "PURSUES" if target_label == "CharacterGoal" else "HAS_ASPECT"
+                    )
+                    child_props = {
+                        "id": str(uuid4()),
+                        "ontology_id": agent["ontology_id"],
+                        **impact_data,
+                        "created_at": timestamp,
+                        "updated_at": timestamp,
+                    }
+                    result = await tx.run(
+                        f"""
+                        MATCH (agent:CharacterAgent {{id:$agent_id}})-[:{assignment}]->
+                              (target:{target_label} {{id:$target_id}}),
+                              (perspective:ScenePerspective {{id:$perspective_id}})
+                        CREATE (node:CharacterImpact) SET node=$props
+                        CREATE (perspective)-[:HAS_IMPACT]->(node)
+                        CREATE (node)-[:AFFECTS]->(target)
+                        RETURN target.id AS target_id
+                        """,
+                        agent_id=agent["id"],
+                        target_id=target_id,
+                        perspective_id=perspective_id,
+                        props=child_props,
+                    )
+                    if await result.single() is None:
+                        raise ValueError(
+                            "perspective impact target is not active on the CharacterAgent"
+                        )
 
     async def list_identity_revisions(
         self, agent_id: str, skip: int, limit: int, public_only: bool = False,

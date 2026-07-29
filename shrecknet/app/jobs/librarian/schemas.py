@@ -61,7 +61,13 @@ class LibrarianQueryResponse(BaseModel):
     mode: str
     query: str
     subqueries: list[str] = Field(default_factory=list)
-    answer: str | None = None
+    answer: str | None = Field(
+        default=None,
+        description=(
+            "Display-ready cohesive answer. Superscript citation numbers map "
+            "one-to-one to the ordered sources_used collection."
+        ),
+    )
     chunks: list[RetrievedChunk] = Field(default_factory=list)
     sources_used: list[RetrievedChunk] = Field(default_factory=list)
     library_items_used: list[int] = Field(default_factory=list)

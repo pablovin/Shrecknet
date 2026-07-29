@@ -107,7 +107,7 @@ Request body (key fields):
 ```json
 {
   "query": "who discovered the sigil and in which scene?",
-  "top_k": 8,
+  "synthesis_evidence_budget_tokens": 100000,
   "candidate_limit": 40,
   "rerank_limit": 20,
   "include_trace": false,
@@ -169,11 +169,17 @@ Response shape (current):
 The older `/jobs/elder/chat/messages/stream` spelling appeared in previous documentation but
 is not the registered route.
 
-Same retrieval controls apply (`top_k`, `candidate_limit`, `rerank_limit`, `chat_id`, `include_trace`).
+Same retrieval controls apply (`candidate_limit`, `rerank_limit`,
+`synthesis_evidence_budget_tokens`, `chat_id`, `include_trace`).
 
 Both Elder endpoints use `elder-query-retrieval-v2` by default. `instance_id` is an optional,
-additive request field. Responses include `pipeline_version` plus optional
-complete-evidence provenance metadata on each source.
+additive request field. Responses include `pipeline_version`.
+
+`synthesis_evidence_budget_tokens` defaults to `100000` and accepts
+`1000..1000000`. Elder hydrates sources in retrieval order without per-source
+text truncation. It adds full sources until the aggregate budget is crossed,
+includes the complete source that crosses it, and then stops. The actual evidence
+count may therefore exceed the soft budget by one source.
 
 ## Notes
 

@@ -6,11 +6,19 @@ Elder v2 plans no more than five controlled operations, executes independent ope
 parallel dependency waves, merges graph/full-text/vector/exact results, and hydrates every
 selected parent completely before synthesis. Retrieval may rank and select sources; after a
 source is selected, neither its canonical text nor its evidence documents are truncated.
+The endpoint's soft aggregate synthesis budget defaults to 100,000 tokens. The first
+source that crosses it is included atomically, and later sources are omitted.
 
 The unified evidence record includes a stable evidence ID, canonical node and kind, complete
 display text and properties, associated entities, provenance, temporal position, score, and
-all retrieval methods. Explicit adjacency and ontology temporal signals sort ahead of
-timestamps. Ordinary requests use one planning and one synthesis LLM call.
+all retrieval methods. Ordinary requests use one planning and one synthesis LLM call.
+
+For temporal retrieval, the Elder planner chooses relevance or recency ordering,
+ascending or descending direction, and a result limit. Recency compares `updated_at`
+first and `created_at` second. Records missing both values remain explicitly
+non-comparable and follow dated records. Scene and milestone `FOLLOWED_BY` and
+`PRECEDED_BY` edges are local to a source and do not define global chronology across
+sources.
 
 ## Scope
 
@@ -54,6 +62,10 @@ Label-target filtering supports:
 - Chunk candidates are grouped to parent nodes.
 - Dedup is node-level (by `node_id`) for Elder consolidation.
 - Top evidence chunks are attached per node.
+- A planner-selected temporal rank is preserved through consolidation and synthesis.
+- Without temporal ordering, relevance rank controls evidence order.
+- Full sources are admitted in that order through the endpoint-selected aggregate
+  evidence budget.
 
 ### 4. Reranking
 

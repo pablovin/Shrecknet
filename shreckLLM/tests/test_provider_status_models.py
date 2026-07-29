@@ -26,11 +26,17 @@ class FakeAdapter:
         return {"text": "pong", "usage": {}}
 
 
+class FakeKeyProbe:
+    async def validate_api_key(self) -> dict[str, object]:
+        return {"configured": True, "present": True, "valid": True, "error": None}
+
+
 def _service(runtime: RuntimeConfig, adapters: list[FakeAdapter]) -> ChatService:
     service = ChatService.__new__(ChatService)
     service._runtime = runtime
     service._openai = None
     service._anthropic = None
+    service._deepinfra = None
     service.registry = ProviderRegistry()
     for adapter in adapters:
         service.registry.register(adapter)
@@ -185,6 +191,31 @@ async def test_cloud_provider_without_api_key_cannot_read_as_active() -> None:
 
 
 @pytest.mark.asyncio
+async def test_deepinfra_without_a_model_is_unavailable_even_with_validated_state() -> None:
+    service = _service(
+        RuntimeConfig(
+            provider_defaults={
+                "deepinfra": ProviderDefaults(
+                    kind="cloud",
+                    auth_strategy="api_key",
+                    models=[],
+                    base_url="https://api.deepinfra.com/v1/openai",
+                    api_key="deepinfra-secret",
+                )
+            },
+            provider_states={"deepinfra": ProviderState(active=True)},
+        ),
+        [FakeAdapter("deepinfra", ["provider/model"])],
+    )
+
+    payload = await service.provider_validation_status("deepinfra")
+
+    assert payload["active"] is False
+    assert payload["reason"] == "missing_model"
+    assert payload["models"] == []
+
+
+@pytest.mark.asyncio
 async def test_models_omits_cloud_provider_without_api_key_even_if_state_is_active() -> None:
     service = _service(
         RuntimeConfig(
@@ -230,6 +261,33 @@ async def test_revalidate_all_providers_runs_functional_ping_before_marking_acti
     assert len(adapter.chat_calls) == 1
     assert adapter.chat_calls[0]["model"] == "gemma4:31b"
     assert payload["providers"]["ollama_cloud"]["active"] is True
+
+
+@pytest.mark.asyncio
+async def test_deepinfra_uses_shared_revalidation_and_functional_ping_path() -> None:
+    adapter = FakeAdapter("deepinfra", ["provider/model"])
+    service = _service(
+        RuntimeConfig(
+            provider_defaults={
+                "deepinfra": ProviderDefaults(
+                    kind="cloud",
+                    auth_strategy="api_key",
+                    models=["provider/model"],
+                    base_url="https://api.deepinfra.com/v1/openai",
+                    api_key="deepinfra-secret",
+                )
+            },
+            provider_states={"deepinfra": ProviderState(active=False)},
+        ),
+        [adapter],
+    )
+    service._deepinfra = FakeKeyProbe()
+
+    payload = await service.revalidate_all_providers()
+
+    assert len(adapter.chat_calls) == 1
+    assert adapter.chat_calls[0]["model"] == "provider/model"
+    assert payload["providers"]["deepinfra"]["active"] is True
 
 
 @pytest.mark.asyncio

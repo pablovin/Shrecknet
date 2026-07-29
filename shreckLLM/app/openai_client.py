@@ -19,6 +19,14 @@ from app.schemas import ChatMessage
 logger = logging.getLogger(__name__)
 
 
+def _openrouter_nitro_model(model: str) -> str:
+    """Apply OpenRouter throughput routing once to the selected model."""
+    cleaned = (model or "").strip()
+    if cleaned.casefold().endswith(":nitro"):
+        return f"{cleaned[:-6]}:nitro"
+    return f"{cleaned}:nitro"
+
+
 class OpenAIClient:
     provider_id = "openai"
     def __init__(
@@ -27,7 +35,9 @@ class OpenAIClient:
         api_key: str,
         timeout_s: float,
         base_url: str | None = None,
+        provider_id: str = "openai",
     ) -> None:
+        self.provider_id = provider_id
         self._api_key = (api_key or "").strip()
         self._client: AsyncOpenAI | None = None
         self._timeout_s = float(timeout_s)
@@ -37,7 +47,9 @@ class OpenAIClient:
             kwargs: dict[str, Any] = {
                 "api_key": self._api_key,
                 "timeout": self._timeout_s,
-                "max_retries": 1,
+                # shreckLLM owns retries so one logical job has one observable
+                # retry policy and never duplicates attempts inside the SDK.
+                "max_retries": 0,
             }
             if base_url:
                 kwargs["base_url"] = base_url
@@ -146,13 +158,13 @@ class OpenAIClient:
         try:
             resp = await self._client.models.list()
         except APITimeoutError as exc:
-            raise ProviderTimeoutError("openai request timed out") from exc
+            raise ProviderTimeoutError(f"{self.provider_id} request timed out") from exc
         except RateLimitError as exc:
-            raise ProviderOverloadedError("openai rate limited") from exc
+            raise ProviderOverloadedError(f"{self.provider_id} rate limited") from exc
         except APIConnectionError as exc:
-            raise DependencyUnavailableError("openai is unreachable") from exc
+            raise DependencyUnavailableError(f"{self.provider_id} is unreachable") from exc
         except Exception as exc:
-            raise DependencyUnavailableError("openai models list failed") from exc
+            raise DependencyUnavailableError(f"{self.provider_id} models list failed") from exc
 
         items = getattr(resp, "data", []) or []
         out: list[str] = []
@@ -169,12 +181,18 @@ class OpenAIClient:
         messages: list[ChatMessage],
         temperature: float,
         max_tokens: int | None = None,
+        response_format: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         if self._client is None:
-            raise DependencyUnavailableError("openai is not configured")
+            raise DependencyUnavailableError(f"{self.provider_id} is not configured")
 
+        execution_model = (
+            _openrouter_nitro_model(model)
+            if self.provider_id == "openrouter"
+            else model
+        )
         kwargs: dict[str, Any] = {
-            "model": model,
+            "model": execution_model,
             "messages": [m.model_dump() for m in messages],
         }
         # GPT-5-family chat models may reject non-default temperature values.
@@ -184,15 +202,21 @@ class OpenAIClient:
             kwargs["temperature"] = float(temperature)
         if max_tokens is not None:
             kwargs["max_completion_tokens"] = int(max_tokens)
+        if response_format is not None:
+            kwargs["response_format"] = response_format
+        if self.provider_id == "deepinfra":
+            # DeepInfra calls its normal, non-surcharged service tier "default".
+            # Keep this explicit so requests never opt into priority inference.
+            kwargs["extra_body"] = {"service_tier": "default"}
 
         try:
             resp = await self._client.chat.completions.create(**kwargs)
         except APITimeoutError as exc:
-            raise ProviderTimeoutError("openai request timed out") from exc
+            raise ProviderTimeoutError(f"{self.provider_id} request timed out") from exc
         except RateLimitError as exc:
-            raise ProviderOverloadedError("openai rate limited") from exc
+            raise ProviderOverloadedError(f"{self.provider_id} rate limited") from exc
         except APIConnectionError as exc:
-            raise DependencyUnavailableError("openai is unreachable") from exc
+            raise DependencyUnavailableError(f"{self.provider_id} is unreachable") from exc
         except Exception as exc:
             status_code = getattr(exc, "status_code", None)
             text = str(exc).lower()
@@ -204,14 +228,14 @@ class OpenAIClient:
             if status_code == 400 or ("model" in text and "not" in text and "found" in text):
                 raise InvalidModelError("model not found") from exc
             if status_code == 401:
-                raise ProviderAuthenticationError("openai authentication failed") from exc
+                raise ProviderAuthenticationError(f"{self.provider_id} authentication failed") from exc
             if status_code == 403:
-                raise ProviderPermissionError("openai permission denied") from exc
+                raise ProviderPermissionError(f"{self.provider_id} permission denied") from exc
             if status_code == 429:
-                raise ProviderOverloadedError("openai rate limited") from exc
+                raise ProviderOverloadedError(f"{self.provider_id} rate limited") from exc
             if status_code == 400:
-                raise ProviderBadRequestError("openai rejected request") from exc
-            raise DependencyUnavailableError("openai request failed") from exc
+                raise ProviderBadRequestError(f"{self.provider_id} rejected request") from exc
+            raise DependencyUnavailableError(f"{self.provider_id} request failed") from exc
 
         text = ""
         choices = getattr(resp, "choices", None) or []

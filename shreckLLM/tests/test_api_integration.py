@@ -8,9 +8,10 @@ from httpx import ASGITransport, AsyncClient
 
 from app.api import router
 from app.config import Settings
-from app.config_store import ProviderDefaults
+from app.config_store import ProviderDefaults, ProviderState
 from app.schemas import ChatRequest, ChatResponse, ChatUsage
 from app.service import ChatService
+from app.service import _chat_job_attempt_limit
 
 
 class FakeService:
@@ -31,6 +32,8 @@ class FakeService:
                     )
                 },
                 "provider_states": {},
+                "provider_limits": {"ollama": {"max_concurrent": 1}},
+                "max_concurrent_requests": 8,
             },
         )()
 
@@ -138,6 +141,9 @@ class FakeService:
     async def anthropic_validation_status(self):
         return {"configured": True, "present": True, "valid": True, "error": None}
 
+    async def openrouter_validation_status(self):
+        return {"configured": True, "present": True, "valid": True, "error": None}
+
     async def all_provider_validation_statuses(self):
         return {
             "shreckllm_operational": True,
@@ -156,6 +162,14 @@ class FakeService:
         if payload is None:
             return {"provider_id": provider_id, "active": False, "reason": "provider_not_configured"}
         return payload
+
+    async def provider_model_catalog(self, provider_id: str):
+        return {
+            "provider_id": provider_id,
+            "configured_models": ["gemma3:4b"],
+            "discovered_models": ["gemma3:4b", "llama3.2:3b"],
+            "models": ["gemma3:4b", "llama3.2:3b"],
+        }
 
     async def validate_provider_models(self, provider_id: str, cfg):
         discovered_models = {
@@ -215,6 +229,12 @@ class _FakeProviderAdapter:
         return ["gemma3:4b", "llama3.2:3b"]
 
 
+def test_all_chat_jobs_follow_configured_retry_count() -> None:
+    assert _chat_job_attempt_limit(configured_retries=0) == 1
+    assert _chat_job_attempt_limit(configured_retries=1) == 2
+    assert _chat_job_attempt_limit(configured_retries=2) == 3
+
+
 @pytest.fixture
 def test_app() -> FastAPI:
     app = FastAPI()
@@ -268,8 +288,32 @@ async def test_config_routes_exclude_provider_fields(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_request_timeout_is_frontend_editable_and_authoritative() -> None:
+    from app.api import get_config_schema
+
+    schema = await get_config_schema(_user=object())
+    timeout_meta = schema["field_meta"]["request_timeout_seconds"]
+
+    assert timeout_meta["frontend_editable"] is True
+    assert timeout_meta["derived_from_profile"] is False
+    assert "every LLM provider" in timeout_meta["help"]
+
+
+@pytest.mark.asyncio
+async def test_chat_retry_count_is_frontend_editable_and_model_independent() -> None:
+    from app.api import get_config_schema
+
+    schema = await get_config_schema(_user=object())
+    retry_meta = schema["field_meta"]["chat_job_max_retries"]
+
+    assert retry_meta["frontend_editable"] is True
+    assert retry_meta["derived_from_profile"] is False
+    assert "every model" in retry_meta["help"]
+
+
+@pytest.mark.asyncio
 async def test_provider_routes_return_canonical_payloads() -> None:
-    from app.api import get_provider, get_providers
+    from app.api import get_provider, get_provider_models, get_providers
 
     service = FakeService()
 
@@ -280,6 +324,39 @@ async def test_provider_routes_return_canonical_payloads() -> None:
     provider = await get_provider(provider_id="ollama", service=service, _user=object())
     assert provider["provider_id"] == "ollama"
     assert provider["active"] is True
+
+    catalog = await get_provider_models(provider_id="ollama", service=service, _user=object())
+    assert catalog["discovered_models"] == ["gemma3:4b", "llama3.2:3b"]
+
+
+@pytest.mark.asyncio
+async def test_provider_limit_routes_return_effective_capacity_and_update_one_provider(monkeypatch) -> None:
+    import app.api as api
+    from app.api import ProviderConcurrencyUpdateRequest, get_provider_limits, put_provider_limits
+
+    service = FakeService()
+    initial = await get_provider_limits(provider_id="ollama", service=service, _user=object())
+    assert initial == {
+        "provider_id": "ollama",
+        "max_concurrent": 1,
+        "global_max_concurrent": 8,
+        "effective_max_concurrent": 1,
+    }
+
+    def update(patch):
+        service._runtime.provider_limits = patch["provider_limits"]
+        return service._runtime
+
+    monkeypatch.setattr(api, "update_runtime_config", update)
+    monkeypatch.setattr(api, "reload_runtime_config", lambda: service._runtime)
+    updated = await put_provider_limits(
+        provider_id="ollama",
+        payload=ProviderConcurrencyUpdateRequest(max_concurrent=12),
+        service=service,
+        _user=object(),
+    )
+    assert updated["max_concurrent"] == 12
+    assert updated["effective_max_concurrent"] == 8
 
 
 @pytest.mark.asyncio
@@ -403,7 +480,10 @@ async def test_models_catalog_exposes_configured_discovered_and_merged_models() 
     service._runtime = type(
         "Runtime",
         (),
-        {"provider_defaults": {"ollama": ProviderDefaults(models=["gemma3:4b"])}},
+        {
+            "provider_defaults": {"ollama": ProviderDefaults(models=["gemma3:4b"])},
+            "provider_states": {"ollama": ProviderState(active=True)},
+        },
     )()
 
     body = await service.models()
@@ -411,6 +491,38 @@ async def test_models_catalog_exposes_configured_discovered_and_merged_models() 
     assert body["providers"]["ollama"]["configured_models"] == ["gemma3:4b"]
     assert body["providers"]["ollama"]["discovered_models"] == ["gemma3:4b", "llama3.2:3b"]
     assert body["providers"]["ollama"]["models"] == ["gemma3:4b", "llama3.2:3b"]
+
+
+@pytest.mark.asyncio
+async def test_models_exposes_discovery_for_authenticated_provider_missing_first_model() -> None:
+    adapter = _FakeProviderAdapter()
+    adapter.provider_id = "openrouter"
+    service = object.__new__(ChatService)
+    service.registry = _FakeProviderRegistry({"openrouter": adapter})
+    service._runtime = type(
+        "Runtime",
+        (),
+        {
+            "provider_defaults": {
+                "openrouter": ProviderDefaults(
+                    models=[],
+                    api_key="openrouter-secret",
+                    base_url="https://openrouter.ai/api/v1",
+                )
+            },
+            "provider_states": {
+                "openrouter": ProviderState(active=False, last_validation_error="missing_model")
+            },
+        },
+    )()
+
+    body = await service.models()
+
+    assert body["providers"]["openrouter"]["configured_models"] == []
+    assert body["providers"]["openrouter"]["discovered_models"] == [
+        "gemma3:4b",
+        "llama3.2:3b",
+    ]
 
 
 @pytest.mark.asyncio
@@ -467,6 +579,39 @@ async def test_provider_test_route_returns_operational_payload() -> None:
     assert body["provider"]["provider_id"] == "openai"
     assert body["provider"]["active"] is True
     assert body["shreckllm_operational"] is True
+
+
+@pytest.mark.asyncio
+async def test_openrouter_validation_route_uses_api_key_validation() -> None:
+    from app.api import get_openrouter_validate
+
+    body = await get_openrouter_validate(service=FakeService(), _user=object())
+
+    assert body == {"configured": True, "present": True, "valid": True, "error": None}
+
+
+@pytest.mark.asyncio
+async def test_put_openrouter_token_persists_and_validates_api_key(monkeypatch) -> None:
+    import app.api as api
+    from app.api import put_openrouter_token
+    from app.schemas import OpenAITokenUpdateRequest
+
+    service = FakeService()
+    updates = []
+    monkeypatch.setattr(api, "update_runtime_config", lambda patch: updates.append(patch))
+    monkeypatch.setattr(api, "reload_runtime_config", lambda: service._runtime)
+
+    body = await put_openrouter_token(
+        payload=OpenAITokenUpdateRequest(api_key="openrouter-secret"),
+        service=service,
+        _user=object(),
+    )
+
+    saved = updates[0]["provider_defaults"]["openrouter"]
+    assert saved.api_key == "openrouter-secret"
+    assert saved.base_url == "https://openrouter.ai/api/v1"
+    assert body["stored"] is True
+    assert body["openrouter"]["valid"] is True
 
 
 @pytest.mark.asyncio

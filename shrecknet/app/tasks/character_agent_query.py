@@ -127,7 +127,7 @@ async def _run(
             llm_client=client,
             framing_model=settings.model_character_agent_framing,
             deliberation_model=settings.model_character_agent_deliberation,
-            verification_model=settings.model_character_agent_verification,
+            repair_model=settings.model_agents_repair_json,
             report_stage=report,
         )
         try:

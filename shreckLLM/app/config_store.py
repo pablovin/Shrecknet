@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from app.config import Settings, get_settings
 
@@ -20,6 +20,8 @@ MIGRATION_EXTERNAL_OLLAMA_URL_V5_KEY = "migration_external_ollama_url_v5_applied
 MIGRATION_REMOVE_DEFAULT_PROVIDER_MODEL_V6_KEY = "migration_remove_default_provider_model_v6_applied"
 MIGRATION_PROVIDER_ACTIVE_STATE_V7_KEY = "migration_provider_active_state_v7_applied"
 MIGRATION_PROVIDER_METADATA_V8_KEY = "migration_provider_metadata_v8_applied"
+MIGRATION_DEEPINFRA_LIMITS_V9_KEY = "migration_deepinfra_limits_v9_applied"
+MIGRATION_OPENROUTER_V10_KEY = "migration_openrouter_v10_applied"
 LEGACY_COMPOSE_OLLAMA_BASE_URL = "http://ollama:11434"
 EXTERNAL_OLLAMA_BASE_URL = "http://host.docker.internal:11434"
 
@@ -33,6 +35,14 @@ PROVIDER_METADATA: dict[str, dict[str, str]] = {
     "anthropic": {
         "provider_type": "needs_api",
         "website_url": "https://console.anthropic.com/settings/keys",
+    },
+    "deepinfra": {
+        "provider_type": "needs_api",
+        "website_url": "https://deepinfra.com/dash/api_keys",
+    },
+    "openrouter": {
+        "provider_type": "needs_api",
+        "website_url": "https://openrouter.ai/settings/keys",
     },
     "ollama_cloud": {
         "provider_type": "needs_api",
@@ -83,6 +93,30 @@ class RuntimeConfig(BaseModel):
     chat_job_result_ttl_seconds: int = 900
     chat_job_poll_default_interval_ms: int = 250
     chat_job_max_retries: int = 2
+
+    @model_validator(mode="after")
+    def ensure_provider_concurrency_limits(self) -> "RuntimeConfig":
+        defaults = {
+            "ollama": 1,
+            "ollama_cloud": 1,
+            "openai": 10,
+            "anthropic": 10,
+            "deepinfra": 10,
+            "openrouter": 10,
+        }
+        normalized = {provider_id: dict(raw) for provider_id, raw in self.provider_limits.items()}
+        for provider_id in self.provider_defaults:
+            row = normalized.setdefault(provider_id, {})
+            value = row.get("max_concurrent", defaults.get(provider_id, 10))
+            try:
+                max_concurrent = int(value)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"provider_limits.{provider_id}.max_concurrent must be an integer") from exc
+            if max_concurrent < 1:
+                raise ValueError(f"provider_limits.{provider_id}.max_concurrent must be at least 1")
+            row["max_concurrent"] = max_concurrent
+        self.provider_limits = normalized
+        return self
 
 
 class RuntimeConfigUpdate(BaseModel):
@@ -153,9 +187,6 @@ def _bootstrap_defaults(settings: Settings) -> RuntimeConfig:
         legacy_default_model = str(raw.get("default_model") or "").strip()
         if legacy_default_model and legacy_default_model not in models:
             models.insert(0, legacy_default_model)
-        if not models:
-            continue
-
         provider_defaults[provider_id] = ProviderDefaults(
             kind=str(raw.get("kind") or "").strip() or ("local" if provider_id == "ollama" else "cloud"),
             auth_strategy=str(raw.get("auth_strategy") or "").strip() or ("none" if provider_id == "ollama" else "api_key"),
@@ -753,6 +784,97 @@ def load_runtime_config() -> RuntimeConfig:
             )
             conn.commit()
             merged = {**updated_payload, MIGRATION_PROVIDER_METADATA_V8_KEY: True}
+
+        deepinfra_limits_migration_applied = bool(current.get(MIGRATION_DEEPINFRA_LIMITS_V9_KEY))
+        if not deepinfra_limits_migration_applied:
+            runtime = RuntimeConfig(**merged)
+            providers = dict(runtime.provider_defaults)
+            states = dict(runtime.provider_states)
+            limits = {provider_id: dict(row) for provider_id, row in runtime.provider_limits.items()}
+            bootstrap_providers = defaults.get("provider_defaults", {})
+            deepinfra_defaults = bootstrap_providers.get("deepinfra")
+            if "deepinfra" not in providers and isinstance(deepinfra_defaults, dict):
+                providers["deepinfra"] = ProviderDefaults.model_validate(deepinfra_defaults)
+                states["deepinfra"] = ProviderState(active=False)
+
+            default_concurrency = {
+                "ollama": 1,
+                "ollama_cloud": 1,
+                "openai": 10,
+                "anthropic": 10,
+                "deepinfra": 10,
+            }
+            for provider_id in providers:
+                row = limits.setdefault(provider_id, {})
+                row.setdefault("max_concurrent", default_concurrency.get(provider_id, 10))
+
+            updated_payload = RuntimeConfig(
+                **{
+                    **runtime.model_dump(),
+                    "provider_defaults": providers,
+                    "provider_states": states,
+                    "provider_limits": limits,
+                }
+            ).model_dump()
+            ts = _now()
+            conn.executemany(
+                f"""
+                INSERT INTO {CONFIG_TABLE} (key, value, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at
+                """,
+                [(k, _serialize(v), ts) for k, v in updated_payload.items()],
+            )
+            conn.execute(
+                f"""
+                INSERT INTO {CONFIG_TABLE} (key, value, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at
+                """,
+                (MIGRATION_DEEPINFRA_LIMITS_V9_KEY, _serialize(True), ts),
+            )
+            conn.commit()
+            merged = {**updated_payload, MIGRATION_DEEPINFRA_LIMITS_V9_KEY: True}
+
+        openrouter_migration_applied = bool(current.get(MIGRATION_OPENROUTER_V10_KEY))
+        if not openrouter_migration_applied:
+            runtime = RuntimeConfig(**merged)
+            providers = dict(runtime.provider_defaults)
+            states = dict(runtime.provider_states)
+            limits = {provider_id: dict(row) for provider_id, row in runtime.provider_limits.items()}
+            openrouter_defaults = defaults.get("provider_defaults", {}).get("openrouter")
+            if "openrouter" not in providers and isinstance(openrouter_defaults, dict):
+                providers["openrouter"] = ProviderDefaults.model_validate(openrouter_defaults)
+                states["openrouter"] = ProviderState(active=False)
+            limits.setdefault("openrouter", {}).setdefault("max_concurrent", 10)
+
+            updated_payload = RuntimeConfig(
+                **{
+                    **runtime.model_dump(),
+                    "provider_defaults": providers,
+                    "provider_states": states,
+                    "provider_limits": limits,
+                }
+            ).model_dump()
+            ts = _now()
+            conn.executemany(
+                f"""
+                INSERT INTO {CONFIG_TABLE} (key, value, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at
+                """,
+                [(k, _serialize(v), ts) for k, v in updated_payload.items()],
+            )
+            conn.execute(
+                f"""
+                INSERT INTO {CONFIG_TABLE} (key, value, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at
+                """,
+                (MIGRATION_OPENROUTER_V10_KEY, _serialize(True), ts),
+            )
+            conn.commit()
+            merged = {**updated_payload, MIGRATION_OPENROUTER_V10_KEY: True}
     finally:
         conn.close()
 

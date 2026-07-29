@@ -111,9 +111,12 @@ class AnthropicClient:
         messages: list[ChatMessage],
         temperature: float,
         max_tokens: int | None = None,
+        response_format: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         if self._client is None:
             raise DependencyUnavailableError("anthropic is not configured")
+        if response_format is not None:
+            raise ProviderBadRequestError("anthropic does not support response_format")
 
         payload: dict[str, Any] = {
             "model": model,

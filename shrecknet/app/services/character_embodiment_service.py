@@ -369,6 +369,7 @@ class CharacterEmbodimentService:
                       WITH agent
                       OPTIONAL MATCH (agent)-[:HAS_ASPECT]->(aspect:CharacterAspect)
                       RETURN collect({
+                        id: aspect.id,
                         name: aspect.name,
                         category: aspect.category,
                         description: aspect.description,
@@ -380,6 +381,7 @@ class CharacterEmbodimentService:
                       WITH agent
                       OPTIONAL MATCH (agent)-[:PURSUES]->(goal:CharacterGoal)
                       RETURN collect({
+                        id: goal.id,
                         title: goal.title,
                         description: goal.description,
                         goal_type: goal.goal_type,

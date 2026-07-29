@@ -1,9 +1,10 @@
 """Atomic per-source CharacterAgent embodiment generation.
 
-Five-call pipeline per source group:
-  1. Scene perspectives (with optional emotions/beliefs/impacts)
-  2. Embodiment observations (behaviours, motivations, values, fears, etc.)
-  3-5. Parallel axis, aspect, and goal updates
+Six-call pipeline per source group:
+  1. Character incorporation
+  2. Scene psychological enrichment
+  3. Cross-scene observations
+  4-6. Parallel axis, aspect, and goal updates
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ from app.jobs.character_agent.embody_agent_prompts import (
     ASPECTS_UPDATE_PROMPT,
     AXES_UPDATE_PROMPT,
     GOALS_UPDATE_PROMPT,
+    ENRICHMENT_PROMPT,
     OBSERVATIONS_PROMPT,
     PERSPECTIVE_PROMPT,
 )
@@ -31,6 +33,8 @@ from app.schemas.character_agent import (
     EmbodyAgentResult,
     LLMCallRecord,
     SceneInput,
+    SceneEnrichmentsOutput,
+    ScenePerspectiveBundleOutput,
     ScenePerspectiveOutput,
     SubtitleChangeProposal,
 )
@@ -58,9 +62,12 @@ class UsageTracker:
         output_chars = len(str(result))
         output_tokens_est = max(1, output_chars // 4)
 
+        target = kwargs.get("model")
         self.calls.append(LLMCallRecord(
             stage=stage,
             usage_tag=usage_tag,
+            provider=str(getattr(target, "provider", "openai")),
+            model=str(getattr(target, "name", target)),
             input_chars=input_chars,
             output_chars=output_chars,
             input_tokens_est=input_tokens_est,
@@ -71,9 +78,15 @@ class UsageTracker:
 
 
 class EmbodyAgent:
-    def __init__(self, *, llm_client, model, max_goals: int = 10, max_aspects: int = 20):
+    def __init__(
+        self, *, llm_client, character_incorporation_model,
+        scene_interpretation_model, character_update_model,
+        max_goals: int = 10, max_aspects: int = 20,
+    ):
         self._llm = UsageTracker(llm_client)
-        self.model = model
+        self.character_incorporation_model = character_incorporation_model
+        self.scene_interpretation_model = scene_interpretation_model
+        self.character_update_model = character_update_model
         self.max_goals = max_goals
         self.max_aspects = max_aspects
 
@@ -95,12 +108,12 @@ class EmbodyAgent:
 
     async def _call(
         self, *, prompt: str, payload: dict[str, Any], schema: type[BaseModel],
-        stage: str, usage_tag: str, max_tokens: int,
+        stage: str, usage_tag: str, max_tokens: int, model: Any,
     ) -> BaseModel:
         raw = await self._llm.chat(
             stage=stage,
             usage_tag=usage_tag,
-            model=self.model,
+            model=model,
             messages=[
                 {"role": "system", "content": prompt},
                 {"role": "user", "content": self._json(payload)},
@@ -112,7 +125,7 @@ class EmbodyAgent:
             return self._parse(schema, str(raw), stage)
         except EmbodimentGenerationError:
             repaired = await repair_json_text(
-                llm_client=self._llm.llm, model=self.model,
+                llm_client=self._llm.llm, model=model,
                 malformed_text=str(raw),
                 schema_hint=json.dumps(schema.model_json_schema()),
                 usage_tag=f"{usage_tag}.repair",
@@ -138,32 +151,53 @@ class EmbodyAgent:
         known_raw = {s.scene_id for s in scenes}
         known = known_raw | {f"scene:{s.scene_id}" for s in scenes}
 
-        # Step 1 — Scene perspectives
+        identity = {
+            key: canonical_identity.get(key)
+            for key in (
+                "alias", "subtitle", "entity_type",
+                "entity_type_description", "properties",
+            )
+        }
+        aspects = [
+            {
+                "id": str(a.get("id") or ""),
+                "name": a.get("name", ""),
+                "category": a.get("category", ""),
+                "description": a.get("description"),
+            }
+            for a in current_aspects
+        ]
+        goals = [
+            {
+                "id": str(g.get("id") or ""),
+                "title": g.get("title", ""),
+                "description": g.get("description", ""),
+                "goal_type": g.get("goal_type", ""),
+            }
+            for g in current_goals
+        ]
+        if any(not item["id"] for item in aspects + goals):
+            raise EmbodimentGenerationError("current profile entries require stable ids")
+
+        # Step 1 — Character incorporation
         if on_stage:
-            await on_stage("source:{0} - Step 1: Scene perspective".format(source_entity_alias), [1])
+            await on_stage("source:{0} - Step 1: Character incorporation".format(source_entity_alias), [1])
         perspectives_result = await self._call(
             prompt=PERSPECTIVE_PROMPT,
             payload={
-                "canonical_identity": canonical_identity,
+                "identity": identity,
                 "current_profile": {
                     "behavioural_axes": current_behavioural_axes,
-                    "aspects": [
-                        {"name": a.get("name", ""), "category": a.get("category", ""),
-                         "description": a.get("description")}
-                        for a in current_aspects
-                    ],
-                    "goals": [
-                        {"title": g.get("title", ""), "description": g.get("description", ""),
-                         "goal_type": g.get("goal_type", "")}
-                        for g in current_goals
-                    ],
+                    "aspects": aspects,
+                    "goals": goals,
                 },
                 "scenes": scene_list,
             },
             schema=_PerspectivesContainer,
-            stage="scene perspectives",
-            usage_tag="character_agent.embodiment.perspectives",
+            stage="character incorporation",
+            usage_tag="character_agent.embodiment.character_incorporation",
             max_tokens=max(3_000, 800 * len(scenes)),
+            model=self.character_incorporation_model,
         )
         perspectives = perspectives_result.perspectives
         expected_ids = [s.scene_id for s in scenes]
@@ -173,35 +207,98 @@ class EmbodyAgent:
                 "perspective output scene_ids must match input scene order and be unique"
             )
 
-        # Step 2 — Embodiment observations
+        # Step 2 — Per-scene psychological enrichment. Reflection is excluded.
         if on_stage:
             await on_stage(
-                "source:{0} - Step 2: Embodiment observations".format(source_entity_alias), [2]
+                "source:{0} - Step 2: Psychological enrichment".format(source_entity_alias), [2]
+            )
+        enrichment_result = await self._call(
+            prompt=ENRICHMENT_PROMPT,
+            payload={
+                "scenes": scene_list,
+                "perspectives": [
+                    p.model_dump(
+                        mode="json",
+                        exclude={"character_reflection", "status"},
+                    )
+                    for p in perspectives
+                ],
+                "current_profile": {
+                    "aspects": [{"id": a["id"], "name": a["name"]} for a in aspects],
+                    "goals": [{"id": g["id"], "title": g["title"]} for g in goals],
+                },
+            },
+            schema=SceneEnrichmentsOutput,
+            stage="scene psychological enrichment",
+            usage_tag="character_agent.embodiment.scene_interpretation",
+            max_tokens=max(3_000, 900 * len(scenes)),
+            model=self.scene_interpretation_model,
+        )
+        enrichments = enrichment_result.scene_enrichments
+        enrichment_ids = [item.scene_id for item in enrichments]
+        if enrichment_ids != expected_ids or len(enrichment_ids) != len(set(enrichment_ids)):
+            raise EmbodimentGenerationError(
+                "enrichment output scene_ids must match input scene order and be unique"
+            )
+        aspect_ids = {item["id"] for item in aspects}
+        goal_ids = {item["id"] for item in goals}
+        for enrichment in enrichments:
+            for impact in enrichment.impacts:
+                permitted_ids = (
+                    goal_ids if impact.impact_type.value == "goal_change" else aspect_ids
+                )
+                if impact.target_id not in permitted_ids:
+                    raise EmbodimentGenerationError(
+                        "scene enrichment referenced an unknown profile target"
+                    )
+
+        bundles = [
+            ScenePerspectiveBundleOutput(
+                **perspective.model_dump(mode="json"),
+                emotions=enrichment.emotions,
+                beliefs=enrichment.beliefs,
+                impacts=enrichment.impacts,
+            )
+            for perspective, enrichment in zip(perspectives, enrichments, strict=True)
+        ]
+
+        # Step 3 — Cross-scene observations. Reflection remains excluded.
+        if on_stage:
+            await on_stage(
+                "source:{0} - Step 3: Cross-scene observations".format(source_entity_alias), [3]
             )
         observations = await self._call(
             prompt=OBSERVATIONS_PROMPT,
             payload={
-                "canonical_identity": canonical_identity,
-                "scene_perspectives": [
+                "identity": identity,
+                "scene_bundles": [
                     {
-                        "scene_id": p.scene_id,
-                        "source_type": p.source_type.value,
-                        "summary": p.summary,
-                        "interpretation": p.interpretation,
-                        "emotional_interpretation": (
-                            p.emotional_interpretation.model_dump(mode="json")
-                            if p.emotional_interpretation else None
+                        "scene": scene,
+                        "perspective": bundle.model_dump(
+                            mode="json",
+                            exclude={
+                                "character_reflection", "status",
+                                "emotions", "beliefs", "impacts",
+                            },
                         ),
-                        "belief": p.belief.model_dump(mode="json") if p.belief else None,
-                        "impact": p.impact.model_dump(mode="json") if p.impact else None,
+                        "emotions": [
+                            item.model_dump(mode="json") for item in bundle.emotions
+                        ],
+                        "beliefs": [
+                            item.model_dump(mode="json") for item in bundle.beliefs
+                        ],
+                        "impacts": [
+                            item.model_dump(mode="json") for item in bundle.impacts
+                        ],
                     }
-                    for p in perspectives
+                    for scene, bundle in zip(scene_list, bundles, strict=True)
                 ],
             },
             schema=EmbodimentObservationsOutput,
-            stage="embodiment observations",
+            stage="cross-scene observations",
             usage_tag="character_agent.embodiment.observations",
             max_tokens=4_000,
+            model=self.scene_interpretation_model,
         )
 
         # Validate observation evidence IDs (accept both scene:id and bare id)
@@ -212,11 +309,11 @@ class EmbodyAgent:
                 "observations referenced unknown evidence"
             )
 
-        # Steps 3-5 — Parallel axis, aspect, goal updates
+        # Step 4 — Parallel axis, aspect, goal updates
         if on_stage:
             await on_stage(
-                "source:{0} - Step 3: Axis & aspect & goal updates".format(source_entity_alias),
-                [3, 4, 5],
+                "source:{0} - Step 4: Axis & aspect & goal updates".format(source_entity_alias),
+                [4],
             )
 
         axes_result, aspects_result, goals_result = await asyncio.gather(
@@ -230,6 +327,7 @@ class EmbodyAgent:
                 stage="axis updates",
                 usage_tag="character_agent.embodiment.axes",
                 max_tokens=2_500,
+                model=self.character_update_model,
             ),
             self._call(
                 prompt=ASPECTS_UPDATE_PROMPT,
@@ -247,6 +345,7 @@ class EmbodyAgent:
                 stage="aspect updates",
                 usage_tag="character_agent.embodiment.aspects",
                 max_tokens=3_500,
+                model=self.character_update_model,
             ),
             self._call(
                 prompt=GOALS_UPDATE_PROMPT,
@@ -264,6 +363,7 @@ class EmbodyAgent:
                 stage="goal updates",
                 usage_tag="character_agent.embodiment.goals",
                 max_tokens=3_500,
+                model=self.character_update_model,
             ),
         )
 
@@ -280,7 +380,7 @@ class EmbodyAgent:
         return EmbodyAgentResult(
             source_entity_id=source_entity_id,
             source_entity_alias=str(source_entity_alias),
-            perspectives=perspectives,
+            perspectives=bundles,
             observations=observations,
             axis_updates=axes_result.behavioural_axes,
             aspect_updates=aspects_result.aspect_updates,

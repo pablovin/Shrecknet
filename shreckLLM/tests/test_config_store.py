@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import sqlite3
 
+import pytest
+
 import app.config_store as config_store
 from app.config import Settings
 from app.config_store import CONFIG_TABLE
@@ -69,6 +71,53 @@ def test_fresh_bootstrap_uses_external_host_ollama_url(monkeypatch, tmp_path) ->
     runtime = config_store.load_runtime_config()
 
     assert runtime.provider_defaults["ollama"].base_url == EXTERNAL_OLLAMA_BASE_URL
+
+
+def test_fresh_bootstrap_registers_openai_compatible_providers_and_enforces_limits(
+    monkeypatch, tmp_path
+) -> None:
+    _patch_settings(monkeypatch, tmp_path)
+
+    runtime = config_store.load_runtime_config()
+
+    deepinfra = runtime.provider_defaults["deepinfra"]
+    assert deepinfra.base_url == "https://api.deepinfra.com/v1/openai"
+    assert deepinfra.models == []
+    openrouter = runtime.provider_defaults["openrouter"]
+    assert openrouter.base_url == "https://openrouter.ai/api/v1"
+    assert openrouter.models == []
+    assert runtime.provider_limits["ollama_cloud"]["max_concurrent"] == 1
+    assert runtime.provider_limits["openai"]["max_concurrent"] == 10
+    assert runtime.provider_limits["anthropic"]["max_concurrent"] == 10
+    assert runtime.provider_limits["deepinfra"]["max_concurrent"] == 10
+    assert runtime.provider_limits["openrouter"]["max_concurrent"] == 10
+
+
+def test_existing_runtime_is_migrated_with_inactive_openrouter(monkeypatch, tmp_path) -> None:
+    _patch_settings(monkeypatch, tmp_path)
+    _seed_runtime_config(
+        tmp_path,
+        RuntimeConfig(
+            provider_defaults={
+                "openai": ProviderDefaults(models=["gpt-5-nano"], api_key="existing-secret")
+            }
+        ),
+    )
+
+    runtime = config_store.load_runtime_config()
+
+    assert runtime.provider_defaults["openai"].api_key == "existing-secret"
+    assert runtime.provider_defaults["openrouter"].base_url == "https://openrouter.ai/api/v1"
+    assert runtime.provider_states["openrouter"].active is False
+    assert runtime.provider_limits["openrouter"]["max_concurrent"] == 10
+
+
+def test_provider_concurrency_limit_must_be_positive() -> None:
+    with pytest.raises(ValueError, match="max_concurrent must be at least 1"):
+        RuntimeConfig(
+            provider_defaults={"openai": ProviderDefaults(models=["gpt-5-nano"])},
+            provider_limits={"openai": {"max_concurrent": 0}},
+        )
 
 
 def test_legacy_compose_ollama_url_migrates_to_external_host(monkeypatch, tmp_path) -> None:

@@ -63,6 +63,24 @@ class Settings(BaseSettings):
             "provider_type": "needs_api",
             "website_url": "https://console.anthropic.com/settings/keys",
         },
+        "deepinfra": {
+            "kind": "cloud",
+            "auth_strategy": "api_key",
+            "models": [],
+            "base_url": "https://api.deepinfra.com/v1/openai",
+            "api_key": "",
+            "provider_type": "needs_api",
+            "website_url": "https://deepinfra.com/dash/api_keys",
+        },
+        "openrouter": {
+            "kind": "cloud",
+            "auth_strategy": "api_key",
+            "models": [],
+            "base_url": "https://openrouter.ai/api/v1",
+            "api_key": "",
+            "provider_type": "needs_api",
+            "website_url": "https://openrouter.ai/settings/keys",
+        },
         "ollama_cloud": {
             "kind": "cloud",
             "auth_strategy": "api_key",
@@ -80,13 +98,18 @@ class Settings(BaseSettings):
     bootstrap_request_timeout_seconds: float = 180.0
     bootstrap_max_queue_wait_seconds: float = 10.0
     bootstrap_provider_limits: dict[str, dict[str, Any]] = {
+        "ollama": {"max_concurrent": 1},
         "ollama_cloud": {
-            "max_concurrent": 2,
+            "max_concurrent": 1,
             "max_queue_size": 64,
             "max_queue_wait_seconds": 20.0,
             "cooldown_seconds_on_429": 10.0,
             "requests_per_second": 0.0,
-        }
+        },
+        "openai": {"max_concurrent": 10},
+        "anthropic": {"max_concurrent": 10},
+        "deepinfra": {"max_concurrent": 10},
+        "openrouter": {"max_concurrent": 10},
     }
     bootstrap_chat_job_queue_max_size: int = 256
     bootstrap_chat_job_result_ttl_seconds: int = 900

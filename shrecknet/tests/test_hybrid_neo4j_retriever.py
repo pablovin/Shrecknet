@@ -103,6 +103,45 @@ class _FakeRuntime:
         return [0.1, 0.2, 0.3]
 
 
+class _TimelineSession:
+    async def run(self, query: str, **_params):
+        if "RETURN scene AS node" in query:
+            return _FakeResult([
+                {
+                    "node": _FakeNode(
+                        ["Scene"], id="older-edited", name="Older edited",
+                        description="Edited most recently.", instance_id="inst-1",
+                        ontology_id=4, created_at="2026-01-01T00:00:00Z",
+                        updated_at="2026-01-05T00:00:00Z",
+                    ),
+                    "matched_entity_ids": ["ernst"],
+                    "derived_from_entity_id": "ernst",
+                },
+                {
+                    "node": _FakeNode(
+                        ["Scene"], id="newer-created", name="Newer created",
+                        description="Created later but not edited.", instance_id="inst-1",
+                        ontology_id=4, created_at="2026-01-04T00:00:00Z",
+                        updated_at="2026-01-04T00:00:00Z",
+                    ),
+                    "matched_entity_ids": ["ernst"],
+                    "derived_from_entity_id": "ernst",
+                },
+                {
+                    "node": _FakeNode(
+                        ["Scene"], id="undated", name="Undated",
+                        description="No comparable timestamp.", instance_id="inst-1",
+                        ontology_id=4,
+                    ),
+                    "matched_entity_ids": ["ernst"],
+                    "derived_from_entity_id": "ernst",
+                },
+            ])
+        if "RETURN milestone AS node" in query:
+            return _FakeResult([])
+        raise AssertionError(f"unexpected query: {query}")
+
+
 @pytest.mark.asyncio
 async def test_hybrid_retriever_does_not_run_index_checks(monkeypatch) -> None:
     session = _FakeSession()
@@ -131,3 +170,47 @@ async def test_hybrid_retriever_does_not_run_index_checks(monkeypatch) -> None:
     assert not any("SHOW INDEXES" in query for query in session.queries)
     assert not any("CREATE " in query for query in session.queries)
     assert retriever.last_search_stats[0]["debug_stats"]["temporal_mode"] == "after"
+
+
+@pytest.mark.asyncio
+async def test_timeline_expansion_orders_by_updated_then_created_and_marks_missing_dates() -> None:
+    retriever = HybridNeo4jGraphRetriever(_TimelineSession())
+
+    chunks = await retriever.expand_timeline_context(
+        query="What happened to Ernst lately?",
+        ontology_ids=[4],
+        entity_scores={"ernst": 1.0},
+        max_scenes=10,
+        max_milestones=10,
+        max_total=10,
+        temporal_mode="latest",
+        temporal_ordering="recency",
+        temporal_direction="descending",
+    )
+
+    assert [chunk.node_id for chunk in chunks] == [
+        "older-edited",
+        "newer-created",
+        "undated",
+    ]
+    assert chunks[0].properties["updated_at"] == "2026-01-05T00:00:00Z"
+    assert chunks[0].properties["temporal_position"]["rank"] == 0
+    assert chunks[2].properties["temporal_position"]["comparable"] is False
+
+
+@pytest.mark.asyncio
+async def test_timeline_expansion_honors_ascending_direction_and_total_limit() -> None:
+    retriever = HybridNeo4jGraphRetriever(_TimelineSession())
+
+    chunks = await retriever.expand_timeline_context(
+        query="How has Ernst changed?",
+        ontology_ids=[4],
+        entity_scores={"ernst": 1.0},
+        max_scenes=10,
+        max_milestones=10,
+        max_total=2,
+        temporal_ordering="recency",
+        temporal_direction="ascending",
+    )
+
+    assert [chunk.node_id for chunk in chunks] == ["newer-created", "older-edited"]

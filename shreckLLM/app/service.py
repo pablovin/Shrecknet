@@ -56,7 +56,12 @@ PROVIDER_MODEL_FALLBACKS: dict[str, list[str]] = {
     "ollama_cloud": ["gemma4:31b", "gemma4:31b-cloud"],
 }
 
-CLOUD_API_KEY_PROVIDERS = {"openai", "anthropic", "ollama_cloud"}
+CLOUD_API_KEY_PROVIDERS = {"openai", "anthropic", "deepinfra", "openrouter", "ollama_cloud"}
+
+
+def _chat_job_attempt_limit(*, configured_retries: int) -> int:
+    """Return total attempts from the model-independent runtime retry policy."""
+    return max(1, int(configured_retries) + 1)
 
 
 class ChatService:
@@ -76,6 +81,8 @@ class ChatService:
         self._ollama_cloud: OllamaClient | None = None
         self._openai: OpenAIClient | None = None
         self._anthropic: AnthropicClient | None = None
+        self._deepinfra: OpenAIClient | None = None
+        self._openrouter: OpenAIClient | None = None
         self._bind_providers()
         self.limiter = RequestLimiter(max_concurrent=self._runtime.max_concurrent_requests)
         self._provider_semaphores: dict[str, asyncio.Semaphore] = {}
@@ -97,11 +104,10 @@ class ChatService:
         self._provider_cooldown_until = {}
         for provider_id in self._runtime.provider_defaults.keys():
             limits = (self._runtime.provider_limits or {}).get(provider_id, {})
-            max_concurrent = int(limits.get("max_concurrent", 0) or 0)
-            if max_concurrent > 0:
-                self._provider_semaphores[provider_id] = asyncio.Semaphore(max_concurrent)
-                self._provider_waiting[provider_id] = 0
-                self._provider_rejected[provider_id] = 0
+            max_concurrent = int(limits["max_concurrent"])
+            self._provider_semaphores[provider_id] = asyncio.Semaphore(max_concurrent)
+            self._provider_waiting[provider_id] = 0
+            self._provider_rejected[provider_id] = 0
 
     def _bind_providers(self) -> None:
         self.registry = ProviderRegistry()
@@ -135,6 +141,20 @@ class ChatService:
         else:
             self._anthropic = None
 
+        deepinfra_cfg = provider_defaults.get("deepinfra")
+        if deepinfra_cfg is not None:
+            self._deepinfra = self._build_provider_adapter("deepinfra", deepinfra_cfg)
+            self.registry.register(self._deepinfra)
+        else:
+            self._deepinfra = None
+
+        openrouter_cfg = provider_defaults.get("openrouter")
+        if openrouter_cfg is not None:
+            self._openrouter = self._build_provider_adapter("openrouter", openrouter_cfg)
+            self.registry.register(self._openrouter)
+        else:
+            self._openrouter = None
+
     def _build_provider_adapter(self, provider_id: str, cfg: ProviderDefaults) -> Any:
         provider_key = provider_id.strip().lower()
         if provider_key == "ollama":
@@ -158,6 +178,20 @@ class ChatService:
                 timeout_s=self._runtime.request_timeout_seconds,
                 base_url=cfg.base_url,
             )
+        if provider_key == "deepinfra":
+            return OpenAIClient(
+                api_key=cfg.api_key or "",
+                timeout_s=self._runtime.request_timeout_seconds,
+                base_url=cfg.base_url or "https://api.deepinfra.com/v1/openai",
+                provider_id="deepinfra",
+            )
+        if provider_key == "openrouter":
+            return OpenAIClient(
+                api_key=cfg.api_key or "",
+                timeout_s=self._runtime.request_timeout_seconds,
+                base_url=cfg.base_url or "https://openrouter.ai/api/v1",
+                provider_id="openrouter",
+            )
         if provider_key == "anthropic":
             return AnthropicClient(
                 api_key=cfg.api_key or "",
@@ -180,6 +214,10 @@ class ChatService:
             closers.append(self._openai.aclose())
         if self._anthropic is not None:
             closers.append(self._anthropic.aclose())
+        if self._deepinfra is not None:
+            closers.append(self._deepinfra.aclose())
+        if self._openrouter is not None:
+            closers.append(self._openrouter.aclose())
         await asyncio.gather(*closers, return_exceptions=True)
         await asyncio.gather(
             *(task for task in [*self._job_worker_tasks, self._job_gc_task] if task is not None),
@@ -197,6 +235,10 @@ class ChatService:
             closers.append(self._openai.aclose())
         if self._anthropic is not None:
             closers.append(self._anthropic.aclose())
+        if self._deepinfra is not None:
+            closers.append(self._deepinfra.aclose())
+        if self._openrouter is not None:
+            closers.append(self._openrouter.aclose())
         if closers:
             await asyncio.gather(*closers, return_exceptions=True)
 
@@ -270,6 +312,26 @@ class ChatService:
                 "error": "provider_not_registered",
             }
         return await self._anthropic.validate_api_key()
+
+    async def deepinfra_validation_status(self) -> dict[str, Any]:
+        if self._deepinfra is None:
+            return {
+                "configured": False,
+                "present": False,
+                "valid": None,
+                "error": "provider_not_registered",
+            }
+        return await self._deepinfra.validate_api_key()
+
+    async def openrouter_validation_status(self) -> dict[str, Any]:
+        if self._openrouter is None:
+            return {
+                "configured": False,
+                "present": False,
+                "valid": None,
+                "error": "provider_not_registered",
+            }
+        return await self._openrouter.validate_api_key()
 
     @staticmethod
     def normalize_provider_models(models: list[str]) -> list[str]:
@@ -381,6 +443,8 @@ class ChatService:
         blocker = self._provider_activation_blocker(provider_id, cfg)
         if blocker is not None:
             return False, blocker
+        if not self.normalize_provider_models(list(cfg.models)):
+            return False, "missing_model"
         if not state.active:
             return False, state.last_validation_error or "provider_not_active"
         return True, None
@@ -472,6 +536,10 @@ class ChatService:
                     reason = probe.get("error")
                 elif provider_key == "anthropic" and self._anthropic is not None:
                     probe = await self._anthropic.validate_api_key()
+                    auth_valid = probe.get("valid")
+                    reason = probe.get("error")
+                elif provider_key == "deepinfra" and self._deepinfra is not None:
+                    probe = await self._deepinfra.validate_api_key()
                     auth_valid = probe.get("valid")
                     reason = probe.get("error")
             reachable = True
@@ -752,8 +820,12 @@ class ChatService:
             state = self._runtime.provider_states.get(provider_id, ProviderState())
             if cfg is None:
                 continue
-            effective_active, _ = self._effective_provider_active(provider_id, cfg, state)
-            if not effective_active:
+            effective_active, inactive_reason = self._effective_provider_active(provider_id, cfg, state)
+            # A newly authenticated dynamic-catalog provider cannot become
+            # active until the frontend can discover and select its first
+            # model. Include that catalog in /models while it is in exactly
+            # this bootstrap state.
+            if not effective_active and inactive_reason != "missing_model":
                 continue
             try:
                 catalog = await self.provider_model_catalog(provider_id)
@@ -794,6 +866,9 @@ class ChatService:
             dependencies=ready_payload["dependencies"],
             provider_limiters={
                 provider_id: {
+                    "max_concurrent": int(
+                        ((self._runtime.provider_limits or {}).get(provider_id, {}).get("max_concurrent", 1))
+                    ),
                     "active_requests": int(
                         ((self._runtime.provider_limits or {}).get(provider_id, {}).get("max_concurrent", 0) or 0)
                     ) - sem._value,
@@ -1092,8 +1167,15 @@ class ChatService:
 
     async def _execute_chat_request(self, request: ChatRequest) -> ChatResponse:
         start = time.monotonic()
-        attempts = max(1, int(self._runtime.chat_job_max_retries) + 1)
+        attempts = _chat_job_attempt_limit(
+            configured_retries=self._runtime.chat_job_max_retries,
+        )
         for attempt in range(1, attempts + 1):
+            job_retry_count = attempt - 1
+            for row in self._chat_jobs.values():
+                if row.get("request") is request:
+                    row["retry_count"] = job_retry_count
+                    break
             try:
                 async with self.limiter.slot(wait_timeout_s=self._runtime.max_queue_wait_seconds):
                     memory_applied = bool(request.use_conversation_memory and request.conversation_id)
@@ -1120,6 +1202,14 @@ class ChatService:
             except (ProviderOverloadedError, ProviderTimeoutError, DependencyUnavailableError) as exc:
                 if attempt >= attempts:
                     raise
+                logger.warning(
+                    "chat_job_retry provider=%s model=%s retry=%s max_retries=%s error=%s",
+                    request.provider_id,
+                    request.model,
+                    attempt,
+                    attempts - 1,
+                    exc,
+                )
                 await asyncio.sleep(min(10.0, (2 ** attempt) + random.uniform(0.1, 0.8)))
 
     async def _chat_with_memory_lock(self, request: ChatRequest, start: float) -> ChatResponse:
@@ -1171,15 +1261,18 @@ class ChatService:
             )
 
         combined_messages = [*history, *request.messages]
+        adapter_kwargs: dict[str, Any] = {
+            "model": resolved_model,
+            "messages": combined_messages,
+            "temperature": request.temperature,
+            "max_tokens": request.max_tokens,
+        }
+        if request.response_format is not None:
+            adapter_kwargs["response_format"] = request.response_format
         provider_call_start = time.monotonic()
         sem = self._provider_semaphores.get(provider_id)
         if sem is None:
-            payload = await adapter.chat(
-                model=resolved_model,
-                messages=combined_messages,
-                temperature=request.temperature,
-                max_tokens=request.max_tokens,
-            )
+            payload = await adapter.chat(**adapter_kwargs)
         else:
             limits = (self._runtime.provider_limits or {}).get(provider_id, {})
             queue_size = int(limits.get("max_queue_size", 0) or 0)
@@ -1207,12 +1300,7 @@ class ChatService:
                         resolved_model,
                         round(provider_wait_s * 1000, 2),
                     )
-                payload = await adapter.chat(
-                    model=resolved_model,
-                    messages=combined_messages,
-                    temperature=request.temperature,
-                    max_tokens=request.max_tokens,
-                )
+                payload = await adapter.chat(**adapter_kwargs)
             except ProviderOverloadedError:
                 cooldown_s = float(limits.get("cooldown_seconds_on_429", 10.0) or 10.0)
                 self._provider_cooldown_until[provider_id] = time.monotonic() + max(1.0, cooldown_s)

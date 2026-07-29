@@ -234,12 +234,17 @@ async def _run_llm_prewarm() -> None:
     # Warm every agent model used by the Elder, Librarian, Architect, and
     # Novelist pipelines. Duplicate provider/model targets are loaded once.
     targets: list[LLMModelTarget] = [
-        settings.model_elder,
-        settings.model_librarian,
-        getattr(settings, "model_character_agent_framing", settings.model_elder),
-        getattr(settings, "model_character_agent_deliberation", settings.model_elder),
-        getattr(settings, "model_character_agent_verification", settings.model_elder),
-        getattr(settings, "model_character_agent_embodiment", settings.model_elder),
+        settings.model_elder_planner,
+        settings.model_elder_synthesis,
+        getattr(settings, "model_elder_character_incorporation", settings.model_elder_synthesis),
+        settings.model_librarian_planner,
+        settings.model_librarian_synthesis,
+        getattr(settings, "model_librarian_character_incorporation", settings.model_librarian_synthesis),
+        getattr(settings, "model_character_agent_framing", settings.model_elder_planner),
+        getattr(settings, "model_character_agent_deliberation", settings.model_elder_planner),
+        getattr(settings, "model_character_agent_character_incorporation", settings.model_elder_planner),
+        getattr(settings, "model_character_agent_scene_interpretation", settings.model_elder_planner),
+        getattr(settings, "model_character_agent_update", settings.model_elder_planner),
         settings.model_agents_repair_json,
         settings.model_architect_scene_chunking,
         settings.model_architect_entity_proposal,

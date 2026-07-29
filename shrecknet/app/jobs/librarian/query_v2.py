@@ -8,7 +8,6 @@ import logging
 import re
 import time
 import uuid
-from dataclasses import asdict, dataclass, field
 from typing import Any
 
 import httpx
@@ -16,17 +15,25 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config_store import LLMModelTarget
+from app.jobs.character_incorporation import (
+    NeutralAnswer,
+    cited_ids,
+    incorporate_character,
+    neutral_answer_schema,
+    normalize_target_language,
+    render_answer,
+)
 from app.integrations.llm.shreckllm_client import ShreckLLMClient
-from app.jobs.librarian.citations import extract_sources, render_inline_citations
 from app.jobs.librarian.debug_artifacts import LibrarianDebugArtifacts, debug_value
 from app.jobs.librarian.prompts import (
-    EVIDENCE_WARNING_PROMPT, SIMPLIFIED_ANSWER_STYLE_PROMPT,
-    SYNTHESIS_SYSTEM_PROMPT, planner_messages, validator_messages,
+    SIMPLIFIED_ANSWER_STYLE_PROMPT,
+    SYNTHESIS_SYSTEM_PROMPT,
+    planner_messages,
 )
 from app.jobs.librarian.retrieval_strategies import get_librarian_retrieval_strategy, is_table_like_query
 from app.jobs.librarian.schemas import LibrarianQueryRequest, LibrarianQueryResponse, RetrievedChunk
 from app.jobs.elder.context_budget import estimate_tokens
-from app.jobs.shrecknet import validate_or_repair_json
+from app.jobs.shrecknet import repair_invalid_json
 from app.models.agent import Agent
 from app.models.library import LibraryItem
 
@@ -34,25 +41,20 @@ logger = logging.getLogger(__name__)
 
 SYNTHESIS_EVIDENCE_TOKEN_BUDGET = 30_000
 
-
-@dataclass(slots=True)
-class EvidenceValidation:
-    adequate: bool
-    covered_needs: list[str] = field(default_factory=list)
-    missing_needs: list[str] = field(default_factory=list)
-    reason: str = ""
-    failed: bool = False
-
-
 class LibrarianQueryV2:
-    """Plan, retrieve, validate, retry, and synthesize grounded book evidence."""
+    """Plan, retrieve, and synthesize grounded book evidence."""
 
-    def __init__(self, llm_client: ShreckLLMClient, answer_model: LLMModelTarget | str = "gpt-4o",
+    def __init__(self, llm_client: ShreckLLMClient,
+                 planner_model: LLMModelTarget | str = "gpt-4o",
+                 synthesis_model: LLMModelTarget | str = "gpt-4o",
+                 character_model: LLMModelTarget | str | None = None,
                  repair_json_model: LLMModelTarget | str | None = None,
                  debug_artifacts_enabled: bool = False):
         self.llm_client = llm_client
-        self.answer_model = answer_model
-        self.repair_json_model = repair_json_model or answer_model
+        self.planner_model = planner_model
+        self.synthesis_model = synthesis_model
+        self.character_model = character_model
+        self.repair_json_model = repair_json_model or planner_model
         self.debug_artifacts_enabled = bool(debug_artifacts_enabled)
         self.retrieval = get_librarian_retrieval_strategy()
 
@@ -67,41 +69,18 @@ class LibrarianQueryV2:
         debug.write("query_request_and_scope", input={"agent_id": agent.id, "request": debug_value(request)},
                     output={"run_id": run_id, "ontology_ids": ontology_ids, "rpg_system": rpg_system,
                             "effective_top_k_per_need": top_k})
-        needs = await self._plan(request.query, rpg_system, debug)
-        trace.append({"step": "v2_plan", "data": {"information_needs": needs}})
+        needs, target_language = await self._plan(request.query, rpg_system, debug)
+        trace.append({"step": "v2_plan", "data": {
+            "information_needs": needs, "target_language": target_language,
+        }})
         active = {oid: await self._active_items(db_session, oid, request.library_item_ids) for oid in ontology_ids}
-        evidence: list[dict[str, Any]] = []
-        searched: set[str] = set()
-        pending, passes, stop = needs, 0, "retry_limit"
-        validation = EvidenceValidation(False, missing_needs=needs, reason="Not validated")
-        for pass_number in range(3):
-            novel = [need for need in pending if need.casefold() not in searched]
-            if not novel:
-                stop = "no_novel_missing_needs"; break
-            searched.update(value.casefold() for value in novel)
-            found = await self._retrieve_pass(novel, pass_number, ontology_ids, active, request,
-                                              top_k, trace, debug, run_id)
-            passes += 1
-            before = len(evidence)
-            evidence = self._merge(evidence, found)
-            added = len(evidence) - before
-            trace.append({"step": "v2_evidence_merge", "data": {
-                "pass": pass_number, "retrieved": len(found), "added": added, "total": len(evidence)}})
-            debug.write(f"evidence_merge_pass_{pass_number}", input={"previous_count": before, "chunks": found},
-                        output={"added": added, "evidence": evidence})
-            if pass_number and not added:
-                stop = "no_new_evidence"; break
-            validation = await self._validate(request.query, needs, evidence, pass_number, debug)
-            trace.append({"step": "v2_evidence_validation", "data": {"pass": pass_number, **asdict(validation)}})
-            if validation.adequate:
-                stop = "adequate"; break
-            if validation.failed:
-                stop = "validation_failed"; break
-            pending = validation.missing_needs
-            if not pending:
-                stop = "no_missing_needs"; break
-            trace.append({"step": "v2_retry_decision", "data": {
-                "pass": pass_number, "retry": pass_number < 2, "next_needs": pending}})
+        evidence = await self._retrieve_pass(
+            needs, 0, ontology_ids, active, request, top_k, trace, debug, run_id
+        )
+        evidence = self._merge([], evidence)
+        trace.append({"step": "v2_evidence_merge", "data": {
+            "pass": 0, "retrieved": len(evidence), "added": len(evidence),
+            "total": len(evidence)}})
 
         evidence.sort(key=lambda row: float(row.get("score", 0)), reverse=True)
         evidence = evidence[:max(14, min(30, top_k * max(1, len(needs))))]
@@ -110,7 +89,36 @@ class LibrarianQueryV2:
         answer, sources = None, []
         if request.mode in ("nl", "both"):
             if not chunks:
-                answer = "I couldn't find any relevant information in the available books to answer your question."
+                neutral = NeutralAnswer.model_validate({
+                    "claims": [{
+                        "id": "uncertainty-1",
+                        "text": "I couldn't find any relevant information in the available books to answer your question.",
+                        "citations": [],
+                    }],
+                    "uncertainty": "No relevant book evidence was found.",
+                })
+                rendered = await incorporate_character(
+                    llm_client=self.llm_client,
+                    model=self.character_model,
+                    original_query=request.query,
+                    target_language=target_language,
+                    agent_name=agent.name,
+                    agent_description=getattr(agent, "description", None),
+                    writing_style=agent.writing_style,
+                    answer=neutral,
+                    usage_tag="librarian_character_incorporation",
+                    renderer_name="librarian_character_incorporation",
+                    required=True,
+                    repair_model=self.repair_json_model,
+                )
+                answer = render_answer(
+                    neutral, rendered=rendered, citation_order=[]
+                )
+                trace.append({"step": "character_incorporation", "data": {
+                    "target_language": target_language,
+                    "rendered": rendered is not None,
+                    "fallback": rendered is None,
+                }})
             else:
                 synthesis_chunks, evidence_tokens = self._select_synthesis_evidence(chunks)
                 trace.append({"step": "v2_synthesis_evidence_budget", "data": {
@@ -124,15 +132,47 @@ class LibrarianQueryV2:
                     "librarian_v2_synthesis_evidence_budget run_id=%s candidate_chunks=%s selected_chunks=%s estimated_evidence_tokens=%s budget_tokens=%s",
                     run_id, len(chunks), len(synthesis_chunks), evidence_tokens, SYNTHESIS_EVIDENCE_TOKEN_BUDGET,
                 )
-                raw = await self._synthesize(
-                    request.query, synthesis_chunks, agent.writing_style, rpg_system, trace, debug,
-                    validation=validation,
-                    warning=None if validation.adequate else validation.reason or stop,
+                neutral = await self._synthesize(
+                    request.query, synthesis_chunks,
+                    rpg_system, trace, debug,
                 )
-                sources = extract_sources(raw, chunks)
-                answer = render_inline_citations(raw, chunks)
+                rendered = await incorporate_character(
+                    llm_client=self.llm_client,
+                    model=self.character_model,
+                    original_query=request.query,
+                    target_language=target_language,
+                    agent_name=agent.name,
+                    agent_description=getattr(agent, "description", None),
+                    writing_style=agent.writing_style,
+                    answer=neutral,
+                    usage_tag="librarian_character_incorporation",
+                    renderer_name="librarian_character_incorporation",
+                    required=True,
+                    repair_model=self.repair_json_model,
+                )
+                trace.append({"step": "character_incorporation", "data": {
+                    "target_language": target_language,
+                    "rendered": rendered is not None,
+                    "fallback": rendered is None,
+                }})
+                used_source_ids = cited_ids(neutral, rendered=rendered)
+                sources = [
+                    chunk for chunk in chunks
+                    if chunk.source_id in used_source_ids
+                ]
+                answer = render_answer(
+                    neutral,
+                    rendered=rendered,
+                    citation_order=[
+                        chunk.source_id for chunk in sources if chunk.source_id
+                    ],
+                )
                 trace.append({"step": "citation_rendering", "data": {"sources_used": len(sources)}})
-                debug.write("citation_rendering", input={"raw_answer": raw}, output={"answer": answer})
+                debug.write(
+                    "citation_rendering",
+                    input={"claim_associations": [row.model_dump() for row in (rendered or [])]},
+                    output={"answer": answer},
+                )
         used = list({chunk.library_item_id for chunk in (sources or chunks)})
         response = LibrarianQueryResponse(
             agent_id=agent.id, mode=request.mode, query=request.query, subqueries=needs,
@@ -142,30 +182,65 @@ class LibrarianQueryV2:
         )
         debug.write("final_response", input={"mode": request.mode}, output=response.model_dump())
         elapsed = (time.monotonic() - started) * 1000
-        debug.write_manifest(run_id=run_id, strategy="v2", model=str(self.answer_model), status="success",
-                             pass_count=passes, stop_reason=stop, elapsed_ms=elapsed)
-        logger.info("librarian_v2_complete run_id=%s passes=%s stop=%s evidence=%s elapsed_ms=%.1f",
-                    run_id, passes, stop, len(chunks), elapsed)
+        debug.write_manifest(run_id=run_id, strategy="v2", model=str(self.synthesis_model), status="success",
+                             pass_count=1, stop_reason="retrieval_complete", elapsed_ms=elapsed)
+        logger.info("librarian_v2_complete run_id=%s evidence=%s elapsed_ms=%.1f",
+                    run_id, len(chunks), elapsed)
         return response
 
-    async def _plan(self, query: str, rpg_system: str, debug: LibrarianDebugArtifacts) -> list[str]:
+    async def _plan(
+        self, query: str, rpg_system: str, debug: LibrarianDebugArtifacts
+    ) -> tuple[list[str], str]:
         messages, raw = planner_messages(query=query, rpg_system=rpg_system), ""
         try:
-            raw = str(await self.llm_client.chat(model=self.answer_model, messages=messages,
-                                                 temperature=0.0, usage_tag="librarian_plan"))
+            raw = str(await self._structured_chat(
+                model=self.planner_model,
+                messages=messages,
+                temperature=0.0,
+                usage_tag="librarian_plan",
+                name="librarian_plan",
+                schema={
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "information_needs": {
+                            "type": "array",
+                            "minItems": 1,
+                            "maxItems": 8,
+                            "items": {"type": "string", "minLength": 3},
+                        },
+                        "target_language": {"type": "string", "minLength": 2},
+                    },
+                    "required": ["information_needs", "target_language"],
+                },
+            ))
             parsed, repaired = await self._parse_or_repair(
-                raw, '{"information_needs": ["standalone search question"]}'
+                raw, '{"information_needs":["standalone search question"],"target_language":"und"}'
             )
             needs = self._clean(parsed.get("information_needs"), 8)
-            if not needs: raise ValueError("planner returned no valid information needs")
+            if not needs:
+                repaired_text = await repair_invalid_json(
+                    llm_client=self.llm_client,
+                    model=self.repair_json_model,
+                    malformed_text=json.dumps(parsed, ensure_ascii=False),
+                    schema_hint='{"information_needs":["standalone search question"],"target_language":"und"}',
+                    usage_tag="agents.json_repair",
+                )
+                parsed = self._json(repaired_text)
+                repaired = True
+                needs = self._clean(parsed.get("information_needs"), 8)
+            if not needs:
+                raise ValueError("planner returned no valid information needs")
+            target_language = normalize_target_language(parsed.get("target_language"))
             fallback = False
         except Exception as exc:
             logger.warning("librarian_v2_planner_fallback error=%s", exc)
-            needs, fallback = [query.strip()], True
+            needs, target_language, fallback = [query.strip()], "und", True
         debug.write("v2_planner", input={"messages": messages},
-                    output={"raw_response": raw, "information_needs": needs, "fallback": fallback,
+                    output={"raw_response": raw, "information_needs": needs,
+                            "target_language": target_language, "fallback": fallback,
                             "json_repaired": locals().get("repaired", False)})
-        return needs
+        return needs, target_language
 
     async def _retrieve_pass(self, needs: list[str], pass_number: int, ontology_ids: list[int],
                              active: dict[int, list[int]], request: LibrarianQueryRequest, top_k: int,
@@ -199,58 +274,103 @@ class LibrarianQueryV2:
             "pass": pass_number, "information_needs": needs, "retrieved": len(rows)}})
         return rows
 
-    async def _validate(self, query: str, needs: list[str], evidence: list[dict[str, Any]],
-                        pass_number: int, debug: LibrarianDebugArtifacts) -> EvidenceValidation:
-        excerpts = []
-        for i, row in enumerate(evidence[:30], 1):
-            compact = re.sub(r"\s+", " ", str(row.get("text") or ""))[:1800]
-            excerpts.append(f"source-{i} | needs={row.get('matched_needs', [])}\n{compact}")
-        messages = validator_messages(query=query, needs_json=json.dumps(needs, ensure_ascii=False),
-                                      evidence="\n\n".join(excerpts) or "[none]")
-        raw = ""
-        try:
-            raw = str(await self.llm_client.chat(model=self.answer_model, messages=messages,
-                                                 temperature=0.0, usage_tag="librarian_evidence_validation"))
-            value, repaired = await self._parse_or_repair(
-                raw,
-                '{"adequate": true, "covered_needs": ["..."], '
-                '"missing_needs": ["standalone search question"], "reason": "..."}',
-            )
-            if not isinstance(value.get("adequate"), bool): raise ValueError("invalid adequate value")
-            result = EvidenceValidation(value["adequate"], self._clean(value.get("covered_needs"), 16),
-                                        self._clean(value.get("missing_needs"), 8), str(value.get("reason") or ""))
-        except Exception as exc:
-            result = EvidenceValidation(False, reason=f"Evidence validation failed: {exc}", failed=True)
-        debug.write(f"evidence_validation_pass_{pass_number}", input={"messages": messages},
-                    output={"raw_response": raw, "parsed": asdict(result),
-                            "json_repaired": locals().get("repaired", False)})
-        return result
-
-    async def _synthesize(self, query: str, chunks: list[RetrievedChunk], writing_style: str | None,
-                          rpg_system: str, trace: list[dict[str, Any]], debug: LibrarianDebugArtifacts,
-                          validation: EvidenceValidation, warning: str | None) -> str:
+    async def _synthesize(self, query: str, chunks: list[RetrievedChunk],
+                          rpg_system: str, trace: list[dict[str, Any]],
+                          debug: LibrarianDebugArtifacts) -> NeutralAnswer:
         excerpts = "".join(
             f"\n--- Source {i} (source_id={chunk.source_id}): {chunk.book_title or 'Book'}, "
             f"Page {chunk.display_page_label or chunk.page_number} ---\n"
             f"{'[INCOMPLETE EVIDENCE: do not infer a partial list.]' if chunk.incomplete_evidence else chunk.text}\n"
             for i, chunk in enumerate(chunks, 1))
         prompt = SIMPLIFIED_ANSWER_STYLE_PROMPT.format(
-            query=query, rpg_system=rpg_system, chunks=excerpts,
-            validation_result=json.dumps(asdict(validation), ensure_ascii=False, indent=2),
-            writing_style=writing_style or "Use a clear, direct tone suitable for game masters.")
-        if warning: prompt += EVIDENCE_WARNING_PROMPT.format(warning=warning)
+            query=query, rpg_system=rpg_system, chunks=excerpts)
         system = SYNTHESIS_SYSTEM_PROMPT.format(rpg_system=rpg_system)
         try:
-            answer = str(await self.llm_client.chat(model=self.answer_model,
+            raw = str(await self._structured_chat(
+                model=self.synthesis_model,
                 messages=[{"role": "system", "content": system}, {"role": "user", "content": prompt}],
-                temperature=0.2, usage_tag="librarian_answer"))
+                temperature=0.2,
+                usage_tag="librarian_answer",
+                name="librarian_cited_answer",
+                schema={
+                    "type": "object",
+                    "additionalProperties": False,
+                    **neutral_answer_schema(),
+                },
+            ))
+            payload, repaired = await self._parse_or_repair(
+                raw, '{"claims":[{"id":"claim-1","text":"Supported claim","citations":["source-1"]}],"uncertainty":null}'
+            )
+            try:
+                answer = NeutralAnswer.model_validate(payload)
+            except Exception:
+                repaired_text = await repair_invalid_json(
+                    llm_client=self.llm_client,
+                    model=self.repair_json_model,
+                    malformed_text=json.dumps(payload, ensure_ascii=False),
+                    schema_hint=json.dumps(neutral_answer_schema(), ensure_ascii=False),
+                    usage_tag="agents.json_repair",
+                )
+                answer = NeutralAnswer.model_validate_json(repaired_text)
+                repaired = True
+            available = {chunk.source_id for chunk in chunks if chunk.source_id}
+            cited = {
+                citation for claim in answer.claims for citation in claim.citations
+            }
+            if cited - available or (available and not cited):
+                source_id = sorted(available)[0]
+                answer = NeutralAnswer.model_validate({
+                    "claims": [{
+                        "id": "fallback-1",
+                        "text": "Relevant material was found, but a complete grounded answer could not be produced.",
+                        "citations": [source_id],
+                    }],
+                    "uncertainty": "Neutral synthesis citation validation failed.",
+                })
         except Exception as exc:
             if isinstance(exc, httpx.TimeoutException) or "504" in str(exc):
-                return "I found relevant excerpts, but answer generation timed out. Please try again."
+                source_id = next((chunk.source_id for chunk in chunks if chunk.source_id), None)
+                return NeutralAnswer.model_validate({
+                    "claims": [{
+                        "id": "fallback-1",
+                        "text": "Relevant material was found, but a complete grounded answer could not be produced.",
+                        "citations": [source_id] if source_id else [],
+                    }],
+                    "uncertainty": "Neutral synthesis timed out.",
+                })
             raise
-        trace.append({"step": "answer_with_style", "data": {"chunks_used": len(chunks)}})
-        debug.write("llm_synthesis", input={"messages": [system, prompt]}, output={"raw_answer": answer})
+        trace.append({"step": "answer_with_style", "data": {
+            "chunks_used": len(chunks),
+            "json_repaired": locals().get("repaired", False),
+            "citations_valid": True,
+        }})
+        debug.write("llm_synthesis", input={"messages": [system, prompt]}, output={"neutral_answer": answer})
         return answer
+
+    async def _structured_chat(
+        self, *, model: Any, messages: list[dict[str, str]], temperature: float,
+        usage_tag: str, name: str, schema: dict[str, Any],
+    ) -> str:
+        kwargs = {
+            "model": model,
+            "messages": messages,
+            "temperature": temperature,
+            "usage_tag": usage_tag,
+        }
+        try:
+            return str(await self.llm_client.chat(
+                **kwargs,
+                response_format={
+                    "type": "json_schema",
+                    "json_schema": {"name": name, "strict": True, "schema": schema},
+                },
+            ))
+        except TypeError:
+            return str(await self.llm_client.chat(**kwargs))
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code != 400:
+                raise
+            return str(await self.llm_client.chat(**kwargs))
 
     @staticmethod
     def _select_synthesis_evidence(chunks: list[RetrievedChunk]) -> tuple[list[RetrievedChunk], int]:
@@ -298,15 +418,14 @@ class LibrarianQueryV2:
             return self._json(raw), False
         except Exception as parse_error:
             logger.warning("librarian_json_parse_failed repairing=true error=%s", parse_error)
-            repaired = await validate_or_repair_json(
+            repaired_text = await repair_invalid_json(
                 llm_client=self.llm_client,
                 model=self.repair_json_model,
-                raw_text=raw,
+                malformed_text=raw,
                 schema_hint=schema_hint,
                 usage_tag="agents.json_repair",
             )
-            if not isinstance(repaired, dict):
-                raise ValueError("JSON repair did not return an object")
+            repaired = self._json(repaired_text)
             return repaired, True
 
     @staticmethod

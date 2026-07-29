@@ -50,7 +50,9 @@ async def get_librarian_orchestrator(
 
     return LibrarianOrchestrator(
         llm_client=llm_client,
-        answer_model=settings.model_librarian,
+        planner_model=settings.model_librarian_planner,
+        synthesis_model=settings.model_librarian_synthesis,
+        character_model=settings.model_librarian_character_incorporation,
         repair_json_model=settings.model_agents_repair_json,
         debug_artifacts_enabled=settings.librarian_debug_artifacts_enabled,
     )

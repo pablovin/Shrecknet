@@ -100,6 +100,10 @@ class GraphRetriever(Protocol):
         entity_scores: dict[str, float],
         max_scenes: int = 6,
         max_milestones: int = 6,
+        max_total: int | None = None,
+        temporal_mode: str = "none",
+        temporal_ordering: str = "relevance",
+        temporal_direction: str = "descending",
     ) -> list[RetrievedChunk]:
         """Return graph-near scene/milestone candidates for retrieved entities."""
         ...
@@ -688,6 +692,8 @@ class Neo4jGraphRetriever:
         entity_definition_ids: list[int],
         target_data_type: str,
         temporal_mode: str,
+        temporal_ordering: str,
+        temporal_direction: str,
         temporal_property_ids: list[int],
         limit: int,
     ) -> list[RetrievedChunk]:
@@ -747,29 +753,54 @@ class Neo4jGraphRetriever:
                     return {}
             return raw if isinstance(raw, dict) else {}
 
-        def _date_value(props: dict[str, Any]) -> datetime | None:
+        def _parse_date(value: Any) -> datetime | None:
+            if value in (None, ""):
+                return None
+            if isinstance(value, datetime):
+                return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+            if isinstance(value, date):
+                return datetime.combine(value, datetime.min.time(), tzinfo=timezone.utc)
+            try:
+                parsed = datetime.fromisoformat(str(value).strip().replace("Z", "+00:00"))
+                return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+            except ValueError:
+                return None
+
+        def _recency_value(props: dict[str, Any]) -> tuple[datetime, datetime] | None:
+            updated_at = _parse_date(props.get("updated_at"))
+            created_at = _parse_date(props.get("created_at"))
+            if updated_at is None and created_at is None:
+                return None
+            fallback = updated_at or created_at
+            return fallback, created_at or fallback
+
+        def _domain_date_value(props: dict[str, Any]) -> datetime | None:
             values = _properties(props)
             candidates = [values.get(str(prop_id), values.get(prop_id)) for prop_id in temporal_property_ids]
-            candidates.extend(props.get(key) for key in ("story_date", "date", "created_date", "created_at"))
+            candidates.extend(props.get(key) for key in ("story_date", "date", "created_date"))
             for value in candidates:
                 if value in (None, ""):
                     continue
-                if isinstance(value, datetime):
-                    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
-                if isinstance(value, date):
-                    return datetime.combine(value, datetime.min.time(), tzinfo=timezone.utc)
-                try:
-                    parsed = datetime.fromisoformat(str(value).strip().replace("Z", "+00:00"))
-                    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
-                except ValueError:
-                    continue
+                parsed = _parse_date(value)
+                if parsed is not None:
+                    return parsed
             return None
 
-        if temporal_mode in {"latest", "earliest"}:
-            dated = [(row, _date_value(dict(row["node"]))) for row in rows]
-            dated = [item for item in dated if item[1] is not None]
-            dated.sort(key=lambda item: item[1], reverse=temporal_mode == "latest")
-            rows = [item[0] for item in dated]
+        if temporal_ordering == "recency":
+            reverse = temporal_direction == "descending"
+            dated = [(row, _recency_value(dict(row["node"]))) for row in rows]
+            comparable = [item for item in dated if item[1] is not None]
+            missing = [item for item in dated if item[1] is None]
+            comparable.sort(key=lambda item: (item[1], str(item[0].get("node_id") or "")), reverse=reverse)
+            missing.sort(key=lambda item: str(item[0].get("node_id") or ""))
+            rows = [item[0] for item in comparable + missing]
+        elif temporal_mode in {"latest", "earliest"}:
+            dated = [(row, _domain_date_value(dict(row["node"]))) for row in rows]
+            comparable = [item for item in dated if item[1] is not None]
+            missing = [item for item in dated if item[1] is None]
+            comparable.sort(key=lambda item: (item[1], str(item[0].get("node_id") or "")), reverse=temporal_mode == "latest")
+            missing.sort(key=lambda item: str(item[0].get("node_id") or ""))
+            rows = [item[0] for item in comparable + missing]
 
         chunks: list[RetrievedChunk] = []
         for index, row in enumerate(rows[:limit]):
@@ -782,6 +813,15 @@ class Neo4jGraphRetriever:
                 props.get("text") or props.get("description") or props.get("content")
                 or props.get("summary") or name
             )
+            recency = _recency_value(props)
+            temporal_position = {
+                "ordering": temporal_ordering,
+                "direction": temporal_direction,
+                "rank": index,
+                "comparable": recency is not None if temporal_ordering == "recency" else True,
+                "updated_at": props.get("updated_at"),
+                "created_at": props.get("created_at"),
+            }
             chunks.append(RetrievedChunk(
                 node_id=node_id,
                 node_label=label,
@@ -791,7 +831,12 @@ class Neo4jGraphRetriever:
                 score=max(0.5, 1.0 - index * 0.01),
                 confidence_pct=max(50.0, 100.0 - index),
                 source="elder_v2:select_nodes",
-                properties={**props, "properties": _properties(props)},
+                properties={
+                    **props,
+                    "properties": _properties(props),
+                    "temporal_position": temporal_position,
+                    "_elder_order_rank": index if temporal_ordering == "recency" else None,
+                },
             ))
         return chunks
 
@@ -822,6 +867,7 @@ class Neo4jGraphRetriever:
             entity_scores=entity_scores,
             max_scenes=limit,
             max_milestones=limit,
+            max_total=limit,
         )
         if instance_id:
             chunks = [chunk for chunk in chunks if chunk.instance_id in {None, instance_id}]
@@ -835,6 +881,10 @@ class Neo4jGraphRetriever:
         entity_scores: dict[str, float],
         max_scenes: int = 6,
         max_milestones: int = 6,
+        max_total: int | None = None,
+        temporal_mode: str = "none",
+        temporal_ordering: str = "relevance",
+        temporal_direction: str = "descending",
     ) -> list[RetrievedChunk]:
         entity_ids = [entity_id for entity_id in entity_scores if entity_id]
         if not entity_ids:
@@ -925,6 +975,27 @@ class Neo4jGraphRetriever:
             if len(token) >= 4
         }
 
+        def _parse_timestamp(value: Any) -> datetime | None:
+            if value in (None, ""):
+                return None
+            if isinstance(value, datetime):
+                return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+            if isinstance(value, date):
+                return datetime.combine(value, datetime.min.time(), tzinfo=timezone.utc)
+            try:
+                parsed = datetime.fromisoformat(str(value).strip().replace("Z", "+00:00"))
+                return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+            except ValueError:
+                return None
+
+        def _recency_value(props: dict[str, Any]) -> tuple[datetime, datetime] | None:
+            updated_at = _parse_timestamp(props.get("updated_at"))
+            created_at = _parse_timestamp(props.get("created_at"))
+            if updated_at is None and created_at is None:
+                return None
+            fallback = updated_at or created_at
+            return fallback, created_at or fallback
+
         def _candidate_score(
             *,
             matched_entity_ids: list[str],
@@ -983,6 +1054,8 @@ class Neo4jGraphRetriever:
                     "source_entity_instance_id": source_entity_instance_id,
                     "matched_entity_ids": matched_entity_ids,
                     "expanded_from_graph": True,
+                    "created_at": props.get("created_at"),
+                    "updated_at": props.get("updated_at"),
                 },
             )
 
@@ -990,13 +1063,46 @@ class Neo4jGraphRetriever:
         milestone_chunks = [_build_chunk(row=row, node_type="milestone") for row in milestone_rows]
         chunks = [chunk for chunk in scene_chunks if chunk is not None]
         chunks.extend(chunk for chunk in milestone_chunks if chunk is not None)
-        chunks.sort(key=lambda chunk: chunk.score, reverse=True)
+        if temporal_ordering == "recency":
+            reverse = temporal_direction == "descending"
+            comparable = [
+                (chunk, _recency_value(chunk.properties))
+                for chunk in chunks
+                if _recency_value(chunk.properties) is not None
+            ]
+            missing = [
+                chunk for chunk in chunks if _recency_value(chunk.properties) is None
+            ]
+            comparable.sort(
+                key=lambda item: (item[1], item[0].node_id),
+                reverse=reverse,
+            )
+            missing.sort(key=lambda chunk: chunk.node_id)
+            chunks = [item[0] for item in comparable] + missing
+        else:
+            chunks.sort(key=lambda chunk: (-chunk.score, chunk.node_id))
+
+        for rank, chunk in enumerate(chunks):
+            comparable = _recency_value(chunk.properties) is not None
+            chunk.properties["temporal_position"] = {
+                "mode": temporal_mode,
+                "ordering": temporal_ordering,
+                "direction": temporal_direction,
+                "rank": rank,
+                "comparable": comparable,
+                "updated_at": chunk.properties.get("updated_at"),
+                "created_at": chunk.properties.get("created_at"),
+            }
+            if temporal_ordering == "recency":
+                chunk.properties["_elder_order_rank"] = rank
 
         selected: list[RetrievedChunk] = []
         scene_count = 0
         milestone_count = 0
         seen_node_ids: set[str] = set()
         for chunk in chunks:
+            if max_total is not None and len(selected) >= max_total:
+                break
             if chunk.node_id in seen_node_ids:
                 continue
             if chunk.node_label == "Scene":

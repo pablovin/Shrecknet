@@ -154,6 +154,8 @@ class ElderRetrievalExecutor:
                 entity_definition_ids=definition_ids,
                 target_data_type=step.target_data_type,
                 temporal_mode=step.temporal.mode,
+                temporal_ordering=step.temporal.ordering,
+                temporal_direction=step.temporal.direction,
                 temporal_property_ids=temporal_property_ids,
                 limit=step.limit,
             )
@@ -170,6 +172,10 @@ class ElderRetrievalExecutor:
                 entity_scores=anchors,
                 max_scenes=step.limit,
                 max_milestones=step.limit,
+                max_total=step.limit,
+                temporal_mode=step.temporal.mode,
+                temporal_ordering=step.temporal.ordering,
+                temporal_direction=step.temporal.direction,
             )
         elif step.operation == "traverse_graph":
             anchors = [chunk for dep in step.dependencies for chunk in prior.get(dep, [])]
@@ -227,6 +233,10 @@ class ElderRetrievalExecutor:
                         entity_scores={entity_id: 1.0 for entity_id in bound_entity_ids},
                         max_scenes=8,
                         max_milestones=8,
+                        max_total=8,
+                        temporal_mode=step.temporal.mode,
+                        temporal_ordering=step.temporal.ordering,
+                        temporal_direction=step.temporal.direction,
                     )
                     graph_context = graph_context[:8]
                     seen = {(chunk.node_label, chunk.node_id) for chunk in chunks}

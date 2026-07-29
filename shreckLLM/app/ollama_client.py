@@ -69,6 +69,7 @@ class OllamaClient:
         messages: list[ChatMessage],
         temperature: float,
         max_tokens: int | None = None,
+        response_format: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         options: dict[str, Any] = {"temperature": float(temperature)}
         if max_tokens is not None:
@@ -80,6 +81,10 @@ class OllamaClient:
             "stream": False,
             "options": options,
         }
+        if response_format is not None:
+            json_schema = response_format.get("json_schema")
+            if response_format.get("type") == "json_schema" and isinstance(json_schema, dict):
+                payload["format"] = json_schema.get("schema") or json_schema
         if self.keep_alive is not None:
             payload["keep_alive"] = self.keep_alive
         data = await self._chat_request(payload)

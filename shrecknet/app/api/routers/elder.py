@@ -63,12 +63,18 @@ async def get_model_policy() -> ModelPolicy:
     """Dependency to get model policy."""
     settings = get_settings()
 
-    default_target = settings.model_elder or LLMModelTarget(provider="openai", name="gpt-5-nano")
+    default_target = settings.model_elder_planner
     model_policy = ModelPolicy(
         default_model=default_target,
         architect_extract_model=default_target,
     )
-    setattr(model_policy, "model_elder", default_target)
+    setattr(model_policy, "model_elder_planner", settings.model_elder_planner)
+    setattr(model_policy, "model_elder_synthesis", settings.model_elder_synthesis)
+    setattr(
+        model_policy,
+        "model_elder_character_incorporation",
+        settings.model_elder_character_incorporation,
+    )
     repair_target = settings.model_agents_repair_json or default_target
     setattr(model_policy, "model_agents_repair_json", repair_target)
     return model_policy
@@ -78,7 +84,7 @@ async def get_elder_llm_concurrency() -> int:
     settings = get_settings()
     try:
         runtime_config = await fetch_shreckllm_runtime(settings)
-        target = settings.model_elder or LLMModelTarget(provider="openai", name="gpt-5-nano")
+        target = settings.model_elder_planner
         return resolve_effective_architect_concurrency(
             runtime_config,
             provider_id=target.provider,
@@ -114,7 +120,6 @@ async def get_elder_orchestrator(
         llm_client=llm_client,
         model_policy=model_policy,
         graph_retriever=graph_retriever,
-        default_top_k=settings.default_top_k,
         llm_max_concurrency=llm_max_concurrency,
         debug_artifacts_enabled=settings.elder_debug_artifacts_enabled,
     )

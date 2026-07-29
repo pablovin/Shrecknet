@@ -11,6 +11,7 @@ from app.jobs.character_agent.query import CharacterAgentQueryJob, CharacterGene
 from app.jobs.character_agent.prompts import (
     DELIBERATION_PROMPT,
     FRAME_PROMPT,
+    GENERIC_FRAME_PROMPT,
     GENERIC_QUERY_PROMPT,
 )
 from app.jobs.shrecknet.agent import parse_json_deterministically
@@ -79,7 +80,8 @@ async def test_query_uses_exactly_two_calls_and_passes_lean_stage_two_payload():
     target = LLMModelTarget(provider="test", name="model")
     job = CharacterAgentQueryJob(
         llm_client=llm, framing_model=target, deliberation_model=target,
-        verification_model=target, report_stage=report,
+        repair_model=target,
+        report_stage=report,
     )
     request = CharacterAgentQueryRequest.model_validate({
         "query": "Answer the threat", "response_format": {"type": "json", "schema": {
@@ -126,8 +128,12 @@ def test_query_rejects_removed_generation_fields(removed_field):
 
 
 @pytest.mark.asyncio
-async def test_query_without_character_identity_uses_one_generic_text_call():
-    llm = FakeLLM([json.dumps({
+async def test_query_without_character_identity_uses_neutral_framing_then_deliberation():
+    llm = FakeLLM([_frame(
+        relevant_trait_axes=[],
+        relevant_aspect_ids=[],
+        relevant_goal_ids=[],
+    ), json.dumps({
         "content": "A neutral response.",
         "decision_basis": "The supplied facts support a neutral assessment.",
     })])
@@ -136,7 +142,7 @@ async def test_query_without_character_identity_uses_one_generic_text_call():
         llm_client=llm,
         framing_model=target,
         deliberation_model=target,
-        verification_model=target,
+        repair_model=target,
     )
     request = CharacterAgentQueryRequest(
         query="Assess the treaty",
@@ -152,19 +158,37 @@ async def test_query_without_character_identity_uses_one_generic_text_call():
         "content": "A neutral response.",
         "decision_basis": "The supplied facts support a neutral assessment.",
     }
-    assert len(llm.calls) == 1
-    assert llm.calls[0]["model"] == target
-    assert llm.calls[0]["usage_tag"] == "character_agent.generic"
-    assert "max_tokens" not in llm.calls[0]
-    prompt_input = llm.calls[0]["messages"][1]["content"]
-    assert '"query":"Assess the treaty"' in prompt_input
-    assert "character_agent" not in prompt_input
-    assert "background_story" not in prompt_input
+    assert len(llm.calls) == 2
+    assert [call["model"] for call in llm.calls] == [target, target]
+    assert [call["usage_tag"] for call in llm.calls] == [
+        "character_agent.generic_frame",
+        "character_agent.generic_deliberate",
+    ]
+    assert all("max_tokens" not in call for call in llm.calls)
+    framing = json.loads(llm.calls[0]["messages"][1]["content"])
+    assert framing == {
+        "query": "Assess the treaty",
+        "context": {"supply_days": 14},
+    }
+    deliberation = json.loads(llm.calls[1]["messages"][1]["content"])
+    assert set(deliberation) == {
+        "query", "context_summary", "system_instruction", "conflicts",
+        "unknowns", "response_format",
+    }
+    assert deliberation["context_summary"] == "A threat must be answered."
+    encoded_calls = json.dumps([call["messages"] for call in llm.calls])
+    assert "agent_profile" not in encoded_calls
+    assert "background_story" not in encoded_calls
+    assert "behavioural_traits" not in encoded_calls
 
 
 @pytest.mark.asyncio
 async def test_query_without_character_identity_validates_json_contract():
-    llm = FakeLLM([json.dumps({
+    llm = FakeLLM([_frame(
+        relevant_trait_axes=[],
+        relevant_aspect_ids=[],
+        relevant_goal_ids=[],
+    ), json.dumps({
         "content": {"choice": "accept"},
         "decision_basis": "Accept is best supported.",
     })])
@@ -173,7 +197,7 @@ async def test_query_without_character_identity_validates_json_contract():
         llm_client=llm,
         framing_model=target,
         deliberation_model=target,
-        verification_model=target,
+        repair_model=target,
     )
     request = CharacterAgentQueryRequest.model_validate({
         "query": "Choose",
@@ -192,6 +216,26 @@ async def test_query_without_character_identity_validates_json_contract():
     result = await job.run(request)
 
     assert result.content == {"choice": "accept"}
+    assert len(llm.calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_query_without_character_identity_rejects_identity_selectors():
+    llm = FakeLLM([_frame(relevant_goal_ids=["goal-1"])])
+    target = LLMModelTarget(provider="test", name="model")
+    job = CharacterAgentQueryJob(
+        llm_client=llm,
+        framing_model=target,
+        deliberation_model=target,
+        repair_model=target,
+    )
+
+    with pytest.raises(
+        CharacterGenerationError, match="generic task framing returned identity selectors"
+    ):
+        await job.run(CharacterAgentQueryRequest(
+            query="Assess the treaty", use_character_identity=False
+        ))
     assert len(llm.calls) == 1
 
 
@@ -199,23 +243,27 @@ async def test_query_without_character_identity_validates_json_contract():
 async def test_query_rejects_invented_evidence_without_repair_call():
     llm = FakeLLM([_frame(relevant_goal_ids=["invented-goal"])])
     target = LLMModelTarget(provider="test", name="model")
-    job = CharacterAgentQueryJob(llm_client=llm, framing_model=target, deliberation_model=target, verification_model=target)
+    job = CharacterAgentQueryJob(
+        llm_client=llm, framing_model=target, deliberation_model=target,
+        repair_model=target,
+    )
     with pytest.raises(CharacterGenerationError):
         await job.run(CharacterAgentQueryRequest(query="Write a letter"), SNAPSHOT)
     assert len(llm.calls) == 1
 
 
 @pytest.mark.asyncio
-async def test_query_repairs_final_output_once_and_validates_repair():
+async def test_query_uses_global_repair_target_once_and_validates_repair():
     repaired = json.dumps({
         "content": {"choice": "accept"},
         "decision_basis": "Accept is best supported.",
     })
     llm = FakeLLM([_frame(), "not json", repaired])
-    target = LLMModelTarget(provider="test", name="model")
+    normal_target = LLMModelTarget(provider="test", name="normal")
+    repair_target = LLMModelTarget(provider="test", name="global-repair")
     job = CharacterAgentQueryJob(
-        llm_client=llm, framing_model=target,
-        deliberation_model=target, verification_model=target,
+        llm_client=llm, framing_model=normal_target,
+        deliberation_model=normal_target, repair_model=repair_target,
     )
     request = CharacterAgentQueryRequest.model_validate({
         "query": "Choose",
@@ -231,6 +279,99 @@ async def test_query_repairs_final_output_once_and_validates_repair():
         "character_agent.deliberate",
         "character_agent.repair",
     ]
+    assert llm.calls[2]["model"] == repair_target
+
+
+@pytest.mark.asyncio
+async def test_query_caps_rationale_at_2000_without_repair_or_failure():
+    long_rationale = "r" * 2_500
+    llm = FakeLLM([
+        _frame(),
+        json.dumps({
+            "content": {"choice": "investigate", "rationale": long_rationale},
+            "decision_basis": "The supplied evidence supports investigation.",
+        }),
+    ])
+    target = LLMModelTarget(provider="test", name="model")
+    job = CharacterAgentQueryJob(
+        llm_client=llm,
+        framing_model=target,
+        deliberation_model=target,
+        repair_model=target,
+    )
+    request = CharacterAgentQueryRequest.model_validate({
+        "query": "Choose",
+        "response_format": {"type": "json", "schema": {
+            "type": "object",
+            "required": ["choice", "rationale"],
+            "properties": {
+                "choice": {"type": "string"},
+                "rationale": {"type": "string", "maxLength": 500},
+            },
+            "additionalProperties": False,
+        }},
+    })
+
+    result = await job.run(request, SNAPSHOT)
+
+    assert result.content["rationale"] == "r" * 2_000
+    assert len(llm.calls) == 2
+    deliberation = json.loads(llm.calls[1]["messages"][1]["content"])
+    assert (
+        deliberation["response_format"]["schema"]["properties"]["rationale"][
+            "maxLength"
+        ]
+        == 2_000
+    )
+
+
+def test_rationale_cap_applies_to_nested_objects_and_preserves_short_values():
+    content = {
+        "rationale": "short",
+        "decisions": [{"rationale": "x" * 2_001}],
+    }
+
+    normalized = CharacterAgentQueryJob._cap_rationale(content)
+
+    assert normalized["rationale"] == "short"
+    assert normalized["decisions"][0]["rationale"] == "x" * 2_000
+    assert content["decisions"][0]["rationale"] == "x" * 2_001
+
+
+@pytest.mark.asyncio
+async def test_query_repair_hint_describes_the_top_level_envelope():
+    repaired = json.dumps({
+        "content": {"choice": "accept"},
+        "decision_basis": "Accept is best supported.",
+    })
+    llm = FakeLLM([_frame(), "not json", repaired])
+    target = LLMModelTarget(provider="test", name="model")
+    job = CharacterAgentQueryJob(
+        llm_client=llm,
+        framing_model=target,
+        deliberation_model=target,
+        repair_model=target,
+    )
+    request = CharacterAgentQueryRequest.model_validate({
+        "query": "Choose",
+        "response_format": {"type": "json", "schema": {
+            "type": "object",
+            "required": ["choice"],
+            "properties": {"choice": {"enum": ["accept", "reject"]}},
+            "additionalProperties": False,
+        }},
+    })
+
+    await job.run(request, SNAPSHOT)
+
+    repair_prompt = llm.calls[2]["messages"][0]["content"]
+    schema_hint = repair_prompt.split(
+        "Expected schema hint:\n", 1
+    )[1].split("\nMalformed JSON:", 1)[0]
+    schema = json.loads(schema_hint)
+    assert set(schema["properties"]) == {"content", "decision_basis"}
+    assert schema["properties"]["content"] == request.response_format.schema_
+    assert "envelope" not in schema
 
 
 def test_deterministic_json_parser_handles_fences_and_prefixes():
@@ -240,6 +381,8 @@ def test_deterministic_json_parser_handles_fences_and_prefixes():
 
 def test_prompts_embed_complete_stage_contracts():
     assert "general-purpose backend response generator" in GENERIC_QUERY_PROMPT
+    assert "neutral context summarization" in GENERIC_FRAME_PROMPT
+    assert '"relevant_goal_ids": []' in GENERIC_FRAME_PROMPT
     assert "Stage 1 of 2" in FRAME_PROMPT
     assert '"agent_profile"' in FRAME_PROMPT
     assert '"relevant_goal_ids"' in FRAME_PROMPT
@@ -255,8 +398,10 @@ def test_character_agent_defaults_and_configuration_targets():
     settings = Settings()
     assert settings.model_character_agent_framing == LLMModelTarget(provider="", name="")
     assert settings.model_character_agent_deliberation == LLMModelTarget(provider="", name="")
-    assert settings.model_character_agent_verification == LLMModelTarget(provider="", name="")
-    assert settings.model_character_agent_embodiment == LLMModelTarget(provider="", name="")
+    assert not hasattr(settings, "model_character_agent_verification")
+    assert settings.model_character_agent_character_incorporation == LLMModelTarget(provider="", name="")
+    assert settings.model_character_agent_scene_interpretation == LLMModelTarget(provider="", name="")
+    assert settings.model_character_agent_update == LLMModelTarget(provider="", name="")
 
 
 class _Result:

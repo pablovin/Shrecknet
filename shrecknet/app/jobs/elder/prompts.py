@@ -4,11 +4,12 @@ Active v2 order:
 1. ``V2_RETRIEVAL_PLANNER_PROMPT`` is used by ``planner.create_retrieval_plan``.
    It must return a JSON ``RetrievalPlan`` with ``answer_goal`` and 1-5 steps.
 2. ``V2_SYNTHESIS_PROMPT`` is used by ``ElderQueryV2._synthesize_v2`` when all
-   complete evidence fits. It returns the final user-facing Elder answer.
+   complete evidence fits. It returns neutral English citation-bearing blocks.
 3. ``V2_OVERFLOW_EVIDENCE_PROMPT`` is used once per complete-record overflow
    batch. It returns an exhaustive citation-bearing evidence memorandum.
-4. ``V2_OVERFLOW_FINAL_PROMPT`` combines those memoranda and returns the final
-   user-facing Elder answer.
+4. ``V2_OVERFLOW_FINAL_PROMPT`` combines those memoranda into neutral blocks.
+5. The shared constrained character renderer translates and applies agent voice;
+   code restores citations afterward.
 
 """
 
@@ -23,6 +24,10 @@ Return ONLY valid JSON. Produce between 1 and 5 topologically ordered steps.
 GENERAL RULES
 
 1. Plan evidence retrieval, not final prose.
+1a. Detect `target_language` only from USER QUERY and return a normalized
+    BCP-47 tag such as `en`, `pt-BR`, or `fr`. Ignore grounding, conversation,
+    ontology, and RPG terminology when detecting it; use `und` only when the
+    query language cannot be determined.
 2. Reuse resolved entity names when they are already supplied with high confidence.
 3. Use resolve_entity for named world objects such as people, places, factions,
    objects, or narrative records.
@@ -38,9 +43,14 @@ GENERAL RULES
    shared participation, and graph neighbourhoods.
 9. Use expand_temporal_context for latest, earliest, before, after, so-far,
    sequence, evolution, and timeline questions.
-10. Hydrate the minimum sufficient source context. Default to local_context with
-    one adjacent chunk on each side and 1200 tokens per source. Use complete_source
-    only when the user explicitly requests a complete source summary.
+   Set temporal.ordering to recency only when time ordering is needed. Recency
+   compares updated_at first and created_at second across sources. Choose
+   temporal.direction from the requested presentation order. Do not infer
+   cross-source chronology from FOLLOWED_BY or PRECEDED_BY relationships.
+   For an unspecified recent-history window, a limit near 10 is usually useful,
+   but choose the minimum sufficient limit for the actual question.
+10. Select the minimum sufficient sources. Selected sources are hydrated in full
+    after retrieval; do not plan excerpt windows or per-source token truncation.
 11. Ontology-definition results help interpret the query but are not narrative evidence.
 12. Prefer canonical graph selection for structural and temporal questions.
     Prefer graph-constrained hybrid search for implicit actions and meanings.
@@ -55,8 +65,8 @@ GENERAL RULES
 Return exactly this structure:
 {{
   "answer_goal": "Specific factual or analytical result the synthesis must establish",
+  "target_language": "BCP-47 language tag detected only from USER QUERY, or und",
   "response_scope": "brief|standard|deep",
-  "evidence_budget_tokens": 10000,
   "query_intent": {{
     "kind": "fact|summary|relationship|timeline|history|comparison|mixed",
     "temporal_scope": "none|latest|earliest|before|after|so_far|range|timeline",
@@ -77,12 +87,8 @@ Return exactly this structure:
       "temporal": {{
         "mode": "none",
         "anchor": null,
-        "ordering_priority": [
-          "explicit_relationship",
-          "ontology_property",
-          "domain_date",
-          "created_at"
-        ]
+        "ordering": "relevance",
+        "direction": "descending"
       }},
       "traversal": {{
         "relationships": [],
@@ -91,10 +97,7 @@ Return exactly this structure:
       }},
       "target_data_type": "mixed",
       "limit": 20,
-      "hydration_mode": "local_context",
-      "context_chunks_before": 1,
-      "context_chunks_after": 1,
-      "max_tokens_per_source": 1200,
+      "evidence_type": "brief_fact|relationship_or_local_event|standard_summary|timeline_or_history|deep_comparison_or_mixed|exhaustive|null",
       "cypher": null,
       "parameters": {{}}
     }}
@@ -106,12 +109,23 @@ resolve_entity, resolve_concept, exact_lookup, hybrid_search, select_nodes,
 traverse_graph, expand_temporal_context, hydrate_sources.
 Allowed target_data_type values: entity, scene, milestone, mixed, ontology_definition.
 
+EVIDENCE BUDGET CLASSIFICATION
+
+Set evidence_type only on terminal steps whose results are sent to synthesis.
+All resolution, constraint, and intermediate steps must use null. Choose:
+- brief_fact for a narrowly scoped fact (12,000 tokens)
+- relationship_or_local_event for a relationship or one local event (20,000)
+- standard_summary for an ordinary bounded summary (35,000)
+- timeline_or_history for chronological or historical coverage (60,000)
+- deep_comparison_or_mixed for deep comparison or mixed analysis (100,000)
+- exhaustive only when the user explicitly requests exhaustive coverage (100,000)
+
 EXPECTED PLANNING BEHAVIOUR
 
 Retrieve the minimum sufficient evidence. Broad phrases such as "what can you
 tell me" do not request complete history. Prefer a bounded entity profile and
 graph context, keep resolved-entity overviews to at most two retrieval steps,
-and keep expected synthesis evidence within the evidence budget.
+and order the most useful sources first.
 
 For "What happened in the last story?": resolve the Story concept; select the
 latest canonical Story using ontology and temporal constraints; traverse to its
@@ -123,6 +137,17 @@ search over Scenes and Milestones for taking, stealing, recovering, receiving,
 or removing something; traverse provenance and temporal neighbours around the
 best results; then hydrate the relevant canonical sources.
 
+For "What happened to Ernst lately?": resolve Ernst, then use
+expand_temporal_context with mode latest, ordering recency, direction descending,
+and a limit near 10 unless the question implies a narrower or broader window.
+
+For "How has Ernst changed over the available records?": resolve Ernst, then use
+expand_temporal_context with ordering recency and direction ascending so synthesis
+receives the records from older to newer.
+
+For non-temporal questions, keep ordering relevance. Do not request recency merely
+because retrieved nodes happen to have timestamps.
+
 USER QUERY:
 {query}
 
@@ -131,19 +156,22 @@ GROUNDING:
 """
 
 
-# Shared synthesis instruction fragments. They are composed into each of the
-# following synthesis prompts and do not independently produce an output.
-V2_PERSONA_PROMPT = """You are {agent_name}, an Elder guide.
-Style: {writing_style}."""
-
-V2_GROUNDING_RULES_PROMPT = """Use only supplied evidence.
+V2_GROUNDING_RULES_PROMPT = """Produce a neutral, concise factual answer in English.
+Use only supplied evidence.
 Distinguish canonical facts, narrative-supported events, interpretations,
-contradictions, and unknowns. Cite stable evidence_id values. Select the format
-appropriate to the question. Never claim evidence was absent when it is present."""
+contradictions, and unknowns. Split the complete answer into atomic, independently
+supportable claims. Each claim must express one fact, conclusion, or user-facing
+uncertainty and attach all supporting evidence IDs. Use only
+supplied evidence_id values. Put every limitation and uncertainty in an answer
+claim; `uncertainty` is optional metadata and cannot replace user-facing text.
+Never claim evidence was absent when it is present. Do not apply personality,
+voice, humour, rapport, roleplay, or target-language behavior.
+
+Return exactly:
+{"claims":[{"id":"claim-1","text":"English atomic factual claim","citations":["evidence-1"]}],"uncertainty":null}"""
 
 
-V2_SYNTHESIS_PROMPT = """{persona}
-{rules}
+V2_SYNTHESIS_PROMPT = """{rules}
 
 QUERY:
 {query}
@@ -156,8 +184,7 @@ COMPLETE EVIDENCE:
 """
 
 
-V2_OVERFLOW_EVIDENCE_PROMPT = """{persona}
-{rules}
+V2_OVERFLOW_EVIDENCE_PROMPT = """{rules}
 
 QUERY:
 {query}
@@ -173,8 +200,7 @@ COMPLETE EVIDENCE:
 """
 
 
-V2_OVERFLOW_FINAL_PROMPT = """{persona}
-{rules}
+V2_OVERFLOW_FINAL_PROMPT = """{rules}
 
 QUERY:
 {query}

@@ -15,11 +15,13 @@ def _settings() -> SimpleNamespace:
         model_architect_milestone_proposal=target,
         model_architect_entity_generation=target,
         model_agents_repair_json=target,
-        model_elder=target,
+        model_elder_planner=target,
+        model_elder_synthesis=target,
         model_novelist_planning=target,
         model_novelist_prose=target,
         model_novelist_critic=target,
-        model_librarian=target,
+        model_librarian_planner=target,
+        model_librarian_synthesis=target,
     )
 
 

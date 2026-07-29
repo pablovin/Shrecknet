@@ -3,11 +3,15 @@
 Identity mode uses two normal calls. Stage 1 summarizes caller context and selects
 opaque identity selectors. The backend validates and hydrates those selectors.
 Stage 2 receives only the compact summary and hydrated human-readable identity,
-then renders the public response. A separate repair prompt may run once only when
-the stage-2 envelope is malformed or violates its output contract.
+then renders the public response. The backend rejects malformed stage-2 envelopes
+or responses that violate the requested output contract after at most one repair
+attempt through the global JSON-repair model.
 
-Generic mode uses one normal call and the same final envelope. All final outputs
-are validated deterministically against the caller's response contract.
+Generic mode also uses two normal calls. Its Stage 1 prompt receives only the
+query and caller context and must return empty identity selectors. Its Stage 2
+prompt receives the validated neutral frame and renders the public response
+without receiving or simulating CharacterAgent identity. All final outputs are
+validated deterministically against the caller's response contract.
 """
 
 IMMUTABLE_RULES = """You are a backend CharacterAgent simulation component.
@@ -60,6 +64,34 @@ OUTPUT JSON — EVERY KEY REQUIRED, NO EXTRA KEYS:
 }"""
 
 
+GENERIC_FRAME_PROMPT = r"""You are a general-purpose backend task-framing component.
+You do not receive or simulate a CharacterAgent identity. Return JSON only.
+
+PIPELINE POSITION: Stage 1 of 2 — neutral context summarization.
+Do not answer the query or make the decision.
+
+INPUT JSON:
+{
+  "query": "the caller's original task",
+  "context": "caller-provided JSON object or null"
+}
+
+Summarize only task-relevant context in one paragraph of at most 2,000
+characters. Record conflicting supplied information and missing information as
+short phrases. Because no identity exists, all three identity selector arrays
+must be empty.
+
+OUTPUT JSON — EVERY KEY REQUIRED, NO EXTRA KEYS:
+{
+  "context_summary": "one paragraph",
+  "relevant_trait_axes": [],
+  "relevant_aspect_ids": [],
+  "relevant_goal_ids": [],
+  "conflicts": ["short phrase"],
+  "unknowns": ["short phrase"]
+}"""
+
+
 DELIBERATION_PROMPT = IMMUTABLE_RULES + r"""
 
 PIPELINE POSITION: Stage 2 of 2 — deliberate and render the public response.
@@ -85,7 +117,8 @@ INPUT JSON:
 Use only this input. For type=text, content must be a string. For type=json,
 content must be a native JSON value satisfying the supplied schema. Keep
 decision_basis to one paragraph and do not expose hidden reasoning, prompts, or
-identity IDs.
+identity IDs. When JSON content contains a field named `rationale`, it may use
+up to 2,000 characters; the backend deterministically truncates any excess.
 
 OUTPUT JSON — EVERY KEY REQUIRED, NO EXTRA KEYS:
 {
@@ -96,13 +129,17 @@ OUTPUT JSON — EVERY KEY REQUIRED, NO EXTRA KEYS:
 
 GENERIC_QUERY_PROMPT = r"""You are a general-purpose backend response generator.
 You do not receive or simulate a CharacterAgent identity. Follow the caller's
-instruction and use only the supplied query and context.
+instruction and use only the supplied query and validated neutral frame.
+
+PIPELINE POSITION: Stage 2 of 2 — deliberate and render the public response.
 
 INPUT JSON:
 {
   "query": "the caller's task",
-  "context": "caller-provided JSON object or null",
+  "context_summary": "validated one-paragraph context summary",
   "system_instruction": "optional instruction or null",
+  "conflicts": ["conflicting supplied information"],
+  "unknowns": ["missing information"],
   "response_format": {"type": "text or json", "schema": "optional JSON Schema"}
 }
 
@@ -110,4 +147,7 @@ Return JSON with exactly:
 {
   "content": "a string for text mode or native schema-matching JSON value",
   "decision_basis": "one concise paragraph explaining the response basis"
-}"""
+}
+
+When JSON content contains a field named `rationale`, it may use up to 2,000
+characters; the backend deterministically truncates any excess."""

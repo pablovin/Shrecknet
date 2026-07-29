@@ -50,15 +50,20 @@ LLM_TARGET_FIELDS = (
     "model_architect_milestone_proposal",
     "model_architect_entity_generation",
     "model_agents_repair_json",
-    "model_elder",
+    "model_elder_planner",
+    "model_elder_synthesis",
+    "model_elder_character_incorporation",
     "model_novelist_planning",
     "model_novelist_prose",
     "model_novelist_critic",
-    "model_librarian",
+    "model_librarian_planner",
+    "model_librarian_synthesis",
+    "model_librarian_character_incorporation",
     "model_character_agent_framing",
     "model_character_agent_deliberation",
-    "model_character_agent_verification",
-    "model_character_agent_embodiment",
+    "model_character_agent_character_incorporation",
+    "model_character_agent_scene_interpretation",
+    "model_character_agent_update",
     "model_orchestrator_routing",
     "model_orchestrator_synthesis",
 )
@@ -207,8 +212,14 @@ class Settings(BaseSettings):
     model_agents_repair_json: LLMModelTarget = Field(
         default_factory=lambda: LLMModelTarget(provider="openai", name="gpt-5-nano")
     )
-    model_elder: LLMModelTarget = Field(
-        default_factory=lambda: LLMModelTarget(provider="openai", name="gpt-5-nano")
+    model_elder_planner: LLMModelTarget = Field(
+        default_factory=lambda: LLMModelTarget(provider="", name="")
+    )
+    model_elder_synthesis: LLMModelTarget = Field(
+        default_factory=lambda: LLMModelTarget(provider="", name="")
+    )
+    model_elder_character_incorporation: LLMModelTarget = Field(
+        default_factory=lambda: LLMModelTarget(provider="", name="")
     )
     model_novelist_planning: LLMModelTarget = Field(
         default_factory=lambda: LLMModelTarget(provider="openai", name="gpt-5-nano")
@@ -219,8 +230,14 @@ class Settings(BaseSettings):
     model_novelist_critic: LLMModelTarget = Field(
         default_factory=lambda: LLMModelTarget(provider="openai", name="gpt-5-nano")
     )
-    model_librarian: LLMModelTarget = Field(
-        default_factory=lambda: LLMModelTarget(provider="openai", name="gpt-5-nano")
+    model_librarian_planner: LLMModelTarget = Field(
+        default_factory=lambda: LLMModelTarget(provider="", name="")
+    )
+    model_librarian_synthesis: LLMModelTarget = Field(
+        default_factory=lambda: LLMModelTarget(provider="", name="")
+    )
+    model_librarian_character_incorporation: LLMModelTarget = Field(
+        default_factory=lambda: LLMModelTarget(provider="", name="")
     )
     model_character_agent_framing: LLMModelTarget = Field(
         default_factory=lambda: LLMModelTarget(provider="", name="")
@@ -228,16 +245,19 @@ class Settings(BaseSettings):
     model_character_agent_deliberation: LLMModelTarget = Field(
         default_factory=lambda: LLMModelTarget(provider="", name="")
     )
-    model_character_agent_verification: LLMModelTarget = Field(
+    model_character_agent_character_incorporation: LLMModelTarget = Field(
         default_factory=lambda: LLMModelTarget(provider="", name="")
     )
-    model_character_agent_embodiment: LLMModelTarget = Field(
+    model_character_agent_scene_interpretation: LLMModelTarget = Field(
+        default_factory=lambda: LLMModelTarget(provider="", name="")
+    )
+    model_character_agent_update: LLMModelTarget = Field(
         default_factory=lambda: LLMModelTarget(provider="", name="")
     )
     character_agent_embodiment_evidence_tokens: int = Field(12_000, ge=1_000, le=100_000)
     character_agent_embodiment_max_aspects: int = Field(12, ge=0, le=50)
     character_agent_embodiment_max_goals: int = Field(8, ge=0, le=50)
-    librarian_debug_artifacts_enabled: bool = False
+    librarian_debug_artifacts_enabled: bool = True
     elder_debug_artifacts_enabled: bool = True
     model_orchestrator_routing: LLMModelTarget = Field(
         default_factory=lambda: LLMModelTarget(provider="openai", name="gpt-5-nano")
@@ -246,7 +266,6 @@ class Settings(BaseSettings):
         default_factory=lambda: LLMModelTarget(provider="openai", name="gpt-5")
     )
     companion_agent_trace_enabled: bool = False
-    default_top_k: int = 20
     embedding_model_id: str = "intfloat/multilingual-e5-small"
     embedding_dimension: int = 384
     embedding_device: str = "cpu"

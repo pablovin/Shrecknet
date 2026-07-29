@@ -16,10 +16,7 @@ Request model: `ElderQueryRequest`
 Core fields:
 
 - `query`
-- `top_k`
 - `include_trace`
-- `fast`
-- `route` (`auto | fast | deep`)
 - `chat_id` (optional memory context)
 - `candidate_limit`
 - `rerank_limit`
@@ -36,22 +33,10 @@ The decomposition stage returns intent objects:
 - `top_k_scenes`: retrieved `Scene` node IDs for this subquery
 - `top_k_milestones`: retrieved `Milestone` node IDs for this subquery
 
-### Fast Mode Relation
+### Adaptive planner
 
-`fast`/`route` use the same Elder response contract and downstream retrieval/synthesis stages, but change planning:
-
-- `route=fast`: creates exactly one intent
-  - `subquery`: original user query
-  - `target_data_type`: `mixed`
-  - `reason`: `fast_mode`
-- `route=deep`: plan first, then execute bounded retrieval steps.
-- `route=auto`: fast-first pass, and expands to decomposition only when first-pass retrieval quality is low
-
-Backward compatibility in current implementation:
-
-- if `route=auto` and `fast=false`, request is treated as deep.
-
-This means fast mode is not a different API contract; it is a reduced planning path for lower latency.
+Elder uses one adaptive planning path. Each terminal evidence-producing step must
+set `evidence_type`; resolution, constraint, and intermediate steps must omit it.
 
 This decomposition supports query-type routing:
 
@@ -63,6 +48,24 @@ This decomposition supports query-type routing:
 
 Each intent is retrieved in parallel (bounded concurrency).
 
+The internal retrieval-plan step supports:
+
+- `temporal.ordering`: `relevance | recency`
+- `temporal.direction`: `ascending | descending`
+- `limit`: planner-selected evidence count
+
+For recency, Elder orders by `updated_at` and then `created_at`. Missing timestamps
+are marked non-comparable and placed after comparable records. Local
+`FOLLOWED_BY`/`PRECEDED_BY` relationships never establish chronology between
+different sources. These controls do not add fields to `ElderQueryRequest`.
+
+Synthesis uses full, atomic sources. Evidence types map to server-owned targets:
+`brief_fact` 12k, `relationship_or_local_event` 20k, `standard_summary` 35k,
+`timeline_or_history` 60k, and `deep_comparison_or_mixed` or `exhaustive` 100k.
+The source crossing a terminal step's target is included in full, and collection
+for that step then stops. There is no
+adjacent-chunk window or per-source 1,200-token truncation.
+
 For each retrieval, Elder records counters:
 
 - `raw_candidates`
@@ -73,6 +76,11 @@ For each retrieval, Elder records counters:
 Node survival rule:
 
 - Deduplication is node-level (`node_id`) to avoid dropping distinct nodes from the same instance.
+- Explicit temporal ranks survive deduplication and are not replaced by relevance
+  ordering before synthesis.
+- There is no request-level or server-level global result cap. Each planner step
+  chooses its own bounded `limit`, and all selected step evidence proceeds to
+  consolidation.
 
 ## Memory Priors Contract
 
@@ -107,6 +115,10 @@ Top-level fields:
 - optional `trace`
 - optional `retrieval_debug`
 
+`answer` is display-ready cohesive character prose. Unicode superscript
+citation numbers refer to the corresponding one-based entry in `sources[]`.
+The response never exposes the internal `{cite ...}` wrapper format.
+
 `sources[]` node payload:
 
 - `node_id`
@@ -114,6 +126,9 @@ Top-level fields:
 - `node_name`
 - `score`
 - `evidence_chunks[]` with `chunk_id`, `chunk_type`, `score`, `text`
+
+The former `complete` fields were removed from source and evidence-chunk payloads.
+Returned sources are the sources actually supplied to synthesis.
 
 ## Timing Contract
 
@@ -126,6 +141,25 @@ Elder logs and returns end-to-end timing fields:
 - `rerank_ms`
 - `synthesize_ms`
 - `total_ms`
+
+Before every Elder LLM call, the API logs an `[ELDER_LLM_REQUEST]` operational
+header containing:
+
+- `stage` derived from the Elder usage tag (`plan`, `synthesize`, or an overflow stage)
+- `provider` and `model`
+- `input_tokens_est`, estimated before submission using a provider-independent
+  character heuristic
+
+After the model responds, `[ELDER_LLM_RESPONSE]` reports the stage, resolved
+provider/model, actual provider token usage when available, and `wait_ms`.
+The response's `llm_usage[]` rows and the final `[ELDER_LLM_USAGE]` summary also
+include `wait_ms`. The preflight token count is explicitly an estimate; provider
+usage remains authoritative after completion.
+
+The shrecknet HTTP client never resubmits a queued chat job after its polling
+deadline. A submitted job continues inside shreckLLM, so resubmission would
+create a concurrent duplicate and could duplicate provider charges. Provider
+retries remain exclusively owned and reported by shreckLLM.
 
 Timing interpretation with fast mode:
 

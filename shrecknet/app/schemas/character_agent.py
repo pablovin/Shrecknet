@@ -647,6 +647,7 @@ class ScenePerspectiveCreate(_NarrativeFields):
     confidence: int = Field(..., ge=0, le=100)
     summary: str = Field(..., min_length=1)
     interpretation: str = Field(..., min_length=1)
+    character_reflection: str | None = Field(None, min_length=1)
     memory_strength: int = Field(..., ge=0, le=100)
     importance: int = Field(..., ge=1, le=5)
     status: ScenePerspectiveStatus = ScenePerspectiveStatus.ACTIVE
@@ -658,6 +659,7 @@ class ScenePerspectiveUpdate(_NarrativeFields):
     confidence: int | None = Field(None, ge=0, le=100)
     summary: str | None = Field(None, min_length=1)
     interpretation: str | None = Field(None, min_length=1)
+    character_reflection: str | None = Field(None, min_length=1)
     memory_strength: int | None = Field(None, ge=0, le=100)
     importance: int | None = Field(None, ge=1, le=5)
     status: ScenePerspectiveStatus | None = None
@@ -675,6 +677,7 @@ class ScenePerspectiveRead(_StrictModel):
     confidence: int
     summary: str
     interpretation: str
+    character_reflection: str | None = None
     memory_strength: int
     importance: int
     status: ScenePerspectiveStatus
@@ -710,9 +713,13 @@ class ProjectedScenePerspective(_StrictModel):
     confidence: int = Field(..., ge=0, le=100)
     summary: str = Field(..., min_length=1)
     interpretation: str = Field(..., min_length=1)
+    character_reflection: str | None = Field(None, min_length=1)
     memory_strength: int = Field(..., ge=0, le=100)
     importance: int = Field(..., ge=1, le=5)
     status: ScenePerspectiveStatus = ScenePerspectiveStatus.ACTIVE
+    emotions: list["EmotionalInterpretationOutput"] = Field(default_factory=list)
+    beliefs: list["CharacterBeliefOutput"] = Field(default_factory=list)
+    impacts: list["CharacterImpactOutput"] = Field(default_factory=list)
 
 
 class SourcePerspectiveProjection(_StrictModel):
@@ -763,6 +770,7 @@ class CharacterSourceProjection(_StrictModel):
     aspects: list[EmbodimentAspectProposal] = Field(default_factory=list)
     goals: list[EmbodimentGoalProposal] = Field(default_factory=list)
     subtitle_change: SubtitleChangeProposal = Field(default_factory=SubtitleChangeProposal)
+    llm_calls: list["LLMCallRecord"] = Field(default_factory=list)
     resulting_revision: CharacterIdentityRevisionProjection
 
 
@@ -955,9 +963,25 @@ class CharacterBeliefOutput(_StrictModel):
 
 class CharacterImpactOutput(_StrictModel):
     impact_type: CharacterImpactType
+    target_id: str = Field(..., min_length=1)
     direction: CharacterImpactDirection
     magnitude: int = Field(..., ge=0, le=100)
     description: str = Field(..., min_length=1)
+
+    @model_validator(mode="after")
+    def valid_direction(self):
+        permitted = (
+            {CharacterImpactDirection.ADVANCED, CharacterImpactDirection.THREATENED}
+            if self.impact_type == CharacterImpactType.GOAL_CHANGE
+            else {
+                CharacterImpactDirection.CREATED,
+                CharacterImpactDirection.REINFORCED,
+                CharacterImpactDirection.INVALIDATED,
+            }
+        )
+        if self.direction not in permitted:
+            raise ValueError("impact direction is incompatible with impact_type")
+        return self
 
 
 class ScenePerspectiveOutput(_StrictModel):
@@ -967,12 +991,27 @@ class ScenePerspectiveOutput(_StrictModel):
     confidence: int = Field(..., ge=0, le=100)
     summary: str = Field(..., min_length=1)
     interpretation: str = Field(..., min_length=1)
+    character_reflection: str = Field(..., min_length=1)
     memory_strength: int = Field(..., ge=0, le=100)
     importance: int = Field(..., ge=1, le=5)
     status: ScenePerspectiveStatus = ScenePerspectiveStatus.ACTIVE
-    emotional_interpretation: EmotionalInterpretationOutput | None = None
-    belief: CharacterBeliefOutput | None = None
-    impact: CharacterImpactOutput | None = None
+
+
+class SceneEnrichmentOutput(_StrictModel):
+    scene_id: str
+    emotions: list[EmotionalInterpretationOutput] = Field(default_factory=list)
+    beliefs: list[CharacterBeliefOutput] = Field(default_factory=list)
+    impacts: list[CharacterImpactOutput] = Field(default_factory=list)
+
+
+class SceneEnrichmentsOutput(_StrictModel):
+    scene_enrichments: list[SceneEnrichmentOutput]
+
+
+class ScenePerspectiveBundleOutput(ScenePerspectiveOutput):
+    emotions: list[EmotionalInterpretationOutput] = Field(default_factory=list)
+    beliefs: list[CharacterBeliefOutput] = Field(default_factory=list)
+    impacts: list[CharacterImpactOutput] = Field(default_factory=list)
 
 
 class EmbodimentObservationsOutput(_StrictModel):
@@ -1052,6 +1091,8 @@ class GoalUpdateOutput(_StrictModel):
 class LLMCallRecord(_StrictModel):
     stage: str
     usage_tag: str
+    provider: str
+    model: str
     input_chars: int
     output_chars: int
     input_tokens_est: int
@@ -1062,7 +1103,7 @@ class LLMCallRecord(_StrictModel):
 class EmbodyAgentResult(_StrictModel):
     source_entity_id: str
     source_entity_alias: str
-    perspectives: list[ScenePerspectiveOutput]
+    perspectives: list[ScenePerspectiveBundleOutput]
     observations: EmbodimentObservationsOutput
     axis_updates: list[AxisChangeData]
     aspect_updates: list[AspectUpdateData]

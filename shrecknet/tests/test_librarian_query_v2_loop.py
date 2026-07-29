@@ -41,12 +41,9 @@ class Retrieval:
 
 
 @pytest.mark.asyncio
-async def test_v2_runs_two_follow_up_passes_and_preserves_provenance(tmp_path, monkeypatch):
+async def test_v2_plans_all_needs_and_retrieves_once(tmp_path, monkeypatch):
     llm = SequenceLLM([
-        '{"information_needs":["Need A"]}',
-        '{"adequate":false,"covered_needs":[],"missing_needs":["Need B"],"reason":"missing B"}',
-        '{"adequate":false,"covered_needs":["Need A"],"missing_needs":["Need C"],"reason":"missing C"}',
-        '{"adequate":true,"covered_needs":["Need A","Need B","Need C"],"missing_needs":[],"reason":"complete"}',
+        '{"information_needs":["Need A","Need B","Need C"]}',
     ])
     orchestrator = LibrarianOrchestrator(llm_client=llm, debug_artifacts_enabled=True)
     retrieval = Retrieval()
@@ -68,8 +65,8 @@ async def test_v2_runs_two_follow_up_passes_and_preserves_provenance(tmp_path, m
 
     assert retrieval.queries == ["Need A", "Need B", "Need C"]
     assert len(response.chunks) == 3
-    assert response.subqueries == ["Need A"]
-    assert [step["data"]["pass"] for step in response.trace if step["step"] == "v2_evidence_validation"] == [0, 1, 2]
+    assert response.subqueries == ["Need A", "Need B", "Need C"]
+    assert not [step for step in response.trace if step["step"] == "v2_evidence_validation"]
     manifest = next((tmp_path / "local_tests" / "librarian").glob("*/manifest.json"))
     assert manifest.exists()
 
@@ -78,22 +75,28 @@ async def test_v2_runs_two_follow_up_passes_and_preserves_provenance(tmp_path, m
 async def test_planner_invalid_json_falls_back_to_original_query(tmp_path):
     orchestrator = LibrarianOrchestrator(llm_client=SequenceLLM(["not json"]))
     from app.jobs.librarian.debug_artifacts import LibrarianDebugArtifacts
-    needs = await orchestrator._plan("¿Cómo funciona?", "Sistema", LibrarianDebugArtifacts(tmp_path))
+    needs, language = await orchestrator._plan(
+        "¿Cómo funciona?", "Sistema", LibrarianDebugArtifacts(tmp_path)
+    )
     assert needs == ["¿Cómo funciona?"]
+    assert language == "und"
 
 
 @pytest.mark.asyncio
 async def test_planner_uses_shared_json_repair_service(tmp_path):
     llm = SequenceLLM([
         '{information_needs: ["Need armor rules"]}',
-        '{"information_needs":["Need armor rules"]}',
+        '{"information_needs":["Need armor rules"],"target_language":"en"}',
     ])
     orchestrator = LibrarianOrchestrator(llm_client=llm, repair_json_model="repair-model")
     from app.jobs.librarian.debug_artifacts import LibrarianDebugArtifacts
 
-    needs = await orchestrator._plan("How does armor work?", "System", LibrarianDebugArtifacts(tmp_path))
+    needs, language = await orchestrator._plan(
+        "How does armor work?", "System", LibrarianDebugArtifacts(tmp_path)
+    )
 
     assert needs == ["Need armor rules"]
+    assert language == "en"
     assert llm.tags == ["librarian_plan", "agents.json_repair"]
 
 
@@ -109,30 +112,54 @@ def test_merge_evidence_keeps_best_hit_and_all_need_pass_provenance():
 
 
 @pytest.mark.asyncio
-async def test_synthesis_formats_evidence_validation_contract(tmp_path):
-    llm = SequenceLLM(["Grounded answer"])
+async def test_synthesis_uses_structured_output_and_requires_citations(tmp_path):
+    llm = SequenceLLM([
+        '{"claims":[{"id":"claim-1","text":"Armor provides protection.",'
+        '"citations":["source-1"]}],"uncertainty":null}'
+    ])
     orchestrator = LibrarianOrchestrator(llm_client=llm)
     from app.jobs.librarian.debug_artifacts import LibrarianDebugArtifacts
-    from app.jobs.librarian.query_v2 import EvidenceValidation
     from app.jobs.librarian.schemas import RetrievedChunk
 
     answer = await orchestrator._synthesize(
         "How does armor work?",
         [RetrievedChunk(library_item_id=1, page_number=2, text="Armor evidence", score=0.9,
                         source_id="source-1", book_title="Rules")],
-        None,
         "System",
         [],
         LibrarianDebugArtifacts(tmp_path),
-        validation=EvidenceValidation(False, ["Armor basics"], ["Armor exceptions"], "Missing exceptions"),
-        warning="Missing exceptions",
     )
 
-    assert answer == "Grounded answer"
+    assert answer.claims[0].text == "Armor provides protection."
+    assert answer.claims[0].citations == ["source-1"]
     assert llm.tags == ["librarian_answer"]
+    assert llm.calls[0]["model"] == "gpt-4o"
+    assert llm.calls[0]["response_format"]["json_schema"]["strict"] is True
     synthesis_prompt = llm.calls[0]["messages"][1]["content"]
-    assert '"missing_needs": [' in synthesis_prompt
-    assert "Armor exceptions" in synthesis_prompt
+    assert "Armor evidence" in synthesis_prompt
+
+
+@pytest.mark.asyncio
+async def test_synthesis_falls_back_when_neutral_citations_are_missing(tmp_path):
+    llm = SequenceLLM([
+        '{"claims":[{"id":"claim-1","text":"Armor provides protection.",'
+        '"citations":[]}],"uncertainty":null}',
+    ])
+    orchestrator = LibrarianOrchestrator(llm_client=llm)
+    from app.jobs.librarian.debug_artifacts import LibrarianDebugArtifacts
+    from app.jobs.librarian.schemas import RetrievedChunk
+
+    answer = await orchestrator._synthesize(
+        "How does armor work?",
+        [RetrievedChunk(
+            library_item_id=1, page_number=2, text="Armor evidence",
+            score=0.9, source_id="source-1", book_title="Rules",
+        )],
+        "System", [], LibrarianDebugArtifacts(tmp_path),
+    )
+
+    assert answer.claims[0].citations == ["source-1"]
+    assert llm.tags == ["librarian_answer"]
 
 
 def test_synthesis_evidence_budget_keeps_one_chunk_that_crosses_the_limit(monkeypatch):

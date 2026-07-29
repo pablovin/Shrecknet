@@ -23,7 +23,6 @@ def test_elder_debug_artifacts_write_ordered_responses_and_manifest(tmp_path):
         retrieval_plan=ElderRetrievalPlan(
             answer_goal="answer the question",
             response_scope="standard",
-            evidence_budget_tokens=10_000,
         ),
         trace_id="trace-1",
     )
@@ -43,7 +42,7 @@ def test_elder_debug_artifacts_write_ordered_responses_and_manifest(tmp_path):
     assert final_response == response.model_dump(mode="json")
     assert final_response_path
     manifest = json.loads((tmp_path / "manifest.json").read_text(encoding="utf-8"))
-    assert manifest["pipeline_version"] == "elder-query-retrieval-v2"
+    assert manifest["pipeline_version"] == "elder-query-retrieval-v3"
     assert manifest["trace_id"] == "trace-1"
     assert manifest_path
 

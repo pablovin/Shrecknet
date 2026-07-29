@@ -6,6 +6,7 @@ import asyncio
 import logging
 import os
 import random
+import time
 from collections import defaultdict
 from typing import Any
 
@@ -29,7 +30,10 @@ class ShreckLLMClient:
         self.base_url = base_url.rstrip("/")
         self.timeout = float(timeout)
         self.max_retries = max(0, int(max_retries))
-        self.poll_without_deadline = bool(poll_without_deadline)
+        # Kept as an accepted compatibility argument for existing callers.
+        # Submitted jobs are owned by shreckLLM and are always polled to a
+        # terminal state; only shreckLLM may end provider execution.
+        del poll_without_deadline
         self._max_backoff_s = 20.0
         self._http = httpx.AsyncClient(base_url=self.base_url, timeout=self.timeout)
         self._usage_events: list[dict[str, Any]] = []
@@ -56,6 +60,7 @@ class ShreckLLMClient:
         usage_tag: str | None = None,
         return_metadata: bool = False,
         max_tokens: int | None = None,
+        response_format: dict[str, Any] | None = None,
     ) -> str | dict[str, Any]:
         target = self._coerce_target(model)
         await self.ensure_provider_ready(target.provider)
@@ -68,8 +73,23 @@ class ShreckLLMClient:
             "use_conversation_memory": use_conversation_memory,
             "metadata": {"usage_tag": usage_tag} if usage_tag else None,
             "max_tokens": max_tokens,
+            "response_format": response_format,
         }
-        attempts = self.max_retries + 1
+        input_tokens_est = self._estimate_message_tokens(messages)
+        stage = self._display_stage(usage_tag)
+        is_elder_call = str(usage_tag or "").startswith("elder.")
+        if is_elder_call:
+            print(
+                "[ELDER_LLM_REQUEST] "
+                f"stage={stage} provider={target.provider} model={target.name} "
+                f"input_tokens_est={input_tokens_est}",
+                flush=True,
+            )
+        # A submitted job continues executing inside shreckLLM even if this
+        # caller's polling deadline expires. Never submit a duplicate job here;
+        # shreckLLM owns provider retries and their accounting.
+        attempts = 1
+        request_started = time.monotonic()
         for attempt in range(1, attempts + 1):
             try:
                 job_id = await self.submit_chat_job(payload)
@@ -83,18 +103,29 @@ class ShreckLLMClient:
                 )
                 data = await self.wait_for_chat_job(
                     job_id,
-                    timeout_s=None if self.poll_without_deadline else self.timeout,
+                    timeout_s=None,
                     poll_interval_s=1.0,
                 )
                 text = str(data.get("text") or "")
                 usage = data.get("usage") if isinstance(data.get("usage"), dict) else {}
                 resolved_model = str(data.get("resolved_model") or target.name)
                 provider_id = str(data.get("provider_id") or target.provider)
+                wait_ms = round((time.monotonic() - request_started) * 1000, 2)
                 self._record_usage_event(
                     model=f"{provider_id}:{resolved_model}",
                     usage=usage,
                     usage_tag=usage_tag,
+                    input_tokens_est=input_tokens_est,
+                    wait_ms=wait_ms,
                 )
+                if is_elder_call:
+                    print(
+                        "[ELDER_LLM_RESPONSE] "
+                        f"stage={stage} provider={provider_id} model={resolved_model} "
+                        f"input_tokens={usage.get('prompt_tokens') or input_tokens_est} "
+                        f"output_tokens={usage.get('completion_tokens')} wait_ms={wait_ms:.2f}",
+                        flush=True,
+                    )
                 if return_metadata:
                     return {
                         "text": text,
@@ -239,6 +270,8 @@ class ShreckLLMClient:
         model: str,
         usage: dict[str, Any],
         usage_tag: str | None,
+        input_tokens_est: int,
+        wait_ms: float,
     ) -> None:
         prompt_tokens = usage.get("prompt_tokens")
         completion_tokens = usage.get("completion_tokens")
@@ -249,11 +282,35 @@ class ShreckLLMClient:
                 "prompt_tokens": prompt_tokens if isinstance(prompt_tokens, int) else None,
                 "completion_tokens": completion_tokens if isinstance(completion_tokens, int) else None,
                 "total_tokens": total_tokens if isinstance(total_tokens, int) else None,
-                "input_tokens_est": prompt_tokens if isinstance(prompt_tokens, int) else None,
+                "input_tokens_est": (
+                    prompt_tokens if isinstance(prompt_tokens, int) else input_tokens_est
+                ),
                 "memory_tokens_est": 0 if isinstance(prompt_tokens, int) else None,
                 "usage_tag": (usage_tag or "").strip() or None,
+                "wait_ms": wait_ms,
             }
         )
+
+    @staticmethod
+    def _estimate_message_tokens(messages: list[dict[str, str]]) -> int:
+        # Provider tokenizers differ; chars/4 plus a small per-message allowance
+        # is a stable preflight estimate suitable for operational progress logs.
+        character_count = sum(
+            len(str(message.get("role") or "")) + len(str(message.get("content") or ""))
+            for message in messages
+        )
+        return max(1, (character_count + 3) // 4 + (4 * len(messages)))
+
+    @staticmethod
+    def _display_stage(usage_tag: str | None) -> str:
+        tag = str(usage_tag or "").strip()
+        if not tag:
+            return "unspecified"
+        marker = ".v2."
+        if marker in tag:
+            suffix = tag.split(marker, 1)[1]
+            return suffix.split(".", 1)[1] if "." in suffix else suffix
+        return tag
 
     def get_usage_summary(self, *, reset: bool = False) -> dict[str, Any]:
         payload = self._summarize_usage_events(self._usage_events)

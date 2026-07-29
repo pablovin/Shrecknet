@@ -4,15 +4,23 @@ This document describes the sole supported Elder query and retrieval system.
 
 ## V2 Contract
 
-The normal path makes two LLM calls: one retrieval-plan call (at most five controlled
-operations), deterministic dependency-wave retrieval, and one Elder synthesis call.
-The synthesis call receives the complete hydrated evidence records, including canonical
-node properties, every selected semantic document, provenance, and temporal metadata.
-Evidence is never shortened into a preview or silently cut off.
+The normal path uses independently configured `model_elder_planner`,
+`model_elder_synthesis`, and `model_elder_character_incorporation` targets.
+Planning detects the original query's BCP-47 language while selecting at most
+five retrieval operations. After deterministic retrieval, neutral English
+synthesis returns atomic factual claims with trusted evidence IDs. Character
+incorporation receives only the original query, detected language, agent name,
+description, writing style, and citation-free claim text.
+The synthesis call receives full, atomic source records, including canonical node
+properties, every semantic document for each accepted source, provenance, and temporal
+metadata. Every terminal evidence step declares an `evidence_type`; the server maps
+it to an immutable 12,000–100,000 token target. The source that crosses a step's
+soft target is included in full, then collection for that step stops. Records are
+never partially truncated.
 
-If multiple complete records exceed the model context they are processed in complete-record
-batches and combined by an additional synthesis pass. A single record too large for one
-model call produces a typed capacity failure instead of partial evidence.
+If accepted records exceed the synthesis model context they are processed in
+record-boundary batches and combined by an additional synthesis pass. A single record
+too large for one model call produces a typed capacity failure instead of partial evidence.
 
 ## Jobs Overview
 
@@ -26,6 +34,32 @@ Chat stream-compatible endpoint:
 
 - `POST /chat/messages/stream`
 
+Model configuration uses the shared admin endpoints:
+
+- `GET /config/` reads all three Elder model targets.
+- `PUT /config/` updates either target.
+- `GET /config/schema` exposes both fields in the Elder group.
+- `GET /llm_status/` reports readiness for both targets.
+
+Planner, synthesis, and character calls request strict JSON Schema output when
+supported. Malformed planner plans, neutral synthesis payloads, and character
+renderer payloads are repaired through the shared `model_agents_repair_json`
+target. The stage-specific Elder model remains responsible for primary generation;
+the global repair target is the single authority for JSON and schema correction.
+Character output contains cohesive passages associated with claim IDs. It may
+reorder, combine, and condense claims, but every claim ID must occur exactly
+once and the prose cannot contain citation markup or source identifiers. The
+backend restores trusted attribution as Unicode superscript numbers in source
+order (`¹`, `²`, …, `¹⁰`). Each number refers to the corresponding one-based
+entry in `sources[]`; full attribution remains available through
+`sources[].evidence_id` and the complete structured source record. Invalid,
+unavailable, or timed-out character rendering is retried once through
+`model_agents_repair_json` with a corrective contract prompt.
+If the configured model fails the contract twice, the Elder request fails
+explicitly; it never presents neutral synthesis as a successful in-character
+answer. When no character target is configured, neutral rendering remains the
+configuration-level fallback.
+
 ## Goal
 
 Given a user question, Elder returns a grounded answer plus explicit source nodes (`EntityInstance`, `Scene`, `Milestone`) used to build the response.
@@ -36,7 +70,31 @@ The Elder v2 architecture is:
 2. One validated retrieval plan with at most five operations
 3. Parallel deterministic retrieval waves
 4. Unified deduplicated, ordered, fully hydrated evidence
-5. Personality-aware grounded synthesis
+5. Neutral English atomic-claim synthesis with citation attribution
+6. Cohesive language and character composition
+7. Deterministic superscript rendering with structured source attribution
+
+### Temporal planning and ordering
+
+Each retrieval step can explicitly choose `temporal.ordering` (`relevance` or
+`recency`), `temporal.direction` (`ascending` or `descending`), and its own
+result `limit`. The planner normally chooses a limit near 10 for an unspecified
+recent-history request, but this is guidance rather than a fixed window.
+
+Recency compares `updated_at` first and `created_at` second. Records without
+either timestamp are retained as non-comparable records after timestamped
+results; Elder does not invent a temporal position for them. `FOLLOWED_BY` and
+`PRECEDED_BY` are local source-order relationships and are not used to order
+records across sources.
+
+Temporal expansion preserves the planner-selected order through evidence
+consolidation and synthesis. `created_at`, `updated_at`, source/scene identifiers,
+the selected rank, and whether the record was temporally comparable are retained
+in evidence metadata.
+
+For non-temporal plans, evidence remains relevance-ranked. For temporal plans, the
+planner-selected temporal rank takes precedence when the synthesis budget selects
+which sources fit.
 
 Current implementation is in:
 
@@ -51,7 +109,7 @@ Current implementation is in:
 
 - Validates agent and ontology scope.
 - Optionally loads chat memory from `chat_id` (recent messages).
-- Builds a bounded retrieval plan according to route mode (`auto`, `fast`, `deep`).
+- Builds one adaptive bounded retrieval plan.
 
 Each intent contains:
 
@@ -69,29 +127,15 @@ Type guidance used by decomposition:
 - `milestone`: arc progression / when-how evolution
 - `mixed`: broad multi-type question
 
-### Route and Fast Behavior (Current)
+### Adaptive planning
 
-`fast` and `route` are both accepted on `ElderQueryRequest`.
-
-- `route=fast`: single mixed intent (`subquery = original query`).
-- `route=deep`: plan first, then execute bounded retrieval steps.
-- `route=auto`: fast-first pass, then expands to decomposition only if first pass is weak.
-
-Backward compatibility rule in code:
-
-- If `route` is omitted/`auto` and `fast=false`, the request is treated as `deep`.
-
-After that, both modes follow the same downstream stages:
-
-- candidate generation
-- candidate consolidation
-- reranking + memory priors
-- grounded synthesis
-
-Practical effect:
-
-- fast mode reduces latency and token usage
-- deep mode usually provides better coverage for multi-aspect questions
+Elder has one planner-driven execution path. The removed `fast` and `route`
+request fields are not accepted. A deterministic resolved-entity overview
+shortcut remains for narrow profile questions. It selects the single exact
+query entity (confidence `>= 0.99`) and ignores lower-confidence fuzzy candidates.
+If planner generation or validation fails for such a query, the fallback plan
+also uses an exact profile lookup plus entity-bound narrative context rather than
+an unconstrained search over the full conversational query.
 
 ### 2. Candidate Generation
 

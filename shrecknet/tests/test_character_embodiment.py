@@ -13,6 +13,7 @@ from app.jobs.character_agent.embody_agent_prompts import (
     ASPECTS_UPDATE_PROMPT,
     AXES_UPDATE_PROMPT,
     GOALS_UPDATE_PROMPT,
+    ENRICHMENT_PROMPT,
     OBSERVATIONS_PROMPT,
     PERSPECTIVE_PROMPT,
     PROMPT_VERSION,
@@ -25,6 +26,7 @@ from app.schemas.character_agent import (
     CharacterTimelineProjection,
 )
 from app.services.character_embodiment_service import CharacterEmbodimentService, _json_safe
+from app.services.character_agent_service import CharacterAgentService
 from app.db.base import Base
 from app.models.character_embodiment import CharacterEmbodimentDraft  # noqa: F401
 
@@ -43,6 +45,18 @@ def _canonical(overrides=None):
     if overrides:
         data.update(overrides)
     return data
+
+
+def _agent(llm):
+    target = LLMModelTarget()
+    return EmbodyAgent(
+        llm_client=llm,
+        character_incorporation_model=target,
+        scene_interpretation_model=target,
+        character_update_model=target,
+        max_aspects=4,
+        max_goals=3,
+    )
 
 
 class FakeLLM:
@@ -82,9 +96,10 @@ def test_prompts_document_complete_contracts():
     assert "scene_id" in PERSPECTIVE_PROMPT
     assert "source_type" in PERSPECTIVE_PROMPT
     assert "awareness_level" in PERSPECTIVE_PROMPT
-    assert "emotional_interpretation" in PERSPECTIVE_PROMPT
-    assert "belief" in PERSPECTIVE_PROMPT
-    assert "impact" in PERSPECTIVE_PROMPT
+    assert "character_reflection" in PERSPECTIVE_PROMPT
+    assert "emotions" in ENRICHMENT_PROMPT
+    assert "beliefs" in ENRICHMENT_PROMPT
+    assert "impacts" in ENRICHMENT_PROMPT
 
     assert "recurring_behaviours" in OBSERVATIONS_PROMPT
     assert "motivations" in OBSERVATIONS_PROMPT
@@ -108,15 +123,28 @@ def test_prompts_document_complete_contracts():
 # ── Pipeline tests ────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
-async def test_embodiment_pipeline_is_five_calls_with_parallel_steps_3_4_5():
+async def test_embodiment_pipeline_is_six_calls_with_parallel_profile_updates():
     llm = ParallelStepLLM({
-        "character_agent.embodiment.perspectives": json.dumps({
+        "character_agent.embodiment.character_incorporation": json.dumps({
             "perspectives": [{
                 "scene_id": "s1", "source_type": "participated",
                 "awareness_level": 80, "confidence": 75,
                 "summary": "Mara explored the ruins.",
                 "interpretation": "She felt curiosity.",
+                "character_reflection": "I need to know what lies below.",
                 "memory_strength": 60, "importance": 3, "status": "active",
+            }],
+        }),
+        "character_agent.embodiment.scene_interpretation": json.dumps({
+            "scene_enrichments": [{
+                "scene_id": "s1",
+                "emotions": [{"arousal": 50, "valence": 10, "description": "Uneasy curiosity."}],
+                "beliefs": [{"statement": "The ruins matter.", "confidence": 60, "status": "suspected"}],
+                "impacts": [{
+                    "impact_type": "goal_change", "target_id": "goal:investigate",
+                    "direction": "advanced", "magnitude": 40,
+                    "description": "The investigation advanced.",
+                }],
             }],
         }),
         "character_agent.embodiment.observations": json.dumps({
@@ -141,7 +169,7 @@ async def test_embodiment_pipeline_is_five_calls_with_parallel_steps_3_4_5():
             "goal_updates": [],
         }),
     })
-    agent = EmbodyAgent(llm_client=llm, model=LLMModelTarget(), max_aspects=4, max_goals=3)
+    agent = _agent(llm)
     scenes = [
         SceneInput(scene_id="s1", name="Ruins", description="Mara explores ancient ruins.",
                    created_at="2026-01-01T00:00:00Z"),
@@ -151,37 +179,57 @@ async def test_embodiment_pipeline_is_five_calls_with_parallel_steps_3_4_5():
         source_entity_alias="Source A",
         canonical_identity=_canonical(),
         current_behavioural_axes={axis: 50 for axis in BEHAVIOURAL_AXES},
-        current_aspects=[],
-        current_goals=[],
+        current_aspects=[{
+            "id": "aspect:curious", "name": "Curious", "category": "personality",
+            "description": "Seeks answers",
+        }],
+        current_goals=[{
+            "id": "goal:investigate", "title": "Investigate",
+            "description": "Find answers", "goal_type": "desire",
+        }],
         scenes=scenes,
     )
-    assert len(llm.calls) == 5
-    assert result.total_llm_calls == 5
+    assert len(llm.calls) == 6
+    assert result.total_llm_calls == 6
     assert result.total_tokens_est > 0
-    assert len(result.llm_calls) == 5
+    assert len(result.llm_calls) == 6
     assert result.source_entity_id == "source-a"
     assert result.source_entity_alias == "Source A"
     assert len(result.perspectives) == 1
     assert result.perspectives[0].scene_id == "s1"
+    assert result.perspectives[0].character_reflection.startswith("I need")
+    assert len(result.perspectives[0].emotions) == 1
+    assert result.perspectives[0].impacts[0].target_id == "goal:investigate"
     assert len(result.observations.recurring_behaviours) == 1
     assert len(result.axis_updates) == 1
     assert result.axis_updates[0].axis == "cautious_reckless"
     tags = [call["usage_tag"] for call in llm.calls]
-    assert "character_agent.embodiment.perspectives" in tags
+    assert "character_agent.embodiment.character_incorporation" in tags
+    assert "character_agent.embodiment.scene_interpretation" in tags
     assert "character_agent.embodiment.observations" in tags
-    assert tags.index("character_agent.embodiment.perspectives") < tags.index(
+    assert tags.index("character_agent.embodiment.character_incorporation") < tags.index(
         "character_agent.embodiment.observations"
     )
     for t in ("character_agent.embodiment.axes", "character_agent.embodiment.aspects",
               "character_agent.embodiment.goals"):
         assert t in tags
+    incorporation_payload = json.loads(llm.calls[0]["messages"][1]["content"])
+    assert "authored_text" not in json.dumps(incorporation_payload)
+    enrichment_call = next(
+        call for call in llm.calls
+        if call["usage_tag"] == "character_agent.embodiment.scene_interpretation"
+    )
+    observations_call = next(
+        call for call in llm.calls
+        if call["usage_tag"] == "character_agent.embodiment.observations"
+    )
+    assert "character_reflection" not in enrichment_call["messages"][1]["content"]
+    assert "character_reflection" not in observations_call["messages"][1]["content"]
 
 
 @pytest.mark.asyncio
 async def test_embodiment_rejects_empty_scenes():
-    agent = EmbodyAgent(
-        llm_client=FakeLLM({}), model=LLMModelTarget(), max_aspects=4, max_goals=3,
-    )
+    agent = _agent(FakeLLM({}))
     with pytest.raises(EmbodimentGenerationError, match="no scenes"):
         await agent.run(
             source_entity_id="s", source_entity_alias="S",
@@ -194,12 +242,18 @@ async def test_embodiment_rejects_empty_scenes():
 @pytest.mark.asyncio
 async def test_embodiment_rejects_unknown_evidence_in_observations():
     llm = FakeLLM({
-        "character_agent.embodiment.perspectives": json.dumps({
+        "character_agent.embodiment.character_incorporation": json.dumps({
             "perspectives": [{
                 "scene_id": "s1", "source_type": "participated",
                 "awareness_level": 50, "confidence": 50,
                 "summary": "Scene.", "interpretation": "Ok.",
+                "character_reflection": "I remember.",
                 "memory_strength": 50, "importance": 3, "status": "active",
+            }],
+        }),
+        "character_agent.embodiment.scene_interpretation": json.dumps({
+            "scene_enrichments": [{
+                "scene_id": "s1", "emotions": [], "beliefs": [], "impacts": [],
             }],
         }),
         "character_agent.embodiment.observations": json.dumps({
@@ -210,7 +264,7 @@ async def test_embodiment_rejects_unknown_evidence_in_observations():
             "relationships": [], "contradictions": [], "evidence_gaps": [],
         }),
     })
-    agent = EmbodyAgent(llm_client=llm, model=LLMModelTarget(), max_aspects=4, max_goals=3)
+    agent = _agent(llm)
     with pytest.raises(EmbodimentGenerationError, match="unknown evidence"):
         await agent.run(
             source_entity_id="s", source_entity_alias="S",
@@ -224,16 +278,17 @@ async def test_embodiment_rejects_unknown_evidence_in_observations():
 @pytest.mark.asyncio
 async def test_embodiment_rejects_mismatched_scene_ids():
     llm = FakeLLM({
-        "character_agent.embodiment.perspectives": json.dumps({
+        "character_agent.embodiment.character_incorporation": json.dumps({
             "perspectives": [{
                 "scene_id": "wrong_id", "source_type": "participated",
                 "awareness_level": 50, "confidence": 50,
                 "summary": "Scene.", "interpretation": "Ok.",
+                "character_reflection": "I remember.",
                 "memory_strength": 50, "importance": 3, "status": "active",
             }],
         }),
     })
-    agent = EmbodyAgent(llm_client=llm, model=LLMModelTarget(), max_aspects=4, max_goals=3)
+    agent = _agent(llm)
     with pytest.raises(EmbodimentGenerationError, match="scene_ids must match"):
         await agent.run(
             source_entity_id="s", source_entity_alias="S",
@@ -245,14 +300,53 @@ async def test_embodiment_rejects_mismatched_scene_ids():
 
 
 @pytest.mark.asyncio
+async def test_enrichment_rejects_unknown_impact_target():
+    llm = FakeLLM({
+        "character_agent.embodiment.character_incorporation": json.dumps({
+            "perspectives": [{
+                "scene_id": "s1", "source_type": "participated",
+                "awareness_level": 50, "confidence": 50,
+                "summary": "Scene.", "interpretation": "Grounded.",
+                "character_reflection": "I remember.",
+                "memory_strength": 50, "importance": 3,
+            }],
+        }),
+        "character_agent.embodiment.scene_interpretation": json.dumps({
+            "scene_enrichments": [{
+                "scene_id": "s1", "emotions": [], "beliefs": [],
+                "impacts": [{
+                    "impact_type": "goal_change", "target_id": "goal:unknown",
+                    "direction": "advanced", "magnitude": 50,
+                    "description": "Advances an unknown goal.",
+                }],
+            }],
+        }),
+    })
+    with pytest.raises(EmbodimentGenerationError, match="unknown profile target"):
+        await _agent(llm).run(
+            source_entity_id="s", source_entity_alias="S",
+            canonical_identity=_canonical(),
+            current_behavioural_axes={axis: 50 for axis in BEHAVIOURAL_AXES},
+            current_aspects=[], current_goals=[],
+            scenes=[SceneInput(scene_id="s1", name="Scene", description="Objective")],
+        )
+
+
+@pytest.mark.asyncio
 async def test_embodiment_pipeline_records_llm_stats():
     llm = FakeLLM({
-        "character_agent.embodiment.perspectives": json.dumps({
+        "character_agent.embodiment.character_incorporation": json.dumps({
             "perspectives": [{
                 "scene_id": "s1", "source_type": "participated",
                 "awareness_level": 50, "confidence": 50,
                 "summary": "Test.", "interpretation": "Test.",
+                "character_reflection": "I remember this.",
                 "memory_strength": 50, "importance": 3, "status": "active",
+            }],
+        }),
+        "character_agent.embodiment.scene_interpretation": json.dumps({
+            "scene_enrichments": [{
+                "scene_id": "s1", "emotions": [], "beliefs": [], "impacts": [],
             }],
         }),
         "character_agent.embodiment.observations": json.dumps({
@@ -266,7 +360,7 @@ async def test_embodiment_pipeline_records_llm_stats():
         "character_agent.embodiment.aspects": json.dumps({"aspect_updates": []}),
         "character_agent.embodiment.goals": json.dumps({"goal_updates": []}),
     })
-    agent = EmbodyAgent(llm_client=llm, model=LLMModelTarget(), max_aspects=4, max_goals=3)
+    agent = _agent(llm)
     result = await agent.run(
         source_entity_id="s", source_entity_alias="S",
         canonical_identity=_canonical(),
@@ -274,11 +368,12 @@ async def test_embodiment_pipeline_records_llm_stats():
         current_aspects=[], current_goals=[],
         scenes=[SceneInput(scene_id="s1", name="Scene", description="", created_at=None)],
     )
-    assert result.total_llm_calls == 5
+    assert result.total_llm_calls == 6
     assert result.total_tokens_est >= 5
     for record in result.llm_calls:
         assert record.stage in (
-            "scene perspectives", "embodiment observations",
+            "character incorporation", "scene psychological enrichment",
+            "cross-scene observations",
             "axis updates", "aspect updates", "goal updates",
         )
         assert record.usage_tag.startswith("character_agent.embodiment.")
@@ -430,6 +525,103 @@ def test_timeline_contract_preserves_revision_subtitles():
     assert timeline.revisions[0].subtitle == "The Doll"
 
 
+class _TimelineResult:
+    def __init__(self, row=None):
+        self.row = row
+
+    async def single(self):
+        return self.row
+
+
+class _TimelineTx:
+    def __init__(self):
+        self.calls = []
+
+    async def run(self, query, **params):
+        self.calls.append((query, params))
+        if "RETURN aspect.id AS id" in query:
+            return _TimelineResult({"id": "persisted-aspect"})
+        if "RETURN target.id AS target_id" in query:
+            return _TimelineResult({"target_id": params["target_id"]})
+        return _TimelineResult()
+
+
+@pytest.mark.asyncio
+async def test_timeline_persists_removed_impact_target_as_inactive_assignment():
+    aspect = {
+        "suggestion_id": "aspect:trusting",
+        "name": "Trusting",
+        "category": "identity",
+        "description": "Tends to trust others.",
+        "importance": 3,
+        "intensity": 60,
+        "justification": "Shown in the scene.",
+        "confidence": 0.8,
+        "evidence_ids": ["scene:1"],
+    }
+    revision_0 = {
+        "revision_number": 0,
+        "name": "Mara",
+        "trait_adherence": 80,
+        "behavioural_axes": {axis: 50 for axis in BEHAVIOURAL_AXES},
+        "active_aspects": [aspect],
+        "active_goals": [],
+    }
+    revision_1 = {
+        **revision_0,
+        "revision_number": 1,
+        "source_group_id": "source-1",
+        "active_aspects": [],
+    }
+    timeline = CharacterTimelineProjection.model_validate({
+        "revisions": [revision_0, revision_1],
+        "source_projections": [{
+            "source_group_id": "source-1",
+            "starting_revision_number": 0,
+            "perspectives": [{
+                "scene_id": "scene-1",
+                "source_type": "participated",
+                "awareness_level": 100,
+                "confidence": 100,
+                "summary": "Mara trusted someone.",
+                "interpretation": "The trust was misplaced.",
+                "memory_strength": 80,
+                "importance": 4,
+                "impacts": [{
+                    "impact_type": "aspect_change",
+                    "target_id": "aspect:trusting",
+                    "direction": "invalidated",
+                    "magnitude": 90,
+                    "description": "Her trusting nature was undermined.",
+                }],
+            }],
+            "resulting_revision": revision_1,
+        }],
+    })
+    tx = _TimelineTx()
+
+    await CharacterAgentService(None, None)._persist_timeline_tx(
+        tx,
+        {"id": "agent-1", "ontology_id": 1, "name": "Mara"},
+        timeline,
+        "2026-07-29T00:00:00+00:00",
+        provider=None,
+        model=None,
+        prompt_version=None,
+        profile_target_ids={},
+    )
+
+    inactive_assignment = next(
+        params for query, params in tx.calls
+        if "rel.status='inactive'" in query and "HAS_ASPECT" in query
+    )
+    assert inactive_assignment["agent_id"] == "agent-1"
+    impact = next(
+        params for query, params in tx.calls if "RETURN target.id AS target_id" in query
+    )
+    assert impact["target_id"] == "persisted-aspect"
+
+
 def test_graph_temporal_values_are_json_safe_in_nested_evidence():
     created_at = DateTime(2026, 7, 25, 14, 26, 27, 60_000_000, tzinfo=timezone.utc)
     normalized = _json_safe({
@@ -450,16 +642,17 @@ def test_graph_temporal_values_are_json_safe_in_nested_evidence():
 def test_embody_agent_result_aggregates_stats():
     from app.schemas.character_agent import (
         EmbodyAgentResult, LLMCallRecord,
-        ScenePerspectiveOutput, EmbodimentObservationsOutput,
+        ScenePerspectiveBundleOutput, EmbodimentObservationsOutput,
     )
     result = EmbodyAgentResult(
         source_entity_id="s1",
         source_entity_alias="Source 1",
         perspectives=[
-            ScenePerspectiveOutput(
+            ScenePerspectiveBundleOutput(
                 scene_id="sc1", source_type="participated",
                 awareness_level=50, confidence=50,
                 summary="Test.", interpretation="Test.",
+                character_reflection="I remember this.",
                 memory_strength=50, importance=3, status="active",
             ),
         ],
@@ -468,9 +661,11 @@ def test_embody_agent_result_aggregates_stats():
         aspect_updates=[],
         goal_updates=[],
         llm_calls=[
-            LLMCallRecord(stage="s1", usage_tag="t1", input_chars=100, output_chars=50,
+            LLMCallRecord(stage="s1", usage_tag="t1", provider="openai", model="m1",
+                          input_chars=100, output_chars=50,
                           input_tokens_est=25, output_tokens_est=13, total_tokens_est=38),
-            LLMCallRecord(stage="s2", usage_tag="t2", input_chars=200, output_chars=100,
+            LLMCallRecord(stage="s2", usage_tag="t2", provider="openai", model="m2",
+                          input_chars=200, output_chars=100,
                           input_tokens_est=50, output_tokens_est=25, total_tokens_est=75),
         ],
     )

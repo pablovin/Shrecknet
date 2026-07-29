@@ -183,7 +183,7 @@ def test_config_store_rejects_legacy_string_model_updates(monkeypatch, tmp_path)
     _reset_runtime_state()
 
     with pytest.raises(ValueError, match="must be an object with provider/name"):
-        update_settings({"model_elder": "legacy-elder-model"})
+        update_settings({"model_elder_planner": "legacy-elder-model"})
 
 
 def test_blank_model_targets_remain_blank_after_reload(monkeypatch, tmp_path) -> None:
@@ -191,13 +191,15 @@ def test_blank_model_targets_remain_blank_after_reload(monkeypatch, tmp_path) ->
     _reset_runtime_state()
 
     update_settings({
-        "model_character_agent_embodiment": {"provider": "", "name": ""},
+        "model_character_agent_character_incorporation": {"provider": "", "name": ""},
+        "model_character_agent_scene_interpretation": {"provider": "", "name": ""},
+        "model_character_agent_update": {"provider": "", "name": ""},
     })
 
     reloaded = reload_settings()
-    assert reloaded.model_character_agent_embodiment == LLMModelTarget(
-        provider="", name=""
-    )
+    assert reloaded.model_character_agent_character_incorporation == LLMModelTarget(provider="", name="")
+    assert reloaded.model_character_agent_scene_interpretation == LLMModelTarget(provider="", name="")
+    assert reloaded.model_character_agent_update == LLMModelTarget(provider="", name="")
 
 
 @pytest.mark.asyncio

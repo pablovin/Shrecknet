@@ -6,9 +6,12 @@ import json
 import re
 from typing import Any
 
+import httpx
+
 from app.jobs.elder.v2_schemas import RetrievalPlan
 from app.jobs.elder.prompts import V2_RETRIEVAL_PLANNER_PROMPT
-from app.jobs.shrecknet import validate_or_repair_json
+from app.jobs.shrecknet import repair_invalid_json, validate_or_repair_json
+from app.jobs.character_incorporation import normalize_target_language
 
 
 _WRITE_OR_UNSAFE = re.compile(
@@ -50,10 +53,53 @@ def validate_bounded_cypher(
     return plan
 
 
-def fallback_plan(query: str) -> RetrievalPlan:
+def fallback_plan(query: str, grounding: dict[str, Any] | None = None) -> RetrievalPlan:
+    normalized_query = re.sub(r"\s+", " ", query.casefold())
+    exact_entities = [
+        entity
+        for entity in (grounding or {}).get("resolved_entities") or []
+        if float(entity.get("confidence") or 0) >= 0.99
+        and (alias := str(entity.get("alias") or "").strip().casefold())
+        and alias in normalized_query
+    ]
+    if len(exact_entities) == 1:
+        alias = str(exact_entities[0]["alias"]).strip()
+        return RetrievalPlan.model_validate(
+            {
+                "answer_goal": f"Provide a grounded overview of {alias}",
+                "target_language": "und",
+                "response_scope": "standard",
+                "steps": [
+                    {
+                        "id": "entity_profile",
+                        "purpose": f"Retrieve the canonical profile for {alias}",
+                        "operation": "exact_lookup",
+                        "query": alias,
+                        "entity_refs": [alias],
+                        "target_data_type": "entity",
+                        "limit": 1,
+                        "evidence_type": "brief_fact",
+                    },
+                    {
+                        "id": "entity_context",
+                        "purpose": f"Retrieve important narrative context involving {alias}",
+                        "operation": "hybrid_search",
+                        "query": (
+                            f"Important characteristics, actions, relationships, "
+                            f"and major developments involving {alias}"
+                        ),
+                        "entity_refs": [alias],
+                        "target_data_type": "mixed",
+                        "limit": 14,
+                        "evidence_type": "standard_summary",
+                    },
+                ],
+            }
+        )
     return RetrievalPlan.model_validate(
         {
             "answer_goal": query,
+            "target_language": "und",
             "steps": [
                 {
                     "id": "primary",
@@ -61,41 +107,11 @@ def fallback_plan(query: str) -> RetrievalPlan:
                     "query": query,
                     "target_data_type": "mixed",
                     "limit": 20,
+                    "evidence_type": "standard_summary",
                 }
             ],
         }
     )
-
-
-def enforce_complete_source_policy(plan: RetrievalPlan, query: str) -> RetrievalPlan:
-    normalized = re.sub(r"\s+", " ", query.casefold()).strip()
-    explicitly_complete = bool(
-        re.search(r"\b(complete|entire|full|exhaustive|whole)\b", normalized)
-        or (
-            re.search(r"\bsummari[sz]e\b", normalized)
-            and re.search(r"\b(story|chapter|source|document|record)\b", normalized)
-        )
-    )
-    if explicitly_complete and not any(step.operation == "hydrate_sources" for step in plan.steps):
-        if len(plan.steps) < 5:
-            payload = plan.model_dump()
-            payload["steps"].append({
-                "id": "hydrate_complete_source",
-                "purpose": "Hydrate the explicitly requested complete source",
-                "operation": "hydrate_sources",
-                "inputs": [step.id for step in plan.steps],
-                "hydration_mode": "complete_source",
-                "max_tokens_per_source": 100_000,
-            })
-            plan = RetrievalPlan.model_validate(payload)
-    elif not explicitly_complete:
-        for step in plan.steps:
-            if step.hydration_mode == "complete_source":
-                step.hydration_mode = "local_context"
-                step.context_chunks_before = 1
-                step.context_chunks_after = 1
-                step.max_tokens_per_source = min(step.max_tokens_per_source, 1200)
-    return plan
 
 
 def _llm_grounding(grounding: dict[str, Any]) -> dict[str, Any]:
@@ -126,10 +142,16 @@ def _planner_schema() -> dict[str, Any]:
             properties = value.get("properties")
             if isinstance(properties, dict):
                 value = dict(value)
-                value["properties"] = {
+                cleaned_properties = {
                     key: clean(item) for key, item in properties.items()
                     if not key.endswith("_id") and not key.endswith("_ids")
                 }
+                value["properties"] = cleaned_properties
+                value["required"] = list(cleaned_properties)
+                value["additionalProperties"] = False
+            elif value.get("type") == "object":
+                value = dict(value)
+                value["additionalProperties"] = False
             return {key: clean(item) for key, item in value.items()}
         if isinstance(value, list):
             return [clean(item) for item in value]
@@ -153,12 +175,31 @@ async def create_retrieval_plan(
         grounding_json=json.dumps(_llm_grounding(grounding), ensure_ascii=False),
     )
     try:
-        raw = await llm_client.chat(
-            model=model,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.1,
-            usage_tag=usage_tag,
-        )
+        chat_kwargs = {
+            "model": model,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.1,
+            "usage_tag": usage_tag,
+        }
+        try:
+            raw = await llm_client.chat(
+                **chat_kwargs,
+                response_format={
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": "elder_retrieval_plan",
+                        "strict": True,
+                        "schema": _planner_schema(),
+                    },
+                },
+            )
+        except TypeError:
+            # Compatibility for in-process/test clients predating response_format.
+            raw = await llm_client.chat(**chat_kwargs)
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code != 400:
+                raise
+            raw = await llm_client.chat(**chat_kwargs)
         if debug is not None:
             debug.write("retrieval_planner_llm", input={"prompt": prompt}, output={"raw": raw})
         payload = await validate_or_repair_json(
@@ -174,17 +215,38 @@ async def create_retrieval_plan(
                 input={"raw": raw, "schema": _planner_schema()},
                 output={"parsed_or_repaired": payload},
             )
+        try:
+            parsed_plan = RetrievalPlan.model_validate(payload)
+        except Exception:
+            repaired_raw = await repair_invalid_json(
+                llm_client=llm_client,
+                model=repair_model,
+                malformed_text=json.dumps(payload, ensure_ascii=False),
+                schema_hint=json.dumps(_planner_schema(), ensure_ascii=False),
+                usage_tag=f"{usage_tag}.schema_repair",
+            )
+            parsed_plan = RetrievalPlan.model_validate(json.loads(repaired_raw))
         plan = validate_bounded_cypher(
-            RetrievalPlan.model_validate(payload),
+            parsed_plan,
             list(grounding.get("ontology_ids") or []),
             grounding.get("active_instance_id"),
         )
-        plan = enforce_complete_source_policy(plan, query)
+        plan.target_language = normalize_target_language(plan.target_language)
         if debug is not None:
             debug.write("retrieval_plan_validated", input=payload, output=plan)
         return plan
     except Exception as exc:
-        plan = fallback_plan(query)
+        plan = fallback_plan(query, grounding)
         if debug is not None:
-            debug.write("retrieval_plan_fallback", input={"query": query}, output={"error": str(exc), "plan": plan})
+            debug.write(
+                "retrieval_plan_fallback",
+                input={"query": query},
+                output={
+                    "reason": "planner_generation_or_validation_failed",
+                    "error_type": type(exc).__name__,
+                    "error": str(exc),
+                    "fallback_operation": "hybrid_search",
+                    "plan": plan,
+                },
+            )
         return plan

@@ -85,7 +85,7 @@ class ElderDebugArtifacts:
             return None
         path = self.output_dir / "manifest.json"
         payload = {
-            "pipeline_version": "elder-query-retrieval-v2",
+            "pipeline_version": "elder-query-retrieval-v3",
             "created_at": datetime.now(timezone.utc).isoformat(),
             "artifacts": list(self._files),
             **values,

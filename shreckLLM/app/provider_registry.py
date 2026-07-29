@@ -15,6 +15,7 @@ class ProviderAdapter(Protocol):
         messages: list[ChatMessage],
         temperature: float,
         max_tokens: int | None = None,
+        response_format: dict[str, Any] | None = None,
     ) -> dict[str, Any]: ...
 
     async def list_models(self) -> list[str]: ...

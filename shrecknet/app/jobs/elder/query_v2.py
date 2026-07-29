@@ -9,11 +9,19 @@ from difflib import SequenceMatcher
 from typing import Any
 from uuid import uuid4
 
+import httpx
+
+from app.jobs.character_incorporation import (
+    NeutralAnswer,
+    incorporate_character,
+    neutral_answer_schema,
+    render_answer,
+)
 from app.integrations.llm.model_policy import LLMTask
 from app.core.config_store import LLMModelTarget
 from app.jobs.elder.context_budget import partition_complete_records, serialize_evidence
 from app.jobs.elder.debug_artifacts import ElderDebugArtifacts
-from app.jobs.elder.evidence import assemble_evidence, compact_synthesis_evidence
+from app.jobs.elder.evidence import assemble_budgeted_evidence
 from app.jobs.elder.executor import ElderRetrievalExecutor
 from app.jobs.elder.grounding import build_grounding_package
 from app.jobs.elder.planner import create_retrieval_plan
@@ -21,7 +29,6 @@ from app.jobs.elder.prompts import (
     V2_GROUNDING_RULES_PROMPT,
     V2_OVERFLOW_EVIDENCE_PROMPT,
     V2_OVERFLOW_FINAL_PROMPT,
-    V2_PERSONA_PROMPT,
     V2_SYNTHESIS_PROMPT,
 )
 from app.jobs.elder.schemas import (
@@ -32,10 +39,11 @@ from app.jobs.elder.schemas import (
     SourceNode,
     TraceStep,
 )
-from app.jobs.elder.v2_schemas import RetrievalPlan
+from app.jobs.elder.v2_schemas import EVIDENCE_TARGET_TOKENS, RetrievalPlan
+from app.jobs.shrecknet import repair_invalid_json, validate_or_repair_json
 
 
-PIPELINE_VERSION = "elder-query-retrieval-v2"
+PIPELINE_VERSION = "elder-query-retrieval-v3"
 
 
 class ElderQueryV2:
@@ -46,28 +54,35 @@ class ElderQueryV2:
         llm_client,
         model_policy,
         graph_retriever,
-        default_top_k: int = 20,
         llm_max_concurrency: int = 1,
         debug_artifacts_enabled: bool = False,
     ):
         self.llm_client = llm_client
         self.model_policy = model_policy
         self.graph_retriever = graph_retriever
-        self.default_top_k = default_top_k
         self.llm_max_concurrency = max(1, int(llm_max_concurrency))
         self.repair_json_model = (
             getattr(model_policy, "model_agents_repair_json", None)
-            or self._query_model(LLMTask.DECOMPOSE)
+            or self._planner_model()
         )
         self.debug_artifacts_enabled = bool(debug_artifacts_enabled)
 
-    def _query_model(self, fallback_task: LLMTask) -> LLMModelTarget:
-        model = getattr(self.model_policy, "model_elder", None)
+    def _configured_model(self, field: str, fallback_task: LLMTask) -> LLMModelTarget:
+        model = getattr(self.model_policy, field, None)
         if isinstance(model, LLMModelTarget):
             return model
         if isinstance(model, str) and model.strip():
             return LLMModelTarget(provider="openai", name=model.strip())
         return self.model_policy.get_model(fallback_task)
+
+    def _planner_model(self) -> LLMModelTarget:
+        return self._configured_model("model_elder_planner", LLMTask.DECOMPOSE)
+
+    def _synthesis_model(self) -> LLMModelTarget:
+        return self._configured_model("model_elder_synthesis", LLMTask.SYNTHESIS)
+
+    def _character_model(self) -> LLMModelTarget | None:
+        return getattr(self.model_policy, "model_elder_character_incorporation", None)
 
     async def _match_query_entities(self, *, query: str, ontology_ids: list[int]) -> list[dict[str, Any]]:
         normalized_query = self._normalize_text(query)
@@ -128,11 +143,25 @@ class ElderQueryV2:
         return max(overlap, SequenceMatcher(None, alias_normalized, query_normalized).ratio() * 0.8, partial * 0.95)
 
     @classmethod
+    def _exact_query_entities(
+        cls, query: str, resolved_entities: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        normalized = cls._normalize_text(query)
+        return [
+            entity
+            for entity in resolved_entities
+            if float(entity.get("confidence") or 0) >= 0.99
+            and (alias := cls._normalize_text(str(entity.get("alias") or "")))
+            and alias in normalized
+        ]
+
+    @classmethod
     def _is_generic_entity_overview(cls, query: str, resolved_entities: list[dict[str, Any]]) -> bool:
-        if len(resolved_entities) != 1 or float(resolved_entities[0].get("confidence") or 0) < 0.99:
+        exact_entities = cls._exact_query_entities(query, resolved_entities)
+        if len(exact_entities) != 1:
             return False
         normalized = cls._normalize_text(query)
-        alias = cls._normalize_text(str(resolved_entities[0].get("alias") or ""))
+        alias = cls._normalize_text(str(exact_entities[0].get("alias") or ""))
         if not alias or alias not in normalized:
             return False
         patterns = (
@@ -154,14 +183,14 @@ class ElderQueryV2:
                 "important connections, and a few major narrative developments."
             ),
             "response_scope": "standard",
-            "evidence_budget_tokens": 10_000,
             "steps": [
                 {"id": "entity_profile", "operation": "exact_lookup", "query": alias,
                  "entity_refs": [alias], "target_data_type": "entity", "limit": 1},
                 {"id": "entity_context", "operation": "hybrid_search",
                  "query": f"Important characteristics, actions, relationships, and major developments involving {alias}",
                  "inputs": ["entity_profile"], "entity_refs": [alias],
-                 "target_data_type": "mixed", "limit": 14},
+                 "target_data_type": "mixed", "limit": 14,
+                 "evidence_type": "standard_summary"},
             ],
         })
 
@@ -251,12 +280,15 @@ class ElderQueryV2:
 
         plan_started = time.monotonic()
         if self._is_generic_entity_overview(request.query, resolved_entities):
-            plan = self._overview_plan(request.query, resolved_entities[0])
+            exact_entity = self._exact_query_entities(
+                request.query, resolved_entities
+            )[0]
+            plan = self._overview_plan(request.query, exact_entity)
             debug.write("retrieval_plan_fast_path", input={"query": request.query}, output=plan)
         else:
             plan = await create_retrieval_plan(
                 llm_client=self.llm_client,
-                model=self._query_model(LLMTask.DECOMPOSE),
+                model=self._planner_model(),
                 query=request.query,
                 grounding=grounding,
                 repair_model=self.repair_json_model,
@@ -286,17 +318,16 @@ class ElderQueryV2:
         trace.append(TraceStep(step="retrieval_waves", data={"waves": waves}))
 
         consolidate_started = time.monotonic()
-        evidence, sources = await assemble_evidence(
+        evidence, sources, synthesis_evidence, synthesis_selection = await assemble_budgeted_evidence(
             retriever=self.graph_retriever,
             plan=plan,
             step_results=step_results,
-            limit=request.top_k or self.default_top_k,
             ontology_ids=ontology_ids,
             instance_id=request.instance_id,
         )
         debug.write(
             "unified_evidence",
-            input={"selected_limit": request.top_k or self.default_top_k},
+            input={"selection": "all planner-selected evidence"},
             output={"evidence": evidence, "sources": sources},
         )
         timings["consolidate_ms"] = round((time.monotonic() - consolidate_started) * 1000, 2)
@@ -313,30 +344,57 @@ class ElderQueryV2:
 
         synthesis_started = time.monotonic()
         overflow_passes = 0
+        character_rendered: bool | None = None
         if request.mode == "context":
             answer = ""
         elif not evidence:
             failed_steps = [row for row in retrieval_debug if row.get("status") == "failed"]
             if failed_steps:
                 operations = ", ".join(str(row.get("operation")) for row in failed_steps)
-                answer = (
+                neutral_text = (
                     "I couldn't complete the knowledge-base retrieval required for this question "
                     f"because these operations failed: {operations}."
                 )
             else:
-                answer = (
+                neutral_text = (
                     "I couldn't find relevant grounded evidence in the knowledge base for this question. "
                     "Please try rephrasing or ask for a narrower scope."
                 )
-        else:
-            synthesis_evidence = compact_synthesis_evidence(
-                evidence, evidence_budget_tokens=plan.evidence_budget_tokens
+            neutral = NeutralAnswer.model_validate({
+                "claims": [{
+                    "id": "uncertainty-1",
+                    "text": neutral_text,
+                    "citations": [],
+                }],
+                "uncertainty": neutral_text,
+            })
+            rendered = await incorporate_character(
+                llm_client=self.llm_client,
+                model=self._character_model(),
+                original_query=request.query,
+                target_language=plan.target_language,
+                agent_name=agent.name,
+                agent_description=getattr(agent, "description", None),
+                writing_style=agent.writing_style,
+                answer=neutral,
+                usage_tag=f"{usage_prefix}.character_incorporation",
+                renderer_name="elder_character_incorporation",
+                required=True,
+                repair_model=self.repair_json_model,
             )
-            answer, overflow_passes = await self._synthesize_v2(
+            answer = render_answer(
+                neutral,
+                rendered=rendered,
+                citation_order=[],
+            )
+            character_rendered = rendered is not None
+        else:
+            answer, overflow_passes, character_rendered = await self._synthesize_v2(
                 agent=agent,
                 query=request.query,
                 evidence=synthesis_evidence,
                 chat_history=chat_history,
+                target_language=plan.target_language,
                 debug=debug,
                 usage_prefix=usage_prefix,
             )
@@ -348,18 +406,28 @@ class ElderQueryV2:
                     step="evidence",
                     data={
                         "selected_records": len(evidence),
-                        "complete": all(item.complete for item in evidence),
+                        "selection": synthesis_selection,
                         "overflow_passes": overflow_passes,
                     },
                 ),
                 TraceStep(step="timings", data={"trace_id": trace_id, "timings": timings}),
             ]
         )
+        if character_rendered is not None:
+            trace.append(TraceStep(
+                step="character_incorporation",
+                data={
+                    "target_language": plan.target_language,
+                    "rendered": character_rendered,
+                    "fallback": not character_rendered,
+                },
+            ))
         retrieval_debug.append(
             {
                 "pipeline_version": PIPELINE_VERSION,
                 "waves": waves,
                 "evidence_records": len(evidence),
+                "synthesis_selection": synthesis_selection,
                 "overflow_passes": overflow_passes,
             }
         )
@@ -411,7 +479,6 @@ class ElderQueryV2:
         return ElderRetrievalPlan(
             answer_goal=plan.answer_goal,
             response_scope=plan.response_scope,
-            evidence_budget_tokens=plan.evidence_budget_tokens,
             query_intent=plan.query_intent.model_dump(),
             steps=[
                 ElderRetrievalPlanStep(
@@ -425,10 +492,11 @@ class ElderQueryV2:
                     traversal=step.traversal.model_dump(),
                     target_data_type=step.target_data_type,
                     limit=step.limit,
-                    hydration_mode=step.hydration_mode,
-                    context_chunks_before=step.context_chunks_before,
-                    context_chunks_after=step.context_chunks_after,
-                    max_tokens_per_source=step.max_tokens_per_source,
+                    evidence_type=step.evidence_type,
+                    evidence_target_tokens=(
+                        EVIDENCE_TARGET_TOKENS[str(step.evidence_type)]
+                        if step.evidence_type else None
+                    ),
                 )
                 for step in plan.steps
             ],
@@ -436,12 +504,8 @@ class ElderQueryV2:
 
     async def _synthesize_v2(
         self, *, agent, query, evidence, chat_history, debug: ElderDebugArtifacts,
-        usage_prefix: str,
-    ) -> tuple[str, int]:
-        persona = V2_PERSONA_PROMPT.format(
-            agent_name=agent.name,
-            writing_style=agent.writing_style or "thoughtful, precise mentor",
-        )
+        usage_prefix: str, target_language: str,
+    ) -> tuple[str, int, bool]:
         rules = V2_GROUNDING_RULES_PROMPT
         conversation = json.dumps(
             [
@@ -451,32 +515,53 @@ class ElderQueryV2:
             ],
             ensure_ascii=False,
         )
-        fixed = f"{persona}\n{rules}\nQUERY:\n{query}\nCONVERSATION:\n{conversation}"
+        fixed = f"{rules}\nQUERY:\n{query}\nCONVERSATION:\n{conversation}"
         batches = partition_complete_records(evidence, fixed_prompt=fixed)
-        model = self._query_model(LLMTask.SYNTHESIS)
+        model = self._synthesis_model()
+        evidence_ids = {record.evidence_id for record in evidence}
         if len(batches) == 1:
             block = "\n".join(serialize_evidence(record) for record in batches[0])
             prompt = V2_SYNTHESIS_PROMPT.format(
-                persona=persona,
                 rules=rules,
                 query=query,
                 conversation_json=conversation,
                 evidence_block=block,
             )
-            answer = await self.llm_client.chat(
-                model=model,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.3,
+            neutral = await self._neutral_synthesis_call(
+                model=model, prompt=prompt, temperature=0.3,
                 usage_tag=f"{usage_prefix}.synthesize",
+                evidence_ids=evidence_ids,
             )
-            debug.write("synthesis_llm", input={"prompt": prompt}, output={"raw": answer})
-            return answer, 0
+            rendered = await incorporate_character(
+                llm_client=self.llm_client,
+                model=self._character_model(),
+                original_query=query,
+                target_language=target_language,
+                agent_name=agent.name,
+                agent_description=getattr(agent, "description", None),
+                writing_style=agent.writing_style,
+                answer=neutral,
+                usage_tag=f"{usage_prefix}.character_incorporation",
+                renderer_name="elder_character_incorporation",
+                required=True,
+                repair_model=self.repair_json_model,
+            )
+            answer = render_answer(
+                neutral,
+                rendered=rendered,
+                citation_order=[record.evidence_id for record in evidence],
+            )
+            debug.write(
+                "synthesis_llm",
+                input={"prompt": prompt},
+                output={"neutral": neutral, "character_rendered": rendered is not None},
+            )
+            return answer, 0, rendered is not None
 
         memoranda: list[str] = []
         for index, batch in enumerate(batches):
             block = "\n".join(serialize_evidence(record) for record in batch)
             prompt = V2_OVERFLOW_EVIDENCE_PROMPT.format(
-                persona=persona,
                 rules=rules,
                 query=query,
                 conversation_json=conversation,
@@ -484,13 +569,12 @@ class ElderQueryV2:
                 batch_count=len(batches),
                 evidence_block=block,
             )
-            memorandum = await self.llm_client.chat(
-                    model=model,
-                    messages=[{"role": "user", "content": prompt}],
-                    temperature=0.1,
+            memorandum = await self._neutral_synthesis_call(
+                    model=model, prompt=prompt, temperature=0.1,
                     usage_tag=f"{usage_prefix}.overflow_evidence.{index + 1}",
+                    evidence_ids={record.evidence_id for record in batch},
             )
-            memoranda.append(memorandum)
+            memoranda.append(memorandum.model_dump_json())
             debug.write(
                 f"overflow_evidence_llm_{index + 1}",
                 input={"prompt": prompt},
@@ -500,20 +584,105 @@ class ElderQueryV2:
             f"MEMORANDUM {index + 1}:\n{memo}" for index, memo in enumerate(memoranda)
         )
         final_prompt = V2_OVERFLOW_FINAL_PROMPT.format(
-            persona=persona,
             rules=rules,
             query=query,
             conversation_json=conversation,
             memoranda_block=combined,
         )
-        answer = await self.llm_client.chat(
-            model=model,
-            messages=[{"role": "user", "content": final_prompt}],
-            temperature=0.3,
+        neutral = await self._neutral_synthesis_call(
+            model=model, prompt=final_prompt, temperature=0.3,
             usage_tag=f"{usage_prefix}.overflow_final",
+            evidence_ids=evidence_ids,
         )
-        debug.write("overflow_final_llm", input={"prompt": final_prompt}, output={"raw": answer})
-        return answer, len(batches)
+        rendered = await incorporate_character(
+            llm_client=self.llm_client,
+            model=self._character_model(),
+            original_query=query,
+            target_language=target_language,
+            agent_name=agent.name,
+            agent_description=getattr(agent, "description", None),
+            writing_style=agent.writing_style,
+            answer=neutral,
+            usage_tag=f"{usage_prefix}.character_incorporation",
+            renderer_name="elder_character_incorporation",
+            required=True,
+            repair_model=self.repair_json_model,
+        )
+        answer = render_answer(
+            neutral,
+            rendered=rendered,
+            citation_order=[record.evidence_id for record in evidence],
+        )
+        debug.write(
+            "overflow_final_llm",
+            input={"prompt": final_prompt},
+            output={"neutral": neutral, "character_rendered": rendered is not None},
+        )
+        return answer, len(batches), rendered is not None
+
+    async def _neutral_synthesis_call(
+        self, *, model: LLMModelTarget, prompt: str, temperature: float,
+        usage_tag: str, evidence_ids: set[str],
+    ) -> NeutralAnswer:
+        schema = neutral_answer_schema()
+        kwargs = {
+            "model": model,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": temperature,
+            "usage_tag": usage_tag,
+        }
+        try:
+            raw = str(await self.llm_client.chat(
+                **kwargs,
+                response_format={
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": "elder_neutral_answer",
+                        "strict": True,
+                        "schema": schema,
+                    },
+                },
+            ))
+        except TypeError:
+            raw = str(await self.llm_client.chat(**kwargs))
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code != 400:
+                raise
+            raw = str(await self.llm_client.chat(**kwargs))
+        payload = await validate_or_repair_json(
+            llm_client=self.llm_client,
+            model=self.repair_json_model,
+            raw_text=raw,
+            schema_hint=json.dumps(schema, ensure_ascii=False),
+            usage_tag=f"{usage_tag}.json_repair",
+        )
+        try:
+            answer = NeutralAnswer.model_validate(payload)
+        except Exception:
+            repaired_raw = await repair_invalid_json(
+                llm_client=self.llm_client,
+                model=self.repair_json_model,
+                malformed_text=json.dumps(payload, ensure_ascii=False),
+                schema_hint=json.dumps(schema, ensure_ascii=False),
+                usage_tag=f"{usage_tag}.schema_repair",
+            )
+            answer = NeutralAnswer.model_validate_json(repaired_raw)
+        cited = {
+            citation
+            for claim in answer.claims
+            for citation in claim.citations
+        }
+        if cited - evidence_ids or (evidence_ids and not cited):
+            evidence_id = sorted(evidence_ids)[0]
+            return NeutralAnswer.model_validate({
+                "claims": [{
+                    "id": "fallback-1",
+                    "text": "Relevant evidence was found, but a complete grounded answer could not be produced.",
+                    "citations": [evidence_id],
+                }],
+                "uncertainty": "Neutral synthesis citation validation failed.",
+            })
+        return answer
 
     def _usage_event_count(self) -> int:
         getter = getattr(self.llm_client, "get_usage_event_count", None)
@@ -542,6 +711,7 @@ class ElderQueryV2:
                     "input_tokens": input_tokens,
                     "output_tokens": output_tokens,
                     "total_tokens": total_tokens,
+                    "wait_ms": round(float(event.get("wait_ms") or 0.0), 2),
                 }
             )
         totals = {
@@ -563,7 +733,7 @@ class ElderQueryV2:
                 f"trace_id={trace_id} agent_id={agent_id} call={row['call']} "
                 f"stage={row['stage']} model={row['model']} "
                 f"input_tokens={row['input_tokens']} output_tokens={row['output_tokens']} "
-                f"total_tokens={row['total_tokens']}",
+                f"total_tokens={row['total_tokens']} wait_ms={row['wait_ms']:.2f}",
                 flush=True,
             )
         print(

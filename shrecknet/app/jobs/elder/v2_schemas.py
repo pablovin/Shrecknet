@@ -19,6 +19,24 @@ ElderOperation = Literal[
     "bounded_read_cypher",
 ]
 
+EvidenceType = Literal[
+    "brief_fact",
+    "relationship_or_local_event",
+    "standard_summary",
+    "timeline_or_history",
+    "deep_comparison_or_mixed",
+    "exhaustive",
+]
+
+EVIDENCE_TARGET_TOKENS: dict[str, int] = {
+    "brief_fact": 12_000,
+    "relationship_or_local_event": 20_000,
+    "standard_summary": 35_000,
+    "timeline_or_history": 60_000,
+    "deep_comparison_or_mixed": 100_000,
+    "exhaustive": 100_000,
+}
+
 
 class QueryIntent(BaseModel):
     kind: Literal["fact", "summary", "relationship", "timeline", "history", "comparison", "mixed"] = "mixed"
@@ -40,11 +58,8 @@ class RetrievalFilters(BaseModel):
 class TemporalPlan(BaseModel):
     mode: Literal["none", "latest", "earliest", "before", "after", "so_far", "range", "timeline"] = "none"
     anchor: str | None = None
-    ordering_priority: list[str] = Field(
-        default_factory=lambda: [
-            "explicit_relationship", "ontology_property", "domain_date", "created_at"
-        ]
-    )
+    ordering: Literal["relevance", "recency"] = "relevance"
+    direction: Literal["ascending", "descending"] = "descending"
 
 
 class TraversalPlan(BaseModel):
@@ -67,12 +82,7 @@ class RetrievalStep(BaseModel):
         "entity", "scene", "milestone", "mixed", "ontology_definition"
     ] = "mixed"
     limit: int = Field(default=20, ge=1, le=100)
-    hydration_mode: Literal[
-        "metadata", "matched_excerpt", "local_context", "complete_source"
-    ] = "local_context"
-    context_chunks_before: int = Field(default=1, ge=0, le=4)
-    context_chunks_after: int = Field(default=1, ge=0, le=4)
-    max_tokens_per_source: int = Field(default=1200, ge=128, le=100_000)
+    evidence_type: EvidenceType | None = None
     cypher: str | None = None
     parameters: dict[str, Any] = Field(default_factory=dict)
     # Read-compatible aliases for plans emitted before the richer v2 contract.
@@ -95,8 +105,8 @@ class RetrievalStep(BaseModel):
 
 class RetrievalPlan(BaseModel):
     answer_goal: str = Field(min_length=1)
+    target_language: str = "und"
     response_scope: Literal["brief", "standard", "deep"] = "standard"
-    evidence_budget_tokens: int = Field(default=10_000, ge=1_000, le=200_000)
     query_intent: QueryIntent = Field(default_factory=QueryIntent)
     steps: list[RetrievalStep] = Field(min_length=1, max_length=5)
 
@@ -117,7 +127,40 @@ class RetrievalPlan(BaseModel):
             if not step.dependencies.issubset(known):
                 raise ValueError("steps must appear after their dependencies")
             known.add(step.id)
+        dependency_ids = {
+            dependency
+            for step in self.steps
+            for dependency in step.dependencies
+        }
+        for step in self.steps:
+            is_terminal = step.id not in dependency_ids
+            produces_evidence = (
+                is_terminal
+                and step.operation not in {"resolve_concept"}
+                and step.target_data_type != "ontology_definition"
+            )
+            if produces_evidence and step.evidence_type is None:
+                raise ValueError(
+                    f"terminal evidence step {step.id!r} requires evidence_type"
+                )
+            if not produces_evidence and step.evidence_type is not None:
+                raise ValueError(
+                    f"non-terminal or constraint step {step.id!r} cannot set evidence_type"
+                )
         return self
+
+    @property
+    def terminal_evidence_steps(self) -> list[RetrievalStep]:
+        dependency_ids = {
+            dependency
+            for step in self.steps
+            for dependency in step.dependencies
+        }
+        return [
+            step
+            for step in self.steps
+            if step.id not in dependency_ids and step.evidence_type is not None
+        ]
 
 
 class EvidenceRecord(BaseModel):
@@ -132,7 +175,6 @@ class EvidenceRecord(BaseModel):
     temporal_position: dict[str, Any] = Field(default_factory=dict)
     score: float = 0.0
     retrieval_methods: list[str] = Field(default_factory=list)
-    complete: bool = True
 
 
 class SynthesisEvidence(BaseModel):

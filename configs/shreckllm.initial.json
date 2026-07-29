@@ -42,6 +42,20 @@
       "api_key": "",
       "provider_type": "needs_api",
       "website_url": "https://console.anthropic.com/settings/keys"
+    },
+    "deepinfra": {
+      "models": [],
+      "base_url": "https://api.deepinfra.com/v1/openai",
+      "api_key": "",
+      "provider_type": "needs_api",
+      "website_url": "https://deepinfra.com/dash/api_keys"
+    },
+    "openrouter": {
+      "models": [],
+      "base_url": "https://openrouter.ai/api/v1",
+      "api_key": "",
+      "provider_type": "needs_api",
+      "website_url": "https://openrouter.ai/settings/keys"
     }
   },
   "bootstrap_memory_ttl_seconds": 3600,
@@ -50,13 +64,20 @@
   "bootstrap_request_timeout_seconds": 180.0,
   "bootstrap_max_queue_wait_seconds": 10.0,
   "bootstrap_provider_limits": {
+    "ollama": {
+      "max_concurrent": 1
+    },
     "ollama_cloud": {
-      "max_concurrent": 2,
+      "max_concurrent": 1,
       "max_queue_size": 64,
       "max_queue_wait_seconds": 20.0,
       "cooldown_seconds_on_429": 10.0,
       "requests_per_second": 0.0
-    }
+    },
+    "openai": {"max_concurrent": 10},
+    "anthropic": {"max_concurrent": 10},
+    "deepinfra": {"max_concurrent": 10},
+    "openrouter": {"max_concurrent": 10}
   },
   "ollama_keep_alive": "30m",
   "ollama_prewarm_on_startup": false

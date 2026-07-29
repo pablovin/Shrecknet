@@ -179,6 +179,7 @@ Example perspective creation:
   "confidence": 70,
   "summary": "The guard fell at the western gate.",
   "interpretation": "The keep can no longer protect its own people.",
+  "character_reflection": "I can still hear the gate splintering. We were never safe there.",
   "memory_strength": 90,
   "importance": 5,
   "status": "active"
@@ -210,6 +211,10 @@ A duplicate agent/scene pair returns `409`. Missing resources return `404`.
 Invalid scope, scene eligibility, assigned impact targets, or causal milestones
 return `400`; request-contract violations return `422`. Deleting a perspective,
 agent, or projected canonical scene cascades perspective-owned children.
+Embodiment-draft acceptance preserves goals and aspects referenced by historical
+timeline impacts even when they are absent from the final profile. Their
+`PURSUES` or `HAS_ASPECT` assignment is stored with `status=inactive`; final
+profile assignments remain active.
 
 ## Query
 
@@ -222,12 +227,18 @@ The agent must be active.
 
 `use_character_identity` defaults to `true` and normally performs two LLM calls:
 compact identity framing followed by deliberation/rendering. Invalid final JSON
-may trigger one repair call. Generic mode normally performs one call and
-receives no CharacterAgent identity. shreckLLM owns provider retries; Shrecknet
+may receive one repair attempt through `model_agents_repair_json`. Generic mode
+also performs framing followed by deliberation, but neither call receives
+CharacterAgent identity. Generic framing receives only the query and context.
+shreckLLM owns provider retries; Shrecknet
 polls the submitted shreckLLM job without a whole-stage deadline.
 
 `generation` contains only `temperature`; removed `generation.mode` and
 `generation.max_tokens` fields return `422`.
+
+In structured JSON results, fields named `rationale` use a server-owned
+2,000-character maximum. Longer generated values are truncated to 2,000
+characters before validation rather than causing repair or job failure.
 
 See [CharacterAgent Query](Query/Query.md) for request and response contracts.
 
@@ -301,14 +312,16 @@ Evidence returned in a draft is JSON-safe. Neo4j date/time values nested in
 entity properties or Scene provenance are represented as ISO-8601 strings.
 Revision 0 uses entity evidence only. Related Scenes are grouped by their
 required `DERIVED_FROM` source; groups and Scenes use `created_at` with stable
-ID tie-breakers. Each source runs one perspective call followed by parallel
-axes, aspects, and goals consolidation. Draft acceptance atomically materializes
-the revisions, change records, and perspectives.
+ID tie-breakers. Each source runs character incorporation, psychological
+enrichment, cross-scene observations, then parallel axes, aspects, and goals
+updates. Draft acceptance atomically materializes revisions, change records,
+perspectives, reflections, emotion/belief children, and impacts linked to their
+active goal/aspect targets.
 
 The existing background-job response contract is unchanged. During generation,
-its details report `status` and `active_stages`: Stage 1 reports `[1]`, the
-parallel projection wave reports `[2, 3, 4]`, and validation/merge reports an
-empty active-stage array.
+its details report `status` and `active_stages`: incorporation `[1]`,
+psychological enrichment `[2]`, observations `[3]`, parallel profile updates
+`[4]`, and validation/merge an empty active-stage array.
 
 The old manual creation payload remains valid. `embodiment_draft_id`, `aspects`,
 and `goals` are optional additions.
@@ -372,9 +385,13 @@ and goals always include `justification` and `confidence`. When evidence IDs are
 
 Configuration:
 
-- `model_character_agent_framing`, `model_character_agent_deliberation`, and
-  `model_character_agent_verification`: query pipeline targets.
-- `model_character_agent_embodiment`: model target shared by interpretation and proposal.
+- `model_character_agent_framing` and `model_character_agent_deliberation`:
+  query pipeline targets.
+- `model_agents_repair_json`: shared JSON repair target used for the optional
+  single repair attempt.
+- `model_character_agent_character_incorporation`: perspectives and expressive reflections.
+- `model_character_agent_scene_interpretation`: psychological enrichment and observations.
+- `model_character_agent_update`: parallel axis, aspect, and goal updates.
 - Every CharacterAgent model target defaults to
   `{"provider": "", "name": ""}`. Empty targets remain empty until an
   administrator selects a target or enabling AI agents reconciles them against

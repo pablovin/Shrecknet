@@ -1141,7 +1141,9 @@ async def _execute_generation(
 
                                     runner = EmbodyAgent(
                                         llm_client=client,
-                                        model=settings.model_character_agent_embodiment,
+                                        character_incorporation_model=settings.model_character_agent_character_incorporation,
+                                        scene_interpretation_model=settings.model_character_agent_scene_interpretation,
+                                        character_update_model=settings.model_character_agent_update,
                                         max_goals=settings.character_agent_embodiment_max_goals,
                                         max_aspects=settings.character_agent_embodiment_max_aspects,
                                     )
@@ -1186,7 +1188,7 @@ async def _execute_generation(
 
                                     def _map_aspect(a: dict) -> EmbodimentAspectProposal:
                                         return EmbodimentAspectProposal(
-                                            suggestion_id=_tid("aspect", a.get("name", "")),
+                                            suggestion_id=a.get("id") or _tid("aspect", a.get("name", "")),
                                             name=a.get("name", ""),
                                             category=a.get("category", "identity"),
                                             description=a.get("description"),
@@ -1203,7 +1205,7 @@ async def _execute_generation(
 
                                     def _map_goal(g: dict) -> EmbodimentGoalProposal:
                                         return EmbodimentGoalProposal(
-                                            suggestion_id=_tid("goal", g.get("title", "")),
+                                            suggestion_id=g.get("id") or _tid("goal", g.get("title", "")),
                                             title=g.get("title", ""),
                                             description=(
                                                 g.get("description") or g.get("title", "")
@@ -1309,9 +1311,13 @@ async def _execute_generation(
                                                 confidence=p.confidence,
                                                 summary=p.summary,
                                                 interpretation=p.interpretation,
+                                                character_reflection=p.character_reflection,
                                                 memory_strength=p.memory_strength,
                                                 importance=p.importance,
                                                 status=p.status,
+                                                emotions=p.emotions,
+                                                beliefs=p.beliefs,
+                                                impacts=p.impacts,
                                             )
                                             for p in bundle_result.perspectives
                                         ],
@@ -1322,6 +1328,7 @@ async def _execute_generation(
                                             bundle_result.subtitle_change
                                             or SubtitleChangeProposal()
                                         ),
+                                        llm_calls=list(bundle_result.llm_calls),
                                         resulting_revision=rev1,
                                     )
 
@@ -1351,12 +1358,12 @@ async def _execute_generation(
                                             tx, _agent, _tl, _ts,
                                             provider=str(
                                                 settings
-                                                .model_character_agent_embodiment
+                                                .model_character_agent_character_incorporation
                                                 .provider
                                             ),
                                             model=str(
                                                 settings
-                                                .model_character_agent_embodiment
+                                                .model_character_agent_character_incorporation
                                                 .name
                                             ),
                                             prompt_version=PROMPT_VERSION,

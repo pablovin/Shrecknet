@@ -64,7 +64,6 @@ class SourceEvidenceChunk(BaseModel):
     chunk_type: Optional[str] = None
     score: float = 0.0
     text: Optional[str] = None
-    complete: bool = True
 
 
 class SourceNode(BaseModel):
@@ -82,7 +81,6 @@ class SourceNode(BaseModel):
     provenance: dict[str, Any] = Field(default_factory=dict)
     temporal_position: dict[str, Any] = Field(default_factory=dict)
     retrieval_methods: list[str] = Field(default_factory=list)
-    complete: bool = True
     canonical_text: Optional[str] = None
     properties: dict[str, Any] = Field(default_factory=dict)
 
@@ -100,10 +98,8 @@ class ElderRetrievalPlanStep(BaseModel):
     traversal: dict[str, Any] = Field(default_factory=dict)
     target_data_type: str
     limit: int
-    hydration_mode: str
-    context_chunks_before: int
-    context_chunks_after: int
-    max_tokens_per_source: int
+    evidence_type: str | None = None
+    evidence_target_tokens: int | None = None
 
 
 class ElderRetrievalPlan(BaseModel):
@@ -111,7 +107,6 @@ class ElderRetrievalPlan(BaseModel):
 
     answer_goal: str
     response_scope: Literal["brief", "standard", "deep"]
-    evidence_budget_tokens: int
     query_intent: dict[str, Any] = Field(default_factory=dict)
     steps: list[ElderRetrievalPlanStep] = Field(default_factory=list)
 
@@ -126,18 +121,7 @@ class ElderQueryRequest(BaseModel):
         pattern="^(nl|context|both)$",
         description="Legacy response mode field",
     )
-    top_k: Optional[int] = Field(
-        None, ge=1, le=50, description="Number of results per intent"
-    )
     include_trace: bool = Field(False, description="Include execution trace")
-    fast: bool = Field(
-        False,
-        description="Fast mode: skip decomposition and use one mixed intent",
-    )
-    route: Literal["auto", "fast", "deep"] = Field(
-        "auto",
-        description="Execution route: auto (fast-first), fast (single-pass), deep (always decompose before retrieval)",
-    )
     chat_id: Optional[str] = Field(
         None, description="Optional chat ID to use conversation history as context"
     )
@@ -176,7 +160,12 @@ class ElderQueryResponse(BaseModel):
 
     agent_id: str = Field(..., description="Agent ID")
     query: str = Field(..., description="Original query")
-    answer: str = Field(..., description="Grounded synthesized answer")
+    answer: str = Field(
+        ...,
+        description=(
+            "Display-ready grounded answer. Evidence is returned separately in sources."
+        ),
+    )
     timings: dict[str, float] = Field(default_factory=dict)
     retrieval_plan: ElderRetrievalPlan
     sources: list[SourceNode] = Field(default_factory=list)
@@ -189,7 +178,7 @@ class ElderQueryResponse(BaseModel):
         None,
         description="Debug information about v2 retrieval steps and counters",
     )
-    pipeline_version: Literal["elder-query-retrieval-v2"] = "elder-query-retrieval-v2"
+    pipeline_version: Literal["elder-query-retrieval-v3"] = "elder-query-retrieval-v3"
     llm_usage: list[dict[str, Any]] = Field(
         default_factory=list,
         description="Per-LLM-call token usage in execution order",

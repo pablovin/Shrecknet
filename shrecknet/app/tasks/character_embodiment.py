@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from datetime import datetime, timezone
 from uuid import uuid4
@@ -31,12 +32,16 @@ from app.utils.async_helpers import run_async
 from app.utils.job_tracking import mark_job_done, mark_job_failed, mark_job_running, update_job_progress
 
 STEP_NAME: dict[int, str] = {
-    1: "Scene perspective",
-    2: "Observations",
-    3: "Axis updates",
-    4: "Aspect updates",
-    5: "Goal updates",
+    1: "Character incorporation",
+    2: "Psychological enrichment",
+    3: "Cross-scene observations",
+    4: "Profile updates",
 }
+
+
+def _stable_profile_id(kind: str, value: str) -> str:
+    normalized = re.sub(r"[^a-z0-9]+", "-", str(value).lower()).strip("-")
+    return f"{kind}:{normalized or 'unnamed'}"
 
 
 def _step_label(steps: list[int]) -> str:
@@ -93,7 +98,7 @@ def _build_timeline(
 
     def map_aspect(a: dict) -> EmbodimentAspectProposal:
         return EmbodimentAspectProposal(
-            suggestion_id=_id("aspect", a.get("name", "")),
+            suggestion_id=a.get("id") or _id("aspect", a.get("name", "")),
             name=a.get("name", ""),
             category=a.get("category", "identity"),
             description=a.get("description"),
@@ -106,7 +111,7 @@ def _build_timeline(
 
     def map_goal(g: dict) -> EmbodimentGoalProposal:
         return EmbodimentGoalProposal(
-            suggestion_id=_id("goal", g.get("title", "")),
+            suggestion_id=g.get("id") or _id("goal", g.get("title", "")),
             title=g.get("title", ""),
             description=g.get("description") or g.get("title", ""),
             goal_type=g.get("goal_type", "desire"),
@@ -205,8 +210,10 @@ def _build_timeline(
                     scene_id=p.scene_id, source_type=p.source_type,
                     awareness_level=p.awareness_level, confidence=p.confidence,
                     summary=p.summary, interpretation=p.interpretation,
+                    character_reflection=p.character_reflection,
                     memory_strength=p.memory_strength, importance=p.importance,
                     status=p.status,
+                    emotions=p.emotions, beliefs=p.beliefs, impacts=p.impacts,
                 )
                 for p in br.perspectives
             ],
@@ -215,6 +222,7 @@ def _build_timeline(
             goals=b_goals,
             subtitle_change=(getattr(br, "subtitle_change", None)
                              or SubtitleChangeProposal()),
+            llm_calls=list(br.llm_calls),
             resulting_revision=rev_n,
         ))
 
@@ -290,6 +298,7 @@ def _apply_aspect_ops(
                     break
             else:
                 aspects.append(dict(
+                    id=_stable_profile_id("aspect", upd.name),
                     name=upd.name, category=upd.category or "identity",
                     description=upd.description, importance=upd.importance or 3,
                     intensity=upd.intensity, justification=upd.justification,
@@ -297,6 +306,7 @@ def _apply_aspect_ops(
                 ))
         elif op == "add":
             aspects.append(dict(
+                id=_stable_profile_id("aspect", upd.name),
                 name=upd.name, category=upd.category or "identity",
                 description=upd.description, importance=upd.importance or 3,
                 intensity=upd.intensity, justification=upd.justification,
@@ -323,6 +333,7 @@ def _apply_goal_ops(
                     break
             else:
                 goals.append(dict(
+                    id=_stable_profile_id("goal", upd.title),
                     title=upd.title, description=upd.description or upd.title,
                     goal_type=upd.goal_type or "desire", priority=upd.priority or 50,
                     commitment=upd.commitment or 50, basis=upd.basis or "inferred",
@@ -331,6 +342,7 @@ def _apply_goal_ops(
                 ))
         elif op == "add":
             goals.append(dict(
+                id=_stable_profile_id("goal", upd.title),
                 title=upd.title, description=upd.description or upd.title,
                 goal_type=upd.goal_type or "desire", priority=upd.priority or 50,
                 commitment=upd.commitment or 50, basis=upd.basis or "inferred",
@@ -428,7 +440,9 @@ async def _generate(*, draft_id: str, revision: int, job_id: int) -> dict:
         try:
             agent = EmbodyAgent(
                 llm_client=client,
-                model=settings.model_character_agent_embodiment,
+                character_incorporation_model=settings.model_character_agent_character_incorporation,
+                scene_interpretation_model=settings.model_character_agent_scene_interpretation,
+                character_update_model=settings.model_character_agent_update,
                 max_goals=settings.character_agent_embodiment_max_goals,
                 max_aspects=settings.character_agent_embodiment_max_aspects,
             )
@@ -468,7 +482,7 @@ async def _generate(*, draft_id: str, revision: int, job_id: int) -> dict:
                     "source_name": source_alias,
                     "status": "done",
                     "active_steps": [],
-                    "done_steps": [1, 2, 3, 4, 5],
+                    "done_steps": [1, 2, 3, 4],
                     "elapsed_seconds": round(elapsed, 1),
                 }
 
@@ -553,7 +567,7 @@ async def _generate(*, draft_id: str, revision: int, job_id: int) -> dict:
         ]
         final_aspects_for_proposal = [
             {
-                "suggestion_id": str(uuid4()),
+                "suggestion_id": a.get("id") or _stable_profile_id("aspect", a.get("name", "")),
                 "name": a.get("name", ""),
                 "category": a.get("category", "identity"),
                 "description": a.get("description"),
@@ -567,7 +581,7 @@ async def _generate(*, draft_id: str, revision: int, job_id: int) -> dict:
         ]
         final_goals_for_proposal = [
             {
-                "suggestion_id": str(uuid4()),
+                "suggestion_id": g.get("id") or _stable_profile_id("goal", g.get("title", "")),
                 "title": g.get("title", ""),
                 "description": g.get("description") or g.get("title", ""),
                 "goal_type": g.get("goal_type", "desire"),
@@ -607,8 +621,8 @@ async def _generate(*, draft_id: str, revision: int, job_id: int) -> dict:
             current_subtitle=initial_subtitle,
             per_bundle_results=per_bundle_results,
         )
-        draft.provider = settings.model_character_agent_embodiment.provider
-        draft.model = settings.model_character_agent_embodiment.name
+        draft.provider = settings.model_character_agent_character_incorporation.provider
+        draft.model = settings.model_character_agent_character_incorporation.name
         draft.prompt_version = PROMPT_VERSION
         draft.generated_at = datetime.now(timezone.utc)
         draft.status = CharacterEmbodimentDraftStatus.READY

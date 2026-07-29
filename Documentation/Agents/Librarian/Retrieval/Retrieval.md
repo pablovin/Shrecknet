@@ -8,8 +8,7 @@ Query v2 is the only supported Librarian retrieval strategy.
 ## Retrieval v2 Pipeline
 
 This retriever is the active evidence provider for Query v2. Query v2 invokes
-it once per planned information need and may invoke it for up to two sets of
-validator-requested follow-up needs. Ranking and graph expansion remain local
+it once per planned information need. Ranking and graph expansion remain local
 to each need; the orchestrator performs cross-need evidence deduplication.
 
 For each ontology attached to the Librarian agent, v2 performs the following
@@ -96,7 +95,7 @@ available and preserves deterministic RRF order. Candidates outside the
 
 An explicit request `top_k` is clamped to an effective v2 range of 5–8. When
 the request omits `top_k`, v2 selects six. Legacy retrieval continues using the
-server-wide `default_top_k`. If fewer candidates exist, all eligible candidates
+request-specific `top_k`. If fewer candidates exist, all eligible candidates
 are retained.
 
 Selection proceeds greedily by reranked relevance while:
@@ -145,12 +144,13 @@ incomplete-evidence warning.
 ## Source IDs, Pages, and Bounding Boxes
 
 Each final evidence unit receives a stable request-local identifier such as
-`source-1`. The answer model cites only that identifier:
-
-`[supported text]{cite source_id=source-1}`
+`source-1`. Neutral synthesis assigns those identifiers to atomic claims.
+Character incorporation receives only claim IDs and text, then associates every
+claim with one cohesive passage without seeing source identifiers.
 
 The server resolves the identifier to trusted metadata rather than accepting
-model-authored book or page values. Returned `chunks` and `sources_used`
+model-authored book or page values. It appends Unicode superscript markers to
+each passage in one-based `sources_used` order. Returned `chunks` and `sources_used`
 include:
 
 - `source_id`

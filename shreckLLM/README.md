@@ -11,7 +11,7 @@ Standalone LLM gateway service for Shrecknet-compatible chat semantics.
 
 ## Features
 - FastAPI API (`/health`, `/ready`, `/chat`, `/models`, `/status`, `/config`)
-- Multi-provider explicit routing via `provider_id` (`ollama`, `openai`, `anthropic`)
+- Multi-provider explicit routing via `provider_id` (`ollama`, `ollama_cloud`, `openai`, `anthropic`, `deepinfra`, `openrouter`)
 - Redis-backed conversation memory with TTL + trimming
 - Bounded concurrent chat-job worker pool, with global and per-provider limits
 - Queue, provider-slot, and execution timing telemetry for chat jobs
@@ -22,6 +22,7 @@ Standalone LLM gateway service for Shrecknet-compatible chat semantics.
 - `provider_id` (explicit, no auto mode)
 - optional `model`
 - `messages`, `temperature`, `max_tokens`
+- optional `response_format` for provider-supported structured output
 - `conversation_id`, `use_conversation_memory`
 - `metadata`
 
@@ -32,7 +33,9 @@ Response includes execution details:
 - `provider_request_id`
 
 ## Runtime config model
-- `provider_defaults` map keyed by provider id (`ollama`, `openai`, `anthropic`)
+- `provider_defaults` map keyed by provider id
+- `provider_limits.<provider_id>.max_concurrent`, a positive per-provider
+  concurrency limit enforced in addition to the global limit
 - runtime limits and timeouts
 
 ## Frontend config endpoints
@@ -45,6 +48,14 @@ Response includes execution details:
 - `PUT /config/anthropic-token` (requires bearer token; role `admin` or `world_builder`)
 - `DELETE /config/anthropic-token` (requires bearer token; role `admin` or `world_builder`)
 - `GET /providers/anthropic/validate` (requires bearer token; role `admin` or `world_builder`)
+- `PUT /config/deepinfra-token` (requires bearer token; role `admin` or `world_builder`)
+- `DELETE /config/deepinfra-token` (requires bearer token; role `admin` or `world_builder`)
+- `GET /providers/deepinfra/validate` (requires bearer token; role `admin` or `world_builder`)
+- `PUT /config/openrouter-token` (requires bearer token; role `admin` or `world_builder`)
+- `DELETE /config/openrouter-token` (requires bearer token; role `admin` or `world_builder`)
+- `GET /providers/openrouter/validate` (requires bearer token; role `admin` or `world_builder`)
+- `GET /providers/{provider_id}/models` (requires bearer token; role `admin` or `world_builder`)
+- `GET|PUT /config/providers/{provider_id}/limits` (requires bearer token; role `admin` or `world_builder`)
 
 ## Anthropic defaults
 - Provider id: `anthropic`
@@ -52,6 +63,24 @@ Response includes execution details:
 - Preconfigured models:
   - `claude-3-haiku-20240307`
   - `claude-opus-4-1-20250805`
+
+## DeepInfra defaults
+- Provider id: `deepinfra`
+- OpenAI-compatible base URL: `https://api.deepinfra.com/v1/openai`
+- Initial model list: empty; the provider remains unavailable until its API key
+  and at least one model have both been validated
+- The API key and model list can be managed through the generic provider endpoints.
+- Provider requests use a five-minute timeout.
+
+## OpenRouter defaults
+- Provider id: `openrouter`
+- OpenAI-compatible base URL: `https://openrouter.ai/api/v1`
+- Initial model list: empty; the provider remains unavailable until its API key
+  and at least one model have both been validated
+- Provider requests use a five-minute timeout.
+- Every chat execution automatically appends OpenRouter's `:nitro` model suffix
+  (idempotently) to request throughput-based endpoint sorting. This improves
+  routing preference but does not guarantee a fixed TPS or reserve capacity.
 
 When running with Docker compose, shreckLLM is exposed on `http://localhost:8111`.
 The Docker Compose stack does not start Ollama; the local `ollama` provider defaults to an Ollama API already running on the host at `http://host.docker.internal:11434`.

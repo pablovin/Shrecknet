@@ -614,10 +614,7 @@ class EmbeddingLifecycleReport(BaseModel):
 class ElderQueryRequest(BaseModel):
     query: str
     mode: str = "both"
-    top_k: int | None = None
     include_trace: bool = False
-    fast: bool = False
-    route: str = "auto"
     chat_id: str | None = None
     entities_hint: str | None = None
     node_scope: str = "everything"
@@ -630,7 +627,6 @@ class ElderSourceEvidenceChunk(BaseModel):
     chunk_type: str | None = None
     score: float = 0.0
     text: str | None = None
-    complete: bool = True
 
 
 class ElderSourceNode(BaseModel):
@@ -646,7 +642,6 @@ class ElderSourceNode(BaseModel):
     provenance: dict[str, Any] = Field(default_factory=dict)
     temporal_position: dict[str, Any] = Field(default_factory=dict)
     retrieval_methods: list[str] = Field(default_factory=list)
-    complete: bool = True
     canonical_text: str | None = None
     properties: dict[str, Any] = Field(default_factory=dict)
 
@@ -662,16 +657,13 @@ class ElderRetrievalPlanStep(BaseModel):
     traversal: dict[str, Any] = Field(default_factory=dict)
     target_data_type: str
     limit: int
-    hydration_mode: str
-    context_chunks_before: int
-    context_chunks_after: int
-    max_tokens_per_source: int
+    evidence_type: str | None = None
+    evidence_target_tokens: int | None = None
 
 
 class ElderRetrievalPlan(BaseModel):
     answer_goal: str
     response_scope: str
-    evidence_budget_tokens: int
     query_intent: dict[str, Any] = Field(default_factory=dict)
     steps: list[ElderRetrievalPlanStep] = Field(default_factory=list)
 

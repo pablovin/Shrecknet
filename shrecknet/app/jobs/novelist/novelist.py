@@ -68,7 +68,7 @@ class NovelistOrchestrator:
         self.novelist_prose_model = getattr(model_policy, "model_novelist_prose", None)
         self.novelist_critic_model = getattr(model_policy, "model_novelist_critic", None)
         self.repair_json_model = getattr(model_policy, "model_agents_repair_json", None)
-        self.max_concurrency = max(1, min(10, max_concurrency))
+        self.max_concurrency = max(1, int(max_concurrency))
         self.scene_pipeline_batch_size = max(1, min(50, int(scene_pipeline_batch_size)))
         self._elder_query_concurrency = max(1, int(elder_query_concurrency))
         self._elder_query_timeout_s = max(1.0, float(elder_query_timeout_s))

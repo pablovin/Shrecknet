@@ -19,6 +19,7 @@ class ChatRequest(BaseModel):
     use_conversation_memory: bool = False
     metadata: dict[str, Any] | None = None
     max_tokens: int | None = Field(default=None, ge=1, le=131072)
+    response_format: dict[str, Any] | None = None
 
 
 class ChatUsage(BaseModel):

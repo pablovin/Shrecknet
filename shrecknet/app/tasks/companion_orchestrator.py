@@ -66,7 +66,13 @@ def _log_companion_agent_trace(*, job: str, agent_id: str, agent_name: str | Non
 def _build_model_policy(default_target) -> ModelPolicy:
     settings = get_settings()
     policy = ModelPolicy(default_model=default_target, architect_extract_model=default_target)
-    setattr(policy, "model_elder", settings.model_elder)
+    setattr(policy, "model_elder_planner", settings.model_elder_planner)
+    setattr(policy, "model_elder_synthesis", settings.model_elder_synthesis)
+    setattr(
+        policy,
+        "model_elder_character_incorporation",
+        settings.model_elder_character_incorporation,
+    )
     setattr(policy, "model_agents_repair_json", settings.model_agents_repair_json)
     return policy
 
@@ -111,7 +117,6 @@ async def _run_elder_agent(
         llm_client=llm_client,
         model_policy=model_policy,
         graph_retriever=graph_retriever,
-        default_top_k=settings.default_top_k,
         llm_max_concurrency=2,
         debug_artifacts_enabled=settings.elder_debug_artifacts_enabled,
     )
@@ -213,7 +218,9 @@ async def _run_librarian_agent(
         async with driver.session(database=settings.neo4j_database) as graph_session:
             orchestrator = LibrarianOrchestrator(
                 llm_client=llm_client,
-                answer_model=settings.model_librarian,
+                planner_model=settings.model_librarian_planner,
+                synthesis_model=settings.model_librarian_synthesis,
+                character_model=settings.model_librarian_character_incorporation,
                 repair_json_model=settings.model_agents_repair_json,
                 debug_artifacts_enabled=settings.librarian_debug_artifacts_enabled,
             )

@@ -150,4 +150,6 @@ Generation results only prefill the frontend form. Neo4j is changed only when
 the normal `create` call submits the edited aggregate.
 
 Use `response_format.type="json"` with a caller JSON Schema for structured
-content. The API remains admin-only in Phase 1.
+content. String fields named `rationale` use a server-owned 2,000-character
+maximum: longer values are truncated before validation and do not fail the
+background job. The API remains admin-only in Phase 1.

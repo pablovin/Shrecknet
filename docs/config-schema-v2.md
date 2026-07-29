@@ -40,7 +40,7 @@
 ### Elder Agent
 - `id`: `elder`
 - `property`: `runtime`
-- `fields`: `model_elder`, `default_top_k`, `elder_embedding_inference_concurrency`, `elder_query_embedding_timeout_s`, `elder_embedding_warmup_on_worker_start`, `elder_embedding_manager_enabled`, `elder_embedding_queue_max_size`, `elder_embedding_batch_max_size`, `elder_embedding_batch_wait_ms`, `elder_embedding_cache_size`, `elder_embedding_request_timeout_s`, `embedding_runtime_enabled`, `embedding_runtime_queue_max_size`, `embedding_runtime_batch_max_size`, `embedding_runtime_batch_wait_ms`, `embedding_runtime_cache_size`, `embedding_runtime_request_timeout_s`, `embedding_runtime_startup_timeout_s`, `embedding_runtime_fail_open_health`, `embedding_model_id`, `embedding_dimension`, `embedding_device`, `embedding_chunk_size`, `embedding_chunk_overlap`
+- `fields`: `model_elder_planner`, `model_elder_synthesis`, `model_elder_character_incorporation`, `elder_embedding_inference_concurrency`, `elder_query_embedding_timeout_s`, `elder_embedding_warmup_on_worker_start`, `elder_embedding_manager_enabled`, `elder_embedding_queue_max_size`, `elder_embedding_batch_max_size`, `elder_embedding_batch_wait_ms`, `elder_embedding_cache_size`, `elder_embedding_request_timeout_s`, `embedding_runtime_enabled`, `embedding_runtime_queue_max_size`, `embedding_runtime_batch_max_size`, `embedding_runtime_batch_wait_ms`, `embedding_runtime_cache_size`, `embedding_runtime_request_timeout_s`, `embedding_runtime_startup_timeout_s`, `embedding_runtime_fail_open_health`, `embedding_model_id`, `embedding_dimension`, `embedding_device`, `embedding_chunk_size`, `embedding_chunk_overlap`
 
 ### Novelist Agent
 - `id`: `novelist`
@@ -50,7 +50,12 @@
 ### Librarian Agent
 - `id`: `librarian`
 - `property`: `runtime`
-- `fields`: `model_librarian`
+- `fields`: `model_librarian_planner`, `model_librarian_synthesis`, `model_librarian_character_incorporation`
+
+### Character Agent
+- `id`: `character_agent`
+- `property`: `runtime`
+- `fields`: `model_character_agent_framing`, `model_character_agent_deliberation`, `model_character_agent_character_incorporation`, `model_character_agent_scene_interpretation`, `model_character_agent_update`, `character_agent_embodiment_evidence_tokens`, `character_agent_embodiment_max_aspects`, `character_agent_embodiment_max_goals`
 
 ### Security Tokens
 - `id`: `security_tokens`

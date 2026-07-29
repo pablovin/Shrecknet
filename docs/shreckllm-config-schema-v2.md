@@ -30,8 +30,14 @@ This document reflects the **current** `GET /config/schema` behavior implemented
 
 Defaults applied by schema generation:
 - all fields default to `change_impact=hot`
-- expert override fields default to `frontend_editable=false`
+- expert override fields default to `frontend_editable=false`, except
+  `provider_limits`, `request_timeout_seconds`, and `chat_job_max_retries`;
+  provider limits tune enforced concurrency, `request_timeout_seconds` is the
+  authoritative timeout for every provider attempt, and
+  `chat_job_max_retries` is the model-independent retry count
 - expert override fields default to `derived_from_profile=true`
+- `request_timeout_seconds` and `chat_job_max_retries` explicitly report
+  `derived_from_profile=false`
 
 Provider routing is explicit; shreckLLM does not expose a default provider or default provider model.
 
@@ -41,11 +47,29 @@ Provider routing is explicit; shreckLLM does not expose a default provider or de
 - `PUT /config`
 - `POST /config/reload`
 
+`PUT /config` accepts partial updates. For example:
+
+```json
+{
+  "request_timeout_seconds": 600,
+  "chat_job_max_retries": 1
+}
+```
+
+The change is hot-applied. Shrecknet job clients poll to a terminal state and
+do not impose a second overall generation timeout. The retry value applies to
+every model without special cases.
+
 ## Provider Token Endpoints
 - `PUT /config/openai-token`
 - `DELETE /config/openai-token`
 - `PUT /config/anthropic-token`
 - `DELETE /config/anthropic-token`
+- `PUT /config/deepinfra-token`
+- `DELETE /config/deepinfra-token`
+- `PUT /config/openrouter-token`
+- `DELETE /config/openrouter-token`
+- `GET /providers/openrouter/validate`
 - `PUT /config/ollama-cloud-token`
 - `DELETE /config/ollama-cloud-token`
 

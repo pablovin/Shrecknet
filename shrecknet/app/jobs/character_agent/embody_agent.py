@@ -182,12 +182,21 @@ class EmbodyAgent:
     def _json(value: Any) -> str:
         return json.dumps(value, ensure_ascii=False)
 
+    @staticmethod
+    def _schema_errors(error: EmbodimentGenerationError) -> list[dict[str, Any]]:
+        """Expose parser errors to a correction call without inventing evidence."""
+        cause = error.__cause__
+        if isinstance(cause, ValidationError):
+            return cause.errors(include_url=False)
+        return [{"message": str(error)}]
+
     async def _call(
         self, *, prompt: str, payload: dict[str, Any], schema: type[BaseModel],
         stage: str, usage_tag: str, max_tokens: int, model: Any,
         semantic_validator: Callable[[BaseModel], None] | None = None,
         source_entity_id: str | None = None,
         source_entity_alias: str | None = None,
+        schema_correction_attempts: int = 0,
     ) -> BaseModel:
         try:
             raw = await self._llm.chat(
@@ -224,15 +233,54 @@ class EmbodyAgent:
         try:
             result = self._parse(schema, str(raw), stage)
         except EmbodimentGenerationError as exc:
-            repaired = await repair_json_text(
-                llm_client=self._llm.llm, model=model,
-                malformed_text=str(raw),
-                schema_hint=json.dumps(schema.model_json_schema()),
-                usage_tag=f"{usage_tag}.repair",
-            )
+            last_error = exc
             try:
+                repaired = await repair_json_text(
+                    llm_client=self._llm.llm, model=model,
+                    malformed_text=str(raw),
+                    schema_hint=json.dumps(schema.model_json_schema()),
+                    usage_tag=f"{usage_tag}.repair",
+                )
                 result = self._parse(schema, repaired, f"repaired {stage}")
-            except EmbodimentGenerationError as repaired_exc:
+            except Exception as repaired_exc:
+                if isinstance(repaired_exc, EmbodimentGenerationError):
+                    last_error = repaired_exc
+            for attempt in range(1, schema_correction_attempts + 1):
+                correction_payload = {
+                    "original_input": payload,
+                    "rejected_output": str(raw),
+                    "validation_errors": self._schema_errors(last_error),
+                    "required_output_schema": schema.model_json_schema(),
+                    "instruction": (
+                        "Return one complete replacement object that satisfies the "
+                        "required output schema. Do not invent evidence. If an "
+                        "observation cannot cite supplied evidence and complete its "
+                        "required grounding fields, omit that observation; an empty "
+                        "trait_evidence list is valid. Return JSON only."
+                    ),
+                }
+                try:
+                    corrected_raw = await self._llm.chat(
+                        stage=stage,
+                        usage_tag=f"{usage_tag}.schema_correction",
+                        model=model,
+                        messages=[
+                            {"role": "system", "content": prompt},
+                            {"role": "user", "content": self._json(correction_payload)},
+                        ],
+                        temperature=0.0,
+                        max_tokens=max_tokens,
+                    )
+                    result = self._parse(schema, str(corrected_raw), f"schema corrected {stage}")
+                    break
+                except EmbodimentGenerationError as corrected_exc:
+                    last_error = corrected_exc
+                except Exception as corrected_exc:
+                    logger.warning(
+                        "embodiment_schema_correction_transport_failed stage=%s attempt=%d error=%s",
+                        stage, attempt, corrected_exc,
+                    )
+            else:
                 raise EmbodimentGenerationError(
                     f"{stage} schema validation failed",
                     category="schema",
@@ -240,7 +288,7 @@ class EmbodyAgent:
                     source_entity_id=source_entity_id,
                     source_entity_alias=source_entity_alias,
                     retryable=True,
-                ) from repaired_exc
+                ) from last_error
 
         if semantic_validator is None:
             return result
@@ -527,6 +575,7 @@ class EmbodyAgent:
             _validate_and_normalize_evidence(value, allowed_ids=known, stage="cross-scene observations")
             _semantic(lambda: ground_observations(value.trait_evidence,
                 scene_ids=expected_ids, source_group_id=source_entity_id))
+        observations_unavailable = False
         if "observations" in stage_checkpoints:
             observations = EmbodimentObservationsOutput.model_validate(
                 stage_checkpoints["observations"]
@@ -535,18 +584,30 @@ class EmbodyAgent:
                 observations, allowed_ids=known, stage="cross-scene observations",
             )
         else:
-            observations = await self._call(
-                prompt=OBSERVATIONS_PROMPT,
-                payload=observations_payload,
-                schema=EmbodimentObservationsOutput,
-                stage="cross-scene observations",
-                usage_tag="character_agent.embodiment.observations",
-                max_tokens=4_000,
-                model=self.scene_interpretation_model,
-                semantic_validator=validate_observations,
-                source_entity_id=source_entity_id,
-                source_entity_alias=source_entity_alias,
-            )
+            try:
+                observations = await self._call(
+                    prompt=OBSERVATIONS_PROMPT,
+                    payload=observations_payload,
+                    schema=EmbodimentObservationsOutput,
+                    stage="cross-scene observations",
+                    usage_tag="character_agent.embodiment.observations",
+                    max_tokens=4_000,
+                    model=self.scene_interpretation_model,
+                    semantic_validator=validate_observations,
+                    source_entity_id=source_entity_id,
+                    source_entity_alias=source_entity_alias,
+                    schema_correction_attempts=1,
+                )
+            except EmbodimentGenerationError as exc:
+                if exc.category not in {"schema", "semantic_reference", "semantic"}:
+                    raise
+                logger.warning(
+                    "embodiment_observations_discarded source_id=%s source_alias=%s "
+                    "category=%s error=%s",
+                    source_entity_id, source_entity_alias, exc.category, exc,
+                )
+                observations = EmbodimentObservationsOutput()
+                observations_unavailable = True
         _semantic(lambda: ground_observations(observations.trait_evidence,
             scene_ids=expected_ids, source_group_id=source_entity_id))
         if "observations" not in stage_checkpoints and on_checkpoint:
@@ -561,6 +622,7 @@ class EmbodyAgent:
             subtitle_change=observations.subtitle_change or SubtitleChangeProposal(),
             evidence_ids=known,
             llm_calls=list(self.llm_calls),
+            observations_unavailable=observations_unavailable,
         )
 
     async def apply_profile_update(
@@ -577,6 +639,23 @@ class EmbodyAgent:
         on_stage: Any = None,
     ) -> EmbodyAgentResult:
         """Apply one analyzed source to the latest chronological profile."""
+
+        if analysis.observations_unavailable:
+            # The source remains represented by perspectives and a no-change
+            # revision, but malformed observations can never create evidence or
+            # mutate traits, aspects, goals, or subtitle state.
+            return EmbodyAgentResult(
+                scene_input_digests=analysis.scene_input_digests,
+                source_entity_id=analysis.source_entity_id,
+                source_entity_alias=analysis.source_entity_alias,
+                perspectives=analysis.perspectives,
+                observations=analysis.observations,
+                trait_profile=current_trait_profile.model_copy(deep=True),
+                trait_evidence=[], trait_changes=[], batch_id=batch_id,
+                aspect_updates=[], goal_updates=[],
+                subtitle_change=SubtitleChangeProposal(),
+                llm_calls=list(self.llm_calls),
+            )
 
         obs_data = analysis.observations.model_dump(mode="json", exclude={"trait_evidence"})
         existing = current_trait_evidence or []

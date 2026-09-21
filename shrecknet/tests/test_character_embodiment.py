@@ -588,9 +588,72 @@ class BatchLLM:
         raise AssertionError(stage)
 
 
+class MalformedObservationsLLM(BatchLLM):
+    def __init__(self, *, correction_is_valid: bool):
+        super().__init__()
+        self.correction_is_valid = correction_is_valid
+
+    async def chat(self, **kwargs):
+        stage = kwargs['usage_tag'].rsplit('.', 1)[-1]
+        if stage == 'observations':
+            return json.dumps({'trait_evidence': [{
+                'trait': 'curiosity', 'evidence_kind': 'behavior',
+                'situation_type': 'exploration', 'direction': 'high',
+                'expression_point': 8, 'confidence': .9, 'diagnosticity': .9,
+                'behavior': 'Investigated the unknown.',
+                'justification': 'The character chose exploration.',
+            }]})
+        if stage == 'schema_correction':
+            self.calls.append(kwargs)
+            return json.dumps({'trait_evidence': []} if self.correction_is_valid else {
+                'trait_evidence': [{'trait': 'curiosity'}],
+            })
+        return await super().chat(**kwargs)
+
+
 def scenes(count, offset=0):
     return [SceneInput(scene_id=f's{i}',name='Choice',description='Free, known and safe choice.',created_at=f'{i:03}')
             for i in range(offset,offset+count)]
+
+
+@pytest.mark.asyncio
+async def test_observation_schema_correction_receives_context_and_can_return_no_evidence(monkeypatch):
+    async def unrepaired(**_kwargs):
+        return '{"trait_evidence": [{"trait": "curiosity"}]}'
+    monkeypatch.setattr('app.jobs.character_agent.embody_agent.repair_json_text', unrepaired)
+    llm = MalformedObservationsLLM(correction_is_valid=True)
+
+    analysis = await _agent(llm).analyze(
+        source_entity_id='source', source_entity_alias='Source',
+        canonical_identity=_canonical(), current_trait_profile=TraitProfile(),
+        current_aspects=[], current_goals=[], scenes=scenes(1),
+    )
+
+    correction = next(call for call in llm.calls if call['usage_tag'].endswith('.schema_correction'))
+    payload = json.loads(correction['messages'][1]['content'])
+    assert payload['original_input']['allowed_evidence_ids'] == ['scene:s0']
+    assert payload['validation_errors']
+    assert analysis.observations.trait_evidence == []
+    assert not analysis.observations_unavailable
+    assert len(llm.calls) == 3
+
+
+@pytest.mark.asyncio
+async def test_unrecoverable_observations_create_no_evidence_or_profile_update(monkeypatch):
+    async def unrepaired(**_kwargs):
+        return '{"trait_evidence": [{"trait": "curiosity"}]}'
+    monkeypatch.setattr('app.jobs.character_agent.embody_agent.repair_json_text', unrepaired)
+    llm = MalformedObservationsLLM(correction_is_valid=False)
+
+    result = await _agent(llm).run(
+        source_entity_id='source', source_entity_alias='Source',
+        canonical_identity=_canonical(), current_trait_profile=TraitProfile(),
+        current_aspects=[], current_goals=[], scenes=scenes(1), batch_id='bundle',
+    )
+
+    assert result.trait_evidence == [] and result.trait_changes == []
+    assert result.aspect_updates == [] and result.goal_updates == []
+    assert not any(call['usage_tag'].endswith('.profile_update') for call in llm.calls)
 
 
 @pytest.mark.asyncio
@@ -634,10 +697,15 @@ async def test_sequential_chunks_use_previous_profile_and_preserve_actual_revisi
 @pytest.mark.asyncio
 @pytest.mark.parametrize('corruption',['future','unknown'])
 async def test_batch_rejects_future_grounding_and_unknown_trait_evidence(corruption):
-    with pytest.raises(EmbodimentGenerationError):
-        await _agent(BatchLLM(corruption),semantic_correction_attempts=0).run(
-            source_entity_id='s',source_entity_alias='S',canonical_identity=_canonical(),
+    agent = _agent(BatchLLM(corruption), semantic_correction_attempts=0)
+    if corruption == 'future':
+        with pytest.raises(EmbodimentGenerationError):
+            await agent.run(source_entity_id='s',source_entity_alias='S',canonical_identity=_canonical(),
+                current_trait_profile=TraitProfile(),current_aspects=[],current_goals=[],scenes=scenes(3))
+    else:
+        result = await agent.run(source_entity_id='s',source_entity_alias='S',canonical_identity=_canonical(),
             current_trait_profile=TraitProfile(),current_aspects=[],current_goals=[],scenes=scenes(3))
+        assert result.trait_evidence == [] and result.trait_changes == []
 
 
 @pytest.mark.asyncio

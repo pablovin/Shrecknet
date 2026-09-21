@@ -1107,6 +1107,7 @@ class EmbodyAgentAnalysis(_StrictModel):
     subtitle_change: SubtitleChangeProposal = Field(default_factory=SubtitleChangeProposal)
     evidence_ids: set[str] = Field(default_factory=set)
     llm_calls: list[LLMCallRecord]
+    observations_unavailable: bool = False
 
 
 class EmbodyAgentResult(_StrictModel):

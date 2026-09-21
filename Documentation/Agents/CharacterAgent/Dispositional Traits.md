@@ -67,6 +67,14 @@ integrity; forbidden speech is not low presence; careful failure is not low
 diligence; incorrect conclusions do not negate curiosity. Weak, excluded,
 contradictory, and no-change evidence remains inspectable in the revision ledger.
 
+If the cross-scene observation response is malformed, the backend first attempts
+JSON repair and then makes one source-aware correction call containing the
+original scene bundle, rejected output, validation errors, and permitted evidence
+IDs. The correction may return an empty observation list. If it still cannot
+validate, the source retains its scene perspectives and a no-change revision, but
+the backend discards all observations and skips trait, aspect, goal, and subtitle
+updates for that source.
+
 `app/services/character_trait_service.py` centralizes `evidence-policy-v1`:
 
 - Qualifying confidence and diagnosticity are each at least 0.7.

@@ -1,15 +1,17 @@
-"""Four-call split-phase CharacterAgent embodiment prompts.
+"""Sequential source-chunk embodiment contracts.
 
-Pipeline per source group:
-  Step 1 incorporation -> Step 2 enrichment -> Step 3 observations
-                                             -> Step 4 profile update
-
-Steps 1-3 analyze an immutable starting-profile snapshot and may run concurrently
-across source groups. Step 4 runs in chronological source order against the
-latest cumulative profile.
+Stage 0 initializes authored dispositions. For each chronological chunk, stage 1
+renders scene perspectives; stage 2 reasons about immediate effects; stage 3
+extracts diagnostic observations; stage 4 reasons over cumulative structured
+trait evidence and proposes profile changes. The backend verifies every stage,
+computes STEADINESS, and persists revisions. Reflection is presentation only.
+All scenes in a chunk use its starting identity; changes take effect at its end.
 """
+import json
+from app.schemas.character_traits import trait_metadata
 
-PROMPT_VERSION = "character-embodiment-v11-profile-lifecycle"
+TRAIT_CONTRACT = "\nAuthoritative trait definitions and scale:\n" + json.dumps(trait_metadata(), ensure_ascii=False)
+PROMPT_VERSION = "character-embodiment-v12-dispositions"
 
 PERSPECTIVE_PROMPT = r"""You are incorporating a character's identity into canonical objective scenes.
 
@@ -18,6 +20,11 @@ each scene, produce one grounded subjective perspective and one expressive
 first-person character_reflection. Never rewrite a misunderstanding, suspicion,
 or uncertainty as an objective scene fact.
 
+Use only facts available to the character at each scene. The whole chunk is
+visible to you, but later revelations must never become earlier knowledge.
+Every perspective cites its own or earlier supplied scenes in evidence_ids.
+Unknown traits remain unknown, not midpoint. Trait values bias behavior and do
+not mandate it. STEADINESS modifies consistency, never sampling temperature.
 Return every perspective in the same order as the input scenes, using the exact scene_id for each.
 
 INPUT:
@@ -30,7 +37,7 @@ INPUT:
     "properties": {"property": "value"}
   },
   "current_profile": {
-    "behavioural_axes": {"axis_name": value_0_100},
+    "trait_profile": {"dispositional_traits": {"canonical trait key": {"z": "anchor or null", "point": "1..9 or null", "status": "unknown | provisional | supported | contested | manual"}}, "steadiness": "separate estimate"},
     "aspects": [{"id": "stable id", "name": "...", "category": "...", "description": "..."}],
     "goals": [{"id": "stable id", "title": "...", "description": "...", "goal_type": "..."}]
   },
@@ -45,6 +52,7 @@ OUTPUT — return an object with exactly one key "perspectives":
   "perspectives": [
     {
       "scene_id": "exact input scene_id",
+      "evidence_ids": ["scene:own-or-earlier-input-scene-id"],
       "source_type": "participated | witnessed | heard_about | read_about | inferred | unknown",
       "awareness_level": 0..100,
       "confidence": 0..100,
@@ -65,7 +73,8 @@ ENRICHMENT_PROMPT = r"""You are enriching grounded scene perspectives with immed
 Canonical scenes remain objective. Interpretations are subjective evidence.
 The presentation-only character_reflection is intentionally absent. For every
 input scene return exactly one same-order result. Return empty lists when an
-effect is not warranted. Do not create or update profile state.
+effect is not warranted. Do not create or update profile state. Do not use later revelations for earlier beliefs.
+Cite only the current or earlier supplied scene in each evidence_ids list.
 
 Impacts may target only stable IDs supplied in current_profile. Goal impacts
 allow advanced or threatened. Aspect impacts allow created, reinforced, or
@@ -89,6 +98,7 @@ OUTPUT:
 {
   "scene_enrichments": [{
     "scene_id":"exact input scene_id",
+    "evidence_ids":["scene:own-or-earlier-input-scene-id"],
     "emotions":[{"arousal":0..100,"valence":-100..100,"description":"..."}],
     "beliefs":[{"statement":"...","confidence":0..100,"status":"suspected | believed | confirmed | doubted | disproven | superseded"}],
     "impacts":[{"impact_type":"goal_change | aspect_change","target_id":"supplied stable id","direction":"advanced | threatened | created | reinforced | invalidated","magnitude":0..100,"description":"..."}]
@@ -97,6 +107,60 @@ OUTPUT:
 
 Return JSON only. required_output is authoritative if this description and the schema differ."""
 
+
+TRAIT_EVIDENCE_CONTRACT = r"""
+Every trait_evidence item has exactly these fields:
+{
+  "trait":"integrity | caution | presence | forbearance | diligence | curiosity | sharing | restlessness",
+  "evidence_kind":"behavior | authored_disposition",
+  "situation_type":"one diagnostic_situations value from that trait's definition",
+  "direction":"low | midpoint | high",
+  "expression_point":"integer 1..9 or null if not estimable",
+  "diagnosticity":0.0,
+  "confidence":0.0,
+  "behavior":"concise observed choice or explicitly authored stable disposition",
+  "justification":"why this reveals this construct, addressing neighboring-trait boundaries",
+  "evidence_ids":["exact nonempty allowed canonical evidence references"],
+  "episode_id":"scene:exact-scene-id for behavior; identity:exact-entity-id for authored baseline",
+  "available_after_scene_id":"latest scene ID cited, without scene: prefix; null for authored baseline",
+  "conditions":{
+    "knowledge":{"status":"supported | contradicted | unknown","justification":"grounding"},
+    "capability":{"status":"supported | contradicted | unknown","justification":"grounding"},
+    "options":{"status":"supported | contradicted | unknown","justification":"grounding"},
+    "freedom":{"status":"supported | contradicted | unknown","justification":"grounding"}
+  },
+  "comparison_context":"stable concise description of comparable stakes, relationship, role and choices; null when comparability is uncertain"
+}
+confidence and diagnosticity are bounded 0..1 judgments, not psychometric precision.
+Direction must agree with the point: 1..4 low, 5 intermediate, 6..9 high.
+The expression is one observation, not a final personality verdict. Null is
+unknown; 5 requires actual intermediate behavior. Conditions ask whether the
+character knew relevant facts, could perform either action, had both options,
+and was free of external compulsion. Unsupported conditions prevent updates.
+Prefer no inference to inventing choice. A failed lock is not integrity;
+forbidden speech is not low presence; careful failed work is not low diligence;
+wrong conclusions do not negate curiosity; known fatal exploration confounds
+avoidance. Allocation is sharing, not automatically integrity. Retaliation is
+forbearance. Social visibility is not dominance. Exploration is not automatically
+low caution or restlessness. RESTLESSNESS requires explicit value choices or
+recurring motivated preferences, not merely novelty exposure.
+Emit at most one item per trait and canonical episode. Cite its episode. Cross-scene
+recurrence cites all supporting scenes and becomes available at the latest one.
+Do not manufacture independence by repeating one act. Different trait-relevant
+choices can yield different evidence. Preserve contradictions and evidence gaps.
+STEADINESS is never an extracted trait or direct LLM update. The backend computes
+it from repeated comparable behavioral evidence; never equate it with goodness.
+"""
+
+BASELINE_PROMPT = r"""Stage 0 — extract authored stable-disposition evidence, not public output.
+INPUT: identity {alias, authored_text, properties, entity_type}; allowed_evidence_ids
+contains the exact identity:entity-id reference. No generated biography is supplied.
+OUTPUT: {"trait_evidence": [items defined below]}. Return [] if unsupported.
+Only explicit stable dispositions with concrete diagnostic meaning qualify.
+Bare adjectives such as shy or honest are insufficient. evidence_kind must be
+authored_disposition. Do not invent behavioral episodes or scene dates. Unknown
+choice conditions are allowed for an authored assertion, but it is not behavior.
+""" + TRAIT_EVIDENCE_CONTRACT + TRAIT_CONTRACT
 
 OBSERVATIONS_PROMPT = r"""You are distilling character observations from canonical scene bundles.
 
@@ -132,6 +196,7 @@ INPUT:
 
 OUTPUT:
 {
+  "trait_evidence": ["objects with the complete trait-evidence contract below"],
   "recurring_behaviours": [{"text": "grounded statement", "evidence_ids": ["scene:scene_id"]}],
   "motivations": [{"text": "grounded statement", "evidence_ids": ["scene:scene_id"]}],
   "values": [{"text": "grounded statement", "evidence_ids": ["scene:scene_id"]}],
@@ -154,111 +219,47 @@ Omit subtitle_change when a set or clear operation has no allowed evidence ID.
 
 Return JSON only. required_output is authoritative if this description and the schema differ."""
 
-PROFILE_UPDATE_PROMPT = r"""You are applying one chronological source's observations to a character's persistent profile.
-
-Return one atomic update covering behavioural axes, aspects, and goals. The current profile already
-contains updates from every earlier source. Default to retaining it unless the observations provide
-clear evidence for a change.
-
-BEHAVIOURAL AXES:
-- calm_aggressive: 0 calm, 100 aggressive
-- cautious_reckless: 0 cautious, 100 reckless
-- compassionate_ruthless: 0 compassionate, 100 ruthless
-- trusting_suspicious: 0 trusting, 100 suspicious
-- honest_deceptive: 0 honest, 100 deceptive
-- patient_impulsive: 0 patient, 100 impulsive
-- humble_proud: 0 humble, 100 proud
-- cooperative_dominating: 0 cooperative, 100 dominating
-
-Return only axes that change. Omit unchanged axes entirely. For each changed
-axis return a signed integer delta from -5 through -1 or 1 through 5. Never
-return delta 0. The backend applies and clamps the delta; do not return a final
-axis value. Return an empty behavioural_axis_updates list when no axis changes.
-For behavioural_axis_updates, aspect_updates, and goal_updates, omit every item
-that cannot cite at least one allowed evidence ID. Return [] when a category has
-no grounded updates; never return placeholder or zero-effect update items.
-
-An aspect is a stable, high-impact identity fact, role, state, physical characteristic, capability,
-knowledge, preference, attitude, or history. A goal is an active persistent driver, not a completed
-one-time action.
-
-Return at most two aspect_updates and at most one goal_update for this source.
-When evidence shows that a current goal was achieved, return a "complete"
-operation so it is no longer active. When a current aspect no longer applies,
-return a "remove" operation. Use the exact current name/title for update,
-remove, and complete operations.
-
-The limits are maximum ACTIVE profile sizes, not a reason to fail or omit a
-well-supported new item. The backend resolves capacity after applying this
-source: higher aspect importance and goal priority are retained first, and
-newer items are retained before older equally ranked items.
-
+PROFILE_UPDATE_PROMPT = r"""Stage 4 — propose one chronological chunk's cumulative profile update.
+This reasoning stage consumes structured evidence; the backend validates changes.
 INPUT:
 {
-  "current_profile": {
-    "behavioural_axes": {"axis_name": 0..100},
-    "aspects": [
-      {"name": "name", "category": "category", "description": "text or null", "importance": 1..5, "intensity": 0..100 or null, "created_at": "ISO-8601 datetime or null"}
-    ],
-    "goals": [
-      {"title": "title", "description": "text", "goal_type": "type", "priority": 0..100, "commitment": 0..100, "created_at": "ISO-8601 datetime or null"}
-    ]
-  },
-  "observations": {
-    "recurring_behaviours": [...],
-    "motivations": [...],
-    "values": [...],
-    "fears": [...],
-    "conflicts": [...],
-    "relationships": [...],
-    "contradictions": [...],
-    "evidence_gaps": [...]
-  },
-  "allowed_evidence_ids": ["scene:exact-scene-id"],
-  "limits": {"max_aspects": 0..50, "max_goals": 0..50},
-  "required_output": "<ProfileUpdateOutput schema>"
+ "current_profile":{"trait_profile":"current estimates including unknowns and manual overrides",
+  "aspects":[{"name":"...","category":"...","description":null,"importance":1,"intensity":null,"created_at":null}],
+  "goals":[{"title":"...","description":"...","goal_type":"...","priority":50,"commitment":50,"created_at":null}]},
+ "trait_evidence":["validated cumulative observation records: full trait-evidence fields plus backend id, source_group_id, chronological_position, eligible, exclusions"],
+ "observations":{"recurring_behaviours":[],"motivations":[],"values":[],"fears":[],"conflicts":[],"relationships":[],"contradictions":[],"evidence_gaps":[],"subtitle_change":null},
+ "allowed_evidence_ids":["canonical scene IDs for aspect/goal updates in this chunk"],
+ "limits":{"max_aspects":0,"max_goals":0}
 }
-
-OUTPUT:
+OUTPUT — all three arrays, empty when no grounded proposal:
 {
-  "behavioural_axis_updates": [
-    {
-      "axis": "one of the eight exact axis names",
-      "delta": "-5..-1 or 1..5",
-      "justification": "why this axis changes by this amount",
-      "confidence": 0..1,
-      "evidence_ids": ["evidence_id from observations"]
-    }
-  ],
-  "aspect_updates": [
-    {
-      "operation": "add | update | remove",
-      "name": "aspect name",
-      "category": "identity | role | status | physical | capability | knowledge | preference | attitude | history",
-      "description": "description or null",
-      "importance": 1..5 or null,
-      "intensity": 0..100 or null,
-      "justification": "why this operation",
-      "confidence": 0..1,
-      "evidence_ids": ["evidence_id from observations"]
-    }
-  ],
-  "goal_updates": [
-    {
-      "operation": "add | update | remove | complete",
-      "title": "goal title",
-      "description": "description or null",
-      "goal_type": "desire | objective | ambition | obligation | avoidance | survival",
-      "priority": 0..100 or null,
-      "commitment": 0..100 or null,
-      "basis": "explicit | inferred",
-      "justification": "why this operation",
-      "confidence": 0..1,
-      "evidence_ids": ["evidence_id from observations"]
-    }
-  ]
+ "trait_proposals":[{"trait":"one of the eight directional keys","point":5,
+   "observation_ids":["eligible backend trait:... observation IDs for this trait"],
+   "justification":"cumulative behavioral basis for anchored estimate",
+   "addresses_contradictions":"explicit account of opposing evidence or its absence"}],
+ "aspect_updates":[{"operation":"add | update | remove","name":"stable current name for update/remove",
+   "category":"identity | role | status | physical | capability | knowledge | preference | attitude | history | null",
+   "description":null,"importance":3,"intensity":null,"justification":"...","confidence":0.8,"evidence_ids":["allowed canonical scene reference"]}],
+ "goal_updates":[{"operation":"add | update | remove | complete","title":"stable current title for update/remove/complete",
+   "description":null,"goal_type":"desire | objective | ambition | obligation | avoidance | survival | null",
+   "priority":50,"commitment":50,"basis":"explicit | inferred | null","justification":"...","confidence":0.8,"evidence_ids":["allowed canonical scene reference"]}]
 }
+Trait points are integers 1..9 with bipolar anchors. Select them only from the
+structured trait_evidence, never generic observation adjectives. Cite eligible
+observation IDs; one proposal per trait, at most eight. Three independent
+behavioral episodes normally establish a centre. Authored evidence is provisional.
+Do not average contradictory extremes into a falsely certain midpoint. State
+contradictions. RESTLESSNESS requires value choices in multiple source contexts.
+Never propose STEADINESS; it is computed separately. Manual effective values remain
+overrides while the underlying inferred estimate can develop. Do not propose deltas.
+At most two aspect operations and one goal operation. importance is 1..5 or null,
+intensity/priority/commitment 0..100 or null, confidence 0..1. Stable name/title,
+nonblank justification, confidence, and nonempty allowed evidence_ids are required.
+Use complete for achieved goals, remove for obsolete aspects. Backend resolves
+maximum ACTIVE capacities by importance/priority then recency. No placeholders.
+Trait magnitudes bias behavior probabilistically; they do not mandate choices.
+Return JSON only.
+""" + TRAIT_EVIDENCE_CONTRACT + TRAIT_CONTRACT
 
-For remove or complete operations, the stable name/title and justification are required; fields that
-describe the resulting active item are ignored. Every evidence_ids value must
-come exactly from allowed_evidence_ids. Return JSON only."""
+PERSPECTIVE_PROMPT += TRAIT_CONTRACT
+OBSERVATIONS_PROMPT += TRAIT_EVIDENCE_CONTRACT + TRAIT_CONTRACT

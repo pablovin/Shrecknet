@@ -39,8 +39,7 @@ def test_character_payload_defaults_and_ranges():
     assert payload.ontology_id == 42
     assert payload.entity_instance_id == "entity-1"
     assert payload.name == "Mara"
-    assert payload.calm_aggressive == 50
-    assert payload.cooperative_dominating == 50
+    assert payload.trait_edits == {}
     assert payload.visibility == CharacterAgentVisibility.PRIVATE
     derived = CharacterAgentCreate(
         ontology_id=42, entity_instance_id="entity-2"
@@ -51,7 +50,7 @@ def test_character_payload_defaults_and_ranges():
     with pytest.raises(ValidationError):
         CharacterAgentCreate(
             ontology_id=42, entity_instance_id="e", name="Mara",
-            background_story="Story", calm_aggressive=101,
+            background_story="Story", trait_edits={"integrity": {"point": 10, "reason": "Invalid"}},
         )
     assert CharacterAgentCreate(
         ontology_id=42, entity_instance_id="public-entity", visibility="public"

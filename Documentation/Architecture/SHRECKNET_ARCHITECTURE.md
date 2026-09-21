@@ -61,3 +61,16 @@ parameter when the selected adapter supports one (currently OpenRouter's
 `reasoning.enabled`, with `reasoning.effort: "high"` when enabled) and otherwise
 ignores it. Changing the value is a hot configuration update and requires no
 persistence migration or service restart.
+
+
+## CharacterAgent dispositional evidence ownership
+
+`app/schemas/character_traits.py` owns trait definitions, diagnostic affordances,
+scale conversion and boundary contracts. `app/services/character_trait_service.py`
+owns eligibility, deduplication, conservative acceptance, manual overrides and
+within-context STEADINESS. `app/jobs/character_agent/profile.py` supplies shared
+profile/timeline lifecycle operations to draft generation and Architect append.
+Existing CharacterAgent services retain Neo4j transaction ownership; Celery entry
+points retain job/checkpoint lifecycle. Source chunks run sequentially, with four
+normal LLM calls each. Revision JSON contains the evidence ledger, including
+no-change observations. See [Dispositional traits](../Agents/CharacterAgent/Dispositional%20Traits.md).

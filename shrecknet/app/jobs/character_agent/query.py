@@ -26,16 +26,9 @@ from app.schemas.character_agent import CharacterAgentQueryRequest, CharacterAge
 
 StageReporter = Callable[[str, float], Awaitable[None]]
 
-TRAIT_EXPLANATIONS = {
-    "calm_aggressive": "0 means calm; 100 means aggressive.",
-    "cautious_reckless": "0 means cautious; 100 means reckless.",
-    "compassionate_ruthless": "0 means compassionate; 100 means ruthless.",
-    "trusting_suspicious": "0 means trusting; 100 means suspicious.",
-    "honest_deceptive": "0 means honest; 100 means deceptive.",
-    "patient_impulsive": "0 means patient; 100 means impulsive.",
-    "humble_proud": "0 means humble; 100 means proud.",
-    "cooperative_dominating": "0 means cooperative; 100 means dominating.",
-}
+from dataclasses import asdict
+from app.schemas.character_traits import TraitProfile, TRAIT_BY_KEY, trait_metadata
+
 RATIONALE_MAX_CHARACTERS = 2_000
 logger = logging.getLogger(__name__)
 
@@ -163,8 +156,8 @@ class CharacterAgentQueryJob:
         character = snapshot["character_agent"]
         return {
             "name": character["name"],
-            "behavioural_traits": character["behavioural_traits"],
-            "trait_adherence": character["trait_adherence"],
+            "trait_profile": character["trait_profile"],
+            "trait_definitions": trait_metadata(),
             "active_aspects": [
                 {"id": item["id"], "name": item["name"]}
                 for item in snapshot["aspects"]
@@ -247,7 +240,7 @@ class CharacterAgentQueryJob:
     @staticmethod
     def _validate_generic_frame(frame: CharacterQueryFrame) -> None:
         if (
-            frame.relevant_trait_axes
+            frame.relevant_traits
             or frame.relevant_aspect_ids
             or frame.relevant_goal_ids
         ):
@@ -263,19 +256,18 @@ class CharacterAgentQueryJob:
     ) -> dict[str, Any]:
         selected_aspects = set(frame.relevant_aspect_ids)
         selected_goals = set(frame.relevant_goal_ids)
-        traits = snapshot["character_agent"]["behavioural_traits"]
+        profile = TraitProfile.model_validate(snapshot["character_agent"]["trait_profile"])
         return {
             "query": request.query,
             "context_summary": frame.context_summary,
             "system_instruction": request.system_instruction,
-            "relevant_trait_axes": [
-                {
-                    "name": name,
-                    "value": traits[name],
-                    "explanation": TRAIT_EXPLANATIONS[name],
-                }
-                for name in frame.relevant_trait_axes
+            "relevant_traits": [
+                {**asdict(TRAIT_BY_KEY[item.trait]),
+                 "estimate": profile.estimate(item.trait).model_dump(mode="json"),
+                 "situation_type": item.situation_type, "relevance": item.relevance}
+                for item in frame.relevant_traits
             ],
+            "steadiness": profile.steadiness.model_dump(mode="json") if frame.relevant_traits else None,
             "relevant_aspect_names": [
                 item["name"]
                 for item in snapshot["aspects"]

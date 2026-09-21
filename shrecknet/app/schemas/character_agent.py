@@ -9,6 +9,9 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from app.models.character_embodiment import CharacterEmbodimentDraftStatus
+from app.schemas.character_traits import (
+    SlotKey, TraitEdit, TraitProfile, TraitObservation, TraitEvidence, TraitProposal, TraitChange,
+)
 
 
 class CharacterAgentStatus(str, Enum):
@@ -115,15 +118,7 @@ class CharacterAgentCreate(_StrictModel):
     image_url: str | None = Field(None, max_length=2048)
     status: CharacterAgentStatus = CharacterAgentStatus.ACTIVE
     visibility: CharacterAgentVisibility = CharacterAgentVisibility.PRIVATE
-    calm_aggressive: int = Field(50, ge=0, le=100)
-    cautious_reckless: int = Field(50, ge=0, le=100)
-    compassionate_ruthless: int = Field(50, ge=0, le=100)
-    trusting_suspicious: int = Field(50, ge=0, le=100)
-    honest_deceptive: int = Field(50, ge=0, le=100)
-    patient_impulsive: int = Field(50, ge=0, le=100)
-    humble_proud: int = Field(50, ge=0, le=100)
-    cooperative_dominating: int = Field(50, ge=0, le=100)
-    trait_adherence: int = Field(80, ge=0, le=100)
+    trait_edits: dict[SlotKey, TraitEdit] = Field(default_factory=dict)
 
     @field_validator("entity_instance_id")
     @classmethod
@@ -151,15 +146,7 @@ class CharacterAgentUpdate(_StrictModel):
     image_url: str | None = Field(None, max_length=2048)
     status: CharacterAgentStatus | None = None
     visibility: CharacterAgentVisibility | None = None
-    calm_aggressive: int | None = Field(None, ge=0, le=100)
-    cautious_reckless: int | None = Field(None, ge=0, le=100)
-    compassionate_ruthless: int | None = Field(None, ge=0, le=100)
-    trusting_suspicious: int | None = Field(None, ge=0, le=100)
-    honest_deceptive: int | None = Field(None, ge=0, le=100)
-    patient_impulsive: int | None = Field(None, ge=0, le=100)
-    humble_proud: int | None = Field(None, ge=0, le=100)
-    cooperative_dominating: int | None = Field(None, ge=0, le=100)
-    trait_adherence: int | None = Field(None, ge=0, le=100)
+    trait_edits: dict[SlotKey, TraitEdit] = Field(default_factory=dict)
 
     @field_validator("name", "subtitle", "background_story")
     @classmethod
@@ -173,6 +160,8 @@ class CharacterAgentUpdate(_StrictModel):
 
 
 class CharacterAgentRead(CharacterAgentCreate):
+    trait_edits: dict[SlotKey, TraitEdit] = Field(default_factory=dict, exclude=True)
+    trait_profile: TraitProfile = Field(default_factory=TraitProfile)
     id: str
     name: str
     background_story: str
@@ -202,13 +191,6 @@ class CharacterEmbodimentCandidatePage(_StrictModel):
     results: list[CharacterEmbodimentCandidate]
 
 
-BEHAVIOURAL_AXES = (
-    "calm_aggressive", "cautious_reckless", "compassionate_ruthless",
-    "trusting_suspicious", "honest_deceptive", "patient_impulsive",
-    "humble_proud", "cooperative_dominating",
-)
-
-
 class EmbodimentEvidence(_StrictModel):
     evidence_id: str
     kind: Literal["identity", "property", "relationship", "scene", "milestone", "semantic_document"]
@@ -229,6 +211,7 @@ class EmbodimentEvidenceGap(_StrictModel):
 
 
 class EmbodimentObservations(_StrictModel):
+    trait_evidence: list[TraitObservation] = Field(default_factory=list)
     identity_description: EmbodimentGroundedStatement
     recurring_behaviours: list[EmbodimentGroundedStatement] = Field(default_factory=list)
     important_experiences: list[EmbodimentGroundedStatement] = Field(default_factory=list)
@@ -241,18 +224,6 @@ class EmbodimentObservations(_StrictModel):
     possible_aspects: list[EmbodimentGroundedStatement] = Field(default_factory=list)
     contradictions: list[EmbodimentGroundedStatement] = Field(default_factory=list)
     evidence_gaps: list[EmbodimentEvidenceGap] = Field(default_factory=list)
-
-
-class EmbodimentAxisProposal(_StrictModel):
-    axis: Literal[
-        "calm_aggressive", "cautious_reckless", "compassionate_ruthless",
-        "trusting_suspicious", "honest_deceptive", "patient_impulsive",
-        "humble_proud", "cooperative_dominating",
-    ]
-    value: int = Field(..., ge=0, le=100)
-    justification: str = Field(..., min_length=1)
-    confidence: float = Field(..., ge=0, le=1)
-    evidence_ids: list[str] = Field(..., min_length=1)
 
 
 class EmbodimentAspectProposal(_StrictModel):
@@ -281,12 +252,6 @@ class EmbodimentGoalProposal(_StrictModel):
     basis: Literal["explicit", "inferred"]
 
 
-class EmbodimentAxesProposal(_StrictModel):
-    behavioural_axes: list[EmbodimentAxisProposal] = Field(
-        ..., min_length=8, max_length=8
-    )
-
-
 class EmbodimentAspectsProposal(_StrictModel):
     aspects: list[EmbodimentAspectProposal] = Field(default_factory=list)
 
@@ -302,8 +267,7 @@ class EmbodimentProposal(_StrictModel):
     image_url: str | None = Field(None, max_length=2048)
     status: CharacterAgentStatus = CharacterAgentStatus.ACTIVE
     visibility: CharacterAgentVisibility = CharacterAgentVisibility.PRIVATE
-    trait_adherence: int = Field(80, ge=0, le=100)
-    behavioural_axes: list[EmbodimentAxisProposal] = Field(..., min_length=8, max_length=8)
+    trait_profile: TraitProfile = Field(default_factory=TraitProfile)
     aspects: list[EmbodimentAspectProposal] = Field(default_factory=list)
     goals: list[EmbodimentGoalProposal] = Field(default_factory=list)
 
@@ -666,6 +630,7 @@ class ScenePerspectiveUpdate(_NarrativeFields):
 
 
 class ScenePerspectiveRead(_StrictModel):
+    source_digest: str | None = None
     id: str
     ontology_id: int
     character_agent_id: str
@@ -707,7 +672,9 @@ class CharacterSourceGroup(_StrictModel):
 
 
 class ProjectedScenePerspective(_StrictModel):
+    source_digest: str | None = None
     scene_id: str
+    evidence_ids: list[str] = Field(default_factory=list)
     source_type: ScenePerspectiveSourceType
     awareness_level: int = Field(..., ge=0, le=100)
     confidence: int = Field(..., ge=0, le=100)
@@ -756,8 +723,10 @@ class CharacterIdentityRevisionProjection(_StrictModel):
     last_processed_scene_id: str | None = None
     name: str
     subtitle: str | None = None
-    trait_adherence: int = Field(..., ge=0, le=100)
-    behavioural_axes: dict[str, int]
+    trait_profile: TraitProfile = Field(default_factory=TraitProfile)
+    trait_evidence: list[TraitEvidence] = Field(default_factory=list)
+    batch_id: str | None = None
+    scene_ids: list[str] = Field(default_factory=list)
     active_aspects: list[EmbodimentAspectProposal] = Field(default_factory=list)
     active_goals: list[EmbodimentGoalProposal] = Field(default_factory=list)
 
@@ -766,7 +735,8 @@ class CharacterSourceProjection(_StrictModel):
     source_group_id: str
     starting_revision_number: int = Field(..., ge=0)
     perspectives: list[ProjectedScenePerspective]
-    axis_changes: list[EmbodimentAxisProposal] = Field(default_factory=list)
+    trait_changes: list[TraitChange] = Field(default_factory=list)
+    batch_id: str | None = None
     aspects: list[EmbodimentAspectProposal] = Field(default_factory=list)
     goals: list[EmbodimentGoalProposal] = Field(default_factory=list)
     completed_goal_titles: list[str] = Field(default_factory=list)
@@ -776,8 +746,30 @@ class CharacterSourceProjection(_StrictModel):
 
 
 class CharacterTimelineProjection(_StrictModel):
-    revisions: list[CharacterIdentityRevisionProjection]
+    revisions: list[CharacterIdentityRevisionProjection] = Field(..., min_length=1)
     source_projections: list[CharacterSourceProjection] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_chronology(self):
+        if len(self.revisions) != len(self.source_projections) + 1:
+            raise ValueError("timeline requires one baseline and one revision per batch")
+        seen_scenes: set[str] = set()
+        for previous, revision, projection in zip(
+            self.revisions, self.revisions[1:], self.source_projections
+        ):
+            if (revision.revision_number != previous.revision_number + 1
+                    or projection.starting_revision_number != previous.revision_number
+                    or projection.resulting_revision != revision):
+                raise ValueError("timeline revisions must match consecutive batch projections")
+            scene_ids = [item.scene_id for item in projection.perspectives]
+            if (scene_ids != revision.scene_ids or len(set(scene_ids)) != len(scene_ids)
+                    or seen_scenes.intersection(scene_ids)):
+                raise ValueError("timeline scenes must occur exactly once in their batch order")
+            if (projection.batch_id != revision.batch_id
+                    or projection.source_group_id != revision.source_group_id):
+                raise ValueError("timeline batch provenance must match its revision")
+            seen_scenes.update(scene_ids)
+        return self
 
 
 class CharacterIdentityRevisionRead(_StrictModel):
@@ -788,8 +780,9 @@ class CharacterIdentityRevisionRead(_StrictModel):
     last_processed_scene_id: str | None = None
     name: str
     subtitle: str | None = None
-    trait_adherence: int
-    behavioural_axes: dict[str, int]
+    trait_profile: TraitProfile
+    batch_id: str | None = None
+    scene_ids: list[str] = Field(default_factory=list)
     active_aspect_ids: list[str] = Field(default_factory=list)
     active_goal_ids: list[str] = Field(default_factory=list)
     provenance_type: Literal["generated", "manual", "initial"]
@@ -798,14 +791,11 @@ class CharacterIdentityRevisionRead(_StrictModel):
     prompt_version: str | None = None
     created_at: datetime
 
-    @field_validator("behavioural_axes", "active_aspect_ids", "active_goal_ids", mode="before")
+    @field_validator("trait_profile", "scene_ids", "active_aspect_ids", "active_goal_ids", mode="before")
     @classmethod
     def parse_revision_json(cls, value: Any):
         if isinstance(value, str):
-            try:
-                return json.loads(value)
-            except (TypeError, ValueError):
-                return {} if value.lstrip().startswith("{") else []
+            return json.loads(value)
         return value
 
 
@@ -814,7 +804,10 @@ class CharacterIdentityChangeRead(_StrictModel):
     character_agent_id: str
     revision_number: int
     source_group_id: str | None = None
-    change_type: Literal["axis", "subtitle", "aspect", "goal"]
+    change_type: Literal["trait", "steadiness", "subtitle", "aspect", "goal"]
+    observation_ids: list[str] = Field(default_factory=list)
+    actor_user_id: int | None = None
+    policy_version: str | None = None
     field_name: str
     previous_value: Any = None
     new_value: Any = None
@@ -824,7 +817,7 @@ class CharacterIdentityChangeRead(_StrictModel):
     provenance_type: Literal["generated", "manual"]
     created_at: datetime
 
-    @field_validator("evidence_ids", mode="before")
+    @field_validator("evidence_ids", "observation_ids", mode="before")
     @classmethod
     def parse_change_evidence(cls, value: Any) -> list[str]:
         return _evidence_ids(value)
@@ -987,6 +980,7 @@ class CharacterImpactOutput(_StrictModel):
 
 class ScenePerspectiveOutput(_StrictModel):
     scene_id: str
+    evidence_ids: list[str] = Field(min_length=1)
     source_type: ScenePerspectiveSourceType
     awareness_level: int = Field(..., ge=0, le=100)
     confidence: int = Field(..., ge=0, le=100)
@@ -1000,6 +994,7 @@ class ScenePerspectiveOutput(_StrictModel):
 
 class SceneEnrichmentOutput(_StrictModel):
     scene_id: str
+    evidence_ids: list[str] = Field(min_length=1)
     emotions: list[EmotionalInterpretationOutput] = Field(default_factory=list)
     beliefs: list[CharacterBeliefOutput] = Field(default_factory=list)
     impacts: list[CharacterImpactOutput] = Field(default_factory=list)
@@ -1016,6 +1011,7 @@ class ScenePerspectiveBundleOutput(ScenePerspectiveOutput):
 
 
 class EmbodimentObservationsOutput(_StrictModel):
+    trait_evidence: list[TraitObservation] = Field(default_factory=list)
     recurring_behaviours: list[EmbodimentGroundedStatement] = Field(default_factory=list)
     motivations: list[EmbodimentGroundedStatement] = Field(default_factory=list)
     values: list[EmbodimentGroundedStatement] = Field(default_factory=list)
@@ -1025,42 +1021,6 @@ class EmbodimentObservationsOutput(_StrictModel):
     contradictions: list[EmbodimentGroundedStatement] = Field(default_factory=list)
     evidence_gaps: list[EmbodimentEvidenceGap] = Field(default_factory=list)
     subtitle_change: SubtitleChangeProposal | None = None
-
-
-class AxisChangeData(_StrictModel):
-    axis: Literal[
-        "calm_aggressive", "cautious_reckless", "compassionate_ruthless",
-        "trusting_suspicious", "honest_deceptive", "patient_impulsive",
-        "humble_proud", "cooperative_dominating",
-    ]
-    new_value: int = Field(..., ge=0, le=100)
-    justification: str = Field(..., min_length=1)
-    confidence: float = Field(..., ge=0, le=1)
-    evidence_ids: list[str] = Field(..., min_length=1)
-
-
-class AxisChangeOutput(_StrictModel):
-    behavioural_axes: list[AxisChangeData] = Field(default_factory=list)
-
-
-class AxisDeltaUpdateData(_StrictModel):
-    """Sparse LLM instruction for a bounded behavioural-axis change."""
-
-    axis: Literal[
-        "calm_aggressive", "cautious_reckless", "compassionate_ruthless",
-        "trusting_suspicious", "honest_deceptive", "patient_impulsive",
-        "humble_proud", "cooperative_dominating",
-    ]
-    delta: int = Field(..., ge=-5, le=5)
-    justification: str = Field(..., min_length=1)
-    confidence: float = Field(..., ge=0, le=1)
-    evidence_ids: list[str] = Field(..., min_length=1)
-
-    @model_validator(mode="after")
-    def reject_zero_delta(self) -> "AxisDeltaUpdateData":
-        if self.delta == 0:
-            raise ValueError("zero-delta axis updates must be omitted")
-        return self
 
 
 class AspectUpdateOperationType(str, Enum):
@@ -1112,17 +1072,15 @@ class GoalUpdateOutput(_StrictModel):
 class ProfileUpdateOutput(_StrictModel):
     """One atomic, validated update of the persistent character profile."""
 
-    behavioural_axis_updates: list[AxisDeltaUpdateData] = Field(
-        default_factory=list, max_length=8
-    )
+    trait_proposals: list[TraitProposal] = Field(default_factory=list, max_length=8)
     aspect_updates: list[AspectUpdateData] = Field(default_factory=list, max_length=2)
     goal_updates: list[GoalUpdateData] = Field(default_factory=list, max_length=1)
 
     @model_validator(mode="after")
-    def validate_unique_axis_updates(self) -> "ProfileUpdateOutput":
-        axis_names = [item.axis for item in self.behavioural_axis_updates]
-        if len(set(axis_names)) != len(axis_names):
-            raise ValueError("behavioural_axis_updates must contain unique axes")
+    def validate_unique_trait_proposals(self) -> "ProfileUpdateOutput":
+        trait_names = [item.trait for item in self.trait_proposals]
+        if len(set(trait_names)) != len(trait_names):
+            raise ValueError("trait_proposals must contain unique traits")
         return self
 
 
@@ -1139,6 +1097,7 @@ class LLMCallRecord(_StrictModel):
 
 
 class EmbodyAgentAnalysis(_StrictModel):
+    scene_input_digests: dict[str, str] = Field(default_factory=dict)
     """Snapshot-based source interpretation before ordered profile mutation."""
 
     source_entity_id: str
@@ -1151,11 +1110,15 @@ class EmbodyAgentAnalysis(_StrictModel):
 
 
 class EmbodyAgentResult(_StrictModel):
+    scene_input_digests: dict[str, str] = Field(default_factory=dict)
     source_entity_id: str
     source_entity_alias: str
     perspectives: list[ScenePerspectiveBundleOutput]
     observations: EmbodimentObservationsOutput
-    axis_updates: list[AxisChangeData]
+    trait_profile: TraitProfile
+    trait_evidence: list[TraitEvidence] = Field(default_factory=list)
+    trait_changes: list[TraitChange] = Field(default_factory=list)
+    batch_id: str | None = None
     aspect_updates: list[AspectUpdateData]
     goal_updates: list[GoalUpdateData]
     subtitle_change: SubtitleChangeProposal = Field(default_factory=SubtitleChangeProposal)

@@ -6,6 +6,9 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 
+from .character_traits import TraitEdit, TraitEstimate, TraitProfile, TraitEvidence, SlotKey
+
+
 class Token(BaseModel):
     access_token: str
     token_type: str = "bearer"
@@ -142,6 +145,7 @@ class CharacterAgentEmbeddedGoal(BaseModel):
 
 
 class CharacterAgentCreateRequest(BaseModel):
+    model_config = {"extra": "forbid"}
     ontology_id: int
     entity_instance_id: str
     embodiment_draft_id: str | None = None
@@ -151,20 +155,14 @@ class CharacterAgentCreateRequest(BaseModel):
     image_url: str | None = None
     status: str = "active"
     visibility: str = "private"
-    calm_aggressive: int = 50
-    cautious_reckless: int = 50
-    compassionate_ruthless: int = 50
-    trusting_suspicious: int = 50
-    honest_deceptive: int = 50
-    patient_impulsive: int = 50
-    humble_proud: int = 50
-    cooperative_dominating: int = 50
-    trait_adherence: int = 80
+    trait_edits: dict[SlotKey, TraitEdit] = Field(default_factory=dict)
     aspects: list[CharacterAgentEmbeddedAspect] = Field(default_factory=list)
     goals: list[CharacterAgentEmbeddedGoal] = Field(default_factory=list)
 
 
 class CharacterAgentRead(BaseModel):
+    trait_profile: TraitProfile
+    embodiment_draft_id: str | None = None
     id: str
     ontology_id: int
     entity_instance_id: str
@@ -178,25 +176,18 @@ class CharacterAgentRead(BaseModel):
     created_by_user_id: int
     created_at: datetime
     updated_at: datetime
-    model_config = {"extra": "allow"}
+    model_config = {"extra": "forbid"}
 
 
 class CharacterAgentUpdate(BaseModel):
+    model_config = {"extra": "forbid"}
     name: str | None = None
     subtitle: str | None = None
     background_story: str | None = None
     image_url: str | None = None
     status: str | None = None
     visibility: str | None = None
-    calm_aggressive: int | None = None
-    cautious_reckless: int | None = None
-    compassionate_ruthless: int | None = None
-    trusting_suspicious: int | None = None
-    honest_deceptive: int | None = None
-    patient_impulsive: int | None = None
-    humble_proud: int | None = None
-    cooperative_dominating: int | None = None
-    trait_adherence: int | None = None
+    trait_edits: dict[SlotKey, TraitEdit] = Field(default_factory=dict)
 
 
 class CharacterIdentityRevisionRead(BaseModel):
@@ -207,8 +198,9 @@ class CharacterIdentityRevisionRead(BaseModel):
     last_processed_scene_id: str | None = None
     name: str
     subtitle: str | None = None
-    trait_adherence: int
-    behavioural_axes: dict[str, int]
+    trait_profile: TraitProfile
+    batch_id: str | None = None
+    scene_ids: list[str] = Field(default_factory=list)
     active_aspect_ids: list[str] = Field(default_factory=list)
     active_goal_ids: list[str] = Field(default_factory=list)
     provenance_type: str
@@ -223,7 +215,10 @@ class CharacterIdentityChangeRead(BaseModel):
     character_agent_id: str
     revision_number: int
     source_group_id: str | None = None
-    change_type: str
+    change_type: Literal["trait", "steadiness", "subtitle", "aspect", "goal"]
+    observation_ids: list[str] = Field(default_factory=list)
+    actor_user_id: int | None = None
+    policy_version: str | None = None
     field_name: str
     previous_value: Any = None
     new_value: Any = None

@@ -3,8 +3,7 @@
 ## Definition
 
 A `CharacterAgent` is a graph-backed simulation identity embodied by one
-`EntityInstance`. It combines a background story, eight behavioural axes,
-`trait_adherence`, active aspects, active goals, and subjective projections of
+`EntityInstance`. It combines a background story, eight directional dispositions, a separate STEADINESS estimate, active aspects, active goals, and subjective projections of
 canonical scenes. It is distinct from the
 SQL-backed Elder, Librarian, Architect, and Novelist agent configuration.
 
@@ -54,15 +53,7 @@ Label: `CharacterAgent`
 | `image_url` | string or null | no | Maximum 2,048 characters. An omitted value is derived from the entity avatar or the first configured image property when available. |
 | `status` | string enum | yes | `active` or `archived`; defaults to `active`. Only active agents may be queried. |
 | `visibility` | string enum | yes for new nodes | `private` or `public`; defaults to `private`. Missing legacy values are read and authorized as `private`. |
-| `calm_aggressive` | integer | yes | Behavioural axis from `0` (calm) to `100` (aggressive); defaults to `50`. |
-| `cautious_reckless` | integer | yes | Behavioural axis from `0` (cautious) to `100` (reckless); defaults to `50`. |
-| `compassionate_ruthless` | integer | yes | Behavioural axis from `0` (compassionate) to `100` (ruthless); defaults to `50`. |
-| `trusting_suspicious` | integer | yes | Behavioural axis from `0` (trusting) to `100` (suspicious); defaults to `50`. |
-| `honest_deceptive` | integer | yes | Behavioural axis from `0` (honest) to `100` (deceptive); defaults to `50`. |
-| `patient_impulsive` | integer | yes | Behavioural axis from `0` (patient) to `100` (impulsive); defaults to `50`. |
-| `humble_proud` | integer | yes | Behavioural axis from `0` (humble) to `100` (proud); defaults to `50`. |
-| `cooperative_dominating` | integer | yes | Behavioural axis from `0` (cooperative) to `100` (dominating); defaults to `50`. |
-| `trait_adherence` | integer | yes for new nodes | Strength with which generation follows the behavioural axes, from `0` through `100`; defaults to `80`. Missing legacy values are read as `80`. |
+| `trait_profile` | JSON string | yes | Eight directional estimates, separate STEADINESS, evidence metadata, and audited manual overrides. Returned as a typed object; see [Dispositional traits](Dispositional%20Traits.md), including extraction and query pipelines. |
 | `created_by_user_id` | integer | yes | SQL user ID of the administrator that created the node. |
 | `created_at` | datetime string | yes | UTC ISO-8601 creation timestamp. |
 | `updated_at` | datetime string | yes | UTC ISO-8601 timestamp changed by agent updates. |
@@ -72,19 +63,19 @@ An agent cannot change `ontology_id`, its embodied entity, `id`,
 
 ## Chronological identity revisions
 
-Embodiment creates Revision 0 from canonical `EntityInstance` evidence only.
-Related Scenes are grouped by their required `DERIVED_FROM` entity and processed
-in deterministic `created_at` order. Each source produces ScenePerspectives
-against the generation-start profile snapshot, followed by a conservative
-atomic update of axes, aspects, and goals against the latest chronological
-profile. An optional subtitle change comes from source observations. Later
-evidence is never projected into an earlier Scene.
+Embodiment extracts a provisional authored baseline or preserves unknown values
+in Revision 0. Chronological source chunks contain up to ten scenes and run
+sequentially. Each chunk uses its actual starting identity for batched
+ScenePerspectives, then accumulates diagnostic observations before one profile
+update. Its resulting revision becomes the next chunk's starting identity.
 
-`CharacterIdentityRevision` preserves the complete identity snapshot.
-`CharacterIdentityChange` records axis, subtitle, aspect, and goal deltas with
-source provenance. `ScenePerspective-[:GENERATED_WITH]->
-CharacterIdentityRevision` records which identity generated a perspective.
-Manual identity edits create a new revision instead of modifying history.
+`CharacterIdentityRevision` stores the profile snapshot and newly introduced
+trait evidence, including evidence that did not change a score.
+`CharacterIdentityChange` records trait, steadiness, subtitle, aspect, and goal
+changes with provenance. `ScenePerspective-[:GENERATED_WITH]->CharacterIdentityRevision`
+identifies the actual starting revision. Manual point edits preserve history and
+record their actor and reason. See [Dispositional traits](Dispositional%20Traits.md)
+for constructs, scales, eligibility, consistency, and chronology limitations.
 
 ## `CharacterAspect` node schema
 
@@ -155,8 +146,8 @@ perspective may exist for each (`character_agent_id`, `scene_id`) pair.
 A scene is eligible when it directly connects to the embodied `EntityInstance`
 through `DERIVED_FROM` or `RELATES_TO`, or when one of its contained
 `Milestone` nodes does. The agent, embodied entity, and scene must share
-`ontology_id` and `instance_id`. Perspectives are created manually in this
-version; scenes are not backfilled automatically.
+`ontology_id` and `instance_id`. Perspectives may be created manually or generated through embodiment. Architect
+can append perspectives for newly created scenes using the same profile rules.
 
 ### `ScenePerspective`
 
@@ -256,199 +247,27 @@ The service also enforces these rules:
 
 ## Query projection
 
-`POST /character-agents/{character_agent_id}/query` creates a background job.
-The worker loads the complete active identity in one Neo4j operation, then
-normally performs two LLM calls: compact task/identity framing followed by
-deliberation and rendering. The final call receives only identity selected
-during framing. Invalid final JSON or schema-invalid content may receive one
-repair attempt through the shared `model_agents_repair_json` target.
+Identity-grounded queries use two normal LLM calls: affordance-based framing and
+deliberation. The backend hydrates only selected directional traits from the
+registry with their estimates, construct, poles, and relevance. STEADINESS is
+supplied separately when directional dispositions apply. Unknown remains unknown;
+dispositions bias decisions probabilistically. Aspects, goals, and supplied
+context remain relevant. Generic mode receives no identity data.
 
-When `use_character_identity=false`, the same two-stage shape is retained.
-Neutral framing receives only the original query and caller context and must
-return empty trait, aspect, and goal selectors. Generic deliberation receives
-the validated neutral frame, system instruction, and output contract. No
-CharacterAgent identity or profile information enters either call.
+Queries preserve asynchronous submission/polling, response-schema validation,
+and one optional final repair. Caller `generation.temperature` remains independent
+of personality. See [CharacterAgent Query](Query/Query.md).
 
-The snapshot contains:
+## Evidence-grounded embodiment
 
-- The agent's `name`, `background_story`, eight behavioural axes, and
-  `trait_adherence`.
-- Aspects whose node status and `HAS_ASPECT.status` are both active.
-- Goals whose node status is active.
-
-Perspectives, emotions, beliefs, and impacts are intentionally not part of the
-current query snapshot.
-
-Aspects are ordered by assignment importance, intensity, then ID. Goals are
-ordered by priority, commitment, status, then ID. The background story and
-backend CharacterAgent identifier are omitted from the framing prompt and all
-later query stages.
-
-The caller's `system_instruction` controls the task, tone, constraints, and
-output shape below the immutable service rules. It cannot replace the identity,
-request internal reasoning, override security, or authorize external actions.
-
-Trait names must use the fixed axes. Aspect and goal IDs must come from the
-snapshot. Missing information remains uncertainty. Final output is validated
-deterministically and may use at most one shared JSON-repair LLM call.
-
-The query stages use `model_character_agent_framing` and
-`model_character_agent_deliberation`, exposed through the existing config API.
-JSON repair uses the global `model_agents_repair_json` target rather than a
-CharacterAgent-specific model target.
-All CharacterAgent model targets default to an empty `provider` and `name`.
-They remain unselected during pre-provider startup and must be populated by an
-administrator or by model reconciliation when AI agents are enabled.
-
-Visibility does not replace lifecycle status. Public archived agents remain
-readable but cannot be queried; query requires `status=active`. Publishing and
-unpublishing are graph property updates and do not copy or move an agent.
-
-### Future perspective-aware query projection
-
-A later query revision may select perspective aggregates dynamically and allow
-the caller to include or omit perspectives, emotions, beliefs, and impacts for
-a particular task. That future projection must preserve the distinction
-between canonical scene facts and subjective character claims.
+See [Dispositional traits](Dispositional%20Traits.md) for the complete current
+personality and embodiment contract, including four calls per source chunk,
+initial authored evidence, checkpoints, revision ownership, and breaking release
+operations. The registry is the authoritative definition source; SDKs and UI
+consumers can request it through `/character-agents/trait-definitions`.
 
 ## Related documentation
 
-- [Query contract](Query/Query.md)
-- [Endpoints](CharacterAgent%20-%20Endpoints.md)
-## Evidence-grounded embodiment
-
-Administrators can generate an initial profile without writing an unreviewed
-CharacterAgent to Neo4j. `POST /character-agents/embodiment-drafts` creates a SQL
-generation result and a `character_agent_embodiment` background job. The worker
-deterministically collects the selected entity's canonical alias, ontology type
-name and description, resolved properties, authored text, explicitly marked
-autogenerated text, and directly related Scenes.
-
-Every identity field, property, text source, and Scene has a stable evidence ID.
-Scenes are ordered from earliest to latest by `Scene.created_at`, with Scene ID
-as a deterministic tie-breaker. The interpretation prompt treats this order as
-temporal: later Scenes may change, complete, contradict, or supersede earlier
-behaviour, relationships, knowledge, and goals. Evidence packing uses a
-provider-neutral limit of ten characters per configured
-`character_agent_embodiment_evidence_tokens` token.
-All Neo4j temporal values in canonical properties and nested evidence provenance
-are converted to ISO-8601 strings before evidence is serialized, stored, or sent
-to the model.
-
-Each chronological `DERIVED_FROM` source group makes exactly four normal LLM
-calls. Character incorporation first returns one ordered perspective and
-presentation-only `character_reflection` per Scene. Psychological enrichment
-then returns zero or more emotions, beliefs, and impacts on stable existing
-goal/aspect IDs. Cross-scene observations consume canonical Scene facts,
-structured interpretations, and enrichment—but never reflections. One atomic
-profile-update call then returns sparse behavioural-axis deltas plus aspect and
-goal operations. Unchanged axes are omitted.
-
-The first three calls use the profile snapshot captured when draft generation
-starts. Snapshot analysis runs concurrently across source groups, bounded by
-`character_agent_embodiment_source_concurrency` (default `4`). Profile updates
-remain strictly chronological: source N receives the cumulative profile
-produced by sources 1 through N-1. The worker may begin the earliest ready
-ordered update while later source analyses continue. Set concurrency to `1`
-to minimize provider load; snapshot semantics remain unchanged.
-
-The backend validates exact Scene order, stable impact targets, observation and
-update evidence IDs, unique sparse axis updates, and configured list limits.
-Each source bundle may return at most two aspect operations and one goal
-operation. A goal `complete` operation and an aspect `remove` operation remove
-that item from the next active identity revision. When the timeline is
-persisted, profile relationships present in the final revision are marked
-`active`. Achieved goal pursuits are marked `completed`, capacity-evicted or
-removed goal pursuits are marked `superseded`, and omitted aspect assignments
-are marked `inactive`. All remain available for history.
-
-The configured aspect and goal limits apply to active items. If applying a
-grounded new item would exceed a limit, generation does not fail. The active
-set is reduced deterministically: aspects with higher assignment `importance`
-are retained first and goals with higher pursuit `priority` are retained first.
-For equal values, newer assignments or pursuits are retained before older
-ones. Items created during the current generation are treated as newer than
-the starting profile. This allows a strong new item to replace an older,
-lower-value item while preserving high-value long-term profile state.
-
-Only active `HAS_ASPECT` and `PURSUES` relationships are loaded into a later
-embodiment snapshot. Aspect importance, intensity, and age come from the
-character-specific `HAS_ASPECT` relationship. Goal priority, commitment, and
-age come from the character-specific `PURSUES` relationship, with legacy goal
-node values used as fallbacks for priority and commitment.
-Each returned axis delta must be an integer from `-5` through `-1` or `1`
-through `5`; zero-delta entries are invalid and unchanged axes are omitted.
-The backend clamps `current + delta` to `0..100`, rejects ineffective
-boundary deltas, and converts the result to the absolute values used by the
-timeline and final proposal. Prompts receive
-an explicit source-local `allowed_evidence_ids` list. Bare Scene IDs are
-canonicalized to `scene:<id>`; invented and cross-source references are rejected.
-Within grounded observation lists and profile update lists, an item with a
-missing or empty `evidence_ids` list is deterministically omitted while valid
-siblings are preserved. This converts unsupported “none observed” placeholders
-to the intended empty category list. Evidence-free subtitle `set` or `clear`
-operations are omitted and therefore retain the current subtitle. Each omission
-is logged by stage and count; non-empty unknown references are never pruned.
-When structurally valid output contains invalid references, the worker may make
-`character_agent_embodiment_semantic_correction_attempts` targeted correction
-calls (default `1`). A correction receives the rejected output, exact offending
-and allowed IDs, and the unchanged output contract.
-
-Each validated analysis stage is stored in
-`character_embodiment_checkpoints`, keyed by draft revision, source position,
-prompt version, model targets, profile snapshot, and source evidence. Retrying a
-failed revision reuses only matching checkpoints and resumes at the first
-missing stage. Profile updates are deliberately not reused because their input
-depends on every prior chronological update. A changed revision, prompt, model,
-profile, or evidence snapshot produces a different cache key and ignores stale
-rows. Old drafts without checkpoints simply regenerate from the first stage.
-
-Transport, JSON/schema, and semantic-reference failures are categorized
-separately. Failed job details expose the failed stage/source, attempt,
-retryability, and offending/allowed IDs. Logs contain those identifiers and
-model metadata, but not full prompts. Canonical Scene
-nodes are never changed by embodiment. The final `name` is copied from the entity alias,
-`image_url` from the entity avatar or image property, and `background_story`
-from authored entity text, falling back to autogenerated text and then alias.
-No LLM call generates these final identity fields.
-When an aspect or goal was active for an earlier source bundle but is absent
-from the accepted final profile, acceptance retains its definition and agent
-assignment with `status=inactive`. This preserves revision snapshots and lets
-earlier `CharacterImpact` nodes keep their historically valid `AFFECTS` target
-without reactivating that target in the final profile.
-Any optional subtitle revision is recorded in the identity timeline and proposal;
-it is not part of the strict `observations` payload returned for an embodiment
-draft.
-
-All four system prompts document their complete input object and expected output
-object directly, including field meanings, allowed enums, numeric ranges, and
-identifier provenance rules. The generated Pydantic JSON Schema is also supplied
-as `required_output` and remains the authoritative validation contract. The
-proposal prompt states each behavioural axis direction explicitly: `0` is the
-left-hand pole and `100` is the right-hand pole, and the numeric value must agree
-with its justification. Every proposed behavioural axis, aspect, and goal has a
-required `justification` and `confidence`; evidence IDs retain deterministic
-source provenance separately.
-`model_character_agent_character_incorporation`,
-`model_character_agent_scene_interpretation`, and
-`model_character_agent_update` are empty by default. The first handles
-perspectives/reflections, the second handles enrichment and observations, and
-the third handles the atomic persistent-profile update call.
-At API startup, configured targets on operational ShreckLLM providers receive
-one lightweight generation warm-up per unique provider/model pair. Normal jobs
-read ShreckLLM's cached provider status before submission; they do not repeat
-the functional provider ping performed during ShreckLLM startup validation.
-Generation logs include total wall time and accumulated per-stage LLM time for
-latency diagnosis without changing the embodiment draft API.
-
-The frontend copies the proposal into its normal CharacterAgent creation form.
-All editing and removal of suggestions happens locally in that form. Submitting
-the edited form to `POST /character-agents` creates the agent, `EMBODIES`,
-embedded aspects and `HAS_ASPECT` assignments, and embedded goals and `PURSUES`
-relationships in one Neo4j transaction. A generated result alone never modifies
-the graph.
-
-The optional `embodiment_draft_id` on creation preserves generation provenance
-and makes a retried submission idempotent. Omitting it preserves the original
-manual creation contract. Starting generation again replaces the prior
-unconsumed result for that entity.
+- [CharacterAgent endpoints](CharacterAgent%20-%20Endpoints.md)
+- [Dispositional traits](Dispositional%20Traits.md)
+- [CharacterAgent Query](Query/Query.md)

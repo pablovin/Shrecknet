@@ -4,11 +4,10 @@ Four-call pipeline per source group:
   1. Character incorporation
   2. Scene psychological enrichment
   3. Cross-scene observations
-  4. Atomic axis, aspect, and goal update
+  4. Evidence-grounded trait, aspect, and goal update
 
-The first three calls analyze a fixed profile snapshot. Orchestration may run
-that phase concurrently across sources. The fourth call is applied in source
-order against the cumulative profile.
+All four calls process one ordered source chunk using its starting revision.
+Chunks run sequentially and accumulate grounded evidence.
 """
 
 from __future__ import annotations
@@ -22,6 +21,7 @@ from pydantic import BaseModel, ValidationError
 
 from app.integrations.llm.json_repair import repair_json_text
 from app.jobs.character_agent.embody_agent_prompts import (
+    BASELINE_PROMPT,
     ENRICHMENT_PROMPT,
     OBSERVATIONS_PROMPT,
     PERSPECTIVE_PROMPT,
@@ -32,7 +32,6 @@ from app.schemas.character_agent import (
     EmbodyAgentAnalysis,
     EmbodimentObservationsOutput,
     EmbodyAgentResult,
-    AxisChangeData,
     LLMCallRecord,
     ProfileUpdateOutput,
     SceneInput,
@@ -42,6 +41,11 @@ from app.schemas.character_agent import (
     SubtitleChangeProposal,
 )
 
+
+from app.schemas.character_traits import TraitProfile, TraitEvidence, TraitProposal
+from app.services.character_trait_service import (
+    ground_observations, merge_evidence, update_profile, validate_proposals, validate_scene_grounding, scene_digest,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -289,13 +293,36 @@ class EmbodyAgent:
 
         raise AssertionError("semantic validation loop did not return or raise")
 
+    async def initialize(self, *, canonical_identity: dict[str, Any], entity_id: str):
+        evidence_id = f"identity:{entity_id}"
+        known = {evidence_id}
+        def validate(value):
+            _validate_and_normalize_evidence(value, allowed_ids=known, stage="authored baseline")
+            _semantic(lambda: ground_observations(value.trait_evidence, scene_ids=[],
+                source_group_id=entity_id, authored_evidence_ids=known))
+        output = await self._call(
+            prompt=BASELINE_PROMPT,
+            payload={"identity": {key: canonical_identity.get(key) for key in
+                ("alias", "authored_text", "properties", "entity_type")}, "allowed_evidence_ids": [evidence_id]},
+            schema=EmbodimentObservationsOutput, stage="authored baseline",
+            usage_tag="character_agent.embodiment.baseline", max_tokens=6000,
+            model=self.scene_interpretation_model, semantic_validator=validate,
+        )
+        evidence = ground_observations(output.trait_evidence, scene_ids=[],
+            source_group_id=entity_id, authored_evidence_ids=known)
+        proposals = [TraitProposal(trait=item.trait, point=item.expression_point,
+            observation_ids=[item.id], justification=item.justification,
+            addresses_contradictions="Authored baseline only.") for item in evidence if item.eligible]
+        profile, _ = update_profile(TraitProfile(), evidence, proposals)
+        return profile, evidence, output
+
     async def analyze(
         self,
         *,
         source_entity_id: str,
         source_entity_alias: str,
         canonical_identity: dict[str, Any],
-        current_behavioural_axes: dict[str, int],
+        current_trait_profile: TraitProfile,
         current_aspects: list[dict[str, Any]],
         current_goals: list[dict[str, Any]],
         scenes: list[SceneInput],
@@ -351,13 +378,14 @@ class EmbodyAgent:
                 payload={
                     "identity": identity,
                     "current_profile": {
-                        "behavioural_axes": current_behavioural_axes,
+                        "trait_profile": current_trait_profile.model_dump(mode="json"),
                         "aspects": aspects,
                         "goals": goals,
                     },
                     "scenes": scene_list,
                 },
                 schema=_PerspectivesContainer,
+                semantic_validator=lambda value: _semantic(lambda: validate_scene_grounding(value.perspectives, [s.scene_id for s in scenes])),
                 stage="character incorporation",
                 usage_tag="character_agent.embodiment.character_incorporation",
                 max_tokens=max(3_000, 800 * len(scenes)),
@@ -372,6 +400,7 @@ class EmbodyAgent:
             raise EmbodimentGenerationError(
                 "perspective output scene_ids must match input scene order and be unique"
             )
+        _semantic(lambda: validate_scene_grounding(perspectives, expected_ids))
         if "character_incorporation" not in stage_checkpoints and on_checkpoint:
             await on_checkpoint("character_incorporation", perspectives_result)
 
@@ -402,6 +431,7 @@ class EmbodyAgent:
                     },
                 },
                 schema=SceneEnrichmentsOutput,
+                semantic_validator=lambda value: _semantic(lambda: validate_scene_grounding(value.scene_enrichments, expected_ids)),
                 stage="scene psychological enrichment",
                 usage_tag="character_agent.embodiment.scene_interpretation",
                 max_tokens=max(3_000, 900 * len(scenes)),
@@ -415,6 +445,7 @@ class EmbodyAgent:
             raise EmbodimentGenerationError(
                 "enrichment output scene_ids must match input scene order and be unique"
             )
+        _semantic(lambda: validate_scene_grounding(enrichments, expected_ids))
         aspect_ids = {item["id"] for item in aspects}
         goal_ids = {item["id"] for item in goals}
         for enrichment in enrichments:
@@ -470,6 +501,10 @@ class EmbodyAgent:
                     for scene, bundle in zip(scene_list, bundles, strict=True)
             ],
         }
+        def validate_observations(value):
+            _validate_and_normalize_evidence(value, allowed_ids=known, stage="cross-scene observations")
+            _semantic(lambda: ground_observations(value.trait_evidence,
+                scene_ids=expected_ids, source_group_id=source_entity_id))
         if "observations" in stage_checkpoints:
             observations = EmbodimentObservationsOutput.model_validate(
                 stage_checkpoints["observations"]
@@ -486,16 +521,17 @@ class EmbodyAgent:
                 usage_tag="character_agent.embodiment.observations",
                 max_tokens=4_000,
                 model=self.scene_interpretation_model,
-                semantic_validator=lambda value: _validate_and_normalize_evidence(
-                    value, allowed_ids=known, stage="cross-scene observations",
-                ),
+                semantic_validator=validate_observations,
                 source_entity_id=source_entity_id,
                 source_entity_alias=source_entity_alias,
             )
+        _semantic(lambda: ground_observations(observations.trait_evidence,
+            scene_ids=expected_ids, source_group_id=source_entity_id))
         if "observations" not in stage_checkpoints and on_checkpoint:
             await on_checkpoint("observations", observations)
 
         return EmbodyAgentAnalysis(
+            scene_input_digests={s.scene_id: scene_digest(s.model_dump()) for s in scenes},
             source_entity_id=source_entity_id,
             source_entity_alias=str(source_entity_alias),
             perspectives=bundles,
@@ -509,16 +545,26 @@ class EmbodyAgent:
         self,
         *,
         analysis: EmbodyAgentAnalysis,
-        current_behavioural_axes: dict[str, int],
+        current_trait_profile: TraitProfile,
         current_aspects: list[dict[str, Any]],
         current_goals: list[dict[str, Any]],
+        current_trait_evidence: list[TraitEvidence] | None = None,
+        batch_id: str | None = None,
+        stage_checkpoint: dict | None = None,
+        on_checkpoint: Any = None,
         on_stage: Any = None,
     ) -> EmbodyAgentResult:
         """Apply one analyzed source to the latest chronological profile."""
 
-        obs_data = analysis.observations.model_dump(mode="json")
+        obs_data = analysis.observations.model_dump(mode="json", exclude={"trait_evidence"})
+        existing = current_trait_evidence or []
+        incoming = ground_observations(analysis.observations.trait_evidence,
+            scene_ids=[p.scene_id for p in analysis.perspectives],
+            source_group_id=analysis.source_entity_id,
+            offset=max((e.chronological_position for e in existing), default=-1) + 1)
+        accumulated = merge_evidence(existing, incoming)
 
-        # Step 4 — Atomic axis, aspect, and goal update
+        # Step 4 — Cumulative grounded traits, aspects, and goals
         if on_stage:
             await on_stage(
                 "source:{0} - Step 4: Profile updates".format(
@@ -527,65 +573,65 @@ class EmbodyAgent:
                 [4],
             )
 
-        profile_result = await self._call(
-            prompt=PROFILE_UPDATE_PROMPT,
-            payload={
-                "current_profile": {
-                    "behavioural_axes": current_behavioural_axes,
-                    "aspects": [
-                        {"name": a.get("name", ""), "category": a.get("category", ""),
-                         "description": a.get("description"),
-                         "importance": a.get("importance"), "intensity": a.get("intensity"),
-                         "created_at": a.get("created_at")}
-                        for a in current_aspects
-                    ],
-                    "goals": [
-                        {"title": g.get("title", ""), "description": g.get("description", ""),
-                         "goal_type": g.get("goal_type", ""),
-                         "priority": g.get("priority"), "commitment": g.get("commitment"),
-                         "created_at": g.get("created_at")}
-                        for g in current_goals
-                    ],
+        if stage_checkpoint is not None:
+            profile_result = ProfileUpdateOutput.model_validate(stage_checkpoint)
+            _validate_profile_update(profile_result, allowed_ids=analysis.evidence_ids, evidence=accumulated)
+        else:
+            profile_result = await self._call(
+                prompt=PROFILE_UPDATE_PROMPT,
+                payload={
+                    "current_profile": {
+                        "trait_profile": current_trait_profile.model_dump(mode="json"),
+                        "aspects": [
+                            {"name": a.get("name", ""), "category": a.get("category", ""),
+                             "description": a.get("description"),
+                             "importance": a.get("importance"), "intensity": a.get("intensity"),
+                             "created_at": a.get("created_at")}
+                            for a in current_aspects
+                        ],
+                        "goals": [
+                            {"title": g.get("title", ""), "description": g.get("description", ""),
+                             "goal_type": g.get("goal_type", ""),
+                             "priority": g.get("priority"), "commitment": g.get("commitment"),
+                             "created_at": g.get("created_at")}
+                            for g in current_goals
+                        ],
+                    },
+                    "observations": obs_data,
+                    "trait_evidence": [item.model_dump(mode="json") for item in accumulated],
+                    "allowed_evidence_ids": sorted(analysis.evidence_ids),
+                    "limits": {
+                        "max_aspects": self.max_aspects,
+                        "max_goals": self.max_goals,
+                    },
                 },
-                "observations": obs_data,
-                "allowed_evidence_ids": sorted(analysis.evidence_ids),
-                "limits": {
-                    "max_aspects": self.max_aspects,
-                    "max_goals": self.max_goals,
-                },
-            },
-            schema=ProfileUpdateOutput,
-            stage="profile updates",
-            usage_tag="character_agent.embodiment.profile_update",
-            max_tokens=6_000,
-            model=self.character_update_model,
-            semantic_validator=lambda value: _validate_profile_update(
-                value,
-                allowed_ids=analysis.evidence_ids,
-                current_axes=current_behavioural_axes,
-            ),
-            source_entity_id=analysis.source_entity_id,
-            source_entity_alias=analysis.source_entity_alias,
-        )
-        axis_updates = [
-            AxisChangeData(
-                axis=update.axis,
-                new_value=max(
-                    0, min(100, current_behavioural_axes[update.axis] + update.delta)
+                schema=ProfileUpdateOutput,
+                stage="profile updates",
+                usage_tag="character_agent.embodiment.profile_update",
+                max_tokens=6_000,
+                model=self.character_update_model,
+                semantic_validator=lambda value: _validate_profile_update(
+                    value,
+                    allowed_ids=analysis.evidence_ids,
+                    evidence=accumulated,
                 ),
-                justification=update.justification,
-                confidence=update.confidence,
-                evidence_ids=update.evidence_ids,
+                source_entity_id=analysis.source_entity_id,
+                source_entity_alias=analysis.source_entity_alias,
             )
-            for update in profile_result.behavioural_axis_updates
-        ]
+            if on_checkpoint:
+                await on_checkpoint("profile_update", profile_result)
+        trait_profile, trait_changes = update_profile(current_trait_profile, accumulated, profile_result.trait_proposals)
 
         return EmbodyAgentResult(
+            scene_input_digests=analysis.scene_input_digests,
             source_entity_id=analysis.source_entity_id,
             source_entity_alias=analysis.source_entity_alias,
             perspectives=analysis.perspectives,
             observations=analysis.observations,
-            axis_updates=axis_updates,
+            trait_profile=trait_profile,
+            trait_evidence=incoming,
+            trait_changes=trait_changes,
+            batch_id=batch_id,
             aspect_updates=profile_result.aspect_updates,
             goal_updates=profile_result.goal_updates,
             subtitle_change=analysis.subtitle_change,
@@ -598,10 +644,12 @@ class EmbodyAgent:
         source_entity_id: str,
         source_entity_alias: str,
         canonical_identity: dict[str, Any],
-        current_behavioural_axes: dict[str, int],
+        current_trait_profile: TraitProfile,
         current_aspects: list[dict[str, Any]],
         current_goals: list[dict[str, Any]],
         scenes: list[SceneInput],
+        current_trait_evidence: list[TraitEvidence] | None = None,
+        batch_id: str | None = None,
         on_stage: Any = None,
     ) -> EmbodyAgentResult:
         """Compatibility entry point for one source executed end to end."""
@@ -610,7 +658,7 @@ class EmbodyAgent:
             source_entity_id=source_entity_id,
             source_entity_alias=source_entity_alias,
             canonical_identity=canonical_identity,
-            current_behavioural_axes=current_behavioural_axes,
+            current_trait_profile=current_trait_profile,
             current_aspects=current_aspects,
             current_goals=current_goals,
             scenes=scenes,
@@ -618,7 +666,9 @@ class EmbodyAgent:
         )
         return await self.apply_profile_update(
             analysis=analysis,
-            current_behavioural_axes=current_behavioural_axes,
+            current_trait_evidence=current_trait_evidence,
+            batch_id=batch_id,
+            current_trait_profile=current_trait_profile,
             current_aspects=current_aspects,
             current_goals=current_goals,
             on_stage=on_stage,
@@ -648,7 +698,7 @@ _OBSERVATION_EVIDENCE_LISTS = {
     "relationships", "contradictions", "evidence_gaps",
 }
 _PROFILE_EVIDENCE_LISTS = {
-    "behavioural_axis_updates", "aspect_updates", "goal_updates",
+    "aspect_updates", "goal_updates",
 }
 
 
@@ -699,7 +749,7 @@ def _drop_ungrounded_output_items(
 
 def _canonical_evidence_id(value: str) -> str:
     normalized = value.strip()
-    return normalized if normalized.startswith("scene:") else f"scene:{normalized}"
+    return normalized if ":" in normalized else f"scene:{normalized}"
 
 
 def _normalize_evidence_ids(data: Any) -> None:
@@ -745,28 +795,14 @@ def _validate_and_normalize_evidence(
         )
 
 
-def _validate_profile_update(
-    value: BaseModel,
-    *,
-    allowed_ids: set[str],
-    current_axes: dict[str, int],
-) -> None:
-    _validate_and_normalize_evidence(
-        value, allowed_ids=allowed_ids, stage="profile updates",
-    )
-    profile = value
-    ineffective = {
-        update.axis
-        for update in profile.behavioural_axis_updates
-        if max(0, min(100, current_axes[update.axis] + update.delta))
-        == current_axes[update.axis]
-    }
-    if ineffective:
-        raise EmbodimentGenerationError(
-            "profile updates contained ineffective boundary deltas",
-            category="semantic_update",
-            stage="profile updates",
-            offending_ids=ineffective,
-            allowed_ids=set(current_axes),
-        )
-    ProfileUpdateOutput,
+def _semantic(action):
+    try:
+        return action()
+    except ValueError as exc:
+        raise EmbodimentGenerationError(str(exc), category="semantic_reference") from exc
+
+
+def _validate_profile_update(value, *, allowed_ids: set[str], evidence: list[TraitEvidence]) -> None:
+    for item in [*value.aspect_updates, *value.goal_updates]:
+        _validate_and_normalize_evidence(item, allowed_ids=allowed_ids, stage="profile updates")
+    _semantic(lambda: validate_proposals(value.trait_proposals, evidence))

@@ -21,7 +21,7 @@ async with Shrecknet(token="...") as sdk:
 ```
 
 By default, the query uses the CharacterAgent's identity, traits, aspects, and
-goals. Set `use_character_identity=False` to make one generic LLM call without
+goals. Set `use_character_identity=False` to use neutral framing and deliberation without
 sending CharacterAgent profile data:
 
 ```python
@@ -152,4 +152,50 @@ the normal `create` call submits the edited aggregate.
 Use `response_format.type="json"` with a caller JSON Schema for structured
 content. String fields named `rationale` use a server-owned 2,000-character
 maximum: longer values are truncated before validation and do not fail the
-background job. The API remains admin-only in Phase 1.
+background job. Graph mutations and raw trait-evidence inspection require an administrator; authenticated users may read/query public agents.
+
+## Dispositional personality
+
+Agent reads expose typed `trait_profile.dispositional_traits` and separate
+`trait_profile.steadiness`. Each estimate includes z, a derived 1–9 point, status,
+evidence counts and uncertainty. Unknown has null z/point; midpoint is point 5.
+Fetch authoritative constructs, poles and situations with
+`await sdk.character_agents.trait_definitions()`; do not maintain separate UI
+meaning dictionaries.
+
+```python
+from shrecknet_client.character_traits import TraitEdit
+from shrecknet_client.models import CharacterAgentUpdate
+
+await sdk.character_agents.update(
+    agent.id,
+    CharacterAgentUpdate(trait_edits={
+        "integrity": TraitEdit(point=8, reason="Authored character sheet.")
+    }),
+)
+evidence = await sdk.character_agents.list_trait_evidence(
+    agent.id, trait="integrity", revision=3
+)
+changes = await sdk.character_agents.list_identity_changes(agent.id, change_type="trait")
+
+# Clear the override; explicit null must be transmitted.
+await sdk.character_agents.update(
+    agent.id,
+    CharacterAgentUpdate(trait_edits={
+        "integrity": TraitEdit(point=None, reason="Resume evidence-derived estimate.")
+    }),
+)
+```
+
+Embodiment uses chronological source chunks of up to ten scenes and four normal
+LLM calls per chunk, plus authored initialization. Chunks run sequentially. The
+server applies the draft's generated profile during creation; submit only changed
+point selections in `trait_edits`, with reasons. Evidence continues accumulating
+beneath a manual override. STEADINESS is inferred separately from repeated
+comparable behavior and never controls query temperature.
+
+This is a breaking contract requiring old CharacterAgents, drafts and checkpoints
+to be cleared and regenerated with matching backend/worker/SDK versions. Starting
+a draft for an already embodied entity replaces its existing identity. See the
+[canonical personality documentation](../../Documentation/Agents/CharacterAgent/Dispositional%20Traits.md)
+and [runnable lifecycle example](../examples/10_character_agent/01_dispositional_lifecycle.py).

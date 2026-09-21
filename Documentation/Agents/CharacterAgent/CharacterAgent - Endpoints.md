@@ -53,15 +53,21 @@ Example response:
     "image_url": null,
     "status": "active",
     "visibility": "public",
-    "calm_aggressive": 65,
-    "cautious_reckless": 30,
-    "compassionate_ruthless": 25,
-    "trusting_suspicious": 70,
-    "honest_deceptive": 40,
-    "patient_impulsive": 35,
-    "humble_proud": 60,
-    "cooperative_dominating": 55,
-    "trait_adherence": 80,
+    "trait_profile": {
+      "version": "dispositions-v1",
+      "dispositional_traits": {
+        "integrity": {"z": null, "point": null, "status": "unknown", "qualifying_count": 0, "observation_ids": [], "uncertainty": [], "accepted_count": 0, "comparison_start": 0},
+        "caution": {"z": null, "point": null, "status": "unknown", "qualifying_count": 0, "observation_ids": [], "uncertainty": [], "accepted_count": 0, "comparison_start": 0},
+        "presence": {"z": null, "point": null, "status": "unknown", "qualifying_count": 0, "observation_ids": [], "uncertainty": [], "accepted_count": 0, "comparison_start": 0},
+        "forbearance": {"z": null, "point": null, "status": "unknown", "qualifying_count": 0, "observation_ids": [], "uncertainty": [], "accepted_count": 0, "comparison_start": 0},
+        "diligence": {"z": null, "point": null, "status": "unknown", "qualifying_count": 0, "observation_ids": [], "uncertainty": [], "accepted_count": 0, "comparison_start": 0},
+        "curiosity": {"z": null, "point": null, "status": "unknown", "qualifying_count": 0, "observation_ids": [], "uncertainty": [], "accepted_count": 0, "comparison_start": 0},
+        "sharing": {"z": null, "point": null, "status": "unknown", "qualifying_count": 0, "observation_ids": [], "uncertainty": [], "accepted_count": 0, "comparison_start": 0},
+        "restlessness": {"z": null, "point": null, "status": "unknown", "qualifying_count": 0, "observation_ids": [], "uncertainty": [], "accepted_count": 0, "comparison_start": 0}
+      },
+      "steadiness": {"z": null, "point": null, "status": "unknown", "qualifying_count": 0, "observation_ids": [], "uncertainty": [], "accepted_count": 0, "comparison_start": 0},
+      "overrides": {}, "inferred_traits": {}
+    },
     "id": "agent-8c01",
     "embodied_entity_instance_id": "entity-mara",
     "created_by_user_id": 1,
@@ -245,121 +251,62 @@ characters before validation rather than causing repair or job failure.
 
 See [CharacterAgent Query](Query/Query.md) for request and response contracts.
 
-Existing CRUD remains under `/character-agents`, `/character-aspects`, and
-`/character-goals`. `trait_adherence` is an integer from 0 through 100, defaults
-to 80, and is read as 80 for older graph records where it is absent.
-`subtitle` is an optional 255-character identity label. It may be set or cleared
-through the existing CharacterAgent patch endpoint; each manual identity edit
-creates an immutable revision.
+## Personality and history
 
-Historical state is available through
-`GET /character-agents/{character_agent_id}/revisions` and
-`GET /character-agents/{character_agent_id}/identity-changes`. Identity changes
-may be filtered with `change_type=axis|subtitle|aspect|goal`.
+CRUD remains under `/character-agents`, `/character-aspects`, and `/character-goals`.
+CharacterAgent reads include `trait_profile.dispositional_traits` and separate
+`trait_profile.steadiness`. Every slot has z, derived 1–9 point, status, evidence
+counts/references, and uncertainty. Unknown is null, not point 5. See the complete
+[trait specification and policy](Dispositional%20Traits.md).
 
-## Embodiment generation and form creation
+Authenticated metadata: `GET /character-agents/trait-definitions` returns the
+registry and scale mapping. The percentile reference is the general human population.
 
-All embodiment routes require an administrator and enabled/configured AI agents.
+Administrator create/PATCH inputs use point edits rather than raw profiles:
 
-1. `POST /character-agents/embodiment-drafts` with
-   `{"ontology_id": 12, "entity_instance_id": "entity-mara"}` returns `202` with
-   `draft_id`, `job_id`, `draft_url`, and `job_url`.
+```json
+{
+  "trait_edits": {
+    "integrity": {"point": 8, "reason": "Authored character sheet."},
+    "sharing": {"point": 3, "reason": "Scrupulous but ungenerous."}
+  }
+}
+```
+
+Each slot accepts a strict integer 1–9. Omitted slots are retained. A nonblank
+reason is required. `{"trait_edits":{"integrity":{"point":null,"reason":"Resume evidence."}}}`
+clears that manual override and restores the current inferred value, possibly unknown.
+Raw z, caller-invented evidence, unknown trait names, and removed personality fields
+are not accepted as edits (`422`). Graph mutation remains administrator-only.
+Manual values stay effective while underlying evidence accumulates.
+
+`GET /character-agents/{agent_id}/revisions` returns immutable profile snapshots,
+batch IDs and scene IDs. `GET /character-agents/{agent_id}/identity-changes` accepts
+`change_type=trait|steadiness|subtitle|aspect|goal`. Changes include previous/new
+estimate objects, justification, canonical evidence IDs, observation IDs, policy
+version, and actor ID for manual changes.
+
+`GET /character-agents/{agent_id}/trait-evidence` is administrator-only. Filters:
+`trait` (directional key), `revision` (inclusive cutoff), `skip` (default 0), and
+`limit` (default 100, maximum 500). It returns structured observations with
+eligibility/exclusion reasons; it includes weak and no-change evidence. Raw trait
+observations are not included in public revision responses. Visibility rules for
+existing profile and history reads continue to apply.
+
+## Embodiment generation and reviewed creation
+
+1. Administrator submits `POST /character-agents/embodiment-drafts` with
+   `{"ontology_id":12,"entity_instance_id":"entity-mara"}`. AI agents must be
+   enabled and configured. Response `202` includes draft/job IDs and polling URLs.
 2. Poll `GET /jobs/{job_id}` and
-   `GET /character-agents/embodiment-drafts/{draft_id}`. Generation states are
-   `queued`, `generating`, `ready`, `failed`, and `accepted`.
-3. When ready, copy `proposal` into the normal CharacterAgent creation form.
-   Edits, additions, and removal of aspects/goals remain frontend-local.
-4. Submit the edited aggregate to `POST /character-agents`, including
-   `embodiment_draft_id`, optional embedded `aspects`, and optional embedded
-   `goals`.
-
-The generated proposal represents axes as an array of objects containing
-`axis`, `value`, `justification`, `confidence`, and evidence. The proposal
-`name`, `background_story`, and `image_url` are copied deterministically from
-the entity rather than generated by the model. The creation form maps each
-axis object's `value` to the correspondingly named flat CharacterAgent field;
-for example, `{axis: "cautious_reckless", value: 24}` becomes
-`"cautious_reckless": 24`. Explanations remain available in the draft for the
-review UI but are not CharacterAgent node properties.
-
-`POST /character-agents` creates the complete graph aggregate in one Neo4j
-transaction. Draft evidence IDs supplied by embedded aspects/goals must belong
-to the referenced draft. After success the draft becomes `accepted` and records
-the resulting CharacterAgent ID. Retrying the same draft-backed creation returns
-the previously created agent.
-
-Starting another generation replaces the prior unconsumed result for that
-entity. The frontend may ignore a result without calling a reject endpoint.
-
-### Re-embodiment (replacing an existing agent)
-
-If the `EntityInstance` already has a CharacterAgent when
-`POST /character-agents/embodiment-drafts` is called, the existing agent is
-**silently deleted** before the new draft starts. The deletion cascade removes:
-
-- All scene perspectives and their children (emotions, beliefs, impacts)
-- All identity revisions and change records (axis history)
-- All aspect and goal assignments (orphan definitions are cleaned up)
-- The CharacterAgent node itself
-
-The new embodiment generation then proceeds normally. No `409` is returned;
-the response is identical to a first-time embodiment. The frontend should
-treat this as a re-embodiment flow and update any cached references to the
-previous agent ID.
-
-Direct `POST /character-agents` creation also deletes any prior agent for the
-same entity before creating the new one, handling any edge case where an agent
-exists without an active draft.
-
-Evidence returned in a draft is JSON-safe. Neo4j date/time values nested in
-entity properties or Scene provenance are represented as ISO-8601 strings.
-Revision 0 uses entity evidence only. Related Scenes are grouped by their
-required `DERIVED_FROM` source; groups and Scenes use `created_at` with stable
-ID tie-breakers. Each source runs character incorporation, psychological
-enrichment, cross-scene observations, then one atomic axes/aspects/goals
-update. The first three stages use the generation-start profile snapshot and
-may run concurrently across sources. Profile updates always run in source
-order against cumulative state. Draft acceptance atomically materializes revisions, change records,
-perspectives, reflections, emotion/belief children, and impacts linked to their
-active goal/aspect targets.
-
-The profile-update LLM contract uses `behavioural_axis_updates`, a sparse list
-of `{axis, delta, justification, confidence, evidence_ids}`. `delta` is a
-nonzero signed integer from `-5` through `5`. Omitted axes retain their current
-values, and an empty list means no behavioural-axis change. The backend applies
-and clamps each delta; generated proposals still expose the existing absolute
-`{axis, value, ...}` contract.
-
-Every grounded observation and profile-update list item requires at least one
-`evidence_ids` value. Items with missing or empty evidence are omitted
-individually, leaving valid siblings intact; a category with no remaining items
-is `[]`. Evidence-free subtitle changes are treated as `retain`. Non-empty
-unknown or cross-source evidence IDs still fail validation.
-
-The existing background-job response contract is unchanged. During generation,
-its details report `status` and `active_stages`: incorporation `[1]`,
-psychological enrichment `[2]`, observations `[3]`, atomic profile updates
-`[4]`, and validation/merge an empty active-stage array. Concurrent progress
-writes are serialized; every source independently reports pending, processing,
-done, or failed state and elapsed time. Bundle details add
-`checkpointed_stages` and `reused_stages`. On failure, job details add
-`failure_category`, `failed_stage`, `failed_source_id`,
-`failed_source_alias`, `attempt`, `retryable`, `offending_ids`, and
-`allowed_ids`. These fields are additive; successful proposal payloads are
-unchanged. The draft `error_message` contains the same concise categorized
-diagnostic.
-
-Validated incorporation, interpretation, and observation outputs are
-checkpointed per draft revision and source. A retry reuses a checkpoint only
-when its prompt version, model target, source evidence, and starting profile
-still match. Profile updates always rerun in chronological order. Removing the
-checkpoint table rolls back resumability only; existing drafts remain readable
-and regenerate normally.
-
-The old manual creation payload remains valid. `embodiment_draft_id`, `aspects`,
-and `goals` are optional additions.
-
-Example edited creation form:
+   `GET /character-agents/embodiment-drafts/{draft_id}`. States remain `queued`,
+   `generating`, `ready`, `failed`, and `accepted`.
+3. Review `proposal.trait_profile`, aspects/goals, source evidence and timeline.
+   The server-owned profile is the inference baseline; do not submit that entire
+   read object as a write payload.
+4. Submit the normal creation aggregate with the draft ID and any manual point
+   edits. Identical points preserve inferred provenance; different points produce
+   a final manual revision after the generated timeline.
 
 ```json
 {
@@ -367,84 +314,67 @@ Example edited creation form:
   "entity_instance_id": "entity-mara",
   "embodiment_draft_id": "draft-123",
   "name": "Mara of the Frontier",
-  "background_story": "The final administrator-edited story.",
-  "image_url": "https://example.test/mara.png",
-  "status": "active",
+  "background_story": "The administrator-reviewed history.",
   "visibility": "private",
-  "calm_aggressive": 32,
-  "cautious_reckless": 24,
-  "compassionate_ruthless": 28,
-  "trusting_suspicious": 61,
-  "honest_deceptive": 43,
-  "patient_impulsive": 27,
-  "humble_proud": 58,
-  "cooperative_dominating": 56,
-  "trait_adherence": 85,
-  "aspects": [
-    {
-      "suggestion_id": "aspect-frontier-leader",
-      "name": "Frontier leader",
-      "category": "role",
-      "description": "Organizes the frontier community.",
-      "importance": 5,
-      "intensity": 85,
-      "justification": "Mara repeatedly organizes and leads the settlement.",
-      "evidence_ids": ["milestone:milestone-31"],
-      "confidence": 0.92
-    }
-  ],
-  "goals": [
-    {
-      "suggestion_id": "goal-protect-community",
-      "title": "Protect the frontier community",
-      "description": "Keep the settlement safe.",
-      "goal_type": "obligation",
-      "status": "active",
-      "priority": 90,
-      "commitment": 88,
-      "justification": "Mara explicitly accepts responsibility for the settlement's safety.",
-      "basis": "explicit",
-      "evidence_ids": ["milestone:milestone-31"],
-      "confidence": 0.9
-    }
-  ]
+  "trait_edits": {"integrity":{"point":8,"reason":"Reviewed authored characterization."}},
+  "aspects": [],
+  "goals": []
 }
 ```
 
-`suggestion_id`, `justification`, `evidence_ids`, `confidence`, and goal `basis`
-are optional for manually added form items. Generated behavioural axes, aspects,
-and goals always include `justification` and `confidence`. When evidence IDs are supplied with
-`embodiment_draft_id`, every ID must occur in that draft.
+Creation materializes the graph aggregate atomically. Embedded aspect/goal
+provenance must belong to the draft. Retrying an accepted draft returns its
+existing agent. Manual creation without a draft starts unobserved slots as unknown.
+Name/story/image derivation continues to use canonical entity information.
 
-Configuration:
+### Sequential source chunks
 
-- `model_character_agent_framing` and `model_character_agent_deliberation`:
-  query pipeline targets.
-- `model_agents_repair_json`: shared JSON repair target used for the optional
-  single repair attempt.
-- `model_character_agent_character_incorporation`: perspectives and expressive reflections.
-- `model_character_agent_scene_interpretation`: psychological enrichment and observations.
-- `model_character_agent_update`: one atomic axis, aspect, and goal update.
-- Every CharacterAgent model target defaults to
-  `{"provider": "", "name": ""}`. Empty targets remain empty until an
-  administrator selects a target or enabling AI agents reconciles them against
-  the available shreckLLM providers.
-- Startup prewarming covers configured CharacterAgent targets on providers that
-  ShreckLLM reports operational. Each job performs only a cached-status
-  preflight; an explicit provider test is not repeated before generation.
-- `character_agent_embodiment_evidence_tokens`: bounded evidence budget; default `12000`.
-- `character_agent_embodiment_max_aspects`: default `12`.
-- `character_agent_embodiment_max_goals`: default `8`.
-  These are maximum active profile sizes. Capacity is resolved by retaining
-  higher-importance aspects or higher-priority goals, then newer items for
-  ties; exceeding a limit with a valid proposal does not fail the job.
-- Each source bundle returns at most two aspect operations and one goal
-  operation. Achieved goals become `completed`, capacity-evicted or removed
-  goals become `superseded`, and removed aspects become `inactive`; their
-  historical graph records remain available.
-- `character_agent_embodiment_source_concurrency`: concurrent source snapshot
-  analyses; default `4`, allowed range `1` through `16`. Profile updates remain
-  sequential regardless of this value. Use `1` to reduce provider load.
-- `character_agent_embodiment_semantic_correction_attempts`: targeted retries
-  for structurally valid output containing invalid evidence references; default
-  `1`, allowed range `0` through `3`. Set `0` for immediate strict failure.
+Scenes retain `DERIVED_FROM` source grouping and deterministic time order. Large
+sources split into chunks of at most ten scenes or the input budget. Interleaving
+sources split into chronological runs; no scene is silently truncated. Each chunk
+runs four normal calls: perspectives, enrichment, joint observations, and one
+cumulative profile proposal. Baseline authored extraction adds one initial call.
+No scenes are required for authored-only initialization. All chunk perspectives
+use its starting revision; the updated identity takes effect at chunk end.
+
+Outputs contain per-scene provenance and availability cutoffs. Invalid references,
+missing/duplicate/reordered scene outputs, or unsupported updates fail validation
+and may use the configured bounded correction. Explicit future citations are
+rejected; shared-context prompts cannot guarantee absence of uncited hindsight.
+
+Checkpoints include the preceding profile/evidence, source inputs, batch size,
+versions, and model targets. Architect uses the same accumulation/timeline rules
+for new scenes. Stale concurrent writes return a conflict; edited, removed, or
+backdated processed history requires regeneration. Background failure is reported
+through the existing job/draft error path.
+
+### Regeneration and rollout
+
+Starting an embodiment draft for an already embodied entity deletes its current
+CharacterAgent aggregate through the existing cleanup path, then generates a new
+draft. Its perspectives, history, and unshared aspect/goal definitions are removed;
+canonical entities/scenes remain. This endpoint is not a nondestructive preview.
+
+This personality contract is intentionally breaking. Drain old workers/queued
+jobs, clear old agents and draft/checkpoint payloads, deploy matching consumers,
+and regenerate. There is no conversion or compatibility alias. See
+[deployment and rollback notes](Dispositional%20Traits.md#breaking-deployment).
+
+### Configuration
+
+- `model_character_agent_character_incorporation`: batch perspectives/reflections.
+- `model_character_agent_scene_interpretation`: authored baseline, enrichment,
+  and joint diagnostic observations.
+- `model_character_agent_update`: cumulative trait proposals, aspects and goals.
+- `model_character_agent_framing` / `model_character_agent_deliberation`: query stages.
+- `model_agents_repair_json`: query final repair target.
+- `character_agent_embodiment_scene_batch_size`: default 10, allowed 1–10; all
+  chunks for a character execute sequentially.
+- `character_agent_embodiment_evidence_tokens`: default 12000; source chunk input
+  budget uses four characters per configured token. Oversized individual scenes fail.
+- `character_agent_embodiment_max_aspects` / `character_agent_embodiment_max_goals`:
+  defaults 12/8, active capacities. Per-chunk operation caps remain two aspects/one goal.
+- `character_agent_embodiment_semantic_correction_attempts`: default 1, range 0–3.
+
+Model targets default to empty provider/name until configured or reconciled.
+Unrelated belief, emotion, aspect and goal scales retain their existing meanings.

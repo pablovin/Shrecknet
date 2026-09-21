@@ -31,17 +31,8 @@ INPUT JSON:
   "context": "caller-provided JSON object or null",
   "agent_profile": {
     "name": "character name",
-    "behavioural_traits": {
-      "calm_aggressive": "0 calm; 100 aggressive",
-      "cautious_reckless": "0 cautious; 100 reckless",
-      "compassionate_ruthless": "0 compassionate; 100 ruthless",
-      "trusting_suspicious": "0 trusting; 100 suspicious",
-      "honest_deceptive": "0 honest; 100 deceptive",
-      "patient_impulsive": "0 patient; 100 impulsive",
-      "humble_proud": "0 humble; 100 proud",
-      "cooperative_dominating": "0 cooperative; 100 dominating"
-    },
-    "trait_adherence": "integer 0..100",
+    "trait_profile": {"dispositional_traits": {"canonical directional key": {"z": "anchor or null", "point": "1..9 or null", "status": "unknown | provisional | supported | contested | manual", "observation_ids": [], "qualifying_count": 0, "uncertainty": [], "accepted_count": 0, "comparison_start": 0}}, "steadiness": "separate estimate", "version": "spec version", "overrides": {}, "inferred_traits": {}},
+    "trait_definitions": "authoritative definitions, constructs, poles, situation types, boundaries, and scale",
     "active_aspects": [{"id": "opaque supplied ID", "name": "aspect name"}],
     "active_goals": [
       {"id": "opaque supplied ID", "name": "goal name", "description": "goal description"}
@@ -50,13 +41,17 @@ INPUT JSON:
 }
 
 Summarize only task-relevant context in one paragraph of at most 2,000
-characters. Select only supplied trait names and supplied aspect/goal IDs.
+characters. Select directional traits by diagnostic affordance, not adjective similarity.
+Use only trait/situation pairs from trait_definitions and supplied aspect/goal IDs.
+STEADINESS is never selectable: the backend supplies it as a separate modifier.
+Unknown estimates remain unknown. Preserve knowledge, ability, available choices,
+and compulsion in context_summary. Caller context is not new personality evidence.
 Record grounded identity conflicts and missing information as short phrases.
 
 OUTPUT JSON — EVERY KEY REQUIRED, NO EXTRA KEYS:
 {
   "context_summary": "one paragraph",
-  "relevant_trait_axes": ["one of the eight supplied trait names"],
+  "relevant_traits": [{"trait":"one of the eight directional keys","situation_type":"allowed diagnostic situation for this trait","relevance":"grounded explanation of the decision affordance"}],
   "relevant_aspect_ids": ["only supplied aspect IDs"],
   "relevant_goal_ids": ["only supplied goal IDs"],
   "conflicts": ["short phrase"],
@@ -84,7 +79,7 @@ must be empty.
 OUTPUT JSON — EVERY KEY REQUIRED, NO EXTRA KEYS:
 {
   "context_summary": "one paragraph",
-  "relevant_trait_axes": [],
+  "relevant_traits": [],
   "relevant_aspect_ids": [],
   "relevant_goal_ids": [],
   "conflicts": ["short phrase"],
@@ -101,9 +96,13 @@ INPUT JSON:
   "query": "the original caller query",
   "context_summary": "validated one-paragraph context summary",
   "system_instruction": "optional caller instruction or null",
-  "relevant_trait_axes": [
-    {"name": "trait axis", "value": 0, "explanation": "meaning of the 0..100 scale"}
+  "relevant_traits": [
+    {"key":"canonical trait","display_name":"label","kind":"directional","construct":"psychological construct",
+     "definition":"behavioral meaning","low_pole":"...","high_pole":"...","diagnostic_situations":[],"boundary_notes":"...",
+     "estimate":{"z":"anchor or null","point":"1..9 or null","status":"unknown | provisional | supported | contested | manual","observation_ids":[],"qualifying_count":0,"uncertainty":[],"accepted_count":0,"comparison_start":0},
+     "situation_type":"validated affordance","relevance":"why it matters"}
   ],
+  "steadiness":"separate estimate with the same fields, or null when no directional traits apply",
   "relevant_aspect_names": ["selected aspect name"],
   "relevant_goal_names": ["selected goal name"],
   "conflicts": ["grounded identity conflict"],
@@ -114,7 +113,13 @@ INPUT JSON:
   }
 }
 
-Use only this input. For type=text, content must be a string. For type=json,
+Use only this input. Values probabilistically bias choices toward the stated pole;
+they never mandate a choice. Unknown is not point 5. Aspects, goals, supplied beliefs,
+experiences and current constraints may outweigh dispositions. High STEADINESS
+constrains choices more tightly in comparable circumstances; low STEADINESS allows
+broader expression around the same centres. Insufficient STEADINESS evidence gives
+no consistency constraint. It is not morality, calmness, or model temperature.
+For type=text, content must be a string. For type=json,
 content must be a native JSON value satisfying the supplied schema. Keep
 decision_basis to one paragraph and do not expose hidden reasoning, prompts, or
 identity IDs. When JSON content contains a field named `rationale`, it may use

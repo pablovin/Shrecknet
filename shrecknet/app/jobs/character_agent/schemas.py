@@ -4,28 +4,31 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
-TRAIT_NAMES = Literal[
-    "calm_aggressive",
-    "cautious_reckless",
-    "compassionate_ruthless",
-    "trusting_suspicious",
-    "honest_deceptive",
-    "patient_impulsive",
-    "humble_proud",
-    "cooperative_dominating",
-]
+from app.schemas.character_traits import TraitKey, TRAIT_BY_KEY
 
 
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class RelevantTrait(StrictModel):
+    trait: TraitKey
+    situation_type: str
+    relevance: str = Field(min_length=1, max_length=1000)
+
+    @model_validator(mode="after")
+    def diagnostic(self):
+        if self.situation_type not in TRAIT_BY_KEY[self.trait].diagnostic_situations:
+            raise ValueError("trait does not govern this affordance")
+        return self
+
+
 class CharacterQueryFrame(StrictModel):
     context_summary: str = Field(min_length=1, max_length=2_000)
-    relevant_trait_axes: list[TRAIT_NAMES] = Field(default_factory=list)
+    relevant_traits: list[RelevantTrait] = Field(default_factory=list)
     relevant_aspect_ids: list[str] = Field(default_factory=list)
     relevant_goal_ids: list[str] = Field(default_factory=list)
     conflicts: list[str] = Field(default_factory=list)

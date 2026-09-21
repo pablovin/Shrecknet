@@ -54,34 +54,28 @@ generation.
 
 Identity mode normally performs two LLM calls.
 
-1. **Framing** receives the query, caller context, character name, all eight
-   behavioral-axis values, trait adherence, active aspects as `{id,name}`, and
-   active goals as `{id,name,description}`. It returns a one-paragraph
-   `context_summary`, relevant trait names, aspect IDs, goal IDs, conflicts,
-   and unknowns. The backend keeps supplied active IDs and may resolve a
-   selector returned as a name only when it exactly matches one active aspect
-   or goal after case and whitespace normalization. Unknown or ambiguous
-   selectors are discarded, allowing deliberation to continue without them.
-   Model-returned selector text is never passed directly to deliberation.
-2. **Deliberation** receives only the original query, context summary, system
-   instruction, selected axes as name/value/scale explanation, selected aspect
-   names, selected goal names, conflicts, unknowns, and response-format
-   contract. It returns `content` and a one-paragraph `decision_basis`.
+1. **Framing** receives the query/context, character name, current trait profile,
+   registry metadata, active aspects as `{id,name}`, and active goals as
+   `{id,name,description}`. It selects directional traits by psychological
+   affordance and returns `relevant_traits` entries with `trait`, `situation_type`,
+   and `relevance`. The backend rejects invalid trait/situation pairs. Aspect/goal
+   selectors retain exact-ID or unambiguous exact-name resolution.
+2. **Deliberation** receives the original query, validated context summary,
+   caller instruction, selected trait estimates with constructs/poles/boundaries
+   and relevance, selected aspect/goal names, conflicts, unknowns and output format.
+   STEADINESS is a separate consistency modifier only when directional traits apply.
+   It is never selected as an ordinary predictor and never sets temperature.
 
-Stage 2 never receives the original context, background story, trait adherence,
-identity IDs, aspect descriptions, or goal descriptions. Final output is
-parsed and validated locally. If it is malformed or violates the caller schema,
-one JSON-repair LLM call is allowed; repaired output must validate or the job
-fails. The repair call receives the required top-level `content` and
-`decision_basis` envelope schema, with `content` constrained by the caller's
-response schema. Stage 1 is never repaired.
+Unknown traits remain unknown; point 5 means an evidenced midpoint. Trait values
+bias choices probabilistically. Context, aspects and goals can outweigh those
+biases. Framing preserves knowledge, capabilities, available options and compulsion
+so the selected disposition matches a meaningful decision affordance.
 
-For JSON content, Shrecknet owns the length policy for every string field named
-`rationale`: the effective schema allows up to 2,000 characters, regardless of
-a lower caller-provided `maxLength`. Returned rationale text longer than 2,000
-characters is deterministically truncated before schema validation. Exceeding
-this cap does not trigger repair and does not fail the job; all other caller
-schema constraints continue to validate normally.
+Stage 2 receives no original raw context, background story, or aspect/goal IDs or
+descriptions. Structured output is parsed/validated locally; one final JSON repair
+is allowed through the configured repair target. Stage 1 is not repaired.
+String fields named `rationale` retain the server-owned 2,000-character cap and
+are deterministically truncated before response-schema validation.
 
 Generic mode also uses two normal calls. Neutral framing receives only the
 original query and caller context and must return empty identity-selector

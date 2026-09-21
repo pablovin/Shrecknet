@@ -296,16 +296,32 @@ class AgentsAPI:
         return AgentRead.model_validate(data)
 
 
+from .character_traits import TraitEvidence
+
+
 class CharacterAgentsAPI:
     """CharacterAgent query and administrator embodiment workflow."""
 
     def __init__(self, client: AsyncShrecknetClient):
         self._client = client
 
+    async def trait_definitions(self) -> dict[str, Any]:
+        return await self._client.raw_request("GET", "/character-agents/trait-definitions")
+
+    async def list_trait_evidence(self, character_agent_id: str, *, trait: str | None = None,
+                                  revision: int | None = None, skip: int = 0, limit: int = 100) -> list[TraitEvidence]:
+        params = {"skip": skip, "limit": limit}
+        if trait is not None:
+            params["trait"] = trait
+        if revision is not None:
+            params["revision"] = revision
+        data = await self._client.raw_request("GET", f"/character-agents/{character_agent_id}/trait-evidence", params=params)
+        return [TraitEvidence.model_validate(item) for item in data]
+
     async def create(self, payload: CharacterAgentCreateRequest) -> CharacterAgentRead:
         data = await self._client.raw_request(
             "POST", "/character-agents",
-            json=payload.model_dump(mode="json", exclude_none=True),
+            json=payload.model_dump(mode="json", exclude_unset=True),
         )
         return CharacterAgentRead.model_validate(data)
 

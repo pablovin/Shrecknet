@@ -41,3 +41,5 @@ Official documentation for the async Shrecknet Python SDK.
 ## API Reference
 
 - [API Reference (Generated)](./reference/index.md)
+
+- [CharacterAgent dispositions and evidence](character_agents.md)

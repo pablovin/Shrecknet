@@ -16,13 +16,15 @@ from app.models.ontology import (
     OntologyEntity, OntologyProperty, PropertyDataType,
 )
 from app.schemas.character_agent import (
-    BEHAVIOURAL_AXES,
     EmbodimentDraftRead,
     EmbodimentEvidence,
     EmbodimentProposal,
     CharacterSourceGroup,
     SourceSceneInput,
 )
+
+
+from app.schemas.character_traits import TraitProfile, TraitEvidence
 
 
 def _json(value: str | None, default: Any) -> Any:
@@ -249,25 +251,7 @@ class CharacterEmbodimentService:
     async def load_embodiment_input(
         self, source_entity_id: str, ontology_id: int,
     ) -> dict[str, Any]:
-        """Load all data needed by EmbodyAgent for one source group.
-
-        Loads the source entity's canonical identity, finds any existing
-        CharacterAgent EMBODYING this entity for current axes/aspects/goals,
-        and collects scenes DERIVED_FROM the source entity that involve the
-        embodied entity.
-
-        Returns:
-          canonical_identity: dict with alias, entity_type, entity_type_description,
-                              properties, authored_text, generated_text, avatar_url
-          current_axes: dict of 8 axis name -> int value (defaults 50 if no agent)
-          current_aspects: list of {name, category, description, importance,
-                           intensity, created_at}
-          current_goals: list of {title, description, goal_type, priority,
-                         commitment, created_at}
-          source_entity_alias: str
-          scenes: list of {scene_id, name, description, created_at}
-          agent_id: str | None
-        """
+        """Load authored identity, scoped scenes, current profile, and its evidence ledger."""
         # 1. Load the source entity
         entity_row = await (
             await self.graph.run(
@@ -335,7 +319,7 @@ class CharacterEmbodimentService:
             },
         }
 
-        # 3. Check for existing agent, load current axes/aspects/goals
+        # 3. Check for existing agent, load current traits/aspects/goals
         agent_row = await (
             await self.graph.run(
                 """
@@ -348,15 +332,21 @@ class CharacterEmbodimentService:
         ).single()
         agent = _json_safe(dict(agent_row["agent"])) if agent_row and agent_row["agent"] else None
 
-        current_axes: dict[str, int] = {}
+        trait_profile = TraitProfile.model_validate_json(agent["trait_profile"]) if agent else TraitProfile()
+        trait_evidence = []
+        latest_revision = -1
+        processed_scene_ids = set()
         if agent:
-            for axis in BEHAVIOURAL_AXES:
-                current_axes[axis] = int(agent.get(axis, 50))
             if agent.get("subtitle"):
                 canonical_identity["subtitle"] = str(agent["subtitle"])
-        else:
-            for axis in BEHAVIOURAL_AXES:
-                current_axes[axis] = 50
+            history = await self.graph.run(
+                "MATCH (:CharacterAgent {id:$id})-[:HAS_REVISION]->(r:CharacterIdentityRevision) "
+                "RETURN r ORDER BY r.revision_number", id=agent["id"])
+            async for record in history:
+                revision = dict(record["r"])
+                latest_revision = revision["revision_number"]
+                processed_scene_ids.update(json.loads(revision.get("scene_ids") or "[]"))
+                trait_evidence.extend(TraitEvidence.model_validate(item) for item in json.loads(revision.get("trait_evidence") or "[]"))
 
         current_aspects: list[dict[str, Any]] = []
         current_goals: list[dict[str, Any]] = []
@@ -420,6 +410,7 @@ class CharacterEmbodimentService:
             """
             MATCH (scene:Scene)-[:RELATES_TO]->
                   (:EntityInstance {entity_instance_id:$entity_id})
+            WHERE scene.ontology_id = $ontology_id AND scene.instance_id = $instance_id
             OPTIONAL MATCH (scene)-[:DERIVED_FROM]->(source:EntityInstance)
             RETURN scene.id AS scene_id,
                    coalesce(scene.name, scene.id) AS name,
@@ -429,7 +420,7 @@ class CharacterEmbodimentService:
                    coalesce(source.alias, source.entity_instance_id) AS source_alias
             ORDER BY coalesce(toString(scene.created_at), ''), scene.id
             """,
-            entity_id=entity_instance_id,
+            entity_id=entity_instance_id, ontology_id=ontology_id, instance_id=entity.get("instance_id"),
         )
         scenes: list[dict[str, Any]] = []
         groups: dict[str, dict[str, Any]] = {}
@@ -462,7 +453,10 @@ class CharacterEmbodimentService:
 
         return {
             "canonical_identity": canonical_identity,
-            "current_axes": current_axes,
+            "trait_profile": trait_profile,
+            "trait_evidence": trait_evidence,
+            "latest_revision": latest_revision,
+            "processed_scene_ids": processed_scene_ids,
             "current_aspects": current_aspects,
             "current_goals": current_goals,
             "source_entity_alias": source_alias,
@@ -470,6 +464,78 @@ class CharacterEmbodimentService:
             "source_groups": source_groups,
             "agent_id": agent_id,
         }
+
+    async def append_created_scenes(self, *, agent_id, entity_id, ontology_id,
+                                    created_scene_ids, llm_client, settings):
+        """Append newly authored scenes with the same chunk and profile rules as drafts."""
+        from app.jobs.character_agent.embody_agent import EmbodyAgent
+        from app.jobs.character_agent.embody_agent_prompts import PROMPT_VERSION
+        from app.jobs.character_agent.profile import _build_timeline, _apply_aspect_ops, _apply_goal_ops
+        from app.schemas.character_agent import CharacterTimelineProjection, SceneInput
+        from app.services.character_trait_service import chunk_source_scenes, merge_evidence, scene_digest
+        from app.services.character_agent_service import CharacterAgentService, _now
+
+        inputs = await self.load_embodiment_input(entity_id, ontology_id)
+        if inputs["agent_id"] != agent_id:
+            raise ValueError("embodied identity changed")
+        processed = await self.graph.run(
+            "MATCH (:CharacterAgent {id:$id})-[:HAS_PERSPECTIVE]->(p:ScenePerspective)-[:PROJECTS_ON]->(s:Scene) "
+            "RETURN p.scene_id AS id, coalesce(toString(s.created_at), '') AS time, p.source_digest AS digest", id=agent_id)
+        seen = {row["id"]: (row["time"], row["digest"]) async for row in processed}
+        if not inputs["processed_scene_ids"] <= set(seen):
+            raise ValueError("removed processed scenes require CharacterAgent regeneration")
+        current_scene_ids = {scene["scene_id"] for scene in inputs["scenes"]}
+        if not set(seen) <= current_scene_ids:
+            raise ValueError("removed or detached processed scenes require CharacterAgent regeneration")
+        last_key = max(((value[0], scene) for scene, value in seen.items()), default=None)
+        for group in inputs["source_groups"]:
+            for scene in group["scenes"]:
+                if scene["scene_id"] in seen and seen[scene["scene_id"]][1] != scene_digest(scene):
+                    raise ValueError("edited processed scenes require CharacterAgent regeneration")
+        groups = []
+        for group in inputs["source_groups"]:
+            scenes = [scene for scene in group["scenes"] if scene["scene_id"] in created_scene_ids and scene["scene_id"] not in seen]
+            if any(last_key and (scene.get("created_at") or '', scene['scene_id']) <= last_key for scene in scenes):
+                raise ValueError("backdated scenes require CharacterAgent regeneration")
+            if scenes:
+                groups.append({**group, "scenes": scenes})
+        profile, evidence = inputs["trait_profile"], inputs["trait_evidence"]
+        aspects, goals = inputs["current_aspects"], inputs["current_goals"]
+        number = inputs["latest_revision"]
+        subtitle = inputs["canonical_identity"].get("subtitle")
+        service = CharacterAgentService(self.sql, self.graph)
+        for chunk in chunk_source_scenes(groups, batch_size=settings.character_agent_embodiment_scene_batch_size,
+                                         max_chars=settings.character_agent_embodiment_evidence_tokens * 4):
+            job = EmbodyAgent(llm_client=llm_client,
+                character_incorporation_model=settings.model_character_agent_character_incorporation,
+                scene_interpretation_model=settings.model_character_agent_scene_interpretation,
+                character_update_model=settings.model_character_agent_update,
+                max_aspects=settings.character_agent_embodiment_max_aspects,
+                max_goals=settings.character_agent_embodiment_max_goals,
+                semantic_correction_attempts=settings.character_agent_embodiment_semantic_correction_attempts)
+            result = await job.run(source_entity_id=chunk["source_id"], source_entity_alias=chunk["source_alias"],
+                canonical_identity=inputs["canonical_identity"], current_trait_profile=profile,
+                current_trait_evidence=evidence, current_aspects=aspects, current_goals=goals,
+                scenes=[SceneInput(**scene) for scene in chunk["scenes"]], batch_id=chunk["batch_id"])
+            timeline = CharacterTimelineProjection.model_validate_json(_build_timeline(
+                source_entity_id=entity_id, source_entity_alias=inputs["source_entity_alias"],
+                canonical_identity=inputs["canonical_identity"], current_trait_profile=profile,
+                current_aspects=aspects, current_goals=goals, current_subtitle=subtitle,
+                per_bundle_results=[result], starting_revision=number,
+                max_aspects=settings.character_agent_embodiment_max_aspects,
+                max_goals=settings.character_agent_embodiment_max_goals))
+            agent = (await service.get_agent(agent_id)).model_dump(mode="json")
+            async def persist(tx):
+                await service._persist_timeline_tx(tx, agent, timeline, _now(), append=True,
+                    provider=settings.model_character_agent_update.provider,
+                    model=settings.model_character_agent_update.name, prompt_version=PROMPT_VERSION)
+            await self.graph.execute_write(persist)
+            profile = result.trait_profile
+            evidence = merge_evidence(evidence, result.trait_evidence)
+            _apply_aspect_ops(aspects, result.aspect_updates, max_active=settings.character_agent_embodiment_max_aspects)
+            _apply_goal_ops(goals, result.goal_updates, max_active=settings.character_agent_embodiment_max_goals)
+            subtitle = timeline.revisions[-1].subtitle
+            number += 1
 
     @staticmethod
     def read(draft: CharacterEmbodimentDraft) -> EmbodimentDraftRead:

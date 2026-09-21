@@ -24,16 +24,12 @@ from app.schemas.character_agent import (
 from app.services.character_agent_service import CharacterAgentService
 
 
+from app.schemas.character_traits import TraitProfile
+
 SNAPSHOT = {
     "character_agent": {
         "name": "Mara", "background_story": "A guarded ruler.",
-        "behavioural_traits": {
-            "calm_aggressive": 80, "cautious_reckless": 65,
-            "compassionate_ruthless": 30, "trusting_suspicious": 75,
-            "honest_deceptive": 45, "patient_impulsive": 70,
-            "humble_proud": 60, "cooperative_dominating": 70,
-        },
-        "trait_adherence": 80,
+        "trait_profile": TraitProfile().model_dump(mode="json"),
     },
     "aspects": [{"id": "aspect-1", "name": "Negotiator", "description": "Skilled at negotiation",
                  "category": "capability", "importance": 5, "intensity": 80, "notes": None}],
@@ -55,7 +51,7 @@ class FakeLLM:
 def _frame(**changes):
     value = {
         "context_summary": "A threat must be answered.",
-        "relevant_trait_axes": ["trusting_suspicious"],
+        "relevant_traits": [{"trait":"caution","situation_type":"uncertain_dependence","relevance":"Uncertain reliance."}],
         "relevant_aspect_ids": ["aspect-1"], "relevant_goal_ids": ["goal-1"],
         "conflicts": [], "unknowns": [],
     }
@@ -110,13 +106,13 @@ async def test_query_uses_exactly_two_calls_and_passes_lean_stage_two_payload():
     ]
     deliberation = json.loads(llm.calls[1]["messages"][1]["content"])
     assert set(deliberation) == {
-        "query", "context_summary", "system_instruction", "relevant_trait_axes",
+        "query", "context_summary", "system_instruction", "relevant_traits",
         "relevant_aspect_names", "relevant_goal_names", "conflicts", "unknowns",
-        "response_format",
+        "response_format", "steadiness",
     }
     encoded = json.dumps(deliberation)
     for excluded in (
-        "background_story", "trait_adherence", "aspect-1", "goal-1",
+        "background_story", "aspect-1", "goal-1",
         "Skilled at negotiation", "Protect villagers\":",
     ):
         assert excluded not in encoded
@@ -134,7 +130,7 @@ def test_query_rejects_removed_generation_fields(removed_field):
 @pytest.mark.asyncio
 async def test_query_without_character_identity_uses_neutral_framing_then_deliberation():
     llm = FakeLLM([_frame(
-        relevant_trait_axes=[],
+        relevant_traits=[],
         relevant_aspect_ids=[],
         relevant_goal_ids=[],
     ), json.dumps({
@@ -189,7 +185,7 @@ async def test_query_without_character_identity_uses_neutral_framing_then_delibe
 @pytest.mark.asyncio
 async def test_query_without_character_identity_validates_json_contract():
     llm = FakeLLM([_frame(
-        relevant_trait_axes=[],
+        relevant_traits=[],
         relevant_aspect_ids=[],
         relevant_goal_ids=[],
     ), json.dumps({
@@ -446,7 +442,7 @@ def test_prompts_embed_complete_stage_contracts():
 
 def test_character_agent_defaults_and_configuration_targets():
     agent = CharacterAgentCreate(ontology_id=1, entity_instance_id="entity")
-    assert agent.trait_adherence == 80
+    assert agent.trait_edits == {}
     assert CharacterAgentQueryRequest(query="Reply").use_character_identity is True
     settings = Settings()
     assert settings.model_character_agent_framing == LLMModelTarget(provider="", name="")
@@ -512,7 +508,7 @@ async def test_snapshot_is_one_operation_and_omits_backend_identifiers():
     assert "ORDER BY assignment.importance DESC" in graph.calls[0][0]
     assert "ORDER BY goal.priority DESC" in graph.calls[0][0]
     assert "id" not in snapshot["character_agent"]
-    assert snapshot["character_agent"]["trait_adherence"] == 80
+    assert snapshot["character_agent"]["trait_profile"]["steadiness"]["point"] is None
 
 
 @pytest.mark.asyncio
@@ -616,3 +612,37 @@ async def test_relationship_writes_separate_set_or_create_from_optional_match():
     await CharacterAgentService(object(), goal_graph).pursue_goal("agent-1", "goal-1")
     goal_query = " ".join(goal_graph.calls[0][0].split())
     assert "CREATE (agent)-[:PURSUES {created_at:$now}]->(goal) WITH goal OPTIONAL MATCH" in goal_query
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('selection',[
+    {'trait':'steadiness','situation_type':'provocation','relevance':'Consistency'},
+    {'trait':'sharing','situation_type':'exploitation','relevance':'Wrong construct'},
+])
+async def test_framing_rejects_nondirectional_or_wrong_affordance(selection):
+    from app.jobs.character_agent.query import CharacterGenerationError
+    llm=FakeLLM([_frame(relevant_traits=[selection])])
+    target=LLMModelTarget(provider='test',name='model')
+    with pytest.raises(CharacterGenerationError):
+        await CharacterAgentQueryJob(llm_client=llm,framing_model=target,deliberation_model=target,repair_model=target).run(
+            CharacterAgentQueryRequest(query='Choose'),SNAPSHOT)
+    assert len(llm.calls)==1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('point',[1,9])
+async def test_steadiness_is_separate_modifier_never_temperature(point):
+    import copy
+    from app.schemas.character_traits import TraitEdit
+    from app.services.character_trait_service import apply_manual_edits
+    snapshot=copy.deepcopy(SNAPSHOT)
+    profile=apply_manual_edits(TraitProfile(),{'steadiness':TraitEdit(point=point,reason='Authored consistency.')})
+    snapshot['character_agent']['trait_profile']=profile.model_dump(mode='json')
+    llm=FakeLLM([_frame(),TEXT_DELIBERATION]);target=LLMModelTarget(provider='test',name='model')
+    request=CharacterAgentQueryRequest(query='Choose',generation={'temperature':.42})
+    await CharacterAgentQueryJob(llm_client=llm,framing_model=target,deliberation_model=target,repair_model=target).run(request,snapshot)
+    payload=json.loads(llm.calls[-1]['messages'][1]['content'])
+    assert payload['steadiness']['point']==point
+    assert all(item['key']!='steadiness' for item in payload['relevant_traits'])
+    assert payload['relevant_traits'][0]['construct']=='Emotionality — HEXACO'
+    assert llm.calls[-1]['temperature']==.42

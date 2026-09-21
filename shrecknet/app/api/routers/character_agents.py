@@ -24,6 +24,7 @@ from app.models.audit import AuditAction, AuditActorType, AuditEntityType
 from app.models.user import User
 from app.models.background_job import AuthorType, JobStatus, JobType
 from app.models.character_embodiment import CharacterEmbodimentDraft, CharacterEmbodimentDraftStatus
+from app.schemas.character_traits import TraitKey, TraitEvidence, trait_metadata
 from app.schemas.character_agent import (
     CharacterAgentCreateRequest, CharacterAgentRead, CharacterAgentStatus, CharacterAgentUpdate,
     CharacterAspectAssignmentCreate, CharacterAspectAssignmentRead,
@@ -191,6 +192,20 @@ async def get_embodiment_draft(
     return CharacterEmbodimentService.read(await _draft_or_404(sql, draft_id))
 
 
+@router.get("/trait-definitions")
+async def get_trait_definitions(_: User = Depends(get_current_user)):
+    return trait_metadata()
+
+
+@router.get("/{agent_id}/trait-evidence", response_model=list[TraitEvidence])
+async def get_trait_evidence(
+    agent_id: str, trait: TraitKey | None = None, revision: int | None = Query(None, ge=0),
+    skip: int = Query(0, ge=0), limit: int = Query(100, ge=1, le=500),
+    _: User = Depends(get_current_admin_user), svc: CharacterAgentService = Depends(service),
+):
+    return await svc.list_trait_evidence(agent_id, trait=trait, revision=revision, skip=skip, limit=limit)
+
+
 @router.get("/{agent_id}", response_model=CharacterAgentRead)
 async def get_agent(agent_id: str, actor: User = Depends(get_current_user), svc: CharacterAgentService = Depends(service)):
     return await svc.get_agent(agent_id, public_only=not _is_admin(actor))
@@ -210,7 +225,7 @@ async def list_identity_revisions(
 @router.get("/{agent_id}/identity-changes", response_model=list[CharacterIdentityChangeRead])
 async def list_identity_changes(
     agent_id: str,
-    change_type: str | None = Query(None, pattern="^(axis|subtitle|aspect|goal)$"),
+    change_type: str | None = Query(None, pattern="^(trait|steadiness|subtitle|aspect|goal)$"),
     skip: int = Query(0, ge=0), limit: int = Query(100, ge=1, le=500),
     actor: User = Depends(get_current_user),
     svc: CharacterAgentService = Depends(service),
@@ -657,7 +672,7 @@ async def delete_perspective_impact(
 @router.patch("/{agent_id}", response_model=CharacterAgentRead)
 async def update_agent(agent_id: str, payload: CharacterAgentUpdate, actor: User = Depends(get_current_admin_user),
                        svc: CharacterAgentService = Depends(service), audit: AuditService = Depends(get_audit_service)):
-    result = await svc.update_agent(agent_id, payload)
+    result = await svc.update_agent(agent_id, payload, user_id=actor.id)
     await audit_event(audit, actor, AuditAction.UPDATE, AuditEntityType.CHARACTER_AGENT, agent_id)
     return result
 

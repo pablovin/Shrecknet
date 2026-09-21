@@ -35,6 +35,7 @@ class ChatResponse(BaseModel):
     requested_model: str | None = None
     resolved_model: str
     provider_request_id: str | None = None
+    finish_reason: str | None = None
     # Backward-friendly mirror for consumers that still read `model`.
     model: str
     usage: ChatUsage

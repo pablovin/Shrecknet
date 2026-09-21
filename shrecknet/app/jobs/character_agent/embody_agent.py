@@ -233,6 +233,15 @@ class EmbodyAgent:
         try:
             result = self._parse(schema, str(raw), stage)
         except EmbodimentGenerationError as exc:
+            response_metadata = getattr(self._llm.llm, "last_response_metadata", {})
+            logger.warning(
+                "embodiment_schema_invalid stage=%s source_id=%s source_alias=%s "
+                "requested_max_tokens=%s response_chars=%s completion_tokens=%s "
+                "finish_reason=%s validation_errors=%s",
+                stage, source_entity_id, source_entity_alias, max_tokens, len(str(raw)),
+                response_metadata.get("completion_tokens"),
+                response_metadata.get("finish_reason"), self._schema_errors(exc),
+            )
             last_error = exc
             try:
                 repaired = await repair_json_text(

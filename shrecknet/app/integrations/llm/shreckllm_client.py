@@ -46,11 +46,13 @@ class ShreckLLMClient:
         self._max_backoff_s = 20.0
         self._http = httpx.AsyncClient(base_url=self.base_url, timeout=self.timeout)
         self._usage_events: list[dict[str, Any]] = []
+        self.last_response_metadata: dict[str, Any] = {}
         self._validated_providers: set[str] = set()
 
     async def aclose(self) -> None:
         await self._http.aclose()
         self._usage_events.clear()
+        self.last_response_metadata.clear()
         self._validated_providers.clear()
 
     async def __aenter__(self) -> "ShreckLLMClient":
@@ -120,6 +122,13 @@ class ShreckLLMClient:
                 usage = data.get("usage") if isinstance(data.get("usage"), dict) else {}
                 resolved_model = str(data.get("resolved_model") or target.name)
                 provider_id = str(data.get("provider_id") or target.provider)
+                self.last_response_metadata = {
+                    "provider_id": provider_id,
+                    "resolved_model": resolved_model,
+                    "provider_request_id": data.get("provider_request_id"),
+                    "finish_reason": data.get("finish_reason"),
+                    "completion_tokens": usage.get("completion_tokens"),
+                }
                 wait_ms = round((time.monotonic() - request_started) * 1000, 2)
                 self._record_usage_event(
                     model=f"{provider_id}:{resolved_model}",
@@ -144,6 +153,7 @@ class ShreckLLMClient:
                             "provider_id": provider_id,
                             "resolved_model": resolved_model,
                             "provider_request_id": data.get("provider_request_id"),
+                            "finish_reason": data.get("finish_reason"),
                         },
                     }
                 return text

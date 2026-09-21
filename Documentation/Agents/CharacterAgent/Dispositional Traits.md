@@ -75,6 +75,12 @@ validate, the source retains its scene perspectives and a no-change revision, bu
 the backend discards all observations and skips trait, aspect, goal, and subtitle
 updates for that source.
 
+For malformed model output, worker logs include the stage, requested completion
+limit, returned response character count, provider completion-token count and
+finish reason (when supplied), plus the Pydantic validation errors. shreckLLM
+logs the corresponding requested limit, token usage, finish reason, and response
+size for every provider call.
+
 `app/services/character_trait_service.py` centralizes `evidence-policy-v1`:
 
 - Qualifying confidence and diagnosticity are each at least 0.7.

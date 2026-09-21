@@ -106,6 +106,7 @@ class OllamaClient:
         return {
             "text": text,
             "provider_request_id": None,
+            "finish_reason": str(data.get("done_reason")) if isinstance(data, dict) and data.get("done_reason") is not None else None,
             "usage": {
                 "prompt_tokens": prompt_tokens if isinstance(prompt_tokens, int) else None,
                 "completion_tokens": completion_tokens if isinstance(completion_tokens, int) else None,

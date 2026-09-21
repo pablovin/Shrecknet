@@ -278,8 +278,10 @@ class OpenAIClient:
 
         text = ""
         choices = getattr(resp, "choices", None) or []
+        finish_reason = None
         if choices:
             first = choices[0]
+            finish_reason = getattr(first, "finish_reason", None)
             message = getattr(first, "message", None)
             content = getattr(message, "content", None)
             if isinstance(content, str):
@@ -293,6 +295,7 @@ class OpenAIClient:
         return {
             "text": text,
             "provider_request_id": getattr(resp, "id", None),
+            "finish_reason": str(finish_reason) if finish_reason is not None else None,
             "usage": {
                 "prompt_tokens": int(prompt_tokens) if isinstance(prompt_tokens, int) else None,
                 "completion_tokens": int(completion_tokens)

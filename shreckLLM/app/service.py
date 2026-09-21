@@ -1243,6 +1243,7 @@ class ChatService:
                         requested_model=result["requested_model"],
                         resolved_model=resolved_model,
                         provider_request_id=result["result"].get("provider_request_id"),
+                        finish_reason=result["result"].get("finish_reason"),
                         model=resolved_model,
                         usage=ChatUsage.model_validate(result["result"]["usage"]),
                         latency_ms=latency_ms,
@@ -1289,6 +1290,7 @@ class ChatService:
             requested_model=result["requested_model"],
             resolved_model=resolved_model,
             provider_request_id=result["result"].get("provider_request_id"),
+            finish_reason=result["result"].get("finish_reason"),
             model=resolved_model,
             usage=ChatUsage.model_validate(result["result"]["usage"]),
             latency_ms=latency_ms,
@@ -1380,6 +1382,7 @@ class ChatService:
             requested_model=requested_model,
             payload=payload,
             provider_latency_s=provider_latency_s,
+            requested_max_tokens=request.max_tokens,
         )
         return {
             "provider_id": provider_id,
@@ -1415,6 +1418,7 @@ class ChatService:
         requested_model: str | None,
         payload: dict[str, Any],
         provider_latency_s: float,
+        requested_max_tokens: int | None,
     ) -> None:
         usage = payload.get("usage") if isinstance(payload, dict) else {}
         usage = usage if isinstance(usage, dict) else {}
@@ -1422,6 +1426,8 @@ class ChatService:
         total_tokens = usage.get("total_tokens")
         prompt_tokens = usage.get("prompt_tokens")
         provider_request_id = payload.get("provider_request_id") if isinstance(payload, dict) else None
+        finish_reason = payload.get("finish_reason") if isinstance(payload, dict) else None
+        response_chars = len(str(payload.get("text") or "")) if isinstance(payload, dict) else 0
         completion_tok_per_s: float | None = None
         if (
             isinstance(completion_tokens, int)
@@ -1431,14 +1437,17 @@ class ChatService:
         ):
             completion_tok_per_s = float(completion_tokens) / float(provider_latency_s)
         logger.info(
-            "[SHRECKLLM] provider=%s model=%s requested_model=%s request_id=%s prompt_tokens=%s completion_tokens=%s total_tokens=%s provider_latency_s=%.3f completion_tok_per_s=%s",
+            "[SHRECKLLM] provider=%s model=%s requested_model=%s request_id=%s requested_max_tokens=%s prompt_tokens=%s completion_tokens=%s total_tokens=%s finish_reason=%s response_chars=%s provider_latency_s=%.3f completion_tok_per_s=%s",
             provider_id,
             resolved_model,
             requested_model or "<default>",
             provider_request_id,
+            requested_max_tokens,
             prompt_tokens,
             completion_tokens,
             total_tokens,
+            finish_reason,
+            response_chars,
             provider_latency_s,
             f"{completion_tok_per_s:.2f}" if completion_tok_per_s is not None else "n/a",
         )

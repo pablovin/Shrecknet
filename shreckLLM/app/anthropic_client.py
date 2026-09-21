@@ -166,6 +166,7 @@ class AnthropicClient:
         return {
             "text": text,
             "provider_request_id": data.get("id") if isinstance(data, dict) else None,
+            "finish_reason": str(data.get("stop_reason")) if isinstance(data, dict) and data.get("stop_reason") is not None else None,
             "usage": {
                 "prompt_tokens": int(input_tokens) if isinstance(input_tokens, int) else None,
                 "completion_tokens": int(output_tokens) if isinstance(output_tokens, int) else None,

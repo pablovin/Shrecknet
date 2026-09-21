@@ -18,6 +18,15 @@ logger = logging.getLogger(__name__)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
+class LLMProviderUnavailableError(RuntimeError):
+    """A configured provider cannot currently serve requests."""
+
+    def __init__(self, provider_id: str, reason: str) -> None:
+        self.provider_id = provider_id
+        self.reason = reason
+        super().__init__(f"LLM provider {provider_id} failed validation: {reason}")
+
+
 class ShreckLLMClient:
     def __init__(
         self,
@@ -186,7 +195,7 @@ class ShreckLLMClient:
         try:
             payload = await self.get_provider_statuses()
         except Exception as exc:
-            raise RuntimeError(f"LLM provider {provider_key} failed validation: {exc}") from exc
+            raise LLMProviderUnavailableError(provider_key, "provider status is unavailable") from exc
         providers = payload.get("providers") if isinstance(payload, dict) else None
         provider = providers.get(provider_key) if isinstance(providers, dict) else None
         active = bool(provider.get("active", provider.get("valid"))) if isinstance(provider, dict) else False
@@ -194,7 +203,9 @@ class ShreckLLMClient:
             reason = None
             if isinstance(provider, dict):
                 reason = provider.get("last_validation_error") or provider.get("reason") or provider.get("last_error")
-            raise RuntimeError(f"LLM provider {provider_key} failed validation: {reason or 'provider validation failed'}")
+            raise LLMProviderUnavailableError(
+                provider_key, str(reason or "provider validation failed"),
+            )
         self._validated_providers.add(provider_key)
 
     async def submit_chat_job(self, payload: dict[str, Any]) -> str:

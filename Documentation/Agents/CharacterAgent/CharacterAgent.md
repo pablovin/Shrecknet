@@ -38,6 +38,17 @@ retrieve, and query public agents and may read their assigned aspects and goals.
 Administrators retain access to both visibility levels. Private agents return
 `404` to non-administrators so their existence is not disclosed.
 
+### Legacy graph nodes
+
+Agents created before the dispositional-traits release can retain retired
+personality properties on their Neo4j nodes. `GET /character-agents` and
+`GET /character-agents/{character_agent_id}` project those nodes onto the
+current response contract: retired properties are omitted, `trait_profile`
+uses the current empty/unknown default when absent, and a missing `visibility`
+is private. Administrators can therefore inspect and delete legacy agents with
+the normal `DELETE /character-agents/{character_agent_id}` endpoint. Creation
+and updates accept only the current fields.
+
 ## `CharacterAgent` node schema
 
 Label: `CharacterAgent`
@@ -64,10 +75,11 @@ An agent cannot change `ontology_id`, its embodied entity, `id`,
 ## Chronological identity revisions
 
 Embodiment extracts a provisional authored baseline or preserves unknown values
-in Revision 0. Chronological source chunks contain up to ten scenes and run
-sequentially. Each chunk uses its actual starting identity for batched
-ScenePerspectives, then accumulates diagnostic observations before one profile
-update. Its resulting revision becomes the next chunk's starting identity.
+in Revision 0. All scenes from a `DERIVED_FROM` source form one chronological
+source bundle and run sequentially. Each bundle uses its actual starting identity
+for batched ScenePerspectives, then accumulates diagnostic observations before one
+profile update and one revision associated with every scene in that source. Its
+resulting revision becomes the next bundle's starting identity.
 
 `CharacterIdentityRevision` stores the profile snapshot and newly introduced
 trait evidence, including evidence that did not change a score.
@@ -261,7 +273,7 @@ of personality. See [CharacterAgent Query](Query/Query.md).
 ## Evidence-grounded embodiment
 
 See [Dispositional traits](Dispositional%20Traits.md) for the complete current
-personality and embodiment contract, including four calls per source chunk,
+personality and embodiment contract, including four calls per source bundle,
 initial authored evidence, checkpoints, revision ownership, and breaking release
 operations. The registry is the authoritative definition source; SDKs and UI
 consumers can request it through `/character-agents/trait-definitions`.

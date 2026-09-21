@@ -241,27 +241,36 @@ def scene_digest(scene: dict) -> str:
     return hashlib.sha256(json.dumps(material, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
 
-def chunk_source_scenes(groups: list[dict], *, batch_size: int = 10, max_chars: int = 120_000) -> list[dict]:
-    if not 1 <= batch_size <= 10:
-        raise ValueError('scene batch size must be between 1 and 10')
-    ordered = sorted(((scene, group) for group in groups for scene in group['scenes']),
-                     key=lambda pair: (pair[0].get('created_at') or '', pair[0]['scene_id']))
-    chunks = []
-    seen = set()
-    for scene, group in ordered:
-        if scene['scene_id'] in seen:
-            raise ValueError('duplicate canonical scene in source groups')
-        seen.add(scene['scene_id'])
-        size = len(json.dumps(scene, ensure_ascii=False))
-        if size > max_chars:
-            raise ValueError('single scene exceeds embodiment evidence budget')
-        source = group.get('source_id') or f"orphan:{scene['scene_id']}"
-        if (not chunks or chunks[-1]['source_id'] != source or len(chunks[-1]['scenes']) >= batch_size
-                or chunks[-1]['input_chars'] + size > max_chars):
-            chunks.append({'source_id': source, 'source_alias': group['source_alias'], 'scenes': [], 'input_chars': 0})
-        chunks[-1]['scenes'].append(scene)
-        chunks[-1]['input_chars'] += size
-    for chunk in chunks:
-        material = json.dumps(chunk, sort_keys=True, ensure_ascii=False)
-        chunk['batch_id'] = hashlib.sha256(material.encode()).hexdigest()[:24]
-    return chunks
+def chunk_source_scenes(groups: list[dict]) -> list[dict]:
+    """Return exactly one chronological embodiment bundle for every source.
+
+    The historical name is retained for callers, but this deliberately does not
+    chunk.  A source's complete scene set is the atomic evidence boundary: one
+    analysis pass and one resulting identity revision.  Payload/provider limits
+    therefore fail visibly at the LLM boundary instead of silently splitting or
+    omitting evidence.
+    """
+    bundles: list[dict] = []
+    seen: set[str] = set()
+    for group in groups:
+        scenes = sorted(group.get('scenes', []), key=lambda scene: (
+            scene.get('created_at') or '', scene['scene_id'],
+        ))
+        if not scenes:
+            continue
+        for scene in scenes:
+            if scene['scene_id'] in seen:
+                raise ValueError('duplicate canonical scene in source groups')
+            seen.add(scene['scene_id'])
+        source_id = str(group.get('source_id') or '__orphan__')
+        bundle = {
+            'source_id': source_id,
+            'source_alias': group.get('source_alias') or 'Unknown source',
+            'scenes': scenes,
+        }
+        material = json.dumps(bundle, sort_keys=True, ensure_ascii=False)
+        bundle['batch_id'] = hashlib.sha256(material.encode()).hexdigest()[:24]
+        bundles.append(bundle)
+    return sorted(bundles, key=lambda bundle: (
+        bundle['scenes'][0].get('created_at') or '', bundle['source_id'],
+    ))

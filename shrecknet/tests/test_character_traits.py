@@ -170,22 +170,22 @@ def test_manual_override_and_clear():
     assert state.dispositional_traits['integrity'].point==8 and not state.overrides
 
 
-@pytest.mark.parametrize('count,sizes',[(0,[]),(1,[1]),(9,[9]),(10,[10]),(11,[10,1]),(21,[10,10,1])])
-def test_source_chunk_boundaries(count,sizes):
+@pytest.mark.parametrize('count', [0, 1, 9, 10, 11, 21])
+def test_source_bundle_contains_every_scene(count):
     scenes=[{'scene_id':f's{i:02}','created_at':f'{i:02}','description':'x','name':'Scene'} for i in range(count)]
     groups=[{'source_id':'a','source_alias':'A','scenes':scenes}]
     chunks=chunk_source_scenes(groups)
-    assert [len(c['scenes']) for c in chunks]==sizes
+    assert [len(c['scenes']) for c in chunks] == ([count] if count else [])
     assert chunks==chunk_source_scenes(groups)
 
 
-def test_interleaved_sources_never_reorder_and_budget_never_truncates():
+def test_source_bundles_group_all_source_scenes_without_dropping_evidence():
     a={'source_id':'a','source_alias':'A','scenes':[{'scene_id':'1','created_at':'1'},{'scene_id':'3','created_at':'3'}]}
     b={'source_id':'b','source_alias':'B','scenes':[{'scene_id':'2','created_at':'2'}]}
     chunks=chunk_source_scenes([a,b])
-    assert [c['source_id'] for c in chunks]==['a','b','a']
-    assert [s['scene_id'] for c in chunks for s in c['scenes']]==['1','2','3']
-    with pytest.raises(ValueError): chunk_source_scenes([a],max_chars=1)
+    assert [c['source_id'] for c in chunks] == ['a', 'b']
+    assert [[s['scene_id'] for s in c['scenes']] for c in chunks] == [['1', '3'], ['2']]
+    assert [s['scene_id'] for c in chunks for s in c['scenes']] == ['1', '3', '2']
 
 
 def test_definition_documentation_is_generated_from_registry():

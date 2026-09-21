@@ -201,13 +201,13 @@ class CharacterEmbodimentService:
         rows = await self.graph.run(
             """
             MATCH (scene:Scene)-[:DERIVED_FROM]->(source:EntityInstance)
-            WHERE EXISTS {
+            WHERE (EXISTS {
               MATCH (scene)-[:RELATES_TO]->
                     (:EntityInstance {entity_instance_id:$entity_id})
             } OR EXISTS {
               MATCH (scene)-[:CONTAINS]->(:Milestone)-[:RELATES_TO]->
                     (:EntityInstance {entity_instance_id:$entity_id})
-            }
+            })
             OPTIONAL MATCH (scene)-[entity_rel:RELATES_TO]->
                            (:EntityInstance {entity_instance_id:$entity_id})
             RETURN source.entity_instance_id AS source_id,
@@ -405,14 +405,24 @@ class CharacterEmbodimentService:
             entity.get("alias") or entity.get("entity_instance_id") or source_entity_id
         )
 
-        # 5. Scenes RELATED_TO this entity, grouped by DERIVED_FROM source
+        # 5. Scenes involving this entity, grouped by DERIVED_FROM source.
+        # A character can be linked directly or through a milestone.  Legacy
+        # scenes may not carry denormalized scope fields, but when those fields
+        # are present they must match the already validated entity scope.
         scene_rows = await self.graph.run(
             """
-            MATCH (scene:Scene)-[:RELATES_TO]->
-                  (:EntityInstance {entity_instance_id:$entity_id})
-            WHERE scene.ontology_id = $ontology_id AND scene.instance_id = $instance_id
+            MATCH (scene:Scene)
+            WHERE EXISTS {
+              MATCH (scene)-[:RELATES_TO]->
+                    (:EntityInstance {entity_instance_id:$entity_id})
+            } OR EXISTS {
+              MATCH (scene)-[:CONTAINS]->(:Milestone)-[:RELATES_TO]->
+                    (:EntityInstance {entity_instance_id:$entity_id})
+            }
+            AND coalesce(scene.ontology_id, $ontology_id) = $ontology_id
+            AND coalesce(scene.instance_id, $instance_id) = $instance_id
             OPTIONAL MATCH (scene)-[:DERIVED_FROM]->(source:EntityInstance)
-            RETURN scene.id AS scene_id,
+            RETURN DISTINCT scene.id AS scene_id,
                    coalesce(scene.name, scene.id) AS name,
                    coalesce(scene.description, '') AS description,
                    toString(scene.created_at) AS created_at,
@@ -420,7 +430,8 @@ class CharacterEmbodimentService:
                    coalesce(source.alias, source.entity_instance_id) AS source_alias
             ORDER BY coalesce(toString(scene.created_at), ''), scene.id
             """,
-            entity_id=entity_instance_id, ontology_id=ontology_id, instance_id=entity.get("instance_id"),
+            entity_id=entity_instance_id, ontology_id=ontology_id,
+            instance_id=entity.get("instance_id"),
         )
         scenes: list[dict[str, Any]] = []
         groups: dict[str, dict[str, Any]] = {}
@@ -504,8 +515,7 @@ class CharacterEmbodimentService:
         number = inputs["latest_revision"]
         subtitle = inputs["canonical_identity"].get("subtitle")
         service = CharacterAgentService(self.sql, self.graph)
-        for chunk in chunk_source_scenes(groups, batch_size=settings.character_agent_embodiment_scene_batch_size,
-                                         max_chars=settings.character_agent_embodiment_evidence_tokens * 4):
+        for chunk in chunk_source_scenes(groups):
             job = EmbodyAgent(llm_client=llm_client,
                 character_incorporation_model=settings.model_character_agent_character_incorporation,
                 scene_interpretation_model=settings.model_character_agent_scene_interpretation,

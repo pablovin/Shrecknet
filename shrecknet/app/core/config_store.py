@@ -262,7 +262,6 @@ class Settings(BaseSettings):
     character_agent_embodiment_evidence_tokens: int = Field(12_000, ge=1_000, le=100_000)
     character_agent_embodiment_max_aspects: int = Field(12, ge=0, le=50)
     character_agent_embodiment_max_goals: int = Field(8, ge=0, le=50)
-    character_agent_embodiment_scene_batch_size: int = Field(10, ge=1, le=10)
     character_agent_embodiment_semantic_correction_attempts: int = Field(
         1, ge=0, le=3
     )

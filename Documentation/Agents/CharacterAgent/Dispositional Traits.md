@@ -105,21 +105,24 @@ unknown rather than falsely attributing gradual development to inconsistency.
 Consistent retaliation can therefore mean low FORBEARANCE and high STEADINESS.
 STEADINESS never means goodness or calmness and never sets model temperature.
 
-## Sequential source chunks
+## Source-boundary bundles
 
-Scenes are ordered by `(created_at, scene_id)`, retaining their `DERIVED_FROM`
-source. Consecutive same-source runs are divided into at most ten scenes and
-bounded by the configured input budget. Interleaving sources are split into
-separate runs so grouping cannot reorder their scenes. Orphan scenes remain
-individually identified. A final partial chunk runs immediately.
+Scenes are grouped by `DERIVED_FROM` source, then ordered by
+`(created_at, scene_id)` within that source. Every scene from one source is sent
+in one atomic bundle regardless of scene count: it is never silently split,
+truncated, or dropped to meet a scene-count or local character budget. A scene
+linked to the character through either `RELATES_TO` directly or a contained
+milestone is included. Orphan scenes form one explicit `__orphan__` source
+bundle.
 
-Each chunk runs four normal LLM stages, sequentially:
+Each source bundle runs four normal LLM stages, sequentially:
 
 1. Incorporation: one perspective per scene, using the chunk-start profile.
 2. Enrichment: immediate emotions, beliefs, and impacts for each scene.
 3. Observations: joint diagnostic extraction across the chunk.
 4. Profile proposal: cumulative structured evidence, followed by deterministic
-   acceptance and separate STEADINESS computation.
+   acceptance and separate STEADINESS computation. This creates exactly one
+   identity revision associated with every scene in the bundle.
 
 ### Trait extraction pipeline
 
@@ -127,7 +130,7 @@ Each chunk runs four normal LLM stages, sequentially:
 flowchart TD
     A[Canonical entity\nauthored text + properties] --> B[Authored baseline call]
     B --> C[Revision 0\nunknown or provisional trait profile]
-    C --> D[Chronologically next source chunk\n1–10 scenes]
+    C --> D[Next complete source bundle\nall scenes from one source]
     D --> E[1. Batched scene perspectives\nusing the chunk-start identity]
     E --> F[2. Batched enrichment\nemotions, beliefs, impacts]
     F --> G[3. Joint trait observations\none attributed observation per episode]
@@ -138,14 +141,14 @@ flowchart TD
     J --> K[4. LLM anchored profile proposal]
     K --> L[Deterministic policy acceptance\nconservative directional update]
     L --> M[Separate STEADINESS estimator\nonly comparable repeated behavior]
-    M --> N[Chunk-end revision, changes,\nand scene provenance]
+    M --> N[Source-end revision, changes,\nand every-scene provenance]
     N --> D
 ```
 
 The first baseline call may infer only a provisional authored disposition. Each
-later chunk is sequential: its perspectives use the profile from the preceding
-chunk, and its accepted profile becomes available only after the chunk's final
-scene. The evidence ledger retains accepted, contradictory, excluded, and
+later source bundle is sequential: its perspectives use the profile from the
+preceding bundle, and its accepted profile becomes available only after that
+source's final scene. The evidence ledger retains accepted, contradictory, excluded, and
 no-change observations so later updates remain explainable.
 
 Initialization adds one normal call. Repairs/corrections may add calls. There are
@@ -204,12 +207,10 @@ See [CharacterAgent Query](Query/Query.md) for request and response envelopes.
 
 Configuration:
 
-- `character_agent_embodiment_scene_batch_size`: default 10, range 1–10.
-- `character_agent_embodiment_evidence_tokens`: scene budget converted conservatively
-  at four characters per configured token for chunking. Oversized individual scenes
-  fail explicitly instead of being truncated.
+- `character_agent_embodiment_evidence_tokens`: retained for legacy evidence-preview
+  endpoints. It does not limit or split embodiment source bundles.
 - `character_agent_embodiment_max_aspects` / `character_agent_embodiment_max_goals`:
-  active capacities; each chunk proposes at most two aspect and one goal operation.
+  active capacities; each source bundle proposes at most two aspect and one goal operation.
 - `character_agent_embodiment_semantic_correction_attempts`: existing bounded
   correction policy. Query generation retains its separate repair behavior.
 

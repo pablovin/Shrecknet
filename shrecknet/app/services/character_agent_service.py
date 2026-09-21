@@ -57,10 +57,21 @@ def _props(record: Any, key: str = "node") -> dict[str, Any]:
 
 
 def _agent_data(data: dict[str, Any]) -> dict[str, Any]:
-    data["entity_instance_id"] = data["embodied_entity_instance_id"]
-    data["trait_profile"] = _read_profile(data.get("trait_profile"))
-    data.setdefault("visibility", "private")
-    return data
+    """Project a graph node onto the current public CharacterAgent contract.
+
+    CharacterAgent nodes predate the dispositional-traits model and can retain
+    retired personality properties.  Reads must remain possible so those nodes
+    can be inspected or deleted, but the strict API schema must not expose (or
+    accept) properties outside the current contract.
+    """
+    projected = {
+        key: value for key, value in data.items()
+        if key in CharacterAgentRead.model_fields
+    }
+    projected["entity_instance_id"] = data["embodied_entity_instance_id"]
+    projected["trait_profile"] = _read_profile(data.get("trait_profile"))
+    projected.setdefault("visibility", "private")
+    return projected
 
 
 class CharacterAgentService:

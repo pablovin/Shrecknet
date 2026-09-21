@@ -26,6 +26,7 @@ from app.schemas.character_agent import (
 from app.services.character_embodiment_service import CharacterEmbodimentService, _json_safe
 from app.services.character_agent_service import CharacterAgentService
 from app.jobs.character_agent.profile import _apply_aspect_ops, _apply_goal_ops
+from app.tasks.character_embodiment import _public_error_message
 from app.db.base import Base
 from app.models.character_embodiment import CharacterEmbodimentDraft  # noqa: F401
 
@@ -35,6 +36,25 @@ from app.schemas.character_traits import TraitProfile
 
 def _profile_update_output():
     return json.dumps({"trait_proposals": [], "aspect_updates": [], "goal_updates": []})
+
+
+def test_provider_unavailable_error_is_actionable_for_embodiment_draft_reads():
+    error = EmbodimentGenerationError(
+        "authored baseline provider is unavailable",
+        category="provider_unavailable",
+        stage="authored baseline",
+        provider_id="openrouter",
+        model_name="qwen/qwen3.7-flash",
+        provider_reason="model_unavailable",
+    )
+
+    assert _public_error_message(error) == (
+        "Character embodiment cannot start because provider 'openrouter' "
+        "model 'qwen/qwen3.7-flash' is unavailable (model_unavailable). "
+        "Configure an available model and retry."
+    )
+    assert error.details()["failure_category"] == "provider_unavailable"
+    assert error.details()["provider_reason"] == "model_unavailable"
 
 
 def _canonical(overrides=None):
@@ -631,10 +651,8 @@ async def test_authored_only_initialization_is_one_call_and_unknown_is_preserved
     assert 'generated_text' not in payload['identity']
 
 
-def test_batch_size_configuration_and_complete_prompt_contracts():
+def test_complete_prompt_contracts():
     from app.jobs.character_agent.embody_agent_prompts import BASELINE_PROMPT
-    assert Settings().character_agent_embodiment_scene_batch_size==10
-    with pytest.raises(ValueError): Settings(character_agent_embodiment_scene_batch_size=11)
     for field in ('conditions','diagnosticity','available_after_scene_id','comparison_context'):
         assert field in OBSERVATIONS_PROMPT
     assert 'trait_proposals' in PROFILE_UPDATE_PROMPT

@@ -19,6 +19,7 @@ from app.api.routers.character_agents import (
 )
 from app.schemas.character_agent import (
     CharacterAgentCreate,
+    CharacterAgentRead,
     CharacterAgentUpdate,
     CharacterAgentVisibility,
     CharacterAspectAssignmentCreate,
@@ -29,6 +30,7 @@ from app.schemas.character_agent import (
     CharacterGoalRead,
     CharacterAgentQueryRequest,
 )
+from app.services.character_agent_service import _agent_data
 
 
 def test_character_payload_defaults_and_ranges():
@@ -66,6 +68,35 @@ def test_scope_and_embodiment_are_not_patchable():
         CharacterAgentUpdate.model_validate({"ontology_id": 99})
     with pytest.raises(ValidationError):
         CharacterAgentUpdate.model_validate({"entity_instance_id": "other"})
+
+
+def test_legacy_agent_properties_are_ignored_by_current_read_contract():
+    legacy = {
+        "id": "legacy-agent", "ontology_id": 42,
+        "embodied_entity_instance_id": "entity-1", "name": "Mara",
+        "background_story": "A legacy agent.", "status": "active",
+        "created_by_user_id": 7,
+        "created_at": "2025-01-01T00:00:00Z",
+        "updated_at": "2025-01-01T00:00:00Z",
+        "trusting_suspicious": 61, "humble_proud": 50,
+        "trait_adherence": 80, "compassionate_ruthless": 50,
+        "calm_aggressive": 50, "patient_impulsive": 50,
+        "honest_deceptive": 50, "cautious_reckless": 51,
+        "cooperative_dominating": 47,
+    }
+
+    read = _agent_data(legacy)
+    agent = CharacterAgentRead.model_validate(read)
+
+    assert agent.id == "legacy-agent"
+    assert agent.entity_instance_id == "entity-1"
+    assert agent.visibility == CharacterAgentVisibility.PRIVATE
+    assert agent.trait_profile.dispositional_traits
+    assert not set(legacy).intersection({
+        "trusting_suspicious", "humble_proud", "trait_adherence",
+        "compassionate_ruthless", "calm_aggressive", "patient_impulsive",
+        "honest_deceptive", "cautious_reckless", "cooperative_dominating",
+    }).intersection(read)
 
 
 def test_aspect_goal_and_assignment_enums_and_bounds():

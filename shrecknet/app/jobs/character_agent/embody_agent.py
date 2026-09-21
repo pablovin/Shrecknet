@@ -1,4 +1,4 @@
-"""Split-phase per-source CharacterAgent embodiment generation.
+"""Split-phase source-boundary CharacterAgent embodiment generation.
 
 Four-call pipeline per source group:
   1. Character incorporation
@@ -6,8 +6,9 @@ Four-call pipeline per source group:
   3. Cross-scene observations
   4. Evidence-grounded trait, aspect, and goal update
 
-All four calls process one ordered source chunk using its starting revision.
-Chunks run sequentially and accumulate grounded evidence.
+All four calls process every ordered scene from one source using its starting
+revision. Source bundles run sequentially and accumulate grounded evidence;
+each produces one scene-associated revision.
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ from typing import Any, Callable
 from pydantic import BaseModel, ValidationError
 
 from app.integrations.llm.json_repair import repair_json_text
+from app.integrations.llm.shreckllm_client import LLMProviderUnavailableError
 from app.jobs.character_agent.embody_agent_prompts import (
     BASELINE_PROMPT,
     ENRICHMENT_PROMPT,
@@ -65,6 +67,9 @@ class EmbodimentGenerationError(RuntimeError):
         allowed_ids: set[str] | None = None,
         attempt: int = 1,
         retryable: bool = False,
+        provider_id: str | None = None,
+        model_name: str | None = None,
+        provider_reason: str | None = None,
     ) -> None:
         super().__init__(message)
         self.category = category
@@ -75,6 +80,9 @@ class EmbodimentGenerationError(RuntimeError):
         self.allowed_ids = sorted(allowed_ids or set())
         self.attempt = attempt
         self.retryable = retryable
+        self.provider_id = provider_id
+        self.model_name = model_name
+        self.provider_reason = provider_reason
 
     def details(self) -> dict[str, Any]:
         return {
@@ -86,6 +94,9 @@ class EmbodimentGenerationError(RuntimeError):
             "retryable": self.retryable,
             "offending_ids": self.offending_ids,
             "allowed_ids": self.allowed_ids,
+            "provider_id": self.provider_id,
+            "model": self.model_name,
+            "provider_reason": self.provider_reason,
         }
 
 
@@ -190,6 +201,17 @@ class EmbodyAgent:
                 temperature=0.0,
                 max_tokens=max_tokens,
             )
+        except LLMProviderUnavailableError as exc:
+            raise EmbodimentGenerationError(
+                f"{stage} provider is unavailable",
+                category="provider_unavailable",
+                stage=stage,
+                source_entity_id=source_entity_id,
+                source_entity_alias=source_entity_alias,
+                provider_id=exc.provider_id,
+                model_name=str(getattr(model, "name", model)),
+                provider_reason=exc.reason,
+            ) from exc
         except Exception as exc:
             raise EmbodimentGenerationError(
                 f"{stage} transport failed",

@@ -95,6 +95,14 @@ def generate_character_embodiment(*, draft_id: str, revision: int, job_id: int) 
 def _public_error_message(exc: Exception) -> str:
     if not isinstance(exc, EmbodimentGenerationError):
         return str(exc)
+    if exc.category == "provider_unavailable":
+        provider = exc.provider_id or "configured LLM provider"
+        model = f" model '{exc.model_name}'" if exc.model_name else ""
+        reason = f" ({exc.provider_reason})" if exc.provider_reason else ""
+        return (
+            f"Character embodiment cannot start because provider '{provider}'{model} "
+            f"is unavailable{reason}. Configure an available model and retry."
+        )
     stage_key = (exc.stage or "generation").replace("-", " ").replace(" ", "_")
     detail = {
         "code": f"{stage_key}_validation_failed",
@@ -294,9 +302,7 @@ async def _generate(*, draft_id: str, revision: int, job_id: int) -> dict:
                 source_entity_id=draft.source_entity_id,
                 ontology_id=draft.ontology_id,
             )
-        source_groups = chunk_source_scenes(inputs.get("source_groups", []),
-            batch_size=settings.character_agent_embodiment_scene_batch_size,
-            max_chars=settings.character_agent_embodiment_evidence_tokens * 4)
+        source_groups = chunk_source_scenes(inputs.get("source_groups", []))
 
         total = len(source_groups)
         bundles: list[dict] = [
@@ -387,7 +393,7 @@ async def _generate(*, draft_id: str, revision: int, job_id: int) -> dict:
             agents.append(initializer)
             baseline_key = _checkpoint_cache_key(revision=revision, source_group={},
                 canonical_identity=inputs["canonical_identity"], trait_profile={}, trait_evidence=[],
-                aspects=[], goals=[], model_targets=stage_model_targets, batch_size=settings.character_agent_embodiment_scene_batch_size)
+                aspects=[], goals=[], model_targets=stage_model_targets)
             baseline = await sql.scalar(select(CharacterEmbodimentCheckpoint).where(
                 CharacterEmbodimentCheckpoint.draft_id == draft_id,
                 CharacterEmbodimentCheckpoint.generation_revision == revision,
@@ -417,7 +423,7 @@ async def _generate(*, draft_id: str, revision: int, job_id: int) -> dict:
                     canonical_identity=inputs["canonical_identity"],
                     trait_profile=current_profile.model_dump(mode="json"),
                     trait_evidence=[item.model_dump(mode="json") for item in current_evidence],
-                    aspects=current_aspects, goals=current_goals, model_targets=stage_model_targets, batch_size=settings.character_agent_embodiment_scene_batch_size)
+                    aspects=current_aspects, goals=current_goals, model_targets=stage_model_targets)
                 rows = (await sql.execute(select(CharacterEmbodimentCheckpoint).where(
                     CharacterEmbodimentCheckpoint.draft_id == draft_id,
                     CharacterEmbodimentCheckpoint.generation_revision == revision,

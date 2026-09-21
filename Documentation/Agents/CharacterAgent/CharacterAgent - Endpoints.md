@@ -25,6 +25,12 @@ Administrators see public and private agents. `visibility` accepts `private` or
 administrator-only `PATCH /character-agents/{character_agent_id}` route. Graph
 records without this property are treated as private.
 
+Legacy agent nodes with retired personality fields are included in administrator
+list and detail reads. Those fields are omitted from the current response shape;
+an absent `trait_profile` is returned as the current unknown profile. The normal
+administrator-only `DELETE /character-agents/{character_agent_id}` route can be
+used to remove them.
+
 ## Authenticated-user examples
 
 The examples use an OAuth bearer access token:
@@ -301,6 +307,10 @@ existing profile and history reads continue to apply.
 2. Poll `GET /jobs/{job_id}` and
    `GET /character-agents/embodiment-drafts/{draft_id}`. States remain `queued`,
    `generating`, `ready`, `failed`, and `accepted`.
+   When the selected LLM provider or model is unavailable, a failed draft's
+   `error_message` names the provider, selected model, and safe availability
+   reason, then instructs the administrator to configure an available model and
+   retry. Job details additionally use `failure_category: "provider_unavailable"`.
 3. Review `proposal.trait_profile`, aspects/goals, source evidence and timeline.
    The server-owned profile is the inference baseline; do not submit that entire
    read object as a write payload.
@@ -327,22 +337,23 @@ provenance must belong to the draft. Retrying an accepted draft returns its
 existing agent. Manual creation without a draft starts unobserved slots as unknown.
 Name/story/image derivation continues to use canonical entity information.
 
-### Sequential source chunks
+### Source-boundary bundles
 
-Scenes retain `DERIVED_FROM` source grouping and deterministic time order. Large
-sources split into chunks of at most ten scenes or the input budget. Interleaving
-sources split into chronological runs; no scene is silently truncated. Each chunk
-runs four normal calls: perspectives, enrichment, joint observations, and one
-cumulative profile proposal. Baseline authored extraction adds one initial call.
-No scenes are required for authored-only initialization. All chunk perspectives
-use its starting revision; the updated identity takes effect at chunk end.
+Scenes retain `DERIVED_FROM` source grouping and deterministic time order. All
+scenes from a source are one atomic bundle; the backend never splits, truncates,
+or drops them for a count or local input budget. Each bundle runs four normal
+calls: perspectives, enrichment, joint observations, and one cumulative profile
+proposal, producing exactly one revision associated with every source scene.
+Baseline authored extraction adds one initial call. No scenes are required for
+authored-only initialization. All bundle perspectives use its starting revision;
+the updated identity takes effect at bundle end.
 
 Outputs contain per-scene provenance and availability cutoffs. Invalid references,
 missing/duplicate/reordered scene outputs, or unsupported updates fail validation
 and may use the configured bounded correction. Explicit future citations are
 rejected; shared-context prompts cannot guarantee absence of uncited hindsight.
 
-Checkpoints include the preceding profile/evidence, source inputs, batch size,
+Checkpoints include the preceding profile/evidence, complete source inputs,
 versions, and model targets. Architect uses the same accumulation/timeline rules
 for new scenes. Stale concurrent writes return a conflict; edited, removed, or
 backdated processed history requires regeneration. Background failure is reported
@@ -368,12 +379,10 @@ and regenerate. There is no conversion or compatibility alias. See
 - `model_character_agent_update`: cumulative trait proposals, aspects and goals.
 - `model_character_agent_framing` / `model_character_agent_deliberation`: query stages.
 - `model_agents_repair_json`: query final repair target.
-- `character_agent_embodiment_scene_batch_size`: default 10, allowed 1–10; all
-  chunks for a character execute sequentially.
-- `character_agent_embodiment_evidence_tokens`: default 12000; source chunk input
-  budget uses four characters per configured token. Oversized individual scenes fail.
+- `character_agent_embodiment_evidence_tokens`: default 12000; applies only to
+  legacy evidence previews, never to an embodiment source bundle.
 - `character_agent_embodiment_max_aspects` / `character_agent_embodiment_max_goals`:
-  defaults 12/8, active capacities. Per-chunk operation caps remain two aspects/one goal.
+  defaults 12/8, active capacities. Per-bundle operation caps remain two aspects/one goal.
 - `character_agent_embodiment_semantic_correction_attempts`: default 1, range 0–3.
 
 Model targets default to empty provider/name until configured or reconciled.

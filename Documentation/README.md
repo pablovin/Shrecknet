@@ -7,7 +7,7 @@ Welcome to the Shrecknet documentation! This directory contains all organized do
 - [CharacterAgent](./Agents/CharacterAgent/CharacterAgent.md)
 - [CharacterAgent Query](./Agents/CharacterAgent/Query/Query.md)
 - [CharacterAgent endpoints](./Agents/CharacterAgent/CharacterAgent%20-%20Endpoints.md)
-- [Dispositional traits](./Agents/CharacterAgent/Dispositional%20Traits.md) — constructs, evidence, extraction/query pipelines, source chunks, revisions, and deployment
+- [Dispositional traits](./Agents/CharacterAgent/Dispositional%20Traits.md) — constructs, evidence, extraction/query pipelines, source bundles, revisions, and deployment
 - [Dispositional traits design record](./Agents/CharacterAgent/Dispositional%20Traits%20Plan.md)
 
 ## 📚 Documentation Structure

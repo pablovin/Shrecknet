@@ -31,7 +31,7 @@ INPUT JSON:
   "context": "caller-provided JSON object or null",
   "agent_profile": {
     "name": "character name",
-    "trait_profile": {"dispositional_traits": {"canonical directional key": {"z": "anchor or null", "point": "1..9 or null", "status": "unknown | provisional | supported | contested | manual", "observation_ids": [], "qualifying_count": 0, "uncertainty": [], "accepted_count": 0, "comparison_start": 0}}, "steadiness": "separate estimate", "version": "spec version", "overrides": {}, "inferred_traits": {}},
+    "trait_profile": {"dispositional_traits": {"canonical directional key": {"z": "bounded inferred value or null", "status": "unknown | provisional | supported | contested | manual", "observation_ids": [], "qualifying_count": 0, "uncertainty": [], "accepted_count": 0, "comparison_start": 0, "applied_source_ids": []}}, "steadiness": "separate estimate", "version": "spec version", "overrides": {}, "inferred_traits": {}},
     "trait_definitions": "authoritative definitions, constructs, poles, situation types, boundaries, and scale",
     "active_aspects": [{"id": "opaque supplied ID", "name": "aspect name"}],
     "active_goals": [
@@ -99,7 +99,7 @@ INPUT JSON:
   "relevant_traits": [
     {"key":"canonical trait","display_name":"label","kind":"directional","construct":"psychological construct",
      "definition":"behavioral meaning","low_pole":"...","high_pole":"...","diagnostic_situations":[],"boundary_notes":"...",
-     "estimate":{"z":"anchor or null","point":"1..9 or null","status":"unknown | provisional | supported | contested | manual","observation_ids":[],"qualifying_count":0,"uncertainty":[],"accepted_count":0,"comparison_start":0},
+     "estimate":{"z":"bounded inferred value or null","status":"unknown | provisional | supported | contested | manual","observation_ids":[],"qualifying_count":0,"uncertainty":[],"accepted_count":0,"comparison_start":0,"applied_source_ids":[]},
      "situation_type":"validated affordance","relevance":"why it matters"}
   ],
   "steadiness":"separate estimate with the same fields, or null when no directional traits apply",
@@ -114,7 +114,7 @@ INPUT JSON:
 }
 
 Use only this input. Values probabilistically bias choices toward the stated pole;
-they never mandate a choice. Unknown is not point 5. Aspects, goals, supplied beliefs,
+they never mandate a choice. Unknown is not z=0. Aspects, goals, supplied beliefs,
 experiences and current constraints may outweigh dispositions. High STEADINESS
 constrains choices more tightly in comparable circumstances; low STEADINESS allows
 broader expression around the same centres. Insufficient STEADINESS evidence gives

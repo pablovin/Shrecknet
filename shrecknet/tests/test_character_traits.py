@@ -4,14 +4,14 @@ import math
 import pytest
 from pydantic import ValidationError
 from app.schemas.character_traits import (ANCHORS, DIRECTIONAL_TRAITS, TRAIT_DEFINITIONS, TRAIT_BY_KEY,
-    TraitEdit, TraitEstimate, TraitObservation, TraitProfile, TraitProposal, point_to_z, z_to_point)
+    TraitEdit, TraitEstimate, TraitObservation, TraitProfile, TraitProposal)
 from app.services.character_trait_service import (apply_manual_edits, chunk_source_scenes,
     ground_observations, merge_evidence, update_profile)
 
 
-def observation(scene='s1', trait='integrity', point=8, **changes):
+def observation(scene='s1', trait='integrity', expression_z=1.2, **changes):
     data = dict(trait=trait, situation_type=TRAIT_BY_KEY[trait].diagnostic_situations[0],
-        direction='low' if point < 5 else 'high' if point > 5 else 'midpoint', expression_point=point,
+        direction='low' if expression_z < 0 else 'high' if expression_z > 0 else 'midpoint', expression_z=expression_z,
         confidence=.9, diagnosticity=.9, behavior='Had a meaningful choice and acted.',
         justification='Choice reveals this construct.', evidence_ids=[f'scene:{scene}'],
         episode_id=f'scene:{scene}', available_after_scene_id=scene,
@@ -22,14 +22,14 @@ def observation(scene='s1', trait='integrity', point=8, **changes):
     return TraitObservation(**data)
 
 
-def evidence(points=(8,8,8), trait='integrity', source='source', offset=0):
-    scenes=[f's{offset+i}' for i in range(len(points))]
-    return ground_observations([observation(s,trait,p) for s,p in zip(scenes,points)],
+def evidence(values=(1.2,1.2,1.2), trait='integrity', source='source', offset=0):
+    scenes=[f's{offset+i}' for i in range(len(values))]
+    return ground_observations([observation(s,trait,p) for s,p in zip(scenes,values)],
                                scene_ids=scenes,source_group_id=source,offset=offset)
 
 
-def proposal(items,point=8):
-    return TraitProposal(trait=items[0].trait,point=point,observation_ids=[i.id for i in items if i.eligible],
+def proposal(items):
+    return TraitProposal(trait=items[0].trait,observation_ids=[i.id for i in items if i.eligible],
         justification='Cumulative choices.',addresses_contradictions='Reviewed opposing evidence.')
 
 
@@ -41,30 +41,13 @@ def test_registry_constructs_poles_and_spread_kind():
     assert TRAIT_BY_KEY['steadiness'].diagnostic_situations==()
 
 
-@pytest.mark.parametrize('point,z',enumerate(ANCHORS,1))
-def test_scale_round_trip(point,z):
-    assert point_to_z(point)==z and z_to_point(z)==point
-    value=TraitEstimate(z=z,status='supported')
-    assert TraitEstimate.model_validate(value.model_dump())==value
-
-
-@pytest.mark.parametrize('value',[True,False,0,10,5.5,'5'])
-def test_invalid_point(value):
-    with pytest.raises(ValueError): point_to_z(value)
-
-
-@pytest.mark.parametrize('value',[True,math.inf,math.nan,-2,2,'0'])
-def test_invalid_z(value):
-    with pytest.raises(ValueError): z_to_point(value)
-
 
 def test_unknown_is_not_midpoint_and_storage_uses_z():
     state=TraitProfile()
-    assert state.dispositional_traits['integrity'].point is None
-    assert TraitEstimate(z=0,status='supported').point==5
+    assert state.dispositional_traits['integrity'].z is None
+    assert TraitEstimate(z=0,status='supported').z == 0
     assert 'point' not in json.loads(state.storage_json())['steadiness']
     assert TraitProfile.model_validate_json(state.storage_json())==state
-    assert z_to_point(.15)==5
     with pytest.raises(ValidationError): TraitEstimate(z=0)
     with pytest.raises(ValidationError): TraitEstimate(z=True,status='supported')
 
@@ -105,34 +88,31 @@ def test_required_provenance_and_availability():
 
 def test_conservative_changes_and_deduplication():
     items=evidence()
-    state,_=update_profile(TraitProfile(),items[:1],[proposal(items[:1])])
-    assert state.dispositional_traits['integrity'].point is None
-    state,_=update_profile(state,items,[proposal(items)])
-    assert state.dispositional_traits['integrity'].point==8
-    replay,_=update_profile(state,items,[proposal(items,9)])
-    assert replay.dispositional_traits['integrity'].point==8
-    all_items=merge_evidence(items,evidence((9,9),offset=3))
-    changed,_=update_profile(state,all_items,[proposal(all_items,9)])
-    assert changed.dispositional_traits['integrity'].point==9
+    state,_=update_profile(TraitProfile(),items[:1],[proposal(items[:1])],source_group_id='source')
+    assert state.dispositional_traits['integrity'].z==.1
+    state,_=update_profile(state,items,[proposal(items)],source_group_id='source')
+    assert state.dispositional_traits['integrity'].z==.1
+    replay,_=update_profile(state,items,[proposal(items)],source_group_id='source')
+    assert replay.dispositional_traits['integrity'].z==.1
+    all_items=merge_evidence(items,evidence((1.2,1.2),source='next',offset=3))
+    changed,_=update_profile(state,all_items,[proposal(all_items)],source_group_id='next')
+    assert changed.dispositional_traits['integrity'].z==.2
     assert len(merge_evidence(items,items))==3
     with pytest.raises(ValueError):
         ground_observations([observation(),observation()],scene_ids=['s1'],source_group_id='source')
 
 
 def test_opposing_extremes_are_contested_not_midpoint():
-    items=evidence((1,9,1,9))
-    state,_=update_profile(TraitProfile(),items,[proposal(items,5)])
-    assert state.dispositional_traits['integrity'].status=='contested'
-    assert state.dispositional_traits['integrity'].point is None
-
-
-def test_restlessness_requires_multiple_source_contexts():
-    items=evidence(trait='restlessness')
+    items=evidence((-1.9,1.9,-1.9,1.9))
     state,_=update_profile(TraitProfile(),items,[proposal(items)])
-    assert state.dispositional_traits['restlessness'].point is None
-    items+=evidence((8,),trait='restlessness',source='another',offset=3)
-    state,_=update_profile(state,items,[proposal(items)])
-    assert state.dispositional_traits['restlessness'].point==8
+    assert state.dispositional_traits['integrity'].status=='contested'
+    assert state.dispositional_traits['integrity'].z is None
+
+
+def test_restlessness_can_update_from_one_eligible_value_choice():
+    items=evidence((1.2,),trait='restlessness')
+    state,_=update_profile(TraitProfile(),items,[proposal(items)],source_group_id='source')
+    assert state.dispositional_traits['restlessness'].z==.1
 
 
 def test_authored_evidence_is_provisional():
@@ -142,32 +122,32 @@ def test_authored_evidence_is_provisional():
     state,_=update_profile(TraitProfile(),records,[proposal(records)])
     assert state.dispositional_traits['integrity'].status=='provisional'
     assert state.dispositional_traits['integrity'].qualifying_count==0
-    assert state.steadiness.point is None
+    assert state.steadiness.z is None
 
 
 def test_steadiness_requires_comparable_repetition_not_morality():
-    retaliation=evidence((1,1,1),trait='forbearance')
-    state,_=update_profile(TraitProfile(),retaliation,[proposal(retaliation,1)])
-    assert state.steadiness.point is None
-    allocation=evidence((9,9,9),trait='sharing',offset=3)
-    state,_=update_profile(state,retaliation+allocation,[proposal(allocation,9)])
-    assert state.dispositional_traits['forbearance'].point==1 and state.steadiness.point==9
-    varied=evidence((1,9,1),trait='forbearance')+evidence((9,1,9),trait='sharing',offset=3)
+    retaliation=evidence((-1.9,-1.9,-1.9),trait='forbearance')
+    state,_=update_profile(TraitProfile(),retaliation,[proposal(retaliation)])
+    assert state.steadiness.z is None
+    allocation=evidence((1.9,1.9,1.9),trait='sharing',offset=3)
+    state,_=update_profile(state,retaliation+allocation,[proposal(allocation)])
+    assert state.dispositional_traits['forbearance'].z==-.1 and state.steadiness.z==1.9
+    varied=evidence((-1.9,1.9,-1.9),trait='forbearance')+evidence((1.9,-1.9,1.9),trait='sharing',offset=3)
     state,_=update_profile(TraitProfile(),varied,[])
-    assert state.steadiness.point<=2
+    assert state.steadiness.z<=-1.2
     for item in varied: item.comparison_context=None
     state,_=update_profile(TraitProfile(),varied,[])
-    assert state.steadiness.point is None
+    assert state.steadiness.z is None
 
 
 def test_manual_override_and_clear():
     items=evidence()
-    state=apply_manual_edits(TraitProfile(),{'integrity':TraitEdit(point=2,reason='Authored sheet.')})
+    state=apply_manual_edits(TraitProfile(),{'integrity':TraitEdit(z=-1.2,reason='Authored sheet.')})
     state,_=update_profile(state,items,[proposal(items)])
-    assert state.dispositional_traits['integrity'].point==2
-    assert state.inferred_traits['integrity'].point==8
-    state=apply_manual_edits(state,{'integrity':TraitEdit(point=None,reason='Resume inference.')})
-    assert state.dispositional_traits['integrity'].point==8 and not state.overrides
+    assert state.dispositional_traits['integrity'].z==-1.2
+    assert state.inferred_traits['integrity'].z==.1
+    state=apply_manual_edits(state,{'integrity':TraitEdit(z=None,reason='Resume inference.')})
+    assert state.dispositional_traits['integrity'].z==.1 and not state.overrides
 
 
 @pytest.mark.parametrize('count', [0, 1, 9, 10, 11, 21])
@@ -201,17 +181,42 @@ def test_definition_documentation_is_generated_from_registry():
 def test_clearing_without_override_keeps_inferred_state():
     items=evidence()
     state,_=update_profile(TraitProfile(),items,[proposal(items)])
-    clear=apply_manual_edits(state,{'integrity':TraitEdit(point=None,reason='Already inferred.')})
-    assert clear.dispositional_traits['integrity'].point==8
+    clear=apply_manual_edits(state,{'integrity':TraitEdit(z=None,reason='Already inferred.')})
+    assert clear.dispositional_traits['integrity'].z==.1
 
 
 def test_contradictions_change_uncertainty_without_llm_numeric_proposal():
-    items=evidence((1,9,1,9))
+    items=evidence((-1.9,1.9,-1.9,1.9))
     state,_=update_profile(TraitProfile(),items,[])
     assert state.dispositional_traits['integrity'].status=='contested'
 
 
-def test_proposal_cannot_invert_pole_of_cited_evidence():
+def test_evidence_direction_controls_numeric_update():
     items=evidence()
-    with pytest.raises(ValueError,match='pole'):
-        update_profile(TraitProfile(),items,[proposal(items,1)])
+    state,_=update_profile(TraitProfile(),items,[proposal(items)])
+    assert state.dispositional_traits['integrity'].z==.1
+
+
+def test_source_update_averages_intensities_once_per_trait():
+    records=ground_observations([
+        observation('s1', update_intensity='small'),
+        observation('s2', update_intensity='medium'),
+        observation('s3', update_intensity='large'),
+    ],scene_ids=['s1','s2','s3'],source_group_id='source')
+    state,_=update_profile(TraitProfile(),records,[],source_group_id='source')
+    assert state.dispositional_traits['integrity'].z==pytest.approx((.05+.1+.2)/3, abs=.0001)
+    assert state.dispositional_traits['integrity'].applied_source_ids==['source']
+    replay,_=update_profile(state,records,[],source_group_id='source')
+    assert replay.dispositional_traits['integrity'].z==state.dispositional_traits['integrity'].z
+
+
+def test_source_update_marks_opposing_directions_contested_without_stacking():
+    records=ground_observations([
+        observation('s1', expression_z=1.2, update_intensity='large'),
+        observation('s2', expression_z=-1.2, update_intensity='small'),
+        observation('s3', expression_z=1.2, update_intensity='medium'),
+    ],scene_ids=['s1','s2','s3'],source_group_id='source')
+    state,_=update_profile(TraitProfile(),records,[],source_group_id='source')
+    # Opposing poles remain a contradiction, not an averaged pseudo-centre.
+    assert state.dispositional_traits['integrity'].z is None
+    assert state.dispositional_traits['integrity'].status=='contested'

@@ -157,8 +157,8 @@ background job. Graph mutations and raw trait-evidence inspection require an adm
 ## Dispositional personality
 
 Agent reads expose typed `trait_profile.dispositional_traits` and separate
-`trait_profile.steadiness`. Each estimate includes z, a derived 1–9 point, status,
-evidence counts and uncertainty. Unknown has null z/point; midpoint is point 5.
+`trait_profile.steadiness`. Each estimate includes a bounded z estimate, status,
+evidence counts and uncertainty. Unknown has null z; midpoint is z=0.
 Fetch authoritative constructs, poles and situations with
 `await sdk.character_agents.trait_definitions()`; do not maintain separate UI
 meaning dictionaries.
@@ -170,7 +170,7 @@ from shrecknet_client.models import CharacterAgentUpdate
 await sdk.character_agents.update(
     agent.id,
     CharacterAgentUpdate(trait_edits={
-        "integrity": TraitEdit(point=8, reason="Authored character sheet.")
+        "integrity": TraitEdit(z=1.2, reason="Authored character sheet.")
     }),
 )
 evidence = await sdk.character_agents.list_trait_evidence(
@@ -182,15 +182,15 @@ changes = await sdk.character_agents.list_identity_changes(agent.id, change_type
 await sdk.character_agents.update(
     agent.id,
     CharacterAgentUpdate(trait_edits={
-        "integrity": TraitEdit(point=None, reason="Resume evidence-derived estimate.")
+        "integrity": TraitEdit(z=None, reason="Resume evidence-derived estimate.")
     }),
 )
 ```
 
-Embodiment uses chronological source chunks of up to ten scenes and four normal
-LLM calls per chunk, plus authored initialization. Chunks run sequentially. The
+Embodiment uses chronological source chunks of one source bundle and three normal
+LLM calls per bundle, plus authored initialization. Chunks run sequentially. The
 server applies the draft's generated profile during creation; submit only changed
-point selections in `trait_edits`, with reasons. Evidence continues accumulating
+z selections in `trait_edits`, with reasons. Evidence continues accumulating
 beneath a manual override. STEADINESS is inferred separately from repeated
 comparable behavior and never controls query temperature.
 

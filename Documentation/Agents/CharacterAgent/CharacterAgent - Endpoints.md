@@ -62,16 +62,16 @@ Example response:
     "trait_profile": {
       "version": "dispositions-v1",
       "dispositional_traits": {
-        "integrity": {"z": null, "point": null, "status": "unknown", "qualifying_count": 0, "observation_ids": [], "uncertainty": [], "accepted_count": 0, "comparison_start": 0},
-        "caution": {"z": null, "point": null, "status": "unknown", "qualifying_count": 0, "observation_ids": [], "uncertainty": [], "accepted_count": 0, "comparison_start": 0},
-        "presence": {"z": null, "point": null, "status": "unknown", "qualifying_count": 0, "observation_ids": [], "uncertainty": [], "accepted_count": 0, "comparison_start": 0},
-        "forbearance": {"z": null, "point": null, "status": "unknown", "qualifying_count": 0, "observation_ids": [], "uncertainty": [], "accepted_count": 0, "comparison_start": 0},
-        "diligence": {"z": null, "point": null, "status": "unknown", "qualifying_count": 0, "observation_ids": [], "uncertainty": [], "accepted_count": 0, "comparison_start": 0},
-        "curiosity": {"z": null, "point": null, "status": "unknown", "qualifying_count": 0, "observation_ids": [], "uncertainty": [], "accepted_count": 0, "comparison_start": 0},
-        "sharing": {"z": null, "point": null, "status": "unknown", "qualifying_count": 0, "observation_ids": [], "uncertainty": [], "accepted_count": 0, "comparison_start": 0},
-        "restlessness": {"z": null, "point": null, "status": "unknown", "qualifying_count": 0, "observation_ids": [], "uncertainty": [], "accepted_count": 0, "comparison_start": 0}
+        "integrity": {"z": null, "status": "unknown", "qualifying_count": 0, "observation_ids": [], "uncertainty": [], "accepted_count": 0, "comparison_start": 0, "applied_source_ids": []},
+        "caution": {"z": null, "status": "unknown", "qualifying_count": 0, "observation_ids": [], "uncertainty": [], "accepted_count": 0, "comparison_start": 0, "applied_source_ids": []},
+        "presence": {"z": null, "status": "unknown", "qualifying_count": 0, "observation_ids": [], "uncertainty": [], "accepted_count": 0, "comparison_start": 0, "applied_source_ids": []},
+        "forbearance": {"z": null, "status": "unknown", "qualifying_count": 0, "observation_ids": [], "uncertainty": [], "accepted_count": 0, "comparison_start": 0, "applied_source_ids": []},
+        "diligence": {"z": null, "status": "unknown", "qualifying_count": 0, "observation_ids": [], "uncertainty": [], "accepted_count": 0, "comparison_start": 0, "applied_source_ids": []},
+        "curiosity": {"z": null, "status": "unknown", "qualifying_count": 0, "observation_ids": [], "uncertainty": [], "accepted_count": 0, "comparison_start": 0, "applied_source_ids": []},
+        "sharing": {"z": null, "status": "unknown", "qualifying_count": 0, "observation_ids": [], "uncertainty": [], "accepted_count": 0, "comparison_start": 0, "applied_source_ids": []},
+        "restlessness": {"z": null, "status": "unknown", "qualifying_count": 0, "observation_ids": [], "uncertainty": [], "accepted_count": 0, "comparison_start": 0, "applied_source_ids": []}
       },
-      "steadiness": {"z": null, "point": null, "status": "unknown", "qualifying_count": 0, "observation_ids": [], "uncertainty": [], "accepted_count": 0, "comparison_start": 0},
+      "steadiness": {"z": null, "status": "unknown", "qualifying_count": 0, "observation_ids": [], "uncertainty": [], "accepted_count": 0, "comparison_start": 0, "applied_source_ids": []},
       "overrides": {}, "inferred_traits": {}
     },
     "id": "agent-8c01",
@@ -257,30 +257,42 @@ characters before validation rather than causing repair or job failure.
 
 See [CharacterAgent Query](Query/Query.md) for request and response contracts.
 
+## Timeline display references
+
+`GET /character-agents/embodiment-drafts/{draft_id}` includes display-ready
+references inside `timeline.source_projections`. Each new source projection has
+`source_group`; each perspective has `scene` and `evidence`; each projected
+impact has `target`; and each trait change has `evidence`. A reference always
+contains stable `id`, `type`, human-readable `name`, optional `description`, and
+optional `instance_name`. Clients may retain IDs for joins, but should render
+these display fields rather than opaque identifiers. Existing drafts generated
+before this contract may omit the new objects; regenerate the draft to obtain
+complete display references.
+
 ## Personality and history
 
 CRUD remains under `/character-agents`, `/character-aspects`, and `/character-goals`.
 CharacterAgent reads include `trait_profile.dispositional_traits` and separate
-`trait_profile.steadiness`. Every slot has z, derived 1–9 point, status, evidence
-counts/references, and uncertainty. Unknown is null, not point 5. See the complete
+`trait_profile.steadiness`. Every slot has z, bounded z estimate, status, evidence
+counts/references, and uncertainty. Unknown is null, not z=0. See the complete
 [trait specification and policy](Dispositional%20Traits.md).
 
 Authenticated metadata: `GET /character-agents/trait-definitions` returns the
 registry and scale mapping. The percentile reference is the general human population.
 
-Administrator create/PATCH inputs use point edits rather than raw profiles:
+Administrator create/PATCH inputs use z edits rather than raw profiles:
 
 ```json
 {
   "trait_edits": {
-    "integrity": {"point": 8, "reason": "Authored character sheet."},
-    "sharing": {"point": 3, "reason": "Scrupulous but ungenerous."}
+    "integrity": {"z": 1.2, "reason": "Authored character sheet."},
+    "sharing": {"z": -0.7, "reason": "Scrupulous but ungenerous."}
   }
 }
 ```
 
-Each slot accepts a strict integer 1–9. Omitted slots are retained. A nonblank
-reason is required. `{"trait_edits":{"integrity":{"point":null,"reason":"Resume evidence."}}}`
+Each slot accepts a finite number from -1.9 through 1.9. Omitted slots are retained. A nonblank
+reason is required. `{"trait_edits":{"integrity":{"z":null,"reason":"Resume evidence."}}}`
 clears that manual override and restores the current inferred value, possibly unknown.
 Raw z, caller-invented evidence, unknown trait names, and removed personality fields
 are not accepted as edits (`422`). Graph mutation remains administrator-only.
@@ -314,8 +326,8 @@ existing profile and history reads continue to apply.
 3. Review `proposal.trait_profile`, aspects/goals, source evidence and timeline.
    The server-owned profile is the inference baseline; do not submit that entire
    read object as a write payload.
-4. Submit the normal creation aggregate with the draft ID and any manual point
-   edits. Identical points preserve inferred provenance; different points produce
+4. Submit the normal creation aggregate with the draft ID and any manual z
+   edits. Identical z values preserve inferred provenance; different z values produce
    a final manual revision after the generated timeline.
 
 ```json
@@ -326,7 +338,7 @@ existing profile and history reads continue to apply.
   "name": "Mara of the Frontier",
   "background_story": "The administrator-reviewed history.",
   "visibility": "private",
-  "trait_edits": {"integrity":{"point":8,"reason":"Reviewed authored characterization."}},
+  "trait_edits": {"integrity":{"z":1.2,"reason":"Reviewed authored characterization."}},
   "aspects": [],
   "goals": []
 }
@@ -341,12 +353,24 @@ Name/story/image derivation continues to use canonical entity information.
 
 Scenes retain `DERIVED_FROM` source grouping and deterministic time order. All
 scenes from a source are one atomic bundle; the backend never splits, truncates,
-or drops them for a count or local input budget. Each bundle runs four normal
-calls: perspectives, enrichment, joint observations, and one cumulative profile
-proposal, producing exactly one revision associated with every source scene.
-Baseline authored extraction adds one initial call. No scenes are required for
-authored-only initialization. All bundle perspectives use its starting revision;
-the updated identity takes effect at bundle end.
+or drops them for a count or local input budget. Each bundle runs three normal
+calls: perspectives, perspective-only per-scene enrichment (including scene-local
+trait candidates and durable aspect/goal signals), and one cumulative profile
+proposal. Only incorporation receives the raw scene; enrichment receives the
+grounded character perspective without its presentation-only reflection. The
+backend validates and grounds the candidates before the profile proposal; it does
+not make a separate cross-scene-observation call. A scene has no hard cap on trait
+candidates, while aspect and goal signals are limited to one each and never mutate
+state on their own. Baseline authored extraction adds one initial call. No scenes
+are required for authored-only initialization. All bundle perspectives use its
+starting revision; the updated identity takes effect at bundle end.
+
+Every enrichment item explicitly returns its six arrays: `emotions`, `beliefs`,
+`impacts`, `trait_candidates`, `aspect_signals`, and `goal_signals`. Empty arrays
+are valid; omitted arrays are rejected and receive one schema-correction attempt.
+Impacts can only target existing profile aspect/goal IDs, so an agent with neither
+can correctly have `impacts: []` while still emitting candidate or durable-signal
+evidence for later profile creation.
 
 Outputs contain per-scene provenance and availability cutoffs. Invalid references,
 missing/duplicate/reordered scene outputs, or unsupported updates fail validation
@@ -374,8 +398,8 @@ and regenerate. There is no conversion or compatibility alias. See
 ### Configuration
 
 - `model_character_agent_character_incorporation`: batch perspectives/reflections.
-- `model_character_agent_scene_interpretation`: authored baseline, enrichment,
-  and joint diagnostic observations.
+- `model_character_agent_scene_interpretation`: authored baseline and per-scene
+  psychological enrichment/candidate extraction.
 - `model_character_agent_update`: cumulative trait proposals, aspects and goals.
 - `model_character_agent_framing` / `model_character_agent_deliberation`: query stages.
 - `model_agents_repair_json`: query final repair target.
@@ -384,6 +408,10 @@ and regenerate. There is no conversion or compatibility alias. See
 - `character_agent_embodiment_max_aspects` / `character_agent_embodiment_max_goals`:
   defaults 12/8, active capacities. Per-bundle operation caps remain two aspects/one goal.
 - `character_agent_embodiment_semantic_correction_attempts`: default 1, range 0–3.
+- `character_agent_embodiment_debug_artifacts_enabled`: default `true`; writes a
+  host-visible local trace for every request under
+  `shrecknet/databases/local_test/character_embodiment/`. See
+  [debug artifact details](Dispositional%20Traits.md#local-embodiment-debug-artifacts).
 
 Model targets default to empty provider/name until configured or reconciled.
 Unrelated belief, emotion, aspect and goal scales retain their existing meanings.

@@ -265,6 +265,7 @@ class Settings(BaseSettings):
     character_agent_embodiment_semantic_correction_attempts: int = Field(
         1, ge=0, le=3
     )
+    character_agent_embodiment_debug_artifacts_enabled: bool = True
     librarian_debug_artifacts_enabled: bool = True
     elder_debug_artifacts_enabled: bool = True
     model_orchestrator_routing: LLMModelTarget = Field(

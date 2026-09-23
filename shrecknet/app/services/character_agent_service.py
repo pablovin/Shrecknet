@@ -257,7 +257,7 @@ class CharacterAgentService:
         generated_profile = timeline.revisions[-1].trait_profile if timeline else TraitProfile()
         # A reviewed unchanged value keeps its generated provenance.
         edits = {key: edit for key, edit in payload.trait_edits.items()
-                 if not timeline or edit.point != generated_profile.estimate(key).point}
+                 if not timeline or edit.z != generated_profile.estimate(key).z}
         final_profile = apply_manual_edits(generated_profile, edits)
         agent_props["trait_profile"] = final_profile.storage_json()
 

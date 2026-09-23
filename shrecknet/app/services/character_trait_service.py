@@ -14,17 +14,18 @@ from typing import Iterable
 from app.schemas.character_traits import (
     ChoiceConditions, DIRECTIONAL_TRAITS, SPEC_VERSION, TraitChange, TraitEdit,
     TraitEstimate, TraitEvidence, TraitObservation, TraitProfile, TraitProposal,
-    point_to_z,
 )
 
-POLICY_VERSION = 'evidence-policy-v1'
+POLICY_VERSION = 'evidence-policy-v3-perspective-single-observation'
 MIN_CONFIDENCE = 0.7
 MIN_DIAGNOSTICITY = 0.7
-MIN_EPISODES = 3
-MIN_NEW_EPISODES = 2
+MIN_EPISODES = 1
+MIN_DIRECTIONAL_NEW_EPISODES = 1
+MIN_STEADINESS_NEW_EPISODES = 2
 MIN_SPREAD_EPISODES = 6
 MIN_COMPARISON_GROUPS = 2
 MIN_GROUP_EPISODES = 3
+UPDATE_MAGNITUDES = {'small': 0.05, 'medium': 0.10, 'large': 0.20}
 
 
 def validate_scene_grounding(items, scene_ids: list[str]) -> None:
@@ -65,7 +66,7 @@ def ground_observations(
             exclusions.append('insufficient_confidence')
         if observation.diagnosticity < MIN_DIAGNOSTICITY:
             exclusions.append('insufficient_diagnosticity')
-        if observation.expression_point is None:
+        if observation.expression_z is None:
             exclusions.append('expression_unknown')
         if observation.evidence_kind == 'behavior':
             for key in ChoiceConditions.model_fields:
@@ -102,11 +103,6 @@ def validate_proposals(proposals: list[TraitProposal], evidence: list[TraitEvide
         if any(ref not in lookup or lookup[ref].trait != proposal.trait or not lookup[ref].eligible
                for ref in proposal.observation_ids):
             raise ValueError('trait proposal must cite eligible observations for that trait')
-        side = 'low' if proposal.point < 5 else 'high' if proposal.point > 5 else 'midpoint'
-        if not any(lookup[ref].direction == side for ref in proposal.observation_ids):
-            # Polarized evidence is retained as contested, never accepted as a midpoint.
-            if side != 'midpoint':
-                raise ValueError('trait proposal contradicts the pole of its cited evidence')
 
 
 def _set(profile: TraitProfile, key: str, estimate: TraitEstimate):
@@ -119,64 +115,80 @@ def _set(profile: TraitProfile, key: str, estimate: TraitEstimate):
 def apply_manual_edits(profile: TraitProfile, edits: dict[str, TraitEdit]) -> TraitProfile:
     result = profile.model_copy(deep=True)
     for key, edit in edits.items():
-        if edit.point is None:
+        if edit.z is None:
             result.overrides.pop(key, None)
             _set(result, key, result.inferred_traits.pop(key, result.estimate(key)))
         else:
             if key not in result.overrides:
                 result.inferred_traits[key] = result.estimate(key).model_copy(deep=True)
             result.overrides[key] = edit
-            _set(result, key, TraitEstimate(z=point_to_z(edit.point), status='manual'))
+            _set(result, key, TraitEstimate(z=edit.z, status='manual'))
     return result
 
 
-def _bounded_point(previous: TraitEstimate, point: int) -> int:
-    if previous.point is None:
-        return point
-    return max(previous.point - 1, min(previous.point + 1, point))
+def _source_delta(items: list[TraitEvidence]) -> float:
+    """Average one source's eligible directional evidence for one trait.
+
+    This is deliberately an average, not a sum: a source with many scenes
+    cannot manufacture a larger personality jump than a source with one
+    decisive eligible choice. Midpoint evidence remains auditable but moves
+    neither pole.
+    """
+    contributions = [
+        (1 if item.direction == 'high' else -1 if item.direction == 'low' else 0)
+        * UPDATE_MAGNITUDES[item.update_intensity]
+        for item in items
+    ]
+    return round(sum(contributions) / len(contributions), 4) if contributions else 0.0
+
+
+def _bounded_z(previous: TraitEstimate, delta: float) -> float:
+    baseline = previous.z if previous.z is not None else 0.0
+    return round(max(-1.9, min(1.9, baseline + delta)), 4)
 
 
 def _directional(previous: TraitEstimate, key: str, proposal: TraitProposal | None,
-                 evidence: list[TraitEvidence]) -> TraitEstimate:
+                 evidence: list[TraitEvidence], source_group_id: str | None) -> TraitEstimate:
     items = [item for item in evidence if item.trait == key and item.eligible]
     behavioral = [item for item in items if item.evidence_kind == 'behavior']
+    source_behavioral = [
+        item for item in behavioral
+        if source_group_id is None or item.source_group_id == source_group_id
+    ]
     result = previous.model_copy(deep=True)
     result.qualifying_count = len(behavioral)
     result.observation_ids = [item.id for item in items]
     directions = {item.direction for item in behavioral}
     opposed = {'low', 'high'} <= directions
-    if not proposal:
-        if opposed:
-            result.status = 'contested'
-            result.uncertainty = ['Contradictory diagnostic behavior remains in the evidence history.']
-        return result
-    proposed_side = 'low' if proposal.point < 5 else 'high' if proposal.point > 5 else 'midpoint'
     if opposed:
         result.uncertainty = ['Contradictory diagnostic behavior remains in the evidence history.']
-        if len(behavioral) < 3 or any(item.direction != proposed_side for item in behavioral[-3:]):
+        if len(behavioral) < 3 or len({item.direction for item in behavioral[-3:]}) > 1:
             result.status = 'contested'
             return result
-    if proposal.point == 5 and not any(item.direction == 'midpoint' for item in items):
-        result.uncertainty = ['A midpoint requires intermediate behavior, not an average of extremes.']
-        return result
     if len(behavioral) < MIN_EPISODES:
         authored = [item for item in items if item.evidence_kind == 'authored_disposition']
-        if previous.z is None and authored and not behavioral:
-            result.z = point_to_z(proposal.point)
+        if previous.z is None and authored and not behavioral and proposal:
+            result.z = _source_delta(authored)
             result.status = 'provisional'
             result.uncertainty = ['Authored disposition; insufficient independent behavioral evidence.']
         return result
-    if key == 'restlessness' and len({item.source_group_id for item in behavioral}) < 2:
-        result.uncertainty = ['Restlessness requires value choices in at least two source contexts.']
+    if (previous.z is not None
+            and len(behavioral) - previous.accepted_count < MIN_DIRECTIONAL_NEW_EPISODES):
         return result
-    if previous.z is not None and len(behavioral) - previous.accepted_count < MIN_NEW_EPISODES:
+    if source_group_id is not None and source_group_id in previous.applied_source_ids:
         return result
-    point = _bounded_point(previous, proposal.point)
-    result.z = point_to_z(point)
+    delta = _source_delta(source_behavioral)
+    if delta == 0:
+        if source_behavioral and {'low', 'high'} <= {item.direction for item in source_behavioral}:
+            result.status = 'contested'
+            result.uncertainty = ['This source contains opposing diagnostic behavior; no net update was applied.']
+        return result
+    result.z = _bounded_z(previous, delta)
     result.status = 'supported'
-    if previous.z != result.z:
-        result.accepted_count = len(behavioral)
-        result.comparison_start = max(item.chronological_position for item in behavioral) + 1 if previous.z is not None else 0
+    result.accepted_count = len(behavioral)
+    result.comparison_start = max(item.chronological_position for item in behavioral) + 1 if previous.z is not None else 0
+    if source_group_id is not None:
+        result.applied_source_ids = [*previous.applied_source_ids, source_group_id]
     return result
 
 
@@ -193,27 +205,42 @@ def _steadiness(profile: TraitProfile, evidence: list[TraitEvidence]) -> TraitEs
     if len(groups) < MIN_COMPARISON_GROUPS or len(items) < MIN_SPREAD_EPISODES:
         return TraitEstimate(uncertainty=['Insufficient repeated comparable behavior.'])
     previous = profile.inferred_traits.get('steadiness', profile.steadiness)
-    if previous.z is not None and len(items) - previous.accepted_count < MIN_NEW_EPISODES:
+    if previous.z is not None and len(items) - previous.accepted_count < MIN_STEADINESS_NEW_EPISODES:
         return previous.model_copy(deep=True)
     squared = 0.0
     for group in groups.values():
-        values = [point_to_z(item.expression_point) for item in group]
+        values = [item.expression_z for item in group if item.expression_z is not None]
         mean = sum(values) / len(values)
         squared += sum((value - mean) ** 2 for value in values)
     spread = math.sqrt(squared / len(items))
-    point = math.floor(9 - 8 * min(spread / 1.9, 1) + 0.5)
-    return TraitEstimate(z=point_to_z(_bounded_point(previous, point)), status='provisional',
+    z = round(1.9 - 3.8 * min(spread / 1.9, 1), 4)
+    return TraitEstimate(z=z, status='provisional',
         observation_ids=[item.id for item in items], qualifying_count=len(items), accepted_count=len(items),
         uncertainty=['Engineering estimate of within-context spread; not population calibrated.'])
 
 
-def update_profile(profile: TraitProfile, evidence: list[TraitEvidence], proposals: list[TraitProposal]) -> tuple[TraitProfile, list[TraitChange]]:
+def update_profile(
+    profile: TraitProfile,
+    evidence: list[TraitEvidence],
+    proposals: list[TraitProposal],
+    *,
+    source_group_id: str | None = None,
+) -> tuple[TraitProfile, list[TraitChange]]:
+    """Apply at most one bounded update per directional trait/source bundle.
+
+    Numeric change comes exclusively from eligible evidence in ``source_group_id``:
+    high/low directions carry the candidate's small/medium/large magnitude and
+    same-trait contributions are averaged. LLM proposals provide traceable
+    explanations only; they cannot choose a numeric personality value.
+    """
     validate_proposals(proposals, evidence)
     result = profile.model_copy(deep=True)
     proposals_by_trait = {p.trait: p for p in proposals}
     for key in DIRECTIONAL_TRAITS:
         previous = result.inferred_traits.get(key, result.estimate(key))
-        estimate = _directional(previous, key, proposals_by_trait.get(key), evidence)
+        estimate = _directional(
+            previous, key, proposals_by_trait.get(key), evidence, source_group_id,
+        )
         if key in result.overrides:
             result.inferred_traits[key] = estimate
         else:

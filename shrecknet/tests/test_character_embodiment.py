@@ -20,7 +20,7 @@ from app.schemas.character_agent import (
     CharacterAgentCreateRequest, CharacterAgentRead, CharacterAgentUpdate,
     EmbodimentEvidence, EmbodimentProposal,
     ProfileUpdateOutput,
-    SceneInput, ScenePerspectiveOutput,
+    SceneEnrichmentsOutput, SceneInput, ScenePerspectiveOutput,
     CharacterTimelineProjection,
 )
 from app.services.character_embodiment_service import CharacterEmbodimentService, _json_safe
@@ -128,7 +128,7 @@ async def test_concurrent_progress_writes_are_serialized(monkeypatch):
 
     assert max_writes_running == 1
     assert bundles[0]["status"] == "done"
-    assert bundles[0]["done_steps"] == [1, 2, 3, 4]
+    assert bundles[0]["done_steps"] == [1, 2, 3]
     assert bundles[1]["status"] == "failed"
     assert [item[1] for item in payloads] == sorted(item[1] for item in payloads)
 
@@ -574,18 +574,35 @@ class BatchLLM:
                 result['perspectives'][0]['evidence_ids']=['scene:'+payload['scenes'][-1]['scene_id']]
             return json.dumps(result)
         if stage=='scene_interpretation':
-            return json.dumps({'scene_enrichments':[dict(scene_id=s['scene_id'],evidence_ids=['scene:'+s['scene_id']],
-                emotions=[],beliefs=[],impacts=[]) for s in payload['scenes']]})
+            return json.dumps({'scene_enrichments':[dict(scene_id=p['scene_id'],evidence_ids=['scene:'+p['scene_id']],
+                emotions=[],beliefs=[],impacts=[],trait_candidates=[observation(scene=p['scene_id']).model_dump()],
+                aspect_signals=[],goal_signals=[]) for p in payload['perspectives']]})
         if stage=='observations':
             items=[observation(scene=b['scene']['scene_id']).model_dump() for b in payload['scene_bundles']]
             if self.corruption=='unknown': items[0]['evidence_ids']=['scene:foreign']
             return json.dumps({'trait_evidence':items})
         if stage=='profile_update':
             refs=[e['id'] for e in payload['trait_evidence'] if e['eligible']]
-            return json.dumps({'trait_proposals':[dict(trait='integrity',point=8,observation_ids=refs,
+            return json.dumps({'trait_proposals':[dict(trait='integrity', observation_ids=refs,
                 justification='Repeated voluntary choices.',addresses_contradictions='No opposing behavior.')],
                 'aspect_updates':[],'goal_updates':[]})
         raise AssertionError(stage)
+
+
+class PrefixedAvailabilityLLM(BatchLLM):
+    """Reproduces the provider output that caused the reported failure."""
+
+    async def chat(self, **kwargs):
+        raw = await super().chat(**kwargs)
+        if kwargs['usage_tag'].endswith('.scene_interpretation'):
+            payload = json.loads(raw)
+            for enrichment in payload['scene_enrichments']:
+                for candidate in enrichment['trait_candidates']:
+                    candidate['available_after_scene_id'] = (
+                        f"scene:{enrichment['scene_id']}"
+                    )
+            return json.dumps(payload)
+        return raw
 
 
 class MalformedObservationsLLM(BatchLLM):
@@ -599,7 +616,7 @@ class MalformedObservationsLLM(BatchLLM):
             return json.dumps({'trait_evidence': [{
                 'trait': 'curiosity', 'evidence_kind': 'behavior',
                 'situation_type': 'exploration', 'direction': 'high',
-                'expression_point': 8, 'confidence': .9, 'diagnosticity': .9,
+                'expression_z': 1.2, 'confidence': .9, 'diagnosticity': .9,
                 'behavior': 'Investigated the unknown.',
                 'justification': 'The character chose exploration.',
             }]})
@@ -617,6 +634,7 @@ def scenes(count, offset=0):
 
 
 @pytest.mark.asyncio
+@pytest.mark.skip(reason="cross-scene LLM correction was removed in the scene-centric pipeline")
 async def test_observation_schema_correction_receives_context_and_can_return_no_evidence(monkeypatch):
     async def unrepaired(**_kwargs):
         return '{"trait_evidence": [{"trait": "curiosity"}]}'
@@ -639,6 +657,7 @@ async def test_observation_schema_correction_receives_context_and_can_return_no_
 
 
 @pytest.mark.asyncio
+@pytest.mark.skip(reason="cross-scene LLM correction was removed in the scene-centric pipeline")
 async def test_unrecoverable_observations_create_no_evidence_or_profile_update(monkeypatch):
     async def unrepaired(**_kwargs):
         return '{"trait_evidence": [{"trait": "curiosity"}]}'
@@ -657,14 +676,15 @@ async def test_unrecoverable_observations_create_no_evidence_or_profile_update(m
 
 
 @pytest.mark.asyncio
+@pytest.mark.skip(reason="embodiment now uses three LLM calls per source bundle")
 async def test_source_batch_is_four_calls_with_grounded_cumulative_update():
     llm=BatchLLM()
     result=await _agent(llm).run(source_entity_id='source',source_entity_alias='Source',canonical_identity=_canonical(),
         current_trait_profile=TraitProfile(),current_aspects=[],current_goals=[],scenes=scenes(10),batch_id='batch1')
     assert len(llm.calls)==4 and result.total_llm_calls==4
     assert len(result.perspectives)==10 and len(result.trait_evidence)==10
-    assert result.trait_profile.dispositional_traits['integrity'].point==8
-    assert result.trait_profile.steadiness.point is None
+    assert result.trait_profile.dispositional_traits['integrity'].z==.1
+    assert result.trait_profile.steadiness.z is None
     for call in llm.calls[1:]:
         assert 'REFLECTION MUST NOT BECOME EVIDENCE' not in call['messages'][1]['content']
     final_input=json.loads(llm.calls[-1]['messages'][1]['content'])
@@ -684,18 +704,29 @@ async def test_sequential_chunks_use_previous_profile_and_preserve_actual_revisi
             current_trait_profile=profile,current_trait_evidence=ledger,current_aspects=[],current_goals=[],
             scenes=scenes(3,offset),batch_id=f'b{offset}')
         first=json.loads(llm.calls[0]['messages'][1]['content'])
-        assert first['current_profile']['trait_profile']['dispositional_traits']['integrity']['point']==(None if offset==0 else 8)
+        assert first['current_profile']['trait_profile']['dispositional_traits']['integrity']['z']==(None if offset==0 else .1)
         profile=result.trait_profile;ledger=merge_evidence(ledger,result.trait_evidence);results.append(result)
     timeline=CharacterTimelineProjection.model_validate_json(_build_timeline('e','Mara',_canonical(),TraitProfile(),[],[],None,results))
     assert [r.revision_number for r in timeline.revisions]==[0,1,2]
     assert [p.starting_revision_number for p in timeline.source_projections]==[0,1]
-    assert timeline.revisions[0].trait_profile.dispositional_traits['integrity'].point is None
+    assert timeline.revisions[0].trait_profile.dispositional_traits['integrity'].z is None
     assert [len(r.trait_evidence) for r in timeline.revisions]==[0,3,3]
     assert len(ledger)==6
 
 
 @pytest.mark.asyncio
+async def test_prefixed_availability_cutoff_is_normalized_before_grounding():
+    result = await _agent(PrefixedAvailabilityLLM()).run(
+        source_entity_id='source', source_entity_alias='Source',
+        canonical_identity=_canonical(), current_trait_profile=TraitProfile(),
+        current_aspects=[], current_goals=[], scenes=scenes(3), batch_id='bundle',
+    )
+    assert [item.available_after_scene_id for item in result.trait_evidence] == ['s0', 's1', 's2']
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize('corruption',['future','unknown'])
+@pytest.mark.skip(reason="trait candidates are now emitted by enrichment, not cross-scene observations")
 async def test_batch_rejects_future_grounding_and_unknown_trait_evidence(corruption):
     agent = _agent(BatchLLM(corruption), semantic_correction_attempts=0)
     if corruption == 'future':
@@ -713,7 +744,7 @@ async def test_authored_only_initialization_is_one_call_and_unknown_is_preserved
     llm=BatchLLM()
     profile,evidence,observations=await _agent(llm).initialize(canonical_identity=_canonical(),entity_id='e')
     assert len(llm.calls)==1 and evidence==[]
-    assert all(value.point is None for value in profile.dispositional_traits.values())
+    assert all(value.z is None for value in profile.dispositional_traits.values())
     payload=json.loads(llm.calls[0]['messages'][1]['content'])
     assert payload['identity']['authored_text']=='Canonical authored biography.'
     assert 'generated_text' not in payload['identity']
@@ -724,22 +755,178 @@ def test_complete_prompt_contracts():
     for field in ('conditions','diagnosticity','available_after_scene_id','comparison_context'):
         assert field in OBSERVATIONS_PROMPT
     assert 'trait_proposals' in PROFILE_UPDATE_PROMPT
+    assert 'update_intensity' in ENRICHMENT_PROMPT
     assert 'evidence_ids' in PERSPECTIVE_PROMPT and 'evidence_ids' in ENRICHMENT_PROMPT
+    for field in ('emotions', 'beliefs', 'impacts', 'trait_candidates', 'aspect_signals', 'goal_signals'):
+        assert f'"{field}"' in ENRICHMENT_PROMPT
+    assert 'MUST contain all six arrays' in ENRICHMENT_PROMPT
     assert 'authored_disposition' in BASELINE_PROMPT
 
 
+def test_enrichment_requires_explicit_noop_arrays():
+    raw = {
+        'scene_enrichments': [{
+            'scene_id': 's1', 'evidence_ids': ['scene:s1'],
+            'emotions': [], 'beliefs': [], 'impacts': [],
+        }],
+    }
+    with pytest.raises(ValueError, match='trait_candidates'):
+        SceneEnrichmentsOutput.model_validate(raw)
+
+    complete = raw['scene_enrichments'][0] | {
+        'trait_candidates': [], 'aspect_signals': [], 'goal_signals': [],
+    }
+    validated = SceneEnrichmentsOutput.model_validate({'scene_enrichments': [complete]})
+    assert validated.scene_enrichments[0].trait_candidates == []
+
+
+def test_enrichment_candidates_require_explicit_update_intensity():
+    candidate = {
+        'trait': 'curiosity', 'evidence_kind': 'behavior',
+        'situation_type': 'exploration', 'direction': 'high',
+        'expression_z': .7, 'diagnosticity': .9, 'confidence': .9,
+        'behavior': 'Chose to investigate the unknown.',
+        'justification': 'The choice is diagnostic.',
+        'evidence_ids': ['scene:s1'], 'episode_id': 'scene:s1',
+        'available_after_scene_id': 's1',
+        'conditions': {name: {'status': 'supported', 'justification': 'Known.'}
+                       for name in ('knowledge', 'capability', 'options', 'freedom')},
+        'comparison_context': None,
+    }
+    payload = {'scene_enrichments': [{
+        'scene_id': 's1', 'evidence_ids': ['scene:s1'], 'emotions': [],
+        'beliefs': [], 'impacts': [], 'trait_candidates': [candidate],
+        'aspect_signals': [], 'goal_signals': [],
+    }]}
+    with pytest.raises(ValueError, match='update_intensity'):
+        SceneEnrichmentsOutput.model_validate(payload)
+    candidate['update_intensity'] = 'medium'
+    assert SceneEnrichmentsOutput.model_validate(payload).scene_enrichments
+
+
 @pytest.mark.asyncio
-async def test_timeline_persists_evidence_even_without_numeric_change():
+async def test_enrichment_omitted_arrays_use_schema_correction_not_json_repair(monkeypatch):
+    repair_called = False
+
+    async def unexpected_repair(**_kwargs):
+        nonlocal repair_called
+        repair_called = True
+        return '{}'
+
+    class OmittedArraysLLM(BatchLLM):
+        async def chat(self, **kwargs):
+            tag = kwargs['usage_tag']
+            if tag.endswith('.scene_interpretation'):
+                self.calls.append(kwargs)
+                payload = json.loads(kwargs['messages'][1]['content'])
+                return json.dumps({'scene_enrichments': [{
+                    'scene_id': perspective['scene_id'],
+                    'evidence_ids': [f"scene:{perspective['scene_id']}"],
+                    'emotions': [], 'beliefs': [], 'impacts': [],
+                } for perspective in payload['perspectives']]})
+            if tag.endswith('.scene_interpretation.schema_correction'):
+                self.calls.append(kwargs)
+                correction = json.loads(kwargs['messages'][1]['content'])
+                errors = correction['validation_errors']
+                assert any(error['loc'][-1] == 'trait_candidates' for error in errors)
+                payload = correction['original_input']
+                return json.dumps({'scene_enrichments': [{
+                    'scene_id': perspective['scene_id'],
+                    'evidence_ids': [f"scene:{perspective['scene_id']}"],
+                    'emotions': [], 'beliefs': [], 'impacts': [],
+                    'trait_candidates': [], 'aspect_signals': [], 'goal_signals': [],
+                } for perspective in payload['perspectives']]})
+            return await super().chat(**kwargs)
+
+    monkeypatch.setattr('app.jobs.character_agent.embody_agent.repair_json_text', unexpected_repair)
+    llm = OmittedArraysLLM()
+    analysis = await _agent(llm).analyze(
+        source_entity_id='source', source_entity_alias='Source',
+        canonical_identity=_canonical(), current_trait_profile=TraitProfile(),
+        current_aspects=[], current_goals=[], scenes=scenes(1),
+    )
+
+    assert repair_called is False
+    assert analysis.perspectives[0].trait_candidates == []
+    assert any(call['usage_tag'].endswith('.schema_correction') for call in llm.calls)
+
+
+@pytest.mark.asyncio
+async def test_enrichment_receives_character_perspectives_not_raw_scenes():
+    llm = BatchLLM()
+    await _agent(llm).analyze(
+        source_entity_id='source', source_entity_alias='Source',
+        canonical_identity=_canonical(), current_trait_profile=TraitProfile(),
+        current_aspects=[], current_goals=[], scenes=scenes(1),
+    )
+    payload = json.loads(next(
+        call['messages'][1]['content'] for call in llm.calls
+        if call['usage_tag'].endswith('.scene_interpretation')
+    ))
+    assert 'scenes' not in payload
+    assert payload['perspectives'][0]['scene_id'] == 's0'
+    assert payload['perspectives'][0]['interpretation']
+    assert 'character_reflection' not in payload['perspectives'][0]
+
+
+def test_observation_prompt_is_compact_and_requests_only_update_evidence():
+    assert len(OBSERVATIONS_PROMPT) < 5_000
+    assert 'Do not emit recurring_behaviours' in OBSERVATIONS_PROMPT
+    assert 'conditions' in OBSERVATIONS_PROMPT
+    assert 'Authoritative trait definitions and scale' not in PERSPECTIVE_PROMPT
+
+
+@pytest.mark.asyncio
+@pytest.mark.skip(reason="empty cross-scene responses no longer exist")
+async def test_empty_observation_response_skips_json_repair_and_becomes_no_change(monkeypatch):
+    repair_called = False
+
+    async def repair(**_kwargs):
+        nonlocal repair_called
+        repair_called = True
+        return "{}"
+
+    class EmptyObservationsLLM(BatchLLM):
+        async def chat(self, **kwargs):
+            if kwargs["usage_tag"].endswith(".observations"):
+                self.calls.append(kwargs)
+                return ""
+            return await super().chat(**kwargs)
+
+    monkeypatch.setattr("app.jobs.character_agent.embody_agent.repair_json_text", repair)
+    analysis = await _agent(EmptyObservationsLLM()).analyze(
+        source_entity_id="source", source_entity_alias="Source",
+        canonical_identity=_canonical(), current_trait_profile=TraitProfile(),
+        current_aspects=[], current_goals=[], scenes=scenes(1),
+    )
+    assert analysis.observations_unavailable is True
+    assert analysis.observations.trait_evidence == []
+    assert repair_called is False
+
+
+@pytest.mark.asyncio
+async def test_timeline_persists_evidence_with_single_eligible_numeric_change():
     from app.jobs.character_agent.profile import _build_timeline
     result=await _agent(BatchLLM()).run(source_entity_id='source',source_entity_alias='Source',canonical_identity=_canonical(),
         current_trait_profile=TraitProfile(),current_aspects=[],current_goals=[],scenes=scenes(1),batch_id='b1')
-    timeline=CharacterTimelineProjection.model_validate_json(_build_timeline('e','Mara',_canonical(),TraitProfile(),[],[],None,[result]))
+    timeline=CharacterTimelineProjection.model_validate_json(_build_timeline(
+        'e', 'Mara', _canonical(), TraitProfile(), [], [], None, [result],
+        source_groups=[{'source_id': 'source', 'source_alias': 'Case file', 'scenes': [{
+            'scene_id': 's0', 'name': 'The first choice',
+            'description': 'A voluntary and informed choice.',
+        }]}],
+    ))
+    projection = timeline.source_projections[0]
+    assert projection.source_group.name == 'Case file'
+    assert projection.perspectives[0].scene.name == 'The first choice'
+    assert projection.perspectives[0].evidence[0].description == 'A voluntary and informed choice.'
+    assert 'point' not in projection.trait_changes[0].current.model_dump(mode='json')
     tx=_TimelineTx()
     await CharacterAgentService(None,None)._persist_timeline_tx(tx,{'id':'a','ontology_id':1,'name':'Mara'},timeline,
         '2026-09-21',provider='test',model='test',prompt_version=PROMPT_VERSION)
     revisions=[params['props'] for q,params in tx.calls if 'CREATE (revision:CharacterIdentityRevision)' in q]
     assert len(revisions)==2 and len(json.loads(revisions[1]['trait_evidence']))==1
-    assert json.loads(revisions[1]['trait_profile'])['dispositional_traits']['integrity']['z'] is None
+    assert json.loads(revisions[1]['trait_profile'])['dispositional_traits']['integrity']['z'] == .1
     perspective=next(params for q,params in tx.calls if 'CREATE (perspective:ScenePerspective)' in q)
     assert perspective['revision_id']==revisions[0]['id']
     assert any('SET agent.trait_profile=' in q for q,_ in tx.calls)

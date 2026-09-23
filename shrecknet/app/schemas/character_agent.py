@@ -671,10 +671,34 @@ class CharacterSourceGroup(_StrictModel):
     scenes: list[SourceSceneInput] = Field(default_factory=list)
 
 
+class DisplayReference(_StrictModel):
+    """Human-readable identity for a UI-facing timeline reference."""
+    id: str
+    type: Literal["scene", "source_group", "aspect", "goal", "evidence"]
+    name: str
+    description: str | None = None
+    instance_name: str | None = None
+
+
+class ProjectedCharacterImpact(_StrictModel):
+    impact_type: CharacterImpactType
+    target_id: str = Field(..., min_length=1)
+    direction: CharacterImpactDirection
+    magnitude: int = Field(..., ge=0, le=100)
+    description: str = Field(..., min_length=1)
+    target: DisplayReference | None = None
+
+
+class ProjectedTraitChange(TraitChange):
+    evidence: list[DisplayReference] = Field(default_factory=list)
+
+
 class ProjectedScenePerspective(_StrictModel):
     source_digest: str | None = None
     scene_id: str
+    scene: DisplayReference | None = None
     evidence_ids: list[str] = Field(default_factory=list)
+    evidence: list[DisplayReference] = Field(default_factory=list)
     source_type: ScenePerspectiveSourceType
     awareness_level: int = Field(..., ge=0, le=100)
     confidence: int = Field(..., ge=0, le=100)
@@ -686,7 +710,7 @@ class ProjectedScenePerspective(_StrictModel):
     status: ScenePerspectiveStatus = ScenePerspectiveStatus.ACTIVE
     emotions: list["EmotionalInterpretationOutput"] = Field(default_factory=list)
     beliefs: list["CharacterBeliefOutput"] = Field(default_factory=list)
-    impacts: list["CharacterImpactOutput"] = Field(default_factory=list)
+    impacts: list[ProjectedCharacterImpact] = Field(default_factory=list)
 
 
 class SourcePerspectiveProjection(_StrictModel):
@@ -733,9 +757,10 @@ class CharacterIdentityRevisionProjection(_StrictModel):
 
 class CharacterSourceProjection(_StrictModel):
     source_group_id: str
+    source_group: DisplayReference | None = None
     starting_revision_number: int = Field(..., ge=0)
     perspectives: list[ProjectedScenePerspective]
-    trait_changes: list[TraitChange] = Field(default_factory=list)
+    trait_changes: list[ProjectedTraitChange] = Field(default_factory=list)
     batch_id: str | None = None
     aspects: list[EmbodimentAspectProposal] = Field(default_factory=list)
     goals: list[EmbodimentGoalProposal] = Field(default_factory=list)
@@ -978,6 +1003,30 @@ class CharacterImpactOutput(_StrictModel):
         return self
 
 
+class SceneAspectSignal(_StrictModel):
+    """Evidence that one scene may justify a durable aspect; never a mutation."""
+    name: str = Field(..., min_length=1, max_length=255)
+    category: CharacterAspectCategory
+    description: str = Field(..., min_length=1)
+    importance: int = Field(..., ge=1, le=5)
+    justification: str = Field(..., min_length=1)
+    confidence: float = Field(..., ge=0, le=1)
+    evidence_ids: list[str] = Field(..., min_length=1)
+
+
+class SceneGoalSignal(_StrictModel):
+    """Evidence that one scene may justify a durable goal; never a mutation."""
+    title: str = Field(..., min_length=1, max_length=255)
+    description: str = Field(..., min_length=1)
+    goal_type: CharacterGoalType
+    priority: int = Field(..., ge=0, le=100)
+    commitment: int = Field(..., ge=0, le=100)
+    basis: Literal["explicit", "inferred"]
+    justification: str = Field(..., min_length=1)
+    confidence: float = Field(..., ge=0, le=1)
+    evidence_ids: list[str] = Field(..., min_length=1)
+
+
 class ScenePerspectiveOutput(_StrictModel):
     scene_id: str
     evidence_ids: list[str] = Field(min_length=1)
@@ -995,9 +1044,27 @@ class ScenePerspectiveOutput(_StrictModel):
 class SceneEnrichmentOutput(_StrictModel):
     scene_id: str
     evidence_ids: list[str] = Field(min_length=1)
-    emotions: list[EmotionalInterpretationOutput] = Field(default_factory=list)
-    beliefs: list[CharacterBeliefOutput] = Field(default_factory=list)
-    impacts: list[CharacterImpactOutput] = Field(default_factory=list)
+    # These keys are required in generated enrichment output. An empty list is a
+    # valid, explicit no-op; an omitted key is a contract failure that must be
+    # corrected rather than silently defaulting to an empty list.
+    emotions: list[EmotionalInterpretationOutput] = Field(...)
+    beliefs: list[CharacterBeliefOutput] = Field(...)
+    impacts: list[CharacterImpactOutput] = Field(...)
+    trait_candidates: list[TraitObservation] = Field(...)
+    aspect_signals: list[SceneAspectSignal] = Field(..., max_length=1)
+    goal_signals: list[SceneGoalSignal] = Field(..., max_length=1)
+
+    @model_validator(mode="before")
+    @classmethod
+    def candidates_require_update_intensity(cls, value):
+        if not isinstance(value, dict):
+            return value
+        for candidate in value.get("trait_candidates", []):
+            if isinstance(candidate, dict) and "update_intensity" not in candidate:
+                raise ValueError(
+                    "trait candidates must explicitly include update_intensity"
+                )
+        return value
 
 
 class SceneEnrichmentsOutput(_StrictModel):
@@ -1008,6 +1075,9 @@ class ScenePerspectiveBundleOutput(ScenePerspectiveOutput):
     emotions: list[EmotionalInterpretationOutput] = Field(default_factory=list)
     beliefs: list[CharacterBeliefOutput] = Field(default_factory=list)
     impacts: list[CharacterImpactOutput] = Field(default_factory=list)
+    trait_candidates: list[TraitObservation] = Field(default_factory=list)
+    aspect_signals: list[SceneAspectSignal] = Field(default_factory=list)
+    goal_signals: list[SceneGoalSignal] = Field(default_factory=list)
 
 
 class EmbodimentObservationsOutput(_StrictModel):
@@ -1106,6 +1176,8 @@ class EmbodyAgentAnalysis(_StrictModel):
     observations: EmbodimentObservationsOutput
     subtitle_change: SubtitleChangeProposal = Field(default_factory=SubtitleChangeProposal)
     evidence_ids: set[str] = Field(default_factory=set)
+    aspect_signals: list[SceneAspectSignal] = Field(default_factory=list)
+    goal_signals: list[SceneGoalSignal] = Field(default_factory=list)
     llm_calls: list[LLMCallRecord]
     observations_unavailable: bool = False
 

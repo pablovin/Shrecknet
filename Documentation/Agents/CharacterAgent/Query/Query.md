@@ -66,7 +66,7 @@ Identity mode normally performs two LLM calls.
    STEADINESS is a separate consistency modifier only when directional traits apply.
    It is never selected as an ordinary predictor and never sets temperature.
 
-Unknown traits remain unknown; point 5 means an evidenced midpoint. Trait values
+Unknown traits remain unknown; z=0 means an evidenced midpoint. Trait values
 bias choices probabilistically. Context, aspects and goals can outweigh those
 biases. Framing preserves knowledge, capabilities, available options and compulsion
 so the selected disposition matches a meaningful decision affordance.

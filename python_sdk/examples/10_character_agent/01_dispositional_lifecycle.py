@@ -1,4 +1,4 @@
-"""Generate/recreate an identity, inspect evidence, edit a point, and query it.
+"""Generate/recreate an identity, inspect evidence, edit a z value, and query it.
 
 Requires the matching backend/worker release and administrator token. Starting a
 draft replaces any existing CharacterAgent for the supplied canonical entity.
@@ -42,7 +42,7 @@ async def main(args):
         print('Inferred integrity:', agent.trait_profile.dispositional_traits['integrity'].model_dump())
         print('Evidence:', [item.model_dump() for item in await sdk.character_agents.list_trait_evidence(agent.id)])
         await sdk.character_agents.update(agent.id, CharacterAgentUpdate(trait_edits={
-            'integrity': TraitEdit(point=8, reason='Example authored sheet override.')}))
+            'integrity': TraitEdit(z=1.2, reason='Example authored sheet override.')}))
         print('Changes:', [item.model_dump() for item in await sdk.character_agents.list_identity_changes(agent.id, change_type='trait')])
         queued = await sdk.character_agents.query(agent.id, CharacterAgentQueryRequest(
             query='You can keep an untraceable overpayment or return it. What do you choose?',

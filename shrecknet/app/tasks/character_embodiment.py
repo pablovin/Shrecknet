@@ -23,6 +23,7 @@ from app.jobs.character_agent.embody_agent import (
     EmbodyAgent,
     EmbodimentGenerationError,
 )
+from app.jobs.character_agent.embodiment_debug_artifacts import EmbodimentDebugArtifacts
 from app.jobs.character_agent.embody_agent_prompts import PROMPT_VERSION
 from app.models.character_embodiment import (
     CharacterEmbodimentCheckpoint,
@@ -49,8 +50,8 @@ from app.utils.job_tracking import mark_job_done, mark_job_failed, mark_job_runn
 STEP_NAME: dict[int, str] = {
     1: "Character incorporation",
     2: "Psychological enrichment",
-    3: "Cross-scene observations",
-    4: "Profile updates",
+    3: "Profile updates",
+    4: "Profile updates",  # legacy progress readers
 }
 
 
@@ -220,7 +221,7 @@ class _EmbodimentProgress:
 
     async def complete(self, index: int) -> None:
         async with self.lock:
-            self.done[index].update({1, 2, 3, 4})
+            self.done[index].update({1, 2, 3})
             self.active[index] = []
             await self._publish(index, "done", stage="Source complete")
 
@@ -303,6 +304,11 @@ async def _generate(*, draft_id: str, revision: int, job_id: int) -> dict:
                 ontology_id=draft.ontology_id,
             )
         source_groups = chunk_source_scenes(inputs.get("source_groups", []))
+        debug_artifacts = EmbodimentDebugArtifacts.create(
+            enabled=settings.character_agent_embodiment_debug_artifacts_enabled,
+            draft_id=draft_id,
+            revision=revision,
+        )
 
         total = len(source_groups)
         bundles: list[dict] = [
@@ -379,7 +385,7 @@ async def _generate(*, draft_id: str, revision: int, job_id: int) -> dict:
         agents: list[EmbodyAgent] = []
 
         try:
-            def make_agent():
+            def make_agent(*, source_index: int | None = None, source_alias: str | None = None):
                 return EmbodyAgent(
                     llm_client=client,
                     character_incorporation_model=settings.model_character_agent_character_incorporation,
@@ -388,6 +394,9 @@ async def _generate(*, draft_id: str, revision: int, job_id: int) -> dict:
                     max_goals=settings.character_agent_embodiment_max_goals,
                     max_aspects=settings.character_agent_embodiment_max_aspects,
                     semantic_correction_attempts=settings.character_agent_embodiment_semantic_correction_attempts,
+                    debug_artifacts=debug_artifacts,
+                    debug_source_index=source_index,
+                    debug_source_alias=source_alias,
                 )
             initializer = make_agent()
             agents.append(initializer)
@@ -400,7 +409,9 @@ async def _generate(*, draft_id: str, revision: int, job_id: int) -> dict:
                 CharacterEmbodimentCheckpoint.source_index == -1,
                 CharacterEmbodimentCheckpoint.stage == "baseline",
                 CharacterEmbodimentCheckpoint.cache_key == baseline_key))
-            if baseline:
+            # A debug request must execute and record every LLM stage rather than
+            # hiding a prior response behind a checkpoint cache hit.
+            if baseline and not settings.character_agent_embodiment_debug_artifacts_enabled:
                 data = json.loads(baseline.payload)
                 current_profile = TraitProfile.model_validate(data["profile"])
                 current_evidence = [TraitEvidence.model_validate(item) for item in data["evidence"]]
@@ -417,7 +428,7 @@ async def _generate(*, draft_id: str, revision: int, job_id: int) -> dict:
             total_llm_calls += len(initializer.llm_calls)
             total_tokens_est += sum(item.total_tokens_est for item in initializer.llm_calls)
             for bi, group in enumerate(source_groups):
-                agent = make_agent()
+                agent = make_agent(source_index=bi, source_alias=group["source_alias"])
                 agents.append(agent)
                 cache_key = _checkpoint_cache_key(revision=revision, source_group=group,
                     canonical_identity=inputs["canonical_identity"],
@@ -429,8 +440,16 @@ async def _generate(*, draft_id: str, revision: int, job_id: int) -> dict:
                     CharacterEmbodimentCheckpoint.generation_revision == revision,
                     CharacterEmbodimentCheckpoint.source_index == bi,
                     CharacterEmbodimentCheckpoint.cache_key == cache_key))).scalars().all()
-                checkpoints = {row.stage: json.loads(row.payload) for row in rows
-                    if row.prompt_version == PROMPT_VERSION and row.model_target == stage_model_targets.get(row.stage)}
+                checkpoints = (
+                    {} if settings.character_agent_embodiment_debug_artifacts_enabled else {
+                        row.stage: json.loads(row.payload) for row in rows
+                        if row.prompt_version == PROMPT_VERSION
+                        and row.model_target == stage_model_targets.get(row.stage)
+                    }
+                )
+                debug_artifacts.write_checkpoint(
+                    source_index=bi, source_alias=group["source_alias"], checkpoints=checkpoints,
+                )
                 bundles[bi]["reused_stages"] = sorted(checkpoints)
                 async def save_stage(stage, value):
                     await _save_checkpoint(draft_id=draft_id, revision=revision, source_index=bi,
@@ -599,6 +618,24 @@ async def _generate(*, draft_id: str, revision: int, job_id: int) -> dict:
             per_bundle_results=per_bundle_results,
             max_aspects=settings.character_agent_embodiment_max_aspects,
             max_goals=settings.character_agent_embodiment_max_goals,
+            source_groups=source_groups,
+        )
+        debug_artifacts.write_final(
+            input={
+                "draft_id": draft_id, "revision": revision,
+                "canonical_identity": inputs["canonical_identity"],
+                "source_groups": source_groups, "initial_trait_profile": initial_profile,
+                "initial_trait_evidence": initial_evidence,
+            },
+            output={
+                "trait_profile": current_profile, "trait_evidence": current_evidence,
+                "aspects": current_aspects, "goals": current_goals,
+                "subtitle": current_subtitle, "observations": merged_obs,
+                "perspectives": all_perspectives,
+                "aspect_updates": all_aspect_updates, "goal_updates": all_goal_updates,
+                "generated_proposal": json.loads(draft.generated_proposal),
+                "timeline_projection": draft.timeline_projection,
+            },
         )
         draft.provider = settings.model_character_agent_character_incorporation.provider
         draft.model = settings.model_character_agent_character_incorporation.name

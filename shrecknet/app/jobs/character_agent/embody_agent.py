@@ -1,14 +1,15 @@
-"""Split-phase source-boundary CharacterAgent embodiment generation.
+"""Scene-centric source-boundary CharacterAgent embodiment generation.
 
-Four-call pipeline per source group:
+Three LLM calls run for each source group:
   1. Character incorporation
-  2. Scene psychological enrichment
-  3. Cross-scene observations
-  4. Evidence-grounded trait, aspect, and goal update
+  2. Scene psychological enrichment and scene-local candidate extraction
+  3. Evidence-grounded trait, aspect, and goal update
 
-All four calls process every ordered scene from one source using its starting
-revision. Source bundles run sequentially and accumulate grounded evidence;
-each produces one scene-associated revision.
+Between stages 2 and 3 the backend validates and grounds the extracted
+candidates; this is deterministic work, not a fourth LLM call. All calls process
+every ordered scene from one source using its starting revision. Source bundles
+run sequentially and accumulate grounded evidence; each produces one
+scene-associated revision.
 """
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ from pydantic import BaseModel, ValidationError
 
 from app.integrations.llm.json_repair import repair_json_text
 from app.integrations.llm.shreckllm_client import LLMProviderUnavailableError
+from app.jobs.character_agent.embodiment_debug_artifacts import EmbodimentDebugArtifacts
 from app.jobs.character_agent.embody_agent_prompts import (
     BASELINE_PROMPT,
     ENRICHMENT_PROMPT,
@@ -146,6 +148,9 @@ class EmbodyAgent:
         scene_interpretation_model, character_update_model,
         max_goals: int = 10, max_aspects: int = 20,
         semantic_correction_attempts: int = 1,
+        debug_artifacts: EmbodimentDebugArtifacts | None = None,
+        debug_source_index: int | None = None,
+        debug_source_alias: str | None = None,
     ):
         self._llm = UsageTracker(llm_client)
         self.character_incorporation_model = character_incorporation_model
@@ -155,6 +160,9 @@ class EmbodyAgent:
         self.max_aspects = max_aspects
         self.semantic_correction_attempts = semantic_correction_attempts
         self.semantic_correction_count = 0
+        self._debug_artifacts = debug_artifacts
+        self._debug_source_index = debug_source_index
+        self._debug_source_alias = debug_source_alias
 
     @property
     def llm_calls(self) -> list[LLMCallRecord]:
@@ -164,10 +172,27 @@ class EmbodyAgent:
     def stage_elapsed_seconds(self) -> dict[str, float]:
         return dict(self._llm.stage_elapsed_seconds)
 
+    def _debug_call(self, **values: Any) -> None:
+        if self._debug_artifacts is not None:
+            values.setdefault(
+                "response_metadata",
+                dict(getattr(self._llm.llm, "last_response_metadata", {}) or {}),
+            )
+            self._debug_artifacts.write_call(
+                source_index=self._debug_source_index,
+                source_alias=self._debug_source_alias,
+                **values,
+            )
+
     @staticmethod
     def _parse(schema: type[BaseModel], raw: str, stage: str) -> BaseModel:
         try:
             parsed = parse_json_deterministically(raw)
+        except (TypeError, ValueError) as exc:
+            raise EmbodimentGenerationError(
+                f"invalid JSON in {stage} output", category="json",
+            ) from exc
+        try:
             dropped = _drop_ungrounded_output_items(parsed, schema=schema)
             if dropped:
                 logger.warning(
@@ -176,7 +201,9 @@ class EmbodyAgent:
                 )
             return schema.model_validate(parsed)
         except (TypeError, ValueError, ValidationError) as exc:
-            raise EmbodimentGenerationError(f"invalid {stage} output") from exc
+            raise EmbodimentGenerationError(
+                f"invalid {stage} output", category="schema",
+            ) from exc
 
     @staticmethod
     def _json(value: Any) -> str:
@@ -211,6 +238,8 @@ class EmbodyAgent:
                 max_tokens=max_tokens,
             )
         except LLMProviderUnavailableError as exc:
+            self._debug_call(stage=stage, prompt=prompt, payload=payload, error=str(exc),
+                             model=model, usage_tag=usage_tag)
             raise EmbodimentGenerationError(
                 f"{stage} provider is unavailable",
                 category="provider_unavailable",
@@ -222,6 +251,8 @@ class EmbodyAgent:
                 provider_reason=exc.reason,
             ) from exc
         except Exception as exc:
+            self._debug_call(stage=stage, prompt=prompt, payload=payload, error=str(exc),
+                             model=model, usage_tag=usage_tag)
             raise EmbodimentGenerationError(
                 f"{stage} transport failed",
                 category="transport",
@@ -230,9 +261,27 @@ class EmbodyAgent:
                 source_entity_alias=source_entity_alias,
                 retryable=True,
             ) from exc
+        if not str(raw).strip():
+            self._debug_call(
+                stage=stage, prompt=prompt, payload=payload, raw_output=raw,
+                error="provider returned an empty response body", model=model,
+                usage_tag=usage_tag,
+            )
+            raise EmbodimentGenerationError(
+                f"{stage} returned an empty response",
+                category="empty_response",
+                stage=stage,
+                source_entity_id=source_entity_id,
+                source_entity_alias=source_entity_alias,
+                retryable=True,
+            )
         try:
             result = self._parse(schema, str(raw), stage)
+            self._debug_call(stage=stage, prompt=prompt, payload=payload, raw_output=raw,
+                             parsed_output=result, model=model, usage_tag=usage_tag)
         except EmbodimentGenerationError as exc:
+            self._debug_call(stage=stage, prompt=prompt, payload=payload, raw_output=raw,
+                             error=self._schema_errors(exc), model=model, usage_tag=usage_tag)
             response_metadata = getattr(self._llm.llm, "last_response_metadata", {})
             logger.warning(
                 "embodiment_schema_invalid stage=%s source_id=%s source_alias=%s "
@@ -243,18 +292,32 @@ class EmbodyAgent:
                 response_metadata.get("finish_reason"), self._schema_errors(exc),
             )
             last_error = exc
-            try:
-                repaired = await repair_json_text(
-                    llm_client=self._llm.llm, model=model,
-                    malformed_text=str(raw),
-                    schema_hint=json.dumps(schema.model_json_schema()),
-                    usage_tag=f"{usage_tag}.repair",
-                )
-                result = self._parse(schema, repaired, f"repaired {stage}")
-            except Exception as repaired_exc:
-                if isinstance(repaired_exc, EmbodimentGenerationError):
-                    last_error = repaired_exc
-            for attempt in range(1, schema_correction_attempts + 1):
+            repair_succeeded = False
+            if exc.category == "json":
+                try:
+                    repaired = await repair_json_text(
+                        llm_client=self._llm.llm, model=model,
+                        malformed_text=str(raw),
+                        schema_hint=json.dumps(schema.model_json_schema()),
+                        usage_tag=f"{usage_tag}.repair",
+                    )
+                    result = self._parse(schema, repaired, f"repaired {stage}")
+                    self._debug_call(stage=stage, prompt="JSON repair", payload={
+                        "malformed_text": str(raw), "required_output_schema": schema.model_json_schema(),
+                    }, raw_output=repaired, parsed_output=result, model=model,
+                        usage_tag=f"{usage_tag}.repair", call_kind="json_repair")
+                    repair_succeeded = True
+                except Exception as repaired_exc:
+                    self._debug_call(stage=stage, prompt="JSON repair", payload={
+                        "malformed_text": str(raw), "required_output_schema": schema.model_json_schema(),
+                    }, error=str(repaired_exc), model=model, usage_tag=f"{usage_tag}.repair",
+                        call_kind="json_repair")
+                    if isinstance(repaired_exc, EmbodimentGenerationError):
+                        last_error = repaired_exc
+            for attempt in range(
+                1, (schema_correction_attempts if not repair_succeeded else 0) + 1,
+            ):
+                corrected_raw = None
                 correction_payload = {
                     "original_input": payload,
                     "rejected_output": str(raw),
@@ -262,10 +325,9 @@ class EmbodyAgent:
                     "required_output_schema": schema.model_json_schema(),
                     "instruction": (
                         "Return one complete replacement object that satisfies the "
-                        "required output schema. Do not invent evidence. If an "
-                        "observation cannot cite supplied evidence and complete its "
-                        "required grounding fields, omit that observation; an empty "
-                        "trait_evidence list is valid. Return JSON only."
+                        "required output schema. Do not invent evidence. Preserve "
+                        "valid items; for every required list with no qualified "
+                        "item, return an explicit empty list. Return JSON only."
                     ),
                 }
                 try:
@@ -281,23 +343,37 @@ class EmbodyAgent:
                         max_tokens=max_tokens,
                     )
                     result = self._parse(schema, str(corrected_raw), f"schema corrected {stage}")
+                    self._debug_call(stage=stage, prompt=prompt, payload=correction_payload,
+                                     raw_output=corrected_raw, parsed_output=result, model=model,
+                                     usage_tag=f"{usage_tag}.schema_correction",
+                                     call_kind="schema_correction")
                     break
                 except EmbodimentGenerationError as corrected_exc:
+                    self._debug_call(stage=stage, prompt=prompt, payload=correction_payload,
+                                     raw_output=corrected_raw,
+                                     error=self._schema_errors(corrected_exc), model=model,
+                                     usage_tag=f"{usage_tag}.schema_correction",
+                                     call_kind="schema_correction")
                     last_error = corrected_exc
                 except Exception as corrected_exc:
+                    self._debug_call(stage=stage, prompt=prompt, payload=correction_payload,
+                                     error=str(corrected_exc), model=model,
+                                     usage_tag=f"{usage_tag}.schema_correction",
+                                     call_kind="schema_correction")
                     logger.warning(
                         "embodiment_schema_correction_transport_failed stage=%s attempt=%d error=%s",
                         stage, attempt, corrected_exc,
                     )
             else:
-                raise EmbodimentGenerationError(
-                    f"{stage} schema validation failed",
-                    category="schema",
-                    stage=stage,
-                    source_entity_id=source_entity_id,
-                    source_entity_alias=source_entity_alias,
-                    retryable=True,
-                ) from last_error
+                if not repair_succeeded:
+                    raise EmbodimentGenerationError(
+                        f"{stage} schema validation failed",
+                        category="schema",
+                        stage=stage,
+                        source_entity_id=source_entity_id,
+                        source_entity_alias=source_entity_alias,
+                        retryable=True,
+                    ) from last_error
 
         if semantic_validator is None:
             return result
@@ -346,6 +422,10 @@ class EmbodyAgent:
                         max_tokens=max_tokens,
                     )
                 except Exception as correction_exc:
+                    self._debug_call(stage=stage, prompt=prompt, payload=correction_payload,
+                                     error=str(correction_exc), model=model,
+                                     usage_tag=f"{usage_tag}.semantic_correction",
+                                     call_kind="semantic_correction")
                     raise EmbodimentGenerationError(
                         f"{stage} semantic correction transport failed",
                         category="transport",
@@ -359,7 +439,15 @@ class EmbodyAgent:
                     result = self._parse(
                         schema, str(corrected_raw), f"corrected {stage}"
                     )
+                    self._debug_call(stage=stage, prompt=prompt, payload=correction_payload,
+                                     raw_output=corrected_raw, parsed_output=result, model=model,
+                                     usage_tag=f"{usage_tag}.semantic_correction",
+                                     call_kind="semantic_correction")
                 except EmbodimentGenerationError as corrected_exc:
+                    self._debug_call(stage=stage, prompt=prompt, payload=correction_payload,
+                                     raw_output=corrected_raw, error=self._schema_errors(corrected_exc),
+                                     model=model, usage_tag=f"{usage_tag}.semantic_correction",
+                                     call_kind="semantic_correction")
                     raise EmbodimentGenerationError(
                         f"{stage} correction schema validation failed",
                         category="schema",
@@ -389,7 +477,7 @@ class EmbodyAgent:
         )
         evidence = ground_observations(output.trait_evidence, scene_ids=[],
             source_group_id=entity_id, authored_evidence_ids=known)
-        proposals = [TraitProposal(trait=item.trait, point=item.expression_point,
+        proposals = [TraitProposal(trait=item.trait,
             observation_ids=[item.id], justification=item.justification,
             addresses_contradictions="Authored baseline only.") for item in evidence if item.eligible]
         profile, _ = update_profile(TraitProfile(), evidence, proposals)
@@ -483,7 +571,9 @@ class EmbodyAgent:
         if "character_incorporation" not in stage_checkpoints and on_checkpoint:
             await on_checkpoint("character_incorporation", perspectives_result)
 
-        # Step 2 — Per-scene psychological enrichment. Reflection is excluded.
+        # Step 2 — Per-scene psychological enrichment. It consumes only the
+        # already-grounded character perspective, never the raw objective scene.
+        # Reflection remains presentation-only and cannot manufacture evidence.
         if on_stage:
             await on_stage(
                 "source:{0} - Step 2: Psychological enrichment".format(source_entity_alias), [2]
@@ -496,7 +586,6 @@ class EmbodyAgent:
             enrichment_result = await self._call(
                 prompt=ENRICHMENT_PROMPT,
                 payload={
-                    "scenes": scene_list,
                     "perspectives": [
                         p.model_dump(
                             mode="json",
@@ -517,6 +606,7 @@ class EmbodyAgent:
                 model=self.scene_interpretation_model,
                 source_entity_id=source_entity_id,
                 source_entity_alias=source_entity_alias,
+                schema_correction_attempts=1,
             )
         enrichments = enrichment_result.scene_enrichments
         enrichment_ids = [item.scene_id for item in enrichments]
@@ -545,43 +635,38 @@ class EmbodyAgent:
                 emotions=enrichment.emotions,
                 beliefs=enrichment.beliefs,
                 impacts=enrichment.impacts,
+                trait_candidates=enrichment.trait_candidates,
+                aspect_signals=enrichment.aspect_signals,
+                goal_signals=enrichment.goal_signals,
             )
             for perspective, enrichment in zip(perspectives, enrichments, strict=True)
         ]
 
-        # Step 3 — Cross-scene observations. Reflection remains excluded.
+        # Step 3 is deterministic: Step 2 emits scene-local candidates, which
+        # are grounded below before the cumulative profile-update call.
+        stage_checkpoints["observations"] = EmbodimentObservationsOutput(
+            trait_evidence=[
+                candidate for enrichment in enrichments
+                for candidate in enrichment.trait_candidates
+            ],
+        ).model_dump(mode="json")
         if on_stage:
             await on_stage(
-                "source:{0} - Step 3: Cross-scene observations".format(source_entity_alias), [3]
+                "source:{0} - Step 3: Profile updates".format(source_entity_alias), [3]
             )
         observations_payload = {
             "identity": identity,
             "allowed_evidence_ids": sorted(known),
-            "scene_bundles": [
-                    {
-                        "scene": scene,
-                        "perspective": bundle.model_dump(
-                            mode="json",
-                            exclude={
-                                "character_reflection", "status",
-                                "emotions", "beliefs", "impacts",
-                            },
-                        ),
-                        "emotions": [
-                            item.model_dump(mode="json") for item in bundle.emotions
-                        ],
-                        "beliefs": [
-                            item.model_dump(mode="json") for item in bundle.beliefs
-                        ],
-                        "impacts": [
-                            item.model_dump(mode="json") for item in bundle.impacts
-                        ],
-                    }
-                    for scene, bundle in zip(scene_list, bundles, strict=True)
+            "scene_perspectives": [
+                bundle.model_dump(
+                    mode="json",
+                    exclude={"character_reflection", "status"},
+                )
+                for bundle in bundles
             ],
         }
         def validate_observations(value):
-            _validate_and_normalize_evidence(value, allowed_ids=known, stage="cross-scene observations")
+            _validate_and_normalize_evidence(value, allowed_ids=known, stage="scene-local trait candidates")
             _semantic(lambda: ground_observations(value.trait_evidence,
                 scene_ids=expected_ids, source_group_id=source_entity_id))
         observations_unavailable = False
@@ -590,7 +675,7 @@ class EmbodyAgent:
                 stage_checkpoints["observations"]
             )
             _validate_and_normalize_evidence(
-                observations, allowed_ids=known, stage="cross-scene observations",
+                observations, allowed_ids=known, stage="scene-local trait candidates",
             )
         else:
             try:
@@ -598,7 +683,7 @@ class EmbodyAgent:
                     prompt=OBSERVATIONS_PROMPT,
                     payload=observations_payload,
                     schema=EmbodimentObservationsOutput,
-                    stage="cross-scene observations",
+                    stage="scene-local trait candidates",
                     usage_tag="character_agent.embodiment.observations",
                     max_tokens=4_000,
                     model=self.scene_interpretation_model,
@@ -608,7 +693,9 @@ class EmbodyAgent:
                     schema_correction_attempts=1,
                 )
             except EmbodimentGenerationError as exc:
-                if exc.category not in {"schema", "semantic_reference", "semantic"}:
+                if exc.category not in {
+                    "schema", "semantic_reference", "semantic", "empty_response",
+                }:
                     raise
                 logger.warning(
                     "embodiment_observations_discarded source_id=%s source_alias=%s "
@@ -630,6 +717,12 @@ class EmbodyAgent:
             observations=observations,
             subtitle_change=observations.subtitle_change or SubtitleChangeProposal(),
             evidence_ids=known,
+            aspect_signals=[
+                signal for enrichment in enrichments for signal in enrichment.aspect_signals
+            ],
+            goal_signals=[
+                signal for enrichment in enrichments for signal in enrichment.goal_signals
+            ],
             llm_calls=list(self.llm_calls),
             observations_unavailable=observations_unavailable,
         )
@@ -674,15 +767,6 @@ class EmbodyAgent:
             offset=max((e.chronological_position for e in existing), default=-1) + 1)
         accumulated = merge_evidence(existing, incoming)
 
-        # Step 4 — Cumulative grounded traits, aspects, and goals
-        if on_stage:
-            await on_stage(
-                "source:{0} - Step 4: Profile updates".format(
-                    analysis.source_entity_alias
-                ),
-                [4],
-            )
-
         if stage_checkpoint is not None:
             profile_result = ProfileUpdateOutput.model_validate(stage_checkpoint)
             _validate_profile_update(profile_result, allowed_ids=analysis.evidence_ids, evidence=accumulated)
@@ -709,6 +793,10 @@ class EmbodyAgent:
                     },
                     "observations": obs_data,
                     "trait_evidence": [item.model_dump(mode="json") for item in accumulated],
+                    "scene_signals": {
+                        "aspects": [item.model_dump(mode="json") for item in analysis.aspect_signals],
+                        "goals": [item.model_dump(mode="json") for item in analysis.goal_signals],
+                    },
                     "allowed_evidence_ids": sorted(analysis.evidence_ids),
                     "limits": {
                         "max_aspects": self.max_aspects,
@@ -730,7 +818,12 @@ class EmbodyAgent:
             )
             if on_checkpoint:
                 await on_checkpoint("profile_update", profile_result)
-        trait_profile, trait_changes = update_profile(current_trait_profile, accumulated, profile_result.trait_proposals)
+        trait_profile, trait_changes = update_profile(
+            current_trait_profile,
+            accumulated,
+            profile_result.trait_proposals,
+            source_group_id=analysis.source_entity_id,
+        )
 
         return EmbodyAgentResult(
             scene_input_digests=analysis.scene_input_digests,
@@ -874,6 +967,12 @@ def _normalize_evidence_ids(data: Any) -> None:
                     data, field_name,
                     [_canonical_evidence_id(item) for item in value],
                 )
+            elif field_name == "available_after_scene_id" and isinstance(value, str):
+                # Evidence references are canonicalized with ``scene:``, but
+                # this cutoff deliberately stores the raw input scene ID.  LLMs
+                # commonly mirror the evidence-reference form; it is an
+                # unambiguous equivalent, so normalize it before grounding.
+                setattr(data, field_name, value.removeprefix("scene:").strip())
             else:
                 _normalize_evidence_ids(value)
     elif isinstance(data, list):
@@ -885,6 +984,8 @@ def _normalize_evidence_ids(data: Any) -> None:
                 data[key] = _canonical_evidence_id(value)
             elif key == "evidence_ids" and isinstance(value, list):
                 data[key] = [_canonical_evidence_id(item) for item in value]
+            elif key == "available_after_scene_id" and isinstance(value, str):
+                data[key] = value.removeprefix("scene:").strip()
             else:
                 _normalize_evidence_ids(value)
 

@@ -85,7 +85,7 @@ resulting revision becomes the next bundle's starting identity.
 trait evidence, including evidence that did not change a score.
 `CharacterIdentityChange` records trait, steadiness, subtitle, aspect, and goal
 changes with provenance. `ScenePerspective-[:GENERATED_WITH]->CharacterIdentityRevision`
-identifies the actual starting revision. Manual point edits preserve history and
+identifies the actual starting revision. Manual z edits preserve history and
 record their actor and reason. See [Dispositional traits](Dispositional%20Traits.md)
 for constructs, scales, eligibility, consistency, and chronology limitations.
 
@@ -273,10 +273,11 @@ of personality. See [CharacterAgent Query](Query/Query.md).
 ## Evidence-grounded embodiment
 
 See [Dispositional traits](Dispositional%20Traits.md) for the complete current
-personality and embodiment contract, including four calls per source bundle,
-initial authored evidence, checkpoints, revision ownership, and breaking release
-operations. The registry is the authoritative definition source; SDKs and UI
-consumers can request it through `/character-agents/trait-definitions`.
+personality and embodiment contract, including the three-stage scene-centric
+source-bundle pipeline, initial authored evidence, candidate/signal rules, debug
+artifacts, checkpoints, revision ownership, and breaking release operations. The
+registry is the authoritative definition source; SDKs and UI consumers can
+request it through `/character-agents/trait-definitions`.
 
 ## Related documentation
 

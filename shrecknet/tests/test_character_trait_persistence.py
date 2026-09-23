@@ -37,8 +37,8 @@ class ManualGraph:
 async def test_manual_edit_creates_typed_snapshot_and_actor_audit():
     graph=ManualGraph()
     result=await CharacterAgentService(None,graph).update_agent('a',CharacterAgentUpdate(
-        trait_edits={'integrity':TraitEdit(point=8,reason='Authored by administrator.')}),user_id=12)
-    assert result.trait_profile.dispositional_traits['integrity'].point==8
+        trait_edits={'integrity':TraitEdit(z=1.2,reason='Authored by administrator.')}),user_id=12)
+    assert result.trait_profile.dispositional_traits['integrity'].z==1.2
     snapshots=[p['props'] for q,p in graph.calls if 'CREATE (revision:CharacterIdentityRevision)' in q]
     changes=[p['props'] for q,p in graph.calls if 'CREATE (change:CharacterIdentityChange)' in q]
     assert snapshots[0]['revision_number']==5
@@ -46,7 +46,7 @@ async def test_manual_edit_creates_typed_snapshot_and_actor_audit():
     assert json.loads(snapshots[0]['active_goal_ids'])==['goal-1']
     assert changes[0]['actor_user_id']==12 and changes[0]['field_name']=='integrity'
     assert changes[0]['provenance_type']=='manual' and changes[0]['justification']=='Authored by administrator.'
-    assert json.loads(changes[0]['new_value'])['point']==8
+    assert json.loads(changes[0]['new_value'])['z']==1.2
     assert changes[0]['evidence_ids']=='[]'
     assert 'point' not in json.loads(graph.agent['trait_profile'])['dispositional_traits']['integrity']
 
@@ -75,9 +75,9 @@ def test_sdk_reads_backend_profile_without_contract_drift(monkeypatch):
     backend=CharacterAgentRead.model_validate({**graph.agent,'entity_instance_id':'e',
         'trait_profile':TraitProfile.model_validate_json(graph.agent['trait_profile'])})
     sdk=SDKRead.model_validate(backend.model_dump(mode='json'))
-    assert sdk.trait_profile.dispositional_traits['integrity'].point is None
-    edit=SDKUpdate(trait_edits={'integrity':{'point':None,'reason':'Resume inference.'}})
-    assert CharacterAgentUpdate.model_validate(edit.model_dump(exclude_unset=True)).trait_edits['integrity'].point is None
+    assert sdk.trait_profile.dispositional_traits['integrity'].z is None
+    edit=SDKUpdate(trait_edits={'integrity':{'z':None,'reason':'Resume inference.'}})
+    assert CharacterAgentUpdate.model_validate(edit.model_dump(exclude_unset=True)).trait_edits['integrity'].z is None
 
 
 @pytest.mark.asyncio

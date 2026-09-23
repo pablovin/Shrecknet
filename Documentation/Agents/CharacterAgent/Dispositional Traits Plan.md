@@ -1,15 +1,27 @@
-# CharacterAgent dispositional traits: implementation plan
+# CharacterAgent dispositional traits: historical implementation plan
 
-Status: accepted design record. The implementation follows this source-chunk design; see [current contracts](Dispositional%20Traits.md). Prepared against the current working tree on 2026-09-21. Existing unrelated changes must be preserved.
+> **Historical record — not the current embodiment contract.** This plan records
+> the earlier four-stage, chunked design considered on 2026-09-21. The implemented
+> pipeline is now the three-stage scene-centric flow documented in
+> [current contracts](Dispositional%20Traits.md): incorporation, per-scene
+> enrichment/candidate extraction, and cumulative profile update. In particular,
+> this plan's references to a joint/cross-scene observation LLM call, a four-call
+> budget, source splitting, and `character_agent_embodiment_scene_batch_size` do
+> not describe deployed behavior. Do not use this document as an operational or
+> API contract.
 
-This plan replaces the personality layer described in [CharacterAgent](CharacterAgent.md), its [HTTP contracts](CharacterAgent%20-%20Endpoints.md), and its [query pipeline](Query/Query.md). Those pages describe the current implemented contracts.
+This historical plan was written to replace the personality layer described in
+[CharacterAgent](CharacterAgent.md), its [HTTP contracts](CharacterAgent%20-%20Endpoints.md),
+and its [query pipeline](Query/Query.md). Those pages, together with the
+[current dispositional-traits contract](Dispositional%20Traits.md), describe the
+implemented behavior.
 
 ## Scope and decisions
 
 - Deliver the supplied eight directional dispositions plus STEADINESS end to end: narrative extraction, accumulation, persistence, revisions, embodiment, queries, API, SDK, tests, and documentation.
 - This is a breaking replacement. Existing agents will be deleted and regenerated. No old-to-new trait conversion, compatibility aliases, or questionnaire subsystem.
 - Remove `trait_adherence` from psychological identity. Keep the independent caller-controlled query temperature; STEADINESS never controls temperature.
-- **Confirmed by the user:** retain administrator edits on the 1–9 scale, with explicit manual provenance and audit history.
+- **Confirmed by the user:** use bounded z values for administrator edits, with explicit manual provenance and audit history.
 - **User-directed batching:** retain source-based scene grouping, with chronological chunks of up to 10 scenes processed sequentially rather than in parallel. Send each chunk together to the LLM, extract scene-attributed evidence jointly, and carry its resulting identity and accumulated evidence into the next chunk. Do not introduce mandatory per-scene LLM calls.
 - Numeric inference thresholds below are proposed, versioned engineering policy, not findings from the personality study or validated psychometric estimates.
 
@@ -59,23 +71,27 @@ Use `trait_profile` with `dispositional_traits` containing exactly the eight dir
 An estimate contains:
 
 - `z: number | null`, the authoritative stored value;
-- `point: integer 1..9 | null`, derived for responses;
+- `z: number -1.9..1.9 | null`, the only numeric response value;
 - `status: unknown | provisional | supported | contested | manual`;
 - qualifying observation count and supporting trait-observation IDs;
 - concise uncertainty notes; no invented percentage probability of correctness.
 
-Unknown means `z=null, point=null`. An evidenced midpoint is `z=0, point=5`. A contested prior estimate may retain its last accepted value while exposing the disagreement. The evidence metadata, rather than the numeric score, communicates certainty.
+Unknown means `z=null`. An evidenced midpoint is `z=0`. A contested prior estimate may retain its last accepted value while exposing the disagreement. The evidence metadata, rather than the numeric score, communicates certainty.
 
-For the first implementation, persist z at the nine supplied anchors. This deliberately avoids adding an unrequested continuous psychometric estimator. LLM profile proposals and administrator inputs use points; the backend maps them to z.
+The current implementation persists bounded inferred z precision rather than
+forcing every source update to a display anchor. The LLM supplies evidence
+direction/intensity and explanation; the backend averages that source's fixed
+contributions and applies the resulting bounded z delta. Administrator inputs
+continue to use bounded z values.
 
 | Point | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | z | -1.9 | -1.2 | -0.7 | -0.3 | 0 | 0.3 | 0.7 | 1.2 | 1.9 |
 | Supplied general-human percentile | 3 | 12 | 24 | 38 | 50 | 62 | 76 | 88 | 97 |
 
-Conversion rules: reject invalid points, booleans, nonfinite z, and out-of-range z. Anchor round trips are exact within floating-point tolerance. If an analytical intermediate needs display conversion, choose the nearest z anchor, breaking equal-distance ties toward the midpoint. Do not silently clamp malformed API input. Omit percentile from normal profile responses initially; include the supplied mapping and its **general human population** reference in metadata. Narrative estimates are not validated population measurements.
+Reject booleans, nonfinite z values, and values outside -1.9..1.9. Do not silently clamp malformed API input. Omit percentile from normal profile responses initially; include the supplied mapping and its **general human population** reference in metadata. Narrative estimates are not validated population measurements.
 
-Creation/PATCH inputs accept only point selections, explicit clearing, and a justification, not caller-authored z, evidence counts, or inferred confidence. Omitted PATCH entries mean retain. A manual selection sets `status=manual`, records actor/reason and previous/new estimates, and stays effective until explicitly cleared or replaced. Evidence continues accumulating underneath it. Clearing the override restores the evidence-derived estimate, which may be unknown. This also permits an explicitly authored STEADINESS selection without falsely claiming it was inferred from a single scene.
+Creation/PATCH inputs accept bounded z selections, explicit clearing, and a justification, evidence counts, or inferred confidence. Omitted PATCH entries mean retain. A manual selection sets `status=manual`, records actor/reason and previous/new estimates, and stays effective until explicitly cleared or replaced. Evidence continues accumulating underneath it. Clearing the override restores the evidence-derived estimate, which may be unknown. This also permits an explicitly authored STEADINESS selection without falsely claiming it was inferred from a single scene.
 
 During draft acceptance, identical submitted points retain generated provenance. Differences from the generated proposal become a final manual revision; never rewrite earlier inferred revisions to match form edits.
 
@@ -89,7 +105,7 @@ trait                       one of eight directional keys, never steadiness
 evidence_kind               behavior | authored_disposition
 situation_type              registry-defined diagnostic affordance
 direction                   low | midpoint | high
-expression_point            1..9, or null if not estimable
+expression_z                -1.9..1.9, or null if not estimable
 diagnosticity, confidence   bounded 0..1 engineering judgments
 behavior                    concise description of what the character did
 justification               why this is diagnostic of this construct
@@ -102,9 +118,9 @@ comparison_context         stakes, relationship, role, available choices
 eligibility, exclusions     backend result and reasons
 ```
 
-The expression point describes the observed expression, not a final personality verdict. The condition fields use `supported | contradicted | unknown` plus grounded explanations. A supported condition may be established directly or reasonably supported by the narrative. For the initial conservative policy, an unknown or contradicted required condition makes behavioral evidence ineligible for numeric updates; preserve it for inspection and uncertainty. Do not invent probabilities to compensate for missing choice.
+The expression z describes the observed expression, not a final personality verdict. The condition fields use `supported | contradicted | unknown` plus grounded explanations. A supported condition may be established directly or reasonably supported by the narrative. For the initial conservative policy, an unknown or contradicted required condition makes behavioral evidence ineligible for numeric updates; preserve it for inspection and uncertainty. Do not invent probabilities to compensate for missing choice.
 
-Validate trait–situation compatibility, direction/point consistency, source ownership, ontology/instance scope, cutoff, and exact allowed provenance. Behavior cannot become evidence solely because a generated reflection, adjective, belief, or earlier model inference says it occurred. Keep `character_reflection` excluded. Explicit authored stable dispositions have their own evidence kind and lower evidential status; they do not masquerade as observed choices.
+Validate trait–situation compatibility, direction/z consistency, source ownership, ontology/instance scope, cutoff, and exact allowed provenance. Behavior cannot become evidence solely because a generated reflection, adjective, belief, or earlier model inference says it occurred. Keep `character_reflection` excluded. Explicit authored stable dispositions have their own evidence kind and lower evidential status; they do not masquerade as observed choices.
 
 Deduplicate by canonical episode and trait, including retries and multiple derived descriptions of the same act. Multiple references or interpretations of one event are not independent observations. For the first version, conservatively cap independent support at one item per trait per canonical scene unless distinct canonical milestones establish separate episodes. Do not let an LLM invent extra episode IDs.
 
@@ -114,14 +130,19 @@ Retain rejected/weak observations with reasons, contradictory observations, and 
 
 Add `app/services/character_trait_service.py` for deterministic evidence eligibility, accumulation, update acceptance, and STEADINESS. Keep job-local extraction/proposal prompts next to `EmbodyAgent`.
 
-The profile-update LLM proposes anchored directional estimates from **structured cumulative evidence**. It does not receive arbitrary scene prose for personality estimation and does not emit personality deltas. Aspects/goals may continue consuming their existing grounded observation categories in the same stage.
+The profile-update LLM supplies traceable explanations from **structured cumulative
+evidence**. It does not receive arbitrary scene prose and does not select trait
+points or personality deltas. The deterministic backend converts validated
+candidate direction/intensity into one bounded, averaged update per trait/source.
+Aspects/goals may continue consuming their existing grounded observation categories
+in the same stage.
 
 Proposed starting policy, centralized and versioned:
 
 1. Qualifying behavioral evidence requires supported choice conditions, confidence at least 0.7, and diagnosticity at least 0.7.
-2. Establish a supported directional estimate only after at least three independent qualifying episodes. Before that, retain unknown. One explicit, well-grounded authored stable-disposition statement may seed a **provisional** directional point; a bare adjective cannot.
+2. Establish a supported directional estimate only after at least three independent qualifying episodes. Before that, retain unknown. One explicit, well-grounded authored stable-disposition statement may seed a **provisional** directional z estimate; a bare adjective cannot.
 3. RESTLESSNESS requires explicit value-choice evidence or recurring motivated preferences. Its supported estimate requires at least three qualifying value choices across at least two source contexts. Investigating an artifact alone is ineligible.
-4. An already accepted directional estimate can move by at most one sheet point at an update, and only after at least two new independent qualifying episodes since its last accepted change. Duplicated/replayed evidence does not unlock another movement.
+4. An already accepted directional estimate can move by at most one z contribution at an update, and only after at least two new independent qualifying episodes since its last accepted change. Duplicated/replayed evidence does not unlock another movement.
 5. A candidate must cite accumulated eligible observation IDs and explicitly address contradictory evidence. Material opposition to both poles marks the estimate contested; it must not be silently averaged into an apparently certain midpoint. First-version conservative rule: qualifying low-pole and high-pole evidence block a new centre unless the latest three independent observations consistently support the proposed side. Retain the conflicting history and uncertainty even when a later estimate is accepted.
 6. A midpoint proposal needs evidence of intermediate/balanced behavior, rather than only an average of extremes or missing information. No qualified new evidence means no numeric update.
 7. Prefer behavioral evidence over authored shorthand. Author assertions can remain as provenance when contradicted; do not count them as extra behavioral episodes.
@@ -135,8 +156,8 @@ Estimate it outside ordinary trait extraction. First qualify comparability; only
 - Require at least six eligible behavioral episodes in total, with at least two comparison groups containing at least three episodes each. Groups may concern one or more traits, but each group must share trait, affordance, and meaningfully similar choice conditions.
 - Comparison groups use grounded context fields, not just matching trait names. Uncertain comparability excludes a group. Exclude authored declarations and manual overrides from behavioral variance.
 - Compute spread within groups from expression z values, then pool within-group variance. Never pool unrelated trait centres: consistent retaliation and consistent generosity are compatible with high STEADINESS.
-- Initial engineering mapping: for pooled standard deviation `s`, compute `round_half_up(9 - 8 * min(s / 1.9, 1))`, then map that point to the supplied z anchor. The maximum spread bound comes from the bounded expression scale; the mapping is a project heuristic, not a population-calibrated formula.
-- Preserve the contributing group/observation IDs, sample counts, and uncertainty. Meeting the minimum count permits a provisional estimate, not a claim of psychometric certainty. Require two new comparable observations before updating an existing estimate and bound movement to one point.
+- Initial engineering mapping: for pooled standard deviation `s`, compute `1.9 - 3.8 * min(s / 1.9, 1)` directly as z. The maximum spread bound comes from the bounded expression scale; the mapping is a project heuristic, not a population-calibrated formula.
+- Preserve the contributing group/observation IDs, sample counts, and uncertainty. Meeting the minimum count permits a provisional estimate, not a claim of psychometric certainty. Require two new comparable observations before updating an existing estimate and apply only the bounded source-level z update.
 - Do not interpret slow chronological change of a dispositional centre as erratic behavior. Split comparison windows across accepted directional changes. If this leaves insufficient comparable evidence, mark STEADINESS insufficient rather than retaining a falsely current inference.
 - One act, unrelated contexts, uncertainty about evidence, or contradictory accounts of the same event never establish low STEADINESS.
 
@@ -153,7 +174,7 @@ flowchart TD
     C --> D[Next source chunk: up to 10 time-ordered scenes]
     D --> E[Batched perspectives and enrichment using batch-start identity]
     E --> F[Joint batch evidence extraction and confound validation]
-    F --> G[Accumulated evidence + anchored profile proposal]
+    F --> G[Accumulated evidence + profile explanation]
     G --> H[Deterministic acceptance + separate STEADINESS]
     H --> I[One batch-end revision and change provenance]
     I --> D
@@ -219,7 +240,7 @@ Preserve generic mode's absence of identity data, the caller response schema, pu
 
 Update together:
 
-- `POST /character-agents`, list/get, and PATCH: new typed profile and manual point-edit contract; old personality inputs fail validation.
+- `POST /character-agents`, list/get, and PATCH: new typed profile and manual z-edit contract; old personality inputs fail validation.
 - Draft generation/read: structured evidence, explicit unknowns, new proposal, chronological timeline, and schema version; acceptance validates against server-owned draft evidence.
 - `GET /character-agents/{agent_id}/revisions`: new snapshots and evidence references.
 - `GET /character-agents/{agent_id}/identity-changes`: new categories and previous/new estimates.
@@ -228,7 +249,7 @@ Update together:
 
 Use separate public revision summaries and administrator evidence reads if necessary to preserve this boundary. Update both Pydantic/OpenAPI schemas and explicit SDK models/resource methods. Add a runnable SDK example for generation, reviewed creation, manual edits, history/evidence inspection, and a query. SDK tests must detect personality schema drift rather than accept arbitrary extra fields.
 
-Frontend handoff: render nine named slots, distinguish unknown from 5, display uncertainty/override state, use metadata for construct/poles, and submit 1–9 values. The separate STEADINESS semantics should remain visible even if all nine slots share a sheet layout.
+Frontend handoff: render directional z values, distinguish unknown from z=0, display uncertainty/override state, use metadata for construct/poles, and submit bounded z values. The separate STEADINESS semantics should remain visible even if all nine slots share a sheet layout.
 
 ## 10. Delivery sequence and acceptance gates
 
@@ -282,7 +303,7 @@ Search all tracked source, tests, examples, SDK docs, and `Documentation/` for t
 
 ## 12. Documentation and release operations
 
-Rewrite the three canonical CharacterAgent pages and SDK feature page; update endpoint examples, SDK reference/example indexes, and `Documentation/README.md`. Document all constructs/poles, diagnostic rules, uncertain values, z/point representation, policy defaults, STEADINESS, manual overrides, chronological ordering, checkpoint invalidation, call-count/concurrency impact, and query use. Update architecture ownership documentation for the shared coordinator and trait service. Add a release entry following the existing release process, without modifying unrelated changelog work.
+Rewrite the three canonical CharacterAgent pages and SDK feature page; update endpoint examples, SDK reference/example indexes, and `Documentation/README.md`. Document all constructs/poles, diagnostic rules, uncertain values, z-only representation, policy defaults, STEADINESS, manual overrides, chronological ordering, checkpoint invalidation, call-count/concurrency impact, and query use. Update architecture ownership documentation for the shared coordinator and trait service. Add a release entry following the existing release process, without modifying unrelated changelog work.
 
 Deployment is a coordinated breaking release:
 

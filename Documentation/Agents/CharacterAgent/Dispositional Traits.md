@@ -28,22 +28,15 @@ a rule that mandates an action.
 ## Representation and uncertainty
 
 `trait_profile.dispositional_traits` contains all eight directional keys.
-`trait_profile.steadiness` is separate. Each estimate exposes `z`, derived `point`,
-`status`, `qualifying_count`, `observation_ids`, and `uncertainty`. Internal
-`accepted_count` and `comparison_start` make conservative accumulation replayable.
-Neo4j stores z anchors in JSON; it does not store the derived point.
+`trait_profile.steadiness` is separate. Every estimate exposes a bounded `z`
+value, a status, evidence references/counts, and uncertainty. `z` is the only
+numeric trait value returned by the API; there is no rounded 1–9 score. Unknown
+is `z=null, status="unknown"`. `z=0` is an evidenced centre, not an implicit
+fallback for unknown. Inferred values retain bounded fractional precision, so a
+small update such as `z=0.1` remains visible to clients. Manual edits also use a
+bounded z value. Invalid, boolean, nonfinite, and out-of-range z values are
+rejected. The valid range is `-1.9..1.9`.
 
-| Point | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| z | -1.9 | -1.2 | -0.7 | -0.3 | 0 | 0.3 | 0.7 | 1.2 | 1.9 |
-| General-human percentile reference | 3 | 12 | 24 | 38 | 50 | 62 | 76 | 88 | 97 |
-
-The reference population is the **general human population**. The supplied mapping
-is metadata, not a claim that narrative estimates are population-calibrated tests.
-Unknown is `z=null, point=null, status="unknown"`. An evidenced midpoint is
-`z=0, point=5`. Other statuses are `provisional`, `supported`, `contested`, and
-`manual`. Uncertainty never silently becomes point 5. Invalid/nonfinite values
-are rejected. Analytical nearest-anchor conversion breaks ties toward the midpoint.
 
 ## Evidence and update policy
 
@@ -53,7 +46,7 @@ are insufficient; generated biography is not treated as independent authored
 support. Authored-only generation is allowed, including an all-unknown profile.
 
 Scene observations record the directional trait, diagnostic situation, expression
-point/pole, confidence, diagnosticity, behavior, justification, canonical evidence
+z/pole, confidence, diagnosticity, behavior, justification, canonical evidence
 IDs, episode ID, availability cutoff, choice conditions, and comparison context.
 The backend assigns stable observation IDs, source ownership, chronological
 positions, eligibility, and exclusion reasons. Repeated descriptions of one
@@ -67,33 +60,108 @@ integrity; forbidden speech is not low presence; careful failure is not low
 diligence; incorrect conclusions do not negate curiosity. Weak, excluded,
 contradictory, and no-change evidence remains inspectable in the revision ledger.
 
-If the cross-scene observation response is malformed, the backend first attempts
-JSON repair and then makes one source-aware correction call containing the
-original scene bundle, rejected output, validation errors, and permitted evidence
-IDs. The correction may return an empty observation list. If it still cannot
-validate, the source retains its scene perspectives and a no-change revision, but
-the backend discards all observations and skips trait, aspect, goal, and subtitle
-updates for that source.
+The current embodiment pipeline is scene-centric and uses three LLM calls per
+source bundle: incorporation, per-scene enrichment/candidate extraction, and a
+cumulative profile update. There is no separate cross-scene-observation LLM
+call. Incorporation alone receives objective scene text. Enrichment receives only
+the corresponding grounded character perspective (without its presentation-only
+reflection), and derives emotions, beliefs, trait candidates, and durable signals
+from that perspective. The backend collects each enrichment result's
+`trait_candidates`, validates their canonical grounding and choice conditions,
+then supplies the accumulated evidence to the profile-update call.
 
-For malformed model output, worker logs include the stage, requested completion
-limit, returned response character count, provider completion-token count and
-finish reason (when supplied), plus the Pydantic validation errors. shreckLLM
-logs the corresponding requested limit, token usage, finish reason, and response
-size for every provider call.
+Enrichment emits every distinct scene-local trait candidate it can identify;
+there is deliberately **no hard per-scene candidate limit**. Candidates with
+unknown or contradicted choice conditions remain auditable evidence but cannot
+move a trait estimate. Each scene may emit at most one durable aspect signal and
+one durable goal signal. Signals are evidence, never mutations: they make a
+later addition possible but do not themselves create, update, or complete an
+aspect or goal.
 
-`app/services/character_trait_service.py` centralizes `evidence-policy-v1`:
+Every enrichment result explicitly contains `emotions`, `beliefs`, `impacts`,
+`trait_candidates`, `aspect_signals`, and `goal_signals`. `[]` is the valid
+no-evidence value; omitting any array is a structured-output contract error, not
+an implicit empty result. This prevents a provider from silently dropping the
+candidate and signal fields while still returning valid JSON.
+
+Impacts are separate from candidate signals. An impact can affect only an
+existing aspect or goal ID supplied in the input profile. A new aspect or goal
+requires a matching durable signal and supporting canonical evidence. The final
+update may add at most two aspects and one goal for a source bundle, and only
+when that evidence establishes durable character development; ordinary events,
+passing emotions, group actions, and assigned tasks do not qualify.
+
+The perspective stage receives the current profile as input but not the full
+trait-definition catalogue: it renders grounded perspectives and does not make
+trait inferences. Psychological enrichment remains a compact per-scene contract.
+An empty provider response is classified before JSON parsing; it does not trigger
+JSON repair or schema correction and results in a recorded no-change source.
+
+For a non-empty response with invalid JSON, the backend attempts JSON repair.
+For valid JSON that violates the output schema—for example, by omitting a
+required enrichment array—it makes one bounded schema-correction call instead.
+An empty response is classified before parsing and does **not** spend repair or
+correction tokens. For all malformed output, worker logs include the stage,
+requested completion limit, returned response character count, provider
+completion-token count and finish reason (when supplied), plus the Pydantic
+validation errors. shreckLLM logs the corresponding requested limit, token usage,
+finish reason, and response size for every provider call.
+
+## Local embodiment debug artifacts
+
+`character_agent_embodiment_debug_artifacts_enabled` is enabled by default. When
+enabled, every embodiment request creates one timestamped directory under
+`databases/local_test/character_embodiment/`. These files contain full prompt,
+payload, raw model response, parsed response, validation error, and correction
+payloads; treat them as local diagnostic data rather than application logs.
+
+- `baseline.log` records the authored-baseline LLM call.
+- One `bundle_XXX_<source>.log` is written for each source-boundary bundle. It
+  contains its three LLM stage calls in order (including JSON/semantic corrections)
+  and any checkpointed stage outputs reused for that bundle.
+- `final_pipeline.log` captures the complete accumulated inputs and outputs after
+  every bundle: observations, perspectives, trait evidence/profile, aspect and
+  goal updates, subtitle, generated proposal, and timeline projection.
+
+To make the trace complete, an enabled debug request does not reuse embodiment
+checkpoints from an earlier attempt; it reruns and records every stage.
+
+Artifact-write failures are logged and do not interrupt a draft. Because these
+files can contain full scene text and model-generated explanations/justifications,
+enable the flag only in a protected development environment and remove the
+request directory when the investigation is complete.
+
+In the Docker Compose deployment, `/data` is bind-mounted to the host's
+`shrecknet/databases` directory, so these artifacts appear on the host at
+`shrecknet/databases/local_test/character_embodiment/`. Settings are cached by
+Celery workers; restart `shrecknet_worker` after changing this flag before
+submitting a new embodiment request.
+
+`app/services/character_trait_service.py` centralizes
+`evidence-policy-v3-perspective-single-observation`:
 
 - Qualifying confidence and diagnosticity are each at least 0.7.
-- Three independent behavioral episodes normally establish an estimate. A strong
-  authored stable-disposition statement alone may only seed a provisional value.
-- RESTLESSNESS requires at least two source contexts with diagnostic value choices.
-- An existing centre moves at most one display point after at least two new
-  qualifying episodes since its last accepted numeric change.
+- One eligible, individually attributed behavioral observation establishes a
+  bounded directional estimate. A strong authored stable-disposition statement
+  alone may only seed a provisional value.
+- RESTLESSNESS still requires an explicit value choice or recurring motivated
+  preference; it does not require multiple source contexts.
+- A behavioral candidate carries a direction and an update intensity. Small,
+  medium, and large map deterministically to ±0.05, ±0.10, and ±0.20 z; high is
+  positive and low is negative. Midpoint evidence has no directional movement.
+- For each trait, the backend averages all eligible contributions from the
+  current source bundle and applies at most one resulting update. It never sums
+  scene-level candidates, so a long source cannot produce a massive jump.
+- One eligible behavioral observation establishes an estimate, and one newly
+  eligible observation can move an existing centre at a later source. The backend
+  records the applied source ID to make replay a no-op. STEADINESS remains
+  separate and still requires repeated comparable behavior.
 - Opposing low/high evidence makes the estimate contested unless the latest three
-  qualifying observations consistently support the proposed side. A midpoint
-  requires actual intermediate evidence; opposite extremes are not neutral facts.
-- An LLM proposes anchored points using cumulative structured evidence and cites
-  eligible observation IDs. The backend validates and applies the transition.
+  qualifying observations consistently support one pole. Opposite extremes are
+  not averaged into a falsely certain midpoint.
+- An LLM may supply an evidence-grounded explanation and citation set, but it
+  does not select a numeric estimate or delta. The backend derives and applies
+  the transition from validated evidence.
   Aspects and goals keep their separate grounded lifecycle rules and scales.
 
 These thresholds are engineering policy, not claims from psychological literature.
@@ -112,7 +180,7 @@ trait centres do not themselves create variability. If pooled standard deviation
 is `s`, the engineering display mapping is
 `round_half_up(9 - 8 * min(s / 1.9, 1))`. The resulting estimate remains provisional
 and includes its contributing observation IDs. Later updates require two new
-comparable samples and move by at most one point. Comparison windows restart
+comparable samples and move by its bounded source-level z contribution. Comparison windows restart
 after accepted directional changes; insufficient remaining evidence restores
 unknown rather than falsely attributing gradual development to inconsistency.
 
@@ -129,12 +197,12 @@ linked to the character through either `RELATES_TO` directly or a contained
 milestone is included. Orphan scenes form one explicit `__orphan__` source
 bundle.
 
-Each source bundle runs four normal LLM stages, sequentially:
+Each source bundle runs three normal LLM stages, sequentially:
 
-1. Incorporation: one perspective per scene, using the chunk-start profile.
-2. Enrichment: immediate emotions, beliefs, and impacts for each scene.
-3. Observations: joint diagnostic extraction across the chunk.
-4. Profile proposal: cumulative structured evidence, followed by deterministic
+1. Incorporation: one perspective per scene, using the source-bundle-start profile.
+2. Enrichment: immediate emotions, beliefs, impacts, all grounded scene-local
+   trait candidates, and bounded aspect/goal candidate signals for each scene.
+3. Profile proposal: cumulative structured evidence, followed by deterministic
    acceptance and separate STEADINESS computation. This creates exactly one
    identity revision associated with every scene in the bundle.
 
@@ -145,15 +213,15 @@ flowchart TD
     A[Canonical entity\nauthored text + properties] --> B[Authored baseline call]
     B --> C[Revision 0\nunknown or provisional trait profile]
     C --> D[Next complete source bundle\nall scenes from one source]
-    D --> E[1. Batched scene perspectives\nusing the chunk-start identity]
-    E --> F[2. Batched enrichment\nemotions, beliefs, impacts]
-    F --> G[3. Joint trait observations\none attributed observation per episode]
+    D --> E[1. Source-bundle perspectives\nusing the starting identity]
+    E --> F[2. Source-bundle enrichment\nemotions, beliefs, impacts]
+    F --> G[Scene-local trait candidates\nand aspect/goal signals]
     G --> H{Backend grounding and\nchoice-condition checks}
     H -->|invalid, weak, or confounded| I[Keep auditable excluded evidence]
     H -->|eligible| J[Persistent cumulative evidence ledger]
     I --> J
-    J --> K[4. LLM anchored profile proposal]
-    K --> L[Deterministic policy acceptance\nconservative directional update]
+    J --> K[3. LLM profile explanation]
+    K --> L[Backend averages source intensities\none bounded directional update]
     L --> M[Separate STEADINESS estimator\nonly comparable repeated behavior]
     M --> N[Source-end revision, changes,\nand every-scene provenance]
     N --> D
@@ -166,22 +234,23 @@ source's final scene. The evidence ledger retains accepted, contradictory, exclu
 no-change observations so later updates remain explainable.
 
 Initialization adds one normal call. Repairs/corrections may add calls. There are
-no mandatory per-scene calls. Chunks for the same character never run in parallel.
-The next chunk receives the preceding result. Identity changes take effect only
-at chunk end; all its perspectives link to the actual starting revision through
-`GENERATED_WITH`. One revision per chunk also preserves evidence-only transitions.
+no mandatory per-scene calls. Source bundles for the same character never run in
+parallel. The next bundle receives the preceding result. Identity changes take
+effect only at bundle end; all its perspectives link to the actual starting
+revision through `GENERATED_WITH`. One revision per bundle also preserves
+evidence-only transitions.
 
-Per-scene grounding can cite only supplied current/earlier scenes. Cross-scene
-findings become available at their latest contributing scene. Validators reject
-unknown IDs, duplicate/missing/reordered scene outputs, and explicit future
-citations. Because the LLM reads the entire chunk, these checks **cannot prove
-absence of uncited semantic hindsight**. Prompts forbid it; later-revelation
-fixtures must be evaluated against the selected provider/model before deployment.
-Creation timestamps are processing chronology, not guaranteed in-world dates.
+Per-scene enrichment can cite only supplied current/earlier scenes. Validators
+reject unknown IDs, duplicate/missing/reordered scene outputs, and explicit
+future citations. Because the perspective and enrichment calls read the whole
+source bundle, these checks **cannot prove absence of uncited semantic
+hindsight**. Prompts forbid it; later-revelation fixtures must be evaluated
+against the selected provider/model before deployment. Creation timestamps are
+processing chronology, not guaranteed in-world dates.
 
-Stage checkpoints include source inputs, preceding profile and evidence, batch
-size, model targets, and prompt/specification/policy versions. Replayed outputs
-are validated. Changed earlier inputs invalidate downstream checkpoints. Architect
+Stage checkpoints include source inputs, preceding profile and evidence, model
+targets, and prompt/specification/policy versions. Replayed outputs are
+validated. Changed earlier inputs invalidate downstream checkpoints. Architect
 uses the same timeline/profile helpers and appends from the latest revision with
 a stale-writer check. Processed scene digests detect edited history; backdated,
 edited, or removed processed scenes require regeneration rather than an append.
@@ -215,7 +284,7 @@ cannot be selected as a decision trait. It reaches deliberation only as a global
 consistency modifier: high STEADINESS narrows expression around relevant trait
 centres; low STEADINESS permits broader expression. It never changes model
 temperature. Unknown estimates remain unknown rather than being presented as
-point 5. Generic queries bypass the identity profile entirely.
+z=0. Generic queries bypass the identity profile entirely.
 
 See [CharacterAgent Query](Query/Query.md) for request and response envelopes.
 
@@ -227,6 +296,9 @@ Configuration:
   active capacities; each source bundle proposes at most two aspect and one goal operation.
 - `character_agent_embodiment_semantic_correction_attempts`: existing bounded
   correction policy. Query generation retains its separate repair behavior.
+- `character_agent_embodiment_debug_artifacts_enabled`: default `true`; writes
+  complete local embodiment traces as described in
+  [Local embodiment debug artifacts](#local-embodiment-debug-artifacts).
 
 ## Persistence, editing, and inspection
 
@@ -237,16 +309,17 @@ estimate objects, observation IDs, canonical evidence IDs, policy version, and
 justification. Manual changes additionally record the actor.
 
 Administrator writes use `trait_edits`, for example
-`{"integrity":{"point":8,"reason":"Authored character sheet."}}`. The backend
-converts the point. Omitted entries retain their values. `point:null` clears a
+`{"integrity":{"z":1.2,"reason":"Authored character sheet."}}`. The backend
+accepts the supplied z. Omitted entries retain their values. `z:null` clears a
 manual override and restores the inferred estimate. Evidence continues developing
 in `inferred_traits` while `overrides` remain effective. Manual STEADINESS is an
 explicit author setting, not fabricated empirical evidence.
 
 Draft acceptance uses the server-owned generated profile. Identical submitted
 points preserve generated provenance; changed points create a final manual
-revision. Creation and incremental writes commit each graph aggregate/chunk
-atomically. Retry identity is based on processed scenes/chunks, not just source ID.
+revision. Creation and incremental writes commit each graph aggregate/source
+bundle atomically. Retry identity is based on processed scenes/source bundles,
+not just source ID.
 
 `GET /character-agents/{agent_id}/trait-evidence` is administrator-only and supports
 `trait`, `revision`, `skip`, and `limit`. Public profile/revision reads expose

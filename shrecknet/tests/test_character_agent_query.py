@@ -508,7 +508,7 @@ async def test_snapshot_is_one_operation_and_omits_backend_identifiers():
     assert "ORDER BY assignment.importance DESC" in graph.calls[0][0]
     assert "ORDER BY goal.priority DESC" in graph.calls[0][0]
     assert "id" not in snapshot["character_agent"]
-    assert snapshot["character_agent"]["trait_profile"]["steadiness"]["point"] is None
+    assert snapshot["character_agent"]["trait_profile"]["steadiness"]["z"] is None
 
 
 @pytest.mark.asyncio
@@ -630,19 +630,19 @@ async def test_framing_rejects_nondirectional_or_wrong_affordance(selection):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('point',[1,9])
-async def test_steadiness_is_separate_modifier_never_temperature(point):
+@pytest.mark.parametrize('z',[-1.9,1.9])
+async def test_steadiness_is_separate_modifier_never_temperature(z):
     import copy
     from app.schemas.character_traits import TraitEdit
     from app.services.character_trait_service import apply_manual_edits
     snapshot=copy.deepcopy(SNAPSHOT)
-    profile=apply_manual_edits(TraitProfile(),{'steadiness':TraitEdit(point=point,reason='Authored consistency.')})
+    profile=apply_manual_edits(TraitProfile(),{'steadiness':TraitEdit(z=z,reason='Authored consistency.')})
     snapshot['character_agent']['trait_profile']=profile.model_dump(mode='json')
     llm=FakeLLM([_frame(),TEXT_DELIBERATION]);target=LLMModelTarget(provider='test',name='model')
     request=CharacterAgentQueryRequest(query='Choose',generation={'temperature':.42})
     await CharacterAgentQueryJob(llm_client=llm,framing_model=target,deliberation_model=target,repair_model=target).run(request,snapshot)
     payload=json.loads(llm.calls[-1]['messages'][1]['content'])
-    assert payload['steadiness']['point']==point
+    assert payload['steadiness']['z']==z
     assert all(item['key']!='steadiness' for item in payload['relevant_traits'])
     assert payload['relevant_traits'][0]['construct']=='Emotionality — HEXACO'
     assert llm.calls[-1]['temperature']==.42

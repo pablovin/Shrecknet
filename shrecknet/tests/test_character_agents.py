@@ -52,7 +52,7 @@ def test_character_payload_defaults_and_ranges():
     with pytest.raises(ValidationError):
         CharacterAgentCreate(
             ontology_id=42, entity_instance_id="e", name="Mara",
-            background_story="Story", trait_edits={"integrity": {"point": 10, "reason": "Invalid"}},
+            background_story="Story", trait_edits={"integrity": {"z": 2.0, "reason": "Invalid"}},
         )
     assert CharacterAgentCreate(
         ontology_id=42, entity_instance_id="public-entity", visibility="public"

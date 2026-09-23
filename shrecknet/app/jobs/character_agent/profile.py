@@ -5,7 +5,8 @@ from typing import Any
 from app.schemas.character_traits import TraitProfile, TraitEvidence
 from app.schemas.character_agent import (
     CharacterIdentityRevisionProjection, CharacterSourceProjection, CharacterTimelineProjection,
-    EmbodimentAspectProposal, EmbodimentGoalProposal, ProjectedScenePerspective, SubtitleChangeProposal,
+    DisplayReference, EmbodimentAspectProposal, EmbodimentGoalProposal, ProjectedCharacterImpact,
+    ProjectedScenePerspective, ProjectedTraitChange, SubtitleChangeProposal,
 )
 
 def _stable_profile_id(kind: str, value: str) -> str:
@@ -164,6 +165,7 @@ def _build_timeline(
     starting_revision: int = 0,
     max_aspects: int | None = None,
     max_goals: int | None = None,
+    source_groups: list[dict[str, Any]] | None = None,
 ) -> str:
     from app.services.character_agent_service import _normalize_name
 
@@ -198,6 +200,34 @@ def _build_timeline(
         )
 
     alias = str(canonical_identity.get("alias") or source_entity_alias)
+    source_groups_by_id = {
+        str(group.get("source_id") or group.get("source_group_id")): group
+        for group in source_groups or []
+    }
+    scenes_by_id = {
+        str(scene["scene_id"]): scene
+        for group in source_groups or [] for scene in group.get("scenes", [])
+    }
+
+    def scene_reference(scene_id: str) -> DisplayReference:
+        scene = scenes_by_id.get(scene_id, {})
+        return DisplayReference(
+            id=scene_id, type="scene", name=str(scene.get("name") or scene_id),
+            description=scene.get("description"), instance_name=alias,
+        )
+
+    def evidence_references(evidence_ids: list[str]) -> list[DisplayReference]:
+        result = []
+        for evidence_id in evidence_ids:
+            scene_id = evidence_id.removeprefix("scene:")
+            if evidence_id.startswith("scene:") and scene_id in scenes_by_id:
+                result.append(scene_reference(scene_id).model_copy(update={"id": evidence_id}))
+            else:
+                result.append(DisplayReference(
+                    id=evidence_id, type="evidence", name="Evidence",
+                    description=None, instance_name=alias,
+                ))
+        return result
 
     # Revision 0 — starting state before any bundle
     rev0 = CharacterIdentityRevisionProjection(
@@ -219,6 +249,27 @@ def _build_timeline(
 
     for i, br in enumerate(per_bundle_results):
         br_source_id = str(getattr(br, "source_entity_id", source_entity_id) or source_entity_id)
+
+        target_references = {
+            str(item.get("id")): DisplayReference(
+                id=str(item.get("id")), type="aspect", name=str(item.get("name") or "Aspect"),
+                description=item.get("description"), instance_name=alias,
+            )
+            for item in cum_aspects if item.get("id")
+        } | {
+            str(item.get("id")): DisplayReference(
+                id=str(item.get("id")), type="goal", name=str(item.get("title") or "Goal"),
+                description=item.get("description"), instance_name=alias,
+            )
+            for item in cum_goals if item.get("id")
+        }
+        source_group = source_groups_by_id.get(br_source_id, {})
+        source_reference = DisplayReference(
+            id=br_source_id, type="source_group",
+            name=str(source_group.get("source_alias") or getattr(br, "source_entity_alias", None) or br_source_id),
+            description=source_group.get("description") or "Source scenes used for this identity update.",
+            instance_name=alias,
+        )
 
         cum_profile = br.trait_profile.model_copy(deep=True)
         _apply_aspect_ops(
@@ -288,18 +339,28 @@ def _build_timeline(
             batch_id=br.batch_id,
             perspectives=[
                 ProjectedScenePerspective(
-                    scene_id=p.scene_id, source_type=p.source_type, evidence_ids=p.evidence_ids,
+                    scene_id=p.scene_id, scene=scene_reference(p.scene_id),
+                    source_type=p.source_type, evidence_ids=p.evidence_ids,
+                    evidence=evidence_references(p.evidence_ids),
                     source_digest=br.scene_input_digests.get(p.scene_id),
                     awareness_level=p.awareness_level, confidence=p.confidence,
                     summary=p.summary, interpretation=p.interpretation,
                     character_reflection=p.character_reflection,
                     memory_strength=p.memory_strength, importance=p.importance,
                     status=p.status,
-                    emotions=p.emotions, beliefs=p.beliefs, impacts=p.impacts,
+                    emotions=p.emotions, beliefs=p.beliefs,
+                    impacts=[ProjectedCharacterImpact(
+                        **impact.model_dump(mode="json"),
+                        target=target_references[impact.target_id],
+                    ) for impact in p.impacts],
                 )
                 for p in br.perspectives
             ],
-            trait_changes=br.trait_changes,
+            trait_changes=[ProjectedTraitChange(
+                **change.model_dump(mode="json"),
+                evidence=evidence_references(change.evidence_ids),
+            ) for change in br.trait_changes],
+            source_group=source_reference,
             aspects=b_aspects,
             goals=b_goals,
             completed_goal_titles=[

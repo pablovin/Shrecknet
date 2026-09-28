@@ -112,6 +112,26 @@ completion-token count and finish reason (when supplied), plus the Pydantic
 validation errors. shreckLLM logs the corresponding requested limit, token usage,
 finish reason, and response size for every provider call.
 
+## Backend-owned model references
+
+Embodiment prompts do not ask a model to reproduce canonical scene, evidence,
+profile-target, or observation identifiers. Scene-local stages return one output
+object per numbered input position; the backend binds position 1 to the first
+input scene and assigns that scene’s canonical ID and evidence citation to the
+outer result and all nested candidates. Enrichment impact targets use a one-based
+position in the supplied aspect or goal list, which the backend resolves to the
+stable ID. The source-level profile update similarly selects observations and
+scene evidence by one-based positions. Persisted drafts, checkpoints, graph
+records, and API responses retain the canonical IDs; this is an internal LLM
+boundary contract only.
+
+A wrong, duplicated, or reordered identifier in an otherwise complete scene list
+cannot mis-associate content: it is overwritten during binding. A list with the
+wrong number of entries, an out-of-range positional target, or another semantic
+violation enters the bounded semantic-correction policy. Correction payloads
+include the expected and actual scene-position sequences. Checkpoint payloads
+must pass the same schema and grounding checks before reuse.
+
 ## Local embodiment debug artifacts
 
 `character_agent_embodiment_debug_artifacts_enabled` is enabled by default. When

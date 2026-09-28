@@ -617,27 +617,27 @@ class BatchLLM:
         if stage=='baseline':
             return json.dumps({'trait_evidence':[]})
         if stage=='character_incorporation':
-            result={'perspectives':[dict(scene_id=s['scene_id'],evidence_ids=['scene:'+s['scene_id']],
+            result={'perspectives':[dict(scene_id=f"model-scene-{s['position']}",evidence_ids=[f"scene:model-scene-{s['position']}"],
                 source_type='participated',awareness_level=90,confidence=90,
                 summary='Returned an untraceable overpayment.',interpretation='Keeping it would exploit another.',
                 character_reflection='REFLECTION MUST NOT BECOME EVIDENCE',memory_strength=80,importance=3)
                 for s in payload['scenes']]}
             if self.corruption=='future':
-                result['perspectives'][0]['evidence_ids']=['scene:'+payload['scenes'][-1]['scene_id']]
+                result['perspectives'][0]['evidence_ids']=["scene:model-scene-{}".format(payload['scenes'][-1]['position'])]
             if self.corruption == 'prior':
                 result['perspectives'][1]['evidence_ids'] = ['scene:s0', 'scene:s1']
             return json.dumps(result)
         if stage=='scene_interpretation':
-            return json.dumps({'scene_enrichments':[dict(scene_id=p['scene_id'],evidence_ids=['scene:'+p['scene_id']],
-                emotions=[],beliefs=[],impacts=[],trait_candidates=[observation(scene=p['scene_id']).model_dump()],
+            return json.dumps({'scene_enrichments':[dict(scene_id=f"model-scene-{p['position']}",evidence_ids=[f"scene:model-scene-{p['position']}"],
+                emotions=[],beliefs=[],impacts=[],trait_candidates=[observation(scene=f"model-scene-{p['position']}").model_dump()],
                 aspect_signals=[],goal_signals=[]) for p in payload['perspectives']]})
         if stage=='observations':
             items=[observation(scene=b['scene']['scene_id']).model_dump() for b in payload['scene_bundles']]
             if self.corruption=='unknown': items[0]['evidence_ids']=['scene:foreign']
             return json.dumps({'trait_evidence':items})
         if stage=='profile_update':
-            refs=[e['id'] for e in payload['trait_evidence'] if e['eligible']]
-            return json.dumps({'trait_proposals':[dict(trait='integrity', observation_ids=refs,
+            refs=[e['position'] for e in payload['trait_evidence'] if e['eligible']]
+            return json.dumps({'trait_proposals':[dict(trait='integrity', observation_indexes=refs,
                 justification='Repeated voluntary choices.',addresses_contradictions='No opposing behavior.')],
                 'aspect_updates':[],'goal_updates':[]})
         raise AssertionError(stage)
@@ -830,15 +830,16 @@ async def test_bare_perspective_scene_evidence_is_normalized_before_grounding():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('corruption', ['future', 'prior'])
-async def test_nonlocal_perspective_scene_evidence_is_rejected(corruption):
-    agent = _agent(BatchLLM(corruption), semantic_correction_attempts=0)
-
-    with pytest.raises(EmbodimentGenerationError, match='only its own scene evidence'):
-        await agent.analyze(
-            source_entity_id='source', source_entity_alias='Source',
-            canonical_identity=_canonical(), current_trait_profile=TraitProfile(),
-            current_aspects=[], current_goals=[], scenes=scenes(3),
-        )
+async def test_noncanonical_perspective_references_are_bound_to_input_positions(corruption):
+    analysis = await _agent(BatchLLM(corruption), semantic_correction_attempts=0).analyze(
+        source_entity_id="source", source_entity_alias="Source",
+        canonical_identity=_canonical(), current_trait_profile=TraitProfile(),
+        current_aspects=[], current_goals=[], scenes=scenes(3),
+    )
+    assert [item.scene_id for item in analysis.perspectives] == ["s0", "s1", "s2"]
+    assert [item.evidence_ids for item in analysis.perspectives] == [
+        ["scene:s0"], ["scene:s1"], ["scene:s2"],
+    ]
 
 
 class PriorSceneNestedEvidenceLLM(BatchLLM):
@@ -854,15 +855,15 @@ class PriorSceneNestedEvidenceLLM(BatchLLM):
 
 
 @pytest.mark.asyncio
-async def test_nonlocal_nested_scene_evidence_is_rejected():
-    agent = _agent(PriorSceneNestedEvidenceLLM(), semantic_correction_attempts=0)
-
-    with pytest.raises(EmbodimentGenerationError, match='only its own scene evidence'):
-        await agent.analyze(
-            source_entity_id='source', source_entity_alias='Source',
-            canonical_identity=_canonical(), current_trait_profile=TraitProfile(),
-            current_aspects=[], current_goals=[], scenes=scenes(3),
-        )
+async def test_noncanonical_nested_scene_evidence_is_bound_to_parent_position():
+    analysis = await _agent(PriorSceneNestedEvidenceLLM(), semantic_correction_attempts=0).analyze(
+        source_entity_id="source", source_entity_alias="Source",
+        canonical_identity=_canonical(), current_trait_profile=TraitProfile(),
+        current_aspects=[], current_goals=[], scenes=scenes(3),
+    )
+    assert [item.trait_candidates[0].evidence_ids for item in analysis.perspectives] == [
+        ["scene:s0"], ["scene:s1"], ["scene:s2"],
+    ]
 
 
 @pytest.mark.asyncio
@@ -1038,7 +1039,8 @@ async def test_enrichment_receives_character_perspectives_not_raw_scenes():
         if call['usage_tag'].endswith('.scene_interpretation')
     ))
     assert 'scenes' not in payload
-    assert payload['perspectives'][0]['scene_id'] == 's0'
+    assert payload['perspectives'][0]['position'] == 1
+    assert 'scene_id' not in payload['perspectives'][0]
     assert payload['perspectives'][0]['interpretation']
     assert 'character_reflection' not in payload['perspectives'][0]
 

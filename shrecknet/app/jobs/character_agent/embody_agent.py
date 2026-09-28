@@ -67,6 +67,8 @@ class EmbodimentGenerationError(RuntimeError):
         source_entity_alias: str | None = None,
         offending_ids: set[str] | None = None,
         allowed_ids: set[str] | None = None,
+        expected_sequence: list[str] | None = None,
+        actual_sequence: list[str] | None = None,
         attempt: int = 1,
         retryable: bool = False,
         provider_id: str | None = None,
@@ -80,6 +82,8 @@ class EmbodimentGenerationError(RuntimeError):
         self.source_entity_alias = source_entity_alias
         self.offending_ids = sorted(offending_ids or set())
         self.allowed_ids = sorted(allowed_ids or set())
+        self.expected_sequence = list(expected_sequence or [])
+        self.actual_sequence = list(actual_sequence or [])
         self.attempt = attempt
         self.retryable = retryable
         self.provider_id = provider_id
@@ -96,6 +100,8 @@ class EmbodimentGenerationError(RuntimeError):
             "retryable": self.retryable,
             "offending_ids": self.offending_ids,
             "allowed_ids": self.allowed_ids,
+            "expected_sequence": self.expected_sequence,
+            "actual_sequence": self.actual_sequence,
             "provider_id": self.provider_id,
             "model": self.model_name,
             "provider_reason": self.provider_reason,
@@ -185,9 +191,14 @@ class EmbodyAgent:
             )
 
     @staticmethod
-    def _parse(schema: type[BaseModel], raw: str, stage: str) -> BaseModel:
+    def _parse(
+        schema: type[BaseModel], raw: str, stage: str,
+        output_binding: dict[str, Any] | None = None,
+    ) -> BaseModel:
         try:
             parsed = parse_json_deterministically(raw)
+            if output_binding:
+                _bind_model_output_references(parsed, **output_binding)
         except (TypeError, ValueError) as exc:
             raise EmbodimentGenerationError(
                 f"invalid JSON in {stage} output", category="json",
@@ -227,6 +238,7 @@ class EmbodyAgent:
         source_entity_id: str | None = None,
         source_entity_alias: str | None = None,
         schema_correction_attempts: int = 0,
+        output_binding: dict[str, Any] | None = None,
     ) -> BaseModel:
         try:
             raw = await self._llm.chat(
@@ -279,7 +291,7 @@ class EmbodyAgent:
                 retryable=True,
             )
         try:
-            result = self._parse(schema, str(raw), stage)
+            result = self._parse(schema, str(raw), stage, output_binding)
             self._debug_call(stage=stage, prompt=prompt, payload=payload, raw_output=raw,
                              parsed_output=result, model=model, usage_tag=usage_tag)
         except EmbodimentGenerationError as exc:
@@ -304,7 +316,7 @@ class EmbodyAgent:
                         schema_hint=json.dumps(schema.model_json_schema()),
                         usage_tag=f"{usage_tag}.repair",
                     )
-                    result = self._parse(schema, repaired, f"repaired {stage}")
+                    result = self._parse(schema, repaired, f"repaired {stage}", output_binding)
                     self._debug_call(stage=stage, prompt="JSON repair", payload={
                         "malformed_text": str(raw), "required_output_schema": schema.model_json_schema(),
                     }, raw_output=repaired, parsed_output=result, model=model,
@@ -345,7 +357,7 @@ class EmbodyAgent:
                         temperature=0.0,
                         max_tokens=max_tokens,
                     )
-                    result = self._parse(schema, str(corrected_raw), f"schema corrected {stage}")
+                    result = self._parse(schema, str(corrected_raw), f"schema corrected {stage}", output_binding)
                     self._debug_call(stage=stage, prompt=prompt, payload=correction_payload,
                                      raw_output=corrected_raw, parsed_output=result, model=model,
                                      usage_tag=f"{usage_tag}.schema_correction",
@@ -400,6 +412,11 @@ class EmbodyAgent:
                     str(getattr(model, "name", model)), attempt, exc.category,
                     exc.offending_ids, exc.allowed_ids, exc.retryable,
                 )
+                self._debug_call(
+                    stage=stage, prompt=prompt, payload=payload, raw_output=raw,
+                    error=exc.details(), model=model, usage_tag=usage_tag,
+                    call_kind="semantic_validation",
+                )
                 if not exc.retryable:
                     raise
                 self.semantic_correction_count += 1
@@ -440,7 +457,7 @@ class EmbodyAgent:
                     ) from correction_exc
                 try:
                     result = self._parse(
-                        schema, str(corrected_raw), f"corrected {stage}"
+                        schema, str(corrected_raw), f"corrected {stage}", output_binding
                     )
                     self._debug_call(stage=stage, prompt=prompt, payload=correction_payload,
                                      raw_output=corrected_raw, parsed_output=result, model=model,
@@ -477,6 +494,7 @@ class EmbodyAgent:
             schema=EmbodimentObservationsOutput, stage="authored baseline",
             usage_tag="character_agent.embodiment.baseline", max_tokens=None,
             model=self.scene_interpretation_model, semantic_validator=validate,
+            output_binding={"evidence_id": evidence_id},
         )
         evidence = ground_observations(output.trait_evidence, scene_ids=[],
             source_group_id=entity_id, authored_evidence_ids=known)
@@ -503,7 +521,11 @@ class EmbodyAgent:
         if not scenes:
             raise EmbodimentGenerationError("no scenes provided for embodiment")
 
-        scene_list = [s.model_dump(mode="json") for s in scenes]
+        scene_list = [
+            {"position": index + 1, "name": scene.name, "description": scene.description,
+             "created_at": scene.created_at}
+            for index, scene in enumerate(scenes)
+        ]
         known = {f"scene:{s.scene_id}" for s in scenes}
         stage_checkpoints = stage_checkpoints or {}
 
@@ -549,8 +571,8 @@ class EmbodyAgent:
                     "identity": identity,
                     "current_profile": {
                         "trait_profile": current_trait_profile.model_dump(mode="json"),
-                        "aspects": aspects,
-                        "goals": goals,
+                        "aspects": [{"name": item["name"], "category": item["category"], "description": item["description"]} for item in aspects],
+                        "goals": [{"title": item["title"], "description": item["description"], "goal_type": item["goal_type"]} for item in goals],
                     },
                     "scenes": scene_list,
                 },
@@ -566,6 +588,8 @@ class EmbodyAgent:
                 model=self.character_incorporation_model,
                 source_entity_id=source_entity_id,
                 source_entity_alias=source_entity_alias,
+                schema_correction_attempts=1,
+                output_binding={"collection": "perspectives", "scene_ids": [s.scene_id for s in scenes]},
             )
         perspectives = perspectives_result.perspectives
         expected_ids = [s.scene_id for s in scenes]
@@ -596,13 +620,13 @@ class EmbodyAgent:
                     "perspectives": [
                         p.model_dump(
                             mode="json",
-                            exclude={"character_reflection", "status"},
-                        )
-                        for p in perspectives
+                            exclude={"scene_id", "evidence_ids", "character_reflection", "status"},
+                        ) | {"position": index + 1}
+                        for index, p in enumerate(perspectives)
                     ],
                     "current_profile": {
-                        "aspects": [{"id": a["id"], "name": a["name"]} for a in aspects],
-                        "goals": [{"id": g["id"], "title": g["title"]} for g in goals],
+                        "aspects": [{"position": index + 1, "name": a["name"]} for index, a in enumerate(aspects)],
+                        "goals": [{"position": index + 1, "title": g["title"]} for index, g in enumerate(goals)],
                     },
                 },
                 schema=SceneEnrichmentsOutput,
@@ -618,6 +642,10 @@ class EmbodyAgent:
                 source_entity_id=source_entity_id,
                 source_entity_alias=source_entity_alias,
                 schema_correction_attempts=1,
+                output_binding={
+                    "collection": "scene_enrichments", "scene_ids": expected_ids,
+                    "profile_targets": {"aspects": [a["id"] for a in aspects], "goals": [g["id"] for g in goals]},
+                },
             )
         enrichments = enrichment_result.scene_enrichments
         enrichment_ids = [item.scene_id for item in enrichments]
@@ -777,6 +805,7 @@ class EmbodyAgent:
             source_group_id=analysis.source_entity_id,
             offset=max((e.chronological_position for e in existing), default=-1) + 1)
         accumulated = merge_evidence(existing, incoming)
+        source_evidence_ids = sorted(analysis.evidence_ids)
 
         if stage_checkpoint is not None:
             profile_result = ProfileUpdateOutput.model_validate(stage_checkpoint)
@@ -803,12 +832,18 @@ class EmbodyAgent:
                         ],
                     },
                     "observations": obs_data,
-                    "trait_evidence": [item.model_dump(mode="json") for item in accumulated],
+                    "trait_evidence": [
+                        {"position": index + 1} | item.model_dump(
+                            mode="json",
+                            exclude={"id", "evidence_ids", "episode_id", "available_after_scene_id", "source_group_id"},
+                        )
+                        for index, item in enumerate(accumulated)
+                    ],
                     "scene_signals": {
-                        "aspects": [item.model_dump(mode="json") for item in analysis.aspect_signals],
-                        "goals": [item.model_dump(mode="json") for item in analysis.goal_signals],
+                        "aspects": [item.model_dump(mode="json", exclude={"evidence_ids"}) for item in analysis.aspect_signals],
+                        "goals": [item.model_dump(mode="json", exclude={"evidence_ids"}) for item in analysis.goal_signals],
                     },
-                    "allowed_evidence_ids": sorted(analysis.evidence_ids),
+                    "allowed_evidence_positions": list(range(1, len(source_evidence_ids) + 1)),
                     "limits": {
                         "max_aspects": self.max_aspects,
                         "max_goals": self.max_goals,
@@ -826,6 +861,10 @@ class EmbodyAgent:
                 ),
                 source_entity_id=analysis.source_entity_id,
                 source_entity_alias=analysis.source_entity_alias,
+                output_binding={
+                    "observation_ids": [item.id for item in accumulated],
+                    "evidence_ids": source_evidence_ids,
+                },
             )
             if on_checkpoint:
                 await on_checkpoint("profile_update", profile_result)
@@ -887,6 +926,84 @@ class EmbodyAgent:
             current_goals=current_goals,
             on_stage=on_stage,
         )
+
+
+def _bind_model_output_references(
+    value: Any, *, collection: str | None = None, scene_ids: list[str] | None = None,
+    evidence_id: str | None = None, profile_targets: dict[str, list[str]] | None = None,
+    observation_ids: list[str] | None = None, evidence_ids: list[str] | None = None,
+) -> None:
+    """Attach backend-owned identifiers to position-bound model output."""
+    if not isinstance(value, dict):
+        return
+    if collection and scene_ids is not None:
+        records = value.get(collection)
+        if isinstance(records, list):
+            for index, record in enumerate(records):
+                scene_id = (
+                    scene_ids[index] if index < len(scene_ids)
+                    else f"__extra_position_{index + 1}"
+                )
+                if isinstance(record, dict):
+                    _bind_scene_local_references(record, scene_id, profile_targets)
+    if evidence_id is not None:
+        _bind_evidence_references(value, evidence_id)
+    if observation_ids is not None:
+        for proposal in value.get("trait_proposals", []):
+            if not isinstance(proposal, dict):
+                continue
+            indexes = proposal.pop("observation_indexes", None)
+            if isinstance(indexes, list) and all(isinstance(index, int) for index in indexes):
+                proposal["observation_ids"] = [
+                    observation_ids[index - 1] for index in indexes
+                    if 1 <= index <= len(observation_ids)
+                ]
+    if evidence_ids is not None:
+        for key in ("aspect_updates", "goal_updates"):
+            for update in value.get(key, []):
+                if not isinstance(update, dict):
+                    continue
+                indexes = update.pop("evidence_indexes", None)
+                if isinstance(indexes, list) and all(isinstance(index, int) for index in indexes):
+                    update["evidence_ids"] = [
+                        evidence_ids[index - 1] for index in indexes
+                        if 1 <= index <= len(evidence_ids)
+                    ]
+
+
+def _bind_scene_local_references(
+    item: dict[str, Any], scene_id: str, profile_targets: dict[str, list[str]] | None,
+) -> None:
+    item["scene_id"] = scene_id
+    _bind_evidence_references(item, f"scene:{scene_id}", scene_id)
+    for impact in item.get("impacts", []):
+        if not isinstance(impact, dict) or profile_targets is None:
+            continue
+        target_index = impact.pop("target_index", None)
+        impact.pop("target_id", None)
+        target_kind = "goals" if impact.get("impact_type") == "goal_change" else "aspects"
+        targets = profile_targets.get(target_kind, [])
+        if isinstance(target_index, int) and 1 <= target_index <= len(targets):
+            impact["target_id"] = targets[target_index - 1]
+
+
+def _bind_evidence_references(value: Any, evidence_id: str, scene_id: str | None = None) -> None:
+    if isinstance(value, list):
+        for item in value:
+            _bind_evidence_references(item, evidence_id, scene_id)
+        return
+    if not isinstance(value, dict):
+        return
+    if "evidence_ids" in value:
+        value["evidence_ids"] = [evidence_id]
+    if "evidence_id" in value:
+        value["evidence_id"] = evidence_id
+    if "episode_id" in value:
+        value["episode_id"] = evidence_id
+    if scene_id is not None and "available_after_scene_id" in value:
+        value["available_after_scene_id"] = scene_id
+    for nested in value.values():
+        _bind_evidence_references(nested, evidence_id, scene_id)
 
 
 def _collect_evidence_ids(data: Any) -> set[str]:
@@ -1004,6 +1121,16 @@ def _normalize_evidence_ids(data: Any) -> None:
 def _validate_and_normalize_scene_grounding(items: list[Any], scene_ids: list[str]) -> None:
     """Canonicalize and require each scene-local result to cite only itself."""
     _normalize_evidence_ids(items)
+    actual_scene_ids = [item.scene_id for item in items]
+    if actual_scene_ids != scene_ids or len(actual_scene_ids) != len(set(actual_scene_ids)):
+        raise EmbodimentGenerationError(
+            "scene output positions must match the exact unique input order",
+            category="semantic_reference",
+            offending_ids=set(actual_scene_ids) - set(scene_ids),
+            allowed_ids=set(scene_ids),
+            expected_sequence=scene_ids,
+            actual_sequence=actual_scene_ids,
+        )
     validate_scene_grounding(items, scene_ids)
     for item in items:
         referenced = _collect_evidence_ids(item.model_dump(mode="json"))

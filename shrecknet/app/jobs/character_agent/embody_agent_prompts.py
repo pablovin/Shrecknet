@@ -12,7 +12,7 @@ import json
 from app.schemas.character_traits import trait_metadata
 
 TRAIT_CONTRACT = "\nAuthoritative trait definitions and scale:\n" + json.dumps(trait_metadata(), ensure_ascii=False)
-PROMPT_VERSION = "character-embodiment-v18-scene-local-parallel-chunks"
+PROMPT_VERSION = "character-embodiment-v19-backend-owned-references"
 
 PERSPECTIVE_PROMPT = r"""You are incorporating a character's identity into canonical objective scenes.
 
@@ -23,11 +23,12 @@ or uncertainty as an objective scene fact.
 
 Use only facts available to the character at each scene. The whole source bundle is
 visible to you, but later revelations must never become earlier knowledge.
-Every perspective cites exactly its own supplied scene in evidence_ids. Do not cite
-earlier scenes, even when they provide narrative context.
+The backend assigns every canonical scene and evidence ID. Do not return IDs or
+evidence references; return one result for each numbered input position.
 Unknown traits remain unknown, not midpoint. Trait values bias behavior and do
 not mandate it. STEADINESS modifies consistency, never sampling temperature.
-Return every perspective in the same order as the input scenes, using the exact scene_id for each.
+Return every perspective in the same order as the input positions. The backend binds
+position 1 to the first scene, position 2 to the second, and so on.
 
 INPUT:
 {
@@ -40,21 +41,19 @@ INPUT:
   },
   "current_profile": {
     "trait_profile": {"dispositional_traits": {"canonical trait key": {"z": "bounded inferred value or null", "status": "unknown | provisional | supported | contested | manual"}}, "steadiness": "separate estimate"},
-    "aspects": [{"id": "stable id", "name": "...", "category": "...", "description": "..."}],
-    "goals": [{"id": "stable id", "title": "...", "description": "...", "goal_type": "..."}]
+    "aspects": [{"name": "...", "category": "...", "description": "..."}],
+    "goals": [{"title": "...", "description": "...", "goal_type": "..."}]
   },
   "scenes": [
-    {"scene_id": "id", "name": "scene name", "description": "scene description", "created_at": "ISO timestamp or null"}
+    {"position": 1, "name": "scene name", "description": "scene description", "created_at": "ISO timestamp or null"}
   ],
-  "required_output": "<ScenePerspectiveOutput schema for one perspective>"
+  "required_output": "one position-bound perspective object as defined below"
 }
 
 OUTPUT — return an object with exactly one key "perspectives":
 {
   "perspectives": [
     {
-      "scene_id": "exact input scene_id",
-      "evidence_ids": ["scene:exact-input-scene-id"],
       "source_type": "participated | witnessed | heard_about | read_about | inferred | unknown",
       "awareness_level": 0..100,
       "confidence": 0..100,
@@ -67,55 +66,52 @@ OUTPUT — return an object with exactly one key "perspectives":
   ]
 }
 
-Return JSON only. required_output is authoritative if this description and the schema differ."""
+Return JSON only."""
 
 
 ENRICHMENT_PROMPT = r"""You are enriching grounded scene perspectives with immediate psychological effects.
 
 You receive only this character's already-grounded scene perspectives, not raw
-objective scenes. Derive every result from the supplied perspective's summary,
-interpretation, awareness, confidence, and evidence IDs. The presentation-only
+objective scenes. Derive every result from the supplied numbered perspective's summary,
+interpretation, awareness, and confidence. The presentation-only
 character_reflection is intentionally absent. Do not reconstruct or supplement
-the objective scene, and do not create or update profile state. Do not use later
-perspectives for earlier beliefs. Cite only the current supplied scene in each
-evidence_ids list. Every evidence_ids reference, including nested trait,
-aspect, and goal signals, must cite exactly the current scene.
+the objective scene, and do not create or update profile state. Do not use later perspectives for earlier beliefs. The backend attaches the
+current scene evidence to every generated result and nested candidate.
 
 Every scene result MUST contain all six arrays in the output object. Use [] when
 an array has no grounded item; never omit an array.
 
-Impacts may target only stable IDs supplied in current_profile. Goal impacts
+For an impact, use target_index: the one-based position of its target in the
+matching current_profile array. The backend resolves that index to its stable ID. Goal impacts
 allow advanced or threatened. Aspect impacts allow created, reinforced, or
 invalidated.
 
 INPUT:
 {
   "perspectives": [{
-    "scene_id":"id","source_type":"participated | witnessed | heard_about | read_about | inferred | unknown",
+    "position":1,"source_type":"participated | witnessed | heard_about | read_about | inferred | unknown",
     "awareness_level":0..100,"confidence":0..100,"summary":"...","interpretation":"...",
     "memory_strength":0..100,"importance":1..5
   }],
   "current_profile": {
-    "aspects": [{"id":"stable id","name":"..."}],
-    "goals": [{"id":"stable id","title":"..."}]
+    "aspects": [{"position":1,"name":"..."}],
+    "goals": [{"position":1,"title":"..."}]
   }
 }
 
 OUTPUT:
 {
   "scene_enrichments": [{
-    "scene_id":"exact input scene_id",
-    "evidence_ids":["scene:exact-input-scene-id"],
     "emotions":[{"arousal":0..100,"valence":-100..100,"description":"..."}],
     "beliefs":[{"statement":"...","confidence":0..100,"status":"suspected | believed | confirmed | doubted | disproven | superseded"}],
-    "impacts":[{"impact_type":"goal_change | aspect_change","target_id":"supplied stable id","direction":"advanced | threatened | created | reinforced | invalidated","magnitude":0..100,"description":"..."}],
-    "trait_candidates":[{"trait":"integrity | caution | presence | forbearance | diligence | curiosity | sharing | restlessness","evidence_kind":"behavior","situation_type":"diagnostic value for trait","direction":"low | midpoint | high","update_intensity":"small | medium | large","expression_z":"number from -1.9 to 1.9 or null","diagnosticity":0.0,"confidence":0.0,"behavior":"one observed individual choice","justification":"why diagnostic","evidence_ids":["scene:exact-input-scene-id"],"episode_id":"scene:exact input scene_id","available_after_scene_id":"exact input scene ID, WITHOUT scene: prefix","conditions":{"knowledge":{"status":"supported | contradicted | unknown","justification":"..."},"capability":{"status":"supported | contradicted | unknown","justification":"..."},"options":{"status":"supported | contradicted | unknown","justification":"..."},"freedom":{"status":"supported | contradicted | unknown","justification":"..."}},"comparison_context":"string or null"}],
-    "aspect_signals":[{"name":"...","category":"identity | role | status | physical | capability | knowledge | preference | attitude | history","description":"durable character-development fact","importance":1..5,"justification":"...","confidence":0.0,"evidence_ids":["scene:exact-input-scene-id"]}],
-    "goal_signals":[{"title":"...","description":"adopted durable commitment","goal_type":"desire | objective | ambition | obligation | avoidance | survival","priority":0..100,"commitment":0..100,"basis":"explicit | inferred","justification":"...","confidence":0.0,"evidence_ids":["scene:exact-input-scene-id"]}]
+    "impacts":[{"impact_type":"goal_change | aspect_change","target_index":1,"direction":"advanced | threatened | created | reinforced | invalidated","magnitude":0..100,"description":"..."}],
+    "trait_candidates":[{"trait":"integrity | caution | presence | forbearance | diligence | curiosity | sharing | restlessness","evidence_kind":"behavior","situation_type":"diagnostic value for trait","direction":"low | midpoint | high","update_intensity":"small | medium | large","expression_z":"number from -1.9 to 1.9 or null","diagnosticity":0.0,"confidence":0.0,"behavior":"one observed individual choice","justification":"why diagnostic","conditions":{"knowledge":{"status":"supported | contradicted | unknown","justification":"..."},"capability":{"status":"supported | contradicted | unknown","justification":"..."},"options":{"status":"supported | contradicted | unknown","justification":"..."},"freedom":{"status":"supported | contradicted | unknown","justification":"..."}},"comparison_context":"string or null"}],
+    "aspect_signals":[{"name":"...","category":"identity | role | status | physical | capability | knowledge | preference | attitude | history","description":"durable character-development fact","importance":1..5,"justification":"...","confidence":0.0}],
+    "goal_signals":[{"title":"...","description":"adopted durable commitment","goal_type":"desire | objective | ambition | obligation | avoidance | survival","priority":0..100,"commitment":0..100,"basis":"explicit | inferred","justification":"...","confidence":0.0}]
   }]
 }
 
-Return JSON only. required_output is authoritative if this description and the schema differ."""
+Return JSON only."""
 
 ENRICHMENT_PROMPT += r"""
 
@@ -136,9 +132,9 @@ Every trait_evidence item has exactly these fields:
   "confidence":0.0,
   "behavior":"concise observed choice or explicitly authored stable disposition",
   "justification":"why this reveals this construct, addressing neighboring-trait boundaries",
-  "evidence_ids":["exact nonempty allowed canonical evidence references"],
-  "episode_id":"scene:exact-scene-id for behavior; identity:exact-entity-id for authored baseline",
-  "available_after_scene_id":"latest raw input scene ID cited, without scene: prefix; null for authored baseline",
+  "evidence_ids":"assigned by the backend; omit from model output",
+  "episode_id":"assigned by the backend; omit from model output",
+  "available_after_scene_id":"assigned by the backend; omit from model output",
   "conditions":{
     "knowledge":{"status":"supported | contradicted | unknown","justification":"grounding"},
     "capability":{"status":"supported | contradicted | unknown","justification":"grounding"},
@@ -188,27 +184,26 @@ INPUT:
  "current_profile":{"trait_profile":"current estimates including unknowns and manual overrides",
   "aspects":[{"name":"...","category":"...","description":null,"importance":1,"intensity":null,"created_at":null}],
   "goals":[{"title":"...","description":"...","goal_type":"...","priority":50,"commitment":50,"created_at":null}]},
- "trait_evidence":["validated cumulative observation records: full trait-evidence fields plus backend id, source_group_id, chronological_position, eligible, exclusions"],
+ "trait_evidence":[{"position":1,"validated observation fields":"without backend identifiers"}],
  "observations":{"recurring_behaviours":[],"motivations":[],"values":[],"fears":[],"conflicts":[],"relationships":[],"contradictions":[],"evidence_gaps":[],"subtitle_change":null},
- "allowed_evidence_ids":["canonical scene IDs for aspect/goal updates in this source bundle"],
+ "allowed_evidence_positions":["one-based positions for source-scene evidence"],
  "scene_signals":{"aspects":["durable scene-local aspect evidence"],"goals":["adopted durable goal evidence"]},
  "limits":{"max_aspects":0,"max_goals":0}
 }
 OUTPUT — all three arrays, empty when no grounded proposal:
 {
  "trait_proposals":[{"trait":"one of the eight directional keys",
-   "observation_ids":["eligible backend trait:... observation IDs for this trait"],
+   "observation_indexes":[1],
    "justification":"cumulative behavioral basis for the evidence-driven update",
    "addresses_contradictions":"explicit account of opposing evidence or its absence"}],
  "aspect_updates":[{"operation":"add | update | remove","name":"stable current name for update/remove",
    "category":"identity | role | status | physical | capability | knowledge | preference | attitude | history | null",
-   "description":null,"importance":3,"intensity":null,"justification":"...","confidence":0.8,"evidence_ids":["allowed canonical scene reference"]}],
+   "description":null,"importance":3,"intensity":null,"justification":"...","confidence":0.8,"evidence_indexes":[1]}],
  "goal_updates":[{"operation":"add | update | remove | complete","title":"stable current title for update/remove/complete",
    "description":null,"goal_type":"desire | objective | ambition | obligation | avoidance | survival | null",
-   "priority":50,"commitment":50,"basis":"explicit | inferred | null","justification":"...","confidence":0.8,"evidence_ids":["allowed canonical scene reference"]}]
+   "priority":50,"commitment":50,"basis":"explicit | inferred | null","justification":"...","confidence":0.8,"evidence_indexes":[1]}]
 }
-Trait numeric updates are deterministic: do not output a numeric estimate or delta. Cite
-eligible observation IDs; one proposal per trait, at most eight. One eligible
+Trait numeric updates are deterministic: do not output a numeric estimate or delta. Use one-based observation_indexes; one proposal per trait, at most eight. One eligible
 behavioral observation can establish a bounded centre. Authored evidence is provisional.
 Do not average contradictory extremes into a falsely certain midpoint. State
 contradictions. RESTLESSNESS requires an explicit value choice or recurring motivated preference.
@@ -216,13 +211,13 @@ Never propose STEADINESS; it is computed separately. Manual effective values rem
 overrides while the underlying inferred estimate can develop. Do not propose deltas.
 At most two aspect operations and one goal operation. importance is 1..5 or null,
 intensity/priority/commitment 0..100 or null, confidence 0..1. Stable name/title,
-nonblank justification, confidence, and nonempty allowed evidence_ids are required.
+nonblank justification, confidence, and nonempty evidence_indexes are required.
 Use complete for achieved goals, remove for obsolete aspects. Backend resolves
 maximum ACTIVE capacities by importance/priority then recency. No placeholders.
 Trait magnitudes bias behavior probabilistically; they do not mandate choices.
 Create an aspect or goal only when scene_signals establishes a durable change or
 commitment. Do not create one merely because a scene is dramatic. Additions must
-be traceable to a matching signal and its evidence_ids; returning no additions is
+be traceable to a matching signal; returning no additions is
 normal.
 Return JSON only.
 """ + TRAIT_EVIDENCE_CONTRACT + TRAIT_CONTRACT

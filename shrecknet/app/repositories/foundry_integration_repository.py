@@ -26,3 +26,4 @@ class FoundryIntegrationRepository:
         result = await self.session.execute(
             select(FoundryIntegration).order_by(FoundryIntegration.created_at.desc())
         )
+        return list(result.scalars().all())

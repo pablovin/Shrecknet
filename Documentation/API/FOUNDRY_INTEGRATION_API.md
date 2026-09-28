@@ -42,8 +42,9 @@ Both endpoints use `X-Shrecknet-Integration-Key` and require no player bearer to
 | `POST /integrations/foundry/validate` | Server identity and version after key validation. |
 | `GET /integrations/foundry/worlds` | Worlds allowed by this key. Empty allow-list means all Worlds. |
 
-An invalid or revoked key returns `401`. The module must never store the key in a
-Foundry World setting because that setting is visible to all connected clients.
+An invalid or revoked key returns `401`. A Foundry GM enters the key only in **Game Settings → Configure Settings → Shrecknet Connection**. Once the selected World is enabled, the key-entry form is no longer exposed; the key is not stored in a Foundry World setting because that setting is visible to all connected clients.
+
+The GM-only panel also calls the existing unauthenticated `GET /health` endpoint to show the configured connection as `online` or `offline`. This status is operational feedback only; players authenticate with their own existing Shrecknet account.
 
 ## Player content requests
 

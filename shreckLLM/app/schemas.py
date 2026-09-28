@@ -52,6 +52,21 @@ class ChatJobCreateResponse(BaseModel):
     expires_at: float | None = None
 
 
+class ChatJobAttemptStatus(BaseModel):
+    """One upstream route tried for a logical chat job."""
+
+    attempt_id: str
+    kind: str
+    status: str
+    provider_id: str
+    requested_model: str
+    resolved_model: str | None = None
+    started_at: float | None = None
+    finished_at: float | None = None
+    elapsed_ms: float | None = None
+    error: str | None = None
+
+
 class ChatJobStatusResponse(BaseModel):
     job_id: str
     status: str
@@ -66,6 +81,10 @@ class ChatJobStatusResponse(BaseModel):
     queue_wait_ms: float | None = None
     execution_ms: float | None = None
     error: str | None = None
+    winner_attempt_id: str | None = None
+    hedge_after_ms: float | None = None
+    latency_cohort: dict[str, Any] | None = None
+    attempts: list[ChatJobAttemptStatus] = Field(default_factory=list)
 
 
 class ServiceStatusResponse(BaseModel):

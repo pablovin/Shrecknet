@@ -214,10 +214,9 @@ the provider. OpenRouter uses the shared runtime `request_timeout_seconds`
 value and has no provider-specific generation timeout.
 
 Configured and catalog model IDs remain unchanged. At chat execution time,
-shreckLLM appends `:nitro` to the selected OpenRouter model; an existing
-case-insensitive `:nitro` suffix is not appended again. This requests
-OpenRouter's throughput sorting behavior. It is a routing preference based on
-current provider metrics, not a fixed-TPS guarantee or capacity reservation.
+shreckLLM sends OpenRouter `provider.sort: "latency"` and
+`provider.allow_fallbacks: true`. This is a latency-oriented routing preference
+based on provider metrics, not a fixed latency guarantee or capacity reservation.
 
 ## POST /config/reload
 Reloads runtime config from sqlite and reapplies adapters.

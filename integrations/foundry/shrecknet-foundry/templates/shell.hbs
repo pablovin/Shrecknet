@@ -7,25 +7,7 @@
   {{#if notice}}<p class="shrecknet-notice">{{notice}}</p>{{/if}}
 
   {{#unless configured}}
-    {{#if canConfigure}}
-      <form class="shrecknet-form">
-        <h2>Shrecknet Connection</h2>
-        <label>Server URL <input name="serverUrl" type="url" value="{{connection.serverUrl}}" required></label>
-        <label>Integration Key <input name="integrationKey" type="password" autocomplete="off" required></label>
-        <button type="button" data-action="testConnection">Test Connection</button>
-        {{#if worldChoices.length}}
-          <label>Shrecknet World
-            <select name="worldId" required>
-              <option value="">Select a World</option>
-              {{#each worldChoices}}<option value="{{id}}">{{name}}</option>{{/each}}
-            </select>
-          </label>
-          <button type="button" data-action="saveConnection">Save</button>
-        {{/if}}
-      </form>
-    {{else}}
-      <p>This Foundry World has not been connected to Shrecknet. Ask a GM to configure it.</p>
-    {{/if}}
+    <p>This Foundry World has not been connected to Shrecknet. A GM must configure it in <strong>Game Settings → Configure Settings → Shrecknet Connection</strong>.</p>
   {{else if (not authenticated)}}
     <form class="shrecknet-form">
       <h2>Connected World: {{connection.worldName}}</h2>

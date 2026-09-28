@@ -172,17 +172,7 @@ async def test_openai_chat_does_not_send_deepinfra_service_tier(monkeypatch) -> 
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("selected_model", "execution_model"),
-    [
-        ("anthropic/claude-sonnet-4", "anthropic/claude-sonnet-4:nitro"),
-        ("anthropic/claude-sonnet-4:nitro", "anthropic/claude-sonnet-4:nitro"),
-        ("anthropic/claude-sonnet-4:NITRO", "anthropic/claude-sonnet-4:nitro"),
-    ],
-)
-async def test_openrouter_chat_uses_nitro_routing_and_native_reasoning_flag(
-    monkeypatch, selected_model, execution_model
-) -> None:
+async def test_openrouter_chat_uses_latency_routing_and_native_reasoning_flag(monkeypatch) -> None:
     captured = {}
 
     class Response:
@@ -204,22 +194,17 @@ async def test_openrouter_chat_uses_nitro_routing_and_native_reasoning_flag(
 
     monkeypatch.setattr(openai_client, "AsyncOpenAI", FakeAsyncOpenAI)
     client = openai_client.OpenAIClient(
-        api_key="secret",
-        timeout_s=300,
-        base_url="https://openrouter.ai/api/v1",
-        provider_id="openrouter",
+        api_key="secret", timeout_s=300,
+        base_url="https://openrouter.ai/api/v1", provider_id="openrouter",
     )
-
     await client.chat(
-        model=selected_model,
-        messages=[ChatMessage(role="user", content="hello")],
-        temperature=0.3,
-        reasoning=True,
+        model="anthropic/claude-sonnet-4",
+        messages=[ChatMessage(role="user", content="hello")], temperature=0.3, reasoning=True,
     )
-
-    assert captured["model"] == execution_model
+    assert captured["model"] == "anthropic/claude-sonnet-4"
     assert captured["extra_body"] == {
-        "reasoning": {"enabled": True, "effort": "high"}
+        "reasoning": {"enabled": True, "effort": "high"},
+        "provider": {"sort": "latency", "allow_fallbacks": True},
     }
 
 
@@ -258,7 +243,10 @@ async def test_openrouter_chat_disables_reasoning_by_default(monkeypatch) -> Non
         temperature=0.3,
     )
 
-    assert captured["extra_body"] == {"reasoning": {"enabled": False}}
+    assert captured["extra_body"] == {
+        "reasoning": {"enabled": False},
+        "provider": {"sort": "latency", "allow_fallbacks": True},
+    }
 
 
 def test_retry_after_seconds_supports_seconds_and_http_dates() -> None:

@@ -1,8 +1,9 @@
 import { ShrecknetShell } from "./apps/shrecknet-shell.js";
+import { ShrecknetConnectionSettings } from "./apps/shrecknet-connection-settings.js";
 import { registerConnectionSettings } from "./settings/connection-settings.js";
 
 Hooks.once("init", () => {
-  registerConnectionSettings();
+  registerConnectionSettings(ShrecknetConnectionSettings);
   console.info("[Shrecknet] Foundry module initialized");
 });
 
@@ -10,14 +11,14 @@ Hooks.on("getSceneControlButtons", (controls) => {
   controls.shrecknet ??= {
     name: "shrecknet",
     title: "Shrecknet",
-    icon: "fa-solid fa-terminal",
+    icon: "shrecknet-logo-icon",
     order: 900,
     tools: {},
   };
   controls.shrecknet.tools.open = {
     name: "open",
     title: "Open Shrecknet",
-    icon: "fa-solid fa-network-wired",
+    icon: "shrecknet-logo-icon",
     order: 1,
     button: true,
     visible: true,

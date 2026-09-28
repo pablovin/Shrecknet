@@ -41,6 +41,7 @@ jobs:
           node --check "$MODULE_DIR/scripts/main.js"
           node --check "$MODULE_DIR/scripts/api/shrecknet-client.js"
           node --check "$MODULE_DIR/scripts/apps/shrecknet-shell.js"
+          node --check "$MODULE_DIR/scripts/apps/shrecknet-connection-settings.js"
           node -e "JSON.parse(require('node:fs').readFileSync(process.argv[1], 'utf8'))" "$MODULE_DIR/themes/terminal/theme.json"
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
@@ -59,6 +60,8 @@ jobs:
           unzip -Z1 "$asset_path" | grep -Fx 'module.json'
           unzip -Z1 "$asset_path" | grep -Fx 'scripts/main.js'
           unzip -Z1 "$asset_path" | grep -Fx 'templates/shell.hbs'
+          unzip -Z1 "$asset_path" | grep -Fx 'templates/connection-settings.hbs'
+          unzip -Z1 "$asset_path" | grep -Fx 'assets/shrecknet-logo.svg'
           echo "asset_path=$asset_path" >> "$GITHUB_OUTPUT"
           echo "asset_name=$asset_name" >> "$GITHUB_OUTPUT"
 

@@ -118,6 +118,7 @@ class ShreckLLMClient:
                     timeout_s=None,
                     poll_interval_s=1.0,
                 )
+                job_status = data.pop("_shreckllm_job_status", None)
                 text = str(data.get("text") or "")
                 usage = data.get("usage") if isinstance(data.get("usage"), dict) else {}
                 resolved_model = str(data.get("resolved_model") or target.name)
@@ -128,6 +129,7 @@ class ShreckLLMClient:
                     "provider_request_id": data.get("provider_request_id"),
                     "finish_reason": data.get("finish_reason"),
                     "completion_tokens": usage.get("completion_tokens"),
+                    "chat_job": job_status,
                 }
                 wait_ms = round((time.monotonic() - request_started) * 1000, 2)
                 self._record_usage_event(
@@ -257,7 +259,10 @@ class ShreckLLMClient:
                 result.raise_for_status()
                 data = result.json() if result.content else {}
                 logger.info("shreckllm_chat_job_result job_id=%s status=succeeded", job_id)
-                return data if isinstance(data, dict) else {}
+                if isinstance(data, dict):
+                    data["_shreckllm_job_status"] = status_data
+                    return data
+                return {}
             if status_value == "failed":
                 error = (status_data or {}).get("error")
                 raise RuntimeError(f"chat job failed job_id={job_id} error={error}")

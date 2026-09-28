@@ -95,6 +95,8 @@ export class ShrecknetClient {
     return this.request("/integrations/foundry/validate", { method: "POST", integrationKey, authenticated: false });
   }
 
+  ping() { return this.request("/health", { authenticated: false }); }
+
   listConnectableWorlds(integrationKey) {
     return this.request("/integrations/foundry/worlds", { integrationKey, authenticated: false });
   }

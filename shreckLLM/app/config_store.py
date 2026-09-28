@@ -80,6 +80,14 @@ class ProviderState(BaseModel):
     last_error: str | None = None
 
 
+class ChatHedgeRoute(BaseModel):
+    """An approved alternate route for a tagged tail-latency hedge."""
+
+    provider_id: str = Field(min_length=1)
+    model: str = Field(min_length=1)
+    timeout_seconds: float | None = Field(default=None, gt=0)
+
+
 class RuntimeConfig(BaseModel):
     provider_defaults: dict[str, ProviderDefaults] = Field(default_factory=dict)
     provider_states: dict[str, ProviderState] = Field(default_factory=dict)
@@ -93,6 +101,14 @@ class RuntimeConfig(BaseModel):
     chat_job_result_ttl_seconds: int = 900
     chat_job_poll_default_interval_ms: int = 250
     chat_job_max_retries: int = 2
+    chat_job_hedging_enabled: bool = True
+    chat_job_hedge_min_samples: int = Field(default=20, ge=1)
+    chat_job_hedge_percentile: float = Field(default=0.95, ge=0.5, le=0.999)
+    chat_job_hedge_min_delay_seconds: float = Field(default=8.0, gt=0)
+    chat_job_hedge_max_in_flight: int = Field(default=4, ge=0)
+    chat_job_default_hedge_timeout_seconds: float = Field(default=120.0, gt=0)
+    chat_job_orphan_timeout_seconds: float = Field(default=900.0, gt=0)
+    chat_job_hedge_routes: dict[str, ChatHedgeRoute] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def ensure_provider_concurrency_limits(self) -> "RuntimeConfig":
@@ -132,6 +148,14 @@ class RuntimeConfigUpdate(BaseModel):
     chat_job_result_ttl_seconds: int | None = None
     chat_job_poll_default_interval_ms: int | None = None
     chat_job_max_retries: int | None = None
+    chat_job_hedging_enabled: bool | None = None
+    chat_job_hedge_min_samples: int | None = Field(default=None, ge=1)
+    chat_job_hedge_percentile: float | None = Field(default=None, ge=0.5, le=0.999)
+    chat_job_hedge_min_delay_seconds: float | None = Field(default=None, gt=0)
+    chat_job_hedge_max_in_flight: int | None = Field(default=None, ge=0)
+    chat_job_default_hedge_timeout_seconds: float | None = Field(default=None, gt=0)
+    chat_job_orphan_timeout_seconds: float | None = Field(default=None, gt=0)
+    chat_job_hedge_routes: dict[str, ChatHedgeRoute] | None = None
 
 
 def _db_path() -> Path:

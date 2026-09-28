@@ -1,3 +1,10 @@
+.shrecknet-logo-icon { display: inline-block; width: 1.1em; height: 1.1em; background: url("../assets/shrecknet-logo.svg") center / contain no-repeat; vertical-align: middle; }
+#controls .shrecknet-logo-icon { width: 1.4rem; height: 1.4rem; font-size: 0; }
+.shrecknet-connection-status { display: grid; grid-template-columns: max-content 1fr; gap: .45rem .75rem; }
+.shrecknet-connection-status dt { color: var(--shrecknet-muted); }
+.status-online { color: var(--shrecknet-accent); }
+.status-offline { color: #e67373; }
+.shrecknet-help { color: var(--shrecknet-muted); }
 .shrecknet-shell { min-height: 100%; background: var(--shrecknet-bg); color: var(--shrecknet-text); font-family: var(--shrecknet-font-ui); }
 .shrecknet-header, .shrecknet-nav { display: flex; gap: .5rem; align-items: center; padding: .75rem; border-bottom: 1px solid var(--shrecknet-border); }
 .shrecknet-header strong { flex: 1; letter-spacing: .08em; }

@@ -53,6 +53,14 @@ CONFIG_FIELD_META: dict[str, dict[str, object]] = {
         "frontend_editable": True,
         "derived_from_profile": False,
     },
+    "chat_job_hedging_enabled": {"type": "boolean", "help": "Enable adaptive alternate-route attempts for configured usage tags.", "category": "Concurrency"},
+    "chat_job_hedge_min_samples": {"type": "integer", "help": "Completed cohort samples required before adaptive hedging.", "category": "Concurrency"},
+    "chat_job_hedge_percentile": {"type": "number", "help": "Historical latency percentile that triggers a hedge.", "category": "Concurrency"},
+    "chat_job_hedge_min_delay_seconds": {"type": "number", "help": "Safety floor for a hedge delay; not a job deadline.", "category": "Concurrency"},
+    "chat_job_hedge_max_in_flight": {"type": "integer", "help": "Maximum simultaneous hedge attempts.", "category": "Concurrency"},
+    "chat_job_default_hedge_timeout_seconds": {"type": "number", "help": "Attempt timeout for automatic same-route hedges.", "category": "Concurrency"},
+    "chat_job_orphan_timeout_seconds": {"type": "number", "help": "Last-resort logical-job watchdog to prevent permanent running jobs.", "category": "Concurrency"},
+    "chat_job_hedge_routes": {"type": "object", "help": "Approved alternate provider/model routes keyed by exact usage_tag.", "category": "Concurrency"},
 }
 
 CONFIG_GROUPS: list[dict[str, object]] = [
@@ -71,6 +79,14 @@ CONFIG_GROUPS: list[dict[str, object]] = [
             "chat_job_result_ttl_seconds",
             "chat_job_poll_default_interval_ms",
             "chat_job_max_retries",
+            "chat_job_hedging_enabled",
+            "chat_job_hedge_min_samples",
+            "chat_job_hedge_percentile",
+            "chat_job_hedge_min_delay_seconds",
+            "chat_job_hedge_max_in_flight",
+            "chat_job_default_hedge_timeout_seconds",
+            "chat_job_orphan_timeout_seconds",
+            "chat_job_hedge_routes",
         ],
     },
 ]

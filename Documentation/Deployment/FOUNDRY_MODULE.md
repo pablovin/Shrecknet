@@ -29,11 +29,9 @@ values are tightened later, retain both headers and the `POST`, `GET`, and
 
 1. A Shrecknet administrator creates a setup key with
    `POST /config/integrations/foundry` and optionally restricts it to World IDs.
-2. A Foundry GM opens the Shrecknet module, enters the Shrecknet API URL and
-   setup key, validates the connection, selects one Shrecknet World, and saves.
-3. The module never persists the setup key in a Foundry World setting.
-4. Each player signs in with their own Shrecknet account and browser-session
-   token.
+2. A Foundry GM opens **Game Settings → Configure Settings → Shrecknet Connection**, enters the Shrecknet API URL and setup key, validates it, selects one Shrecknet World, and selects **Enable connection**. The settings panel records an online/offline status and permits later connection checks.
+3. The module never persists the setup key in a Foundry World setting. After the binding is saved, it does not expose another key-entry form.
+4. Each player opens the Shrecknet-logo control, signs in with their own Shrecknet account and browser-session token, and can use **Sign out** to clear that session.
 
 See [Foundry Integration API](../API/FOUNDRY_INTEGRATION_API.md) for the full
 credential lifecycle and endpoint contracts.
@@ -79,7 +77,7 @@ Before tagging, test against a clean Foundry V14 installation:
 
 - the module appears under **Manage Modules**;
 - the module can be enabled in an empty Foundry World;
-- the GM can configure a Shrecknet URL, setup key, and World;
+- the GM can configure a Shrecknet URL, setup key, and World from Game Settings and see an online status;
 - an individual player can sign in and browse authorized data;
 - a browser request succeeds from `https://foundry.shrecknet.club`;
 - the release ZIP contains `module.json`, `scripts/main.js`, templates, styles,

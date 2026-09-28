@@ -97,6 +97,56 @@ one-token warm-up request. Warm-ups run concurrently while respecting the
 global and per-provider concurrency settings. The provider is marked warmed
 only after all its configured model warm-ups succeed.
 
+## Adaptive tail-latency hedging
+
+A submitted job is a logical job with one primary attempt and, at most, one
+hedge. shreckLLM keeps a bounded rolling latency window grouped by provider,
+model, `metadata.usage_tag`, estimated input-size band, and structured/text
+mode. Once the cohort has `chat_job_hedge_min_samples` successes, a configured
+alternate route for that exact usage tag starts only after the configured
+percentile (with `chat_job_hedge_min_delay_seconds` as a floor). The original
+attempt remains live; the first successful provider response wins and pending
+attempts are marked `superseded` locally.
+
+`GET /chat/jobs/{job_id}` now includes `attempts`, `winner_attempt_id`,
+`hedge_after_ms`, and `latency_cohort`, allowing a frontend to distinguish a
+normal primary wait from an active hedge. Running attempts report a live
+`elapsed_ms` value. A representative active response is:
+
+```json
+{
+  "job_id": "…",
+  "status": "running",
+  "hedge_after_ms": 8400,
+  "winner_attempt_id": null,
+  "attempts": [
+    {"kind": "primary", "status": "running", "elapsed_ms": 11200},
+    {"kind": "hedge", "status": "running", "elapsed_ms": 2800}
+  ]
+}
+```
+
+Every model receives an automatic same-provider/same-model hedge using the
+120-second `chat_job_default_hedge_timeout_seconds` default. For OpenRouter it
+is an independent latency-routed upstream attempt. Configure an explicit route
+only when a reviewed alternate model should be used:
+
+```json
+{
+  "chat_job_hedge_routes": {
+    "character_agent.embodiment.character_incorporation": {
+      "provider_id": "openrouter",
+      "model": "deepseek/deepseek-v4.1-flash",
+      "timeout_seconds": 90
+    }
+  }
+}
+```
+
+Every attempt is also wrapped by `request_timeout_seconds`, and the logical job
+has the final `chat_job_orphan_timeout_seconds` watchdog. These watchdogs are
+resource-safety boundaries, not a normal-response SLA.
+
 ## Strict v1 rule
 `POST /chat` requires explicit `provider_id`.
 
@@ -112,11 +162,11 @@ Unsupported provider behavior:
 - HTTP `400`
 - error detail: `unsupported provider_id: <value>`
 
-For `provider_id: "openrouter"`, shreckLLM automatically appends `:nitro` to
-the selected model when issuing the provider request. The configured model and
-the response's `requested_model`/`resolved_model` remain the catalog model ID.
-The suffix is idempotent and requests throughput-based endpoint sorting; it
-does not guarantee TPS.
+For `provider_id: "openrouter"`, shreckLLM preserves the configured model ID
+and sends `provider: {"sort": "latency", "allow_fallbacks": true}` in the
+provider body. This favors lower time-to-first-token for short structured calls
+while retaining OpenRouter provider failover; it is a routing preference, not a
+latency guarantee.
 
 Every OpenRouter request also sends the request's boolean `reasoning` choice in
 the provider's native `reasoning` body field. Enabled requests send

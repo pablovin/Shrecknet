@@ -4,6 +4,7 @@ import asyncio
 import logging
 import random
 import time
+from collections import defaultdict, deque
 from datetime import datetime, timezone
 from uuid import uuid4
 from typing import Any
@@ -120,6 +121,11 @@ class ChatService:
         self._job_events: dict[str, asyncio.Event] = {}
         self._job_worker_tasks: list[asyncio.Task[Any]] = []
         self._job_gc_task: asyncio.Task[Any] | None = None
+        # A bounded in-memory rolling window is intentional: latency is a
+        # routing signal, not durable product data. A cold process simply does
+        # not hedge until it has observed enough completed work again.
+        self._latency_samples: dict[str, deque[float]] = defaultdict(lambda: deque(maxlen=200))
+        self._hedges_in_flight = 0
 
     def _init_provider_limiters(self) -> None:
         self._provider_semaphores = {}
@@ -1099,6 +1105,10 @@ class ChatService:
             "error": None,
             "request": request,
             "response": None,
+            "attempts": [],
+            "winner_attempt_id": None,
+            "hedge_after_ms": None,
+            "latency_cohort": None,
         }
         self._job_events[job_id] = asyncio.Event()
         self._job_queue.put_nowait(job_id)
@@ -1115,6 +1125,13 @@ class ChatService:
         row = self._chat_jobs.get(job_id)
         if row is None:
             return None
+        now = time.time()
+        attempts = []
+        for raw_attempt in row.get("attempts") or []:
+            attempt = dict(raw_attempt)
+            if attempt.get("status") == "running" and isinstance(attempt.get("started_at"), (int, float)):
+                attempt["elapsed_ms"] = round((now - float(attempt["started_at"])) * 1000, 2)
+            attempts.append(attempt)
         return ChatJobStatusResponse(
             job_id=job_id,
             status=str(row.get("status") or "unknown"),
@@ -1129,6 +1146,10 @@ class ChatService:
             queue_wait_ms=row.get("queue_wait_ms"),
             execution_ms=row.get("execution_ms"),
             error=row.get("error"),
+            winner_attempt_id=row.get("winner_attempt_id"),
+            hedge_after_ms=row.get("hedge_after_ms"),
+            latency_cohort=row.get("latency_cohort"),
+            attempts=attempts,
         )
 
     async def wait_for_chat_job_result(self, job_id: str, *, timeout_s: float) -> ChatResponse:
@@ -1174,7 +1195,10 @@ class ChatService:
                 self._job_queue.qsize(),
             )
             try:
-                response = await self._execute_chat_request(request)
+                response = await asyncio.wait_for(
+                    self._execute_logical_chat_job(job_id, request),
+                    timeout=max(0.01, self._runtime.chat_job_orphan_timeout_seconds),
+                )
                 row["response"] = response
                 row["status"] = "succeeded"
                 row["provider_id"] = response.provider_id
@@ -1215,6 +1239,153 @@ class ChatService:
             for job_id in expired:
                 self._chat_jobs.pop(job_id, None)
                 self._job_events.pop(job_id, None)
+
+    @staticmethod
+    def _input_band(request: ChatRequest) -> str:
+        chars = sum(len(message.content) for message in request.messages)
+        estimated_tokens = max(1, chars // 4)
+        if estimated_tokens <= 2_000:
+            return "0-2k"
+        if estimated_tokens <= 6_000:
+            return "2k-6k"
+        return "6k+"
+
+    def _latency_cohort_key(self, request: ChatRequest) -> str:
+        usage_tag = str((request.metadata or {}).get("usage_tag") or "unclassified")
+        structured = "structured" if request.response_format else "text"
+        return "|".join((request.provider_id, request.model, usage_tag, self._input_band(request), structured))
+
+    @staticmethod
+    def _percentile(values: list[float], percentile: float) -> float:
+        ordered = sorted(values)
+        index = min(len(ordered) - 1, max(0, int((len(ordered) - 1) * percentile)))
+        return ordered[index]
+
+    def _hedge_route_for(self, request: ChatRequest) -> tuple[ChatRequest, float, dict[str, Any], float] | None:
+        if not self._runtime.chat_job_hedging_enabled or request.use_conversation_memory:
+            return None
+        usage_tag = str((request.metadata or {}).get("usage_tag") or "")
+        route = self._runtime.chat_job_hedge_routes.get(usage_tag)
+        if self._hedges_in_flight >= self._runtime.chat_job_hedge_max_in_flight:
+            return None
+        samples = self._latency_samples[self._latency_cohort_key(request)]
+        if len(samples) < self._runtime.chat_job_hedge_min_samples:
+            return None
+        percentile_ms = self._percentile(list(samples), self._runtime.chat_job_hedge_percentile)
+        hedge_after_s = max(self._runtime.chat_job_hedge_min_delay_seconds, percentile_ms / 1000)
+        # An unconfigured tag hedges through the same provider/model. It is
+        # still an independent OpenRouter request and may take a different
+        # latency-selected upstream route. Explicit routes may choose a model.
+        hedge_request = request.model_copy(update={
+            "provider_id": route.provider_id if route else request.provider_id,
+            "model": route.model if route else request.model,
+        })
+        hedge_timeout_s = (route.timeout_seconds if route else None) or self._runtime.chat_job_default_hedge_timeout_seconds
+        telemetry = {
+            "key": self._latency_cohort_key(request),
+            "sample_count": len(samples),
+            "percentile": self._runtime.chat_job_hedge_percentile,
+            "percentile_ms": percentile_ms,
+            "hedge_after_ms": round(hedge_after_s * 1000, 2),
+            "route": "configured" if route else "automatic_same_model",
+            "hedge_timeout_ms": round(hedge_timeout_s * 1000, 2),
+        }
+        return hedge_request, hedge_after_s, telemetry, hedge_timeout_s
+
+    async def _run_logical_attempt(
+        self, job_id: str, kind: str, request: ChatRequest, timeout_s: float
+    ) -> ChatResponse:
+        row = self._chat_jobs[job_id]
+        attempt_id = f"{kind}-{uuid4()}"
+        attempt = {
+            "attempt_id": attempt_id, "kind": kind, "status": "running",
+            "provider_id": request.provider_id, "requested_model": request.model,
+            "resolved_model": None, "started_at": time.time(), "finished_at": None,
+            "elapsed_ms": None, "error": None,
+        }
+        row["attempts"].append(attempt)
+        try:
+            response = await asyncio.wait_for(self._execute_chat_request(request), timeout=max(0.01, timeout_s))
+            attempt["status"] = "succeeded"
+            attempt["resolved_model"] = response.resolved_model
+            if kind == "primary":
+                self._latency_samples[self._latency_cohort_key(request)].append(
+                    (time.time() - float(attempt["started_at"])) * 1000
+                )
+            return response
+        except asyncio.TimeoutError as exc:
+            attempt["status"] = "failed"
+            attempt["error"] = f"attempt watchdog exceeded {timeout_s:.1f}s"
+            raise ProviderTimeoutError(attempt["error"]) from exc
+        except asyncio.CancelledError:
+            attempt["status"] = "superseded"
+            raise
+        except Exception as exc:
+            attempt["status"] = "failed"
+            attempt["error"] = str(exc)
+            raise
+        finally:
+            attempt["finished_at"] = time.time()
+            attempt["elapsed_ms"] = round((float(attempt["finished_at"]) - float(attempt["started_at"])) * 1000, 2)
+
+    async def _execute_logical_chat_job(self, job_id: str, request: ChatRequest) -> ChatResponse:
+        """Run primary and, for a learned tail outlier, one alternate route.
+
+        The winner is the first successfully returned provider response. Strict
+        JSON Schema is still requested from the provider; Shrecknet remains the
+        owner of the domain-specific Pydantic and semantic validation.
+        """
+        row = self._chat_jobs[job_id]
+        plan = self._hedge_route_for(request)
+        if plan is not None:
+            hedge_request, hedge_after_s, telemetry, hedge_timeout_s = plan
+            row["hedge_after_ms"] = telemetry["hedge_after_ms"]
+            row["latency_cohort"] = telemetry
+        primary = asyncio.create_task(
+            self._run_logical_attempt(job_id, "primary", request, self._runtime.request_timeout_seconds)
+        )
+        tasks: dict[asyncio.Task[ChatResponse], str] = {primary: "primary"}
+        hedge_started = False
+        try:
+            while tasks:
+                timeout = hedge_after_s if plan is not None and not hedge_started else None
+                done, _ = await asyncio.wait(tasks, timeout=timeout, return_when=asyncio.FIRST_COMPLETED)
+                if not done:
+                    hedge_started = True
+                    self._hedges_in_flight += 1
+                    hedge = asyncio.create_task(self._run_logical_attempt(job_id, "hedge", plan[0], plan[3]))
+                    tasks[hedge] = "hedge"
+                    continue
+                for task in done:
+                    kind = tasks.pop(task, None)
+                    try:
+                        response = task.result()
+                    except Exception as exc:
+                        row["error"] = str(exc)
+                        if not tasks and plan is not None and not hedge_started:
+                            hedge_started = True
+                            self._hedges_in_flight += 1
+                            hedge = asyncio.create_task(
+                                self._run_logical_attempt(job_id, "hedge", plan[0], plan[3])
+                            )
+                            tasks[hedge] = "hedge"
+                        continue
+                    winner = next(item for item in reversed(row["attempts"]) if item["status"] == "succeeded" and item["kind"] == kind)
+                    row["winner_attempt_id"] = winner["attempt_id"]
+                    for pending in tasks:
+                        pending.cancel()
+                    if tasks:
+                        await asyncio.gather(*tasks, return_exceptions=True)
+                    return response
+            raise DependencyUnavailableError(row.get("error") or "all chat attempts failed")
+        finally:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
+            if hedge_started:
+                self._hedges_in_flight = max(0, self._hedges_in_flight - 1)
 
     async def _execute_chat_request(self, request: ChatRequest) -> ChatResponse:
         start = time.monotonic()

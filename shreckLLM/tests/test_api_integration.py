@@ -8,7 +8,7 @@ from httpx import ASGITransport, AsyncClient
 
 from app.api import router
 from app.config import Settings
-from app.config_store import ProviderDefaults, ProviderState
+from app.config_store import ChatHedgeRoute, ProviderDefaults, ProviderState
 from app.errors import ProviderOverloadedError
 from app.schemas import ChatRequest, ChatResponse, ChatUsage
 from app.service import ChatService
@@ -1060,3 +1060,78 @@ async def test_prewarm_runs_all_configured_models_in_parallel(monkeypatch, tmp_p
     finally:
         release.set()
         await service.aclose()
+
+
+@pytest.mark.asyncio
+async def test_chat_job_hedge_wins_and_exposes_attempt_status(monkeypatch, tmp_path) -> None:
+    import app.config_store as config_store
+
+    settings = Settings(redis_url="redis://localhost:6379/15", data_dir=str(tmp_path), ollama_prewarm_on_startup=False)
+    config_store._cache = None
+    monkeypatch.setattr(config_store, "get_settings", lambda: settings)
+    service = ChatService(settings)
+    service._runtime.chat_job_hedge_min_samples = 1
+    service._runtime.chat_job_hedge_min_delay_seconds = 0.01
+    service._runtime.chat_job_orphan_timeout_seconds = 1.0
+    service._runtime.chat_job_hedge_routes = {
+        "character_agent.embodiment.character_incorporation": ChatHedgeRoute(
+            provider_id="ollama", model="fast-model", timeout_seconds=0.5
+        )
+    }
+    monkeypatch.setattr(service, "_effective_provider_active", lambda *_args: (True, None))
+    request = ChatRequest(
+        provider_id="ollama", model="slow-model", messages=[{"role": "user", "content": "hello"}],
+        metadata={"usage_tag": "character_agent.embodiment.character_incorporation"},
+    )
+    service._latency_samples[service._latency_cohort_key(request)].append(1.0)
+
+    async def fake_execute(candidate: ChatRequest) -> ChatResponse:
+        if candidate.model == "slow-model":
+            await asyncio.Event().wait()
+        return ChatResponse(
+            text="hedge", provider_id=candidate.provider_id, requested_model=candidate.model,
+            resolved_model=candidate.model, provider_request_id=None, model=candidate.model,
+            usage=ChatUsage(prompt_tokens=1, completion_tokens=1, total_tokens=2), latency_ms=1,
+            conversation_id=None, memory_applied=False, metadata=candidate.metadata,
+        )
+
+    monkeypatch.setattr(service, "_execute_chat_request", fake_execute)
+    try:
+        job = await service.submit_chat_job(request)
+        result = await service.wait_for_chat_job_result(job.job_id, timeout_s=1.0)
+        status = service.get_chat_job_status(job.job_id)
+        assert result.text == "hedge"
+        assert status is not None
+        assert status.winner_attempt_id is not None
+        assert status.hedge_after_ms == 10.0
+        assert [(item.kind, item.status) for item in status.attempts] == [
+            ("primary", "superseded"), ("hedge", "succeeded")
+        ]
+    finally:
+        await service.aclose()
+
+
+def test_unconfigured_usage_tag_uses_same_model_automatic_hedge(tmp_path, monkeypatch) -> None:
+    import app.config_store as config_store
+
+    settings = Settings(redis_url="redis://localhost:6379/15", data_dir=str(tmp_path), ollama_prewarm_on_startup=False)
+    config_store._cache = None
+    monkeypatch.setattr(config_store, "get_settings", lambda: settings)
+    service = ChatService(settings)
+    try:
+        service._runtime.chat_job_hedge_min_samples = 1
+        request = ChatRequest(
+            provider_id="ollama", model="gemma3:4b", messages=[{"role": "user", "content": "hello"}],
+            metadata={"usage_tag": "character_agent.embodiment.scene_interpretation"},
+        )
+        service._latency_samples[service._latency_cohort_key(request)].append(20.0)
+        plan = service._hedge_route_for(request)
+        assert plan is not None
+        hedge_request, _delay_s, telemetry, timeout_s = plan
+        assert hedge_request.provider_id == request.provider_id
+        assert hedge_request.model == request.model
+        assert timeout_s == 120.0
+        assert telemetry["route"] == "automatic_same_model"
+    finally:
+        # No background workers were started by this direct policy test.
+        service._chat_jobs.clear()

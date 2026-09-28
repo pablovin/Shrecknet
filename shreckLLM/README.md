@@ -78,9 +78,12 @@ Response includes execution details:
 - Initial model list: empty; the provider remains unavailable until its API key
   and at least one model have both been validated
 - Provider requests use a five-minute timeout.
-- Every chat execution automatically appends OpenRouter's `:nitro` model suffix
-  (idempotently) to request throughput-based endpoint sorting. This improves
-  routing preference but does not guarantee a fixed TPS or reserve capacity.
+- Every OpenRouter chat sends `provider.sort: "latency"` with provider
+  fallbacks enabled. Model IDs remain unchanged; this is a routing preference,
+  not a latency guarantee.
+- Every model gets an automatic independent same-model hedge (120-second
+  attempt timeout by default) when its own latency cohort crosses the tail
+  percentile; optional configuration can select an approved alternate model.
 
 When running with Docker compose, shreckLLM is exposed on `http://localhost:8111`.
 The Docker Compose stack does not start Ollama; the local `ollama` provider defaults to an Ollama API already running on the host at `http://host.docker.internal:11434`.

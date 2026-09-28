@@ -52,14 +52,6 @@ def _rate_limit_error(provider_id: str, exc: Exception) -> ProviderOverloadedErr
     )
 
 
-def _openrouter_nitro_model(model: str) -> str:
-    """Apply OpenRouter throughput routing once to the selected model."""
-    cleaned = (model or "").strip()
-    if cleaned.casefold().endswith(":nitro"):
-        return f"{cleaned[:-6]}:nitro"
-    return f"{cleaned}:nitro"
-
-
 class OpenAIClient:
     provider_id = "openai"
     def __init__(
@@ -220,11 +212,8 @@ class OpenAIClient:
         if self._client is None:
             raise DependencyUnavailableError(f"{self.provider_id} is not configured")
 
-        execution_model = (
-            _openrouter_nitro_model(model)
-            if self.provider_id == "openrouter"
-            else model
-        )
+        # OpenRouter receives latency-first provider routing in extra_body.
+        execution_model = model
         kwargs: dict[str, Any] = {
             "model": execution_model,
             "messages": [m.model_dump() for m in messages],
@@ -242,7 +231,10 @@ class OpenAIClient:
             reasoning_config: dict[str, Any] = {"enabled": bool(reasoning)}
             if reasoning:
                 reasoning_config["effort"] = "high"
-            kwargs["extra_body"] = {"reasoning": reasoning_config}
+            kwargs["extra_body"] = {
+                "reasoning": reasoning_config,
+                "provider": {"sort": "latency", "allow_fallbacks": True},
+            }
         elif self.provider_id == "deepinfra":
             # DeepInfra calls its normal, non-surcharged service tier "default".
             # Keep this explicit so requests never opt into priority inference.

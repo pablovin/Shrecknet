@@ -10,7 +10,9 @@ def _client(monkeypatch, tmp_path):
     monkeypatch.setenv("SHRECKWORLD_MEDIA_ROOT", str(tmp_path / "media"))
     monkeypatch.setenv("SHRECKWORLD_ADMIN_TOKEN", "test-token")
     monkeypatch.setenv("SHRECKWORLD_CELERY_TASK_ALWAYS_EAGER", "true")
+    from app.db.session import create_schema
     from app.main import app
+    create_schema()
     return TestClient(app), {"X-ShreckWorld-Admin-Token": "test-token"}
 
 

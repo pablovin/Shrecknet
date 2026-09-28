@@ -75,7 +75,7 @@ def update_shreckworld(shreckworld_id: str, payload: ShreckWorldUpdate, session:
     return world
 
 
-@admin_router.delete("/{shreckworld_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(require_admin)])
+@admin_router.delete("/{shreckworld_id}", status_code=status.HTTP_204_NO_CONTENT, response_model=None, dependencies=[Depends(require_admin)])
 def delete_shreckworld(shreckworld_id: str, session: Session = Depends(get_db)) -> None:
     world = _world_or_404(session, shreckworld_id)
     root = get_settings().media_root / "shreckworlds" / world.id
@@ -128,7 +128,7 @@ def update_library_item(shreckworld_id: str, item_id: str, payload: ShreckWorldL
     return item
 
 
-@admin_router.delete("/{shreckworld_id}/library-items/{item_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(require_admin)])
+@admin_router.delete("/{shreckworld_id}/library-items/{item_id}", status_code=status.HTTP_204_NO_CONTENT, response_model=None, dependencies=[Depends(require_admin)])
 def delete_library_item(shreckworld_id: str, item_id: str, session: Session = Depends(get_db)) -> None:
     item = _item_or_404(session, shreckworld_id, item_id)
     root = Path(item.pdf_path).parent

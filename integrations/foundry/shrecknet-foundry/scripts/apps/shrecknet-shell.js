@@ -1,6 +1,6 @@
 import { ShrecknetClient, ShrecknetApiError } from "../api/shrecknet-client.js";
 import { NavigationHistory } from "../navigation/navigation-history.js";
-import { getConnectionState, saveConnectionState } from "../settings/connection-settings.js";
+import { getConnectionState, saveConnectionState, setConnectionStatus } from "../settings/connection-settings.js";
 
 const { ApplicationV2, HandlebarsApplicationMixin } = foundry.applications.api;
 
@@ -14,6 +14,7 @@ export class ShrecknetShell extends HandlebarsApplicationMixin(ApplicationV2) {
     actions: {
       testConnection: ShrecknetShell._testConnection,
       saveConnection: ShrecknetShell._saveConnection,
+      checkConnection: ShrecknetShell._checkConnection,
       signIn: ShrecknetShell._signIn,
       signOut: ShrecknetShell._signOut,
       openHome: ShrecknetShell._openHome,
@@ -83,7 +84,8 @@ export class ShrecknetShell extends HandlebarsApplicationMixin(ApplicationV2) {
       app.client.setServer(data.get("serverUrl"));
       await app.client.validateIntegration(data.get("integrationKey"));
       app.worldChoices = await app.client.listConnectableWorlds(data.get("integrationKey"));
-      app.notice = "Connected to Shrecknet. Select a World and save.";
+      app.connection = { ...app.connection, serverUrl: app.client.serverUrl };
+      app.notice = "Connected to Shrecknet. Select a World and enable the connection.";
       await app.render();
     } catch (error) { await app._handleError(error); }
   }
@@ -96,12 +98,30 @@ export class ShrecknetShell extends HandlebarsApplicationMixin(ApplicationV2) {
     const selected = app.worldChoices.find((world) => world.id === worldId);
     if (!selected) return app._handleError(new Error("Test the connection and select a Shrecknet World first."));
     try {
-      await saveConnectionState({ serverUrl: ShrecknetClient.normalizeServerUrl(data.get("serverUrl")), worldId, worldName: selected.name });
+      app.client.setServer(data.get("serverUrl"));
+      await app.client.ping();
+      await saveConnectionState({ serverUrl: app.client.serverUrl, worldId, worldName: selected.name });
       app.connection = getConnectionState();
       app.client.setServer(app.connection.serverUrl);
       app.notice = "Shrecknet connection saved.";
       await app.render();
     } catch (error) { await app._handleError(error); }
+  }
+
+  static async _checkConnection() {
+    const app = this;
+    if (!game.user.isGM) return app._handleError(new Error("Only a Foundry GM can test Shrecknet."));
+    try {
+      await app.client.ping();
+      await setConnectionStatus("online");
+      app.connection = getConnectionState();
+      app.notice = "Shrecknet is online.";
+      await app.render();
+    } catch (error) {
+      await setConnectionStatus("offline");
+      app.connection = getConnectionState();
+      await app._handleError(error);
+    }
   }
 
   static async _signIn(event) {

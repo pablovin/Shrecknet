@@ -1,0 +1,35 @@
+<div class="shrecknet-shell shrecknet-connection-settings">
+  <header class="shrecknet-header"><strong>SHRECKNET CONNECTION</strong></header>
+  {{#if notice}}<p class="shrecknet-notice">{{notice}}</p>{{/if}}
+
+  {{#if configured}}
+    <section class="shrecknet-form">
+      <h2>Connected</h2>
+      <dl class="shrecknet-connection-status">
+        <dt>Server</dt><dd>{{connection.serverUrl}}</dd>
+        <dt>Shrecknet World</dt><dd>{{connection.worldName}}</dd>
+        <dt>Status</dt><dd class="status-{{connection.status}}">{{connection.status}}</dd>
+        {{#if connection.checkedAt}}<dt>Last checked</dt><dd>{{connection.checkedAt}}</dd>{{/if}}
+      </dl>
+      <button type="button" data-action="checkConnection">Check connection</button>
+      <p class="shrecknet-help">The service key was used only during setup and is not stored in Foundry. To change this binding, create a new Foundry World or use a future administrative reset workflow.</p>
+    </section>
+  {{else}}
+    <form class="shrecknet-form">
+      <h2>Initial setup</h2>
+      <p class="shrecknet-help">This is the only place a service key can be entered. It is discarded after the connection is saved.</p>
+      <label>Server URL <input name="serverUrl" type="url" value="{{connection.serverUrl}}" required></label>
+      <label>Service Key <input name="integrationKey" type="password" autocomplete="off" required></label>
+      <button type="button" data-action="testConnection">Test connection</button>
+      {{#if worldChoices.length}}
+        <label>Shrecknet World
+          <select name="worldId" required>
+            <option value="">Select a World</option>
+            {{#each worldChoices}}<option value="{{id}}">{{name}}</option>{{/each}}
+          </select>
+        </label>
+        <button type="button" data-action="saveConnection">Enable connection</button>
+      {{/if}}
+    </form>
+  {{/if}}
+</div>

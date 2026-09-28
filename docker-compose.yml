@@ -486,6 +486,8 @@ services:
         condition: service_healthy
       shreckllm:
         condition: service_healthy
+      shreckworld_api:
+        condition: service_healthy
     command:
       - /bin/sh
       - -c
@@ -501,7 +503,10 @@ services:
         echo "   • External Ollama API expected on host: http://localhost:11434"
         echo "   • Neo4j browser: http://localhost:7475"
         echo "   • Neo4j bolt:    bolt://localhost:7688"
-        echo "✅ Shrecknet + shreckLLM stack is running"
+        echo "🌍 ShreckWorld is ready at http://localhost:8121"
+        echo "   • API health:    http://localhost:8121/health"
+        echo "   • Swagger docs:  http://localhost:8121/docs"
+        echo "✅ Shrecknet + shreckLLM + ShreckWorld stack is running"
     restart: "no"
 
 volumes:

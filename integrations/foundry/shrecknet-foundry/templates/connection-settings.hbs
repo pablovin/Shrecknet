@@ -4,16 +4,29 @@
 
   {{#if configured}}
     <section class="shrecknet-form">
-      <h2>Connected</h2>
+      <h2>Connection active</h2>
       <dl class="shrecknet-connection-status">
         <dt>Server</dt><dd>{{connection.serverUrl}}</dd>
         <dt>Shrecknet World</dt><dd>{{connection.worldName}}</dd>
         <dt>Status</dt><dd class="status-{{connection.status}}">{{connection.status}}</dd>
         {{#if connection.checkedAt}}<dt>Last checked</dt><dd>{{connection.checkedAt}}</dd>{{/if}}
       </dl>
-      <button type="button" data-action="checkConnection">Check connection</button>
-      <p class="shrecknet-help">The service key was used only during setup and is not stored in Foundry. To change this binding, create a new Foundry World or use a future administrative reset workflow.</p>
+      <button type="button" data-action="checkConnection">Check connection now</button>
+      <p class="shrecknet-help">A connected GM refreshes this status automatically every five minutes. The service key was used only during setup and is not stored in Foundry.</p>
     </section>
+  {{else if hasWorldChoices}}
+    <form class="shrecknet-form">
+      <h2>Choose Shrecknet World</h2>
+      <p class="shrecknet-help">The connection is verified. Select the World this Foundry World will browse, then enable it.</p>
+      <input name="serverUrl" type="hidden" value="{{connection.serverUrl}}">
+      <label>Shrecknet World
+        <select name="worldId" required>
+          <option value="">Select a World</option>
+          {{#each worldChoices}}<option value="{{id}}">{{name}}</option>{{/each}}
+        </select>
+      </label>
+      <button type="button" data-action="saveConnection">Enable connection</button>
+    </form>
   {{else}}
     <form class="shrecknet-form">
       <h2>Initial setup</h2>
@@ -21,15 +34,7 @@
       <label>Server URL <input name="serverUrl" type="url" value="{{connection.serverUrl}}" required></label>
       <label>Service Key <input name="integrationKey" type="password" autocomplete="off" required></label>
       <button type="button" data-action="testConnection">Test connection</button>
-      {{#if worldChoices.length}}
-        <label>Shrecknet World
-          <select name="worldId" required>
-            <option value="">Select a World</option>
-            {{#each worldChoices}}<option value="{{id}}">{{name}}</option>{{/each}}
-          </select>
-        </label>
-        <button type="button" data-action="saveConnection">Enable connection</button>
-      {{/if}}
+      {{#if connectionTested}}<p class="shrecknet-help">No Worlds were returned for this service key. Update its allowed World IDs in Shrecknet and test again.</p>{{/if}}
     </form>
   {{/if}}
 </div>

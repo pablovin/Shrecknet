@@ -8,8 +8,9 @@ Shrecknet backend repository.
 
 1. Create an integration key on Shrecknet with `POST /config/integrations/foundry`.
 2. As a Foundry GM, open **Game Settings → Configure Settings → Shrecknet Connection**.
-3. Enter the Shrecknet URL and key, test the connection, choose a Shrecknet World, and select **Enable connection**. The panel shows its online/offline status and lets a GM check it again.
-4. Each Foundry player opens the Shrecknet-logo control and signs in with their own Shrecknet account. Their sign-in is remembered for that browser session; use **Sign out** in the Shrecknet window to end it.
+3. Enter the Shrecknet API base URL (for the production proxy, `https://shrecknet.club/backend_api`) and key, then test the connection. The verified state presents the permitted Shrecknet Worlds directly in this panel. Select one and choose **Enable connection**.
+4. The enabled connection is checked immediately and every five minutes while a GM is connected; the panel shows its shared online/offline status and permits a manual check.
+5. Each Foundry player opens the Shrecknet-logo control and signs in with their own Shrecknet account. Their sign-in is remembered for that browser session; use **Sign out** in the Shrecknet window to end it.
 
 The setup key is deliberately never written to a Foundry setting. It is used
 only to validate the server and list Worlds during the GM setup action. User

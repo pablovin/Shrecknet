@@ -1,6 +1,9 @@
 import { ShrecknetShell } from "./apps/shrecknet-shell.js";
 import { ShrecknetConnectionSettings } from "./apps/shrecknet-connection-settings.js";
 import { registerConnectionSettings } from "./settings/connection-settings.js";
+import { startConnectionMonitor } from "./settings/connection-monitor.js";
+
+Hooks.once("ready", () => startConnectionMonitor());
 
 Hooks.once("init", () => {
   registerConnectionSettings(ShrecknetConnectionSettings);

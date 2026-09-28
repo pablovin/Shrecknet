@@ -42,6 +42,7 @@ jobs:
           node --check "$MODULE_DIR/scripts/api/shrecknet-client.js"
           node --check "$MODULE_DIR/scripts/apps/shrecknet-shell.js"
           node --check "$MODULE_DIR/scripts/apps/shrecknet-connection-settings.js"
+          node --check "$MODULE_DIR/scripts/settings/connection-monitor.js"
           node -e "JSON.parse(require('node:fs').readFileSync(process.argv[1], 'utf8'))" "$MODULE_DIR/themes/terminal/theme.json"
           echo "version=$version" >> "$GITHUB_OUTPUT"
 

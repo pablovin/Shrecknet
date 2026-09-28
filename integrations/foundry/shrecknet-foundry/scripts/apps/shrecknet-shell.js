@@ -1,6 +1,7 @@
 import { ShrecknetClient, ShrecknetApiError } from "../api/shrecknet-client.js";
 import { NavigationHistory } from "../navigation/navigation-history.js";
-import { getConnectionState, saveConnectionState, setConnectionStatus } from "../settings/connection-settings.js";
+import { getConnectionState, saveConnectionState } from "../settings/connection-settings.js";
+import { checkConfiguredConnection } from "../settings/connection-monitor.js";
 
 const { ApplicationV2, HandlebarsApplicationMixin } = foundry.applications.api;
 
@@ -35,6 +36,7 @@ export class ShrecknetShell extends HandlebarsApplicationMixin(ApplicationV2) {
     this.client = new ShrecknetClient({ serverUrl: this.connection.serverUrl });
     this.session = this.client.loadSession();
     this.worldChoices = [];
+    this.connectionTested = false;
     this.notice = null;
     this.resource = { kind: "home", title: this.connection.worldName || "Shrecknet" };
     this.history = new NavigationHistory(this.resource);
@@ -48,6 +50,8 @@ export class ShrecknetShell extends HandlebarsApplicationMixin(ApplicationV2) {
       user: this.session?.user,
       connection: this.connection,
       worldChoices: this.worldChoices,
+      hasWorldChoices: this.worldChoices.length > 0,
+      connectionTested: this.connectionTested,
       resource: this.resource,
       notice: this.notice,
       canGoBack: this.history.canGoBack,
@@ -84,8 +88,11 @@ export class ShrecknetShell extends HandlebarsApplicationMixin(ApplicationV2) {
       app.client.setServer(data.get("serverUrl"));
       await app.client.validateIntegration(data.get("integrationKey"));
       app.worldChoices = await app.client.listConnectableWorlds(data.get("integrationKey"));
+      app.connectionTested = true;
       app.connection = { ...app.connection, serverUrl: app.client.serverUrl };
-      app.notice = "Connected to Shrecknet. Select a World and enable the connection.";
+      app.notice = app.worldChoices.length
+        ? "Connection verified. Select a Shrecknet World and enable the connection."
+        : "Connection verified, but this service key cannot access any Shrecknet Worlds. Ask a Shrecknet administrator to add a World to the integration key.";
       await app.render();
     } catch (error) { await app._handleError(error); }
   }
@@ -112,13 +119,11 @@ export class ShrecknetShell extends HandlebarsApplicationMixin(ApplicationV2) {
     const app = this;
     if (!game.user.isGM) return app._handleError(new Error("Only a Foundry GM can test Shrecknet."));
     try {
-      await app.client.ping();
-      await setConnectionStatus("online");
+      await checkConfiguredConnection();
       app.connection = getConnectionState();
       app.notice = "Shrecknet is online.";
       await app.render();
     } catch (error) {
-      await setConnectionStatus("offline");
       app.connection = getConnectionState();
       await app._handleError(error);
     }

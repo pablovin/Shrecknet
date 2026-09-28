@@ -15,6 +15,7 @@ scene-associated revision.
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import logging
 import time
@@ -198,10 +199,12 @@ class EmbodyAgent:
     async def _chat_structured(
         self, *, schema: type[BaseModel], stage: str, usage_tag: str,
         model: Any, messages: list[dict[str, str]], max_tokens: int | None,
+        output_binding: dict[str, Any] | None = None,
     ) -> str:
         """Request provider-native JSON Schema, with an explicit compatibility fallback."""
         response_format = strict_json_schema(
-            schema.__name__.removeprefix("_"), schema.model_json_schema(),
+            schema.__name__.removeprefix("_"),
+            _model_output_schema(schema, output_binding),
         )
         try:
             return await self._llm.chat(
@@ -292,6 +295,7 @@ class EmbodyAgent:
                     {"role": "user", "content": self._json(payload)},
                 ],
                 max_tokens=max_tokens,
+                output_binding=output_binding,
             )
         except LLMProviderUnavailableError as exc:
             self._debug_call(stage=stage, prompt=prompt, payload=payload, error=str(exc),
@@ -354,21 +358,22 @@ class EmbodyAgent:
                     repaired = await repair_json_text(
                         llm_client=self._llm.llm, model=model,
                         malformed_text=str(raw),
-                        schema_hint=json.dumps(schema.model_json_schema()),
+                        schema_hint=json.dumps(_model_output_schema(schema, output_binding)),
                         response_format=strict_json_schema(
-                            schema.__name__.removeprefix("_"), schema.model_json_schema(),
+                            schema.__name__.removeprefix("_"),
+                            _model_output_schema(schema, output_binding),
                         ),
                         usage_tag=f"{usage_tag}.repair",
                     )
                     result = self._parse(schema, repaired, f"repaired {stage}", output_binding)
                     self._debug_call(stage=stage, prompt="JSON repair", payload={
-                        "malformed_text": str(raw), "required_output_schema": schema.model_json_schema(),
+                        "malformed_text": str(raw), "required_output_schema": _model_output_schema(schema, output_binding),
                     }, raw_output=repaired, parsed_output=result, model=model,
                         usage_tag=f"{usage_tag}.repair", call_kind="json_repair")
                     repair_succeeded = True
                 except Exception as repaired_exc:
                     self._debug_call(stage=stage, prompt="JSON repair", payload={
-                        "malformed_text": str(raw), "required_output_schema": schema.model_json_schema(),
+                        "malformed_text": str(raw), "required_output_schema": _model_output_schema(schema, output_binding),
                     }, error=str(repaired_exc), model=model, usage_tag=f"{usage_tag}.repair",
                         call_kind="json_repair")
                     if isinstance(repaired_exc, EmbodimentGenerationError):
@@ -381,7 +386,7 @@ class EmbodyAgent:
                     "original_input": payload,
                     "rejected_output": str(raw),
                     "validation_errors": self._schema_errors(last_error),
-                    "required_output_schema": schema.model_json_schema(),
+                    "required_output_schema": _model_output_schema(schema, output_binding),
                     "instruction": (
                         "Return one complete replacement object that satisfies the "
                         "required output schema. Do not invent evidence. Preserve "
@@ -400,6 +405,7 @@ class EmbodyAgent:
                             {"role": "user", "content": self._json(correction_payload)},
                         ],
                         max_tokens=max_tokens,
+                        output_binding=output_binding,
                     )
                     result = self._parse(schema, str(corrected_raw), f"schema corrected {stage}", output_binding)
                     self._debug_call(stage=stage, prompt=prompt, payload=correction_payload,
@@ -484,6 +490,7 @@ class EmbodyAgent:
                             {"role": "user", "content": self._json(correction_payload)},
                         ],
                         max_tokens=max_tokens,
+                        output_binding=output_binding,
                     )
                 except Exception as correction_exc:
                     self._debug_call(stage=stage, prompt=prompt, payload=correction_payload,
@@ -923,6 +930,42 @@ class EmbodyAgent:
         )
 
 
+def _model_output_schema(
+    schema: type[BaseModel], output_binding: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Return the contract the model actually writes, not the persistence shape.
+
+    Impacts select a supplied profile target by one-based ``target_index``.  The
+    backend resolves that transient index to the persisted ``target_id`` before
+    Pydantic validates the persistence schema.  Reusing the persistence schema
+    here made native structured output contradict the prompt.
+    """
+    result = copy.deepcopy(schema.model_json_schema())
+    if schema is not SceneEnrichmentsOutput:
+        return result
+    definitions = result.get("$defs", {})
+    impact = definitions.get("CharacterImpactOutput")
+    enrichment = definitions.get("SceneEnrichmentOutput")
+    if not isinstance(impact, dict) or not isinstance(enrichment, dict):
+        return result
+    properties = impact.get("properties")
+    required = impact.get("required")
+    if not isinstance(properties, dict) or not isinstance(required, list):
+        return result
+    properties.pop("target_id", None)
+    properties["target_index"] = {"type": "integer", "minimum": 1}
+    impact["required"] = [field for field in required if field != "target_id"] + ["target_index"]
+    targets = (output_binding or {}).get("profile_targets") or {}
+    target_count = max(len(targets.get("aspects", [])), len(targets.get("goals", [])))
+    impacts = enrichment.get("properties", {}).get("impacts")
+    if isinstance(impacts, dict):
+        if target_count == 0:
+            impacts["maxItems"] = 0
+        else:
+            properties["target_index"]["maximum"] = target_count
+    return result
+
+
 def _normalize_position_bound_collection(
     parsed: Any, output_binding: dict[str, Any] | None,
 ) -> Any:
@@ -1017,15 +1060,24 @@ def _bind_scene_local_references(
                     nested["episode_id"] = canonical_evidence_id
                     nested["available_after_scene_id"] = scene_id
 
-    for impact in item.get("impacts", []):
-        if not isinstance(impact, dict) or profile_targets is None:
-            continue
-        target_index = impact.pop("target_index", None)
-        impact.pop("target_id", None)
-        target_kind = "goals" if impact.get("impact_type") == "goal_change" else "aspects"
-        targets = profile_targets.get(target_kind, [])
-        if isinstance(target_index, int) and 1 <= target_index <= len(targets):
+    if "impacts" in item:
+        resolved_impacts = []
+        for impact in item["impacts"]:
+            if not isinstance(impact, dict) or profile_targets is None:
+                continue
+            target_index = impact.pop("target_index", None)
+            impact.pop("target_id", None)
+            target_kind = "goals" if impact.get("impact_type") == "goal_change" else "aspects"
+            targets = profile_targets.get(target_kind, [])
+            if not isinstance(target_index, int) or not 1 <= target_index <= len(targets):
+                logger.info(
+                    "embodiment_unresolvable_impact_dropped scene_id=%s impact_type=%s target_index=%s",
+                    scene_id, impact.get("impact_type"), target_index,
+                )
+                continue
             impact["target_id"] = targets[target_index - 1]
+            resolved_impacts.append(impact)
+        item["impacts"] = resolved_impacts
 
 
 def _bind_authored_evidence_references(value: dict[str, Any], evidence_id: str) -> None:

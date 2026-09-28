@@ -82,7 +82,8 @@ Every scene result MUST contain all six arrays in the output object. Use [] when
 an array has no grounded item; never omit an array.
 
 For an impact, use target_index: the one-based position of its target in the
-matching current_profile array. The backend resolves that index to its stable ID. Goal impacts
+matching current_profile array. The backend resolves that index to its stable ID.
+When both current_profile arrays are empty, impacts MUST be []. Goal impacts
 allow advanced or threatened. Aspect impacts allow created, reinforced, or
 invalidated.
 

@@ -73,9 +73,14 @@ incorporation, both parallel branches, JSON repair, and schema/semantic
 corrections. The explicit prompt contract remains present for model readability.
 If a configured provider explicitly rejects structured output, the call is
 retried once without it under a `structured_fallback` usage tag; backend binding,
-validation, and correction policy still apply. The backend binds positional
-references, validates the outputs, merges source-local evidence in chronological
-order, and performs trait/profile reduction deterministically. A source with `n`
+validation, and correction policy still apply. The strict model schema is a
+separate boundary contract from persistence: an impact writes only a
+one-based `target_index`, never a storage `target_id`. The backend resolves it
+against the supplied current profile. When no valid target exists, or the model
+returns an out-of-range optional impact, that impact is discarded as a no-op;
+it cannot fail or mutate the source. The backend binds positional references,
+validates the outputs, merges source-local evidence in chronological order, and
+performs trait/profile reduction deterministically. A source with `n`
 analysis chunks therefore normally makes `3n` LLM calls, excluding the authored
 baseline and repair/correction calls. No LLM receives a cumulative evidence
 ledger, raw scenes after incorporation, or a source-level profile-update payload.

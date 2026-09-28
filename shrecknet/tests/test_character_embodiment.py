@@ -726,6 +726,41 @@ async def test_every_embodiment_generation_call_requests_strict_json_schema():
         assert response_format["type"] == "json_schema"
         assert response_format["json_schema"]["strict"] is True
         assert response_format["json_schema"]["schema"]["type"] == "object"
+    trait_format = next(
+        call["response_format"] for call in llm.calls
+        if call["usage_tag"].endswith(".scene_interpretation")
+    )
+    definitions = trait_format["json_schema"]["schema"]["$defs"]
+    impact = definitions["CharacterImpactOutput"]
+    assert "target_index" in impact["properties"]
+    assert "target_id" not in impact["properties"]
+    assert definitions["SceneEnrichmentOutput"]["properties"]["impacts"]["maxItems"] == 0
+
+
+@pytest.mark.asyncio
+async def test_unresolvable_optional_impacts_are_dropped_without_retry():
+    class UnresolvableImpactLLM(BatchLLM):
+        async def chat(self, **kwargs):
+            raw = await super().chat(**kwargs)
+            if kwargs["usage_tag"].endswith(".scene_interpretation"):
+                payload = json.loads(raw)
+                payload["scene_enrichments"][0]["impacts"] = [{
+                    "impact_type": "goal_change", "target_index": 1,
+                    "direction": "advanced", "magnitude": 50,
+                    "description": "Claims progress toward an absent goal.",
+                }]
+                return json.dumps(payload)
+            return raw
+
+    llm = UnresolvableImpactLLM()
+    analysis = await _agent(llm).analyze(
+        source_entity_id="source", source_entity_alias="Source",
+        canonical_identity=_canonical(), current_trait_profile=TraitProfile(),
+        current_aspects=[], current_goals=[], scenes=scenes(1),
+    )
+
+    assert analysis.perspectives[0].impacts == []
+    assert not any("schema_correction" in call["usage_tag"] for call in llm.calls)
 
 
 @pytest.mark.asyncio

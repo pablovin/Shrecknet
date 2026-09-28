@@ -507,13 +507,40 @@ async def _generate(*, draft_id: str, revision: int, job_id: int) -> dict:
                             source_alias=f"{group['source_alias']} (chunk {chunk_index + 1})",
                         )
                         agents.append(chunk_agent)
-                        return await chunk_agent.analyze(
-                            source_entity_id=group["source_id"], source_entity_alias=group["source_alias"],
-                            canonical_identity=inputs["canonical_identity"], current_trait_profile=current_profile,
-                            current_aspects=current_aspects, current_goals=current_goals,
-                            scenes=[SceneInput(**scene) for scene in chunk_scenes],
-                            on_stage=progress.callback(bi),
-                        )
+                        try:
+                            return await chunk_agent.analyze(
+                                source_entity_id=group["source_id"], source_entity_alias=group["source_alias"],
+                                canonical_identity=inputs["canonical_identity"], current_trait_profile=current_profile,
+                                current_aspects=current_aspects, current_goals=current_goals,
+                                scenes=[SceneInput(**scene) for scene in chunk_scenes],
+                                on_stage=progress.callback(bi),
+                            )
+                        except EmbodimentGenerationError as exc:
+                            if len(chunk_scenes) == 1 or exc.category not in {"schema", "semantic", "semantic_reference"}:
+                                raise
+                            logging.getLogger(__name__).warning(
+                                "embodiment_chunk_recovery source_id=%s source_alias=%s "
+                                "chunk_index=%d scene_count=%d failed_stage=%s category=%s",
+                                group["source_id"], group["source_alias"], chunk_index,
+                                len(chunk_scenes), exc.stage, exc.category,
+                            )
+                            recovered = []
+                            for scene_index, scene in enumerate(chunk_scenes):
+                                recovery_agent = make_agent(
+                                    source_index=bi,
+                                    source_alias=(
+                                        f"{group['source_alias']} (chunk {chunk_index + 1}, "
+                                        f"scene {scene_index + 1} recovery)"
+                                    ),
+                                )
+                                agents.append(recovery_agent)
+                                recovered.append(await recovery_agent.analyze(
+                                    source_entity_id=group["source_id"], source_entity_alias=group["source_alias"],
+                                    canonical_identity=inputs["canonical_identity"], current_trait_profile=current_profile,
+                                    current_aspects=current_aspects, current_goals=current_goals,
+                                    scenes=[SceneInput(**scene)], on_stage=progress.callback(bi),
+                                ))
+                            return _merge_chunk_analyses(recovered)
 
                 scene_chunks = _scene_analysis_chunks(group)
                 if len(scene_chunks) == 1 and checkpoints:

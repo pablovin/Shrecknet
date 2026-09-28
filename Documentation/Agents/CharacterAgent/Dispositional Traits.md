@@ -232,6 +232,13 @@ Each analysis chunk runs two normal LLM stages:
 2. Enrichment: immediate emotions, beliefs, impacts, all grounded scene-local
    trait candidates, and bounded aspect/goal candidate signals for each scene.
 
+If a multi-scene chunk exhausts its JSON or semantic correction because its model
+output is malformed or incomplete, the worker automatically retries only that
+chunk as one-scene analysis calls and merges the recovered results. Provider and
+transport failures, and failures from an already one-scene call, still fail the
+draft. This bounded fallback preserves the normal batch cost for healthy output
+and prevents one omitted scene result from discarding a long embodiment run.
+
 After all chunks have completed, the worker merges their structured results and
 runs one source-level profile proposal. Deterministic acceptance and separate
 STEADINESS computation then create exactly one identity revision associated with

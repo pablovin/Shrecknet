@@ -11,6 +11,7 @@ async def repair_json_text(
     model: str | LLMModelTarget,
     malformed_text: str,
     schema_hint: str | None = None,
+    response_format: dict | None = None,
     usage_tag: str = "agents.json_repair",
 ) -> str:
     return await repair_invalid_json(
@@ -18,5 +19,6 @@ async def repair_json_text(
         model=model,
         malformed_text=malformed_text,
         schema_hint=schema_hint,
+        response_format=response_format,
         usage_tag=usage_tag,
     )

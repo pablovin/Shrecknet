@@ -67,7 +67,13 @@ concurrently against the same source-start identity. A chunk first makes one
 incorporation call with its objective scenes. It then makes two calls in parallel,
 both receiving only the bounded interpretations from that chunk: trait extraction
 produces emotions, beliefs, impacts, and trait candidates; identity-signal
-extraction produces durable aspect and goal signals. The backend binds positional
+extraction produces durable aspect and goal signals. Every embodiment generation request sends its Pydantic JSON Schema through
+ShreckLLM as a native strict `response_format` request: authored baseline,
+incorporation, both parallel branches, JSON repair, and schema/semantic
+corrections. The explicit prompt contract remains present for model readability.
+If a configured provider explicitly rejects structured output, the call is
+retried once without it under a `structured_fallback` usage tag; backend binding,
+validation, and correction policy still apply. The backend binds positional
 references, validates the outputs, merges source-local evidence in chronological
 order, and performs trait/profile reduction deterministically. A source with `n`
 analysis chunks therefore normally makes `3n` LLM calls, excluding the authored
@@ -125,11 +131,15 @@ checkpoints, graph records, and API responses retain the canonical IDs; this is 
 internal LLM boundary contract only.
 
 A wrong, duplicated, or reordered identifier in an otherwise complete scene list
-cannot mis-associate content: it is overwritten during binding. A list with the
-wrong number of entries, an out-of-range positional target, or another semantic
-violation enters the bounded semantic-correction policy. Correction payloads
-include the expected and actual scene-position sequences. Checkpoint payloads
-must pass the same schema and grounding checks before reuse.
+cannot mis-associate content: it is overwritten during binding. When a provider
+omits only the outer collection wrapper, the backend safely restores it for a raw
+array, or for one bare object when the input contains exactly one scene. This
+lossless normalization avoids a correction call; it never guesses a missing
+multi-scene result. A list with the wrong number of entries, an out-of-range
+positional target, or another semantic violation enters the bounded
+semantic-correction policy. Correction payloads include the expected and actual
+scene-position sequences. Checkpoint payloads must pass the same schema and
+grounding checks before reuse.
 
 ## Local embodiment debug artifacts
 

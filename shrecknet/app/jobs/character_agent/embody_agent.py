@@ -23,6 +23,10 @@ from typing import Any, Callable
 from pydantic import BaseModel, ValidationError
 
 from app.integrations.llm.json_repair import repair_json_text
+from app.integrations.llm.structured_output import (
+    strict_json_schema,
+    structured_output_is_unsupported,
+)
 from app.integrations.llm.shreckllm_client import LLMProviderUnavailableError
 from app.jobs.character_agent.embodiment_debug_artifacts import EmbodimentDebugArtifacts
 from app.jobs.character_agent.embody_agent_prompts import (
@@ -191,6 +195,41 @@ class EmbodyAgent:
                 **values,
             )
 
+    async def _chat_structured(
+        self, *, schema: type[BaseModel], stage: str, usage_tag: str,
+        model: Any, messages: list[dict[str, str]], max_tokens: int | None,
+    ) -> str:
+        """Request provider-native JSON Schema, with an explicit compatibility fallback."""
+        response_format = strict_json_schema(
+            schema.__name__.removeprefix("_"), schema.model_json_schema(),
+        )
+        try:
+            return await self._llm.chat(
+                stage=stage,
+                usage_tag=usage_tag,
+                model=model,
+                messages=messages,
+                temperature=0.0,
+                max_tokens=max_tokens,
+                response_format=response_format,
+            )
+        except Exception as exc:
+            if not structured_output_is_unsupported(exc):
+                raise
+            fallback_tag = f"{usage_tag}.structured_fallback"
+            logger.warning(
+                "embodiment_structured_output_unsupported stage=%s model=%s error=%s",
+                stage, str(getattr(model, "name", model)), exc,
+            )
+            return await self._llm.chat(
+                stage=stage,
+                usage_tag=fallback_tag,
+                model=model,
+                messages=messages,
+                temperature=0.0,
+                max_tokens=max_tokens,
+            )
+
     @staticmethod
     def _parse(
         schema: type[BaseModel], raw: str, stage: str,
@@ -198,6 +237,7 @@ class EmbodyAgent:
     ) -> BaseModel:
         try:
             parsed = parse_json_deterministically(raw)
+            parsed = _normalize_position_bound_collection(parsed, output_binding)
             if output_binding:
                 _bind_model_output_references(parsed, **output_binding)
         except (TypeError, ValueError) as exc:
@@ -242,7 +282,8 @@ class EmbodyAgent:
         output_binding: dict[str, Any] | None = None,
     ) -> BaseModel:
         try:
-            raw = await self._llm.chat(
+            raw = await self._chat_structured(
+                schema=schema,
                 stage=stage,
                 usage_tag=usage_tag,
                 model=model,
@@ -250,7 +291,6 @@ class EmbodyAgent:
                     {"role": "system", "content": prompt},
                     {"role": "user", "content": self._json(payload)},
                 ],
-                temperature=0.0,
                 max_tokens=max_tokens,
             )
         except LLMProviderUnavailableError as exc:
@@ -315,6 +355,9 @@ class EmbodyAgent:
                         llm_client=self._llm.llm, model=model,
                         malformed_text=str(raw),
                         schema_hint=json.dumps(schema.model_json_schema()),
+                        response_format=strict_json_schema(
+                            schema.__name__.removeprefix("_"), schema.model_json_schema(),
+                        ),
                         usage_tag=f"{usage_tag}.repair",
                     )
                     result = self._parse(schema, repaired, f"repaired {stage}", output_binding)
@@ -347,7 +390,8 @@ class EmbodyAgent:
                     ),
                 }
                 try:
-                    corrected_raw = await self._llm.chat(
+                    corrected_raw = await self._chat_structured(
+                        schema=schema,
                         stage=stage,
                         usage_tag=f"{usage_tag}.schema_correction",
                         model=model,
@@ -355,7 +399,6 @@ class EmbodyAgent:
                             {"role": "system", "content": prompt},
                             {"role": "user", "content": self._json(correction_payload)},
                         ],
-                        temperature=0.0,
                         max_tokens=max_tokens,
                     )
                     result = self._parse(schema, str(corrected_raw), f"schema corrected {stage}", output_binding)
@@ -431,7 +474,8 @@ class EmbodyAgent:
                     ),
                 }
                 try:
-                    corrected_raw = await self._llm.chat(
+                    corrected_raw = await self._chat_structured(
+                        schema=schema,
                         stage=stage,
                         usage_tag=f"{usage_tag}.semantic_correction",
                         model=model,
@@ -439,7 +483,6 @@ class EmbodyAgent:
                             {"role": "system", "content": prompt},
                             {"role": "user", "content": self._json(correction_payload)},
                         ],
-                        temperature=0.0,
                         max_tokens=max_tokens,
                     )
                 except Exception as correction_exc:
@@ -878,6 +921,41 @@ class EmbodyAgent:
             current_goals=current_goals,
             on_stage=on_stage,
         )
+
+
+def _normalize_position_bound_collection(
+    parsed: Any, output_binding: dict[str, Any] | None,
+) -> Any:
+    """Accept an unambiguous missing outer collection wrapper.
+
+    Some providers return the sole item instead of the documented container for a
+    one-scene request.  The backend already owns position binding, so wrapping it
+    is lossless.  A bare object is never inferred for multi-scene work; that
+    remains a schema error and follows the bounded correction/recovery path.
+    """
+    if not output_binding:
+        return parsed
+    collection = output_binding.get("collection")
+    scene_ids = output_binding.get("scene_ids")
+    if not isinstance(collection, str) or not isinstance(scene_ids, list):
+        return parsed
+    if isinstance(parsed, list):
+        logger.info(
+            "embodiment_output_wrapper_normalized collection=%s item_count=%d shape=list",
+            collection, len(parsed),
+        )
+        return {collection: parsed}
+    if (
+        len(scene_ids) == 1
+        and isinstance(parsed, dict)
+        and collection not in parsed
+    ):
+        logger.info(
+            "embodiment_output_wrapper_normalized collection=%s item_count=1 shape=object",
+            collection,
+        )
+        return {collection: [parsed]}
+    return parsed
 
 
 def _bind_model_output_references(

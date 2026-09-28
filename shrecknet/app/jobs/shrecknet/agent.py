@@ -6,6 +6,7 @@ from typing import Any
 
 from app.core.config_store import LLMModelTarget
 from app.integrations.llm.shreckllm_client import ShreckLLMClient
+from app.integrations.llm.structured_output import chat_with_structured_output
 from app.jobs.shrecknet.prompts import REPAIR_INVALID_JSON_PROMPT
 
 
@@ -15,6 +16,7 @@ async def repair_invalid_json(
     model: str | LLMModelTarget,
     malformed_text: str,
     schema_hint: str | None = None,
+    response_format: dict | None = None,
     usage_tag: str = "agents.json_repair",
 ) -> str:
     schema_hint_block = ""
@@ -25,12 +27,23 @@ async def repair_invalid_json(
         schema_hint_block=schema_hint_block,
         malformed_json=str(malformed_text or ""),
     )
-    response = await llm_client.chat(
-        model=model,
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.0,
-        usage_tag=usage_tag,
-    )
+    messages = [{"role": "user", "content": prompt}]
+    if response_format is not None:
+        response = await chat_with_structured_output(
+            llm_client=llm_client,
+            model=model,
+            messages=messages,
+            temperature=0.0,
+            usage_tag=usage_tag,
+            response_format=response_format,
+        )
+    else:
+        response = await llm_client.chat(
+            model=model,
+            messages=messages,
+            temperature=0.0,
+            usage_tag=usage_tag,
+        )
     return response if isinstance(response, str) else str(response)
 
 

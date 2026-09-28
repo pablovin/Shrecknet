@@ -652,6 +652,8 @@ class BatchLLM:
         self.calls.append(kwargs)
         payload=json.loads(kwargs['messages'][1]['content'])
         stage=kwargs['usage_tag'].rsplit('.',1)[-1]
+        if stage == 'structured_fallback':
+            stage = kwargs['usage_tag'].rsplit('.', 2)[-2]
         if stage=='baseline':
             return json.dumps({'trait_evidence':[]})
         if stage=='character_incorporation':
@@ -683,6 +685,66 @@ class BatchLLM:
                 justification='Repeated voluntary choices.',addresses_contradictions='No opposing behavior.')],
                 'aspect_updates':[],'goal_updates':[]})
         raise AssertionError(stage)
+
+
+@pytest.mark.asyncio
+async def test_single_scene_unwrapped_perspective_is_normalized_without_retry():
+    class UnwrappedPerspectiveLLM(BatchLLM):
+        async def chat(self, **kwargs):
+            raw = await super().chat(**kwargs)
+            if kwargs["usage_tag"].endswith(".character_incorporation"):
+                return json.dumps(json.loads(raw)["perspectives"][0])
+            return raw
+
+    llm = UnwrappedPerspectiveLLM()
+    analysis = await _agent(llm).analyze(
+        source_entity_id="source", source_entity_alias="Source",
+        canonical_identity=_canonical(), current_trait_profile=TraitProfile(),
+        current_aspects=[], current_goals=[], scenes=scenes(1),
+    )
+
+    assert analysis.perspectives[0].scene_id == "s0"
+    assert not any("schema_correction" in call["usage_tag"] for call in llm.calls)
+
+
+@pytest.mark.asyncio
+async def test_every_embodiment_generation_call_requests_strict_json_schema():
+    llm = BatchLLM()
+    agent = _agent(llm)
+    await agent.initialize(canonical_identity=_canonical(), entity_id="e1")
+    await agent.run(
+        source_entity_id="source", source_entity_alias="Source",
+        canonical_identity=_canonical(), current_trait_profile=TraitProfile(),
+        current_aspects=[], current_goals=[], scenes=scenes(1), batch_id="source",
+    )
+
+    assert {call["usage_tag"].rsplit(".", 1)[-1] for call in llm.calls} == {
+        "baseline", "character_incorporation", "scene_interpretation", "identity_signals",
+    }
+    for call in llm.calls:
+        response_format = call["response_format"]
+        assert response_format["type"] == "json_schema"
+        assert response_format["json_schema"]["strict"] is True
+        assert response_format["json_schema"]["schema"]["type"] == "object"
+
+
+@pytest.mark.asyncio
+async def test_embodiment_falls_back_only_when_native_schema_is_unsupported():
+    class UnsupportedStructuredOutputLLM(BatchLLM):
+        async def chat(self, **kwargs):
+            if kwargs.get("response_format") is not None:
+                raise RuntimeError("response_format json_schema is unsupported")
+            return await super().chat(**kwargs)
+
+    llm = UnsupportedStructuredOutputLLM()
+    analysis = await _agent(llm).analyze(
+        source_entity_id="source", source_entity_alias="Source",
+        canonical_identity=_canonical(), current_trait_profile=TraitProfile(),
+        current_aspects=[], current_goals=[], scenes=scenes(1),
+    )
+
+    assert analysis.perspectives
+    assert all(call["usage_tag"].endswith(".structured_fallback") for call in llm.calls)
 
 
 class PrefixedAvailabilityLLM(BatchLLM):
@@ -919,6 +981,8 @@ async def test_schema_correction_serializes_model_validator_errors():
 
     correction = next(call for call in llm.calls if call['usage_tag'].endswith('.schema_correction'))
     payload = json.loads(correction['messages'][1]['content'])
+    assert correction['response_format']['type'] == 'json_schema'
+    assert correction['response_format']['json_schema']['strict'] is True
     assert payload['validation_errors'][0]['ctx']['error'] == 'direction and expression_z disagree'
     assert analysis.observations.trait_evidence[0].direction == 'high'
 

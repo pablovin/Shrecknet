@@ -223,6 +223,12 @@ A duplicate agent/scene pair returns `409`. Missing resources return `404`.
 Invalid scope, scene eligibility, assigned impact targets, or causal milestones
 return `400`; request-contract violations return `422`. Deleting a perspective,
 agent, or projected canonical scene cascades perspective-owned children.
+Embodiment-draft acceptance validates every generated timeline scene against the
+same scope rule used during generation: the scene must relate directly to the
+embodied entity or contain a milestone that relates to it. Stale denormalized `Scene.instance_id` metadata does not invalidate an otherwise
+eligible graph relationship; a scene removed or detached after generation does. A scene that was removed or detached after generation returns `409` and
+requires regeneration.
+
 Embodiment-draft acceptance preserves goals and aspects referenced by historical
 timeline impacts even when they are absent from the final profile. Their
 `PURSUES` or `HAS_ASPECT` assignment is stored with `status=inactive`; final
@@ -351,9 +357,13 @@ Name/story/image derivation continues to use canonical entity information.
 
 ### Source-boundary bundles
 
-Scenes retain `DERIVED_FROM` source grouping and deterministic time order. All
-scenes from a source are one atomic bundle; the backend never splits, truncates,
-or drops them for a count or local input budget. Each bundle runs three normal
+Scenes retain `DERIVED_FROM` source grouping and deterministic time order. A scene
+directly related to the embodied entity, or related through one of its milestones,
+is eligible when its ontology matches the entity's ontology. That graph
+relationship is authoritative when stale denormalized `Scene.instance_id` metadata
+disagrees, so imported or moved source material is not silently omitted. All scenes
+from a source are one atomic bundle; the backend never splits, truncates, or drops
+them for a count or local input budget. Each bundle runs three normal
 calls: perspectives, perspective-only per-scene enrichment (including scene-local
 trait candidates and durable aspect/goal signals), and one cumulative profile
 proposal. Only incorporation receives the raw scene; enrichment receives the
@@ -376,6 +386,9 @@ Outputs contain per-scene provenance and availability cutoffs. Invalid reference
 missing/duplicate/reordered scene outputs, or unsupported updates fail validation
 and may use the configured bounded correction. Explicit future citations are
 rejected; shared-context prompts cannot guarantee absence of uncited hindsight.
+For compatibility with providers that emit an otherwise exact bare scene UUID, the
+generation boundary canonicalizes it to `scene:<uuid>` before validation. Foreign
+or future UUIDs remain rejected after canonicalization.
 
 Checkpoints include the preceding profile/evidence, complete source inputs,
 versions, and model targets. Architect uses the same accumulation/timeline rules

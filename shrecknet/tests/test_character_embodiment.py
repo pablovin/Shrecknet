@@ -1,6 +1,7 @@
 import asyncio
 import json
 from datetime import datetime, timezone
+from inspect import getsource
 from uuid import uuid4
 
 import pytest
@@ -131,6 +132,22 @@ async def test_concurrent_progress_writes_are_serialized(monkeypatch):
     assert bundles[0]["done_steps"] == [1, 2, 3]
     assert bundles[1]["status"] == "failed"
     assert [item[1] for item in payloads] == sorted(item[1] for item in payloads)
+
+
+def test_source_scene_analysis_is_partitioned_into_five_scene_chunks():
+    from app.tasks.character_embodiment import _scene_analysis_chunks
+
+    chunks = _scene_analysis_chunks({
+        "scenes": [
+            {"scene_id": f"s{index}", "name": "Scene", "description": "", "created_at": str(index)}
+            for index in range(12)
+        ],
+    })
+
+    assert [len(chunk) for chunk in chunks] == [5, 5, 2]
+    assert [scene["scene_id"] for chunk in chunks for scene in chunk] == [
+        f"s{index}" for index in range(12)
+    ]
 
 
 def test_profile_update_enforces_per_bundle_operation_caps():
@@ -390,6 +407,13 @@ def test_timeline_contract_preserves_revision_subtitles():
     assert timeline.revisions[0].subtitle == "The Doll"
 
 
+def test_embodiment_scene_query_does_not_reject_stale_instance_metadata():
+    source = getsource(CharacterEmbodimentService.load_embodiment_input)
+
+    assert "coalesce(scene.instance_id" not in source
+    assert "coalesce(scene.ontology_id, $ontology_id) = $ontology_id" in source
+
+
 class _TimelineResult:
     def __init__(self, row=None):
         self.row = row
@@ -457,6 +481,13 @@ async def test_timeline_persists_removed_impact_target_as_inactive_assignment():
                 "impacts": [{
                     "impact_type": "aspect_change",
                     "target_id": "aspect:trusting",
+                    "target": {
+                        "id": "aspect:trusting",
+                        "type": "aspect",
+                        "name": "Trusting",
+                        "description": "Tends to trust others.",
+                        "instance_name": "Mara",
+                    },
                     "direction": "invalidated",
                     "magnitude": 90,
                     "description": "Her trusting nature was undermined.",
@@ -498,6 +529,27 @@ async def test_timeline_persists_removed_impact_target_as_inactive_assignment():
         params for query, params in tx.calls if "RETURN target.id AS target_id" in query
     )
     assert impact["target_id"] == "persisted-aspect"
+    assert impact["props"] == {
+        "id": impact["props"]["id"],
+        "ontology_id": 1,
+        "impact_type": "aspect_change",
+        "direction": "invalidated",
+        "magnitude": 90,
+        "description": "Her trusting nature was undermined.",
+        "created_at": "2026-07-29T00:00:00+00:00",
+        "updated_at": "2026-07-29T00:00:00+00:00",
+    }
+
+    # Exercise every graph ``props`` payload emitted by a fully hydrated
+    # timeline. Neo4j permits scalar values and lists of scalars, never maps
+    # or nested lists. Display references are API/draft payload only.
+    for _, params in tx.calls:
+        if "props" not in params:
+            continue
+        for value in params["props"].values():
+            assert not isinstance(value, dict)
+            if isinstance(value, list):
+                assert all(not isinstance(item, (dict, list)) for item in value)
 
 
 def test_graph_temporal_values_are_json_safe_in_nested_evidence():
@@ -572,6 +624,8 @@ class BatchLLM:
                 for s in payload['scenes']]}
             if self.corruption=='future':
                 result['perspectives'][0]['evidence_ids']=['scene:'+payload['scenes'][-1]['scene_id']]
+            if self.corruption == 'prior':
+                result['perspectives'][1]['evidence_ids'] = ['scene:s0', 'scene:s1']
             return json.dumps(result)
         if stage=='scene_interpretation':
             return json.dumps({'scene_enrichments':[dict(scene_id=p['scene_id'],evidence_ids=['scene:'+p['scene_id']],
@@ -601,6 +655,43 @@ class PrefixedAvailabilityLLM(BatchLLM):
                     candidate['available_after_scene_id'] = (
                         f"scene:{enrichment['scene_id']}"
                     )
+            return json.dumps(payload)
+        return raw
+
+
+class BarePerspectiveEvidenceLLM(BatchLLM):
+    """Returns the provider's equivalent bare UUID evidence reference."""
+
+    async def chat(self, **kwargs):
+        raw = await super().chat(**kwargs)
+        if kwargs['usage_tag'].endswith('.character_incorporation'):
+            payload = json.loads(raw)
+            for perspective in payload['perspectives']:
+                perspective['evidence_ids'] = [
+                    evidence_id.removeprefix('scene:')
+                    for evidence_id in perspective['evidence_ids']
+                ]
+            return json.dumps(payload)
+        return raw
+
+
+class DirectionMismatchCorrectionLLM(BatchLLM):
+    """Reproduces a Pydantic model-validator error returned by DeepSeek."""
+
+    async def chat(self, **kwargs):
+        usage_tag = kwargs['usage_tag']
+        if usage_tag.endswith('.scene_interpretation.schema_correction'):
+            self.calls.append(kwargs)
+            rejected = json.loads(json.loads(kwargs['messages'][1]['content'])['rejected_output'])
+            rejected['scene_enrichments'][0]['trait_candidates'][0]['direction'] = 'high'
+            return json.dumps(rejected)
+
+        raw = await super().chat(**kwargs)
+        if usage_tag.endswith('.scene_interpretation'):
+            payload = json.loads(raw)
+            candidate = payload['scene_enrichments'][0]['trait_candidates'][0]
+            candidate['direction'] = 'midpoint'
+            candidate['expression_z'] = 0.1
             return json.dumps(payload)
         return raw
 
@@ -725,6 +816,86 @@ async def test_prefixed_availability_cutoff_is_normalized_before_grounding():
 
 
 @pytest.mark.asyncio
+async def test_bare_perspective_scene_evidence_is_normalized_before_grounding():
+    result = await _agent(BarePerspectiveEvidenceLLM()).run(
+        source_entity_id='source', source_entity_alias='Source',
+        canonical_identity=_canonical(), current_trait_profile=TraitProfile(),
+        current_aspects=[], current_goals=[], scenes=scenes(3), batch_id='bundle',
+    )
+
+    assert [item.evidence_ids for item in result.perspectives] == [
+        ['scene:s0'], ['scene:s1'], ['scene:s2'],
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('corruption', ['future', 'prior'])
+async def test_nonlocal_perspective_scene_evidence_is_rejected(corruption):
+    agent = _agent(BatchLLM(corruption), semantic_correction_attempts=0)
+
+    with pytest.raises(EmbodimentGenerationError, match='only its own scene evidence'):
+        await agent.analyze(
+            source_entity_id='source', source_entity_alias='Source',
+            canonical_identity=_canonical(), current_trait_profile=TraitProfile(),
+            current_aspects=[], current_goals=[], scenes=scenes(3),
+        )
+
+
+class PriorSceneNestedEvidenceLLM(BatchLLM):
+    async def chat(self, **kwargs):
+        raw = await super().chat(**kwargs)
+        if kwargs['usage_tag'].endswith('.scene_interpretation'):
+            payload = json.loads(raw)
+            payload['scene_enrichments'][1]['trait_candidates'][0]['evidence_ids'] = [
+                'scene:s0', 'scene:s1',
+            ]
+            return json.dumps(payload)
+        return raw
+
+
+@pytest.mark.asyncio
+async def test_nonlocal_nested_scene_evidence_is_rejected():
+    agent = _agent(PriorSceneNestedEvidenceLLM(), semantic_correction_attempts=0)
+
+    with pytest.raises(EmbodimentGenerationError, match='only its own scene evidence'):
+        await agent.analyze(
+            source_entity_id='source', source_entity_alias='Source',
+            canonical_identity=_canonical(), current_trait_profile=TraitProfile(),
+            current_aspects=[], current_goals=[], scenes=scenes(3),
+        )
+
+
+@pytest.mark.asyncio
+async def test_schema_correction_serializes_model_validator_errors():
+    llm = DirectionMismatchCorrectionLLM()
+
+    analysis = await _agent(llm).analyze(
+        source_entity_id='source', source_entity_alias='Source',
+        canonical_identity=_canonical(), current_trait_profile=TraitProfile(),
+        current_aspects=[], current_goals=[], scenes=scenes(2),
+    )
+
+    correction = next(call for call in llm.calls if call['usage_tag'].endswith('.schema_correction'))
+    payload = json.loads(correction['messages'][1]['content'])
+    assert payload['validation_errors'][0]['ctx']['error'] == 'direction and expression_z disagree'
+    assert analysis.observations.trait_evidence[0].direction == 'high'
+
+
+@pytest.mark.asyncio
+async def test_embodiment_uses_provider_default_completion_limits():
+    llm = BatchLLM()
+
+    await _agent(llm).run(
+        source_entity_id='source', source_entity_alias='Source',
+        canonical_identity=_canonical(), current_trait_profile=TraitProfile(),
+        current_aspects=[], current_goals=[], scenes=scenes(3), batch_id='bundle',
+    )
+
+    assert llm.calls
+    assert all(call['max_tokens'] is None for call in llm.calls)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize('corruption',['future','unknown'])
 @pytest.mark.skip(reason="trait candidates are now emitted by enrichment, not cross-scene observations")
 async def test_batch_rejects_future_grounding_and_unknown_trait_evidence(corruption):
@@ -757,6 +928,9 @@ def test_complete_prompt_contracts():
     assert 'trait_proposals' in PROFILE_UPDATE_PROMPT
     assert 'update_intensity' in ENRICHMENT_PROMPT
     assert 'evidence_ids' in PERSPECTIVE_PROMPT and 'evidence_ids' in ENRICHMENT_PROMPT
+    assert 'exactly its own supplied scene' in PERSPECTIVE_PROMPT
+    assert 'must cite exactly the current scene' in ENRICHMENT_PROMPT
+    assert 'Direction must agree with expression_z' in ENRICHMENT_PROMPT
     for field in ('emotions', 'beliefs', 'impacts', 'trait_candidates', 'aspect_signals', 'goal_signals'):
         assert f'"{field}"' in ENRICHMENT_PROMPT
     assert 'MUST contain all six arrays' in ENRICHMENT_PROMPT
@@ -929,6 +1103,8 @@ async def test_timeline_persists_evidence_with_single_eligible_numeric_change():
     assert json.loads(revisions[1]['trait_profile'])['dispositional_traits']['integrity']['z'] == .1
     perspective=next(params for q,params in tx.calls if 'CREATE (perspective:ScenePerspective)' in q)
     assert perspective['revision_id']==revisions[0]['id']
+    assert 'scene' not in perspective['props']
+    assert 'evidence' not in perspective['props']
     assert any('SET agent.trait_profile=' in q for q,_ in tx.calls)
 
 

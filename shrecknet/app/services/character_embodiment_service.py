@@ -406,21 +406,21 @@ class CharacterEmbodimentService:
         )
 
         # 5. Scenes involving this entity, grouped by DERIVED_FROM source.
-        # A character can be linked directly or through a milestone.  Legacy
-        # scenes may not carry denormalized scope fields, but when those fields
-        # are present they must match the already validated entity scope.
+        # A character can be linked directly or through a milestone.  The graph
+        # relationship is authoritative for character eligibility: a Scene's
+        # denormalized ``instance_id`` can be stale after importing or moving
+        # source material, as long as its ontology still matches.
         scene_rows = await self.graph.run(
             """
             MATCH (scene:Scene)
-            WHERE EXISTS {
+            WHERE (EXISTS {
               MATCH (scene)-[:RELATES_TO]->
                     (:EntityInstance {entity_instance_id:$entity_id})
             } OR EXISTS {
               MATCH (scene)-[:CONTAINS]->(:Milestone)-[:RELATES_TO]->
                     (:EntityInstance {entity_instance_id:$entity_id})
-            }
+            })
             AND coalesce(scene.ontology_id, $ontology_id) = $ontology_id
-            AND coalesce(scene.instance_id, $instance_id) = $instance_id
             OPTIONAL MATCH (scene)-[:DERIVED_FROM]->(source:EntityInstance)
             RETURN DISTINCT scene.id AS scene_id,
                    coalesce(scene.name, scene.id) AS name,
@@ -431,7 +431,6 @@ class CharacterEmbodimentService:
             ORDER BY coalesce(toString(scene.created_at), ''), scene.id
             """,
             entity_id=entity_instance_id, ontology_id=ontology_id,
-            instance_id=entity.get("instance_id"),
         )
         scenes: list[dict[str, Any]] = []
         groups: dict[str, dict[str, Any]] = {}

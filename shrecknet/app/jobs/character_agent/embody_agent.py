@@ -211,15 +211,18 @@ class EmbodyAgent:
 
     @staticmethod
     def _schema_errors(error: EmbodimentGenerationError) -> list[dict[str, Any]]:
-        """Expose parser errors to a correction call without inventing evidence."""
+        """Expose JSON-safe parser errors to a correction call without inventing evidence."""
         cause = error.__cause__
         if isinstance(cause, ValidationError):
-            return cause.errors(include_url=False)
+            # Pydantic includes the original exception in ``ctx.error`` for
+            # model-validator failures. A correction request is JSON, so retain
+            # the error text while removing non-serializable exception objects.
+            return json.loads(json.dumps(cause.errors(include_url=False), default=str))
         return [{"message": str(error)}]
 
     async def _call(
         self, *, prompt: str, payload: dict[str, Any], schema: type[BaseModel],
-        stage: str, usage_tag: str, max_tokens: int, model: Any,
+        stage: str, usage_tag: str, max_tokens: int | None, model: Any,
         semantic_validator: Callable[[BaseModel], None] | None = None,
         source_entity_id: str | None = None,
         source_entity_alias: str | None = None,
@@ -472,7 +475,7 @@ class EmbodyAgent:
             payload={"identity": {key: canonical_identity.get(key) for key in
                 ("alias", "authored_text", "properties", "entity_type")}, "allowed_evidence_ids": [evidence_id]},
             schema=EmbodimentObservationsOutput, stage="authored baseline",
-            usage_tag="character_agent.embodiment.baseline", max_tokens=6000,
+            usage_tag="character_agent.embodiment.baseline", max_tokens=None,
             model=self.scene_interpretation_model, semantic_validator=validate,
         )
         evidence = ground_observations(output.trait_evidence, scene_ids=[],
@@ -552,10 +555,14 @@ class EmbodyAgent:
                     "scenes": scene_list,
                 },
                 schema=_PerspectivesContainer,
-                semantic_validator=lambda value: _semantic(lambda: validate_scene_grounding(value.perspectives, [s.scene_id for s in scenes])),
+                semantic_validator=lambda value: _semantic(
+                    lambda: _validate_and_normalize_scene_grounding(
+                        value.perspectives, [s.scene_id for s in scenes]
+                    )
+                ),
                 stage="character incorporation",
                 usage_tag="character_agent.embodiment.character_incorporation",
-                max_tokens=max(3_000, 800 * len(scenes)),
+                max_tokens=None,
                 model=self.character_incorporation_model,
                 source_entity_id=source_entity_id,
                 source_entity_alias=source_entity_alias,
@@ -567,7 +574,7 @@ class EmbodyAgent:
             raise EmbodimentGenerationError(
                 "perspective output scene_ids must match input scene order and be unique"
             )
-        _semantic(lambda: validate_scene_grounding(perspectives, expected_ids))
+        _semantic(lambda: _validate_and_normalize_scene_grounding(perspectives, expected_ids))
         if "character_incorporation" not in stage_checkpoints and on_checkpoint:
             await on_checkpoint("character_incorporation", perspectives_result)
 
@@ -599,10 +606,14 @@ class EmbodyAgent:
                     },
                 },
                 schema=SceneEnrichmentsOutput,
-                semantic_validator=lambda value: _semantic(lambda: validate_scene_grounding(value.scene_enrichments, expected_ids)),
+                semantic_validator=lambda value: _semantic(
+                    lambda: _validate_and_normalize_scene_grounding(
+                        value.scene_enrichments, expected_ids
+                    )
+                ),
                 stage="scene psychological enrichment",
                 usage_tag="character_agent.embodiment.scene_interpretation",
-                max_tokens=max(3_000, 900 * len(scenes)),
+                max_tokens=None,
                 model=self.scene_interpretation_model,
                 source_entity_id=source_entity_id,
                 source_entity_alias=source_entity_alias,
@@ -614,7 +625,7 @@ class EmbodyAgent:
             raise EmbodimentGenerationError(
                 "enrichment output scene_ids must match input scene order and be unique"
             )
-        _semantic(lambda: validate_scene_grounding(enrichments, expected_ids))
+        _semantic(lambda: _validate_and_normalize_scene_grounding(enrichments, expected_ids))
         aspect_ids = {item["id"] for item in aspects}
         goal_ids = {item["id"] for item in goals}
         for enrichment in enrichments:
@@ -685,7 +696,7 @@ class EmbodyAgent:
                     schema=EmbodimentObservationsOutput,
                     stage="scene-local trait candidates",
                     usage_tag="character_agent.embodiment.observations",
-                    max_tokens=4_000,
+                    max_tokens=None,
                     model=self.scene_interpretation_model,
                     semantic_validator=validate_observations,
                     source_entity_id=source_entity_id,
@@ -806,7 +817,7 @@ class EmbodyAgent:
                 schema=ProfileUpdateOutput,
                 stage="profile updates",
                 usage_tag="character_agent.embodiment.profile_update",
-                max_tokens=6_000,
+                max_tokens=None,
                 model=self.character_update_model,
                 semantic_validator=lambda value: _validate_profile_update(
                     value,
@@ -988,6 +999,22 @@ def _normalize_evidence_ids(data: Any) -> None:
                 data[key] = value.removeprefix("scene:").strip()
             else:
                 _normalize_evidence_ids(value)
+
+
+def _validate_and_normalize_scene_grounding(items: list[Any], scene_ids: list[str]) -> None:
+    """Canonicalize and require each scene-local result to cite only itself."""
+    _normalize_evidence_ids(items)
+    validate_scene_grounding(items, scene_ids)
+    for item in items:
+        referenced = _collect_evidence_ids(item.model_dump(mode="json"))
+        expected = {f"scene:{item.scene_id}"}
+        if referenced != expected:
+            raise EmbodimentGenerationError(
+                "scene-local output must cite only its own scene evidence",
+                category="semantic_reference",
+                offending_ids=referenced - expected,
+                allowed_ids=expected,
+            )
 
 
 def _validate_and_normalize_evidence(

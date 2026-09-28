@@ -329,6 +329,12 @@ scene immutability remain applicable.
 
 Timeline persistence validates consecutive revisions, matching batch provenance, and unique ordered scenes. It rechecks scene ontology/instance membership and the embodied-entity relationship in the write transaction; changed scope rejects the timeline with HTTP 409.
 
+Hydrated timeline display references (`source_group`, perspective `scene` and
+`evidence`, impact `target`, and trait-change `evidence`) are draft/API data,
+not Neo4j node properties. The graph persists their stable IDs through the
+existing source, scene, evidence, and `AFFECTS` relationships; this prevents
+Neo4j map-property errors while retaining the display payload in the draft.
+
 ## Breaking deployment
 
 No legacy trait conversion is provided. Coordinate backend, worker, SDK, and UI

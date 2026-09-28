@@ -150,3 +150,7 @@ async def test_timeline_scope_change_aborts_before_persistence():
             'now', provider=None, model=None, prompt_version=None)
     assert exc.value.status_code == 409
     assert len(tx.calls) == 1 and 'CREATE ' not in tx.calls[0]
+    scope_query = tx.calls[0]
+    assert "(scene)-[:CONTAINS]->(:Milestone)-[:RELATES_TO]->(entity)" in scope_query
+    assert "coalesce(scene.ontology_id, entity.ontology_id)" in scope_query
+    assert "coalesce(scene.instance_id, entity.instance_id)" not in scope_query

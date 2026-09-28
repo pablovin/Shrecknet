@@ -31,6 +31,7 @@ from app.models.character_embodiment import (
     CharacterEmbodimentDraftStatus,
 )
 from app.services.character_embodiment_service import CharacterEmbodimentService
+from app.schemas.character_agent import EmbodyAgentAnalysis
 from app.schemas.character_traits import TraitProfile, TraitEvidence, SPEC_VERSION
 from app.services.character_trait_service import POLICY_VERSION, chunk_source_scenes, merge_evidence
 from app.jobs.character_agent.profile import _build_timeline, _apply_aspect_ops, _apply_goal_ops, _stable_profile_id
@@ -53,6 +54,9 @@ STEP_NAME: dict[int, str] = {
     3: "Profile updates",
     4: "Profile updates",  # legacy progress readers
 }
+
+SCENE_ANALYSIS_CHUNK_SIZE = 5
+SCENE_ANALYSIS_CONCURRENCY = 3
 
 
 def _step_label(steps: list[int]) -> str:
@@ -276,6 +280,44 @@ def _merge_observations(target: Any, source: Any) -> Any:
     return target
 
 
+def _scene_analysis_chunks(group: dict) -> list[list[dict]]:
+    """Partition one source's ordered raw scenes for scene-local LLM work."""
+    scenes = list(group["scenes"])
+    return [
+        scenes[index:index + SCENE_ANALYSIS_CHUNK_SIZE]
+        for index in range(0, len(scenes), SCENE_ANALYSIS_CHUNK_SIZE)
+    ]
+
+
+def _merge_chunk_analyses(analyses: list[EmbodyAgentAnalysis]) -> EmbodyAgentAnalysis:
+    """Merge validated scene-local chunk analyses before one profile update."""
+    if not analyses:
+        raise EmbodimentGenerationError("source has no scene analyses")
+    first = analyses[0]
+    observations = first.observations.model_copy(deep=True)
+    for analysis in analyses[1:]:
+        _merge_observations(observations, analysis.observations)
+    subtitle = next(
+        (analysis.subtitle_change for analysis in reversed(analyses)
+         if analysis.subtitle_change.operation != "retain"),
+        SubtitleChangeProposal(),
+    )
+    return first.model_copy(update={
+        "scene_input_digests": {
+            scene_id: digest
+            for analysis in analyses for scene_id, digest in analysis.scene_input_digests.items()
+        },
+        "perspectives": [item for analysis in analyses for item in analysis.perspectives],
+        "observations": observations,
+        "subtitle_change": subtitle,
+        "evidence_ids": set().union(*(analysis.evidence_ids for analysis in analyses)),
+        "aspect_signals": [item for analysis in analyses for item in analysis.aspect_signals],
+        "goal_signals": [item for analysis in analyses for item in analysis.goal_signals],
+        "llm_calls": [item for analysis in analyses for item in analysis.llm_calls],
+        "observations_unavailable": any(analysis.observations_unavailable for analysis in analyses),
+    })
+
+
 async def _generate(*, draft_id: str, revision: int, job_id: int) -> dict:
     generation_started = time.monotonic()
     settings = get_settings()
@@ -451,16 +493,43 @@ async def _generate(*, draft_id: str, revision: int, job_id: int) -> dict:
                     source_index=bi, source_alias=group["source_alias"], checkpoints=checkpoints,
                 )
                 bundles[bi]["reused_stages"] = sorted(checkpoints)
+
                 async def save_stage(stage, value):
                     await _save_checkpoint(draft_id=draft_id, revision=revision, source_index=bi,
                         source_entity_id=group["source_id"], stage=stage, cache_key=cache_key,
                         model_target=stage_model_targets[stage], payload=value.model_dump(mode="json"))
-                analysis = await agent.analyze(
-                    source_entity_id=group["source_id"], source_entity_alias=group["source_alias"],
-                    canonical_identity=inputs["canonical_identity"], current_trait_profile=current_profile,
-                    current_aspects=current_aspects, current_goals=current_goals,
-                    scenes=[SceneInput(**scene) for scene in group["scenes"]],
-                    on_stage=progress.callback(bi), stage_checkpoints=checkpoints, on_checkpoint=save_stage)
+
+                semaphore = asyncio.Semaphore(SCENE_ANALYSIS_CONCURRENCY)
+                async def analyze_chunk(chunk_index: int, chunk_scenes: list[dict]):
+                    async with semaphore:
+                        chunk_agent = make_agent(
+                            source_index=bi,
+                            source_alias=f"{group['source_alias']} (chunk {chunk_index + 1})",
+                        )
+                        agents.append(chunk_agent)
+                        return await chunk_agent.analyze(
+                            source_entity_id=group["source_id"], source_entity_alias=group["source_alias"],
+                            canonical_identity=inputs["canonical_identity"], current_trait_profile=current_profile,
+                            current_aspects=current_aspects, current_goals=current_goals,
+                            scenes=[SceneInput(**scene) for scene in chunk_scenes],
+                            on_stage=progress.callback(bi),
+                        )
+
+                scene_chunks = _scene_analysis_chunks(group)
+                if len(scene_chunks) == 1 and checkpoints:
+                    analysis = await agent.analyze(
+                        source_entity_id=group["source_id"], source_entity_alias=group["source_alias"],
+                        canonical_identity=inputs["canonical_identity"], current_trait_profile=current_profile,
+                        current_aspects=current_aspects, current_goals=current_goals,
+                        scenes=[SceneInput(**scene) for scene in group["scenes"]],
+                        on_stage=progress.callback(bi), stage_checkpoints=checkpoints, on_checkpoint=save_stage,
+                    )
+                else:
+                    analyses = await asyncio.gather(*[
+                        analyze_chunk(index, scenes)
+                        for index, scenes in enumerate(scene_chunks)
+                    ])
+                    analysis = _merge_chunk_analyses(analyses)
                 try:
                     result = await agent.apply_profile_update(
                         analysis=analysis,
@@ -471,6 +540,9 @@ async def _generate(*, draft_id: str, revision: int, job_id: int) -> dict:
                         current_goals=current_goals,
                         on_stage=progress.callback(bi),
                     )
+                    result = result.model_copy(update={
+                        "llm_calls": [*analysis.llm_calls, *agent.llm_calls],
+                    })
                 except Exception:
                     await progress.failed(bi)
                     raise

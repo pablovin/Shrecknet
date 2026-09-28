@@ -687,9 +687,11 @@ class CharacterAgentService:
         if scene_ids:
             scoped = await tx.run(
                 "MATCH (:CharacterAgent {id:$id})-[:EMBODIES]->(entity:EntityInstance) "
-                "MATCH (scene:Scene)-[:RELATES_TO]->(entity) "
-                "WHERE scene.id IN $scene_ids AND scene.ontology_id=entity.ontology_id "
-                "AND scene.instance_id=entity.instance_id "
+                "MATCH (scene:Scene) "
+                "WHERE scene.id IN $scene_ids "
+                "AND coalesce(scene.ontology_id, entity.ontology_id)=entity.ontology_id "
+                "AND (EXISTS { MATCH (scene)-[:RELATES_TO]->(entity) } "
+                "OR EXISTS { MATCH (scene)-[:CONTAINS]->(:Milestone)-[:RELATES_TO]->(entity) }) "
                 "RETURN collect(DISTINCT scene.id) AS scoped_scene_ids",
                 id=agent["id"], scene_ids=scene_ids)
             row = await scoped.single()
@@ -944,7 +946,14 @@ class CharacterAgentService:
                     "source_group_id": projection.source_group_id,
                     **item.model_dump(
                         mode="json",
-                        exclude={"scene_id", "emotions", "beliefs", "impacts", "evidence_ids"},
+                        # ``scene`` and ``evidence`` are hydrated UI display
+                        # references retained in the draft timeline. Neo4j node
+                        # properties cannot store maps; the graph relationships
+                        # below are their persistence representation.
+                        exclude={
+                            "scene_id", "scene", "evidence", "emotions",
+                            "beliefs", "impacts", "evidence_ids",
+                        },
                     ),
                     "created_at": timestamp, "updated_at": timestamp,
                 }
@@ -998,6 +1007,10 @@ class CharacterAgentService:
                 for impact in item.impacts:
                     impact_data = impact.model_dump(mode="json")
                     generated_target_id = impact_data.pop("target_id")
+                    # ``target`` is a hydrated UI display reference. The
+                    # AFFECTS relationship below is its graph representation;
+                    # Neo4j properties cannot store the display-reference map.
+                    impact_data.pop("target", None)
                     target_id = profile_target_ids.get(
                         generated_target_id, generated_target_id
                     )

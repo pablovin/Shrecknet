@@ -12,7 +12,7 @@ import json
 from app.schemas.character_traits import trait_metadata
 
 TRAIT_CONTRACT = "\nAuthoritative trait definitions and scale:\n" + json.dumps(trait_metadata(), ensure_ascii=False)
-PROMPT_VERSION = "character-embodiment-v17-perspective-single-observation"
+PROMPT_VERSION = "character-embodiment-v18-scene-local-parallel-chunks"
 
 PERSPECTIVE_PROMPT = r"""You are incorporating a character's identity into canonical objective scenes.
 
@@ -23,7 +23,8 @@ or uncertainty as an objective scene fact.
 
 Use only facts available to the character at each scene. The whole source bundle is
 visible to you, but later revelations must never become earlier knowledge.
-Every perspective cites its own or earlier supplied scenes in evidence_ids.
+Every perspective cites exactly its own supplied scene in evidence_ids. Do not cite
+earlier scenes, even when they provide narrative context.
 Unknown traits remain unknown, not midpoint. Trait values bias behavior and do
 not mandate it. STEADINESS modifies consistency, never sampling temperature.
 Return every perspective in the same order as the input scenes, using the exact scene_id for each.
@@ -53,7 +54,7 @@ OUTPUT — return an object with exactly one key "perspectives":
   "perspectives": [
     {
       "scene_id": "exact input scene_id",
-      "evidence_ids": ["scene:own-or-earlier-input-scene-id"],
+      "evidence_ids": ["scene:exact-input-scene-id"],
       "source_type": "participated | witnessed | heard_about | read_about | inferred | unknown",
       "awareness_level": 0..100,
       "confidence": 0..100,
@@ -76,8 +77,9 @@ objective scenes. Derive every result from the supplied perspective's summary,
 interpretation, awareness, confidence, and evidence IDs. The presentation-only
 character_reflection is intentionally absent. Do not reconstruct or supplement
 the objective scene, and do not create or update profile state. Do not use later
-perspectives for earlier beliefs. Cite only the current or earlier supplied scene
-in each evidence_ids list.
+perspectives for earlier beliefs. Cite only the current supplied scene in each
+evidence_ids list. Every evidence_ids reference, including nested trait,
+aspect, and goal signals, must cite exactly the current scene.
 
 Every scene result MUST contain all six arrays in the output object. Use [] when
 an array has no grounded item; never omit an array.
@@ -103,13 +105,13 @@ OUTPUT:
 {
   "scene_enrichments": [{
     "scene_id":"exact input scene_id",
-    "evidence_ids":["scene:own-or-earlier-input-scene-id"],
+    "evidence_ids":["scene:exact-input-scene-id"],
     "emotions":[{"arousal":0..100,"valence":-100..100,"description":"..."}],
     "beliefs":[{"statement":"...","confidence":0..100,"status":"suspected | believed | confirmed | doubted | disproven | superseded"}],
     "impacts":[{"impact_type":"goal_change | aspect_change","target_id":"supplied stable id","direction":"advanced | threatened | created | reinforced | invalidated","magnitude":0..100,"description":"..."}],
-    "trait_candidates":[{"trait":"integrity | caution | presence | forbearance | diligence | curiosity | sharing | restlessness","evidence_kind":"behavior","situation_type":"diagnostic value for trait","direction":"low | midpoint | high","update_intensity":"small | medium | large","expression_z":"number from -1.9 to 1.9 or null","diagnosticity":0.0,"confidence":0.0,"behavior":"one observed individual choice","justification":"why diagnostic","evidence_ids":["current-or-earlier supplied scene ID"],"episode_id":"scene:exact input scene_id","available_after_scene_id":"exact latest cited input scene ID, WITHOUT scene: prefix","conditions":{"knowledge":{"status":"supported | contradicted | unknown","justification":"..."},"capability":{"status":"supported | contradicted | unknown","justification":"..."},"options":{"status":"supported | contradicted | unknown","justification":"..."},"freedom":{"status":"supported | contradicted | unknown","justification":"..."}},"comparison_context":"string or null"}],
-    "aspect_signals":[{"name":"...","category":"identity | role | status | physical | capability | knowledge | preference | attitude | history","description":"durable character-development fact","importance":1..5,"justification":"...","confidence":0.0,"evidence_ids":["current-or-earlier supplied scene ID"]}],
-    "goal_signals":[{"title":"...","description":"adopted durable commitment","goal_type":"desire | objective | ambition | obligation | avoidance | survival","priority":0..100,"commitment":0..100,"basis":"explicit | inferred","justification":"...","confidence":0.0,"evidence_ids":["current-or-earlier supplied scene ID"]}]
+    "trait_candidates":[{"trait":"integrity | caution | presence | forbearance | diligence | curiosity | sharing | restlessness","evidence_kind":"behavior","situation_type":"diagnostic value for trait","direction":"low | midpoint | high","update_intensity":"small | medium | large","expression_z":"number from -1.9 to 1.9 or null","diagnosticity":0.0,"confidence":0.0,"behavior":"one observed individual choice","justification":"why diagnostic","evidence_ids":["scene:exact-input-scene-id"],"episode_id":"scene:exact input scene_id","available_after_scene_id":"exact input scene ID, WITHOUT scene: prefix","conditions":{"knowledge":{"status":"supported | contradicted | unknown","justification":"..."},"capability":{"status":"supported | contradicted | unknown","justification":"..."},"options":{"status":"supported | contradicted | unknown","justification":"..."},"freedom":{"status":"supported | contradicted | unknown","justification":"..."}},"comparison_context":"string or null"}],
+    "aspect_signals":[{"name":"...","category":"identity | role | status | physical | capability | knowledge | preference | attitude | history","description":"durable character-development fact","importance":1..5,"justification":"...","confidence":0.0,"evidence_ids":["scene:exact-input-scene-id"]}],
+    "goal_signals":[{"title":"...","description":"adopted durable commitment","goal_type":"desire | objective | ambition | obligation | avoidance | survival","priority":0..100,"commitment":0..100,"basis":"explicit | inferred","justification":"...","confidence":0.0,"evidence_ids":["scene:exact-input-scene-id"]}]
   }]
 }
 
@@ -117,6 +119,7 @@ Return JSON only. required_output is authoritative if this description and the s
 
 ENRICHMENT_PROMPT += r"""
 
+Direction must agree with expression_z: use low only for a negative value, midpoint only for exactly 0, and high only for a positive value.
 Trait candidates cover every distinct diagnostic individual choice expressed in this character's perspective; there is no hard per-scene limit. A perspective's emotion or belief can explain a candidate but is not behavioral evidence by itself. If the perspective reports only a group action without this character's own decision, return no trait candidate. Unknown conditions remain auditable but cannot update a trait. Valid trait/situation pairs: integrity=exploitation|self_serving_deception; caution=uncertain_threat|uncertain_dependence|reliance_without_guarantees; presence=social_visibility|social_approach|voluntary_contact; forbearance=provocation|betrayal|obstruction|retaliation; diligence=unattended_duty|delayed_payoff|cutting_corners|persistence; curiosity=novelty|exploration|puzzle|unknown_information; sharing=resource_allocation|spoils|rewards; restlessness=value_conflict|recurring_value_preference. Direction agrees with expression_z: negative low, 0 midpoint, positive high. update_intensity measures the source-level influence of this one choice: small is subtle, medium is clear, large is unusually decisive; it is not a personality score. The backend applies high as positive and low as negative, averages same-trait evidence within the source, and makes at most one bounded update per trait/source. Aspect and goal signals are evidence, never mutations: emit at most one of each per scene, only for a durable identity/role/capability/value/status change or personally adopted durable commitment expressed in the perspective; never for a passing emotion, generic scene event, group action, assigned task, or reflection. Return JSON only."""
 
 

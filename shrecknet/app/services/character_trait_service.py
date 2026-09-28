@@ -32,9 +32,9 @@ def validate_scene_grounding(items, scene_ids: list[str]) -> None:
     positions = {f'scene:{scene}': i for i, scene in enumerate(scene_ids)}
     if [item.scene_id for item in items] != scene_ids or len(positions) != len(scene_ids):
         raise ValueError('scene outputs must match the exact unique input order')
-    for i, item in enumerate(items):
-        if not item.evidence_ids or any(ref not in positions or positions[ref] > i for ref in item.evidence_ids):
-            raise ValueError('scene output references missing or future evidence')
+    for item in items:
+        if set(item.evidence_ids) != {f'scene:{item.scene_id}'}:
+            raise ValueError('scene output must cite only its own scene evidence')
 
 
 def ground_observations(

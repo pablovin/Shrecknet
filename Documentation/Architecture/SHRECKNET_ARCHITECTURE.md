@@ -74,8 +74,10 @@ Existing CharacterAgent services retain Neo4j transaction ownership; Celery entr
 points retain job/checkpoint lifecycle. Each source is one atomic identity-update
 bundle and produces exactly one revision containing every scene used. Its
 scene-local work is partitioned into chunks of at most five scenes; up to three
-chunks run concurrently, each with incorporation and enrichment, before one
-source-level profile update. The normal call budget for `n` chunks is `2n + 1`,
-plus the one-time authored baseline and any repair/correction calls. Revision JSON
-contains the evidence ledger, including no-change observations. See
+chunks run concurrently. Each chunk first incorporates the supplied scenes, then
+runs trait extraction and aspect/goal signal extraction concurrently from the
+resulting interpretations. Source reduction is backend-owned and deterministic,
+so the normal call budget is `3n` for `n` chunks, plus the one-time authored
+baseline and any repair/correction calls. No LLM receives an accumulated evidence
+ledger. Revision JSON contains source-local evidence, including no-change observations. See
 [Dispositional traits](../Agents/CharacterAgent/Dispositional%20Traits.md).

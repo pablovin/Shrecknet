@@ -61,19 +61,18 @@ diligence; incorrect conclusions do not negate curiosity. Weak, excluded,
 contradictory, and no-change evidence remains inspectable in the revision ledger.
 
 The current embodiment pipeline is scene-centric. A source's scenes are divided
-into analysis chunks of at most five scenes. Each chunk makes an incorporation
-call and an enrichment/candidate-extraction call; up to three chunks for the
-same source may run concurrently against the same source-start identity. The
-backend merges their results, then makes one cumulative profile-update call for
-the entire source. A source with `n` analysis chunks therefore normally makes
-`2n + 1` LLM calls, excluding the authored baseline and repair/correction calls.
-There is no separate cross-scene-observation LLM call. Incorporation alone
-receives objective scene text. Enrichment receives only the corresponding
-grounded character perspective (without its presentation-only reflection), and
-derives emotions, beliefs, trait candidates, and durable signals from that
-perspective. The backend collects each enrichment result's `trait_candidates`,
-validates their canonical grounding and choice conditions, then supplies the
-merged evidence to the profile-update call.
+into analysis chunks of at most five scenes (therefore always within the
+maximum ten-scene window). Up to three chunks for the same source may run
+concurrently against the same source-start identity. A chunk first makes one
+incorporation call with its objective scenes. It then makes two calls in parallel,
+both receiving only the bounded interpretations from that chunk: trait extraction
+produces emotions, beliefs, impacts, and trait candidates; identity-signal
+extraction produces durable aspect and goal signals. The backend binds positional
+references, validates the outputs, merges source-local evidence in chronological
+order, and performs trait/profile reduction deterministically. A source with `n`
+analysis chunks therefore normally makes `3n` LLM calls, excluding the authored
+baseline and repair/correction calls. No LLM receives a cumulative evidence
+ledger, raw scenes after incorporation, or a source-level profile-update payload.
 
 Enrichment emits every distinct scene-local trait candidate it can identify;
 there is deliberately **no hard per-scene candidate limit**. Candidates with
@@ -83,11 +82,12 @@ one durable goal signal. Signals are evidence, never mutations: they make a
 later addition possible but do not themselves create, update, or complete an
 aspect or goal.
 
-Every enrichment result explicitly contains `emotions`, `beliefs`, `impacts`,
-`trait_candidates`, `aspect_signals`, and `goal_signals`. `[]` is the valid
-no-evidence value; omitting any array is a structured-output contract error, not
-an implicit empty result. This prevents a provider from silently dropping the
-candidate and signal fields while still returning valid JSON.
+Every trait-extraction result explicitly contains `emotions`, `beliefs`,
+`impacts`, and `trait_candidates`; every identity-signal result explicitly
+contains `aspect_signals` and `goal_signals`. `[]` is the valid no-evidence value;
+omitting a required array is a structured-output contract error, not an implicit
+empty result. This prevents a provider from silently dropping either branch's
+fields while still returning valid JSON.
 
 Impacts are separate from candidate signals. An impact can affect only an
 existing aspect or goal ID supplied in the input profile. A new aspect or goal
@@ -118,12 +118,11 @@ Embodiment prompts do not ask a model to reproduce canonical scene, evidence,
 profile-target, or observation identifiers. Scene-local stages return one output
 object per numbered input position; the backend binds position 1 to the first
 input scene and assigns that scene’s canonical ID and evidence citation to the
-outer result and all nested candidates. Enrichment impact targets use a one-based
-position in the supplied aspect or goal list, which the backend resolves to the
-stable ID. The source-level profile update similarly selects observations and
-scene evidence by one-based positions. Persisted drafts, checkpoints, graph
-records, and API responses retain the canonical IDs; this is an internal LLM
-boundary contract only.
+outer result and all nested candidates. Trait-extraction impact targets use a one-based position in the supplied aspect
+or goal list, which the backend resolves to the stable ID. Identity signals have
+only their chunk-local canonical evidence after backend binding. Persisted drafts,
+checkpoints, graph records, and API responses retain the canonical IDs; this is an
+internal LLM boundary contract only.
 
 A wrong, duplicated, or reordered identifier in an otherwise complete scene list
 cannot mis-associate content: it is overwritten during binding. A list with the
@@ -142,12 +141,12 @@ payloads; treat them as local diagnostic data rather than application logs.
 
 - `baseline.log` records the authored-baseline LLM call.
 - One `bundle_XXX_<source>.log` is written for each source-boundary bundle. It
-  contains all analysis-chunk and source-level profile-update calls, including
-  JSON/semantic corrections and any reused checkpoint output. Concurrent chunk
-  records are append-only and should not be interpreted as a strict call order.
-- `final_pipeline.log` captures the complete accumulated inputs and outputs after
-  every bundle: observations, perspectives, trait evidence/profile, aspect and
-  goal updates, subtitle, generated proposal, and timeline projection.
+  contains all analysis-chunk calls, including JSON/semantic corrections and
+  any reused checkpoint output. Concurrent second-wave branch records are
+  append-only and should not be interpreted as a strict call order.
+- `final_pipeline.log` captures the source-local inputs and outputs after every
+  bundle: interpretations, trait evidence/profile, aspect and goal updates,
+  subtitle, deterministic reduction, and timeline projection.
 
 To make the trace complete, an enabled debug request does not reuse embodiment
 checkpoints from an earlier attempt; it reruns and records every stage.
@@ -226,11 +225,13 @@ goals. A scene linked to the character through either `RELATES_TO` directly or a
 contained milestone is included. Orphan scenes form one explicit `__orphan__`
 source bundle.
 
-Each analysis chunk runs two normal LLM stages:
+Each analysis chunk runs a bounded two-wave LLM pipeline:
 
-1. Incorporation: one perspective per scene, using the source-start profile.
-2. Enrichment: immediate emotions, beliefs, impacts, all grounded scene-local
-   trait candidates, and bounded aspect/goal candidate signals for each scene.
+1. Incorporation: one interpretation per scene, using the source-start profile
+   and only that chunk's objective scenes.
+2. In parallel from interpretations only: trait extraction (emotions, beliefs,
+   impacts, and grounded trait candidates) and identity-signal extraction
+   (bounded aspect/goal candidate signals).
 
 If a multi-scene chunk exhausts its JSON or semantic correction because its model
 output is malformed or incomplete, the worker automatically retries only that
@@ -239,31 +240,40 @@ transport failures, and failures from an already one-scene call, still fail the
 draft. This bounded fallback preserves the normal batch cost for healthy output
 and prevents one omitted scene result from discarding a long embodiment run.
 
-After all chunks have completed, the worker merges their structured results and
-runs one source-level profile proposal. Deterministic acceptance and separate
-STEADINESS computation then create exactly one identity revision associated with
-every scene in that source. The normal source call budget is therefore
-`2 x analysis_chunks + 1`.
+After all chunks have completed, the worker merges their structured results.
+Deterministic trait acceptance, signal deduplication, and separate STEADINESS
+computation then create exactly one identity revision associated with every scene
+in that source. The normal source call budget is `3 x analysis_chunks`; reduction
+makes no model call and never reconstructs a cumulative raw-evidence prompt.
 
 ### Trait extraction pipeline
 
 ```mermaid
 flowchart TD
-    A[Canonical entity\nauthored text + properties] --> B[Authored baseline call]
-    B --> C[Revision 0\nunknown or provisional trait profile]
-    C --> D[Next source bundle\nordered scenes]
-    D --> E[Analysis chunks: max 5 scenes\nup to 3 concurrent]
-    E --> F[1. Chunk perspectives\nusing source-start identity]
-    F --> G[2. Chunk enrichment\nemotions, beliefs, impacts]
-    G --> H{Backend grounding and\nchoice-condition checks}
-    H -->|invalid, weak, or confounded| I[Keep auditable excluded evidence]
-    H -->|eligible| J[Merged source evidence]
+    A[Canonical entity
+authored text + properties] --> B[Authored baseline call]
+    B --> C[Revision 0
+unknown or provisional trait profile]
+    C --> D[Next source bundle
+ordered scenes]
+    D --> E[Analysis chunks: max 5 scenes
+up to 3 concurrent]
+    E --> F[1. Chunk incorporation
+objective scenes]
+    F --> G[Bounded interpretations]
+    G --> H[2a. Trait extraction
+emotions, beliefs, impacts, candidates]
+    G --> I[2b. Identity signals
+aspects and goals]
+    H --> J{Backend grounding and
+choice-condition checks}
     I --> J
-    J --> K[3. One source-level\nLLM profile explanation]
-    K --> L[Backend averages source intensities\none bounded directional update]
-    L --> M[Separate STEADINESS estimator\nonly comparable repeated behavior]
-    M --> N[Source-end revision, changes,\nand every-scene provenance]
-    N --> D
+    J --> K[Deterministic source reduction]
+    K --> L[Backend trait update and
+separate STEADINESS estimator]
+    L --> M[Source-end revision, changes,
+and every-scene provenance]
+    M --> D
 ```
 
 The first baseline call may infer only a provisional authored disposition. Source

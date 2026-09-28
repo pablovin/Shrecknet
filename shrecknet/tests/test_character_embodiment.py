@@ -11,10 +11,9 @@ from sqlalchemy import create_engine, inspect
 from app.core.config_store import LLMModelTarget, Settings
 from app.jobs.character_agent.embody_agent import EmbodyAgent, EmbodimentGenerationError
 from app.jobs.character_agent.embody_agent_prompts import (
-    ENRICHMENT_PROMPT,
-    OBSERVATIONS_PROMPT,
+    IDENTITY_SIGNALS_PROMPT,
     PERSPECTIVE_PROMPT,
-    PROFILE_UPDATE_PROMPT,
+    TRAIT_ENRICHMENT_PROMPT,
     PROMPT_VERSION,
 )
 from app.schemas.character_agent import (
@@ -129,9 +128,48 @@ async def test_concurrent_progress_writes_are_serialized(monkeypatch):
 
     assert max_writes_running == 1
     assert bundles[0]["status"] == "done"
-    assert bundles[0]["done_steps"] == [1, 2, 3]
+    assert bundles[0]["done_steps"] == [1, 2, 3, 4]
     assert bundles[1]["status"] == "failed"
     assert [item[1] for item in payloads] == sorted(item[1] for item in payloads)
+
+
+@pytest.mark.asyncio
+async def test_progress_exposes_each_concurrent_scene_chunk(monkeypatch):
+    from app.tasks import character_embodiment as task_module
+
+    async def fake_update_job_progress(*_args):
+        return None
+
+    monkeypatch.setattr(task_module, "update_job_progress", fake_update_job_progress)
+    bundles = [{
+        "index": 1, "source_name": "Source", "status": "pending",
+        "active_steps": [], "done_steps": [], "elapsed_seconds": None,
+    }]
+    progress = task_module._EmbodimentProgress(
+        job_id=9, draft_id="draft-1", bundles=bundles,
+        source_groups=[{"source_alias": "Source"}],
+    )
+    progress.configure_chunks(0, [[{"scene_id": "s1"}], [{"scene_id": "s2"}]])
+
+    await asyncio.gather(
+        progress.stage(0, [1], chunk_index=0),
+        progress.stage(0, [1], chunk_index=1),
+    )
+    await asyncio.gather(
+        progress.stage(0, [2, 3], chunk_index=0),
+        progress.stage(0, [2, 3], chunk_index=1),
+    )
+
+    assert bundles[0]["active_steps"] == [2, 3]
+    assert bundles[0]["parallel"]["active"] is True
+    assert bundles[0]["parallel"]["active_chunk_count"] == 2
+    assert [chunk["status"] for chunk in bundles[0]["chunks"]] == [
+        "processing", "processing",
+    ]
+
+    await asyncio.gather(progress.chunk_complete(0, 0), progress.chunk_complete(0, 1))
+    assert bundles[0]["done_steps"] == [1, 2, 3]
+    assert [chunk["status"] for chunk in bundles[0]["chunks"]] == ["done", "done"]
 
 
 def test_source_scene_analysis_is_partitioned_into_five_scene_chunks():
@@ -631,6 +669,10 @@ class BatchLLM:
             return json.dumps({'scene_enrichments':[dict(
                 emotions=[],beliefs=[],impacts=[],trait_candidates=[observation(scene=f"model-scene-{p['position']}").model_dump()],
                 aspect_signals=[],goal_signals=[]) for p in payload['perspectives']]})
+        if stage=='identity_signals':
+            return json.dumps({'scene_identity_signals':[
+                {'aspect_signals': [], 'goal_signals': []} for _ in payload['perspectives']
+            ]})
         if stage=='observations':
             items=[observation(scene=b['scene']['scene_id']).model_dump() for b in payload['scene_bundles']]
             if self.corruption=='unknown': items[0]['evidence_ids']=['scene:foreign']
@@ -650,11 +692,9 @@ class PrefixedAvailabilityLLM(BatchLLM):
         raw = await super().chat(**kwargs)
         if kwargs['usage_tag'].endswith('.scene_interpretation'):
             payload = json.loads(raw)
-            for enrichment in payload['scene_enrichments']:
+            for position, enrichment in enumerate(payload['scene_enrichments'], start=1):
                 for candidate in enrichment['trait_candidates']:
-                    candidate['available_after_scene_id'] = (
-                        f"scene:{enrichment['scene_id']}"
-                    )
+                    candidate['available_after_scene_id'] = f"scene:model-scene-{position}"
             return json.dumps(payload)
         return raw
 
@@ -667,10 +707,11 @@ class BarePerspectiveEvidenceLLM(BatchLLM):
         if kwargs['usage_tag'].endswith('.character_incorporation'):
             payload = json.loads(raw)
             for perspective in payload['perspectives']:
-                perspective['evidence_ids'] = [
-                    evidence_id.removeprefix('scene:')
-                    for evidence_id in perspective['evidence_ids']
-                ]
+                if 'evidence_ids' in perspective:
+                    perspective['evidence_ids'] = [
+                        evidence_id.removeprefix('scene:')
+                        for evidence_id in perspective['evidence_ids']
+                    ]
             return json.dumps(payload)
         return raw
 
@@ -924,17 +965,17 @@ async def test_authored_only_initialization_is_one_call_and_unknown_is_preserved
 
 def test_complete_prompt_contracts():
     from app.jobs.character_agent.embody_agent_prompts import BASELINE_PROMPT
-    for field in ('conditions','diagnosticity','available_after_scene_id','comparison_context'):
-        assert field in OBSERVATIONS_PROMPT
-    assert 'trait_proposals' in PROFILE_UPDATE_PROMPT
-    assert 'update_intensity' in ENRICHMENT_PROMPT
-    assert 'evidence_ids' in PERSPECTIVE_PROMPT and 'evidence_ids' in ENRICHMENT_PROMPT
+    for field in ('conditions', 'diagnosticity', 'comparison_context'):
+        assert field in TRAIT_ENRICHMENT_PROMPT
+    assert 'update_intensity' in TRAIT_ENRICHMENT_PROMPT
+    assert 'evidence_ids' in PERSPECTIVE_PROMPT and 'evidence_ids' in TRAIT_ENRICHMENT_PROMPT
     assert 'exactly its own supplied scene' in PERSPECTIVE_PROMPT
-    assert 'must cite exactly the current scene' in ENRICHMENT_PROMPT
-    assert 'Direction must agree with expression_z' in ENRICHMENT_PROMPT
+    assert 'must cite exactly the current scene' in TRAIT_ENRICHMENT_PROMPT
+    assert 'Direction must agree with expression_z' in TRAIT_ENRICHMENT_PROMPT
     for field in ('emotions', 'beliefs', 'impacts', 'trait_candidates', 'aspect_signals', 'goal_signals'):
-        assert f'"{field}"' in ENRICHMENT_PROMPT
-    assert 'MUST contain all six arrays' in ENRICHMENT_PROMPT
+        assert f'"{field}"' in TRAIT_ENRICHMENT_PROMPT
+    assert 'MUST contain all six arrays' in TRAIT_ENRICHMENT_PROMPT
+    assert 'scene_identity_signals' in IDENTITY_SIGNALS_PROMPT
     assert 'authored_disposition' in BASELINE_PROMPT
 
 
@@ -995,8 +1036,6 @@ async def test_enrichment_omitted_arrays_use_schema_correction_not_json_repair(m
                 self.calls.append(kwargs)
                 payload = json.loads(kwargs['messages'][1]['content'])
                 return json.dumps({'scene_enrichments': [{
-                    'scene_id': perspective['scene_id'],
-                    'evidence_ids': [f"scene:{perspective['scene_id']}"],
                     'emotions': [], 'beliefs': [], 'impacts': [],
                 } for perspective in payload['perspectives']]})
             if tag.endswith('.scene_interpretation.schema_correction'):
@@ -1006,8 +1045,6 @@ async def test_enrichment_omitted_arrays_use_schema_correction_not_json_repair(m
                 assert any(error['loc'][-1] == 'trait_candidates' for error in errors)
                 payload = correction['original_input']
                 return json.dumps({'scene_enrichments': [{
-                    'scene_id': perspective['scene_id'],
-                    'evidence_ids': [f"scene:{perspective['scene_id']}"],
                     'emotions': [], 'beliefs': [], 'impacts': [],
                     'trait_candidates': [], 'aspect_signals': [], 'goal_signals': [],
                 } for perspective in payload['perspectives']]})
@@ -1027,28 +1064,55 @@ async def test_enrichment_omitted_arrays_use_schema_correction_not_json_repair(m
 
 
 @pytest.mark.asyncio
-async def test_enrichment_receives_character_perspectives_not_raw_scenes():
-    llm = BatchLLM()
-    await _agent(llm).analyze(
+async def test_parallel_second_wave_receives_only_bounded_interpretations():
+    class ParallelWaveLLM(BatchLLM):
+        def __init__(self):
+            super().__init__()
+            self.second_wave_started: set[str] = set()
+            self.second_wave_gate = asyncio.Event()
+
+        async def chat(self, **kwargs):
+            stage = kwargs['usage_tag'].rsplit('.', 1)[-1]
+            if stage in {'scene_interpretation', 'identity_signals'}:
+                self.second_wave_started.add(stage)
+                if len(self.second_wave_started) == 2:
+                    self.second_wave_gate.set()
+                await asyncio.wait_for(self.second_wave_gate.wait(), timeout=0.2)
+            return await super().chat(**kwargs)
+
+    llm = ParallelWaveLLM()
+    result = await _agent(llm).run(
         source_entity_id='source', source_entity_alias='Source',
         canonical_identity=_canonical(), current_trait_profile=TraitProfile(),
-        current_aspects=[], current_goals=[], scenes=scenes(1),
+        current_aspects=[], current_goals=[], scenes=scenes(1), batch_id='source',
     )
-    payload = json.loads(next(
+    trait_payload = json.loads(next(
         call['messages'][1]['content'] for call in llm.calls
         if call['usage_tag'].endswith('.scene_interpretation')
     ))
-    assert 'scenes' not in payload
-    assert payload['perspectives'][0]['position'] == 1
-    assert 'scene_id' not in payload['perspectives'][0]
-    assert payload['perspectives'][0]['interpretation']
-    assert 'character_reflection' not in payload['perspectives'][0]
+    signal_payload = json.loads(next(
+        call['messages'][1]['content'] for call in llm.calls
+        if call['usage_tag'].endswith('.identity_signals')
+    ))
+    assert llm.second_wave_started == {'scene_interpretation', 'identity_signals'}
+    assert len(llm.calls) == 3
+    assert not any(call['usage_tag'].endswith('.profile_update') for call in llm.calls)
+    for payload in (trait_payload, signal_payload):
+        assert 'scenes' not in payload
+        assert payload['perspectives'][0]['position'] == 1
+        assert 'scene_id' not in payload['perspectives'][0]
+        assert payload['perspectives'][0]['interpretation']
+        assert 'character_reflection' not in payload['perspectives'][0]
+    assert 'current_profile' in trait_payload
+    assert 'current_profile' not in signal_payload
+    assert result.trait_evidence
 
 
-def test_observation_prompt_is_compact_and_requests_only_update_evidence():
-    assert len(OBSERVATIONS_PROMPT) < 5_000
-    assert 'Do not emit recurring_behaviours' in OBSERVATIONS_PROMPT
-    assert 'conditions' in OBSERVATIONS_PROMPT
+def test_second_wave_prompts_are_compact_and_have_separate_contracts():
+    assert len(TRAIT_ENRICHMENT_PROMPT) < 7_000
+    assert len(IDENTITY_SIGNALS_PROMPT) < 5_000
+    assert 'trait_candidates' in TRAIT_ENRICHMENT_PROMPT
+    assert 'aspect_signals' in IDENTITY_SIGNALS_PROMPT
     assert 'Authoritative trait definitions and scale' not in PERSPECTIVE_PROMPT
 
 
@@ -1111,7 +1175,7 @@ async def test_timeline_persists_evidence_with_single_eligible_numeric_change():
 
 
 @pytest.mark.asyncio
-async def test_all_four_stage_checkpoints_resume_without_provider_calls():
+async def test_chunk_stage_checkpoints_resume_without_provider_calls():
     checkpoints = {}
     async def save(stage, payload):
         checkpoints[stage] = payload.model_dump(mode="json")
@@ -1131,7 +1195,7 @@ async def test_all_four_stage_checkpoints_resume_without_provider_calls():
     cached_analysis = await resumed.analyze(**kwargs, stage_checkpoints=checkpoints)
     actual = await resumed.apply_profile_update(analysis=cached_analysis,
         current_trait_profile=TraitProfile(), current_aspects=[], current_goals=[],
-        stage_checkpoint=profile_checkpoints[0])
+)
     assert llm.calls == []
     assert actual.trait_profile == expected.trait_profile
     assert actual.trait_evidence == expected.trait_evidence

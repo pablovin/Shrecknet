@@ -76,12 +76,14 @@ An agent cannot change `ontology_id`, its embodied entity, `id`,
 
 Embodiment extracts a provisional authored baseline or preserves unknown values
 in Revision 0. All scenes from a `DERIVED_FROM` source form one chronological
-source bundle and yield one source-level profile update and revision. The worker
-partitions the source's ordered scenes into analysis chunks of at most five;
-up to three chunks may create ScenePerspectives and scene-local enrichment in
-parallel, all from the same source-start identity. Their results are merged before
-the source-level update. Source bundles themselves run sequentially, so the
-resulting revision becomes the next source bundle's starting identity.
+source bundle and yield one source-level revision. The worker partitions the
+source's ordered scenes into analysis chunks of at most five; up to three chunks
+may create ScenePerspectives in parallel from the same source-start identity.
+For each chunk, trait extraction and aspect/goal signal extraction then run in
+parallel from those interpretations only. The backend merges and reduces the
+source-local outputs deterministically; no LLM receives a cumulative evidence
+history. Source bundles themselves run sequentially, so the resulting revision
+becomes the next source bundle's starting identity.
 
 `CharacterIdentityRevision` stores the profile snapshot and newly introduced
 trait evidence, including evidence that did not change a score.
@@ -275,7 +277,7 @@ of personality. See [CharacterAgent Query](Query/Query.md).
 ## Evidence-grounded embodiment
 
 See [Dispositional traits](Dispositional%20Traits.md) for the complete current
-personality and embodiment contract, including the three-stage scene-centric
+personality and embodiment contract, including the four-step scene-centric
 source-bundle pipeline, initial authored evidence, candidate/signal rules, debug
 artifacts, checkpoints, revision ownership, and breaking release operations. The
 registry is the authoritative definition source; SDKs and UI consumers can
@@ -286,9 +288,11 @@ request it through `/character-agents/trait-definitions`.
 `character_agent.generate_embodiment` is the Celery task that generates a
 reviewable embodiment draft. It performs one authored-baseline call, then
 processes source bundles in order. For a source with `n` analysis chunks, the
-normal LLM call budget is `2n + 1`: incorporation and enrichment for each chunk,
-then one merged source-level profile update. Analysis chunks contain at most five
-scenes and run with a worker-local concurrency cap of three. Checkpoint reuse is
+normal LLM call budget is `3n`: incorporation, then parallel trait extraction
+and aspect/goal signal extraction for each chunk. The source reduction is
+backend-owned and deterministic; it does not make a profile-update LLM call or
+send historical evidence to a model. Analysis chunks contain at most five scenes
+and run with a worker-local concurrency cap of three. Checkpoint reuse is
 available for the single-chunk source path; enabled debug artifacts deliberately
 disable reuse so the complete run is recorded.
 

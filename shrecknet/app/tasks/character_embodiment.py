@@ -50,9 +50,9 @@ from app.utils.job_tracking import mark_job_done, mark_job_failed, mark_job_runn
 
 STEP_NAME: dict[int, str] = {
     1: "Character incorporation",
-    2: "Psychological enrichment",
-    3: "Profile updates",
-    4: "Profile updates",  # legacy progress readers
+    2: "Trait extraction",
+    3: "Aspect and goal signals",
+    4: "Deterministic source reduction",
 }
 
 SCENE_ANALYSIS_CHUNK_SIZE = 5
@@ -187,7 +187,7 @@ async def _save_checkpoint(
 
 
 class _EmbodimentProgress:
-    """Serialize concurrent bundle progress writes and keep progress monotonic."""
+    """Serialize progress writes while exposing independent chunk state."""
 
     def __init__(
         self, *, job_id: int, draft_id: str, bundles: list[dict],
@@ -201,20 +201,58 @@ class _EmbodimentProgress:
         self.starts: dict[int, float] = {}
         self.active: dict[int, list[int]] = {}
         self.done: dict[int, set[int]] = {i: set() for i in range(self.total)}
+        self.chunks: dict[int, list[dict[str, Any]]] = {}
         self.lock = asyncio.Lock()
         self.last_progress = 0.10
 
-    def callback(self, index: int):
+    def configure_chunks(self, index: int, scene_chunks: list[list[dict]]) -> None:
+        """Register a bundle's bounded chunks before their concurrent work starts."""
+        self.chunks[index] = [
+            {"index": chunk_index + 1, "scene_count": len(scenes),
+             "active_steps": [], "done_steps": []}
+            for chunk_index, scenes in enumerate(scene_chunks)
+        ]
+
+    def callback(
+        self, index: int, *, chunk_index: int | None = None,
+    ):
         async def on_stage(_stage_label_value: str, active_stages: list[int]) -> None:
-            await self.stage(index, active_stages)
+            await self.stage(index, active_stages, chunk_index=chunk_index)
         return on_stage
 
-    async def stage(self, index: int, active_stages: list[int]) -> None:
+    async def stage(
+        self, index: int, active_stages: list[int], *, chunk_index: int | None = None,
+    ) -> None:
         async with self.lock:
             self.starts.setdefault(index, time.monotonic())
-            previous = self.active.get(index, [])
-            self.done[index].update(previous)
-            self.active[index] = list(active_stages)
+            if chunk_index is None:
+                previous = self.active.get(index, [])
+                self.done[index].update(previous)
+                self.active[index] = list(active_stages)
+            else:
+                chunk = self.chunks[index][chunk_index]
+                previous = chunk["active_steps"]
+                chunk["done_steps"] = sorted(set(chunk["done_steps"]) | set(previous))
+                chunk["active_steps"] = list(active_stages)
+                self.active[index] = sorted({
+                    step
+                    for item in self.chunks[index]
+                    for step in item["active_steps"]
+                })
+            await self._publish(index, "processing")
+
+    async def chunk_complete(self, index: int, chunk_index: int) -> None:
+        async with self.lock:
+            chunk = self.chunks[index][chunk_index]
+            chunk["done_steps"] = [1, 2, 3]
+            chunk["active_steps"] = []
+            self.active[index] = sorted({
+                step
+                for item in self.chunks[index]
+                for step in item["active_steps"]
+            })
+            if all(item["done_steps"] == [1, 2, 3] for item in self.chunks[index]):
+                self.done[index].update({1, 2, 3})
             await self._publish(index, "processing")
 
     async def analysis_ready(self, index: int) -> None:
@@ -225,7 +263,7 @@ class _EmbodimentProgress:
 
     async def complete(self, index: int) -> None:
         async with self.lock:
-            self.done[index].update({1, 2, 3})
+            self.done[index].update({1, 2, 3, 4})
             self.active[index] = []
             await self._publish(index, "done", stage="Source complete")
 
@@ -240,6 +278,16 @@ class _EmbodimentProgress:
     ) -> None:
         source_alias = self.source_groups[index]["source_alias"]
         started = self.starts.get(index, time.monotonic())
+        chunk_states = [
+            {
+                **item,
+                "status": (
+                    "processing" if item["active_steps"] else
+                    "done" if item["done_steps"] == [1, 2, 3] else "pending"
+                ),
+            }
+            for item in self.chunks.get(index, [])
+        ]
         self.bundles[index] = {
             "index": index + 1,
             "source_name": source_alias,
@@ -251,6 +299,17 @@ class _EmbodimentProgress:
                 self.bundles[index].get("checkpointed_stages", [])
             ),
             "reused_stages": list(self.bundles[index].get("reused_stages", [])),
+            "chunks": chunk_states,
+            "parallel": {
+                "active": len(self.active.get(index, [])) > 1 or sum(
+                    item["status"] == "processing" for item in chunk_states
+                ) > 1,
+                "active_branches": [STEP_NAME[step] for step in self.active.get(index, [])],
+                "active_chunk_count": sum(
+                    item["status"] == "processing" for item in chunk_states
+                ),
+                "scene_chunk_concurrency": SCENE_ANALYSIS_CONCURRENCY,
+            },
         }
         completed = sum(len(steps) for steps in self.done.values())
         active_credit = sum(0.5 for steps in self.active.values() if steps)
@@ -410,7 +469,10 @@ async def _generate(*, draft_id: str, revision: int, job_id: int) -> dict:
             source_groups=source_groups,
         )
         stage_model_targets = {
-            "profile_update": f"{settings.model_character_agent_update.provider}:{settings.model_character_agent_update.name}",
+            "baseline": (
+                f"{settings.model_character_agent_scene_interpretation.provider}:"
+                f"{settings.model_character_agent_scene_interpretation.name}"
+            ),
             "character_incorporation": (
                 f"{settings.model_character_agent_character_incorporation.provider}:"
                 f"{settings.model_character_agent_character_incorporation.name}"
@@ -419,9 +481,9 @@ async def _generate(*, draft_id: str, revision: int, job_id: int) -> dict:
                 f"{settings.model_character_agent_scene_interpretation.provider}:"
                 f"{settings.model_character_agent_scene_interpretation.name}"
             ),
-            "observations": (
-                f"{settings.model_character_agent_scene_interpretation.provider}:"
-                f"{settings.model_character_agent_scene_interpretation.name}"
+            "identity_signals": (
+                f"{settings.model_character_agent_update.provider}:"
+                f"{settings.model_character_agent_update.name}"
             ),
         }
         agents: list[EmbodyAgent] = []
@@ -462,7 +524,7 @@ async def _generate(*, draft_id: str, revision: int, job_id: int) -> dict:
                     canonical_identity=inputs["canonical_identity"], entity_id=draft.source_entity_id)
                 await _save_checkpoint(draft_id=draft_id, revision=revision, source_index=-1,
                     source_entity_id=draft.source_entity_id, stage="baseline", cache_key=baseline_key,
-                    model_target=stage_model_targets["observations"],
+                    model_target=stage_model_targets["baseline"],
                     payload={"profile":current_profile.model_dump(mode="json"),
                              "evidence":[item.model_dump(mode="json") for item in current_evidence]})
             initial_profile = current_profile.model_copy(deep=True)
@@ -500,6 +562,9 @@ async def _generate(*, draft_id: str, revision: int, job_id: int) -> dict:
                         model_target=stage_model_targets[stage], payload=value.model_dump(mode="json"))
 
                 semaphore = asyncio.Semaphore(SCENE_ANALYSIS_CONCURRENCY)
+                scene_chunks = _scene_analysis_chunks(group)
+                progress.configure_chunks(bi, scene_chunks)
+
                 async def analyze_chunk(chunk_index: int, chunk_scenes: list[dict]):
                     async with semaphore:
                         chunk_agent = make_agent(
@@ -508,12 +573,12 @@ async def _generate(*, draft_id: str, revision: int, job_id: int) -> dict:
                         )
                         agents.append(chunk_agent)
                         try:
-                            return await chunk_agent.analyze(
+                            analysis = await chunk_agent.analyze(
                                 source_entity_id=group["source_id"], source_entity_alias=group["source_alias"],
                                 canonical_identity=inputs["canonical_identity"], current_trait_profile=current_profile,
                                 current_aspects=current_aspects, current_goals=current_goals,
                                 scenes=[SceneInput(**scene) for scene in chunk_scenes],
-                                on_stage=progress.callback(bi),
+                                on_stage=progress.callback(bi, chunk_index=chunk_index),
                             )
                         except EmbodimentGenerationError as exc:
                             if len(chunk_scenes) == 1 or exc.category not in {"schema", "semantic", "semantic_reference"}:
@@ -538,19 +603,26 @@ async def _generate(*, draft_id: str, revision: int, job_id: int) -> dict:
                                     source_entity_id=group["source_id"], source_entity_alias=group["source_alias"],
                                     canonical_identity=inputs["canonical_identity"], current_trait_profile=current_profile,
                                     current_aspects=current_aspects, current_goals=current_goals,
-                                    scenes=[SceneInput(**scene)], on_stage=progress.callback(bi),
+                                    scenes=[SceneInput(**scene)], on_stage=progress.callback(
+                                        bi, chunk_index=chunk_index
+                                    ),
                                 ))
-                            return _merge_chunk_analyses(recovered)
+                            result = _merge_chunk_analyses(recovered)
+                            await progress.chunk_complete(bi, chunk_index)
+                            return result
+                        else:
+                            await progress.chunk_complete(bi, chunk_index)
+                            return analysis
 
-                scene_chunks = _scene_analysis_chunks(group)
                 if len(scene_chunks) == 1 and checkpoints:
                     analysis = await agent.analyze(
                         source_entity_id=group["source_id"], source_entity_alias=group["source_alias"],
                         canonical_identity=inputs["canonical_identity"], current_trait_profile=current_profile,
                         current_aspects=current_aspects, current_goals=current_goals,
                         scenes=[SceneInput(**scene) for scene in group["scenes"]],
-                        on_stage=progress.callback(bi), stage_checkpoints=checkpoints, on_checkpoint=save_stage,
+                        on_stage=progress.callback(bi, chunk_index=0), stage_checkpoints=checkpoints, on_checkpoint=save_stage,
                     )
+                    await progress.chunk_complete(bi, 0)
                 else:
                     analyses = await asyncio.gather(*[
                         analyze_chunk(index, scenes)
@@ -560,7 +632,6 @@ async def _generate(*, draft_id: str, revision: int, job_id: int) -> dict:
                 try:
                     result = await agent.apply_profile_update(
                         analysis=analysis,
-                        stage_checkpoint=checkpoints.get("profile_update"), on_checkpoint=save_stage,
                         current_trait_profile=current_profile,
                         current_trait_evidence=current_evidence, batch_id=group["batch_id"],
                         current_aspects=current_aspects,

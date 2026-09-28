@@ -29,6 +29,7 @@ async def test_get_job_allows_unauthenticated_polling(client, session_maker) -> 
     payload = response.json()
     assert payload["id"] == job.id
     assert payload["status"] == JobStatus.RUNNING.value
+    assert payload["details"] == {"phase": "shrecknet_import"}
 
 
 @pytest.mark.asyncio

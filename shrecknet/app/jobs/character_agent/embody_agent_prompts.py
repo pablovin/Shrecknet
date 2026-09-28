@@ -1,18 +1,18 @@
 """Scene-centric source-bundle embodiment prompt contracts.
 
-Stage 0 initializes authored dispositions. For each source bundle, stage 1
-renders scene perspectives; stage 2 enriches each scene with immediate effects,
-trait candidates, and durable aspect/goal signals; stage 3 reasons over the
-cumulative structured evidence and proposes profile changes. The backend grounds
-the scene-local candidates between stages 2 and 3, computes STEADINESS, and
-persists revisions. Reflections are presentation only. All scenes in a bundle use
-its starting identity; changes take effect at its end.
+Stage 0 extracts an authored baseline. For every bounded source chunk, stage 1
+turns only its raw scenes into position-bound interpretations. Stages 2 and 3
+run in parallel from those interpretations alone: trait extraction emits
+emotions, beliefs, impacts, and trait candidates; identity-signal extraction
+emits aspect and goal signals. The backend binds references, validates outputs,
+then performs source reduction, STEADINESS computation, and revision persistence
+deterministically. No prompt receives a cumulative raw-evidence ledger.
 """
 import json
 from app.schemas.character_traits import trait_metadata
 
 TRAIT_CONTRACT = "\nAuthoritative trait definitions and scale:\n" + json.dumps(trait_metadata(), ensure_ascii=False)
-PROMPT_VERSION = "character-embodiment-v19-backend-owned-references"
+PROMPT_VERSION = "character-embodiment-v20-parallel-bounded-reduction"
 
 PERSPECTIVE_PROMPT = r"""You are incorporating a character's identity into canonical objective scenes.
 
@@ -23,7 +23,7 @@ or uncertainty as an objective scene fact.
 
 Use only facts available to the character at each scene. The whole source bundle is
 visible to you, but later revelations must never become earlier knowledge.
-The backend assigns every canonical scene and evidence ID. Do not return IDs or
+The backend assigns every canonical scene and evidence_ids reference. Do not return IDs or
 evidence references; return one result for each numbered input position.
 Unknown traits remain unknown, not midpoint. Trait values bias behavior and do
 not mandate it. STEADINESS modifies consistency, never sampling temperature.
@@ -262,3 +262,30 @@ generosity, presence from leadership, caution from known fatal danger,
 restlessness from one exploration, or steadiness at all. One item per trait and
 canonical episode.
 Return {"trait_evidence":[]} when no diagnostic choice is supported."""
+
+
+# Parallel embodiment prompt branches.
+TRAIT_ENRICHMENT_PROMPT = ENRICHMENT_PROMPT + r"""
+This is the trait-extraction branch. Return emotions, beliefs, impacts, and
+trait_candidates only. You MUST return aspect_signals: [] and goal_signals: []
+for every perspective. Do not infer durable identity here. Each item must cite exactly the current scene conceptually; the backend assigns evidence_ids by
+position, so omit them from model output.
+"""
+
+IDENTITY_SIGNALS_PROMPT = r"""Stage 3 — detect durable aspects and goals from grounded character interpretations.
+
+This is independent of trait extraction. You receive only numbered subjective
+perspectives, never canonical scenes or character reflections. Return durable
+identity signals only when an interpretation establishes a lasting role, state,
+capability, value, history, or personally adopted commitment. Passing emotion,
+group action, assigned work, and generic dramatic events are not durable signals.
+The backend attaches the scene ID and evidence ID by output position. Return one
+object for every input position, in the same order. Empty arrays are normal.
+
+INPUT: {"perspectives":[{"position":1,"source_type":"...","awareness_level":0,"confidence":0,"summary":"...","interpretation":"...","memory_strength":0,"importance":1}]}
+OUTPUT: {"scene_identity_signals":[{"aspect_signals":[{"name":"...","category":"identity | role | status | physical | capability | knowledge | preference | attitude | history","description":"...","importance":1,"justification":"...","confidence":0.0}],"goal_signals":[{"title":"...","description":"...","goal_type":"desire | objective | ambition | obligation | avoidance | survival","priority":0,"commitment":0,"basis":"explicit | inferred","justification":"...","confidence":0.0}]}]}
+Return JSON only."""
+
+# Backend-owned references remain part of the public contract, but are never model supplied.
+PERSPECTIVE_PROMPT += "\nThe backend binds every perspective to exactly its own supplied scene and assigns evidence_ids by position; omit them from model output."
+ENRICHMENT_PROMPT += "\nEach item must cite exactly the current scene conceptually; the backend assigns evidence_ids by position, so omit them from model output."

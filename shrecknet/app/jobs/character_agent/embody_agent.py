@@ -14,6 +14,7 @@ scene-associated revision.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
@@ -26,10 +27,9 @@ from app.integrations.llm.shreckllm_client import LLMProviderUnavailableError
 from app.jobs.character_agent.embodiment_debug_artifacts import EmbodimentDebugArtifacts
 from app.jobs.character_agent.embody_agent_prompts import (
     BASELINE_PROMPT,
-    ENRICHMENT_PROMPT,
-    OBSERVATIONS_PROMPT,
+    IDENTITY_SIGNALS_PROMPT,
+    TRAIT_ENRICHMENT_PROMPT,
     PERSPECTIVE_PROMPT,
-    PROFILE_UPDATE_PROMPT,
 )
 from app.jobs.shrecknet.agent import parse_json_deterministically
 from app.schemas.character_agent import (
@@ -39,6 +39,7 @@ from app.schemas.character_agent import (
     LLMCallRecord,
     ProfileUpdateOutput,
     SceneInput,
+    SceneIdentitySignalsOutput,
     SceneEnrichmentsOutput,
     ScenePerspectiveBundleOutput,
     ScenePerspectiveOutput,
@@ -607,66 +608,113 @@ class EmbodyAgent:
         # Reflection remains presentation-only and cannot manufacture evidence.
         if on_stage:
             await on_stage(
-                "source:{0} - Step 2: Psychological enrichment".format(source_entity_alias), [2]
+                "source:{0} - Steps 2–3: Traits and identity signals".format(source_entity_alias), [2, 3]
             )
-        if "scene_interpretation" in stage_checkpoints:
-            enrichment_result = SceneEnrichmentsOutput.model_validate(
-                stage_checkpoints["scene_interpretation"]
-            )
-        else:
-            enrichment_result = await self._call(
-                prompt=ENRICHMENT_PROMPT,
-                payload={
-                    "perspectives": [
-                        p.model_dump(
-                            mode="json",
-                            exclude={"scene_id", "evidence_ids", "character_reflection", "status"},
-                        ) | {"position": index + 1}
-                        for index, p in enumerate(perspectives)
-                    ],
-                    "current_profile": {
-                        "aspects": [{"position": index + 1, "name": a["name"]} for index, a in enumerate(aspects)],
-                        "goals": [{"position": index + 1, "title": g["title"]} for index, g in enumerate(goals)],
+        trait_payload = {
+            "perspectives": [
+                p.model_dump(
+                    mode="json",
+                    exclude={"scene_id", "evidence_ids", "character_reflection", "status"},
+                ) | {"position": index + 1}
+                for index, p in enumerate(perspectives)
+            ],
+            "current_profile": {
+                "aspects": [{"position": index + 1, "name": a["name"]} for index, a in enumerate(aspects)],
+                "goals": [{"position": index + 1, "title": g["title"]} for index, g in enumerate(goals)],
+            },
+        }
+        identity_signal_payload = {"perspectives": trait_payload["perspectives"]}
+        enrichment_result = (
+            SceneEnrichmentsOutput.model_validate(stage_checkpoints["scene_interpretation"])
+            if "scene_interpretation" in stage_checkpoints
+            else None
+        )
+        identity_result = (
+            SceneIdentitySignalsOutput.model_validate(stage_checkpoints["identity_signals"])
+            if "identity_signals" in stage_checkpoints
+            else None
+        )
+        pending_calls = []
+        if enrichment_result is None:
+            pending_calls.append((
+                "scene_interpretation",
+                self._call(
+                    prompt=TRAIT_ENRICHMENT_PROMPT, payload=trait_payload,
+                    schema=SceneEnrichmentsOutput,
+                    semantic_validator=lambda value: _semantic(
+                        lambda: _validate_and_normalize_scene_grounding(
+                            value.scene_enrichments, expected_ids
+                        )
+                    ),
+                    stage="scene trait extraction",
+                    usage_tag="character_agent.embodiment.scene_interpretation",
+                    max_tokens=None, model=self.scene_interpretation_model,
+                    source_entity_id=source_entity_id, source_entity_alias=source_entity_alias,
+                    schema_correction_attempts=1,
+                    output_binding={
+                        "collection": "scene_enrichments", "scene_ids": expected_ids,
+                        "profile_targets": {"aspects": [a["id"] for a in aspects], "goals": [g["id"] for g in goals]},
                     },
-                },
-                schema=SceneEnrichmentsOutput,
-                semantic_validator=lambda value: _semantic(
-                    lambda: _validate_and_normalize_scene_grounding(
-                        value.scene_enrichments, expected_ids
-                    )
                 ),
-                stage="scene psychological enrichment",
-                usage_tag="character_agent.embodiment.scene_interpretation",
-                max_tokens=None,
-                model=self.scene_interpretation_model,
-                source_entity_id=source_entity_id,
-                source_entity_alias=source_entity_alias,
-                schema_correction_attempts=1,
-                output_binding={
-                    "collection": "scene_enrichments", "scene_ids": expected_ids,
-                    "profile_targets": {"aspects": [a["id"] for a in aspects], "goals": [g["id"] for g in goals]},
-                },
-            )
+            ))
+        if identity_result is None:
+            pending_calls.append((
+                "identity_signals",
+                self._call(
+                    prompt=IDENTITY_SIGNALS_PROMPT, payload=identity_signal_payload,
+                    schema=SceneIdentitySignalsOutput,
+                    semantic_validator=lambda value: _semantic(
+                        lambda: _validate_and_normalize_scene_grounding(
+                            value.scene_identity_signals, expected_ids
+                        )
+                    ),
+                    stage="scene identity signals",
+                    usage_tag="character_agent.embodiment.identity_signals",
+                    max_tokens=None, model=self.character_update_model,
+                    source_entity_id=source_entity_id, source_entity_alias=source_entity_alias,
+                    schema_correction_attempts=1,
+                    output_binding={"collection": "scene_identity_signals", "scene_ids": expected_ids},
+                ),
+            ))
+        if pending_calls:
+            generated = dict(zip(
+                [stage for stage, _ in pending_calls],
+                await asyncio.gather(*(call for _, call in pending_calls)),
+                strict=True,
+            ))
+            enrichment_result = generated.get("scene_interpretation", enrichment_result)
+            identity_result = generated.get("identity_signals", identity_result)
+            if on_checkpoint:
+                await asyncio.gather(*(
+                    on_checkpoint(stage, result)
+                    for stage, result in generated.items()
+                ))
+        assert enrichment_result is not None
+        assert identity_result is not None
         enrichments = enrichment_result.scene_enrichments
         enrichment_ids = [item.scene_id for item in enrichments]
         if enrichment_ids != expected_ids or len(enrichment_ids) != len(set(enrichment_ids)):
             raise EmbodimentGenerationError(
-                "enrichment output scene_ids must match input scene order and be unique"
+                "trait extraction output scene_ids must match input scene order and be unique"
             )
         _semantic(lambda: _validate_and_normalize_scene_grounding(enrichments, expected_ids))
         aspect_ids = {item["id"] for item in aspects}
         goal_ids = {item["id"] for item in goals}
         for enrichment in enrichments:
             for impact in enrichment.impacts:
-                permitted_ids = (
-                    goal_ids if impact.impact_type.value == "goal_change" else aspect_ids
-                )
+                permitted_ids = goal_ids if impact.impact_type.value == "goal_change" else aspect_ids
                 if impact.target_id not in permitted_ids:
                     raise EmbodimentGenerationError(
-                        "scene enrichment referenced an unknown profile target"
+                        "scene trait extraction referenced an unknown profile target"
                     )
-        if "scene_interpretation" not in stage_checkpoints and on_checkpoint:
-            await on_checkpoint("scene_interpretation", enrichment_result)
+
+        identity_signals = identity_result.scene_identity_signals
+        signal_ids = [item.scene_id for item in identity_signals]
+        if signal_ids != expected_ids or len(signal_ids) != len(set(signal_ids)):
+            raise EmbodimentGenerationError(
+                "identity signal output scene_ids must match input scene order and be unique"
+            )
+        _semantic(lambda: _validate_and_normalize_scene_grounding(identity_signals, expected_ids))
 
         bundles = [
             ScenePerspectiveBundleOutput(
@@ -675,78 +723,32 @@ class EmbodyAgent:
                 beliefs=enrichment.beliefs,
                 impacts=enrichment.impacts,
                 trait_candidates=enrichment.trait_candidates,
-                aspect_signals=enrichment.aspect_signals,
-                goal_signals=enrichment.goal_signals,
+                aspect_signals=signals.aspect_signals,
+                goal_signals=signals.goal_signals,
             )
-            for perspective, enrichment in zip(perspectives, enrichments, strict=True)
+            for perspective, enrichment, signals in zip(
+                perspectives, enrichments, identity_signals, strict=True
+            )
         ]
 
-        # Step 3 is deterministic: Step 2 emits scene-local candidates, which
-        # are grounded below before the cumulative profile-update call.
-        stage_checkpoints["observations"] = EmbodimentObservationsOutput(
+        # The two second-wave branches already contain all source-local evidence.
+        # Construct observations in the backend so no additional reconstruction
+        # call can reintroduce raw scenes or an accumulated evidence history.
+        observations = EmbodimentObservationsOutput(
             trait_evidence=[
-                candidate for enrichment in enrichments
+                candidate
+                for enrichment in enrichments
                 for candidate in enrichment.trait_candidates
             ],
-        ).model_dump(mode="json")
-        if on_stage:
-            await on_stage(
-                "source:{0} - Step 3: Profile updates".format(source_entity_alias), [3]
-            )
-        observations_payload = {
-            "identity": identity,
-            "allowed_evidence_ids": sorted(known),
-            "scene_perspectives": [
-                bundle.model_dump(
-                    mode="json",
-                    exclude={"character_reflection", "status"},
-                )
-                for bundle in bundles
-            ],
-        }
-        def validate_observations(value):
-            _validate_and_normalize_evidence(value, allowed_ids=known, stage="scene-local trait candidates")
-            _semantic(lambda: ground_observations(value.trait_evidence,
-                scene_ids=expected_ids, source_group_id=source_entity_id))
-        observations_unavailable = False
-        if "observations" in stage_checkpoints:
-            observations = EmbodimentObservationsOutput.model_validate(
-                stage_checkpoints["observations"]
-            )
-            _validate_and_normalize_evidence(
-                observations, allowed_ids=known, stage="scene-local trait candidates",
-            )
-        else:
-            try:
-                observations = await self._call(
-                    prompt=OBSERVATIONS_PROMPT,
-                    payload=observations_payload,
-                    schema=EmbodimentObservationsOutput,
-                    stage="scene-local trait candidates",
-                    usage_tag="character_agent.embodiment.observations",
-                    max_tokens=None,
-                    model=self.scene_interpretation_model,
-                    semantic_validator=validate_observations,
-                    source_entity_id=source_entity_id,
-                    source_entity_alias=source_entity_alias,
-                    schema_correction_attempts=1,
-                )
-            except EmbodimentGenerationError as exc:
-                if exc.category not in {
-                    "schema", "semantic_reference", "semantic", "empty_response",
-                }:
-                    raise
-                logger.warning(
-                    "embodiment_observations_discarded source_id=%s source_alias=%s "
-                    "category=%s error=%s",
-                    source_entity_id, source_entity_alias, exc.category, exc,
-                )
-                observations = EmbodimentObservationsOutput()
-                observations_unavailable = True
-        _semantic(lambda: ground_observations(observations.trait_evidence,
-            scene_ids=expected_ids, source_group_id=source_entity_id))
-        if "observations" not in stage_checkpoints and on_checkpoint:
-            await on_checkpoint("observations", observations)
+        )
+        _validate_and_normalize_evidence(
+            observations, allowed_ids=known, stage="scene-local trait candidates",
+        )
+        _semantic(lambda: ground_observations(
+            observations.trait_evidence,
+            scene_ids=expected_ids,
+            source_group_id=source_entity_id,
+        ))
 
         return EmbodyAgentAnalysis(
             scene_input_digests={s.scene_id: scene_digest(s.model_dump()) for s in scenes},
@@ -757,13 +759,13 @@ class EmbodyAgent:
             subtitle_change=observations.subtitle_change or SubtitleChangeProposal(),
             evidence_ids=known,
             aspect_signals=[
-                signal for enrichment in enrichments for signal in enrichment.aspect_signals
+                signal for item in identity_signals for signal in item.aspect_signals
             ],
             goal_signals=[
-                signal for enrichment in enrichments for signal in enrichment.goal_signals
+                signal for item in identity_signals for signal in item.goal_signals
             ],
             llm_calls=list(self.llm_calls),
-            observations_unavailable=observations_unavailable,
+            observations_unavailable=False,
         )
 
     async def apply_profile_update(
@@ -798,76 +800,26 @@ class EmbodyAgent:
                 llm_calls=list(self.llm_calls),
             )
 
-        obs_data = analysis.observations.model_dump(mode="json", exclude={"trait_evidence"})
+        if on_stage:
+            await on_stage(
+                "source:{0} - Step 4: Deterministic source reduction".format(
+                    analysis.source_entity_alias
+                ), [4]
+            )
         existing = current_trait_evidence or []
         incoming = ground_observations(analysis.observations.trait_evidence,
             scene_ids=[p.scene_id for p in analysis.perspectives],
             source_group_id=analysis.source_entity_id,
             offset=max((e.chronological_position for e in existing), default=-1) + 1)
         accumulated = merge_evidence(existing, incoming)
-        source_evidence_ids = sorted(analysis.evidence_ids)
-
-        if stage_checkpoint is not None:
-            profile_result = ProfileUpdateOutput.model_validate(stage_checkpoint)
-            _validate_profile_update(profile_result, allowed_ids=analysis.evidence_ids, evidence=accumulated)
-        else:
-            profile_result = await self._call(
-                prompt=PROFILE_UPDATE_PROMPT,
-                payload={
-                    "current_profile": {
-                        "trait_profile": current_trait_profile.model_dump(mode="json"),
-                        "aspects": [
-                            {"name": a.get("name", ""), "category": a.get("category", ""),
-                             "description": a.get("description"),
-                             "importance": a.get("importance"), "intensity": a.get("intensity"),
-                             "created_at": a.get("created_at")}
-                            for a in current_aspects
-                        ],
-                        "goals": [
-                            {"title": g.get("title", ""), "description": g.get("description", ""),
-                             "goal_type": g.get("goal_type", ""),
-                             "priority": g.get("priority"), "commitment": g.get("commitment"),
-                             "created_at": g.get("created_at")}
-                            for g in current_goals
-                        ],
-                    },
-                    "observations": obs_data,
-                    "trait_evidence": [
-                        {"position": index + 1} | item.model_dump(
-                            mode="json",
-                            exclude={"id", "evidence_ids", "episode_id", "available_after_scene_id", "source_group_id"},
-                        )
-                        for index, item in enumerate(accumulated)
-                    ],
-                    "scene_signals": {
-                        "aspects": [item.model_dump(mode="json", exclude={"evidence_ids"}) for item in analysis.aspect_signals],
-                        "goals": [item.model_dump(mode="json", exclude={"evidence_ids"}) for item in analysis.goal_signals],
-                    },
-                    "allowed_evidence_positions": list(range(1, len(source_evidence_ids) + 1)),
-                    "limits": {
-                        "max_aspects": self.max_aspects,
-                        "max_goals": self.max_goals,
-                    },
-                },
-                schema=ProfileUpdateOutput,
-                stage="profile updates",
-                usage_tag="character_agent.embodiment.profile_update",
-                max_tokens=None,
-                model=self.character_update_model,
-                semantic_validator=lambda value: _validate_profile_update(
-                    value,
-                    allowed_ids=analysis.evidence_ids,
-                    evidence=accumulated,
-                ),
-                source_entity_id=analysis.source_entity_id,
-                source_entity_alias=analysis.source_entity_alias,
-                output_binding={
-                    "observation_ids": [item.id for item in accumulated],
-                    "evidence_ids": source_evidence_ids,
-                },
-            )
-            if on_checkpoint:
-                await on_checkpoint("profile_update", profile_result)
+        profile_result = _deterministic_profile_result(
+            evidence=accumulated,
+            source_entity_id=analysis.source_entity_id,
+            aspect_signals=analysis.aspect_signals,
+            goal_signals=analysis.goal_signals,
+            current_aspects=current_aspects,
+            current_goals=current_goals,
+        )
         trait_profile, trait_changes = update_profile(
             current_trait_profile,
             accumulated,
@@ -1192,3 +1144,41 @@ def _validate_profile_update(value, *, allowed_ids: set[str], evidence: list[Tra
     for item in [*value.aspect_updates, *value.goal_updates]:
         _validate_and_normalize_evidence(item, allowed_ids=allowed_ids, stage="profile updates")
     _semantic(lambda: validate_proposals(value.trait_proposals, evidence))
+
+
+def _normalized_identity_label(value: str) -> str:
+    return " ".join(value.casefold().split())
+
+
+def _deterministic_profile_result(*, evidence, source_entity_id: str, aspect_signals, goal_signals, current_aspects, current_goals) -> ProfileUpdateOutput:
+    """Convert independently extracted source signals into safe source operations.
+
+    Numeric trait updates are already backend-owned.  Durable signal additions
+    are deduplicated against active state and each other; no model may mutate or
+    remove existing identity state in this reduction.
+    """
+    proposals = []
+    for trait in sorted({item.trait for item in evidence if item.eligible and item.source_group_id == source_entity_id}):
+        ids = [item.id for item in evidence if item.trait == trait and item.eligible and item.source_group_id == source_entity_id]
+        proposals.append({"trait": trait, "observation_ids": ids, "justification": "Validated source-local behavioral evidence.", "addresses_contradictions": "The deterministic policy retains contradictory evidence without averaging it into a false certainty."})
+    known_aspects = {_normalized_identity_label(str(item.get("name") or "")) for item in current_aspects}
+    known_goals = {_normalized_identity_label(str(item.get("title") or "")) for item in current_goals}
+    aspect_updates = []
+    for signal in sorted(aspect_signals, key=lambda item: (-item.confidence, -item.importance, item.name.casefold())):
+        key = _normalized_identity_label(signal.name)
+        if key in known_aspects:
+            continue
+        known_aspects.add(key)
+        aspect_updates.append({"operation": "add", **signal.model_dump(mode="json")})
+    goal_updates = []
+    for signal in sorted(goal_signals, key=lambda item: (-item.confidence, -item.priority, item.title.casefold())):
+        key = _normalized_identity_label(signal.title)
+        if key in known_goals:
+            continue
+        known_goals.add(key)
+        goal_updates.append({"operation": "add", **signal.model_dump(mode="json")})
+    return ProfileUpdateOutput.model_validate({
+        "trait_proposals": proposals,
+        "aspect_updates": aspect_updates[:2],
+        "goal_updates": goal_updates[:1],
+    })

@@ -357,47 +357,65 @@ Name/story/image derivation continues to use canonical entity information.
 
 ### Source-boundary bundles
 
-Scenes retain `DERIVED_FROM` source grouping and deterministic time order. A scene
-directly related to the embodied entity, or related through one of its milestones,
-is eligible when its ontology matches the entity's ontology. That graph
-relationship is authoritative when stale denormalized `Scene.instance_id` metadata
-disagrees, so imported or moved source material is not silently omitted. All scenes
-from a source remain one atomic identity-update and revision boundary. For
-scene-local LLM work, the worker partitions their ordered scenes into analysis
-chunks of at most five; no scenes are silently truncated or dropped. Up to three
-chunks may run concurrently, all using the same source-start revision. Each chunk
-runs incorporation and perspective-only enrichment (including scene-local trait
-candidates and durable aspect/goal signals). The backend merges every chunk's
-validated results before one cumulative source-level profile proposal. A source
-with `n` chunks normally makes `2n + 1` LLM calls, plus the one-time authored
-baseline and any repair/correction calls. Only incorporation receives the raw
-scene; enrichment receives the grounded character perspective without its
-presentation-only reflection. The backend does not make a separate
-cross-scene-observation call. A scene has no hard cap on trait candidates, while
-aspect and goal signals are limited to one each and never mutate state on their
-own. No scenes are required for authored-only initialization. The updated identity
-takes effect at source end.
+Scenes retain `DERIVED_FROM` source grouping and deterministic time order. A source remains one atomic identity-update and revision boundary, but its scene-local work is partitioned into chunks of at most five scenes (therefore always within the ten-scene source-window limit). Up to three chunks run concurrently from the same source-start identity.
 
-Every enrichment item explicitly returns its six arrays: `emotions`, `beliefs`,
-`impacts`, `trait_candidates`, `aspect_signals`, and `goal_signals`. Empty arrays
-are valid; omitted arrays are rejected and receive one schema-correction attempt.
-Impacts can only target existing profile aspect/goal IDs, so an agent with neither
-can correctly have `impacts: []` while still emitting candidate or durable-signal
-evidence for later profile creation.
+Each chunk has two LLM waves:
 
-Outputs contain per-scene provenance and availability cutoffs. Invalid references,
-missing/duplicate/reordered scene outputs, or unsupported updates fail validation
-and may use the configured bounded correction. Explicit future citations are
-rejected; shared-context prompts cannot guarantee absence of uncited hindsight.
-For compatibility with providers that emit an otherwise exact bare scene UUID, the
-generation boundary canonicalizes it to `scene:<uuid>` before validation. Foreign
-or future UUIDs remain rejected after canonicalization.
+1. **Character incorporation** receives the chunk's canonical raw scenes and returns position-bound perspectives and presentation-only reflections.
+2. **Trait extraction** and **aspect/goal signal detection** run in parallel from those perspectives. Neither receives canonical scenes or reflections. Trait extraction returns emotions, beliefs, impacts, and trait candidates. The identity branch returns only durable aspect and goal signals.
 
-Checkpoints include the preceding profile/evidence, complete source inputs,
-versions, and model targets. Architect uses the same accumulation/timeline rules
-for new scenes. Stale concurrent writes return a conflict; edited, removed, or
-backdated processed history requires regeneration. Background failure is reported
-through the existing job/draft error path.
+The backend binds every scene/evidence/target reference by output position, validates the two branches, merges all chunk-local evidence in chronological source order, deduplicates new identity signals, and performs the trait/profile reduction deterministically. It never sends the cumulative historical evidence ledger to an LLM, and there is no profile-update LLM call. Existing aspects and goals are never modified or removed by the deterministic signal reducer; it creates only evidence-backed, non-duplicate additions. The updated identity takes effect only at source end.
+
+### Frontend job-progress contract
+
+`POST /character-agents/embodiment-drafts` still returns `202`:
+
+```json
+{
+  "draft_id": "9b820ec5-5c1a-4bc6-9b01-4cea280e9420",
+  "job_id": 42,
+  "status": "queued",
+  "draft_url": "/character-agents/embodiment-drafts/9b820ec5-5c1a-4bc6-9b01-4cea280e9420",
+  "job_url": "/jobs/42"
+}
+```
+
+Poll `GET /jobs/42`. `details` is a JSON object when it contains valid JSON. During the parallel second wave, render `active_steps` and `parallel.active_branches` together rather than treating them as sequential stages:
+
+```json
+{
+  "id": 42,
+  "job_type": "character_agent_embodiment",
+  "status": "running",
+  "progress": 0.46,
+  "details": {
+    "stage": "Bundle — session_003_manfred_von_killinger — Steps 2-3: Trait",
+    "draft_id": "9b820ec5-5c1a-4bc6-9b01-4cea280e9420",
+    "bundles": [{
+      "index": 3,
+      "source_name": "session_003_manfred_von_killinger",
+      "status": "processing",
+      "active_steps": [2, 3],
+      "done_steps": [1],
+      "elapsed_seconds": 18.4,
+      "checkpointed_stages": ["character_incorporation"],
+      "reused_stages": [],
+      "chunks": [
+        {"index": 1, "scene_count": 5, "status": "processing", "active_steps": [2, 3], "done_steps": [1]},
+        {"index": 2, "scene_count": 5, "status": "processing", "active_steps": [2, 3], "done_steps": [1]}
+      ],
+      "parallel": {
+        "active": true,
+        "active_branches": ["Trait extraction", "Aspect and goal signals"],
+        "active_chunk_count": 2,
+        "scene_chunk_concurrency": 3
+      }
+    }]
+  }
+}
+```
+
+Step names are stable: `1` character incorporation, `2` trait extraction, `3` aspect and goal signals, and `4` deterministic source reduction. Render a chunk by its `status`, `scene_count`, `active_steps`, and `done_steps`; up to `scene_chunk_concurrency` chunks may be `processing` at once. A completed bundle has `done_steps: [1,2,3,4]`, empty `active_steps`, and `parallel.active: false`. `GET /character-agents/embodiment-drafts/{draft_id}` remains the reviewed-result endpoint; its proposal and timeline response contract is unchanged.
 
 ### Regeneration and rollout
 
@@ -416,7 +434,7 @@ and regenerate. There is no conversion or compatibility alias. See
 - `model_character_agent_character_incorporation`: batch perspectives/reflections.
 - `model_character_agent_scene_interpretation`: authored baseline and per-scene
   psychological enrichment/candidate extraction.
-- `model_character_agent_update`: cumulative trait proposals, aspects and goals.
+- `model_character_agent_update`: chunk-local aspect and goal signal extraction; source reduction is backend-owned and deterministic.
 - `model_character_agent_framing` / `model_character_agent_deliberation`: query stages.
 - `model_agents_repair_json`: query final repair target.
 - `character_agent_embodiment_evidence_tokens`: default 12000; applies only to

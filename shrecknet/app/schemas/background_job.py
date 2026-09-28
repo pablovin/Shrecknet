@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
+import json
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.models.background_job import AuthorType, JobStatus, JobType
 
@@ -16,8 +18,19 @@ class BackgroundJobBase(BaseModel):
     author_id: str
     job_type: JobType
     description: str
-    details: str | None = None
+    details: dict[str, Any] | str | None = None
     ontology_id: int | None = None
+
+    @field_validator("details", mode="before")
+    @classmethod
+    def parse_details(cls, value: Any) -> dict[str, Any] | str | None:
+        if not isinstance(value, str):
+            return value
+        try:
+            parsed = json.loads(value)
+        except (TypeError, ValueError):
+            return value
+        return parsed if isinstance(parsed, dict) else value
 
 
 class BackgroundJobCreate(BackgroundJobBase):

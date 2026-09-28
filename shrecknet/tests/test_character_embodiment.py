@@ -617,7 +617,7 @@ class BatchLLM:
         if stage=='baseline':
             return json.dumps({'trait_evidence':[]})
         if stage=='character_incorporation':
-            result={'perspectives':[dict(scene_id=f"model-scene-{s['position']}",evidence_ids=[f"scene:model-scene-{s['position']}"],
+            result={'perspectives':[dict(
                 source_type='participated',awareness_level=90,confidence=90,
                 summary='Returned an untraceable overpayment.',interpretation='Keeping it would exploit another.',
                 character_reflection='REFLECTION MUST NOT BECOME EVIDENCE',memory_strength=80,importance=3)
@@ -628,7 +628,7 @@ class BatchLLM:
                 result['perspectives'][1]['evidence_ids'] = ['scene:s0', 'scene:s1']
             return json.dumps(result)
         if stage=='scene_interpretation':
-            return json.dumps({'scene_enrichments':[dict(scene_id=f"model-scene-{p['position']}",evidence_ids=[f"scene:model-scene-{p['position']}"],
+            return json.dumps({'scene_enrichments':[dict(
                 emotions=[],beliefs=[],impacts=[],trait_candidates=[observation(scene=f"model-scene-{p['position']}").model_dump()],
                 aspect_signals=[],goal_signals=[]) for p in payload['perspectives']]})
         if stage=='observations':

@@ -947,7 +947,8 @@ def _bind_model_output_references(
                 if isinstance(record, dict):
                     _bind_scene_local_references(record, scene_id, profile_targets)
     if evidence_id is not None:
-        _bind_evidence_references(value, evidence_id)
+        _bind_authored_evidence_references(value, evidence_id)
+
     if observation_ids is not None:
         for proposal in value.get("trait_proposals", []):
             if not isinstance(proposal, dict):
@@ -975,7 +976,17 @@ def _bind_scene_local_references(
     item: dict[str, Any], scene_id: str, profile_targets: dict[str, list[str]] | None,
 ) -> None:
     item["scene_id"] = scene_id
-    _bind_evidence_references(item, f"scene:{scene_id}", scene_id)
+    canonical_evidence_id = f"scene:{scene_id}"
+    item["evidence_ids"] = [canonical_evidence_id]
+    _bind_evidence_references(item, canonical_evidence_id, scene_id)
+    for key in ("trait_candidates", "aspect_signals", "goal_signals"):
+        for nested in item.get(key, []):
+            if isinstance(nested, dict):
+                nested["evidence_ids"] = [canonical_evidence_id]
+                if key == "trait_candidates":
+                    nested["episode_id"] = canonical_evidence_id
+                    nested["available_after_scene_id"] = scene_id
+
     for impact in item.get("impacts", []):
         if not isinstance(impact, dict) or profile_targets is None:
             continue
@@ -985,6 +996,16 @@ def _bind_scene_local_references(
         targets = profile_targets.get(target_kind, [])
         if isinstance(target_index, int) and 1 <= target_index <= len(targets):
             impact["target_id"] = targets[target_index - 1]
+
+
+def _bind_authored_evidence_references(value: dict[str, Any], evidence_id: str) -> None:
+    """Attach the one canonical identity citation to baseline observations."""
+    for observation in value.get("trait_evidence", []):
+        if isinstance(observation, dict):
+            observation["evidence_ids"] = [evidence_id]
+            observation["episode_id"] = evidence_id
+            observation["available_after_scene_id"] = None
+    _bind_evidence_references(value, evidence_id)
 
 
 def _bind_evidence_references(value: Any, evidence_id: str, scene_id: str | None = None) -> None:

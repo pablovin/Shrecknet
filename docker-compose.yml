@@ -438,7 +438,7 @@ services:
       SHRECKWORLD_CELERY_RESULT_BACKEND: redis://shreckworld_redis:6379/1
       SHRECKWORLD_ADMIN_TOKEN: ${SHRECKWORLD_ADMIN_TOKEN:-}
     ports:
-      - "8120:8120"
+      - "8121:8120" # host:container; keep the service port internal
     volumes:
       - ./shreckworld/databases:/data
       - ./shreckworld/media:/app/media

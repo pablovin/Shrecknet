@@ -12,7 +12,7 @@ The existing Shrecknet `World` model remains an ontology-grouping concept.
 
 ## Contract
 
-The service lives in `shreckworld/` and is exposed on port `8120` in Compose.
+The service lives in `shreckworld/` and is exposed on host port `8121` in Compose (container port `8120`).
 The current standalone admin boundary uses `X-ShreckWorld-Admin-Token`.
 
 | Purpose | Endpoint |

@@ -5,6 +5,10 @@ import { checkConfiguredConnection } from "../settings/connection-monitor.js";
 
 const { ApplicationV2, HandlebarsApplicationMixin } = foundry.applications.api;
 
+function getActionTarget(event, target) {
+  return target || event.target.closest("[data-action]");
+}
+
 export class ShrecknetShell extends HandlebarsApplicationMixin(ApplicationV2) {
   static DEFAULT_OPTIONS = {
     id: "shrecknet-shell",
@@ -150,8 +154,11 @@ export class ShrecknetShell extends HandlebarsApplicationMixin(ApplicationV2) {
 
   static async _openHome() { try { await this._loadHome(); await this.render(); } catch (error) { await this._handleError(error); } }
 
-  static async _openFolder(event) {
-    const { ontologyId, definitionId, title } = event.currentTarget.dataset;
+  static async _openFolder(event, target) {
+    const { ontologyId, definitionId, title } = getActionTarget(event, target).dataset;
+    if (!ontologyId || !definitionId) {
+      return this._handleError(new Error("The selected Shrecknet folder is missing its identifiers."));
+    }
     try {
       const page = await this.client.listInstances(ontologyId, definitionId);
       this.resource = { kind: "folder", title, ontologyId, definitionId, breadcrumbs: [this.connection.worldName, title], instances: page.results };
@@ -160,17 +167,22 @@ export class ShrecknetShell extends HandlebarsApplicationMixin(ApplicationV2) {
     } catch (error) { await this._handleError(error); }
   }
 
-  static async _openInstance(event) {
+  static async _openInstance(event, target) {
+    const instanceId = getActionTarget(event, target).dataset.instanceId;
+    if (!instanceId) return this._handleError(new Error("The selected Shrecknet record is missing its identifier."));
     try {
-      const instance = await this.client.getInstance(event.currentTarget.dataset.instanceId);
+      const instance = await this.client.getInstance(instanceId);
       this.resource = { kind: "instance", title: instance.name, instance, breadcrumbs: [this.connection.worldName, instance.name] };
       this.history.navigate(this.resource);
       await this.render();
     } catch (error) { await this._handleError(error); }
   }
 
-  static async _openScene(event) {
-    const { instanceId, sceneId } = event.currentTarget.dataset;
+  static async _openScene(event, target) {
+    const { instanceId, sceneId } = getActionTarget(event, target).dataset;
+    if (!instanceId || !sceneId) {
+      return this._handleError(new Error("The selected Narrative Scene is missing its identifiers."));
+    }
     try {
       const scene = await this.client.getNarrativeScene(instanceId, sceneId);
       this.resource = { kind: "scene", title: scene.name, scene, breadcrumbs: [this.connection.worldName, "Narrative Scenes", scene.name] };

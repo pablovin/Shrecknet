@@ -30,6 +30,7 @@ from app.models.ontology import (
 from app.models.personal_companion_agent import PersonalCompanionAgent
 from app.models.user import User, UserApprovalStatus, UserRole, user_entities
 from app.models.world import World
+from app.models.foundry_integration import FoundryIntegration
 
 __all__ = [
     "User",
@@ -37,6 +38,7 @@ __all__ = [
     "UserApprovalStatus",
     "user_entities",
     "World",
+    "FoundryIntegration",
     "Ontology",
     "OntologyEntity",
     "OntologyProperty",

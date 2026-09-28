@@ -1,0 +1,17 @@
+.shrecknet-shell { min-height: 100%; background: var(--shrecknet-bg); color: var(--shrecknet-text); font-family: var(--shrecknet-font-ui); }
+.shrecknet-header, .shrecknet-nav { display: flex; gap: .5rem; align-items: center; padding: .75rem; border-bottom: 1px solid var(--shrecknet-border); }
+.shrecknet-header strong { flex: 1; letter-spacing: .08em; }
+.shrecknet-nav form { display: flex; flex: 1; gap: .3rem; }
+.shrecknet-nav input { flex: 1; }
+.shrecknet-notice { margin: .75rem; padding: .6rem; border: 1px solid var(--shrecknet-accent); color: var(--shrecknet-accent); }
+.shrecknet-form { display: grid; gap: .8rem; max-width: 32rem; margin: 2rem auto; padding: 1.25rem; border: 1px solid var(--shrecknet-border); }
+.shrecknet-form label { display: grid; gap: .3rem; }
+.shrecknet-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr)); gap: .6rem; padding: .75rem; }
+.shrecknet-folder { min-height: 5rem; text-align: left; }
+.shrecknet-folder small { display: block; color: var(--shrecknet-muted); margin-top: .5rem; }
+.shrecknet-list { list-style: none; padding: .75rem; margin: 0; }
+.shrecknet-list li { margin: .35rem 0; }
+.shrecknet-record { padding: 1rem; font-family: var(--shrecknet-font-content); border-bottom: 1px solid var(--shrecknet-border); }
+.shrecknet-record img { max-width: 12rem; max-height: 12rem; float: right; margin: 0 0 .6rem .8rem; }
+.shrecknet-breadcrumbs { color: var(--shrecknet-muted); padding: 0 .75rem; }
+.shrecknet h2, .shrecknet h3 { padding: 0 .75rem; }

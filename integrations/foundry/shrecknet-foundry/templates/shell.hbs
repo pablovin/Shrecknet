@@ -1,0 +1,72 @@
+<div class="shrecknet-shell">
+  <header class="shrecknet-header">
+    <strong>SHRECKNET://{{connection.worldName}}</strong>
+    {{#if authenticated}}<span>{{user.username}}</span>{{/if}}
+  </header>
+
+  {{#if notice}}<p class="shrecknet-notice">{{notice}}</p>{{/if}}
+
+  {{#unless configured}}
+    {{#if canConfigure}}
+      <form class="shrecknet-form">
+        <h2>Shrecknet Connection</h2>
+        <label>Server URL <input name="serverUrl" type="url" value="{{connection.serverUrl}}" required></label>
+        <label>Integration Key <input name="integrationKey" type="password" autocomplete="off" required></label>
+        <button type="button" data-action="testConnection">Test Connection</button>
+        {{#if worldChoices.length}}
+          <label>Shrecknet World
+            <select name="worldId" required>
+              <option value="">Select a World</option>
+              {{#each worldChoices}}<option value="{{id}}">{{name}}</option>{{/each}}
+            </select>
+          </label>
+          <button type="button" data-action="saveConnection">Save</button>
+        {{/if}}
+      </form>
+    {{else}}
+      <p>This Foundry World has not been connected to Shrecknet. Ask a GM to configure it.</p>
+    {{/if}}
+  {{else if (not authenticated)}}
+    <form class="shrecknet-form">
+      <h2>Connected World: {{connection.worldName}}</h2>
+      <label>Email or Username <input name="identifier" autocomplete="username" required></label>
+      <label>Password <input name="password" type="password" autocomplete="current-password" required></label>
+      <button type="button" data-action="signIn">Sign In</button>
+    </form>
+  {{else}}
+    <nav class="shrecknet-nav">
+      <button type="button" data-action="goBack" {{#unless canGoBack}}disabled{{/unless}}>←</button>
+      <button type="button" data-action="goForward" {{#unless canGoForward}}disabled{{/unless}}>→</button>
+      <button type="button" data-action="openHome">⌂ Home</button>
+      <form><input name="query" placeholder="Search {{connection.worldName}}..."><button type="button" data-action="search">Search</button></form>
+      <button type="button" data-action="signOut">Sign out</button>
+    </nav>
+
+    {{#if resource.breadcrumbs}}<p class="shrecknet-breadcrumbs">{{#each resource.breadcrumbs}}{{this}}{{#unless @last}} &gt; {{/unless}}{{/each}}</p>{{/if}}
+
+    {{#if (eq resource.kind "home")}}
+      <h2>Welcome to {{resource.title}}</h2>
+      <div class="shrecknet-grid">
+        {{#each resource.folders}}<button type="button" class="shrecknet-folder" data-action="openFolder" data-ontology-id="{{ontologyId}}" data-definition-id="{{id}}" data-title="{{name}}">📁 {{name}}<small>{{ontologyName}}</small></button>{{/each}}
+      </div>
+      <p>Narrative Scenes are available from each entity collection.</p>
+    {{else if (eq resource.kind "folder")}}
+      <h2>{{resource.title}}</h2>
+      <ul class="shrecknet-list">{{#each resource.instances}}<li><button type="button" data-action="openInstance" data-instance-id="{{instance_id}}">📄 {{primary_alias}}{{#unless primary_alias}}{{name}}{{/unless}}</button></li>{{/each}}</ul>
+    {{else if (eq resource.kind "instance")}}
+      <h2>{{resource.title}}</h2>
+      {{#each resource.instance.entities}}
+        <article class="shrecknet-record"><h3>{{alias}}</h3>{{#if node_avatar_url}}<img src="{{node_avatar_url}}" alt="">{{/if}}<p>{{text_linked}}</p>
+          {{#if properties.length}}<h4>Properties</h4><ul>{{#each properties}}<li>{{definition_id}}: {{value}}</li>{{/each}}</ul>{{/if}}
+          {{#if relationships.length}}<h4>Related</h4><ul>{{#each relationships}}<li>→ {{target_entity_id}}</li>{{/each}}</ul>{{/if}}
+        </article>
+      {{/each}}
+      {{#if resource.instance.scenes.length}}<h3>Narrative Scenes</h3><ul class="shrecknet-list">{{#each resource.instance.scenes}}<li><button type="button" data-action="openScene" data-instance-id="{{../resource.instance.instance_id}}" data-scene-id="{{id}}">→ {{name}}</button></li>{{/each}}</ul>{{/if}}
+    {{else if (eq resource.kind "scene")}}
+      <article class="shrecknet-record"><p>Narrative Scene</p><h2>{{resource.scene.name}}</h2><p>{{resource.scene.description}}</p>
+      {{#if resource.scene.milestones.length}}<h3>Milestones</h3><ul>{{#each resource.scene.milestones}}<li>{{description}}</li>{{/each}}</ul>{{/if}}</article>
+    {{else if (eq resource.kind "search")}}
+      <h2>{{resource.title}}</h2><ul class="shrecknet-list">{{#each resource.instances}}<li><button type="button" data-action="openInstance" data-instance-id="{{instance_id}}">📄 {{primary_alias}}{{#unless primary_alias}}{{name}}{{/unless}}</button></li>{{/each}}</ul>
+    {{/if}}
+  {{/unless}}
+</div>

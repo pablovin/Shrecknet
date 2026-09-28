@@ -1,0 +1,15 @@
+.shrecknet.theme-terminal {
+  --shrecknet-bg: #0c120d;
+  --shrecknet-panel: #152019;
+  --shrecknet-text: #d6e8cf;
+  --shrecknet-muted: #8ca38b;
+  --shrecknet-accent: #8fe36c;
+  --shrecknet-border: #42613e;
+  --shrecknet-font-ui: "Courier New", monospace;
+  --shrecknet-font-content: Georgia, serif;
+}
+.shrecknet.theme-terminal button, .shrecknet.theme-terminal input, .shrecknet.theme-terminal select {
+  background: var(--shrecknet-panel);
+  border-color: var(--shrecknet-border);
+  color: var(--shrecknet-text);
+}

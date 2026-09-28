@@ -25,6 +25,7 @@ from app.core.config_store import (
 from app.services.shreckllm_status_service import get_all_provider_validations
 from app.services.email_service import EmailDeliveryError, EmailService, get_email_service_status
 from app.schemas.user import PublicRegistrationConfig
+from app.schemas.foundry_integration_config import FoundryIntegrationConfigSummary
 
 router = APIRouter(prefix="/config", tags=["config"])
 logger = logging.getLogger(__name__)
@@ -645,6 +646,7 @@ def get_config_schema() -> dict[str, Any]:
         "field_meta": {k: v for k, v in field_meta.items() if k in visible_fields},
         "frontend_locked_fields": sorted(FRONTEND_LOCKED_FIELDS & visible_fields),
         "ungrouped_fields": ungrouped,
+        "resources": [FoundryIntegrationConfigSummary().model_dump()],
     }
 
 

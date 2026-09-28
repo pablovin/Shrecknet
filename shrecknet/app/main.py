@@ -23,6 +23,8 @@ from app.api.routers import (
     elder,
     elder_chats,
     events,
+    foundry_integrations,
+    foundry_configuration,
     graphrag,
     jobs,
     llm_status,
@@ -402,6 +404,7 @@ app.include_router(librarian.router)
 app.include_router(novelist.router)
 app.include_router(graphrag.router)
 app.include_router(configurations.router)
+app.include_router(foundry_configuration.router)
 app.include_router(audit_logs.router)
 app.include_router(media.router)
 app.include_router(media_admin.router)
@@ -409,6 +412,7 @@ app.include_router(libraries.router)
 app.include_router(ontology_instances.router)
 app.include_router(personal_companion_agents.router)
 app.include_router(events.router)
+app.include_router(foundry_integrations.router)
 app.include_router(contracts.router)
 app.include_router(backups.router)
 app.include_router(llm_status.router)

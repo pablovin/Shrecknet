@@ -41,6 +41,8 @@ databases/
 !configs/*.json
 !shreckCompanion/configs/
 !shreckCompanion/configs/*.json
+!integrations/foundry/shrecknet-foundry/module.json
+!integrations/foundry/shrecknet-foundry/themes/terminal/theme.json
 
 # Deployment
 .vercel

@@ -6,7 +6,7 @@ Shrecknet backend repository.
 
 ## Connect a World
 
-1. Create an integration key on Shrecknet with `POST /integrations/foundry/admin/keys`.
+1. Create an integration key on Shrecknet with `POST /config/integrations/foundry`.
 2. Open the Shrecknet control in Foundry as a GM.
 3. Enter the Shrecknet URL and key, test the connection, choose a Shrecknet World, and save.
 4. Each Foundry player opens Shrecknet and signs in with their own Shrecknet account.

@@ -1,0 +1,29 @@
+{
+  "id": "shrecknet-foundry",
+  "title": "Shrecknet",
+  "description": "Connect Foundry VTT to a Shrecknet World and browse its entities and Narrative Scenes.",
+  "version": "0.1.0",
+  "compatibility": {
+    "minimum": "14",
+    "verified": "14"
+  },
+  "authors": [
+    {
+      "name": "Pablo Barros",
+      "url": "https://github.com/pablovin/Shrecknet"
+    }
+  ],
+  "esmodules": [
+    "scripts/main.js"
+  ],
+  "styles": [
+    "styles/base.css",
+    "themes/terminal/theme.css"
+  ],
+  "languages": [],
+  "url": "https://github.com/pablovin/Shrecknet/tree/main/integrations/foundry/shrecknet-foundry",
+  "readme": "README.md",
+  "manifest": "https://raw.githubusercontent.com/pablovin/Shrecknet/main/integrations/foundry/shrecknet-foundry/module.json",
+  "download": "https://github.com/pablovin/Shrecknet/releases/download/foundry-v0.1.0/shrecknet-foundry-v0.1.0.zip",
+  "bugs": "https://github.com/pablovin/Shrecknet/issues"
+}

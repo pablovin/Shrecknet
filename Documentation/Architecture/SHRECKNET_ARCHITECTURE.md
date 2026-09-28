@@ -71,7 +71,11 @@ owns eligibility, deduplication, conservative acceptance, manual overrides and
 within-context STEADINESS. `app/jobs/character_agent/profile.py` supplies shared
 profile/timeline lifecycle operations to draft generation and Architect append.
 Existing CharacterAgent services retain Neo4j transaction ownership; Celery entry
-points retain job/checkpoint lifecycle. Each source is one atomic bundle, with four
-normal LLM calls and exactly one resulting revision containing every scene used.
-Revision JSON contains the evidence ledger, including
-no-change observations. See [Dispositional traits](../Agents/CharacterAgent/Dispositional%20Traits.md).
+points retain job/checkpoint lifecycle. Each source is one atomic identity-update
+bundle and produces exactly one revision containing every scene used. Its
+scene-local work is partitioned into chunks of at most five scenes; up to three
+chunks run concurrently, each with incorporation and enrichment, before one
+source-level profile update. The normal call budget for `n` chunks is `2n + 1`,
+plus the one-time authored baseline and any repair/correction calls. Revision JSON
+contains the evidence ledger, including no-change observations. See
+[Dispositional traits](../Agents/CharacterAgent/Dispositional%20Traits.md).

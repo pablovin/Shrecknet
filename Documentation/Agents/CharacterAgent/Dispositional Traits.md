@@ -60,15 +60,20 @@ integrity; forbidden speech is not low presence; careful failure is not low
 diligence; incorrect conclusions do not negate curiosity. Weak, excluded,
 contradictory, and no-change evidence remains inspectable in the revision ledger.
 
-The current embodiment pipeline is scene-centric and uses three LLM calls per
-source bundle: incorporation, per-scene enrichment/candidate extraction, and a
-cumulative profile update. There is no separate cross-scene-observation LLM
-call. Incorporation alone receives objective scene text. Enrichment receives only
-the corresponding grounded character perspective (without its presentation-only
-reflection), and derives emotions, beliefs, trait candidates, and durable signals
-from that perspective. The backend collects each enrichment result's
-`trait_candidates`, validates their canonical grounding and choice conditions,
-then supplies the accumulated evidence to the profile-update call.
+The current embodiment pipeline is scene-centric. A source's scenes are divided
+into analysis chunks of at most five scenes. Each chunk makes an incorporation
+call and an enrichment/candidate-extraction call; up to three chunks for the
+same source may run concurrently against the same source-start identity. The
+backend merges their results, then makes one cumulative profile-update call for
+the entire source. A source with `n` analysis chunks therefore normally makes
+`2n + 1` LLM calls, excluding the authored baseline and repair/correction calls.
+There is no separate cross-scene-observation LLM call. Incorporation alone
+receives objective scene text. Enrichment receives only the corresponding
+grounded character perspective (without its presentation-only reflection), and
+derives emotions, beliefs, trait candidates, and durable signals from that
+perspective. The backend collects each enrichment result's `trait_candidates`,
+validates their canonical grounding and choice conditions, then supplies the
+merged evidence to the profile-update call.
 
 Enrichment emits every distinct scene-local trait candidate it can identify;
 there is deliberately **no hard per-scene candidate limit**. Candidates with
@@ -117,8 +122,9 @@ payloads; treat them as local diagnostic data rather than application logs.
 
 - `baseline.log` records the authored-baseline LLM call.
 - One `bundle_XXX_<source>.log` is written for each source-boundary bundle. It
-  contains its three LLM stage calls in order (including JSON/semantic corrections)
-  and any checkpointed stage outputs reused for that bundle.
+  contains all analysis-chunk and source-level profile-update calls, including
+  JSON/semantic corrections and any reused checkpoint output. Concurrent chunk
+  records are append-only and should not be interpreted as a strict call order.
 - `final_pipeline.log` captures the complete accumulated inputs and outputs after
   every bundle: observations, perspectives, trait evidence/profile, aspect and
   goal updates, subtitle, generated proposal, and timeline projection.
@@ -190,21 +196,27 @@ STEADINESS never means goodness or calmness and never sets model temperature.
 ## Source-boundary bundles
 
 Scenes are grouped by `DERIVED_FROM` source, then ordered by
-`(created_at, scene_id)` within that source. Every scene from one source is sent
-in one atomic bundle regardless of scene count: it is never silently split,
-truncated, or dropped to meet a scene-count or local character budget. A scene
-linked to the character through either `RELATES_TO` directly or a contained
-milestone is included. Orphan scenes form one explicit `__orphan__` source
-bundle.
+`(created_at, scene_id)` within that source. A source remains the atomic
+identity-update and revision boundary: all of its eligible scenes contribute to
+one merged profile update and one resulting revision. For scene-local LLM work,
+the worker partitions the ordered scenes into analysis chunks of at most five;
+no scene is silently truncated or dropped. Up to three chunks from the same
+source run concurrently, all using the same source-start profile, aspects, and
+goals. A scene linked to the character through either `RELATES_TO` directly or a
+contained milestone is included. Orphan scenes form one explicit `__orphan__`
+source bundle.
 
-Each source bundle runs three normal LLM stages, sequentially:
+Each analysis chunk runs two normal LLM stages:
 
-1. Incorporation: one perspective per scene, using the source-bundle-start profile.
+1. Incorporation: one perspective per scene, using the source-start profile.
 2. Enrichment: immediate emotions, beliefs, impacts, all grounded scene-local
    trait candidates, and bounded aspect/goal candidate signals for each scene.
-3. Profile proposal: cumulative structured evidence, followed by deterministic
-   acceptance and separate STEADINESS computation. This creates exactly one
-   identity revision associated with every scene in the bundle.
+
+After all chunks have completed, the worker merges their structured results and
+runs one source-level profile proposal. Deterministic acceptance and separate
+STEADINESS computation then create exactly one identity revision associated with
+every scene in that source. The normal source call budget is therefore
+`2 x analysis_chunks + 1`.
 
 ### Trait extraction pipeline
 
@@ -212,41 +224,42 @@ Each source bundle runs three normal LLM stages, sequentially:
 flowchart TD
     A[Canonical entity\nauthored text + properties] --> B[Authored baseline call]
     B --> C[Revision 0\nunknown or provisional trait profile]
-    C --> D[Next complete source bundle\nall scenes from one source]
-    D --> E[1. Source-bundle perspectives\nusing the starting identity]
-    E --> F[2. Source-bundle enrichment\nemotions, beliefs, impacts]
-    F --> G[Scene-local trait candidates\nand aspect/goal signals]
+    C --> D[Next source bundle\nordered scenes]
+    D --> E[Analysis chunks: max 5 scenes\nup to 3 concurrent]
+    E --> F[1. Chunk perspectives\nusing source-start identity]
+    F --> G[2. Chunk enrichment\nemotions, beliefs, impacts]
     G --> H{Backend grounding and\nchoice-condition checks}
     H -->|invalid, weak, or confounded| I[Keep auditable excluded evidence]
-    H -->|eligible| J[Persistent cumulative evidence ledger]
+    H -->|eligible| J[Merged source evidence]
     I --> J
-    J --> K[3. LLM profile explanation]
+    J --> K[3. One source-level\nLLM profile explanation]
     K --> L[Backend averages source intensities\none bounded directional update]
     L --> M[Separate STEADINESS estimator\nonly comparable repeated behavior]
     M --> N[Source-end revision, changes,\nand every-scene provenance]
     N --> D
 ```
 
-The first baseline call may infer only a provisional authored disposition. Each
-later source bundle is sequential: its perspectives use the profile from the
-preceding bundle, and its accepted profile becomes available only after that
-source's final scene. The evidence ledger retains accepted, contradictory, excluded, and
-no-change observations so later updates remain explainable.
+The first baseline call may infer only a provisional authored disposition. Source
+bundles run sequentially: a later source starts only after the preceding source's
+merged profile is accepted. Within a source, concurrent analysis chunks share its
+starting identity; the next source receives the source-end result. The evidence
+ledger retains accepted, contradictory, excluded, and no-change observations so
+later updates remain explainable.
 
 Initialization adds one normal call. Repairs/corrections may add calls. There are
-no mandatory per-scene calls. Source bundles for the same character never run in
-parallel. The next bundle receives the preceding result. Identity changes take
-effect only at bundle end; all its perspectives link to the actual starting
-revision through `GENERATED_WITH`. One revision per bundle also preserves
-evidence-only transitions.
+no mandatory per-scene calls, but a source may require multiple chunk-level calls.
+Identity changes take effect only at source end; all its perspectives link to the
+actual starting revision through `GENERATED_WITH`. One revision per source also
+preserves evidence-only transitions.
 
-Per-scene enrichment can cite only supplied current/earlier scenes. Validators
-reject unknown IDs, duplicate/missing/reordered scene outputs, and explicit
-future citations. Because the perspective and enrichment calls read the whole
-source bundle, these checks **cannot prove absence of uncited semantic
-hindsight**. Prompts forbid it; later-revelation fixtures must be evaluated
-against the selected provider/model before deployment. Creation timestamps are
-processing chronology, not guaranteed in-world dates.
+Per-scene enrichment can cite only supplied current/earlier scenes within its
+analysis chunk. Validators reject unknown IDs, duplicate/missing/reordered scene
+outputs, and explicit future citations. Because a chunk's perspective and
+enrichment calls read the whole chunk, these checks **cannot prove absence of
+uncited semantic hindsight** within that chunk. Prompts forbid it;
+later-revelation fixtures must be evaluated against the selected provider/model
+before deployment. Creation timestamps are processing chronology, not guaranteed
+in-world dates.
 
 Stage checkpoints include source inputs, preceding profile and evidence, model
 targets, and prompt/specification/policy versions. Replayed outputs are

@@ -76,10 +76,12 @@ An agent cannot change `ontology_id`, its embodied entity, `id`,
 
 Embodiment extracts a provisional authored baseline or preserves unknown values
 in Revision 0. All scenes from a `DERIVED_FROM` source form one chronological
-source bundle and run sequentially. Each bundle uses its actual starting identity
-for batched ScenePerspectives, then accumulates diagnostic observations before one
-profile update and one revision associated with every scene in that source. Its
-resulting revision becomes the next bundle's starting identity.
+source bundle and yield one source-level profile update and revision. The worker
+partitions the source's ordered scenes into analysis chunks of at most five;
+up to three chunks may create ScenePerspectives and scene-local enrichment in
+parallel, all from the same source-start identity. Their results are merged before
+the source-level update. Source bundles themselves run sequentially, so the
+resulting revision becomes the next source bundle's starting identity.
 
 `CharacterIdentityRevision` stores the profile snapshot and newly introduced
 trait evidence, including evidence that did not change a score.
@@ -278,6 +280,24 @@ source-bundle pipeline, initial authored evidence, candidate/signal rules, debug
 artifacts, checkpoints, revision ownership, and breaking release operations. The
 registry is the authoritative definition source; SDKs and UI consumers can
 request it through `/character-agents/trait-definitions`.
+
+### Background jobs
+
+`character_agent.generate_embodiment` is the Celery task that generates a
+reviewable embodiment draft. It performs one authored-baseline call, then
+processes source bundles in order. For a source with `n` analysis chunks, the
+normal LLM call budget is `2n + 1`: incorporation and enrichment for each chunk,
+then one merged source-level profile update. Analysis chunks contain at most five
+scenes and run with a worker-local concurrency cap of three. Checkpoint reuse is
+available for the single-chunk source path; enabled debug artifacts deliberately
+disable reuse so the complete run is recorded.
+
+`character_agent.query` is the Celery task for asynchronous identity-grounded or
+generic queries. It reloads the applicable graph identity, reports the
+`loading_identity`, `framing`, `deliberating`, `repairing`, and `validating`
+stages through the background job, and records either a typed result or a safe
+error. See [CharacterAgent Query](Query/Query.md) for its request, polling, and
+output contracts.
 
 ## Related documentation
 

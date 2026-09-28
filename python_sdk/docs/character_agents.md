@@ -187,12 +187,16 @@ await sdk.character_agents.update(
 )
 ```
 
-Embodiment uses chronological source chunks of one source bundle and three normal
-LLM calls per bundle, plus authored initialization. Chunks run sequentially. The
-server applies the draft's generated profile during creation; submit only changed
-z selections in `trait_edits`, with reasons. Evidence continues accumulating
-beneath a manual override. STEADINESS is inferred separately from repeated
-comparable behavior and never controls query temperature.
+Embodiment processes source bundles chronologically. A source remains one
+identity-update/revision boundary, but its ordered scenes are divided into
+analysis chunks of at most five. Up to three chunks run concurrently from the
+same source-start identity; each makes incorporation and enrichment calls. The
+server merges them before one source-level profile update, so a source with `n`
+chunks normally makes `2n + 1` LLM calls, plus authored initialization and any
+repair/correction calls. The server applies the draft's generated profile during
+creation; submit only changed z selections in `trait_edits`, with reasons.
+Evidence continues accumulating beneath a manual override. STEADINESS is inferred
+separately from repeated comparable behavior and never controls query temperature.
 
 This is a breaking contract requiring old CharacterAgents, drafts and checkpoints
 to be cleared and regenerated with matching backend/worker/SDK versions. Starting

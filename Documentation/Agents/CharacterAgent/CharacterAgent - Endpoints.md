@@ -362,18 +362,21 @@ directly related to the embodied entity, or related through one of its milestone
 is eligible when its ontology matches the entity's ontology. That graph
 relationship is authoritative when stale denormalized `Scene.instance_id` metadata
 disagrees, so imported or moved source material is not silently omitted. All scenes
-from a source are one atomic bundle; the backend never splits, truncates, or drops
-them for a count or local input budget. Each bundle runs three normal
-calls: perspectives, perspective-only per-scene enrichment (including scene-local
-trait candidates and durable aspect/goal signals), and one cumulative profile
-proposal. Only incorporation receives the raw scene; enrichment receives the
-grounded character perspective without its presentation-only reflection. The
-backend validates and grounds the candidates before the profile proposal; it does
-not make a separate cross-scene-observation call. A scene has no hard cap on trait
-candidates, while aspect and goal signals are limited to one each and never mutate
-state on their own. Baseline authored extraction adds one initial call. No scenes
-are required for authored-only initialization. All bundle perspectives use its
-starting revision; the updated identity takes effect at bundle end.
+from a source remain one atomic identity-update and revision boundary. For
+scene-local LLM work, the worker partitions their ordered scenes into analysis
+chunks of at most five; no scenes are silently truncated or dropped. Up to three
+chunks may run concurrently, all using the same source-start revision. Each chunk
+runs incorporation and perspective-only enrichment (including scene-local trait
+candidates and durable aspect/goal signals). The backend merges every chunk's
+validated results before one cumulative source-level profile proposal. A source
+with `n` chunks normally makes `2n + 1` LLM calls, plus the one-time authored
+baseline and any repair/correction calls. Only incorporation receives the raw
+scene; enrichment receives the grounded character perspective without its
+presentation-only reflection. The backend does not make a separate
+cross-scene-observation call. A scene has no hard cap on trait candidates, while
+aspect and goal signals are limited to one each and never mutate state on their
+own. No scenes are required for authored-only initialization. The updated identity
+takes effect at source end.
 
 Every enrichment item explicitly returns its six arrays: `emotions`, `beliefs`,
 `impacts`, `trait_candidates`, `aspect_signals`, and `goal_signals`. Empty arrays

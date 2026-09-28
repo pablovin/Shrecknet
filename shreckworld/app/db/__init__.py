@@ -1,0 +1,1 @@
+"""Database ownership for ShreckWorld."""

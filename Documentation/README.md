@@ -23,6 +23,7 @@ Everything you need to deploy Shrecknet
 - [Deployment Workflow](./Deployment/DEPLOYMENT_WORKFLOW.md) - Step-by-step deployment process
 - [Docker Optimization](./Deployment/DOCKER_OPTIMIZATION.md) - Performance optimizations
 - [Deployment Optimization Summary](./Deployment/DEPLOYMENT_OPTIMIZATION_SUMMARY.md)
+- [Foundry Module Deployment](./Deployment/FOUNDRY_MODULE.md) - Module releases, CORS, installation, and operations
 
 ### [Backend](./Backend/)
 Backend service documentation (FastAPI)
@@ -56,6 +57,7 @@ Documentation for AI agent systems
 ### [Architecture](./Architecture/)
 System architecture and design documentation
 - [Shrecknet Architecture](./Architecture/SHRECKNET_ARCHITECTURE.md) - High-level architecture diagram and explanation
+- [ShreckWorld Phase 1](./Architecture/SHRECKWORLD.md) - Standalone world knowledge service, admin API, ingestion, and query contract
 - [GraphRAG](./Architecture/GRAPHRAG.md) - Graph-based retrieval augmented generation
 - [Celery](./Architecture/CELERY.md) - Background job processing
 - [Linking](./Architecture/LINKING.md) - Entity linking system

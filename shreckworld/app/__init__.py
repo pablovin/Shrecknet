@@ -1,0 +1,1 @@
+"""ShreckWorld standalone service."""

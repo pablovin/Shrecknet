@@ -1,0 +1,1 @@
+"""Public ShreckWorld API contracts."""

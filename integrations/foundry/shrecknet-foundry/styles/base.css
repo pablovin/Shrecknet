@@ -1,5 +1,20 @@
-.shrecknet-logo-icon { display: inline-block; width: 1.1em; height: 1.1em; background: url("../assets/shrecknet-logo.svg") center / contain no-repeat; vertical-align: middle; }
-#controls .shrecknet-logo-icon { width: 1.4rem; height: 1.4rem; font-size: 0; }
+.shrecknet-logo-icon {
+  display: inline-block;
+  width: 1.35em;
+  height: 1.35em;
+  background: url("../assets/shrecknet-logo.svg") center / contain no-repeat;
+  filter: brightness(0);
+  vertical-align: middle;
+}
+
+/* Match Foundry's native scene-control glyph footprint and use a dark glyph on
+   its light control button. */
+#controls .shrecknet-logo-icon {
+  width: 2rem;
+  height: 2rem;
+  background-size: 2rem;
+  font-size: 0;
+}
 .shrecknet-connection-status { display: grid; grid-template-columns: max-content 1fr; gap: .45rem .75rem; }
 .shrecknet-connection-status dt { color: var(--shrecknet-muted); }
 .status-online { color: var(--shrecknet-accent); }

@@ -1,4 +1,5 @@
-const SESSION_KEY = "shrecknet-foundry.session.v1";
+const SESSION_KEY = "shrecknet-foundry.session.v2";
+const LEGACY_SESSION_KEY = "shrecknet-foundry.session.v1";
 
 export class ShrecknetApiError extends Error {
   constructor(message, status, payload = null) {
@@ -35,12 +36,20 @@ export class ShrecknetClient {
     this.accessToken = accessToken || null;
   }
 
+  resolveUrl(value) {
+    const url = String(value || "").trim();
+    if (!url) return null;
+    try { return new URL(url, `${this.serverUrl}/`).href; } catch (_) { return null; }
+  }
+
   loadSession() {
     try {
-      const raw = sessionStorage.getItem(SESSION_KEY);
+      const stored = localStorage.getItem(SESSION_KEY);
+      const raw = stored || sessionStorage.getItem(LEGACY_SESSION_KEY);
       const session = raw ? JSON.parse(raw) : null;
       if (session?.serverUrl === this.serverUrl && session.accessToken) {
         this.accessToken = session.accessToken;
+        if (!stored) localStorage.setItem(SESSION_KEY, JSON.stringify(session));
         return session;
       }
     } catch (_) {
@@ -51,7 +60,7 @@ export class ShrecknetClient {
 
   saveSession(user) {
     if (!this.accessToken) return;
-    sessionStorage.setItem(SESSION_KEY, JSON.stringify({
+    localStorage.setItem(SESSION_KEY, JSON.stringify({
       serverUrl: this.serverUrl,
       accessToken: this.accessToken,
       user,
@@ -60,7 +69,8 @@ export class ShrecknetClient {
 
   clearSession() {
     this.accessToken = null;
-    sessionStorage.removeItem(SESSION_KEY);
+    localStorage.removeItem(SESSION_KEY);
+    sessionStorage.removeItem(LEGACY_SESSION_KEY);
   }
 
   async request(path, { method = "GET", body, integrationKey, authenticated = true } = {}) {
@@ -118,13 +128,31 @@ export class ShrecknetClient {
   getOntology(ontologyId) { return this.request(`/ontologies/${ontologyId}`); }
   listEntityTypes(ontologyId) { return this.request(`/ontologies/${ontologyId}/entities?display_on_world=true`); }
 
-  listInstances(ontologyId, entityDefinitionId, { skip = 0, limit = 100, search = "" } = {}) {
-    const params = new URLSearchParams({ ontology_id: String(ontologyId), entity_definition_id: String(entityDefinitionId), skip: String(skip), limit: String(limit) });
+  listInstancePages(ontologyId, entityDefinitionId, { skip = 0, limit = 100, search = "" } = {}) {
+    const params = new URLSearchParams({ ontology_id: String(ontologyId), skip: String(skip), limit: String(limit) });
+    if (entityDefinitionId !== undefined && entityDefinitionId !== null) {
+      params.set("entity_definition_id", String(entityDefinitionId));
+    }
     if (search) params.set("search", search);
-    return this.request(`/ontology-instances/basic?${params}`);
+    return this.request(`/ontology-instances/pages?${params}`);
+  }
+
+  searchPages(ontologyId, query) {
+    return this.listInstancePages(ontologyId, undefined, { search: query });
+  }
+
+  listSceneSummaries(ontologyId, { query = "", skip = 0, limit = 100 } = {}) {
+    const params = new URLSearchParams({ ontology_id: String(ontologyId), skip: String(skip), limit: String(limit) });
+    if (query) params.set("query", query);
+    return this.request(`/ontology-instances/scenes?${params}`);
   }
 
   getInstance(instanceId) { return this.request(`/ontology-instances/${encodeURIComponent(instanceId)}`); }
+  resolveEntities(ontologyId, entityInstanceIds) {
+    return this.request("/ontology-instances/resolve-entities", {
+      method: "POST", body: { ontology_id: Number(ontologyId), entity_instance_ids: entityInstanceIds },
+    });
+  }
   listNarrativeScenes(instanceId) { return this.request(`/ontology-instances/${encodeURIComponent(instanceId)}/scenes`); }
   getNarrativeScene(instanceId, sceneId) { return this.request(`/ontology-instances/${encodeURIComponent(instanceId)}/scenes/${encodeURIComponent(sceneId)}`); }
 

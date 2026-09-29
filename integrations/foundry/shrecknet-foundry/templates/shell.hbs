@@ -20,7 +20,7 @@
       <button type="button" data-action="goBack" {{#unless canGoBack}}disabled{{/unless}}>←</button>
       <button type="button" data-action="goForward" {{#unless canGoForward}}disabled{{/unless}}>→</button>
       <button type="button" data-action="openHome">⌂ Home</button>
-      <form><input name="query" placeholder="Search {{connection.worldName}}..."><button type="button" data-action="search">Search</button></form>
+      <form><input name="query" placeholder="Search page names in {{connection.worldName}}..." required><button type="button" data-action="search">Search</button></form>
       <button type="button" data-action="signOut">Sign out</button>
     </nav>
 
@@ -31,22 +31,27 @@
       <div class="shrecknet-grid">
         {{#each resource.folders}}<button type="button" class="shrecknet-folder" data-action="openFolder" data-ontology-id="{{ontologyId}}" data-definition-id="{{id}}" data-title="{{name}}">📁 {{name}}<small>{{ontologyName}}</small></button>{{/each}}
       </div>
-      <p>Narrative Scenes are available from each entity collection.</p>
+      <button type="button" class="shrecknet-scenes-entry" data-action="openSceneCollection">▣ Narrative Scenes</button>
     {{else if (eq resource.kind "folder")}}
       <h2>{{resource.title}}</h2>
-      <ul class="shrecknet-list">{{#each resource.instances}}<li><button type="button" data-action="openInstance" data-instance-id="{{instance_id}}">📄 {{primary_alias}}{{#unless primary_alias}}{{name}}{{/unless}}</button></li>{{/each}}</ul>
+      <ul class="shrecknet-list">{{#each resource.pages}}<li><button type="button" data-action="openInstance" data-instance-id="{{instance_id}}">📄 {{name}}</button></li>{{/each}}</ul>
     {{else if (eq resource.kind "instance")}}
       <h2>{{resource.title}}</h2>
       {{#each resource.instance.entities}}
-        <article class="shrecknet-record"><h3>{{alias}}</h3>{{#if node_avatar_url}}<img src="{{node_avatar_url}}" alt="">{{/if}}<p>{{text_linked}}</p>
+        <article class="shrecknet-record"><h3>{{alias}}</h3>{{#if avatarUrl}}<div class="shrecknet-image-wrap"><img src="{{avatarUrl}}" alt="">{{#if ../canShowPlayers}}<button type="button" data-action="showImageToPlayers" data-image-url="{{avatarUrl}}" data-title="{{alias}}">Show players</button>{{/if}}</div>{{/if}}{{#if hasBothTextSources}}<div class="shrecknet-tabs"><button type="button" class="{{#if showText}}is-active{{/if}}" data-action="selectTextSource" data-entity-id="{{entity_instance_id}}" data-source="text">Text</button><button type="button" class="{{#if showGeneratedText}}is-active{{/if}}" data-action="selectTextSource" data-entity-id="{{entity_instance_id}}" data-source="generated">Generated text</button></div>{{/if}}{{#if hasText}}{{#if showText}}<p class="shrecknet-source-label">Text</p><button type="button" class="shrecknet-share-button" data-action="showOnChat" data-entity-id="{{entity_instance_id}}">Show on chat</button><div class="shrecknet-document-text">{{{textHtml}}}</div>{{/if}}{{/if}}{{#if hasGeneratedText}}{{#if showGeneratedText}}<p class="shrecknet-source-label">Generated text</p><button type="button" class="shrecknet-share-button" data-action="showOnChat" data-entity-id="{{entity_instance_id}}">Show on chat</button><div class="shrecknet-document-text">{{{generatedTextHtml}}}</div>{{/if}}{{/if}}{{#unless hasText}}{{#unless hasGeneratedText}}<p class="shrecknet-empty">NO DOCUMENT TEXT AVAILABLE</p>{{/unless}}{{/unless}}
           {{#if properties.length}}<h4>Properties</h4><ul>{{#each properties}}<li>{{definition_id}}: {{value}}</li>{{/each}}</ul>{{/if}}
           {{#if relationships.length}}<h4>Related</h4><ul>{{#each relationships}}<li>→ {{target_entity_id}}</li>{{/each}}</ul>{{/if}}
         </article>
       {{/each}}
-      {{#if resource.instance.scenes.length}}<h3>Narrative Scenes</h3><ul class="shrecknet-list">{{#each resource.instance.scenes}}<li><button type="button" data-action="openScene" data-instance-id="{{../resource.instance.instance_id}}" data-scene-id="{{id}}">→ {{name}}</button></li>{{/each}}</ul>{{/if}}
+      {{#if resource.instance.related_content.length}}<h3>Related Content</h3><ul class="shrecknet-list">{{#each resource.instance.related_content}}<li><button type="button" data-action="openInstance" data-instance-id="{{id}}">{{#if imageUrl}}<img src="{{imageUrl}}" alt="">{{/if}}→ {{name}}</button>{{#if ../canShowPlayers}}{{#if imageUrl}}<button type="button" data-action="showImageToPlayers" data-image-url="{{imageUrl}}" data-title="{{name}}">Show players</button>{{/if}}{{/if}}</li>{{/each}}</ul>{{/if}}
+      {{#if resource.instance.scenes.length}}<h3>Narrative Scenes</h3><ul class="shrecknet-list">{{#each resource.instance.scenes}}<li><button type="button" data-action="openScene" data-instance-id="{{../resource.instance.instance_id}}" data-scene-id="{{id}}">▣ {{name}}<small>{{description}}</small></button></li>{{/each}}</ul>{{/if}}
+    {{else if (eq resource.kind "sceneCollection")}}
+      <section class="shrecknet-scene-collection"><header><p>NARRATIVE SCENES</p><h2>{{resource.title}}</h2><form><input name="sceneQuery" value="{{resource.query}}" placeholder="Search scene names…"><button type="button" data-action="searchScenes">Search scenes</button></form></header>
+      {{#if resource.groups.length}}{{#each resource.groups}}<section class="shrecknet-scene-group"><button type="button" class="shrecknet-source-page" data-action="openInstance" data-instance-id="{{instanceId}}">{{#if imageUrl}}<img src="{{imageUrl}}" alt="">{{/if}}<span>📖 {{name}}</span><small>{{scenes.length}} scenes</small></button>{{#each scenes}}<button type="button" class="shrecknet-scene-row" data-action="openScene" data-instance-id="{{instance_id}}" data-scene-id="{{id}}"><strong>▣ {{name}}</strong><span>{{description}}</span><small>◉ {{milestone_count}} milestones · 👁 {{perspective_count}} perspectives</small></button>{{/each}}</section>{{/each}}{{else}}<p class="shrecknet-empty">NO SCENES FOUND</p>{{/if}}</section>
     {{else if (eq resource.kind "scene")}}
-      <article class="shrecknet-record"><p>Narrative Scene</p><h2>{{resource.scene.name}}</h2><p>{{resource.scene.description}}</p>
-      {{#if resource.scene.milestones.length}}<h3>Milestones</h3><ul>{{#each resource.scene.milestones}}<li>{{description}}</li>{{/each}}</ul>{{/if}}</article>
+      <article class="shrecknet-scene-dossier"><header><p>NARRATIVE SCENE</p><h2>{{resource.scene.name}}</h2><small>◉ {{resource.scene.milestones.length}} milestones</small></header><button type="button" class="shrecknet-source-page" data-action="openInstance" data-instance-id="{{resource.sourcePage.instance_id}}">📖 Source: {{resource.sourcePage.name}}</button><div class="shrecknet-document-text">{{resource.scene.description}}</div>
+      {{#if resource.scene.relates_to.length}}<section class="shrecknet-shortcuts"><h3>Related records</h3><ul>{{#each resource.scene.relates_to}}<li>{{#if record}}<button type="button" data-action="openInstance" data-instance-id="{{record.instance_id}}">{{label}} · {{record.instance_name}}</button>{{else}}<span>{{label}} · {{entity_instance_id}}</span>{{/if}}</li>{{/each}}</ul></section>{{/if}}
+      {{#if resource.scene.milestones.length}}<section class="shrecknet-timeline"><h3>Milestone timeline</h3>{{#each resource.scene.milestones}}<article><span class="shrecknet-timeline-marker">●</span><h4>{{name}}</h4><div>{{description}}</div>{{#if relates_to.length}}<ul>{{#each relates_to}}<li>{{#if record}}<button type="button" data-action="openInstance" data-instance-id="{{record.instance_id}}">{{label}} · {{record.instance_name}}</button>{{else}}{{label}} · {{entity_instance_id}}{{/if}}</li>{{/each}}</ul>{{/if}}</article>{{/each}}</section>{{/if}}<section class="shrecknet-perspectives"><h3>Character perspectives</h3><p>0 available</p></section></article>
     {{else if (eq resource.kind "search")}}
       <h2>{{resource.title}}</h2><ul class="shrecknet-list">{{#each resource.instances}}<li><button type="button" data-action="openInstance" data-instance-id="{{instance_id}}">📄 {{primary_alias}}{{#unless primary_alias}}{{name}}{{/unless}}</button></li>{{/each}}</ul>
     {{/if}}

@@ -53,6 +53,24 @@ calls existing `/auth/token`, `/users/me`, `/worlds/{world_id}`, `/ontologies`,
 and `/ontology-instances` APIs. The configured World selects the content scope;
 the module does not create a duplicate content API.
 
+`GET /ontology-instances/scenes?ontology_id={id}&query={scene_name}` returns
+lightweight Narrative Scene records for a scene collection. `query` matches scene
+names case-insensitively; each result includes its source page and milestone and
+perspective counts. The Foundry module calls it once per ontology in its selected
+World and groups the results by source page.
+
+### Preloaded instance pages
+
+`GET /ontology-instances/pages` accepts the same authenticated paging and
+ontology/entity-definition filters as `/ontology-instances/basic`. It returns
+complete entity content for every page in the requested collection, including
+text, timestamps, image URLs, generated text, properties, and relationships.
+Each page also includes `related_content` cards (`id`, `name`, `image`) and
+Narrative Scene previews (`id`, `name`, `description`).
+
+The Foundry module uses this endpoint when opening a collection and caches the
+result. Opening one of those listed pages therefore makes no additional content
+request; a scene's complete detail is requested only when the player opens it.
 ## Operations
 
 Configure CORS for the Foundry deployment origin and the

@@ -40,10 +40,12 @@ from app.schemas.ontology_instance import (
     OntologyInstanceCreate,
     OntologyInstanceRead,
     OntologyInstanceSearchResponse,
+    OntologyInstancePageRead,
     OntologyInstanceSummaryPage,
     OntologyInstanceUpdate,
     SceneCreate,
     SceneRead,
+    SceneSummary,
     SceneUpdate,
 )
 from app.schemas.user import UserRead
@@ -237,6 +239,38 @@ async def list_ontology_instance_summaries(
         ontology_id=ontology_id,
         entity_definition_id=entity_definition_id,
         search=search,
+    )
+
+
+@router.get("/pages", response_model=list[OntologyInstancePageRead])
+async def list_ontology_instance_pages(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, gt=0, le=200),
+    ontology_id: int | None = Query(None, ge=1),
+    entity_definition_id: int | None = Query(None, ge=1),
+    search: str | None = Query(None),
+    service: OntologyInstanceService = Depends(get_ontology_instance_service),
+    _: User = Depends(get_current_user),
+) -> list[OntologyInstancePageRead]:
+    """Return complete pages with preloaded related-content and scene previews."""
+    return await service.list_instance_pages(
+        skip=skip, limit=limit, ontology_id=ontology_id,
+        entity_definition_id=entity_definition_id, search=search,
+    )
+
+
+@router.get("/scenes", response_model=list[SceneSummary])
+async def list_scene_summaries(
+    ontology_id: int = Query(..., ge=1),
+    query: str | None = Query(None),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, gt=0, le=200),
+    service: OntologyInstanceService = Depends(get_ontology_instance_service),
+    _: User = Depends(get_current_user),
+) -> list[SceneSummary]:
+    """Return scene collection records, optionally matched by scene name."""
+    return await service.list_scene_summaries(
+        ontology_id=ontology_id, query=query, skip=skip, limit=limit,
     )
 
 

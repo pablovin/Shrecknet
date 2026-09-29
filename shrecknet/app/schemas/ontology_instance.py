@@ -343,6 +343,22 @@ class SceneRead(SceneBase):
     milestones: list[MilestoneRead] = Field(default_factory=list)
 
 
+class SceneSummary(BaseModel):
+    """Lightweight scene record for World-level scene collections."""
+
+    model_config = ConfigDict(extra="ignore")
+    id: str
+    instance_id: str
+    ontology_id: int
+    name: str
+    description: str
+    source_page_name: str
+    source_page_image: str | None = None
+    milestone_count: int = 0
+    perspective_count: int = 0
+    created_at: datetime
+
+
 class OntologyInstanceBase(BaseModel):
     model_config = ConfigDict(extra="ignore")
     name: str
@@ -370,6 +386,37 @@ class OntologyInstanceRead(OntologyInstanceBase):
     updated_at: datetime
     entities: list[OntologyInstanceEntityRead]
     scenes: list[SceneRead] = Field(default_factory=list)
+
+
+class OntologyInstanceRelatedContent(BaseModel):
+    """Lightweight related-page data supplied with an instance page."""
+
+    model_config = ConfigDict(extra="ignore")
+    id: str
+    name: str
+    image: str | None = None
+
+
+class OntologyInstancePageScene(BaseModel):
+    """Narrative-scene preview data supplied with an instance page."""
+
+    model_config = ConfigDict(extra="ignore")
+    id: str
+    name: str
+    description: str
+
+
+class OntologyInstancePageRead(OntologyInstanceBase):
+    """A fully renderable page with related-content and scene previews."""
+
+    model_config = ConfigDict(extra="ignore")
+    instance_id: str
+    ontology_id: int
+    created_at: datetime
+    updated_at: datetime
+    entities: list[OntologyInstanceEntityRead]
+    related_content: list[OntologyInstanceRelatedContent] = Field(default_factory=list)
+    scenes: list[OntologyInstancePageScene] = Field(default_factory=list)
 
 
 class OntologyInstanceSummary(BaseModel):

@@ -13,3 +13,15 @@
   border-color: var(--shrecknet-border);
   color: var(--shrecknet-text);
 }
+.shrecknet-tabs { display: flex; gap: .25rem; margin: .75rem 0; border-bottom: 1px solid var(--shrecknet-border); }
+.shrecknet-tabs .is-active { color: var(--shrecknet-accent); background: var(--shrecknet-panel); }
+.shrecknet-source-label, .shrecknet-empty { color: var(--shrecknet-muted); font-family: var(--shrecknet-font-ui); font-size: .8rem; }
+.shrecknet-document-text { white-space: pre-wrap; line-height: 1.55; }
+.shrecknet-share-button, .shrecknet-image-wrap button { margin: 0 0 .5rem; font-family: var(--shrecknet-font-ui); font-size: .75rem; }
+.shrecknet-image-wrap { float: right; margin: 0 0 .6rem .8rem; }.shrecknet-image-wrap img { float: none; margin: 0; display: block; }
+.shrecknet-scenes-entry, .shrecknet-source-page, .shrecknet-scene-row { display: block; width: calc(100% - 1.5rem); margin: .75rem; text-align: left; }
+.shrecknet-scene-collection, .shrecknet-scene-dossier { max-width: 56rem; margin: 0 auto; padding: 1rem; font-family: var(--shrecknet-font-content); }
+.shrecknet-scene-collection header form { display: flex; gap: .4rem; }.shrecknet-scene-collection header input { flex: 1; }
+.shrecknet-scene-group { margin: 1rem 0; border: 1px solid var(--shrecknet-border); }.shrecknet-source-page { margin: 0; width: 100%; padding: .65rem; background: var(--shrecknet-panel); }.shrecknet-source-page img { width: 2rem; height: 2rem; object-fit: cover; vertical-align: middle; margin-right: .5rem; }.shrecknet-source-page small { float: right; }
+.shrecknet-scene-row { width: 100%; margin: 0; padding: .8rem; border-width: 1px 0 0; border-color: var(--shrecknet-border); }.shrecknet-scene-row strong, .shrecknet-scene-row span, .shrecknet-scene-row small { display: block; }.shrecknet-scene-row span, .shrecknet-scene-row small { margin-top: .35rem; color: var(--shrecknet-muted); }
+.shrecknet-timeline { border-left: 1px solid var(--shrecknet-border); margin: 1.5rem 0; padding-left: 1.25rem; }.shrecknet-timeline article { position: relative; padding: 0 0 1.25rem; }.shrecknet-timeline-marker { position: absolute; left: -1.67rem; color: var(--shrecknet-accent); }.shrecknet-timeline h4 { margin: 0 0 .3rem; }.shrecknet-timeline ul { color: var(--shrecknet-muted); }.shrecknet-perspectives { color: var(--shrecknet-muted); }

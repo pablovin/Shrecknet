@@ -64,6 +64,13 @@ export class ShrecknetShell extends HandlebarsApplicationMixin(ApplicationV2) {
   }
 
   async _prepareContext() {
+    if (this.session?.user && this.connection.worldId && this.resource.kind === "home" && !this.folders.length) {
+      try {
+        await this._loadHome({ push: false });
+      } catch (error) {
+        this.notice = error.message || "Unable to load the Shrecknet World index.";
+      }
+    }
     return {
       configured: Boolean(this.connection.serverUrl && this.connection.worldId),
       canConfigure: game.user.isGM,
@@ -73,7 +80,7 @@ export class ShrecknetShell extends HandlebarsApplicationMixin(ApplicationV2) {
       worldChoices: this.worldChoices,
       hasWorldChoices: this.worldChoices.length > 0,
       connectionTested: this.connectionTested,
-      resource: this._presentResource(),
+      resource: await this._presentResource(),
       folders: this.folders,
       notice: this.notice,
       canGoBack: this.history.canGoBack,

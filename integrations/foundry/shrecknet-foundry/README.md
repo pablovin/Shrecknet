@@ -41,12 +41,21 @@ Folders, search results, and related records render as image cards that open the
 underlying page. The browser displays a loading indicator while it fetches
 content, including related-record resolution.
 
+The navigation search searches both pages and Narrative Scene names in the
+selected World. Its results show page cards first and matching scenes grouped by
+source page beneath them. Pressing Enter in either search field runs the same
+in-window search as its button and never navigates the Foundry browser URL.
+
 The World index uses each displayed entity type's `image_url`; when that is not
 set, it falls back to the owning ontology's `image_url`.
 
 Narrative Scenes are grouped beneath collapsed source-page panels. Opening a
 panel reveals that source page's scenes, while long scene and document content
 scrolls within the Foundry window.
+
+Scene details present their source, related records, and milestone relations as
+image cards. When a scene has an adjacent scene in its source-page ordering, the
+detail view provides direct Previous scene and Next scene links.
 
 ## v0.1 limits
 

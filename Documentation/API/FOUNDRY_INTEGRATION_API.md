@@ -57,7 +57,9 @@ the module does not create a duplicate content API.
 lightweight Narrative Scene records for a scene collection. `query` matches scene
 names case-insensitively; each result includes its source page and milestone and
 perspective counts. The Foundry module calls it once per ontology in its selected
-World and groups the results by source page.
+World and groups the results by source page. The module's navigation search calls
+this endpoint alongside its existing page search and presents page hits before
+Narrative Scene hits.
 
 ### Preloaded instance pages
 

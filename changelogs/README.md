@@ -15,4 +15,6 @@ This folder contains release notes by application version.
 - [v0.3.0](./v0.3.0.md) - Event-centric graph architecture rollout, migration tooling, and graph documentation.
 - [v0.2.0](./v0.2.0.md) - Full System Backup v2, maintenance-mode restore flow, and backup safety hardening.
 
+- [Foundry v0.1.10](./foundry-v0.1.10.md) - Image-card navigation, readable Narrative Scenes, safe combined page/scene search, and Foundry media URL handling.
+
 - [Unreleased CharacterAgent dispositional personality](unreleased-character-dispositions.md)

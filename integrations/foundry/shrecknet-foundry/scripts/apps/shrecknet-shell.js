@@ -93,6 +93,19 @@ export class ShrecknetShell extends HandlebarsApplicationMixin(ApplicationV2) {
     };
   }
 
+  _onRender(context, options) {
+    super._onRender(context, options);
+    const root = this.element instanceof HTMLElement ? this.element : this.element?.[0];
+    root?.querySelectorAll("form[data-shrecknet-submit]").forEach((form) => {
+      form.addEventListener("submit", (event) => {
+        event.preventDefault();
+        const action = form.dataset.shrecknetSubmit;
+        const handler = this.constructor.DEFAULT_OPTIONS.actions[action];
+        if (typeof handler === "function") handler.call(this, event, form);
+      });
+    });
+  }
+
   _homeBreadcrumb(link = false) {
     return { label: this.connection.worldName, action: link ? "openHome" : null };
   }
@@ -236,6 +249,15 @@ export class ShrecknetShell extends HandlebarsApplicationMixin(ApplicationV2) {
   async _loadSceneCollection({ query = "", push = true } = {}) {
     const world = await this.client.getWorld(this.connection.worldId);
     const summaries = (await Promise.all(world.ontology_ids.map((id) => this.client.listSceneSummaries(id, { query })))).flat();
+    const groups = this._groupSceneSummaries(summaries);
+    this.resource = {
+      kind: "sceneCollection", title: "Narrative Scenes", query,
+      breadcrumbs: [this._homeBreadcrumb(true), { label: "Narrative Scenes" }], groups,
+    };
+    if (push) this.history.navigate(this.resource);
+  }
+
+  _groupSceneSummaries(summaries) {
     const groups = [...summaries.reduce((byPage, scene) => {
       const group = byPage.get(scene.instance_id) || {
         instanceId: scene.instance_id, name: scene.source_page_name,
@@ -245,11 +267,7 @@ export class ShrecknetShell extends HandlebarsApplicationMixin(ApplicationV2) {
       byPage.set(scene.instance_id, group);
       return byPage;
     }, new Map()).values()];
-    this.resource = {
-      kind: "sceneCollection", title: "Narrative Scenes", query,
-      breadcrumbs: [this._homeBreadcrumb(true), { label: "Narrative Scenes" }], groups,
-    };
-    if (push) this.history.navigate(this.resource);
+    return groups;
   }
 
   async _handleError(error) {
@@ -397,15 +415,33 @@ export class ShrecknetShell extends HandlebarsApplicationMixin(ApplicationV2) {
         if (entityIds.length) {
           const resolved = await this.client.resolveEntities(loadedScene.ontology_id, [...new Set(entityIds)]);
           const byEntityId = new Map(resolved.results.map((item) => [item.entity_instance_id, item]));
-          const decorate = (relation) => ({ ...relation, record: byEntityId.get(relation.entity_instance_id) });
+          const decorate = (relation) => {
+            const record = byEntityId.get(relation.entity_instance_id);
+            return {
+              ...relation,
+              record,
+              card: record ? {
+                instanceId: record.instance_id,
+                name: record.entity_alias || record.instance_name || "Untitled record",
+                imageUrl: this.client.resolveUrl(record.avatar_url),
+              } : null,
+            };
+          };
           loadedScene.relates_to = loadedScene.relates_to.map(decorate);
           loadedScene.milestones = loadedScene.milestones.map((milestone) => ({ ...milestone, relates_to: milestone.relates_to.map(decorate) }));
         }
         const page = this.pageCache.get(instanceId) || await this.client.getInstance(instanceId);
         this.pageCache.set(instanceId, page);
-        return { scene: loadedScene, sourcePage: page };
+        const scenesById = new Map((page.scenes || []).map((item) => [item.id, item]));
+        const previousScene = scenesById.get(loadedScene.local_order?.preceded_by_scene_id);
+        const nextScene = scenesById.get(loadedScene.local_order?.followed_by_scene_id);
+        return {
+          scene: { ...loadedScene, previousScene, nextScene },
+          sourcePage: page,
+          sourcePageCard: this._presentPageCard(page),
+        };
       });
-      this.resource = { kind: "scene", title: scene.name, scene, sourcePage, breadcrumbs: [this._homeBreadcrumb(true), { label: "Narrative Scenes", action: "openSceneCollection" }, { label: scene.name }] };
+      this.resource = { kind: "scene", title: scene.name, scene, sourcePage, sourcePageCard, breadcrumbs: [this._homeBreadcrumb(true), { label: "Narrative Scenes", action: "openSceneCollection" }, { label: scene.name }] };
       this.history.navigate(this.resource);
       await this.render();
     } catch (error) { await this._handleError(error); }
@@ -416,13 +452,23 @@ export class ShrecknetShell extends HandlebarsApplicationMixin(ApplicationV2) {
     const query = String(app._form(event, target).get("query") || "").trim();
     if (!query) return;
     try {
-      const pages = await app._withLoading(async () => {
+      const { pages, sceneGroups } = await app._withLoading(async () => {
         const world = await app.client.getWorld(app.connection.worldId);
-        const pagesByOntology = await Promise.all(world.ontology_ids.map((id) => app.client.searchPages(id, query)));
-        return [...new Map(pagesByOntology.flat().map((page) => [page.instance_id, page])).values()];
+        const [pagesByOntology, scenesByOntology] = await Promise.all([
+          Promise.all(world.ontology_ids.map((id) => app.client.searchPages(id, query))),
+          Promise.all(world.ontology_ids.map((id) => app.client.listSceneSummaries(id, { query }))),
+        ]);
+        return {
+          pages: [...new Map(pagesByOntology.flat().map((page) => [page.instance_id, page])).values()],
+          sceneGroups: app._groupSceneSummaries(scenesByOntology.flat()),
+        };
       });
       pages.forEach((page) => app.pageCache.set(page.instance_id, page));
-      app.resource = { kind: "search", title: `Search: ${query}`, query, breadcrumbs: [app._homeBreadcrumb(true), { label: "Search" }], instances: pages.map((page) => app._presentPageCard(page)) };
+      app.resource = {
+        kind: "search", title: `Search: ${query}`, query,
+        breadcrumbs: [app._homeBreadcrumb(true), { label: "Search" }],
+        instances: pages.map((page) => app._presentPageCard(page)), sceneGroups,
+      };
       app.history.navigate(app.resource);
       await app.render();
     } catch (error) { await app._handleError(error); }

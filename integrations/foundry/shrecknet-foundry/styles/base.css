@@ -20,7 +20,8 @@
 .status-online { color: var(--shrecknet-accent); }
 .status-offline { color: #e67373; }
 .shrecknet-help { color: var(--shrecknet-muted); }
-.shrecknet-shell { min-height: 100%; background: var(--shrecknet-bg); color: var(--shrecknet-text); font-family: var(--shrecknet-font-ui); }
+.shrecknet-shell { height: 100%; min-height: 0; overflow: auto; overscroll-behavior: contain; background: var(--shrecknet-bg); color: var(--shrecknet-text); font-family: var(--shrecknet-font-ui); }
+.shrecknet-shell, .shrecknet-document-text, .shrecknet-scene-rows { scrollbar-color: var(--shrecknet-border) var(--shrecknet-bg); scrollbar-width: thin; }
 .shrecknet-header, .shrecknet-nav { display: flex; gap: .5rem; align-items: center; padding: .75rem; border-bottom: 1px solid var(--shrecknet-border); }
 .shrecknet-header strong { flex: 1; letter-spacing: .08em; }
 .shrecknet-nav form { display: flex; flex: 1; gap: .3rem; }
@@ -52,7 +53,12 @@
 .shrecknet-unavailable-related { color: var(--shrecknet-muted); font-family: var(--shrecknet-font-ui); font-size: .8rem; }
 .shrecknet-page-hero { float: right; display: grid; gap: .35rem; width: min(15rem, 38%); margin: 0 1rem .75rem; }
 .shrecknet-page-hero img { width: 100%; max-height: 17rem; object-fit: cover; border: 1px solid var(--shrecknet-border); }
-.shrecknet-breadcrumbs { color: var(--shrecknet-muted); padding: 0 .75rem; }
+.shrecknet-breadcrumbs { display: flex; flex-wrap: wrap; align-items: center; gap: .25rem; color: var(--shrecknet-muted); padding: .5rem .75rem; }
+.shrecknet-breadcrumbs button { padding: 0; border: 0; background: transparent; color: var(--shrecknet-accent); font: inherit; text-decoration: underline; }
+.shrecknet-properties { display: grid; gap: .35rem; margin: .75rem 0; }
+.shrecknet-properties div { display: grid; grid-template-columns: minmax(8rem, 14rem) 1fr; gap: .75rem; padding: .4rem .55rem; background: var(--shrecknet-panel); border-left: 2px solid var(--shrecknet-border); }
+.shrecknet-properties dt { color: var(--shrecknet-muted); font-family: var(--shrecknet-font-ui); }
+.shrecknet-properties dd { margin: 0; overflow-wrap: anywhere; }
 .shrecknet h2, .shrecknet h3 { padding: 0 .75rem; }
 .shrecknet h2, .shrecknet h3, .shrecknet h4 { color: var(--shrecknet-text); }
 @media (max-width: 520px) { .shrecknet-page-hero { float: none; width: auto; margin: .75rem; } }

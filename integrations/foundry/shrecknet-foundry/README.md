@@ -44,6 +44,10 @@ content, including related-record resolution.
 The World index uses each displayed entity type's `image_url`; when that is not
 set, it falls back to the owning ontology's `image_url`.
 
+Narrative Scenes are grouped beneath collapsed source-page panels. Opening a
+panel reveals that source page's scenes, while long scene and document content
+scrolls within the Foundry window.
+
 ## v0.1 limits
 
 The module is read-only. It does not create Foundry Actors, Items, Journals, or

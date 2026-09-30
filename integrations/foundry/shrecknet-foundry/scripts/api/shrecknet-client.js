@@ -39,7 +39,20 @@ export class ShrecknetClient {
   resolveUrl(value) {
     const url = String(value || "").trim();
     if (!url) return null;
-    try { return new URL(url, `${this.serverUrl}/`).href; } catch (_) { return null; }
+    try {
+      const server = new URL(this.serverUrl);
+      const mediaPath = url.replace(/^\/?media\//i, "");
+      if (/^\/?media\//i.test(url)) return new URL(`/media/${mediaPath}`, server.origin).href;
+
+      const resolved = new URL(url, `${this.serverUrl}/`);
+      if (
+        resolved.pathname.startsWith("/media/")
+        && ["localhost", "127.0.0.1", "0.0.0.0"].includes(resolved.hostname)
+      ) {
+        return new URL(`${resolved.pathname}${resolved.search}${resolved.hash}`, server.origin).href;
+      }
+      return resolved.href;
+    } catch (_) { return null; }
   }
 
   loadSession() {
@@ -127,6 +140,9 @@ export class ShrecknetClient {
   getWorld(worldId) { return this.request(`/worlds/${encodeURIComponent(worldId)}`); }
   getOntology(ontologyId) { return this.request(`/ontologies/${ontologyId}`); }
   listEntityTypes(ontologyId) { return this.request(`/ontologies/${ontologyId}/entities?display_on_world=true`); }
+  listEntityProperties(ontologyId, entityDefinitionId) {
+    return this.request(`/ontologies/${ontologyId}/entities/${entityDefinitionId}/properties`);
+  }
 
   listInstancePages(ontologyId, entityDefinitionId, { skip = 0, limit = 100, search = "" } = {}) {
     const params = new URLSearchParams({ ontology_id: String(ontologyId), skip: String(skip), limit: String(limit) });

@@ -75,6 +75,12 @@ links as image cards; clients that do not use it remain compatible.
 The Foundry module uses this endpoint when opening a collection and caches the
 result. Opening one of those listed pages therefore makes no additional content
 request; a scene's complete detail is requested only when the player opens it.
+
+The module reads property definitions from
+`GET /ontologies/{ontology_id}/entities/{entity_id}/properties` to label page
+property values. Media URLs may be absolute or use `/media/...`; localhost media
+URLs are normalized to the configured Shrecknet origin so a deployed Foundry
+client does not attempt to load its own localhost.
 ## Operations
 
 Configure CORS for the Foundry deployment origin and the

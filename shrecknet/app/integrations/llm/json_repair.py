@@ -13,6 +13,7 @@ async def repair_json_text(
     schema_hint: str | None = None,
     response_format: dict | None = None,
     usage_tag: str = "agents.json_repair",
+    max_tokens: int | None = None,
 ) -> str:
     return await repair_invalid_json(
         llm_client=llm_client,
@@ -21,4 +22,5 @@ async def repair_json_text(
         schema_hint=schema_hint,
         response_format=response_format,
         usage_tag=usage_tag,
+        max_tokens=max_tokens,
     )

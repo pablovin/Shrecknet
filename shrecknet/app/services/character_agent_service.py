@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import re
 import json
+import asyncio
+import logging
 from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
@@ -36,6 +38,11 @@ from app.schemas.character_agent import (
 
 from app.schemas.character_traits import TraitProfile, TraitEvidence, DIRECTIONAL_TRAITS
 from app.services.character_trait_service import apply_manual_edits, POLICY_VERSION
+from app.graphrag.embedding_service import EmbeddingService
+from app.jobs.character_agent.memory import render_memory_document
+from app.core.config_store import get_settings
+
+logger = logging.getLogger(__name__)
 
 
 def _read_profile(value) -> TraitProfile:
@@ -54,6 +61,12 @@ def _normalize_name(value: str) -> str:
 
 def _props(record: Any, key: str = "node") -> dict[str, Any]:
     return dict(record[key])
+
+
+def _perspective_props(record: Any, key: str = "node") -> dict[str, Any]:
+    """Keep private derived retrieval fields out of strict public schemas."""
+    data = _props(record, key)
+    return {name: value for name, value in data.items() if name in ScenePerspectiveRead.model_fields}
 
 
 def _agent_data(data: dict[str, Any]) -> dict[str, Any]:
@@ -78,6 +91,34 @@ class CharacterAgentService:
     def __init__(self, sql_session: SqlAsyncSession, graph_session: AsyncSession) -> None:
         self.sql = sql_session
         self.graph = graph_session
+
+    async def refresh_perspective_memory(self, agent_id: str, perspective_id: str) -> None:
+        """Refresh a perspective-only derived vector; failure leaves lexical recall available."""
+        try:
+            aggregate = await self.get_perspective(agent_id, perspective_id)
+            memory = aggregate.model_dump(mode="json")
+            document = render_memory_document(memory)
+            vector = await asyncio.to_thread(EmbeddingService().embed_text, document)
+            await self.graph.run(
+                """
+                MATCH (:CharacterAgent {id:$agent_id})-[:HAS_PERSPECTIVE]->
+                      (perspective:ScenePerspective {id:$perspective_id})
+                SET perspective.memory_document=$document,
+                    perspective.memory_embedding=$vector,
+                    perspective.memory_embedding_model=$model,
+                    perspective.memory_embedding_version=$version,
+                    perspective.memory_embedded_at=$timestamp
+                """,
+                agent_id=agent_id, perspective_id=perspective_id, document=document,
+                vector=vector, model=EmbeddingService().model_id,
+                version=get_settings().semantic_embedding_version,
+                timestamp=_now(),
+            )
+        except Exception:
+            logger.warning(
+                "character_perspective_embedding_deferred agent_id=%s perspective_id=%s",
+                agent_id, perspective_id, exc_info=True,
+            )
 
     async def _require_ontology(self, ontology_id: int) -> None:
         result = await self.sql.execute(select(Ontology.id).where(Ontology.id == ontology_id))
@@ -428,6 +469,13 @@ class CharacterAgentService:
             result = await self.graph.execute_write(work)
         except ConstraintError as exc:
             raise HTTPException(status_code=409, detail="EntityInstance already has a CharacterAgent") from exc
+        # Embodiment materializes a complete perspective aggregate in one graph
+        # transaction. Refresh its vectors afterwards so a failed encoder cannot
+        # roll back an accepted identity; lexical memory documents are already
+        # present as a safe fallback.
+        if timeline:
+            for perspective in await self.list_perspectives(result["id"], "active", 0, 10_000):
+                await self.refresh_perspective_memory(result["id"], perspective.id)
         agent = CharacterAgentRead.model_validate(_agent_data(result))
         if draft:
             draft.status = CharacterEmbodimentDraftStatus.ACCEPTED
@@ -500,8 +548,33 @@ class CharacterAgentService:
                 commitment: coalesce(pursuit.commitment, goal.commitment)
               } END) AS goals
             }
+            CALL {
+              WITH agent
+              OPTIONAL MATCH (agent)-[:HAS_PERSPECTIVE]->(perspective:ScenePerspective)
+              WHERE perspective.status = 'active'
+              WITH perspective
+              ORDER BY perspective.importance DESC, perspective.memory_strength DESC,
+                       perspective.updated_at DESC, perspective.id ASC
+              RETURN collect(CASE WHEN perspective IS NULL THEN null ELSE {
+                id: perspective.id, summary: perspective.summary,
+                interpretation: perspective.interpretation,
+                character_reflection: perspective.character_reflection,
+                source_type: perspective.source_type, confidence: perspective.confidence,
+                memory_strength: perspective.memory_strength, importance: perspective.importance,
+                memory_document: perspective.memory_document,
+                memory_embedding: perspective.memory_embedding,
+                emotions: [(perspective)-[:EVOKES]->(emotion:EmotionalInterpretation) |
+                  {description: emotion.description, arousal: emotion.arousal, valence: emotion.valence}],
+                beliefs: [(perspective)-[:FORMS_BELIEF]->(belief:CharacterBelief) |
+                  {statement: belief.statement, status: belief.status, confidence: belief.confidence}],
+                impacts: [(perspective)-[:HAS_IMPACT]->(impact:CharacterImpact)-[:AFFECTS]->(target) |
+                  {impact_type: impact.impact_type, direction: impact.direction,
+                   description: impact.description, target_name: coalesce(target.title, target.name)}]
+              } END) AS memories
+            }
             RETURN agent, entity, [item IN aspects WHERE item IS NOT NULL] AS aspects,
-                   [item IN goals WHERE item IS NOT NULL] AS goals
+                   [item IN goals WHERE item IS NOT NULL] AS goals,
+                   [item IN memories WHERE item IS NOT NULL] AS memories
             """,
             node_id=node_id, public_only=public_only,
         )
@@ -520,6 +593,7 @@ class CharacterAgentService:
             },
             "aspects": [dict(item) for item in row["aspects"]],
             "goals": [dict(item) for item in row["goals"]],
+            "memories": [dict(item) for item in row["memories"]],
         }
 
     async def ensure_queryable(self, node_id: str, public_only: bool = False) -> None:
@@ -939,6 +1013,7 @@ class CharacterAgentService:
             starting_revision_id = revision_ids[projection.starting_revision_number]
             for item in projection.perspectives:
                 perspective_id = str(uuid4())
+                memory_document = render_memory_document(item.model_dump(mode="json"))
                 props = {
                     "id": perspective_id, "ontology_id": agent["ontology_id"],
                     "character_agent_id": agent["id"], "scene_id": item.scene_id,
@@ -956,6 +1031,10 @@ class CharacterAgentService:
                         },
                     ),
                     "created_at": timestamp, "updated_at": timestamp,
+                    # The vector is populated by the perspective-memory
+                    # reconciliation path; the complete deterministic document
+                    # provides safe lexical retrieval until then.
+                    "memory_document": memory_document,
                 }
                 await tx.run(
                     """
@@ -1419,7 +1498,7 @@ class CharacterAgentService:
         )
         if not row:
             raise HTTPException(status_code=404, detail="ScenePerspective not found")
-        return _props(row)
+        return _perspective_props(row)
 
     async def create_perspective(
         self, agent_id: str, payload: ScenePerspectiveCreate
@@ -1506,6 +1585,7 @@ class CharacterAgentService:
                 status_code=409,
                 detail="CharacterAgent already has a perspective for this Scene",
             ) from exc
+        await self.refresh_perspective_memory(agent_id, perspective_id)
         return await self.get_perspective(agent_id, perspective_id)
 
     async def list_perspectives(
@@ -1535,7 +1615,7 @@ class CharacterAgentService:
             limit=limit,
         )
         return [
-            ScenePerspectiveRead.model_validate(_props(row))
+            ScenePerspectiveRead.model_validate(_perspective_props(row))
             async for row in result
         ]
 
@@ -1576,6 +1656,7 @@ class CharacterAgentService:
         )
         if not row:
             raise HTTPException(status_code=404, detail="ScenePerspective not found")
+        await self.refresh_perspective_memory(agent_id, perspective_id)
         return await self.get_perspective(agent_id, perspective_id)
 
     async def delete_perspective(self, agent_id: str, perspective_id: str) -> None:
@@ -1699,6 +1780,7 @@ class CharacterAgentService:
             perspective_id=perspective_id,
             props=props,
         )
+        await self.refresh_perspective_memory(agent_id, perspective_id)
         return await self.get_perspective_child(
             agent_id, perspective_id, child_id, kind
         )
@@ -1769,6 +1851,7 @@ class CharacterAgentService:
             )
 
         await self.graph.execute_write(work)
+        await self.refresh_perspective_memory(agent_id, perspective_id)
         return await self.get_perspective_child(
             agent_id, perspective_id, child_id, "impacts"
         )
@@ -1845,6 +1928,7 @@ class CharacterAgentService:
                 child_id=child_id,
                 milestone_id=milestone_id,
             )
+        await self.refresh_perspective_memory(agent_id, perspective_id)
         return await self.get_perspective_child(
             agent_id, perspective_id, child_id, kind
         )
@@ -1868,6 +1952,7 @@ class CharacterAgentService:
         row = await result.single()
         if not row or int(row["deleted"] or 0) == 0:
             raise HTTPException(status_code=404, detail=f"{label} not found")
+        await self.refresh_perspective_memory(agent_id, perspective_id)
 
     async def unassign(self, agent_id: str, target_id: str, label: str, rel: str) -> None:
         async def work(tx):

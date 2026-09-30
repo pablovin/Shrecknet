@@ -125,7 +125,6 @@ async def _run(
     try:
         query = CharacterAgentQueryJob(
             llm_client=client,
-            framing_model=settings.model_character_agent_framing,
             deliberation_model=settings.model_character_agent_deliberation,
             repair_model=settings.model_agents_repair_json,
             report_stage=report,

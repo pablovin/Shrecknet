@@ -948,7 +948,7 @@ class CharacterAgentQueryJobRead(_StrictModel):
     character_agent_id: str
     status: Literal["queued", "running", "done", "failed"]
     stage: Literal[
-        "queued", "loading_identity", "framing", "deliberating",
+        "queued", "loading_identity", "retrieving_memories", "deliberating",
         "repairing", "validating", "completed", "failed",
     ]
     progress: float = Field(ge=0.0, le=1.0)
@@ -1204,4 +1204,3 @@ class EmbodyAgentResult(_StrictModel):
     @property
     def total_tokens_est(self) -> int:
         return sum(call.total_tokens_est for call in self.llm_calls)
-

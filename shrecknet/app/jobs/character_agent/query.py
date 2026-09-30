@@ -1,10 +1,9 @@
-"""Two-stage, graph-grounded CharacterAgent query orchestration."""
+"""Single-deliberation, owner-memory-grounded CharacterAgent queries."""
 
 from __future__ import annotations
 
 import copy
 import json
-import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -13,24 +12,16 @@ from pydantic import ValidationError as PydanticValidationError
 
 from app.core.config_store import LLMModelTarget
 from app.integrations.llm.shreckllm_client import ShreckLLMClient
-from app.jobs.character_agent.prompts import (
-    DELIBERATION_PROMPT,
-    FRAME_PROMPT,
-    GENERIC_FRAME_PROMPT,
-    GENERIC_QUERY_PROMPT,
-)
-from app.jobs.character_agent.schemas import CharacterDeliberation, CharacterQueryFrame
+from app.integrations.llm.structured_output import strict_json_schema
+from app.jobs.character_agent.memory import select_relevant_memories
+from app.jobs.character_agent.prompts import QUERY_PROMPT, GENERIC_QUERY_PROMPT
+from app.jobs.character_agent.schemas import CharacterDeliberation
 from app.jobs.shrecknet.agent import parse_json_deterministically, repair_invalid_json
 from app.schemas.character_agent import CharacterAgentQueryRequest, CharacterAgentQueryResult
-
+from app.schemas.character_traits import TraitProfile, TRAIT_BY_KEY
 
 StageReporter = Callable[[str, float], Awaitable[None]]
-
-from dataclasses import asdict
-from app.schemas.character_traits import TraitProfile, TRAIT_BY_KEY, trait_metadata
-
 RATIONALE_MAX_CHARACTERS = 2_000
-logger = logging.getLogger(__name__)
 
 
 class CharacterGenerationError(RuntimeError):
@@ -39,22 +30,18 @@ class CharacterGenerationError(RuntimeError):
 
 class CharacterAgentQueryJob:
     def __init__(
-        self,
-        *,
-        llm_client: ShreckLLMClient,
-        framing_model: LLMModelTarget,
-        deliberation_model: LLMModelTarget,
-        repair_model: LLMModelTarget,
+        self, *, llm_client: ShreckLLMClient, deliberation_model: LLMModelTarget,
+        repair_model: LLMModelTarget, framing_model: LLMModelTarget | None = None,
         report_stage: StageReporter | None = None,
     ) -> None:
         self.llm = llm_client
-        self.framing_model = framing_model
         self.deliberation_model = deliberation_model
         self.repair_model = repair_model
+        self.framing_model = framing_model  # v2 constructor compatibility; never used.
         self.report_stage = report_stage
 
     async def _report(self, stage: str, progress: float) -> None:
-        if self.report_stage is not None:
+        if self.report_stage:
             await self.report_stage(stage, progress)
 
     @staticmethod
@@ -62,24 +49,12 @@ class CharacterAgentQueryJob:
         return json.dumps(data, ensure_ascii=False, separators=(",", ":"))
 
     @staticmethod
-    def _parse_frame(raw: str) -> CharacterQueryFrame:
-        try:
-            return CharacterQueryFrame.model_validate(parse_json_deterministically(raw))
-        except (ValueError, PydanticValidationError) as exc:
-            raise CharacterGenerationError(
-                "task framing returned invalid structured output"
-            ) from exc
-
-    @staticmethod
     def _cap_rationale(value: Any) -> Any:
-        """Cap caller-visible rationale fields without failing the generation."""
         if isinstance(value, dict):
             return {
-                key: (
-                    child[:RATIONALE_MAX_CHARACTERS]
-                    if key == "rationale" and isinstance(child, str)
-                    else CharacterAgentQueryJob._cap_rationale(child)
-                )
+                key: child[:RATIONALE_MAX_CHARACTERS]
+                if key == "rationale" and isinstance(child, str)
+                else CharacterAgentQueryJob._cap_rationale(child)
                 for key, child in value.items()
             }
         if isinstance(value, list):
@@ -88,19 +63,15 @@ class CharacterAgentQueryJob:
 
     @staticmethod
     def _response_schema(request: CharacterAgentQueryRequest) -> dict[str, Any] | None:
-        """Return the caller schema with the server-owned rationale cap applied."""
-        schema = request.response_format.schema_
-        if schema is None:
+        if request.response_format.schema_ is None:
             return None
-        normalized = copy.deepcopy(schema)
+        normalized = copy.deepcopy(request.response_format.schema_)
 
         def apply(item: Any) -> None:
             if isinstance(item, dict):
                 properties = item.get("properties")
-                if isinstance(properties, dict):
-                    rationale = properties.get("rationale")
-                    if isinstance(rationale, dict):
-                        rationale["maxLength"] = RATIONALE_MAX_CHARACTERS
+                if isinstance(properties, dict) and isinstance(properties.get("rationale"), dict):
+                    properties["rationale"]["maxLength"] = RATIONALE_MAX_CHARACTERS
                 for child in item.values():
                     apply(child)
             elif isinstance(item, list):
@@ -111,13 +82,11 @@ class CharacterAgentQueryJob:
         return normalized
 
     @classmethod
-    def _response_format_payload(
-        cls, request: CharacterAgentQueryRequest
-    ) -> dict[str, Any]:
-        payload = request.response_format.model_dump(mode="json", by_alias=True)
+    def _response_format_payload(cls, request: CharacterAgentQueryRequest) -> dict[str, Any]:
+        value = request.response_format.model_dump(mode="json", by_alias=True)
         if request.response_format.type == "json":
-            payload["schema"] = cls._response_schema(request)
-        return payload
+            value["schema"] = cls._response_schema(request)
+        return value
 
     @classmethod
     def _validate_content(cls, request: CharacterAgentQueryRequest, content: Any) -> None:
@@ -136,273 +105,112 @@ class CharacterAgentQueryJob:
                 ) from exc
 
     @classmethod
-    def _parse_final(
-        cls, request: CharacterAgentQueryRequest, raw: str
-    ) -> CharacterDeliberation:
+    def _parse_final(cls, request: CharacterAgentQueryRequest, raw: str) -> CharacterDeliberation:
         try:
-            value = CharacterDeliberation.model_validate(
-                parse_json_deterministically(raw)
-            )
+            value = CharacterDeliberation.model_validate(parse_json_deterministically(raw))
             value.content = cls._cap_rationale(value.content)
             cls._validate_content(request, value.content)
             return value
         except (ValueError, PydanticValidationError, CharacterGenerationError) as exc:
-            raise CharacterGenerationError(
-                "final response returned invalid structured output"
-            ) from exc
+            raise CharacterGenerationError("final response returned invalid structured output") from exc
+
+    def _envelope_response_format(self, request: CharacterAgentQueryRequest) -> dict[str, Any]:
+        content = {"type": "string"} if request.response_format.type == "text" else (
+            self._response_schema(request) or {}
+        )
+        return strict_json_schema("character_agent_query", {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["content", "decision_basis"],
+            "properties": {
+                "content": content,
+                "decision_basis": {"type": "string", "maxLength": RATIONALE_MAX_CHARACTERS},
+            },
+        })
 
     @staticmethod
-    def _frame_profile(snapshot: dict[str, Any]) -> dict[str, Any]:
+    def _compact_character(snapshot: dict[str, Any]) -> dict[str, Any]:
         character = snapshot["character_agent"]
+        profile = TraitProfile.model_validate(character["trait_profile"])
+        traits = {
+            key: {
+                "z": profile.estimate(key).z,
+                "left": definition.left_pole,
+                "right": definition.right_pole,
+            }
+            for key, definition in TRAIT_BY_KEY.items()
+        }
         return {
             "name": character["name"],
-            "trait_profile": character["trait_profile"],
-            "trait_definitions": trait_metadata(),
-            "active_aspects": [
-                {"id": item["id"], "name": item["name"]}
+            "subtitle": character.get("subtitle"),
+            "traits": traits,
+            "steadiness": profile.steadiness.z,
+            "aspects": [
+                {key: item.get(key) for key in ("name", "category", "importance", "description")}
                 for item in snapshot["aspects"]
             ],
-            "active_goals": [
+            "goals": [
                 {
-                    "id": item["id"],
-                    "name": item.get("title") or item.get("name") or "",
-                    "description": item.get("description") or "",
+                    "title": item.get("title") or item.get("name"),
+                    "priority": item.get("priority"),
+                    "commitment": item.get("commitment"),
+                    "description": item.get("description"),
                 }
                 for item in snapshot["goals"]
             ],
         }
 
-    @staticmethod
-    def _normalize_selector_name(value: str) -> str:
-        return " ".join(value.split()).casefold()
-
-    @classmethod
-    def _resolve_selectors(
-        cls,
-        selectors: list[str],
-        items: list[dict[str, Any]],
-        *,
-        name_fields: tuple[str, ...],
-        selector_type: str,
-    ) -> list[str]:
-        """Keep grounded IDs, resolve unique exact names, and discard the rest."""
-        ids = {str(item["id"]) for item in items}
-        ids_by_name: dict[str, set[str]] = {}
-        for item in items:
-            item_id = str(item["id"])
-            for field in name_fields:
-                value = item.get(field)
-                if isinstance(value, str) and value.strip():
-                    normalized = cls._normalize_selector_name(value)
-                    ids_by_name.setdefault(normalized, set()).add(item_id)
-
-        resolved: list[str] = []
-        for selector in selectors:
-            selected_id: str | None = selector if selector in ids else None
-            if selected_id is None:
-                matches = ids_by_name.get(cls._normalize_selector_name(selector), set())
-                if len(matches) == 1:
-                    selected_id = next(iter(matches))
-                    logger.info(
-                        "character_query_selector_resolved type=%s selector=%r id=%s",
-                        selector_type,
-                        selector,
-                        selected_id,
-                    )
-                else:
-                    logger.warning(
-                        "character_query_selector_discarded type=%s selector=%r matches=%d",
-                        selector_type,
-                        selector,
-                        len(matches),
-                    )
-            if selected_id is not None and selected_id not in resolved:
-                resolved.append(selected_id)
-        return resolved
-
-    @classmethod
-    def _validate_selectors(
-        cls, frame: CharacterQueryFrame, snapshot: dict[str, Any]
-    ) -> None:
-        frame.relevant_aspect_ids = cls._resolve_selectors(
-            frame.relevant_aspect_ids,
-            snapshot["aspects"],
-            name_fields=("name",),
-            selector_type="aspect",
-        )
-        frame.relevant_goal_ids = cls._resolve_selectors(
-            frame.relevant_goal_ids,
-            snapshot["goals"],
-            name_fields=("title", "name"),
-            selector_type="goal",
-        )
-
-    @staticmethod
-    def _validate_generic_frame(frame: CharacterQueryFrame) -> None:
-        if (
-            frame.relevant_traits
-            or frame.relevant_aspect_ids
-            or frame.relevant_goal_ids
-        ):
-            raise CharacterGenerationError(
-                "generic task framing returned identity selectors"
-            )
-
-    @staticmethod
-    def _deliberation_input(
-        request: CharacterAgentQueryRequest,
-        frame: CharacterQueryFrame,
-        snapshot: dict[str, Any],
-    ) -> dict[str, Any]:
-        selected_aspects = set(frame.relevant_aspect_ids)
-        selected_goals = set(frame.relevant_goal_ids)
-        profile = TraitProfile.model_validate(snapshot["character_agent"]["trait_profile"])
-        return {
-            "query": request.query,
-            "context_summary": frame.context_summary,
-            "system_instruction": request.system_instruction,
-            "relevant_traits": [
-                {**asdict(TRAIT_BY_KEY[item.trait]),
-                 "estimate": profile.estimate(item.trait).model_dump(mode="json"),
-                 "situation_type": item.situation_type, "relevance": item.relevance}
-                for item in frame.relevant_traits
-            ],
-            "steadiness": profile.steadiness.model_dump(mode="json") if frame.relevant_traits else None,
-            "relevant_aspect_names": [
-                item["name"]
-                for item in snapshot["aspects"]
-                if item["id"] in selected_aspects
-            ],
-            "relevant_goal_names": [
-                item.get("title") or item.get("name") or ""
-                for item in snapshot["goals"]
-                if item["id"] in selected_goals
-            ],
-            "conflicts": frame.conflicts,
-            "unknowns": frame.unknowns,
-            "response_format": CharacterAgentQueryJob._response_format_payload(request),
-        }
-
-    def _repair_schema_hint(self, request: CharacterAgentQueryRequest) -> str:
-        schema = CharacterDeliberation.model_json_schema()
-        content_schema: dict[str, Any]
-        if request.response_format.type == "text":
-            content_schema = {"type": "string"}
-        else:
-            content_schema = self._response_schema(request) or {}
-        schema["properties"]["content"] = content_schema
-        return self._json(schema)
-
-    async def _parse_or_repair(
-        self, request: CharacterAgentQueryRequest, raw: str
-    ) -> CharacterDeliberation:
-        await self._report("validating", 0.85)
+    async def _parse_or_repair(self, request: CharacterAgentQueryRequest, raw: str) -> CharacterDeliberation:
+        await self._report("validating", .85)
         try:
             return self._parse_final(request, raw)
         except CharacterGenerationError:
-            await self._report("repairing", 0.9)
+            await self._report("repairing", .9)
             repaired = await repair_invalid_json(
-                llm_client=self.llm,
-                model=self.repair_model,
-                malformed_text=raw,
-                schema_hint=self._repair_schema_hint(request),
+                llm_client=self.llm, model=self.repair_model, malformed_text=raw,
+                schema_hint=self._json(self._envelope_response_format(request)["json_schema"]["schema"]),
                 usage_tag="character_agent.repair",
             )
-            await self._report("validating", 0.95)
-            try:
-                return self._parse_final(request, repaired)
-            except CharacterGenerationError as exc:
-                raise CharacterGenerationError(
-                    "the repaired response does not satisfy the requested schema"
-                ) from exc
+            await self._report("validating", .95)
+            return self._parse_final(request, repaired)
 
-    async def _run_generic(
-        self, request: CharacterAgentQueryRequest
+    async def run(
+        self, request: CharacterAgentQueryRequest, snapshot: dict[str, Any] | None = None,
     ) -> CharacterAgentQueryResult:
-        await self._report("framing", 0.2)
-        frame_raw = await self.llm.chat(
-            model=self.framing_model,
-            messages=[
-                {"role": "system", "content": GENERIC_FRAME_PROMPT},
-                {"role": "user", "content": self._json({
-                    "query": request.query,
-                    "context": request.context,
-                })},
-            ],
-            temperature=0.0,
-            usage_tag="character_agent.generic_frame",
-        )
-        frame = self._parse_frame(str(frame_raw))
-        self._validate_generic_frame(frame)
+        if request.use_character_identity:
+            if snapshot is None:
+                raise CharacterGenerationError("character identity snapshot is required for identity-grounded queries")
+            await self._report("retrieving_memories", .2)
+            payload = {
+                "character": self._compact_character(snapshot),
+                "memories": await select_relevant_memories(
+                    query=request.query, memories=snapshot.get("memories", [])
+                ),
+                "query": request.query,
+                "context": request.context,
+                "instruction": request.system_instruction,
+                "response_format": self._response_format_payload(request),
+            }
+            prompt, usage_tag = QUERY_PROMPT, "character_agent.query"
+        else:
+            payload = {
+                "query": request.query, "context": request.context,
+                "instruction": request.system_instruction,
+                "response_format": self._response_format_payload(request),
+            }
+            prompt, usage_tag = GENERIC_QUERY_PROMPT, "character_agent.generic_query"
 
-        await self._report("deliberating", 0.55)
+        await self._report("deliberating", .55)
+        # Do not fall back to an unstructured second deliberation call. A
+        # malformed result gets the one bounded JSON-repair pass below.
         raw = await self.llm.chat(
             model=self.deliberation_model,
-            messages=[
-                {"role": "system", "content": GENERIC_QUERY_PROMPT},
-                {"role": "user", "content": self._json({
-                    "query": request.query,
-                    "context_summary": frame.context_summary,
-                    "system_instruction": request.system_instruction,
-                    "conflicts": frame.conflicts,
-                    "unknowns": frame.unknowns,
-                    "response_format": self._response_format_payload(request),
-                })},
-            ],
-            temperature=request.generation.temperature,
-            usage_tag="character_agent.generic_deliberate",
+            messages=[{"role": "system", "content": prompt}, {"role": "user", "content": self._json(payload)}],
+            temperature=request.generation.temperature, usage_tag=usage_tag,
+            response_format=self._envelope_response_format(request),
         )
         result = await self._parse_or_repair(request, str(raw))
         return CharacterAgentQueryResult(
-            type=request.response_format.type,
-            content=result.content,
-            decision_basis=result.decision_basis,
-        )
-
-    async def run(
-        self,
-        request: CharacterAgentQueryRequest,
-        snapshot: dict[str, Any] | None = None,
-    ) -> CharacterAgentQueryResult:
-        if not request.use_character_identity:
-            return await self._run_generic(request)
-        if snapshot is None:
-            raise CharacterGenerationError(
-                "character identity snapshot is required for identity-grounded queries"
-            )
-
-        await self._report("framing", 0.2)
-        frame_raw = await self.llm.chat(
-            model=self.framing_model,
-            messages=[
-                {"role": "system", "content": FRAME_PROMPT},
-                {"role": "user", "content": self._json({
-                    "query": request.query,
-                    "context": request.context,
-                    "agent_profile": self._frame_profile(snapshot),
-                })},
-            ],
-            temperature=0.0,
-            usage_tag="character_agent.frame",
-        )
-        frame = self._parse_frame(str(frame_raw))
-        self._validate_selectors(frame, snapshot)
-
-        await self._report("deliberating", 0.55)
-        deliberation_raw = await self.llm.chat(
-            model=self.deliberation_model,
-            messages=[
-                {"role": "system", "content": DELIBERATION_PROMPT},
-                {"role": "user", "content": self._json(
-                    self._deliberation_input(request, frame, snapshot)
-                )},
-            ],
-            temperature=request.generation.temperature,
-            usage_tag="character_agent.deliberate",
-        )
-        result = await self._parse_or_repair(request, str(deliberation_raw))
-        return CharacterAgentQueryResult(
-            type=request.response_format.type,
-            content=result.content,
+            type=request.response_format.type, content=result.content,
             decision_basis=result.decision_basis,
         )

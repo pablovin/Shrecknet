@@ -243,14 +243,13 @@ status is `done` or `failed`. Non-administrators may submit and read only their
 own jobs for public agents; administrators may use public or private agents.
 The agent must be active.
 
-`use_character_identity` defaults to `true` and normally performs two LLM calls:
-compact identity framing followed by deliberation/rendering. Invalid final JSON
-may receive one repair attempt through `model_agents_repair_json`. Generic mode
-also performs framing followed by deliberation, but neither call receives
-CharacterAgent identity. Generic framing receives only the query and context.
-Identity framing keeps active selector IDs, resolves exact unambiguous
-aspect/goal names to their active IDs, and discards unknown or ambiguous
-selectors instead of failing the query.
+`use_character_identity` defaults to `true` and normally performs one
+identity deliberation/rendering call. Before it, the worker deterministically
+retrieves up to five relevant active `ScenePerspective` records owned by the
+queried CharacterAgent; it never reads objective Scene content or another
+character's memory. Invalid final JSON may receive one repair attempt through
+`model_agents_repair_json`. Generic mode also uses one call and receives no
+CharacterAgent identity.
 shreckLLM owns provider retries; Shrecknet
 polls the submitted shreckLLM job without a whole-stage deadline.
 
@@ -366,6 +365,8 @@ Each chunk has two LLM waves:
 
 The coordinator completes every chunk's Perspective wave before beginning any chunk's Psychological analysis wave. It binds every scene/evidence/target reference by output position, merges all chunk-local evidence in chronological source order, deduplicates new identity signals, and performs the trait/profile reduction deterministically. It never sends the cumulative historical evidence ledger to an LLM, and there is no profile-update LLM call. Existing aspects and goals are never modified or removed by the deterministic signal reducer; it creates only evidence-backed, non-duplicate additions. The updated identity takes effect only at source end.
 
+Each embodiment generation or JSON-repair request is capped at 10,000 completion tokens. This cap is a provider-cost safeguard; a response stopped for length is rejected as truncated and cannot become a draft result.
+
 ### Frontend job-progress contract
 
 `POST /character-agents/embodiment-drafts` still returns `202`:
@@ -434,7 +435,8 @@ and regenerate. There is no conversion or compatibility alias. See
 - `model_character_agent_character_incorporation`: batch perspectives/reflections.
 - `model_character_agent_scene_interpretation`: authored baseline and per-scene
   psychological enrichment/candidate extraction.
-- `model_character_agent_framing` / `model_character_agent_deliberation`: query stages.
+- `model_character_agent_deliberation`: v3 query deliberation. `model_character_agent_framing`
+  is retained as an unused compatibility setting and should not be configured for new deployments.
 - `model_agents_repair_json`: query final repair target.
 - `character_agent_embodiment_max_aspects` / `character_agent_embodiment_max_goals`:
   defaults 12/8, active capacities. Per-bundle operation caps remain two aspects/one goal.

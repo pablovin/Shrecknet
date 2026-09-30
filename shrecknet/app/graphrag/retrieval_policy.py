@@ -15,6 +15,10 @@ TRADITIONAL_AGENT_EXCLUDED_LABELS = frozenset({
     "CharacterAgent",
     "CharacterAspect",
     "CharacterGoal",
+    "ScenePerspective",
+    "CharacterBelief",
+    "EmotionalInterpretation",
+    "CharacterImpact",
 })
 
 

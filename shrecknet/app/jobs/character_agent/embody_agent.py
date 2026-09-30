@@ -54,6 +54,11 @@ from app.services.character_trait_service import (
 
 logger = logging.getLogger(__name__)
 
+# Embodiment works on chunks of at most five scenes. This ceiling is not an
+# expected response size; it prevents a malformed response from consuming an
+# unbounded provider-default completion budget.
+EMBODIMENT_LLM_MAX_TOKENS = 10_000
+
 
 class EmbodimentGenerationError(RuntimeError):
     """Categorized failure from one embodiment generation stage."""
@@ -118,6 +123,7 @@ class UsageTracker:
         self.llm = llm_client
         self.calls: list[LLMCallRecord] = []
         self.stage_elapsed_seconds: dict[str, float] = {}
+        self.last_response_metadata: dict[str, Any] = {}
 
     async def chat(self, *, stage: str, usage_tag: str, **kwargs) -> str:
         input_text = json.dumps(kwargs.get("messages", []), ensure_ascii=False)
@@ -125,11 +131,26 @@ class UsageTracker:
         input_tokens_est = max(1, input_chars // 4)
 
         started_at = time.monotonic()
-        result = await self.llm.chat(usage_tag=usage_tag, **kwargs)
+        result = await self.llm.chat(
+            usage_tag=usage_tag,
+            return_metadata=True,
+            **kwargs,
+        )
         elapsed_seconds = time.monotonic() - started_at
         self.stage_elapsed_seconds[stage] = (
             self.stage_elapsed_seconds.get(stage, 0.0) + elapsed_seconds
         )
+
+        if isinstance(result, dict) and "text" in result:
+            self.last_response_metadata = dict(result.get("response_metadata") or {})
+            result = str(result["text"])
+        else:
+            # Lightweight test doubles may only return text. Production callers
+            # always request metadata above, while this fallback retains their
+            # existing contract.
+            self.last_response_metadata = dict(
+                getattr(self.llm, "last_response_metadata", {}) or {}
+            )
 
         output_chars = len(str(result))
         output_tokens_est = max(1, output_chars // 4)
@@ -182,7 +203,7 @@ class EmbodyAgent:
         if self._debug_artifacts is not None:
             values.setdefault(
                 "response_metadata",
-                dict(getattr(self._llm.llm, "last_response_metadata", {}) or {}),
+                dict(self._llm.last_response_metadata),
             )
             self._debug_artifacts.write_call(
                 source_index=self._debug_source_index,
@@ -315,6 +336,24 @@ class EmbodyAgent:
                 source_entity_alias=source_entity_alias,
                 retryable=True,
             )
+        response_metadata = self._llm.last_response_metadata
+        if response_metadata.get("finish_reason") == "length":
+            self._debug_call(
+                stage=stage, prompt=prompt, payload=payload, raw_output=raw,
+                error=(
+                    "provider stopped the response at the configured output "
+                    f"limit of {max_tokens} tokens"
+                ),
+                model=model, usage_tag=usage_tag,
+            )
+            raise EmbodimentGenerationError(
+                f"{stage} response reached its {max_tokens}-token output limit",
+                category="truncated",
+                stage=stage,
+                source_entity_id=source_entity_id,
+                source_entity_alias=source_entity_alias,
+                retryable=True,
+            )
         try:
             result = self._parse(schema, str(raw), stage, output_binding)
             self._debug_call(stage=stage, prompt=prompt, payload=payload, raw_output=raw,
@@ -322,7 +361,7 @@ class EmbodyAgent:
         except EmbodimentGenerationError as exc:
             self._debug_call(stage=stage, prompt=prompt, payload=payload, raw_output=raw,
                              error=self._schema_errors(exc), model=model, usage_tag=usage_tag)
-            response_metadata = getattr(self._llm.llm, "last_response_metadata", {})
+            response_metadata = self._llm.last_response_metadata
             logger.warning(
                 "embodiment_schema_invalid stage=%s source_id=%s source_alias=%s "
                 "requested_max_tokens=%s response_chars=%s completion_tokens=%s "
@@ -344,6 +383,7 @@ class EmbodyAgent:
                             _model_output_schema(schema, output_binding),
                         ),
                         usage_tag=f"{usage_tag}.repair",
+                        max_tokens=max_tokens,
                     )
                     result = self._parse(schema, repaired, f"repaired {stage}", output_binding)
                     self._debug_call(stage=stage, prompt="JSON repair", payload={
@@ -523,7 +563,7 @@ class EmbodyAgent:
             payload={"identity": {key: canonical_identity.get(key) for key in
                 ("alias", "authored_text", "properties", "entity_type")}, "allowed_evidence_ids": [evidence_id]},
             schema=EmbodimentObservationsOutput, stage="authored baseline",
-            usage_tag="character_agent.embodiment.baseline", max_tokens=None,
+            usage_tag="character_agent.embodiment.baseline", max_tokens=EMBODIMENT_LLM_MAX_TOKENS,
             model=self.scene_interpretation_model, semantic_validator=validate,
             output_binding={"evidence_id": evidence_id},
         )
@@ -564,7 +604,7 @@ class EmbodyAgent:
             ),
             stage="character incorporation",
             usage_tag="character_agent.embodiment.character_incorporation",
-            max_tokens=None,
+            max_tokens=EMBODIMENT_LLM_MAX_TOKENS,
             model=self.character_incorporation_model,
             source_entity_id=source_entity_id,
             source_entity_alias=source_entity_alias,
@@ -643,7 +683,7 @@ class EmbodyAgent:
                 ),
                 stage="character incorporation",
                 usage_tag="character_agent.embodiment.character_incorporation",
-                max_tokens=None,
+                max_tokens=EMBODIMENT_LLM_MAX_TOKENS,
                 model=self.character_incorporation_model,
                 source_entity_id=source_entity_id,
                 source_entity_alias=source_entity_alias,
@@ -688,7 +728,7 @@ class EmbodyAgent:
                     ),
                     stage="scene trait extraction",
                     usage_tag="character_agent.embodiment.scene_interpretation",
-                    max_tokens=None, model=self.scene_interpretation_model,
+                    max_tokens=EMBODIMENT_LLM_MAX_TOKENS, model=self.scene_interpretation_model,
                     source_entity_id=source_entity_id, source_entity_alias=source_entity_alias,
                     schema_correction_attempts=0,
                     output_binding={

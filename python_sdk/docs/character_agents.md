@@ -21,7 +21,10 @@ async with Shrecknet(token="...") as sdk:
 ```
 
 By default, the query uses the CharacterAgent's identity, traits, aspects, and
-goals. Set `use_character_identity=False` to use neutral framing and deliberation without
+goals. Identity queries use one deliberation call with deterministic retrieval of
+the queried character's own scene perspectives; no other character or canonical
+scene memory is supplied. Set `use_character_identity=False` to use neutral
+single-call deliberation without
 sending CharacterAgent profile data:
 
 ```python

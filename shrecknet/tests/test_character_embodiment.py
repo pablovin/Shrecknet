@@ -9,7 +9,11 @@ from neo4j.time import DateTime
 from sqlalchemy import create_engine, inspect
 
 from app.core.config_store import LLMModelTarget, Settings
-from app.jobs.character_agent.embody_agent import EmbodyAgent, EmbodimentGenerationError
+from app.jobs.character_agent.embody_agent import (
+    EMBODIMENT_LLM_MAX_TOKENS,
+    EmbodyAgent,
+    EmbodimentGenerationError,
+)
 from app.jobs.character_agent.embody_agent_prompts import (
     PSYCHOLOGICAL_ANALYSIS_PROMPT,
     PERSPECTIVE_PROMPT,
@@ -660,6 +664,7 @@ async def test_every_embodiment_generation_call_requests_strict_json_schema():
         "baseline", "character_incorporation", "scene_interpretation",
     }
     for call in llm.calls:
+        assert call["max_tokens"] == EMBODIMENT_LLM_MAX_TOKENS == 10_000
         response_format = call["response_format"]
         assert response_format["type"] == "json_schema"
         assert response_format["json_schema"]["strict"] is True
@@ -673,6 +678,26 @@ async def test_every_embodiment_generation_call_requests_strict_json_schema():
     assert "target_index" in impact["properties"]
     assert "target_id" not in impact["properties"]
     assert definitions["SceneEnrichmentOutput"]["properties"]["impacts"]["maxItems"] == 0
+
+
+@pytest.mark.asyncio
+async def test_truncated_embodiment_response_is_rejected_before_schema_validation():
+    class TruncatedLLM(BatchLLM):
+        async def chat(self, **kwargs):
+            raw = await super().chat(**kwargs)
+            self.last_response_metadata = {"finish_reason": "length"}
+            return raw
+
+    with pytest.raises(EmbodimentGenerationError) as raised:
+        await _agent(TruncatedLLM()).generate_perspectives(
+            source_entity_id="source", source_entity_alias="Source",
+            canonical_identity=_canonical(), current_trait_profile=TraitProfile(),
+            current_aspects=[], current_goals=[], scenes=scenes(1),
+        )
+
+    assert raised.value.category == "truncated"
+    assert raised.value.retryable is True
+    assert "10000-token output limit" in str(raised.value)
 
 
 @pytest.mark.asyncio
@@ -962,7 +987,7 @@ async def test_schema_correction_serializes_model_validator_errors():
 
 
 @pytest.mark.asyncio
-async def test_embodiment_uses_provider_default_completion_limits():
+async def test_embodiment_uses_bounded_completion_limits():
     llm = BatchLLM()
 
     await _agent(llm).run(
@@ -972,7 +997,7 @@ async def test_embodiment_uses_provider_default_completion_limits():
     )
 
     assert llm.calls
-    assert all(call['max_tokens'] is None for call in llm.calls)
+    assert all(call['max_tokens'] == EMBODIMENT_LLM_MAX_TOKENS for call in llm.calls)
 
 
 @pytest.mark.asyncio

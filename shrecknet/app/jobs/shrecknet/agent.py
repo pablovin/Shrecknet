@@ -18,6 +18,7 @@ async def repair_invalid_json(
     schema_hint: str | None = None,
     response_format: dict | None = None,
     usage_tag: str = "agents.json_repair",
+    max_tokens: int | None = None,
 ) -> str:
     schema_hint_block = ""
     hint_str = str(schema_hint).strip() if schema_hint else ""
@@ -36,6 +37,7 @@ async def repair_invalid_json(
             temperature=0.0,
             usage_tag=usage_tag,
             response_format=response_format,
+            max_tokens=max_tokens,
         )
     else:
         response = await llm_client.chat(
@@ -43,6 +45,7 @@ async def repair_invalid_json(
             messages=messages,
             temperature=0.0,
             usage_tag=usage_tag,
+            max_tokens=max_tokens,
         )
     return response if isinstance(response, str) else str(response)
 

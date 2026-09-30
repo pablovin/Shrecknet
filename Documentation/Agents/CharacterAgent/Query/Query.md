@@ -52,38 +52,41 @@ generation.
 
 ## Identity pipeline
 
-Identity mode normally performs two LLM calls.
+Identity mode makes one substantive deliberation call. The worker loads the
+active identity, all active aspects/goals, and only active
+`(:CharacterAgent)-[:HAS_PERSPECTIVE]->(:ScenePerspective)` records owned by
+the queried agent. It deterministically ranks the character's own subjective
+memories and supplies at most five relevant memories to the model.
 
-1. **Framing** receives the query/context, character name, current trait profile,
-   registry metadata, active aspects as `{id,name}`, and active goals as
-   `{id,name,description}`. It selects directional traits by psychological
-   affordance and returns `relevant_traits` entries with `trait`, `situation_type`,
-   and `relevance`. The backend rejects invalid trait/situation pairs. Aspect/goal
-   selectors retain exact-ID or unambiguous exact-name resolution.
-2. **Deliberation** receives the original query, validated context summary,
-   caller instruction, selected trait estimates with constructs/poles/boundaries
-   and relevance, selected aspect/goal names, conflicts, unknowns and output format.
-   STEADINESS is a separate consistency modifier only when directional traits apply.
-   It is never selected as an ordinary predictor and never sets temperature.
+A memory contains the perspective's remembered summary, interpretation,
+reflection, emotions, beliefs (including their current status), and lasting
+impacts. Canonical `Scene` text, other characters' perspectives, and arbitrary
+graph facts are never retrieved for this path. A memory is subjective rather
+than objective truth; doubted, disproven, and superseded beliefs remain
+historical beliefs.
 
-Unknown traits remain unknown; z=0 means an evidenced midpoint. Trait values
-bias choices probabilistically. Context, aspects and goals can outweigh those
-biases. Framing preserves knowledge, capabilities, available options and compulsion
-so the selected disposition matches a meaningful decision affordance.
+Each perspective has a derived searchable memory document and embedding. It is
+created or refreshed when the perspective aggregate changes. Failed or pending
+embeddings fall back to owner-scoped lexical ranking; they never widen graph
+scope. These vectors are separate from the ordinary `SemanticDocument` scene
+corpus, so non-character scene search is unchanged.
 
-Stage 2 receives no original raw context, background story, or aspect/goal IDs or
-descriptions. Structured output is parsed/validated locally; one final JSON repair
-is allowed through the configured repair target. Stage 1 is not repaired.
-String fields named `rationale` retain the server-owned 2,000-character cap and
-are deterministically truncated before response-schema validation.
+The deliberation payload has compact traits (z and poles), steadiness, complete
+active aspects/goals with descriptions, caller query/context/instruction, and
+the selected memories. It contains no opaque IDs, evidence IDs, qualifying
+counts, model-selected selectors, or framing summaries. Unknown traits remain
+unknown; z=0 is an evidenced midpoint. Traits bias behaviour while goals,
+aspects, memories, and current context may outweigh them.
 
-Generic mode also uses two normal calls. Neutral framing receives only the
-original query and caller context and must return empty identity-selector
-arrays. Generic deliberation receives the validated context summary, conflicts,
-unknowns, system instruction, and response-format contract. Neither call
-receives or simulates CharacterAgent identity. It uses the same deterministic
-validation and optional final repair.
-Shrecknet does not resubmit timed-out stages; shreckLLM owns provider retries.
+The main call requests native strict JSON for the response envelope. Its output
+is parsed and validated locally against the caller contract. Malformed output
+receives at most one JSON-only repair through `model_agents_repair_json`; a
+failed repair fails the job. This is the only exceptional second model call.
+String fields named `rationale` retain the server-owned 2,000-character cap.
+
+Generic mode also uses one call, never receives CharacterAgent identity, and
+uses the same local validation and bounded repair policy. shreckLLM owns
+provider retries.
 
 ## Polling
 
@@ -91,7 +94,7 @@ Shrecknet does not resubmit timed-out stages; shreckLLM owns provider retries.
 initiating user or an administrator. A job is visible only under its owning
 CharacterAgent.
 
-Stages are `queued`, `loading_identity`, `framing`, `deliberating`,
+Stages are `queued`, `loading_identity`, `retrieving_memories`, `deliberating`,
 `repairing`, `validating`, `completed`, and `failed`. Invalid model output may
 receive one repair attempt through the global `model_agents_repair_json` target.
 Polling a failed job still

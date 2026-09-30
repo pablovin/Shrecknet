@@ -17,7 +17,7 @@ SlotKey = Literal['integrity', 'caution', 'presence', 'forbearance', 'diligence'
 ZValue = Annotated[float, Field(ge=-1.9, le=1.9)]
 ANCHORS = (-1.9, -1.2, -0.7, -0.3, 0.0, 0.3, 0.7, 1.2, 1.9)
 PERCENTILES = (3, 12, 24, 38, 50, 62, 76, 88, 97)
-SPEC_VERSION = 'dispositions-v1'
+SPEC_VERSION = 'dispositions-v2-bipolar-evidence'
 
 @dataclass(frozen=True)
 class TraitDefinition:
@@ -25,8 +25,8 @@ class TraitDefinition:
     display_name: str
     construct: str
     definition: str
-    low_pole: str
-    high_pole: str
+    left_pole: str
+    right_pole: str
     diagnostic_situations: tuple[str, ...]
     boundary_notes: str
     kind: str = 'directional'
@@ -115,7 +115,9 @@ class TraitEstimate(StrictModel):
     qualifying_count: int = Field(0, ge=0)
     uncertainty: list[str] = Field(default_factory=list)
     accepted_count: int = Field(0, ge=0)
-    comparison_start: int = Field(0, ge=0)
+    comparison_group_count: int = Field(0, ge=0)
+    required_qualifying_count: int = Field(0, ge=0)
+    required_comparison_group_count: int = Field(0, ge=0)
     applied_source_ids: list[str] = Field(default_factory=list)
 
     @model_validator(mode='before')
@@ -123,6 +125,9 @@ class TraitEstimate(StrictModel):
     def decode_legacy_point(cls, value):
         if isinstance(value, dict):
             value = dict(value)
+            # Comparison windows were removed in v2. Old revisions remain
+            # readable, but new profiles no longer expose this ineffective gate.
+            value.pop('comparison_start', None)
             if isinstance(value.get('z'), bool):
                 raise ValueError('z cannot be boolean')
             if 'point' in value:
@@ -217,9 +222,9 @@ class TraitObservation(StrictModel):
     trait: TraitKey
     evidence_kind: Literal['behavior', 'authored_disposition'] = 'behavior'
     situation_type: str
-    direction: Literal['low', 'midpoint', 'high']
+    pole: Literal['left', 'right']
     update_intensity: Literal['small', 'medium', 'large'] = 'medium'
-    expression_z: ZValue | None
+    expression_z: ZValue
     diagnosticity: float = Field(ge=0, le=1)
     confidence: float = Field(ge=0, le=1)
     behavior: str = Field(min_length=1)
@@ -235,6 +240,12 @@ class TraitObservation(StrictModel):
     def decode_legacy_expression_point(cls, value):
         if isinstance(value, dict):
             value = dict(value)
+            legacy_direction = value.pop('direction', None)
+            if 'pole' not in value and legacy_direction is not None:
+                legacy_poles = {'low': 'left', 'high': 'right'}
+                if legacy_direction not in legacy_poles:
+                    raise ValueError('legacy midpoint evidence cannot be used as a directional update; regenerate it')
+                value['pole'] = legacy_poles[legacy_direction]
             if isinstance(value.get('expression_z'), bool):
                 raise ValueError('expression_z cannot be boolean')
             if 'expression_point' not in value:
@@ -253,10 +264,11 @@ class TraitObservation(StrictModel):
             raise ValueError('expression_z cannot be boolean')
         if self.situation_type not in TRAIT_BY_KEY[self.trait].diagnostic_situations:
             raise ValueError('situation is not diagnostic of this trait')
-        if self.expression_z is not None:
-            direction = 'low' if self.expression_z < 0 else 'high' if self.expression_z > 0 else 'midpoint'
-            if self.direction != direction:
-                raise ValueError('direction and expression_z disagree')
+        if self.expression_z == 0:
+            raise ValueError('zero expression is not a directional update')
+        pole = 'left' if self.expression_z < 0 else 'right'
+        if self.pole != pole:
+            raise ValueError('pole and expression_z disagree')
         return self
 
 

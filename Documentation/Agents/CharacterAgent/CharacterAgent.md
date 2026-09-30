@@ -291,9 +291,8 @@ normal LLM call budget is `2n`: Perspective followed by Psychological analysis
 for each chunk. The source reduction is
 backend-owned and deterministic; it does not make a profile-update LLM call or
 send historical evidence to a model. Analysis chunks contain at most five scenes
-and submit as a flat stage wave to ShreckLLM. Checkpoint reuse is
-available for the single-chunk source path; enabled debug artifacts deliberately
-disable reuse so the complete run is recorded.
+and submit as a flat stage wave to ShreckLLM. Each request executes a complete,
+self-contained run and records its full debug trace when enabled.
 
 `character_agent.query` is the Celery task for asynchronous identity-grounded or
 generic queries. It reloads the applicable graph identity, reports the

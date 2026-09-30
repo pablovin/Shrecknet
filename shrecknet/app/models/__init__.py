@@ -10,7 +10,6 @@ from app.models.architect import (
 from app.models.audit import AuditAction, AuditActorType, AuditEntityType, AuditLog
 from app.models.background_job import AuthorType, BackgroundJob, JobStatus, JobType
 from app.models.character_embodiment import (
-    CharacterEmbodimentCheckpoint,
     CharacterEmbodimentDraft,
     CharacterEmbodimentDraftStatus,
 )
@@ -57,7 +56,6 @@ __all__ = [
     "JobStatus",
     "JobType",
     "CharacterEmbodimentDraft",
-    "CharacterEmbodimentCheckpoint",
     "CharacterEmbodimentDraftStatus",
     "MediaItem",
     "LibraryItem",

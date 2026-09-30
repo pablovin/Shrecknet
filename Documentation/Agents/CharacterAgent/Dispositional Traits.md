@@ -11,7 +11,7 @@ a rule that mandates an action.
 
 <!-- BEGIN GENERATED TRAIT DEFINITIONS -->
 
-| Slot | Construct | Definition | Low pole | High pole | Diagnostic situations | Boundaries |
+| Slot | Construct | Definition | Left pole | Right pole | Diagnostic situations | Boundaries |
 | --- | --- | --- | --- | --- | --- | --- |
 | INTEGRITY | Honesty-Humility — HEXACO | Will not gain at someone else's expense even when the gain is free, safe, and untraceable. | Takes available advantage; accepts profitable exploitation and self-serving deception. | Refuses unfair advantage or untraceable exploitation, even at personal cost. | exploitation, self_serving_deception | Not taking unfairly, not giving. Generosity, compassion, friendliness, and forgiveness alone are not evidence. |
 | CAUTION | Emotionality — HEXACO | Registers danger early and seeks security or guarantees before exposure or uncertain reliance. | Physically fearless, little worry or need for reassurance; less dependent and sentimental. | Threat-sensitive, anxious, seeks guarantees, protection and support; strong attachments and fear of loss. | uncertain_threat, uncertain_dependence, reliance_without_guarantees | Includes attachment and dependence, not just risk-taking. High values often seek guarantees or withdraw. Low values are not inherently virtuous courage. |
@@ -45,8 +45,8 @@ explicit stable disposition may produce a provisional estimate. Bare adjectives
 are insufficient; generated biography is not treated as independent authored
 support. Authored-only generation is allowed, including an all-unknown profile.
 
-Scene observations record the directional trait, diagnostic situation, expression
-z/pole, confidence, diagnosticity, behavior, justification, canonical evidence
+Scene observations record the directional trait, diagnostic situation, a `left` or
+`right` pole, signed non-zero expression z, confidence, diagnosticity, behavior, justification, canonical evidence
 IDs, episode ID, availability cutoff, choice conditions, and comparison context.
 The backend assigns stable observation IDs, source ownership, chronological
 positions, eligibility, and exclusion reasons. Repeated descriptions of one
@@ -189,9 +189,10 @@ submitting a new embodiment request.
   alone may only seed a provisional value.
 - RESTLESSNESS still requires an explicit value choice or recurring motivated
   preference; it does not require multiple source contexts.
-- A behavioral candidate carries a direction and an update intensity. Small,
-  medium, and large map deterministically to ±0.05, ±0.10, and ±0.20 z; high is
-  positive and low is negative. Midpoint evidence has no directional movement.
+- A behavioral candidate carries a `left` or `right` pole and an update
+  intensity. Small, medium, and large map deterministically to ±0.05, ±0.10,
+  and ±0.20 z; right is positive and left is negative. Neutral or ambiguous
+  behavior is not a trait candidate.
 - For each trait, the backend averages all eligible contributions from the
   current source bundle and applies at most one resulting update. It never sums
   scene-level candidates, so a long source cannot produce a massive jump.
@@ -199,7 +200,7 @@ submitting a new embodiment request.
   eligible observation can move an existing centre at a later source. The backend
   records the applied source ID to make replay a no-op. STEADINESS remains
   separate and still requires repeated comparable behavior.
-- Opposing low/high evidence makes the estimate contested unless the latest three
+- Opposing left/right evidence makes the estimate contested unless the latest three
   qualifying observations consistently support one pole. Opposite extremes are
   not averaged into a falsely certain midpoint.
 - An LLM may supply an evidence-grounded explanation and citation set, but it
@@ -212,20 +213,21 @@ Prompt, specification, and policy versions identify the applicable contracts.
 
 ## STEADINESS
 
-An LLM cannot extract or propose STEADINESS from a scene. The backend requires six
-qualifying behavioral episodes in at least two comparable groups of three.
-A group has the same trait, diagnostic situation, and explicit comparison context
-(stakes, relationship, role, available choices). Missing comparability excludes
-it. Authored statements and manual values are not behavioral samples.
+An LLM cannot extract or propose STEADINESS from a scene. The backend requires
+three qualifying behavioral episodes in one repeated comparable group. A group
+has the same trait and registry-owned diagnostic situation; free-text
+`comparison_context` remains audit prose and is never an equality key. The
+latest 30 eligible behavioral observations form the rolling window. Authored
+statements and manual values are not behavioral samples.
 
 The estimator pools within-group variance of expression z values, so different
 trait centres do not themselves create variability. If pooled standard deviation
 is `s`, the engineering display mapping is
-`round_half_up(9 - 8 * min(s / 1.9, 1))`. The resulting estimate remains provisional
-and includes its contributing observation IDs. Later updates require two new
-comparable samples and move by its bounded source-level z contribution. Comparison windows restart
-after accepted directional changes; insufficient remaining evidence restores
-unknown rather than falsely attributing gradual development to inconsistency.
+`round_half_up(9 - 8 * min(s / 1.9, 1))`. The resulting estimate remains
+provisional and includes its contributing observation IDs. It also reports the
+qualifying-observation and repeated-context counts plus their thresholds, so a
+client can explain why STEADINESS is unknown. Directional changes do not exclude
+older samples inside the rolling window.
 
 Consistent retaliation can therefore mean low FORBEARANCE and high STEADINESS.
 STEADINESS never means goodness or calmness and never sets model temperature.
@@ -358,12 +360,8 @@ See [CharacterAgent Query](Query/Query.md) for request and response envelopes.
 
 Configuration:
 
-- `character_agent_embodiment_evidence_tokens`: retained for legacy evidence-preview
-  endpoints. It does not limit or split embodiment source bundles.
 - `character_agent_embodiment_max_aspects` / `character_agent_embodiment_max_goals`:
   active capacities; each source bundle proposes at most two aspect and one goal operation.
-- `character_agent_embodiment_semantic_correction_attempts`: existing bounded
-  correction policy. Query generation retains its separate repair behavior.
 - `character_agent_embodiment_debug_artifacts_enabled`: default `true`; writes
   complete local embodiment traces as described in
   [Local embodiment debug artifacts](#local-embodiment-debug-artifacts).

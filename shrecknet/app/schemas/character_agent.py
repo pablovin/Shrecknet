@@ -1205,15 +1205,3 @@ class EmbodyAgentResult(_StrictModel):
     def total_tokens_est(self) -> int:
         return sum(call.total_tokens_est for call in self.llm_calls)
 
-
-# A compact, position-bound Stage 3 result. Scene and evidence identifiers are
-# assigned by the backend, never trusted from model output.
-class SceneIdentitySignalOutput(_StrictModel):
-    scene_id: str
-    evidence_ids: list[str] = Field(min_length=1)
-    aspect_signals: list[SceneAspectSignal] = Field(default_factory=list, max_length=1)
-    goal_signals: list[SceneGoalSignal] = Field(default_factory=list, max_length=1)
-
-
-class SceneIdentitySignalsOutput(_StrictModel):
-    scene_identity_signals: list[SceneIdentitySignalOutput]

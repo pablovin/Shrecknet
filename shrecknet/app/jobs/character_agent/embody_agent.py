@@ -1,15 +1,12 @@
 """Scene-centric source-boundary CharacterAgent embodiment generation.
 
-Three LLM calls run for each source group:
+Two LLM calls run for each source chunk:
   1. Character incorporation
-  2. Scene psychological enrichment and scene-local candidate extraction
-  3. Evidence-grounded trait, aspect, and goal update
+  2. Scene psychological analysis and scene-local candidate extraction
 
-Between stages 2 and 3 the backend validates and grounds the extracted
-candidates; this is deterministic work, not a fourth LLM call. All calls process
-every ordered scene from one source using its starting revision. Source bundles
-run sequentially and accumulate grounded evidence; each produces one
-scene-associated revision.
+The backend then validates, grounds, and reduces extracted candidates
+deterministically. Source bundles run sequentially and accumulate grounded
+evidence; each produces one scene-associated revision.
 """
 
 from __future__ import annotations
@@ -32,8 +29,7 @@ from app.integrations.llm.shreckllm_client import LLMProviderUnavailableError
 from app.jobs.character_agent.embodiment_debug_artifacts import EmbodimentDebugArtifacts
 from app.jobs.character_agent.embody_agent_prompts import (
     BASELINE_PROMPT,
-    IDENTITY_SIGNALS_PROMPT,
-    TRAIT_ENRICHMENT_PROMPT,
+    PSYCHOLOGICAL_ANALYSIS_PROMPT,
     PERSPECTIVE_PROMPT,
 )
 from app.jobs.shrecknet.agent import parse_json_deterministically
@@ -44,7 +40,6 @@ from app.schemas.character_agent import (
     LLMCallRecord,
     ProfileUpdateOutput,
     SceneInput,
-    SceneIdentitySignalsOutput,
     SceneEnrichmentsOutput,
     ScenePerspectiveBundleOutput,
     ScenePerspectiveOutput,
@@ -157,7 +152,7 @@ class UsageTracker:
 class EmbodyAgent:
     def __init__(
         self, *, llm_client, character_incorporation_model,
-        scene_interpretation_model, character_update_model,
+        scene_interpretation_model,
         max_goals: int = 10, max_aspects: int = 20,
         semantic_correction_attempts: int = 1,
         debug_artifacts: EmbodimentDebugArtifacts | None = None,
@@ -167,7 +162,6 @@ class EmbodyAgent:
         self._llm = UsageTracker(llm_client)
         self.character_incorporation_model = character_incorporation_model
         self.scene_interpretation_model = scene_interpretation_model
-        self.character_update_model = character_update_model
         self.max_goals = max_goals
         self.max_aspects = max_aspects
         self.semantic_correction_attempts = semantic_correction_attempts
@@ -562,11 +556,6 @@ class EmbodyAgent:
                 "identity": {key: canonical_identity.get(key) for key in (
                     "alias", "subtitle", "entity_type", "entity_type_description", "properties",
                 )},
-                "current_profile": {
-                    "trait_profile": current_trait_profile.model_dump(mode="json"),
-                    "aspects": [{"name": item.get("name", ""), "category": item.get("category", ""), "description": item.get("description")} for item in current_aspects],
-                    "goals": [{"title": item.get("title", ""), "description": item.get("description", ""), "goal_type": item.get("goal_type", "")} for item in current_goals],
-                },
                 "scenes": [{"position": index + 1, "name": scene.name, "description": scene.description, "created_at": scene.created_at} for index, scene in enumerate(scenes)],
             },
             schema=_PerspectivesContainer,
@@ -574,7 +563,7 @@ class EmbodyAgent:
                 lambda: _validate_and_normalize_scene_grounding(value.perspectives, expected_ids)
             ),
             stage="character incorporation",
-            usage_tag="character_agent.embodiment.perspective",
+            usage_tag="character_agent.embodiment.character_incorporation",
             max_tokens=None,
             model=self.character_incorporation_model,
             source_entity_id=source_entity_id,
@@ -595,8 +584,6 @@ class EmbodyAgent:
         current_goals: list[dict[str, Any]],
         scenes: list[SceneInput],
         on_stage: Any = None,
-        stage_checkpoints: dict[str, dict[str, Any]] | None = None,
-        on_checkpoint: Any = None,
         perspectives_result: _PerspectivesContainer | None = None,
     ) -> EmbodyAgentAnalysis:
         if not scenes:
@@ -608,8 +595,6 @@ class EmbodyAgent:
             for index, scene in enumerate(scenes)
         ]
         known = {f"scene:{s.scene_id}" for s in scenes}
-        stage_checkpoints = stage_checkpoints or {}
-
         identity = {
             key: canonical_identity.get(key)
             for key in (
@@ -643,20 +628,11 @@ class EmbodyAgent:
             await on_stage("source:{0} - Step 1: Character incorporation".format(source_entity_alias), [1])
         if perspectives_result is not None:
             pass
-        elif "character_incorporation" in stage_checkpoints:
-            perspectives_result = _PerspectivesContainer.model_validate(
-                stage_checkpoints["character_incorporation"]
-            )
         else:
             perspectives_result = await self._call(
                 prompt=PERSPECTIVE_PROMPT,
                 payload={
                     "identity": identity,
-                    "current_profile": {
-                        "trait_profile": current_trait_profile.model_dump(mode="json"),
-                        "aspects": [{"name": item["name"], "category": item["category"], "description": item["description"]} for item in aspects],
-                        "goals": [{"title": item["title"], "description": item["description"], "goal_type": item["goal_type"]} for item in goals],
-                    },
                     "scenes": scene_list,
                 },
                 schema=_PerspectivesContainer,
@@ -682,9 +658,6 @@ class EmbodyAgent:
                 "perspective output scene_ids must match input scene order and be unique"
             )
         _semantic(lambda: _validate_and_normalize_scene_grounding(perspectives, expected_ids))
-        if "character_incorporation" not in stage_checkpoints and on_checkpoint:
-            await on_checkpoint("character_incorporation", perspectives_result)
-
         # Step 2 — Per-scene psychological enrichment. It consumes only the
         # already-grounded character perspective, never the raw objective scene.
         # Reflection remains presentation-only and cannot manufacture evidence.
@@ -705,14 +678,8 @@ class EmbodyAgent:
                 "goals": [{"position": index + 1, "title": g["title"]} for index, g in enumerate(goals)],
             },
         }
-        enrichment_result = (
-            SceneEnrichmentsOutput.model_validate(stage_checkpoints["scene_interpretation"])
-            if "scene_interpretation" in stage_checkpoints
-            else None
-        )
-        if enrichment_result is None:
-            enrichment_result = await self._call(
-                    prompt=TRAIT_ENRICHMENT_PROMPT, payload=trait_payload,
+        enrichment_result = await self._call(
+                    prompt=PSYCHOLOGICAL_ANALYSIS_PROMPT, payload=trait_payload,
                     schema=SceneEnrichmentsOutput,
                     semantic_validator=lambda value: _semantic(
                         lambda: _validate_and_normalize_scene_grounding(
@@ -729,9 +696,6 @@ class EmbodyAgent:
                         "profile_targets": {"aspects": [a["id"] for a in aspects], "goals": [g["id"] for g in goals]},
                     },
                 )
-            if on_checkpoint:
-                await on_checkpoint("scene_interpretation", enrichment_result)
-        assert enrichment_result is not None
         enrichments = enrichment_result.scene_enrichments
         enrichment_ids = [item.scene_id for item in enrichments]
         if enrichment_ids != expected_ids or len(enrichment_ids) != len(set(enrichment_ids)):
@@ -808,8 +772,6 @@ class EmbodyAgent:
         current_goals: list[dict[str, Any]],
         current_trait_evidence: list[TraitEvidence] | None = None,
         batch_id: str | None = None,
-        stage_checkpoint: dict | None = None,
-        on_checkpoint: Any = None,
         on_stage: Any = None,
     ) -> EmbodyAgentResult:
         """Apply one analyzed source to the latest chronological profile."""
@@ -888,8 +850,16 @@ class EmbodyAgent:
         batch_id: str | None = None,
         on_stage: Any = None,
     ) -> EmbodyAgentResult:
-        """Compatibility entry point for one source executed end to end."""
-
+        """Execute the current two-wave pipeline for one source."""
+        perspectives = await self.generate_perspectives(
+            source_entity_id=source_entity_id,
+            source_entity_alias=source_entity_alias,
+            canonical_identity=canonical_identity,
+            current_trait_profile=current_trait_profile,
+            current_aspects=current_aspects,
+            current_goals=current_goals,
+            scenes=scenes,
+        )
         analysis = await self.analyze(
             source_entity_id=source_entity_id,
             source_entity_alias=source_entity_alias,
@@ -899,6 +869,7 @@ class EmbodyAgent:
             current_goals=current_goals,
             scenes=scenes,
             on_stage=on_stage,
+            perspectives_result=perspectives,
         )
         return await self.apply_profile_update(
             analysis=analysis,
@@ -909,7 +880,6 @@ class EmbodyAgent:
             current_goals=current_goals,
             on_stage=on_stage,
         )
-
 
 def _model_output_schema(
     schema: type[BaseModel], output_binding: dict[str, Any] | None,

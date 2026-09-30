@@ -11,7 +11,7 @@ from app.services.character_trait_service import (apply_manual_edits, chunk_sour
 
 def observation(scene='s1', trait='integrity', expression_z=1.2, **changes):
     data = dict(trait=trait, situation_type=TRAIT_BY_KEY[trait].diagnostic_situations[0],
-        direction='low' if expression_z < 0 else 'high' if expression_z > 0 else 'midpoint', expression_z=expression_z,
+        pole='left' if expression_z < 0 else 'right', expression_z=expression_z,
         confidence=.9, diagnosticity=.9, behavior='Had a meaningful choice and acted.',
         justification='Choice reveals this construct.', evidence_ids=[f'scene:{scene}'],
         episode_id=f'scene:{scene}', available_after_scene_id=scene,
@@ -37,7 +37,7 @@ def test_registry_constructs_poles_and_spread_kind():
     assert len(TRAIT_DEFINITIONS)==9 and len(DIRECTIONAL_TRAITS)==8
     assert 'steadiness' not in DIRECTIONAL_TRAITS
     for d in TRAIT_DEFINITIONS:
-        assert all((d.construct,d.low_pole,d.high_pole,d.definition,d.boundary_notes))
+        assert all((d.construct,d.left_pole,d.right_pole,d.definition,d.boundary_notes))
     assert TRAIT_BY_KEY['steadiness'].diagnostic_situations==()
 
 
@@ -128,16 +128,30 @@ def test_authored_evidence_is_provisional():
 def test_steadiness_requires_comparable_repetition_not_morality():
     retaliation=evidence((-1.9,-1.9,-1.9),trait='forbearance')
     state,_=update_profile(TraitProfile(),retaliation,[proposal(retaliation)])
-    assert state.steadiness.z is None
+    assert state.steadiness.z==1.9
     allocation=evidence((1.9,1.9,1.9),trait='sharing',offset=3)
     state,_=update_profile(state,retaliation+allocation,[proposal(allocation)])
     assert state.dispositional_traits['forbearance'].z==-.1 and state.steadiness.z==1.9
     varied=evidence((-1.9,1.9,-1.9),trait='forbearance')+evidence((1.9,-1.9,1.9),trait='sharing',offset=3)
     state,_=update_profile(TraitProfile(),varied,[])
     assert state.steadiness.z<=-1.2
-    for item in varied: item.comparison_context=None
-    state,_=update_profile(TraitProfile(),varied,[])
+    assert state.steadiness.comparison_group_count == 2
+
+
+def test_steadiness_uses_registry_context_not_free_text_or_comparison_windows():
+    items = evidence((1.2, 1.2, 1.2), trait='diligence')
+    for index, item in enumerate(items):
+        item.comparison_context = f'different prose description {index}'
+    state, _ = update_profile(TraitProfile(), items, [proposal(items)])
+    assert state.steadiness.z == 1.9
+    assert state.steadiness.qualifying_count == 3
+    assert state.steadiness.comparison_group_count == 1
+
+
+def test_steadiness_reports_shortfall_before_three_repeated_observations():
+    state, _ = update_profile(TraitProfile(), evidence((1.2, 1.2)), [])
     assert state.steadiness.z is None
+    assert state.steadiness.required_qualifying_count == 3
 
 
 def test_manual_override_and_clear():
@@ -174,7 +188,7 @@ def test_definition_documentation_is_generated_from_registry():
     table=page.read_text().split('<!-- BEGIN GENERATED TRAIT DEFINITIONS -->')[1].split('<!-- END GENERATED TRAIT DEFINITIONS -->')[0]
     for definition in TRAIT_DEFINITIONS:
         for value in (definition.display_name,definition.construct,definition.definition,
-                      definition.low_pole,definition.high_pole,definition.boundary_notes):
+                      definition.left_pole,definition.right_pole,definition.boundary_notes):
             assert value in table
 
 

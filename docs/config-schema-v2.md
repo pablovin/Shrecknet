@@ -55,7 +55,7 @@
 ### Character Agent
 - `id`: `character_agent`
 - `property`: `runtime`
-- `fields`: `model_character_agent_framing`, `model_character_agent_deliberation`, `model_character_agent_character_incorporation`, `model_character_agent_scene_interpretation`, `model_character_agent_update`, `character_agent_embodiment_evidence_tokens`, `character_agent_embodiment_max_aspects`, `character_agent_embodiment_max_goals`
+- `fields`: `model_character_agent_framing`, `model_character_agent_deliberation`, `model_character_agent_character_incorporation`, `model_character_agent_scene_interpretation`, `character_agent_embodiment_max_aspects`, `character_agent_embodiment_max_goals`
 
 ### Security Tokens
 - `id`: `security_tokens`

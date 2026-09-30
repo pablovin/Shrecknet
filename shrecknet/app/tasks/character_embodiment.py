@@ -3,14 +3,12 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
 import logging
 import re
 import time
 from datetime import datetime, timezone
 from typing import Any
-from uuid import uuid4
 
 from sqlalchemy import delete, select
 
@@ -26,14 +24,13 @@ from app.jobs.character_agent.embody_agent import (
 from app.jobs.character_agent.embodiment_debug_artifacts import EmbodimentDebugArtifacts
 from app.jobs.character_agent.embody_agent_prompts import PROMPT_VERSION
 from app.models.character_embodiment import (
-    CharacterEmbodimentCheckpoint,
     CharacterEmbodimentDraft,
     CharacterEmbodimentDraftStatus,
 )
 from app.services.character_embodiment_service import CharacterEmbodimentService
 from app.schemas.character_agent import EmbodyAgentAnalysis
-from app.schemas.character_traits import TraitProfile, TraitEvidence, SPEC_VERSION
-from app.services.character_trait_service import POLICY_VERSION, chunk_source_scenes, merge_evidence
+from app.schemas.character_traits import TraitProfile, TraitEvidence
+from app.services.character_trait_service import chunk_source_scenes, merge_evidence
 from app.jobs.character_agent.profile import _build_timeline, _apply_aspect_ops, _apply_goal_ops, _stable_profile_id
 from app.schemas.character_agent import (
     CharacterIdentityRevisionProjection,
@@ -112,76 +109,6 @@ def _public_error_message(exc: Exception) -> str:
         **exc.details(),
     }
     return json.dumps(detail, sort_keys=True)
-
-
-def _checkpoint_cache_key(
-    *,
-    revision: int,
-    source_group: dict,
-    canonical_identity: dict,
-    trait_profile: dict,
-    trait_evidence: list,
-    aspects: list,
-    goals: list,
-    model_targets: dict[str, str],
-    batch_size: int = 10,
-) -> str:
-    material = {
-        "revision": revision, "batch_size": batch_size,
-        "prompt_version": PROMPT_VERSION,
-        "source_group": source_group,
-        "canonical_identity": canonical_identity,
-        "profile": {"trait_profile": trait_profile, "trait_evidence": trait_evidence, "aspects": aspects, "goals": goals},
-        "spec_version": SPEC_VERSION, "policy_version": POLICY_VERSION,
-        "model_targets": model_targets,
-    }
-    encoded = json.dumps(
-        material, ensure_ascii=False, sort_keys=True, default=str,
-    ).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
-
-
-async def _save_checkpoint(
-    *,
-    draft_id: str,
-    revision: int,
-    source_index: int,
-    source_entity_id: str,
-    stage: str,
-    cache_key: str,
-    model_target: str,
-    payload: dict,
-) -> None:
-    async with AsyncSessionMaker() as checkpoint_sql:
-        existing = await checkpoint_sql.scalar(select(
-            CharacterEmbodimentCheckpoint
-        ).where(
-            CharacterEmbodimentCheckpoint.draft_id == draft_id,
-            CharacterEmbodimentCheckpoint.generation_revision == revision,
-            CharacterEmbodimentCheckpoint.source_index == source_index,
-            CharacterEmbodimentCheckpoint.stage == stage,
-        ))
-        if existing is None:
-            existing = CharacterEmbodimentCheckpoint(
-                id=str(uuid4()),
-                draft_id=draft_id,
-                generation_revision=revision,
-                source_index=source_index,
-                source_entity_id=source_entity_id,
-                stage=stage,
-                cache_key=cache_key,
-                payload=json.dumps(payload, ensure_ascii=False),
-                prompt_version=PROMPT_VERSION,
-                model_target=model_target,
-            )
-            checkpoint_sql.add(existing)
-        else:
-            existing.source_entity_id = source_entity_id
-            existing.cache_key = cache_key
-            existing.payload = json.dumps(payload, ensure_ascii=False)
-            existing.prompt_version = PROMPT_VERSION
-            existing.model_target = model_target
-        await checkpoint_sql.commit()
 
 
 class _EmbodimentProgress:
@@ -305,10 +232,6 @@ class _EmbodimentProgress:
             "active_steps": list(self.active.get(index, [])),
             "done_steps": sorted(self.done[index]),
             "elapsed_seconds": round(time.monotonic() - started, 1),
-            "checkpointed_stages": list(
-                self.bundles[index].get("checkpointed_stages", [])
-            ),
-            "reused_stages": list(self.bundles[index].get("reused_stages", [])),
             "chunks": chunk_states,
             "parallel": {
                 "active": len(self.active.get(index, [])) > 1 or sum(
@@ -410,11 +333,6 @@ async def _generate(*, draft_id: str, revision: int, job_id: int) -> dict:
         draft.status = CharacterEmbodimentDraftStatus.GENERATING
         draft.error_message = None
         await sql.commit()
-        await sql.execute(delete(CharacterEmbodimentCheckpoint).where(
-            CharacterEmbodimentCheckpoint.draft_id == draft_id,
-            CharacterEmbodimentCheckpoint.generation_revision != revision,
-        ))
-        await sql.commit()
         await update_job_progress(job_id, 0.05, {
             "stage": "Loading embodiment input",
             "draft_id": draft_id,
@@ -443,8 +361,6 @@ async def _generate(*, draft_id: str, revision: int, job_id: int) -> dict:
                 "active_steps": [],
                 "done_steps": [],
                 "elapsed_seconds": None,
-                "checkpointed_stages": [],
-                "reused_stages": [],
             }
             for i, g in enumerate(source_groups)
         ]
@@ -492,24 +408,6 @@ async def _generate(*, draft_id: str, revision: int, job_id: int) -> dict:
             bundles=bundles,
             source_groups=source_groups,
         )
-        stage_model_targets = {
-            "baseline": (
-                f"{settings.model_character_agent_scene_interpretation.provider}:"
-                f"{settings.model_character_agent_scene_interpretation.name}"
-            ),
-            "character_incorporation": (
-                f"{settings.model_character_agent_character_incorporation.provider}:"
-                f"{settings.model_character_agent_character_incorporation.name}"
-            ),
-            "scene_interpretation": (
-                f"{settings.model_character_agent_scene_interpretation.provider}:"
-                f"{settings.model_character_agent_scene_interpretation.name}"
-            ),
-            "identity_signals": (
-                f"{settings.model_character_agent_update.provider}:"
-                f"{settings.model_character_agent_update.name}"
-            ),
-        }
         agents: list[EmbodyAgent] = []
 
         try:
@@ -518,11 +416,10 @@ async def _generate(*, draft_id: str, revision: int, job_id: int) -> dict:
                     llm_client=client,
                     character_incorporation_model=settings.model_character_agent_character_incorporation,
                     scene_interpretation_model=settings.model_character_agent_scene_interpretation,
-                    character_update_model=settings.model_character_agent_update,
                     max_goals=settings.character_agent_embodiment_max_goals,
                     max_aspects=settings.character_agent_embodiment_max_aspects,
-                    # v2 recovery is one JSON repair in the shared stage wrapper;
-                    # failed units are checkpointed instead of triggering hidden LLM loops.
+                    # JSON repair is handled once in the shared stage wrapper;
+                    # failed units surface directly instead of triggering hidden LLM loops.
                     semantic_correction_attempts=0,
                     debug_artifacts=debug_artifacts,
                     debug_source_index=source_index,
@@ -530,29 +427,8 @@ async def _generate(*, draft_id: str, revision: int, job_id: int) -> dict:
                 )
             initializer = make_agent()
             agents.append(initializer)
-            baseline_key = _checkpoint_cache_key(revision=revision, source_group={},
-                canonical_identity=inputs["canonical_identity"], trait_profile={}, trait_evidence=[],
-                aspects=[], goals=[], model_targets=stage_model_targets)
-            baseline = await sql.scalar(select(CharacterEmbodimentCheckpoint).where(
-                CharacterEmbodimentCheckpoint.draft_id == draft_id,
-                CharacterEmbodimentCheckpoint.generation_revision == revision,
-                CharacterEmbodimentCheckpoint.source_index == -1,
-                CharacterEmbodimentCheckpoint.stage == "baseline",
-                CharacterEmbodimentCheckpoint.cache_key == baseline_key))
-            # A debug request must execute and record every LLM stage rather than
-            # hiding a prior response behind a checkpoint cache hit.
-            if baseline and not settings.character_agent_embodiment_debug_artifacts_enabled:
-                data = json.loads(baseline.payload)
-                current_profile = TraitProfile.model_validate(data["profile"])
-                current_evidence = [TraitEvidence.model_validate(item) for item in data["evidence"]]
-            else:
-                current_profile, current_evidence, _ = await initializer.initialize(
-                    canonical_identity=inputs["canonical_identity"], entity_id=draft.source_entity_id)
-                await _save_checkpoint(draft_id=draft_id, revision=revision, source_index=-1,
-                    source_entity_id=draft.source_entity_id, stage="baseline", cache_key=baseline_key,
-                    model_target=stage_model_targets["baseline"],
-                    payload={"profile":current_profile.model_dump(mode="json"),
-                             "evidence":[item.model_dump(mode="json") for item in current_evidence]})
+            current_profile, current_evidence, _ = await initializer.initialize(
+                canonical_identity=inputs["canonical_identity"], entity_id=draft.source_entity_id)
             initial_profile = current_profile.model_copy(deep=True)
             initial_evidence = list(current_evidence)
             total_llm_calls += len(initializer.llm_calls)
@@ -560,33 +436,6 @@ async def _generate(*, draft_id: str, revision: int, job_id: int) -> dict:
             for bi, group in enumerate(source_groups):
                 agent = make_agent(source_index=bi, source_alias=group["source_alias"])
                 agents.append(agent)
-                cache_key = _checkpoint_cache_key(revision=revision, source_group=group,
-                    canonical_identity=inputs["canonical_identity"],
-                    trait_profile=current_profile.model_dump(mode="json"),
-                    trait_evidence=[item.model_dump(mode="json") for item in current_evidence],
-                    aspects=current_aspects, goals=current_goals, model_targets=stage_model_targets)
-                rows = (await sql.execute(select(CharacterEmbodimentCheckpoint).where(
-                    CharacterEmbodimentCheckpoint.draft_id == draft_id,
-                    CharacterEmbodimentCheckpoint.generation_revision == revision,
-                    CharacterEmbodimentCheckpoint.source_index == bi,
-                    CharacterEmbodimentCheckpoint.cache_key == cache_key))).scalars().all()
-                checkpoints = (
-                    {} if settings.character_agent_embodiment_debug_artifacts_enabled else {
-                        row.stage: json.loads(row.payload) for row in rows
-                        if row.prompt_version == PROMPT_VERSION
-                        and row.model_target == stage_model_targets.get(row.stage)
-                    }
-                )
-                debug_artifacts.write_checkpoint(
-                    source_index=bi, source_alias=group["source_alias"], checkpoints=checkpoints,
-                )
-                bundles[bi]["reused_stages"] = sorted(checkpoints)
-
-                async def save_stage(stage, value):
-                    await _save_checkpoint(draft_id=draft_id, revision=revision, source_index=bi,
-                        source_entity_id=group["source_id"], stage=stage, cache_key=cache_key,
-                        model_target=stage_model_targets[stage], payload=value.model_dump(mode="json"))
-
                 scene_chunks = _scene_analysis_chunks(group)
                 progress.configure_chunks(bi, scene_chunks)
 
@@ -836,11 +685,6 @@ async def _generate(*, draft_id: str, revision: int, job_id: int) -> dict:
         draft.generated_at = datetime.now(timezone.utc)
         draft.status = CharacterEmbodimentDraftStatus.READY
         await sql.commit()
-        await sql.execute(delete(CharacterEmbodimentCheckpoint).where(
-            CharacterEmbodimentCheckpoint.draft_id == draft_id,
-            CharacterEmbodimentCheckpoint.generation_revision == revision,
-        ))
-        await sql.commit()
         await update_job_progress(job_id, 1.0, {
             "stage": "Complete",
             "draft_id": draft_id,
@@ -864,9 +708,6 @@ async def _generate(*, draft_id: str, revision: int, job_id: int) -> dict:
             "draft_id": draft_id, "status": "ready", "revision": revision,
             "llm_calls": total_llm_calls, "total_tokens_est": total_tokens_est,
             "semantic_corrections": total_semantic_corrections,
-            "reused_checkpoint_stages": sum(
-                len(bundle.get("reused_stages", [])) for bundle in bundles
-            ),
         }
 
 

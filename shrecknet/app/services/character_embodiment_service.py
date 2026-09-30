@@ -518,14 +518,22 @@ class CharacterEmbodimentService:
             job = EmbodyAgent(llm_client=llm_client,
                 character_incorporation_model=settings.model_character_agent_character_incorporation,
                 scene_interpretation_model=settings.model_character_agent_scene_interpretation,
-                character_update_model=settings.model_character_agent_update,
                 max_aspects=settings.character_agent_embodiment_max_aspects,
                 max_goals=settings.character_agent_embodiment_max_goals,
                 semantic_correction_attempts=settings.character_agent_embodiment_semantic_correction_attempts)
-            result = await job.run(source_entity_id=chunk["source_id"], source_entity_alias=chunk["source_alias"],
+            scene_inputs = [SceneInput(**scene) for scene in chunk["scenes"]]
+            perspectives = await job.generate_perspectives(
+                source_entity_id=chunk["source_id"], source_entity_alias=chunk["source_alias"],
                 canonical_identity=inputs["canonical_identity"], current_trait_profile=profile,
-                current_trait_evidence=evidence, current_aspects=aspects, current_goals=goals,
-                scenes=[SceneInput(**scene) for scene in chunk["scenes"]], batch_id=chunk["batch_id"])
+                current_aspects=aspects, current_goals=goals, scenes=scene_inputs)
+            analysis = await job.analyze(source_entity_id=chunk["source_id"], source_entity_alias=chunk["source_alias"],
+                canonical_identity=inputs["canonical_identity"], current_trait_profile=profile,
+                current_aspects=aspects, current_goals=goals,
+                scenes=scene_inputs, perspectives_result=perspectives)
+            result = await job.apply_profile_update(
+                analysis=analysis, current_trait_profile=profile,
+                current_trait_evidence=evidence, current_aspects=aspects,
+                current_goals=goals, batch_id=chunk["batch_id"])
             timeline = CharacterTimelineProjection.model_validate_json(_build_timeline(
                 source_entity_id=entity_id, source_entity_alias=inputs["source_entity_alias"],
                 canonical_identity=inputs["canonical_identity"], current_trait_profile=profile,
@@ -536,8 +544,8 @@ class CharacterEmbodimentService:
             agent = (await service.get_agent(agent_id)).model_dump(mode="json")
             async def persist(tx):
                 await service._persist_timeline_tx(tx, agent, timeline, _now(), append=True,
-                    provider=settings.model_character_agent_update.provider,
-                    model=settings.model_character_agent_update.name, prompt_version=PROMPT_VERSION)
+                    provider=settings.model_character_agent_scene_interpretation.provider,
+                    model=settings.model_character_agent_scene_interpretation.name, prompt_version=PROMPT_VERSION)
             await self.graph.execute_write(persist)
             profile = result.trait_profile
             evidence = merge_evidence(evidence, result.trait_evidence)

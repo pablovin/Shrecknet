@@ -64,7 +64,6 @@ LLM_TARGET_FIELDS = (
     "model_character_agent_deliberation",
     "model_character_agent_character_incorporation",
     "model_character_agent_scene_interpretation",
-    "model_character_agent_update",
     "model_orchestrator_routing",
     "model_orchestrator_synthesis",
 )
@@ -259,10 +258,6 @@ class Settings(BaseSettings):
     model_character_agent_scene_interpretation: LLMModelTarget = Field(
         default_factory=lambda: LLMModelTarget(provider="", name="")
     )
-    model_character_agent_update: LLMModelTarget = Field(
-        default_factory=lambda: LLMModelTarget(provider="", name="")
-    )
-    character_agent_embodiment_evidence_tokens: int = Field(12_000, ge=1_000, le=100_000)
     character_agent_embodiment_max_aspects: int = Field(12, ge=0, le=50)
     character_agent_embodiment_max_goals: int = Field(8, ge=0, le=50)
     character_agent_embodiment_semantic_correction_attempts: int = Field(

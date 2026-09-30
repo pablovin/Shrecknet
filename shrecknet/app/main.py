@@ -246,7 +246,6 @@ async def _run_llm_prewarm() -> None:
         getattr(settings, "model_character_agent_deliberation", settings.model_elder_planner),
         getattr(settings, "model_character_agent_character_incorporation", settings.model_elder_planner),
         getattr(settings, "model_character_agent_scene_interpretation", settings.model_elder_planner),
-        getattr(settings, "model_character_agent_update", settings.model_elder_planner),
         settings.model_agents_repair_json,
         settings.model_architect_scene_chunking,
         settings.model_architect_entity_proposal,

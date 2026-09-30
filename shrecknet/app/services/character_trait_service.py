@@ -16,15 +16,16 @@ from app.schemas.character_traits import (
     TraitEstimate, TraitEvidence, TraitObservation, TraitProfile, TraitProposal,
 )
 
-POLICY_VERSION = 'evidence-policy-v3-perspective-single-observation'
+POLICY_VERSION = 'evidence-policy-v4-bipolar-three-sample-steadiness'
 MIN_CONFIDENCE = 0.7
 MIN_DIAGNOSTICITY = 0.7
 MIN_EPISODES = 1
 MIN_DIRECTIONAL_NEW_EPISODES = 1
 MIN_STEADINESS_NEW_EPISODES = 2
-MIN_SPREAD_EPISODES = 6
-MIN_COMPARISON_GROUPS = 2
+MIN_SPREAD_EPISODES = 3
+MIN_COMPARISON_GROUPS = 1
 MIN_GROUP_EPISODES = 3
+STEADINESS_WINDOW_EPISODES = 30
 UPDATE_MAGNITUDES = {'small': 0.05, 'medium': 0.10, 'large': 0.20}
 
 
@@ -135,7 +136,7 @@ def _source_delta(items: list[TraitEvidence]) -> float:
     neither pole.
     """
     contributions = [
-        (1 if item.direction == 'high' else -1 if item.direction == 'low' else 0)
+        (1 if item.pole == 'right' else -1)
         * UPDATE_MAGNITUDES[item.update_intensity]
         for item in items
     ]
@@ -158,11 +159,11 @@ def _directional(previous: TraitEstimate, key: str, proposal: TraitProposal | No
     result = previous.model_copy(deep=True)
     result.qualifying_count = len(behavioral)
     result.observation_ids = [item.id for item in items]
-    directions = {item.direction for item in behavioral}
-    opposed = {'low', 'high'} <= directions
+    poles = {item.pole for item in behavioral}
+    opposed = {'left', 'right'} <= poles
     if opposed:
         result.uncertainty = ['Contradictory diagnostic behavior remains in the evidence history.']
-        if len(behavioral) < 3 or len({item.direction for item in behavioral[-3:]}) > 1:
+        if len(behavioral) < 3 or len({item.pole for item in behavioral[-3:]}) > 1:
             result.status = 'contested'
             return result
     if len(behavioral) < MIN_EPISODES:
@@ -179,14 +180,13 @@ def _directional(previous: TraitEstimate, key: str, proposal: TraitProposal | No
         return result
     delta = _source_delta(source_behavioral)
     if delta == 0:
-        if source_behavioral and {'low', 'high'} <= {item.direction for item in source_behavioral}:
+        if source_behavioral and {'left', 'right'} <= {item.pole for item in source_behavioral}:
             result.status = 'contested'
             result.uncertainty = ['This source contains opposing diagnostic behavior; no net update was applied.']
         return result
     result.z = _bounded_z(previous, delta)
     result.status = 'supported'
     result.accepted_count = len(behavioral)
-    result.comparison_start = max(item.chronological_position for item in behavioral) + 1 if previous.z is not None else 0
     if source_group_id is not None:
         result.applied_source_ids = [*previous.applied_source_ids, source_group_id]
     return result
@@ -194,16 +194,24 @@ def _directional(previous: TraitEstimate, key: str, proposal: TraitProposal | No
 
 def _steadiness(profile: TraitProfile, evidence: list[TraitEvidence]) -> TraitEstimate:
     groups = defaultdict(list)
-    for item in evidence:
-        centre = profile.inferred_traits.get(item.trait, profile.estimate(item.trait))
-        if (item.eligible and item.evidence_kind == 'behavior' and item.comparison_context
-                and item.chronological_position >= centre.comparison_start):
-            key = (item.trait, item.situation_type, ' '.join(item.comparison_context.casefold().split()))
-            groups[key].append(item)
+    eligible = [item for item in evidence if item.eligible and item.evidence_kind == 'behavior']
+    eligible = sorted(eligible, key=lambda item: (item.chronological_position, item.id))[-STEADINESS_WINDOW_EPISODES:]
+    for item in eligible:
+        # Situation types are registry-owned categories. Narrative prose is
+        # retained for audit, never used as an unreliable equality key.
+        groups[(item.trait, item.situation_type)].append(item)
     groups = {key: items for key, items in groups.items() if len(items) >= MIN_GROUP_EPISODES}
     items = [item for group in groups.values() for item in group]
     if len(groups) < MIN_COMPARISON_GROUPS or len(items) < MIN_SPREAD_EPISODES:
-        return TraitEstimate(uncertainty=['Insufficient repeated comparable behavior.'])
+        return TraitEstimate(
+            qualifying_count=len(items), comparison_group_count=len(groups),
+            required_qualifying_count=MIN_SPREAD_EPISODES,
+            required_comparison_group_count=MIN_COMPARISON_GROUPS,
+            uncertainty=[
+                f'Insufficient repeated comparable behavior: {len(items)}/{MIN_SPREAD_EPISODES} qualifying observations, '
+                f'{len(groups)}/{MIN_COMPARISON_GROUPS} repeated contexts.'
+            ],
+        )
     previous = profile.inferred_traits.get('steadiness', profile.steadiness)
     if previous.z is not None and len(items) - previous.accepted_count < MIN_STEADINESS_NEW_EPISODES:
         return previous.model_copy(deep=True)
@@ -216,6 +224,8 @@ def _steadiness(profile: TraitProfile, evidence: list[TraitEvidence]) -> TraitEs
     z = round(1.9 - 3.8 * min(spread / 1.9, 1), 4)
     return TraitEstimate(z=z, status='provisional',
         observation_ids=[item.id for item in items], qualifying_count=len(items), accepted_count=len(items),
+        comparison_group_count=len(groups), required_qualifying_count=MIN_SPREAD_EPISODES,
+        required_comparison_group_count=MIN_COMPARISON_GROUPS,
         uncertainty=['Engineering estimate of within-context spread; not population calibrated.'])
 
 
@@ -229,7 +239,7 @@ def update_profile(
     """Apply at most one bounded update per directional trait/source bundle.
 
     Numeric change comes exclusively from eligible evidence in ``source_group_id``:
-    high/low directions carry the candidate's small/medium/large magnitude and
+    right/left poles carry the candidate's small/medium/large magnitude and
     same-trait contributions are averaged. LLM proposals provide traceable
     explanations only; they cannot choose a numeric personality value.
     """

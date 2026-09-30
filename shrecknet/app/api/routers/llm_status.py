@@ -100,6 +100,5 @@ async def get_service_status(
             "model_character_agent_deliberation": _target_status(getattr(settings, "model_character_agent_deliberation", settings.model_elder_planner)),
             "model_character_agent_character_incorporation": _target_status(getattr(settings, "model_character_agent_character_incorporation", settings.model_elder_planner)),
             "model_character_agent_scene_interpretation": _target_status(getattr(settings, "model_character_agent_scene_interpretation", settings.model_elder_planner)),
-            "model_character_agent_update": _target_status(getattr(settings, "model_character_agent_update", settings.model_elder_planner)),
         },
     }

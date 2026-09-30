@@ -31,7 +31,7 @@ INPUT JSON:
   "context": "caller-provided JSON object or null",
   "agent_profile": {
     "name": "character name",
-    "trait_profile": {"dispositional_traits": {"canonical directional key": {"z": "bounded inferred value or null", "status": "unknown | provisional | supported | contested | manual", "observation_ids": [], "qualifying_count": 0, "uncertainty": [], "accepted_count": 0, "comparison_start": 0, "applied_source_ids": []}}, "steadiness": "separate estimate", "version": "spec version", "overrides": {}, "inferred_traits": {}},
+    "trait_profile": {"dispositional_traits": {"canonical directional key": {"z": "bounded inferred value or null", "status": "unknown | provisional | supported | contested | manual", "observation_ids": [], "qualifying_count": 0, "uncertainty": [], "accepted_count": 0, "comparison_group_count": 0, "applied_source_ids": []}}, "steadiness": "separate estimate", "version": "spec version", "overrides": {}, "inferred_traits": {}},
     "trait_definitions": "authoritative definitions, constructs, poles, situation types, boundaries, and scale",
     "active_aspects": [{"id": "opaque supplied ID", "name": "aspect name"}],
     "active_goals": [
@@ -98,8 +98,8 @@ INPUT JSON:
   "system_instruction": "optional caller instruction or null",
   "relevant_traits": [
     {"key":"canonical trait","display_name":"label","kind":"directional","construct":"psychological construct",
-     "definition":"behavioral meaning","low_pole":"...","high_pole":"...","diagnostic_situations":[],"boundary_notes":"...",
-     "estimate":{"z":"bounded inferred value or null","status":"unknown | provisional | supported | contested | manual","observation_ids":[],"qualifying_count":0,"uncertainty":[],"accepted_count":0,"comparison_start":0,"applied_source_ids":[]},
+     "definition":"behavioral meaning","left_pole":"...","right_pole":"...","diagnostic_situations":[],"boundary_notes":"...",
+     "estimate":{"z":"bounded inferred value or null","status":"unknown | provisional | supported | contested | manual","observation_ids":[],"qualifying_count":0,"uncertainty":[],"accepted_count":0,"comparison_group_count":0,"applied_source_ids":[]},
      "situation_type":"validated affordance","relevance":"why it matters"}
   ],
   "steadiness":"separate estimate with the same fields, or null when no directional traits apply",

@@ -158,7 +158,8 @@ background job. Graph mutations and raw trait-evidence inspection require an adm
 
 Agent reads expose typed `trait_profile.dispositional_traits` and separate
 `trait_profile.steadiness`. Each estimate includes a bounded z estimate, status,
-evidence counts and uncertainty. Unknown has null z; midpoint is z=0.
+evidence counts and uncertainty. Unknown has null z; zero is an internal
+estimate only—scene evidence uses explicit left/right poles.
 Fetch authoritative constructs, poles and situations with
 `await sdk.character_agents.trait_definitions()`; do not maintain separate UI
 meaning dictionaries.

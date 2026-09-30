@@ -27,7 +27,9 @@ class TraitEstimate(StrictModel):
     qualifying_count: int = 0
     uncertainty: list[str] = Field(default_factory=list)
     accepted_count: int = 0
-    comparison_start: int = 0
+    comparison_group_count: int = 0
+    required_qualifying_count: int = 0
+    required_comparison_group_count: int = 0
     applied_source_ids: list[str] = Field(default_factory=list)
 
 class TraitProfile(StrictModel):
@@ -52,8 +54,8 @@ class TraitEvidence(StrictModel):
     trait: TraitKey
     evidence_kind: Literal['behavior', 'authored_disposition']
     situation_type: str
-    direction: Literal['low', 'midpoint', 'high']
-    expression_z: ZValue | None
+    pole: Literal['left', 'right']
+    expression_z: ZValue
     diagnosticity: float
     confidence: float
     behavior: str

@@ -62,16 +62,16 @@ Example response:
     "trait_profile": {
       "version": "dispositions-v1",
       "dispositional_traits": {
-        "integrity": {"z": null, "status": "unknown", "qualifying_count": 0, "observation_ids": [], "uncertainty": [], "accepted_count": 0, "comparison_start": 0, "applied_source_ids": []},
-        "caution": {"z": null, "status": "unknown", "qualifying_count": 0, "observation_ids": [], "uncertainty": [], "accepted_count": 0, "comparison_start": 0, "applied_source_ids": []},
-        "presence": {"z": null, "status": "unknown", "qualifying_count": 0, "observation_ids": [], "uncertainty": [], "accepted_count": 0, "comparison_start": 0, "applied_source_ids": []},
-        "forbearance": {"z": null, "status": "unknown", "qualifying_count": 0, "observation_ids": [], "uncertainty": [], "accepted_count": 0, "comparison_start": 0, "applied_source_ids": []},
-        "diligence": {"z": null, "status": "unknown", "qualifying_count": 0, "observation_ids": [], "uncertainty": [], "accepted_count": 0, "comparison_start": 0, "applied_source_ids": []},
-        "curiosity": {"z": null, "status": "unknown", "qualifying_count": 0, "observation_ids": [], "uncertainty": [], "accepted_count": 0, "comparison_start": 0, "applied_source_ids": []},
-        "sharing": {"z": null, "status": "unknown", "qualifying_count": 0, "observation_ids": [], "uncertainty": [], "accepted_count": 0, "comparison_start": 0, "applied_source_ids": []},
-        "restlessness": {"z": null, "status": "unknown", "qualifying_count": 0, "observation_ids": [], "uncertainty": [], "accepted_count": 0, "comparison_start": 0, "applied_source_ids": []}
+        "integrity": {"z": null, "status": "unknown", "qualifying_count": 0, "observation_ids": [], "uncertainty": [], "accepted_count": 0, "comparison_group_count": 0, "required_qualifying_count": 0, "required_comparison_group_count": 0, "applied_source_ids": []},
+        "caution": {"z": null, "status": "unknown", "qualifying_count": 0, "observation_ids": [], "uncertainty": [], "accepted_count": 0, "comparison_group_count": 0, "required_qualifying_count": 0, "required_comparison_group_count": 0, "applied_source_ids": []},
+        "presence": {"z": null, "status": "unknown", "qualifying_count": 0, "observation_ids": [], "uncertainty": [], "accepted_count": 0, "comparison_group_count": 0, "required_qualifying_count": 0, "required_comparison_group_count": 0, "applied_source_ids": []},
+        "forbearance": {"z": null, "status": "unknown", "qualifying_count": 0, "observation_ids": [], "uncertainty": [], "accepted_count": 0, "comparison_group_count": 0, "required_qualifying_count": 0, "required_comparison_group_count": 0, "applied_source_ids": []},
+        "diligence": {"z": null, "status": "unknown", "qualifying_count": 0, "observation_ids": [], "uncertainty": [], "accepted_count": 0, "comparison_group_count": 0, "required_qualifying_count": 0, "required_comparison_group_count": 0, "applied_source_ids": []},
+        "curiosity": {"z": null, "status": "unknown", "qualifying_count": 0, "observation_ids": [], "uncertainty": [], "accepted_count": 0, "comparison_group_count": 0, "required_qualifying_count": 0, "required_comparison_group_count": 0, "applied_source_ids": []},
+        "sharing": {"z": null, "status": "unknown", "qualifying_count": 0, "observation_ids": [], "uncertainty": [], "accepted_count": 0, "comparison_group_count": 0, "required_qualifying_count": 0, "required_comparison_group_count": 0, "applied_source_ids": []},
+        "restlessness": {"z": null, "status": "unknown", "qualifying_count": 0, "observation_ids": [], "uncertainty": [], "accepted_count": 0, "comparison_group_count": 0, "required_qualifying_count": 0, "required_comparison_group_count": 0, "applied_source_ids": []}
       },
-      "steadiness": {"z": null, "status": "unknown", "qualifying_count": 0, "observation_ids": [], "uncertainty": [], "accepted_count": 0, "comparison_start": 0, "applied_source_ids": []},
+      "steadiness": {"z": null, "status": "unknown", "qualifying_count": 0, "observation_ids": [], "uncertainty": [], "accepted_count": 0, "comparison_group_count": 0, "required_qualifying_count": 3, "required_comparison_group_count": 1, "applied_source_ids": []},
       "overrides": {}, "inferred_traits": {}
     },
     "id": "agent-8c01",
@@ -434,14 +434,10 @@ and regenerate. There is no conversion or compatibility alias. See
 - `model_character_agent_character_incorporation`: batch perspectives/reflections.
 - `model_character_agent_scene_interpretation`: authored baseline and per-scene
   psychological enrichment/candidate extraction.
-- `model_character_agent_update`: chunk-local aspect and goal signal extraction; source reduction is backend-owned and deterministic.
 - `model_character_agent_framing` / `model_character_agent_deliberation`: query stages.
 - `model_agents_repair_json`: query final repair target.
-- `character_agent_embodiment_evidence_tokens`: default 12000; applies only to
-  legacy evidence previews, never to an embodiment source bundle.
 - `character_agent_embodiment_max_aspects` / `character_agent_embodiment_max_goals`:
   defaults 12/8, active capacities. Per-bundle operation caps remain two aspects/one goal.
-- `character_agent_embodiment_semantic_correction_attempts`: default 1, range 0–3.
 - `character_agent_embodiment_debug_artifacts_enabled`: default `true`; writes a
   host-visible local trace for every request under
   `shrecknet/databases/local_test/character_embodiment/`. See

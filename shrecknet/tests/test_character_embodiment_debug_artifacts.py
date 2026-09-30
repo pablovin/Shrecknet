@@ -7,6 +7,7 @@ def test_embodiment_debug_artifacts_keep_each_bundle_in_one_log(tmp_path) -> Non
         source_index=0, source_alias="The First Source", stage="character incorporation",
         prompt="system prompt", payload={"scene": "input"}, raw_output='{"answer": 1}',
         parsed_output={"answer": 1}, model="test-model", usage_tag="test.call",
+        requested_max_tokens=10_000, scene_count=1,
     )
     artifacts.write_call(
         source_index=0, source_alias="The First Source", stage="profile updates",
@@ -21,6 +22,8 @@ def test_embodiment_debug_artifacts_keep_each_bundle_in_one_log(tmp_path) -> Non
     assert '"prompt": "system prompt"' in bundle
     assert '"raw_output": "{\\\"answer\\\": 1}"' in bundle
     assert '"call_kind": "semantic_correction"' in bundle
+    assert '"requested_max_tokens": 10000' in bundle
+    assert '"scene_count": 1' in bundle
     final = (tmp_path / "final_pipeline.log").read_text(encoding="utf-8")
     assert '"justification": "kept"' in final
 

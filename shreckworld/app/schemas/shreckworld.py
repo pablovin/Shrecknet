@@ -11,6 +11,7 @@ AuthorityTier = Literal["house_rules", "core_rules", "supplement", "setting", "e
 
 
 class ShreckWorldCreate(BaseModel):
+    shrecknet_world_id: str = Field(min_length=1, max_length=64)
     name: str = Field(min_length=1, max_length=255)
     description: str | None = None
     web_search_enabled: bool = False
@@ -33,6 +34,7 @@ class ShreckWorldUpdate(BaseModel):
 class ShreckWorldRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: str
+    shrecknet_world_id: str | None
     name: str
     description: str | None
     web_search_enabled: bool
@@ -58,6 +60,12 @@ class ShreckWorldLibraryItemRead(BaseModel):
     description: str | None
     authority_tier: AuthorityTier
     authority_priority: int
+    original_filename: str | None
+    mime_type: str | None
+    file_size: int | None
+    cover_path: str | None
+    index_status: str
+    index_error: str | None
     embedding_status: str
     embedding_error: str | None
     embedded_at: datetime | None

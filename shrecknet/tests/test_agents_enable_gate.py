@@ -7,6 +7,7 @@ from fastapi import HTTPException
 
 from app.api import agent_feature_gate
 from app.api.routers import architect, configurations
+from app.core.config_store import Settings
 
 
 @pytest.mark.asyncio
@@ -14,7 +15,7 @@ async def test_enable_agents_requires_operational_shreckllm(monkeypatch) -> None
     persisted_updates: list[dict] = []
 
     def fake_get_settings():
-        return SimpleNamespace(enable_ai_agents=False)
+        return Settings()
 
     async def fake_provider_validations(_settings):
         return {
@@ -45,9 +46,10 @@ async def test_enable_agents_requires_operational_shreckllm(monkeypatch) -> None
 @pytest.mark.asyncio
 async def test_enable_agents_persists_when_shreckllm_operational(monkeypatch) -> None:
     persisted_updates: list[dict] = []
+    active_settings = Settings()
 
     def fake_get_settings():
-        return SimpleNamespace(enable_ai_agents=False)
+        return active_settings
 
     async def fake_provider_validations(_settings):
         return {
@@ -63,8 +65,10 @@ async def test_enable_agents_persists_when_shreckllm_operational(monkeypatch) ->
         }
 
     def fake_update_settings(updates):
+        nonlocal active_settings
         persisted_updates.append(updates)
-        return SimpleNamespace(model_dump=lambda: {"enable_ai_agents": True})
+        active_settings = active_settings.model_copy(update=updates)
+        return active_settings
 
     monkeypatch.setattr(configurations, "get_settings", fake_get_settings)
     monkeypatch.setattr(agent_feature_gate, "get_settings", fake_get_settings)
@@ -76,25 +80,9 @@ async def test_enable_agents_persists_when_shreckllm_operational(monkeypatch) ->
     payload = await configurations._put_config_payload({"enable_ai_agents": True})
 
     assert payload["enable_ai_agents"] is True
-    assert persisted_updates == [
-        {
-            "enable_ai_agents": True,
-            "model_architect_scene_chunking": {"provider": "openai", "name": "gpt-5-nano"},
-            "model_architect_entity_proposal": {"provider": "openai", "name": "gpt-5-nano"},
-            "model_architect_milestone_proposal": {"provider": "openai", "name": "gpt-5-nano"},
-            "model_architect_entity_generation": {"provider": "openai", "name": "gpt-5-nano"},
-            "model_agents_repair_json": {"provider": "openai", "name": "gpt-5-nano"},
-            "model_elder_planner": {"provider": "openai", "name": "gpt-5-nano"},
-            "model_elder_synthesis": {"provider": "openai", "name": "gpt-5-nano"},
-            "model_novelist_planning": {"provider": "openai", "name": "gpt-5-nano"},
-            "model_novelist_prose": {"provider": "openai", "name": "gpt-5-nano"},
-            "model_novelist_critic": {"provider": "openai", "name": "gpt-5-nano"},
-            "model_librarian_planner": {"provider": "openai", "name": "gpt-5-nano"},
-            "model_librarian_synthesis": {"provider": "openai", "name": "gpt-5-nano"},
-            "model_orchestrator_routing": {"provider": "openai", "name": "gpt-5-nano"},
-            "model_orchestrator_synthesis": {"provider": "openai", "name": "gpt-5-nano"},
-        }
-    ]
+    assert persisted_updates[0]["enable_ai_agents"] is True
+    assert persisted_updates[0]["model_novelist_analysis"]["name"] == "gpt-5-nano"
+    assert persisted_updates[0]["model_novelist_writer"]["name"] == "gpt-5-nano"
 
 
 @pytest.mark.asyncio

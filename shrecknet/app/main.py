@@ -251,14 +251,8 @@ async def _run_llm_prewarm() -> None:
         settings.model_architect_entity_proposal,
         settings.model_architect_milestone_proposal,
         settings.model_architect_entity_generation,
-        settings.model_novelist_planning,
-        settings.model_novelist_prose,
-        settings.model_novelist_critic,
-        getattr(
-            settings,
-            "model_novelist_chapter_writer",
-            settings.model_novelist_prose,
-        ),
+        settings.model_novelist_analysis,
+        settings.model_novelist_writer,
     ]
     unique: dict[str, LLMModelTarget] = {}
     for target in targets:

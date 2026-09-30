@@ -1299,16 +1299,22 @@ class NovelistAPI:
         language: str | None = None,
         instructions: str | None = None,
         previous_session_id: str | None = None,
+        previous_novelist_run_id: str | None = None,
+        source_type: str = "auto",
     ) -> NovelistRunRead:
         form = {
             "language": language,
             "instructions": instructions,
             "previous_session_id": previous_session_id,
+            "previous_novelist_run_id": previous_novelist_run_id,
+            "source_type": source_type,
         }
         form = {k: v for k, v in form.items() if v is not None}
 
         with open(pdf_path, "rb") as f:
-            files = {"file": (pdf_path.rsplit("/", 1)[-1], f, "application/pdf")}
+            filename = pdf_path.rsplit("/", 1)[-1]
+            content_type = "application/pdf" if filename.lower().endswith(".pdf") else "text/plain"
+            files = {"file": (filename, f, content_type)}
             response = await self._client._client.post(
                 f"/jobs/novelist/{agent_id}/runs/upload",
                 data=form,

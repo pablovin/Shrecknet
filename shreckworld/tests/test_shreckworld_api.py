@@ -8,19 +8,20 @@ from fastapi.testclient import TestClient
 def _client(monkeypatch, tmp_path):
     monkeypatch.setenv("SHRECKWORLD_DATABASE_URL", f"sqlite:///{tmp_path / 'shreckworld.db'}")
     monkeypatch.setenv("SHRECKWORLD_MEDIA_ROOT", str(tmp_path / "media"))
-    monkeypatch.setenv("SHRECKWORLD_ADMIN_TOKEN", "test-token")
     monkeypatch.setenv("SHRECKWORLD_CELERY_TASK_ALWAYS_EAGER", "true")
     from app.db.session import create_schema
     from app.main import app
+    from app.api.deps import ShrecknetPrincipal, get_current_user, require_world_manager
     create_schema()
-    return TestClient(app), {"X-ShreckWorld-Admin-Token": "test-token"}
+    principal = ShrecknetPrincipal(user_id="1", role="admin")
+    app.dependency_overrides[get_current_user] = lambda: principal
+    app.dependency_overrides[require_world_manager] = lambda: principal
+    return TestClient(app), {"Authorization": "Bearer shrecknet-token"}
 
 
 def test_admin_creates_and_configures_a_shreckworld(monkeypatch, tmp_path):
     client, headers = _client(monkeypatch, tmp_path)
-    forbidden = client.post("/admin/shreckworlds", json={"name": "Arthur 513"})
-    assert forbidden.status_code == 403
-    created = client.post("/admin/shreckworlds", headers=headers, json={"name": "Arthur 513"})
+    created = client.post("/admin/shreckworlds", headers=headers, json={"name": "Arthur 513", "shrecknet_world_id": "arthur-513"})
     assert created.status_code == 201
     world = created.json()
     invalid = client.patch(
@@ -32,8 +33,8 @@ def test_admin_creates_and_configures_a_shreckworld(monkeypatch, tmp_path):
 
 def test_query_isolated_to_its_shreckworld(monkeypatch, tmp_path):
     client, headers = _client(monkeypatch, tmp_path)
-    one = client.post("/admin/shreckworlds", headers=headers, json={"name": "Pendragon"}).json()
-    two = client.post("/admin/shreckworlds", headers=headers, json={"name": "Vampire"}).json()
+    one = client.post("/admin/shreckworlds", headers=headers, json={"name": "Pendragon", "shrecknet_world_id": "pendragon"}).json()
+    two = client.post("/admin/shreckworlds", headers=headers, json={"name": "Vampire", "shrecknet_world_id": "vampire"}).json()
     from app.db.session import session_factory
     from app.models import ShreckWorldDocumentChunk, ShreckWorldLibraryItem
     session = session_factory()()

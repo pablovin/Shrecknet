@@ -17,7 +17,8 @@ class ShreckWorld(Base):
     __tablename__ = "shreckworlds"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_id)
-    name: Mapped[str] = mapped_column(String(255), nullable=False, unique=True, index=True)
+    shrecknet_world_id: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     web_search_enabled: Mapped[bool] = mapped_column(default=False, nullable=False)
     web_search_policy: Mapped[str] = mapped_column(String(32), default="disabled", nullable=False)
@@ -39,9 +40,18 @@ class ShreckWorldLibraryItem(Base):
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     authority_tier: Mapped[str] = mapped_column(String(32), default="core_rules", nullable=False)
     authority_priority: Mapped[int] = mapped_column(Integer, default=100, nullable=False)
+    original_filename: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    mime_type: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    storage_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    file_size: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cover_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
     pdf_path: Mapped[str] = mapped_column(String(512), nullable=False)
     source_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     embedding_status: Mapped[str] = mapped_column(String(32), default="not_embedded", nullable=False, index=True)
+    # `index_*` is the public lifecycle terminology.  Legacy embedding columns
+    # remain during the prototype migration and are populated in lockstep.
+    index_status: Mapped[str] = mapped_column(String(32), default="unindexed", nullable=False, index=True)
+    index_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     embedding_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     embedded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

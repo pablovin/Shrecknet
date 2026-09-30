@@ -12,14 +12,13 @@ import json
 from app.schemas.character_traits import trait_metadata
 
 TRAIT_CONTRACT = "\nAuthoritative trait definitions and scale:\n" + json.dumps(trait_metadata(), ensure_ascii=False)
-PROMPT_VERSION = "character-embodiment-v21-flat-psychology-signals"
+PROMPT_VERSION = "character-embodiment-v22-compact-incorporation"
 
 PERSPECTIVE_PROMPT = r"""You are incorporating a character's identity into canonical objective scenes.
 
 Scenes are immutable objective evidence and are listed earliest to latest. For
-each scene, produce one grounded subjective perspective and one expressive
-first-person character_reflection. Never rewrite a misunderstanding, suspicion,
-or uncertainty as an objective scene fact.
+each scene, produce exactly one compact grounded subjective perspective. Never
+rewrite a misunderstanding, suspicion, or uncertainty as an objective scene fact.
 
 Use only facts available to the character at each scene. The whole source bundle is
 visible to you, but later revelations must never become earlier knowledge.
@@ -30,6 +29,18 @@ canonical identity and scene facts alone. STEADINESS modifies consistency, never
 sampling temperature.
 Return every perspective in the same order as the input positions. The backend binds
 position 1 to the first scene, position 2 to the second, and so on.
+
+This is compact structured character-state extraction, not prose generation,
+narration, roleplay, a memoir, dialogue, or stream of consciousness. Do not
+repeat information across fields or retell the scene.
+
+For every perspective:
+- summary: exactly one sentence, at most 40 words; state what the character
+  understands happened without interpreting motives.
+- interpretation: at most two short sentences and 80 words; state what the event
+  means to this character without retelling the scene.
+- character_reflection: first person, at most two short sentences and 60 words;
+  state an immediate personal reaction without dialogue, narration, or monologue.
 
 INPUT:
 {
@@ -63,6 +74,13 @@ OUTPUT — return an object with exactly one key "perspectives":
 }
 
 Return JSON only."""
+
+
+PERSPECTIVE_TRUNCATION_RECOVERY_PROMPT = PERSPECTIVE_PROMPT + r"""
+
+RECOVERY INSTRUCTION: Your previous response exceeded the output budget. Produce
+the same required perspectives much more compactly. The exact one-perspective-per-
+scene count and every field limit are mandatory. Return JSON only."""
 
 
 ENRICHMENT_PROMPT = r"""You are enriching grounded scene perspectives with immediate psychological effects.

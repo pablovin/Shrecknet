@@ -68,15 +68,11 @@
     "provider": "",
     "name": ""
   },
-  "model_novelist_planning": {
+  "model_novelist_analysis": {
     "provider": "",
     "name": ""
   },
-  "model_novelist_prose": {
-    "provider": "",
-    "name": ""
-  },
-  "model_novelist_critic": {
+  "model_novelist_writer": {
     "provider": "",
     "name": ""
   },

@@ -17,9 +17,8 @@ def _settings() -> SimpleNamespace:
         model_agents_repair_json=target,
         model_elder_planner=target,
         model_elder_synthesis=target,
-        model_novelist_planning=target,
-        model_novelist_prose=target,
-        model_novelist_critic=target,
+        model_novelist_analysis=target,
+        model_novelist_writer=target,
         model_librarian_planner=target,
         model_librarian_synthesis=target,
     )

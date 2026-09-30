@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 
 from app.api.routers import router
 from app.core.config import get_settings
@@ -26,4 +25,5 @@ def health() -> dict[str, str]:
 
 
 app.include_router(router)
-app.mount(settings.media_base_url, StaticFiles(directory=settings.media_root), name="media")
+# Source and cover files are deliberately not mounted as public static media.
+# Their download endpoints must apply the same Shrecknet authorization boundary.

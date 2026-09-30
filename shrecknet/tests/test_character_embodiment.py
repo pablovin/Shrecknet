@@ -13,6 +13,7 @@ from app.jobs.character_agent.embody_agent import (
     EMBODIMENT_LLM_MAX_TOKENS,
     EmbodyAgent,
     EmbodimentGenerationError,
+    ScenePerspectiveLLMOutput,
 )
 from app.jobs.character_agent.embody_agent_prompts import (
     PSYCHOLOGICAL_ANALYSIS_PROMPT,
@@ -604,10 +605,6 @@ class BatchLLM:
                 summary='Returned an untraceable overpayment.',interpretation='Keeping it would exploit another.',
                 character_reflection='REFLECTION MUST NOT BECOME EVIDENCE',memory_strength=80,importance=3)
                 for s in payload['scenes']]}
-            if self.corruption=='future':
-                result['perspectives'][0]['evidence_ids']=["scene:model-scene-{}".format(payload['scenes'][-1]['position'])]
-            if self.corruption == 'prior':
-                result['perspectives'][1]['evidence_ids'] = ['scene:s0', 'scene:s1']
             return json.dumps(result)
         if stage=='scene_interpretation':
             return json.dumps({'scene_enrichments':[dict(
@@ -681,10 +678,75 @@ async def test_every_embodiment_generation_call_requests_strict_json_schema():
 
 
 @pytest.mark.asyncio
+async def test_incorporation_schema_has_exact_count_and_only_llm_owned_fields():
+    llm = BatchLLM()
+    await _agent(llm).generate_perspectives(
+        source_entity_id="source", source_entity_alias="Source",
+        canonical_identity=_canonical(), current_trait_profile=TraitProfile(),
+        current_aspects=[], current_goals=[], scenes=scenes(3),
+    )
+
+    call = next(call for call in llm.calls if call["usage_tag"].endswith(".character_incorporation"))
+    schema = call["response_format"]["json_schema"]["schema"]
+    perspectives = schema["properties"]["perspectives"]
+    assert perspectives["minItems"] == perspectives["maxItems"] == 3
+    fields = schema["$defs"]["ScenePerspectiveLLMOutput"]["properties"]
+    assert {"scene_id", "evidence_ids", "status"}.isdisjoint(fields)
+    assert fields["summary"]["maxLength"] == 300
+    assert fields["interpretation"]["maxLength"] == 700
+    assert fields["character_reflection"]["maxLength"] == 500
+
+
+def test_incorporation_llm_text_fields_are_bounded():
+    valid = {
+        "source_type": "participated", "awareness_level": 50, "confidence": 50,
+        "summary": "Summary.", "interpretation": "Interpretation.",
+        "character_reflection": "I react.", "memory_strength": 50, "importance": 3,
+    }
+    assert ScenePerspectiveLLMOutput.model_validate(valid)
+    with pytest.raises(ValueError, match="String should have at most 300 characters"):
+        ScenePerspectiveLLMOutput.model_validate(valid | {"summary": "x" * 301})
+
+
+@pytest.mark.asyncio
+async def test_truncated_incorporation_retries_once_with_compact_contract():
+    class RecoveringLLM(BatchLLM):
+        def __init__(self):
+            super().__init__()
+            self.call_tags = []
+
+        async def chat(self, **kwargs):
+            self.call_tags.append(kwargs["usage_tag"])
+            request = dict(kwargs)
+            recovering = request["usage_tag"].endswith(".truncation_recovery")
+            if recovering:
+                request["usage_tag"] = request["usage_tag"].removesuffix(".truncation_recovery")
+            raw = await super().chat(**request)
+            self.last_response_metadata = {"finish_reason": "stop" if recovering else "length"}
+            return raw
+
+    llm = RecoveringLLM()
+    result = await _agent(llm).generate_perspectives(
+        source_entity_id="source", source_entity_alias="Source",
+        canonical_identity=_canonical(), current_trait_profile=TraitProfile(),
+        current_aspects=[], current_goals=[], scenes=scenes(2),
+    )
+
+    assert len(result.perspectives) == 2
+    assert llm.call_tags == [
+        "character_agent.embodiment.character_incorporation",
+        "character_agent.embodiment.character_incorporation.truncation_recovery",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_truncated_embodiment_response_is_rejected_before_schema_validation():
     class TruncatedLLM(BatchLLM):
         async def chat(self, **kwargs):
-            raw = await super().chat(**kwargs)
+            request = dict(kwargs)
+            if request['usage_tag'].endswith('.truncation_recovery'):
+                request['usage_tag'] = request['usage_tag'].removesuffix('.truncation_recovery')
+            raw = await super().chat(**request)
             self.last_response_metadata = {"finish_reason": "length"}
             return raw
 
@@ -755,23 +817,6 @@ class PrefixedAvailabilityLLM(BatchLLM):
             for position, enrichment in enumerate(payload['scene_enrichments'], start=1):
                 for candidate in enrichment['trait_candidates']:
                     candidate['available_after_scene_id'] = f"scene:model-scene-{position}"
-            return json.dumps(payload)
-        return raw
-
-
-class BarePerspectiveEvidenceLLM(BatchLLM):
-    """Returns the provider's equivalent bare UUID evidence reference."""
-
-    async def chat(self, **kwargs):
-        raw = await super().chat(**kwargs)
-        if kwargs['usage_tag'].endswith('.character_incorporation'):
-            payload = json.loads(raw)
-            for perspective in payload['perspectives']:
-                if 'evidence_ids' in perspective:
-                    perspective['evidence_ids'] = [
-                        evidence_id.removeprefix('scene:')
-                        for evidence_id in perspective['evidence_ids']
-                    ]
             return json.dumps(payload)
         return raw
 
@@ -919,22 +964,8 @@ async def test_prefixed_availability_cutoff_is_normalized_before_grounding():
 
 
 @pytest.mark.asyncio
-async def test_bare_perspective_scene_evidence_is_normalized_before_grounding():
-    result = await _agent(BarePerspectiveEvidenceLLM()).run(
-        source_entity_id='source', source_entity_alias='Source',
-        canonical_identity=_canonical(), current_trait_profile=TraitProfile(),
-        current_aspects=[], current_goals=[], scenes=scenes(3), batch_id='bundle',
-    )
-
-    assert [item.evidence_ids for item in result.perspectives] == [
-        ['scene:s0'], ['scene:s1'], ['scene:s2'],
-    ]
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize('corruption', ['future', 'prior'])
-async def test_noncanonical_perspective_references_are_bound_to_input_positions(corruption):
-    analysis = await _agent(BatchLLM(corruption), semantic_correction_attempts=0).analyze(
+async def test_perspective_references_are_bound_to_input_positions():
+    analysis = await _agent(BatchLLM(), semantic_correction_attempts=0).analyze(
         source_entity_id="source", source_entity_alias="Source",
         canonical_identity=_canonical(), current_trait_profile=TraitProfile(),
         current_aspects=[], current_goals=[], scenes=scenes(3),
@@ -1057,8 +1088,9 @@ def test_complete_prompt_contracts():
     for field in ('conditions', 'diagnosticity', 'comparison_context'):
         assert field in PSYCHOLOGICAL_ANALYSIS_PROMPT
     assert 'update_intensity' in PSYCHOLOGICAL_ANALYSIS_PROMPT
-    assert 'evidence_ids' in PERSPECTIVE_PROMPT and 'evidence_ids' in PSYCHOLOGICAL_ANALYSIS_PROMPT
-    assert 'exactly its own supplied scene' in PERSPECTIVE_PROMPT
+    assert 'Do not return IDs or\nevidence references' in PERSPECTIVE_PROMPT
+    assert 'at most 40 words' in PERSPECTIVE_PROMPT
+    assert 'evidence_ids' in PSYCHOLOGICAL_ANALYSIS_PROMPT
     assert 'must cite exactly the current scene' in PSYCHOLOGICAL_ANALYSIS_PROMPT
     assert 'Pole must agree with expression_z' in PSYCHOLOGICAL_ANALYSIS_PROMPT
     for field in ('emotions', 'beliefs', 'impacts', 'trait_candidates', 'aspect_signals', 'goal_signals'):

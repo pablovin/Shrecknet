@@ -53,10 +53,8 @@ LLM_TARGET_FIELDS = (
     "model_elder_planner",
     "model_elder_synthesis",
     "model_elder_character_incorporation",
-    "model_novelist_planning",
-    "model_novelist_prose",
-    "model_novelist_critic",
-    "model_novelist_chapter_writer",
+    "model_novelist_analysis",
+    "model_novelist_writer",
     "model_librarian_planner",
     "model_librarian_synthesis",
     "model_librarian_character_incorporation",
@@ -225,16 +223,10 @@ class Settings(BaseSettings):
     model_elder_character_incorporation: LLMModelTarget = Field(
         default_factory=lambda: LLMModelTarget(provider="", name="")
     )
-    model_novelist_planning: LLMModelTarget = Field(
-        default_factory=lambda: LLMModelTarget(provider="openai", name="gpt-5-nano")
-    )
-    model_novelist_prose: LLMModelTarget = Field(
+    model_novelist_analysis: LLMModelTarget = Field(
         default_factory=lambda: LLMModelTarget(provider="openai", name="gpt-5")
     )
-    model_novelist_critic: LLMModelTarget = Field(
-        default_factory=lambda: LLMModelTarget(provider="openai", name="gpt-5-nano")
-    )
-    model_novelist_chapter_writer: LLMModelTarget = Field(
+    model_novelist_writer: LLMModelTarget = Field(
         default_factory=lambda: LLMModelTarget(provider="openai", name="gpt-5")
     )
     model_librarian_planner: LLMModelTarget = Field(
@@ -565,12 +557,28 @@ def _migrate_embedding_model(conn: sqlite3.Connection) -> None:
     logger.info("Migrated embedding_model_id from %s to %s", LEGACY_EMBEDDING_MODEL_ID, ACTIVE_EMBEDDING_MODEL_ID)
 
 
+def _migrate_novelist_v3_targets(conn: sqlite3.Connection) -> None:
+    """Seed the two v3 roles and remove inactive V2 configuration keys."""
+    current = _load_settings_from_db(conn)
+    analysis = current.get("model_novelist_analysis") or current.get("model_novelist_planning") or current.get("model_novelist_critic")
+    writer = current.get("model_novelist_writer") or current.get("model_novelist_chapter_writer") or current.get("model_novelist_prose")
+    timestamp = _current_timestamp()
+    for key, value in (("model_novelist_analysis", analysis), ("model_novelist_writer", writer)):
+        if value is not None and key not in current:
+            if isinstance(value, str):
+                value = LLMModelTarget.from_legacy(value).model_dump()
+            conn.execute(f"INSERT INTO {CONFIG_TABLE} (key, value, updated_at) VALUES (?, ?, ?)", (key, _serialize_value(value), timestamp))
+    conn.executemany(f"DELETE FROM {CONFIG_TABLE} WHERE key = ?", [(key,) for key in ("model_novelist_planning", "model_novelist_prose", "model_novelist_critic", "model_novelist_chapter_writer")])
+    conn.commit()
+
+
 def load_settings() -> Settings:
     conn = _connect()
     try:
         _ensure_schema(conn)
         _normalize_legacy_database_urls(conn)
         _normalize_legacy_llm_targets(conn)
+        _migrate_novelist_v3_targets(conn)
         _migrate_embedding_model(conn)
         merged = _seed_defaults_if_needed(conn)
     finally:

@@ -846,6 +846,9 @@ class NovelistRunCreate(BaseModel):
     previous_session_id: str | None = None
     previous_session_text: str | None = None
     previous_session_summary: str | None = None
+    source_type: str = "auto"
+    source_label: str | None = None
+    previous_novelist_run_id: str | None = None
 
 
 class NovelistRunRead(BaseModel):
@@ -859,6 +862,10 @@ class NovelistRunRead(BaseModel):
     settings: dict[str, Any] | None = None
     request_payload: dict[str, Any] | None = None
     artifacts: dict[str, Any] | None = None
+    pipeline_version: str | None = None
+    block_count: int | None = None
+    fidelity_status: str | None = None
+    correction_count: int | None = None
     previous_session_id: str | None = None
     previous_session_summary: str | None = None
     previous_session_lookup_status: str | None = None

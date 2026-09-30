@@ -18,7 +18,7 @@ import logging
 import time
 from typing import Any, Callable
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.integrations.llm.json_repair import repair_json_text
 from app.integrations.llm.structured_output import (
@@ -31,6 +31,7 @@ from app.jobs.character_agent.embody_agent_prompts import (
     BASELINE_PROMPT,
     PSYCHOLOGICAL_ANALYSIS_PROMPT,
     PERSPECTIVE_PROMPT,
+    PERSPECTIVE_TRUNCATION_RECOVERY_PROMPT,
 )
 from app.jobs.shrecknet.agent import parse_json_deterministically
 from app.schemas.character_agent import (
@@ -43,6 +44,7 @@ from app.schemas.character_agent import (
     SceneEnrichmentsOutput,
     ScenePerspectiveBundleOutput,
     ScenePerspectiveOutput,
+    ScenePerspectiveSourceType,
     SubtitleChangeProposal,
 )
 
@@ -115,7 +117,30 @@ class EmbodimentGenerationError(RuntimeError):
 
 
 class _PerspectivesContainer(BaseModel):
+    """Persistent, backend-bound perspective records used after incorporation."""
     perspectives: list[ScenePerspectiveOutput]
+
+
+class ScenePerspectiveLLMOutput(BaseModel):
+    """Compact model-owned fields for one position-bound scene perspective."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    source_type: ScenePerspectiveSourceType
+    awareness_level: int = Field(ge=0, le=100)
+    confidence: int = Field(ge=0, le=100)
+    summary: str = Field(min_length=1, max_length=300)
+    interpretation: str = Field(min_length=1, max_length=700)
+    character_reflection: str = Field(min_length=1, max_length=500)
+    memory_strength: int = Field(ge=0, le=100)
+    importance: int = Field(ge=1, le=5)
+
+
+class _PerspectivesLLMContainer(BaseModel):
+    """LLM-facing incorporation contract; canonical references are backend-owned."""
+
+    model_config = ConfigDict(extra="forbid")
+    perspectives: list[ScenePerspectiveLLMOutput]
 
 
 class UsageTracker:
@@ -124,6 +149,7 @@ class UsageTracker:
         self.calls: list[LLMCallRecord] = []
         self.stage_elapsed_seconds: dict[str, float] = {}
         self.last_response_metadata: dict[str, Any] = {}
+        self.last_elapsed_seconds: float | None = None
 
     async def chat(self, *, stage: str, usage_tag: str, **kwargs) -> str:
         input_text = json.dumps(kwargs.get("messages", []), ensure_ascii=False)
@@ -137,6 +163,7 @@ class UsageTracker:
             **kwargs,
         )
         elapsed_seconds = time.monotonic() - started_at
+        self.last_elapsed_seconds = elapsed_seconds
         self.stage_elapsed_seconds[stage] = (
             self.stage_elapsed_seconds.get(stage, 0.0) + elapsed_seconds
         )
@@ -242,7 +269,7 @@ class EmbodyAgent:
         try:
             parsed = parse_json_deterministically(raw)
             parsed = _normalize_position_bound_collection(parsed, output_binding)
-            if output_binding:
+            if output_binding and output_binding.get("bind_references", True):
                 _bind_model_output_references(parsed, **output_binding)
         except (TypeError, ValueError) as exc:
             raise EmbodimentGenerationError(
@@ -338,6 +365,21 @@ class EmbodyAgent:
             )
         response_metadata = self._llm.last_response_metadata
         if response_metadata.get("finish_reason") == "length":
+            scene_ids = (output_binding or {}).get("scene_ids")
+            if stage == "character incorporation":
+                logger.warning(
+                    "character_incorporation_truncated source_id=%s source_alias=%s "
+                    "scene_count=%s provider=%s requested_model=%s resolved_model=%s "
+                    "reasoning_enabled=%s requested_max_tokens=%s prompt_tokens=%s "
+                    "completion_tokens=%s finish_reason=%s response_chars=%s duration_ms=%s",
+                    source_entity_id, source_entity_alias,
+                    len(scene_ids) if isinstance(scene_ids, list) else None,
+                    getattr(model, "provider", None), getattr(model, "name", model),
+                    response_metadata.get("resolved_model"), response_metadata.get("reasoning_enabled"),
+                    max_tokens, response_metadata.get("prompt_tokens"),
+                    response_metadata.get("completion_tokens"), response_metadata.get("finish_reason"),
+                    len(str(raw)), round((self._llm.last_elapsed_seconds or 0) * 1000, 2),
+                )
             self._debug_call(
                 stage=stage, prompt=prompt, payload=payload, raw_output=raw,
                 error=(
@@ -345,6 +387,8 @@ class EmbodyAgent:
                     f"limit of {max_tokens} tokens"
                 ),
                 model=model, usage_tag=usage_tag,
+                requested_max_tokens=max_tokens,
+                scene_count=len(scene_ids) if isinstance(scene_ids, list) else None,
             )
             raise EmbodimentGenerationError(
                 f"{stage} response reached its {max_tokens}-token output limit",
@@ -590,28 +634,102 @@ class EmbodyAgent:
         if not scenes:
             raise EmbodimentGenerationError("no scenes provided for embodiment")
         expected_ids = [scene.scene_id for scene in scenes]
-        result = await self._call(
-            prompt=PERSPECTIVE_PROMPT,
-            payload={
-                "identity": {key: canonical_identity.get(key) for key in (
-                    "alias", "subtitle", "entity_type", "entity_type_description", "properties",
-                )},
-                "scenes": [{"position": index + 1, "name": scene.name, "description": scene.description, "created_at": scene.created_at} for index, scene in enumerate(scenes)],
-            },
-            schema=_PerspectivesContainer,
-            semantic_validator=lambda value: _semantic(
-                lambda: _validate_and_normalize_scene_grounding(value.perspectives, expected_ids)
-            ),
-            stage="character incorporation",
-            usage_tag="character_agent.embodiment.character_incorporation",
-            max_tokens=EMBODIMENT_LLM_MAX_TOKENS,
-            model=self.character_incorporation_model,
+        return await self._incorporate_perspectives(
             source_entity_id=source_entity_id,
             source_entity_alias=source_entity_alias,
-            schema_correction_attempts=0,
-            output_binding={"collection": "perspectives", "scene_ids": expected_ids},
+            identity={key: canonical_identity.get(key) for key in (
+                "alias", "subtitle", "entity_type", "entity_type_description", "properties",
+            )},
+            scene_list=[
+                {"position": index + 1, "name": scene.name,
+                 "description": scene.description, "created_at": scene.created_at}
+                for index, scene in enumerate(scenes)
+            ],
+            expected_ids=expected_ids,
         )
-        return result
+
+    async def _incorporate_perspectives(
+        self, *, source_entity_id: str, source_entity_alias: str,
+        identity: dict[str, Any], scene_list: list[dict[str, Any]],
+        expected_ids: list[str],
+    ) -> _PerspectivesContainer:
+        """Generate compact LLM-owned fields, then bind canonical scene references."""
+        payload = {"identity": identity, "scenes": scene_list}
+        output_binding = {
+            "collection": "perspectives",
+            "scene_ids": expected_ids,
+            "bind_references": False,
+        }
+        call_args = {
+            "payload": payload,
+            "schema": _PerspectivesLLMContainer,
+            "stage": "character incorporation",
+            "max_tokens": EMBODIMENT_LLM_MAX_TOKENS,
+            "model": self.character_incorporation_model,
+            "source_entity_id": source_entity_id,
+            "source_entity_alias": source_entity_alias,
+            "schema_correction_attempts": 1,
+            "output_binding": output_binding,
+        }
+        try:
+            result = await self._call(
+                prompt=PERSPECTIVE_PROMPT,
+                usage_tag="character_agent.embodiment.character_incorporation",
+                **call_args,
+            )
+        except EmbodimentGenerationError as exc:
+            if exc.category != "truncated":
+                raise
+            logger.warning(
+                "character_incorporation_truncation_recovery source_id=%s "
+                "source_alias=%s scene_count=%d",
+                source_entity_id, source_entity_alias, len(expected_ids),
+            )
+            result = await self._call(
+                prompt=PERSPECTIVE_TRUNCATION_RECOVERY_PROMPT,
+                usage_tag="character_agent.embodiment.character_incorporation.truncation_recovery",
+                **call_args,
+            )
+
+        perspectives = _bind_llm_perspectives(result, expected_ids)
+        _semantic(lambda: _validate_and_normalize_scene_grounding(
+            perspectives.perspectives, expected_ids,
+        ))
+        self._log_character_incorporation_completed(
+            source_entity_id=source_entity_id,
+            source_entity_alias=source_entity_alias,
+            perspectives=perspectives.perspectives,
+        )
+        return perspectives
+
+    def _log_character_incorporation_completed(
+        self, *, source_entity_id: str, source_entity_alias: str,
+        perspectives: list[ScenePerspectiveOutput],
+    ) -> None:
+        def stats(field: str) -> tuple[int, int, float]:
+            lengths = [len(getattr(item, field)) for item in perspectives]
+            return min(lengths), max(lengths), round(sum(lengths) / len(lengths), 1)
+
+        metadata = self._llm.last_response_metadata
+        summary = stats("summary")
+        interpretation = stats("interpretation")
+        reflection = stats("character_reflection")
+        logger.info(
+            "character_incorporation_completed source_id=%s source_alias=%s "
+            "scene_count=%d perspective_count=%d provider=%s requested_model=%s "
+            "resolved_model=%s reasoning_enabled=%s requested_max_tokens=%d "
+            "prompt_tokens=%s completion_tokens=%s finish_reason=%s response_chars=%s "
+            "duration_ms=%s summary_chars=%s interpretation_chars=%s reflection_chars=%s",
+            source_entity_id, source_entity_alias, len(perspectives), len(perspectives),
+            getattr(self.character_incorporation_model, "provider", None),
+            getattr(self.character_incorporation_model, "name", self.character_incorporation_model),
+            metadata.get("resolved_model"), metadata.get("reasoning_enabled"),
+            EMBODIMENT_LLM_MAX_TOKENS, metadata.get("prompt_tokens"),
+            metadata.get("completion_tokens"), metadata.get("finish_reason"),
+            self._llm.calls[-1].output_chars if self._llm.calls else None,
+            round((self._llm.last_elapsed_seconds or 0) * 1000, 2),
+            summary, interpretation, reflection,
+        )
 
     async def analyze(
         self,
@@ -669,26 +787,12 @@ class EmbodyAgent:
         if perspectives_result is not None:
             pass
         else:
-            perspectives_result = await self._call(
-                prompt=PERSPECTIVE_PROMPT,
-                payload={
-                    "identity": identity,
-                    "scenes": scene_list,
-                },
-                schema=_PerspectivesContainer,
-                semantic_validator=lambda value: _semantic(
-                    lambda: _validate_and_normalize_scene_grounding(
-                        value.perspectives, [s.scene_id for s in scenes]
-                    )
-                ),
-                stage="character incorporation",
-                usage_tag="character_agent.embodiment.character_incorporation",
-                max_tokens=EMBODIMENT_LLM_MAX_TOKENS,
-                model=self.character_incorporation_model,
+            perspectives_result = await self._incorporate_perspectives(
                 source_entity_id=source_entity_id,
                 source_entity_alias=source_entity_alias,
-                schema_correction_attempts=1,
-                output_binding={"collection": "perspectives", "scene_ids": [s.scene_id for s in scenes]},
+                identity=identity,
+                scene_list=scene_list,
+                expected_ids=[s.scene_id for s in scenes],
             )
         perspectives = perspectives_result.perspectives
         expected_ids = [s.scene_id for s in scenes]
@@ -929,12 +1033,20 @@ def _model_output_schema(
 ) -> dict[str, Any]:
     """Return the contract the model actually writes, not the persistence shape.
 
-    Impacts select a supplied profile target by one-based ``target_index``.  The
-    backend resolves that transient index to the persisted ``target_id`` before
-    Pydantic validates the persistence schema.  Reusing the persistence schema
-    here made native structured output contradict the prompt.
+    Incorporation emits only model-owned perspective fields and has an exact
+    position-bound array length. Impacts select a supplied profile target by
+    one-based ``target_index``. The backend resolves that transient index to the
+    persisted ``target_id`` before Pydantic validates the persistence schema.
     """
     result = copy.deepcopy(schema.model_json_schema())
+    if schema is _PerspectivesLLMContainer:
+        scene_ids = (output_binding or {}).get("scene_ids")
+        perspectives = result.get("properties", {}).get("perspectives")
+        if isinstance(scene_ids, list) and isinstance(perspectives, dict):
+            perspectives["minItems"] = len(scene_ids)
+            perspectives["maxItems"] = len(scene_ids)
+        return result
+
     if schema is not SceneEnrichmentsOutput:
         return result
     definitions = result.get("$defs", {})
@@ -991,6 +1103,29 @@ def _model_output_schema(
     impact.pop("additionalProperties", None)
     impact["oneOf"] = variants
     return result
+
+
+def _bind_llm_perspectives(
+    value: BaseModel, scene_ids: list[str],
+) -> _PerspectivesContainer:
+    """Materialize backend-owned scene references after LLM-only validation."""
+    if not isinstance(value, _PerspectivesLLMContainer):
+        raise EmbodimentGenerationError("invalid character incorporation result")
+    if len(value.perspectives) != len(scene_ids):
+        raise EmbodimentGenerationError(
+            "character incorporation must return exactly one perspective per scene",
+            category="schema",
+            expected_sequence=scene_ids,
+            actual_sequence=[str(index + 1) for index in range(len(value.perspectives))],
+        )
+    return _PerspectivesContainer(perspectives=[
+        ScenePerspectiveOutput(
+            **perspective.model_dump(mode="json"),
+            scene_id=scene_id,
+            evidence_ids=[f"scene:{scene_id}"],
+        )
+        for perspective, scene_id in zip(value.perspectives, scene_ids, strict=True)
+    ])
 
 
 def _normalize_position_bound_collection(

@@ -45,7 +45,7 @@
 ### Novelist Agent
 - `id`: `novelist`
 - `property`: `runtime`
-- `fields`: `model_novelist_planning`, `model_novelist_prose`, `model_novelist_critic`
+- `fields`: `model_novelist_analysis`, `model_novelist_writer`
 
 ### Librarian Agent
 - `id`: `librarian`

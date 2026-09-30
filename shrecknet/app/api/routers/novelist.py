@@ -64,7 +64,7 @@ def _extract_text_from_upload(file: UploadFile) -> str:
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Uploaded file is empty",
         )
-    if suffix == "txt":
+    if suffix in {"txt", "md", "json"}:
         return raw.decode("utf-8", errors="ignore").strip()
     if suffix == "pdf":
         try:
@@ -84,7 +84,7 @@ def _extract_text_from_upload(file: UploadFile) -> str:
         return "\n\n".join(page for page in pages if page).strip()
     raise HTTPException(
         status_code=status.HTTP_400_BAD_REQUEST,
-        detail="Unsupported file type. Use .txt or .pdf",
+        detail="Unsupported file type. Use .txt, .md, .json, or .pdf",
     )
 
 
@@ -185,6 +185,8 @@ async def start_novelist_run_from_upload(
     language: str | None = Form(None),
     instructions: str | None = Form(None),
     previous_session_id: str | None = Form(None),
+    previous_novelist_run_id: str | None = Form(None),
+    source_type: str = Form("auto"),
     current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_db_session),
     service: NovelistService = Depends(get_novelist_service),
@@ -209,6 +211,9 @@ async def start_novelist_run_from_upload(
         language=language,
         instructions=instructions,
         previous_session_id=previous_session_id,
+        previous_novelist_run_id=previous_novelist_run_id,
+        source_type=source_type,
+        source_label=file.filename,
     )
     return await _create_and_queue_run(
         agent_id=agent_id,

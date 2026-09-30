@@ -41,9 +41,8 @@ def _settings(elder: str = "shared", librarian: str = "shared") -> SimpleNamespa
         model_architect_entity_proposal=LLMModelTarget(provider="ollama", name=elder),
         model_architect_milestone_proposal=LLMModelTarget(provider="ollama", name=elder),
         model_architect_entity_generation=LLMModelTarget(provider="ollama", name=elder),
-        model_novelist_planning=LLMModelTarget(provider="ollama", name=elder),
-        model_novelist_prose=LLMModelTarget(provider="ollama", name=elder),
-        model_novelist_critic=LLMModelTarget(provider="ollama", name=elder),
+        model_novelist_analysis=LLMModelTarget(provider="ollama", name=elder),
+        model_novelist_writer=LLMModelTarget(provider="ollama", name=elder),
     )
 
 
@@ -62,7 +61,7 @@ async def test_llm_prewarm_dedupes_identical_targets(monkeypatch):
 
     await main._run_llm_prewarm()
 
-    assert fake_client.calls == ["provider='ollama' name='shared'"]
+    assert fake_client.calls == ["provider='ollama' name='shared' reasoning=False"]
 
 
 @pytest.mark.asyncio
@@ -77,8 +76,8 @@ async def test_llm_prewarm_warms_each_unique_target(monkeypatch):
     await main._run_llm_prewarm()
 
     assert fake_client.calls == [
-        "provider='ollama' name='elder-model'",
-        "provider='ollama' name='librarian-model'",
+        "provider='ollama' name='elder-model' reasoning=False",
+        "provider='ollama' name='librarian-model' reasoning=False",
     ]
 
 
@@ -87,8 +86,8 @@ async def test_llm_prewarm_includes_architect_and_novelist_targets(monkeypatch):
     fake_settings = _settings()
     fake_settings.model_architect_scene_chunking = LLMModelTarget(provider="ollama", name="architect-scenes")
     fake_settings.model_architect_entity_proposal = LLMModelTarget(provider="ollama", name="architect-proposals")
-    fake_settings.model_novelist_planning = LLMModelTarget(provider="ollama", name="novelist-planning")
-    fake_settings.model_novelist_prose = LLMModelTarget(provider="ollama", name="novelist-prose")
+    fake_settings.model_novelist_analysis = LLMModelTarget(provider="ollama", name="novelist-analysis")
+    fake_settings.model_novelist_writer = LLMModelTarget(provider="ollama", name="novelist-writer")
     fake_client = _FakeClient()
     monkeypatch.setattr(main, "get_settings", lambda: fake_settings)
     monkeypatch.setattr(main, "ShreckLLMClient", lambda **kwargs: fake_client)
@@ -96,10 +95,10 @@ async def test_llm_prewarm_includes_architect_and_novelist_targets(monkeypatch):
 
     await main._run_llm_prewarm()
 
-    assert "provider='ollama' name='architect-scenes'" in fake_client.calls
-    assert "provider='ollama' name='architect-proposals'" in fake_client.calls
-    assert "provider='ollama' name='novelist-planning'" in fake_client.calls
-    assert "provider='ollama' name='novelist-prose'" in fake_client.calls
+    assert "provider='ollama' name='architect-scenes' reasoning=False" in fake_client.calls
+    assert "provider='ollama' name='architect-proposals' reasoning=False" in fake_client.calls
+    assert "provider='ollama' name='novelist-analysis' reasoning=False" in fake_client.calls
+    assert "provider='ollama' name='novelist-writer' reasoning=False" in fake_client.calls
 
 
 @pytest.mark.asyncio
@@ -115,8 +114,8 @@ async def test_llm_prewarm_failure_isolated_per_model(monkeypatch):
     await main._run_llm_prewarm()
 
     assert fake_client.calls == [
-        "provider='ollama' name='elder-model'",
-        "provider='ollama' name='librarian-model'",
+        "provider='ollama' name='elder-model' reasoning=False",
+        "provider='ollama' name='librarian-model' reasoning=False",
     ]
 
 

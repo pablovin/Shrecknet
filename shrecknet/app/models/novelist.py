@@ -35,6 +35,13 @@ class NovelistStage(str, Enum):
     CRITIC = "critic"
     REVISION = "revision"
     DONE = "done"
+    INTERPRETATION = "interpretation"
+    CONTINUITY = "continuity"
+    BLOCK_PLANNING = "block_planning"
+    WRITING = "writing"
+    QUALITY_GATE = "quality_gate"
+    FIDELITY = "fidelity"
+    CORRECTION = "correction"
 
 
 class NovelistRun(Base):

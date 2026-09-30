@@ -423,6 +423,13 @@ services:
       timeout: 3s
       retries: 5
 
+  qdrant:
+    image: qdrant/qdrant:v1.12.5
+    restart: unless-stopped
+    volumes:
+      - qdrant-data:/qdrant/storage
+    # Deliberately no host port: ShreckWorld is the only retrieval owner.
+
   shreckworld_api:
     build:
       context: ./shreckworld
@@ -436,7 +443,8 @@ services:
       SHRECKWORLD_MEDIA_ROOT: /app/media
       SHRECKWORLD_CELERY_BROKER_URL: redis://shreckworld_redis:6379/0
       SHRECKWORLD_CELERY_RESULT_BACKEND: redis://shreckworld_redis:6379/1
-      SHRECKWORLD_ADMIN_TOKEN: ${SHRECKWORLD_ADMIN_TOKEN:-}
+      SHRECKWORLD_SHRECKNET_JWKS_URL: http://shrecknet_api:8110/auth/jwks
+      SHRECKWORLD_QDRANT_URL: http://qdrant:6333
     ports:
       - "8121:8120" # host:container; keep the service port internal
     volumes:
@@ -447,6 +455,8 @@ services:
         condition: service_completed_successfully
       shreckworld_redis:
         condition: service_healthy
+      qdrant:
+        condition: service_started
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8120/health', timeout=5).read()\""]
       interval: 30s
@@ -467,6 +477,7 @@ services:
       SHRECKWORLD_MEDIA_ROOT: /app/media
       SHRECKWORLD_CELERY_BROKER_URL: redis://shreckworld_redis:6379/0
       SHRECKWORLD_CELERY_RESULT_BACKEND: redis://shreckworld_redis:6379/1
+      SHRECKWORLD_QDRANT_URL: http://qdrant:6333
     volumes:
       - ./shreckworld/databases:/data
       - ./shreckworld/media:/app/media
@@ -475,6 +486,8 @@ services:
         condition: service_completed_successfully
       shreckworld_redis:
         condition: service_healthy
+      qdrant:
+        condition: service_started
   shrecknet_ready:
     image: alpine:3.20
     depends_on:
@@ -512,6 +525,7 @@ services:
 volumes:
   redis-data:
   shreckworld-redis-data:
+  qdrant-data:
   hf-model-cache:
   neo4j-data:
   neo4j-logs:

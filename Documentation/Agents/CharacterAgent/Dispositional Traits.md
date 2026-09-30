@@ -66,7 +66,22 @@ maximum ten-scene window). A source runs a flat Perspective wave for all chunks
 against the same source-start identity, then a flat Psychological analysis wave.
 The first call receives objective scenes; the second receives only its bounded
 interpretations and produces emotions, beliefs, impacts, trait candidates, and
-durable aspect/goal signals. Every embodiment generation request sends its Pydantic JSON Schema through
+durable aspect/goal signals.
+
+Character Incorporation uses a separate LLM-only perspective contract. It
+contains no `scene_id`, `evidence_ids`, status, database identifier, or other
+backend-owned reference. For a chunk of `n` scenes, its native JSON Schema
+requires exactly `n` perspectives with `minItems=n` and `maxItems=n`; position
+`1` is bound to the first input scene, position `2` to the second, and so on.
+Only after LLM validation does the backend attach the canonical `scene_id` and
+`scene:<id>` evidence reference. The LLM-owned `summary`, `interpretation`, and
+`character_reflection` are capped at 300, 700, and 500 characters respectively.
+The prompt further limits them to one 40-word summary sentence, two 80-word
+interpretation sentences, and two 60-word first-person reflection sentences.
+This stage is structured character-state extraction, never prose narration or
+scene reconstruction.
+
+Every embodiment generation request sends its Pydantic JSON Schema through
 ShreckLLM as a native strict `response_format` request: authored baseline,
 incorporation, both parallel branches, JSON repair, and schema/semantic
 corrections. The explicit prompt contract remains present for model readability.
@@ -124,6 +139,10 @@ JSON repair or schema correction and results in a recorded no-change source.
 For a non-empty response with invalid JSON, the backend attempts JSON repair.
 For valid JSON that violates the output schema—for example, by omitting a
 required enrichment array—it makes one bounded schema-correction call instead.
+If Character Incorporation reaches the completion limit, its partial response is
+discarded without JSON repair and the worker makes one compact recovery request.
+The recovery uses the same exact-count, bounded-text schema and an explicit
+instruction to shorten every perspective. A second truncation fails the draft.
 An empty response is classified before parsing and does **not** spend repair or
 correction tokens. For all malformed output, worker logs include the stage,
 requested completion limit, returned response character count, provider
@@ -164,9 +183,12 @@ payloads; treat them as local diagnostic data rather than application logs.
 
 - `baseline.log` records the authored-baseline LLM call.
 - One `bundle_XXX_<source>.log` is written for each source-boundary bundle. It
-  contains all analysis-chunk calls, including JSON/semantic corrections and
-  any reused checkpoint output. Concurrent second-wave branch records are
-  append-only and should not be interpreted as a strict call order.
+  contains all analysis-chunk calls, including JSON/semantic corrections,
+  truncated incorporation output, and the compact recovery request. A truncated
+  incorporation record includes its raw partial output, prompt, payload, model,
+  completion limit, scene count, finish reason, and provider metadata. Concurrent
+  second-wave branch records are append-only and should not be interpreted as a
+  strict call order.
 - `final_pipeline.log` captures the source-local inputs and outputs after every
   bundle: interpretations, trait evidence/profile, aspect and goal updates,
   subtitle, deterministic reduction, and timeline projection.

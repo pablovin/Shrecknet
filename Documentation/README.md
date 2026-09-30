@@ -15,6 +15,12 @@ Welcome to the Shrecknet documentation! This directory contains all organized do
 - [Elder query and retrieval](./Agents/Elder/Elder.md) — current runtime and stable contract
 - [Elder Query V3 implementation plan](./Agents/Elder/ELDER_QUERY_V3_IMPLEMENTATION_PLAN.md) — proposed latency, cost, and answer-quality target with compatibility requirements
 
+## Novelist
+
+- [Novelist](./Agents/Novelist/Novelist.md) — evidence-led chapter generation contract
+- [Novelist endpoints](./Agents/Novelist/Endpoints/Novelist%20-%20Endpoints.md)
+- [Novelist pipeline](./Agents/Novelist/Generate_Draft/Generate_Draft.md)
+
 ## 📚 Documentation Structure
 
 ### [Getting Started](./GettingStarted/)
@@ -37,9 +43,10 @@ Backend service documentation (FastAPI)
 - [Admin Notes API](./Backend/ADMIN_NOTES_API.md) - Admin functionality
 - [Timezone Enforcement](./Backend/TIMEZONE_ENFORCEMENT.md) - Timezone handling
 
-### [Frontend](./Frontend/)
-Frontend application documentation (Next.js/React)
-- [Frontend README](./Frontend/README.md) - Main frontend documentation
+### Frontend
+
+No frontend application is tracked in this repository. Frontend integration
+contracts are documented beside their owning API.
 
 ### [API](./API/)
 Detailed API documentation for specific features

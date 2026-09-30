@@ -87,8 +87,9 @@ becomes the next source bundle's starting identity.
 Every embodiment LLM request, including a JSON-repair request, has a maximum
 completion budget of 10,000 tokens. This is a cost and failure safeguard, not
 an expected output size: normal five-scene structured responses are much
-smaller. A provider response with `finish_reason: "length"` is rejected as
-truncated and is never parsed or persisted.
+smaller. A provider response with `finish_reason: "length"` is never parsed or
+persisted. Character Incorporation alone receives one compact replacement
+request; a second truncated response is rejected.
 
 `CharacterIdentityRevision` stores the profile snapshot and newly introduced
 trait evidence, including evidence that did not change a score.

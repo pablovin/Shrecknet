@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class NovelistRunCreate(BaseModel):
-    """Payload to start a simplified novelist draft job."""
+    """Payload for the provenance-led Novelist v3 chapter job."""
 
     unstructured_text: str = Field(
         ...,
@@ -20,6 +20,10 @@ class NovelistRunCreate(BaseModel):
     instructions: Optional[str] = Field(
         None, description="Extra parsing/writing instructions for the novelist"
     )
+    source_type: Literal[
+        "auto", "transcript", "recap", "notes", "adventure", "event_log", "narrative"
+    ] = Field("auto", description="Non-authoritative hint about the supplied source")
+    source_label: Optional[str] = Field(None, max_length=255)
     previous_session_id: Optional[str] = Field(
         None,
         description=(
@@ -35,6 +39,10 @@ class NovelistRunCreate(BaseModel):
     previous_session_summary: Optional[str] = Field(
         None,
         description="Resolved continuity summary used as non-authoritative context.",
+    )
+    previous_novelist_run_id: Optional[str] = Field(
+        None,
+        description="Completed Novelist v3 run whose evidence ledger may be reused for continuity.",
     )
 
 
@@ -53,6 +61,10 @@ class NovelistRunRead(BaseModel):
     settings: dict[str, Any] | None = None
     request_payload: dict[str, Any] | None = None
     artifacts: dict[str, Any] | None = None
+    pipeline_version: str | None = None
+    block_count: int | None = None
+    fidelity_status: str | None = None
+    correction_count: int | None = None
     previous_session_id: Optional[str] = None
     previous_session_summary: Optional[str] = None
     previous_session_lookup_status: Optional[str] = None
@@ -146,6 +158,12 @@ class NovelistRunRead(BaseModel):
                     inputs.get("previous_session_summary")
                     or payload.get("previous_session_summary")
                 )
+            data.setdefault("pipeline_version", artifacts.get("pipeline_version"))
+            summary = artifacts.get("output_summary") if isinstance(artifacts, dict) else {}
+            if isinstance(summary, dict):
+                data.setdefault("block_count", summary.get("block_count"))
+                data.setdefault("fidelity_status", summary.get("fidelity_status"))
+                data.setdefault("correction_count", summary.get("correction_count"))
             if data.get("previous_session_lookup_status") is None:
                 data["previous_session_lookup_status"] = inputs.get(
                     "previous_session_lookup_status"
@@ -214,6 +232,10 @@ class NovelistRunRead(BaseModel):
             "settings": getattr(data, "settings", None),
             "request_payload": payload if isinstance(payload, dict) else None,
             "artifacts": artifacts if isinstance(artifacts, dict) else None,
+            "pipeline_version": artifacts.get("pipeline_version") if isinstance(artifacts, dict) else None,
+            "block_count": (artifacts.get("output_summary") or {}).get("block_count") if isinstance(artifacts, dict) and isinstance(artifacts.get("output_summary"), dict) else None,
+            "fidelity_status": (artifacts.get("output_summary") or {}).get("fidelity_status") if isinstance(artifacts, dict) and isinstance(artifacts.get("output_summary"), dict) else None,
+            "correction_count": (artifacts.get("output_summary") or {}).get("correction_count") if isinstance(artifacts, dict) and isinstance(artifacts.get("output_summary"), dict) else None,
             "previous_session_id": previous_session_id,
             "previous_session_summary": previous_session_summary,
             "previous_session_lookup_status": previous_session_lookup_status,

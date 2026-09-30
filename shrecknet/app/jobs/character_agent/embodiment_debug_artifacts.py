@@ -83,6 +83,7 @@ class EmbodimentDebugArtifacts:
         stage: str, prompt: str, payload: dict[str, Any], raw_output: Any = None,
         parsed_output: Any = None, error: Any = None, model: Any = None,
         usage_tag: str, call_kind: str = "primary", response_metadata: Any = None,
+        **diagnostics: Any,
     ) -> None:
         if source_index is None:
             filename = "baseline.log"
@@ -98,6 +99,7 @@ class EmbodimentDebugArtifacts:
             "prompt": prompt, "input": payload, "raw_output": raw_output,
             "parsed_output": parsed_output, "error": error,
             "response_metadata": response_metadata,
+            **diagnostics,
         })
 
     def write_checkpoint(self, *, source_index: int, source_alias: str, checkpoints: dict[str, Any]) -> None:

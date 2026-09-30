@@ -17,4 +17,5 @@ This folder contains release notes by application version.
 
 - [Foundry v0.1.10](./foundry-v0.1.10.md) - Image-card navigation, readable Narrative Scenes, safe combined page/scene search, and Foundry media URL handling.
 
+- [Foundry v0.1.11](./foundry-v0.1.11.md) - Narrative Scene rendering, layout, and duplicate-image fixes.
 - [Unreleased CharacterAgent dispositional personality](unreleased-character-dispositions.md)

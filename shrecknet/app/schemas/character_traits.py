@@ -193,6 +193,21 @@ class TraitProfile(StrictModel):
     inferred_traits: dict[SlotKey, TraitEstimate] = Field(default_factory=dict)
     overrides: dict[SlotKey, TraitEdit] = Field(default_factory=dict)
 
+    @model_validator(mode='before')
+    @classmethod
+    def upgrade_legacy_profile_version(cls, value):
+        """Read v1 profiles under the current evidence contract.
+
+        Trait centres remain signed z values, so the profile itself needs no
+        numerical conversion. TraitEvidence is regenerated separately; this
+        compatibility path only keeps existing CharacterAgent reads and queries
+        available while that happens.
+        """
+        if isinstance(value, dict) and value.get('version') == 'dispositions-v1':
+            value = dict(value)
+            value['version'] = SPEC_VERSION
+        return value
+
     @model_validator(mode='after')
     def complete(self):
         if self.version != SPEC_VERSION or set(self.dispositional_traits) != set(DIRECTIONAL_TRAITS):

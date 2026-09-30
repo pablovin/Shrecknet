@@ -52,6 +52,16 @@ def test_unknown_is_not_midpoint_and_storage_uses_z():
     with pytest.raises(ValidationError): TraitEstimate(z=True,status='supported')
 
 
+def test_legacy_profile_is_readable_after_the_bipolar_contract_upgrade():
+    legacy = TraitProfile().model_dump(mode='json')
+    legacy['version'] = 'dispositions-v1'
+    for estimate in legacy['dispositional_traits'].values():
+        estimate['comparison_start'] = 7
+    profile = TraitProfile.model_validate(legacy)
+    assert profile.version == 'dispositions-v2-bipolar-evidence'
+    assert profile.dispositional_traits['integrity'].comparison_group_count == 0
+
+
 @pytest.mark.parametrize('trait,situation', [('integrity','exploitation'),('sharing','resource_allocation'),
     ('forbearance','retaliation'),('presence','social_visibility'),('diligence','unattended_duty'),
     ('curiosity','exploration'),('caution','uncertain_dependence'),('restlessness','value_conflict')])

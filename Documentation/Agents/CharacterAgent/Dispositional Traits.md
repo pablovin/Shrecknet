@@ -210,6 +210,10 @@ submitting a new embodiment request.
 
 These thresholds are engineering policy, not claims from psychological literature.
 Prompt, specification, and policy versions identify the applicable contracts.
+Persisted `dispositions-v1` profiles are read as the current signed-z profile so
+existing agents remain listable and queryable. Their historical scene evidence
+should be regenerated before relying on the new bipolar extraction or
+STEADINESS policy.
 
 ## STEADINESS
 

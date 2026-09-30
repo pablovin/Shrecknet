@@ -84,7 +84,11 @@ analysis chunks therefore normally makes `2n` LLM calls, excluding the authored
 baseline and repair/correction calls. No LLM receives a cumulative evidence
 ledger, raw scenes after incorporation, or a source-level profile-update payload.
 
-Enrichment emits every distinct scene-local trait candidate it can identify;
+Psychological analysis treats newly grounded durable facts (identity, role,
+affiliation, relationship, capability, status, knowledge, value, preference, or
+history) as positive aspect-signal candidates, and active self-adopted objectives
+or commitments as positive goal-signal candidates. The deterministic reducer
+deduplicates and caps additions per source. Enrichment emits every distinct scene-local trait candidate it can identify;
 there is deliberately **no hard per-scene candidate limit**. Candidates with
 unknown or contradicted choice conditions remain auditable evidence but cannot
 move a trait estimate. Each scene may emit at most one durable aspect signal and

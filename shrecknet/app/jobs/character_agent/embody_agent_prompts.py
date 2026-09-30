@@ -12,7 +12,7 @@ import json
 from app.schemas.character_traits import trait_metadata
 
 TRAIT_CONTRACT = "\nAuthoritative trait definitions and scale:\n" + json.dumps(trait_metadata(), ensure_ascii=False)
-PROMPT_VERSION = "character-embodiment-v20-parallel-bounded-reduction"
+PROMPT_VERSION = "character-embodiment-v21-flat-psychology-signals"
 
 PERSPECTIVE_PROMPT = r"""You are incorporating a character's identity into canonical objective scenes.
 
@@ -118,6 +118,21 @@ ENRICHMENT_PROMPT += r"""
 
 Direction must agree with expression_z: use low only for a negative value, midpoint only for exactly 0, and high only for a positive value.
 Trait candidates cover every distinct diagnostic individual choice expressed in this character's perspective; there is no hard per-scene limit. A perspective's emotion or belief can explain a candidate but is not behavioral evidence by itself. If the perspective reports only a group action without this character's own decision, return no trait candidate. Unknown conditions remain auditable but cannot update a trait. Valid trait/situation pairs: integrity=exploitation|self_serving_deception; caution=uncertain_threat|uncertain_dependence|reliance_without_guarantees; presence=social_visibility|social_approach|voluntary_contact; forbearance=provocation|betrayal|obstruction|retaliation; diligence=unattended_duty|delayed_payoff|cutting_corners|persistence; curiosity=novelty|exploration|puzzle|unknown_information; sharing=resource_allocation|spoils|rewards; restlessness=value_conflict|recurring_value_preference. Direction agrees with expression_z: negative low, 0 midpoint, positive high. update_intensity measures the source-level influence of this one choice: small is subtle, medium is clear, large is unusually decisive; it is not a personality score. The backend applies high as positive and low as negative, averages same-trait evidence within the source, and makes at most one bounded update per trait/source. Aspect and goal signals are evidence, never mutations: emit at most one of each per scene, only for a durable identity/role/capability/value/status change or personally adopted durable commitment expressed in the perspective; never for a passing emotion, generic scene event, group action, assigned task, or reflection. Return JSON only."""
+
+ENRICHMENT_PROMPT += r"""
+
+ASPECT/GOAL EMISSION RULE — treat these as positive extraction targets, not rare
+exceptions. Emit one aspect signal when a perspective establishes a newly relevant
+durable fact about this character: identity/origin, role or affiliation,
+relationship, enduring capability or limitation, durable condition, status,
+knowledge, value, preference, or history. The fact need not begin in this scene:
+a fact revealed or made character-defining by this scene qualifies. Emit one goal
+signal when the character expresses, adopts, renews, or demonstrably pursues an
+ongoing personal objective, obligation, avoidance, desire, or commitment. A scene
+may emit both. Return [] only when there is no grounded durable fact or continuing
+motivation. The backend deduplicates and caps accepted additions, so prefer a
+specific well-grounded candidate over suppressing a qualifying one. Return JSON only.
+"""
 
 
 TRAIT_EVIDENCE_CONTRACT = r"""

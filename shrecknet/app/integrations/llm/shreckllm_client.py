@@ -27,6 +27,32 @@ class LLMProviderUnavailableError(RuntimeError):
         super().__init__(f"LLM provider {provider_id} failed validation: {reason}")
 
 
+class ChatJobPollingTimeoutError(TimeoutError):
+    """A submitted shreckLLM job did not reach a terminal state in time."""
+
+    def __init__(self, *, job_id: str, timeout_s: float, last_status: dict[str, Any]) -> None:
+        self.job_id = job_id
+        self.timeout_s = timeout_s
+        self.last_status = last_status
+        super().__init__(
+            f"chat job polling deadline exceeded job_id={job_id} "
+            f"timeout_s={timeout_s} status={last_status.get('status', 'unknown')}"
+        )
+
+    def details(self) -> dict[str, Any]:
+        return {
+            "job_id": self.job_id,
+            "timeout_s": self.timeout_s,
+            "last_status": self.last_status.get("status"),
+            "queue_wait_ms": self.last_status.get("queue_wait_ms"),
+            "execution_ms": self.last_status.get("execution_ms"),
+            "attempts": self.last_status.get("attempts") or [],
+            "provider_id": self.last_status.get("provider_id"),
+            "resolved_model": self.last_status.get("resolved_model"),
+            "requested_model": self.last_status.get("requested_model"),
+        }
+
+
 class ShreckLLMClient:
     def __init__(
         self,
@@ -34,11 +60,16 @@ class ShreckLLMClient:
         base_url: str,
         timeout: float = 60.0,
         max_retries: int = 2,
+        chat_job_timeout_s: float | None = None,
         poll_without_deadline: bool = False,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.timeout = float(timeout)
         self.max_retries = max(0, int(max_retries))
+        self.chat_job_timeout_s = (
+            max(0.1, float(chat_job_timeout_s))
+            if chat_job_timeout_s is not None else max(60.0, self.timeout * 5)
+        )
         # Kept as an accepted compatibility argument for existing callers.
         # Submitted jobs are owned by shreckLLM and are always polled to a
         # terminal state; only shreckLLM may end provider execution.
@@ -115,7 +146,7 @@ class ShreckLLMClient:
                 )
                 data = await self.wait_for_chat_job(
                     job_id,
-                    timeout_s=None,
+                    timeout_s=self.chat_job_timeout_s,
                     poll_interval_s=1.0,
                 )
                 job_status = data.pop("_shreckllm_job_status", None)
@@ -239,10 +270,12 @@ class ShreckLLMClient:
         start = asyncio.get_running_loop().time()
         interval = max(0.05, float(poll_interval_s))
         last_status = ""
+        last_status_data: dict[str, Any] = {}
         while True:
             status_resp = await self._http.get(f"/chat/jobs/{job_id}")
             status_resp.raise_for_status()
             status_data = status_resp.json() if status_resp.content else {}
+            last_status_data = status_data if isinstance(status_data, dict) else {}
             status_value = str((status_data or {}).get("status") or "").strip().lower()
             if status_value != last_status:
                 logger.info(
@@ -269,7 +302,11 @@ class ShreckLLMClient:
             if timeout_s is not None and (
                 asyncio.get_running_loop().time() - start
             ) >= max(0.1, float(timeout_s)):
-                raise httpx.TimeoutException(f"chat job timed out job_id={job_id}")
+                raise ChatJobPollingTimeoutError(
+                    job_id=job_id,
+                    timeout_s=float(timeout_s),
+                    last_status=last_status_data,
+                )
             await asyncio.sleep(interval)
 
     def _coerce_target(self, model: str | LLMModelTarget) -> LLMModelTarget:

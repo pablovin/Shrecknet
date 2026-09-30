@@ -208,29 +208,15 @@ class EmbodyAgent:
         )
         try:
             return await self._llm.chat(
-                stage=stage,
-                usage_tag=usage_tag,
-                model=model,
-                messages=messages,
-                temperature=0.0,
-                max_tokens=max_tokens,
-                response_format=response_format,
+                stage=stage, usage_tag=usage_tag, model=model, messages=messages,
+                temperature=0.0, max_tokens=max_tokens, response_format=response_format,
             )
         except Exception as exc:
             if not structured_output_is_unsupported(exc):
                 raise
-            fallback_tag = f"{usage_tag}.structured_fallback"
-            logger.warning(
-                "embodiment_structured_output_unsupported stage=%s model=%s error=%s",
-                stage, str(getattr(model, "name", model)), exc,
-            )
             return await self._llm.chat(
-                stage=stage,
-                usage_tag=fallback_tag,
-                model=model,
-                messages=messages,
-                temperature=0.0,
-                max_tokens=max_tokens,
+                stage=stage, usage_tag=f"{usage_tag}.structured_fallback", model=model,
+                messages=messages, temperature=0.0, max_tokens=max_tokens,
             )
 
     @staticmethod
@@ -555,6 +541,49 @@ class EmbodyAgent:
         profile, _ = update_profile(TraitProfile(), evidence, proposals)
         return profile, evidence, output
 
+    async def generate_perspectives(
+        self,
+        *,
+        source_entity_id: str,
+        source_entity_alias: str,
+        canonical_identity: dict[str, Any],
+        current_trait_profile: TraitProfile,
+        current_aspects: list[dict[str, Any]],
+        current_goals: list[dict[str, Any]],
+        scenes: list[SceneInput],
+    ) -> _PerspectivesContainer:
+        """Run the flat first wave for one chunk; it never starts another LLM call."""
+        if not scenes:
+            raise EmbodimentGenerationError("no scenes provided for embodiment")
+        expected_ids = [scene.scene_id for scene in scenes]
+        result = await self._call(
+            prompt=PERSPECTIVE_PROMPT,
+            payload={
+                "identity": {key: canonical_identity.get(key) for key in (
+                    "alias", "subtitle", "entity_type", "entity_type_description", "properties",
+                )},
+                "current_profile": {
+                    "trait_profile": current_trait_profile.model_dump(mode="json"),
+                    "aspects": [{"name": item.get("name", ""), "category": item.get("category", ""), "description": item.get("description")} for item in current_aspects],
+                    "goals": [{"title": item.get("title", ""), "description": item.get("description", ""), "goal_type": item.get("goal_type", "")} for item in current_goals],
+                },
+                "scenes": [{"position": index + 1, "name": scene.name, "description": scene.description, "created_at": scene.created_at} for index, scene in enumerate(scenes)],
+            },
+            schema=_PerspectivesContainer,
+            semantic_validator=lambda value: _semantic(
+                lambda: _validate_and_normalize_scene_grounding(value.perspectives, expected_ids)
+            ),
+            stage="character incorporation",
+            usage_tag="character_agent.embodiment.perspective",
+            max_tokens=None,
+            model=self.character_incorporation_model,
+            source_entity_id=source_entity_id,
+            source_entity_alias=source_entity_alias,
+            schema_correction_attempts=0,
+            output_binding={"collection": "perspectives", "scene_ids": expected_ids},
+        )
+        return result
+
     async def analyze(
         self,
         *,
@@ -568,6 +597,7 @@ class EmbodyAgent:
         on_stage: Any = None,
         stage_checkpoints: dict[str, dict[str, Any]] | None = None,
         on_checkpoint: Any = None,
+        perspectives_result: _PerspectivesContainer | None = None,
     ) -> EmbodyAgentAnalysis:
         if not scenes:
             raise EmbodimentGenerationError("no scenes provided for embodiment")
@@ -611,7 +641,9 @@ class EmbodyAgent:
         # Step 1 — Character incorporation
         if on_stage:
             await on_stage("source:{0} - Step 1: Character incorporation".format(source_entity_alias), [1])
-        if "character_incorporation" in stage_checkpoints:
+        if perspectives_result is not None:
+            pass
+        elif "character_incorporation" in stage_checkpoints:
             perspectives_result = _PerspectivesContainer.model_validate(
                 stage_checkpoints["character_incorporation"]
             )
@@ -658,7 +690,7 @@ class EmbodyAgent:
         # Reflection remains presentation-only and cannot manufacture evidence.
         if on_stage:
             await on_stage(
-                "source:{0} - Steps 2–3: Traits and identity signals".format(source_entity_alias), [2, 3]
+                "source:{0} - Step 2: Psychological analysis".format(source_entity_alias), [2]
             )
         trait_payload = {
             "perspectives": [
@@ -673,22 +705,13 @@ class EmbodyAgent:
                 "goals": [{"position": index + 1, "title": g["title"]} for index, g in enumerate(goals)],
             },
         }
-        identity_signal_payload = {"perspectives": trait_payload["perspectives"]}
         enrichment_result = (
             SceneEnrichmentsOutput.model_validate(stage_checkpoints["scene_interpretation"])
             if "scene_interpretation" in stage_checkpoints
             else None
         )
-        identity_result = (
-            SceneIdentitySignalsOutput.model_validate(stage_checkpoints["identity_signals"])
-            if "identity_signals" in stage_checkpoints
-            else None
-        )
-        pending_calls = []
         if enrichment_result is None:
-            pending_calls.append((
-                "scene_interpretation",
-                self._call(
+            enrichment_result = await self._call(
                     prompt=TRAIT_ENRICHMENT_PROMPT, payload=trait_payload,
                     schema=SceneEnrichmentsOutput,
                     semantic_validator=lambda value: _semantic(
@@ -700,47 +723,15 @@ class EmbodyAgent:
                     usage_tag="character_agent.embodiment.scene_interpretation",
                     max_tokens=None, model=self.scene_interpretation_model,
                     source_entity_id=source_entity_id, source_entity_alias=source_entity_alias,
-                    schema_correction_attempts=1,
+                    schema_correction_attempts=0,
                     output_binding={
                         "collection": "scene_enrichments", "scene_ids": expected_ids,
                         "profile_targets": {"aspects": [a["id"] for a in aspects], "goals": [g["id"] for g in goals]},
                     },
-                ),
-            ))
-        if identity_result is None:
-            pending_calls.append((
-                "identity_signals",
-                self._call(
-                    prompt=IDENTITY_SIGNALS_PROMPT, payload=identity_signal_payload,
-                    schema=SceneIdentitySignalsOutput,
-                    semantic_validator=lambda value: _semantic(
-                        lambda: _validate_and_normalize_scene_grounding(
-                            value.scene_identity_signals, expected_ids
-                        )
-                    ),
-                    stage="scene identity signals",
-                    usage_tag="character_agent.embodiment.identity_signals",
-                    max_tokens=None, model=self.character_update_model,
-                    source_entity_id=source_entity_id, source_entity_alias=source_entity_alias,
-                    schema_correction_attempts=1,
-                    output_binding={"collection": "scene_identity_signals", "scene_ids": expected_ids},
-                ),
-            ))
-        if pending_calls:
-            generated = dict(zip(
-                [stage for stage, _ in pending_calls],
-                await asyncio.gather(*(call for _, call in pending_calls)),
-                strict=True,
-            ))
-            enrichment_result = generated.get("scene_interpretation", enrichment_result)
-            identity_result = generated.get("identity_signals", identity_result)
+                )
             if on_checkpoint:
-                await asyncio.gather(*(
-                    on_checkpoint(stage, result)
-                    for stage, result in generated.items()
-                ))
+                await on_checkpoint("scene_interpretation", enrichment_result)
         assert enrichment_result is not None
-        assert identity_result is not None
         enrichments = enrichment_result.scene_enrichments
         enrichment_ids = [item.scene_id for item in enrichments]
         if enrichment_ids != expected_ids or len(enrichment_ids) != len(set(enrichment_ids)):
@@ -758,14 +749,6 @@ class EmbodyAgent:
                         "scene trait extraction referenced an unknown profile target"
                     )
 
-        identity_signals = identity_result.scene_identity_signals
-        signal_ids = [item.scene_id for item in identity_signals]
-        if signal_ids != expected_ids or len(signal_ids) != len(set(signal_ids)):
-            raise EmbodimentGenerationError(
-                "identity signal output scene_ids must match input scene order and be unique"
-            )
-        _semantic(lambda: _validate_and_normalize_scene_grounding(identity_signals, expected_ids))
-
         bundles = [
             ScenePerspectiveBundleOutput(
                 **perspective.model_dump(mode="json"),
@@ -773,12 +756,10 @@ class EmbodyAgent:
                 beliefs=enrichment.beliefs,
                 impacts=enrichment.impacts,
                 trait_candidates=enrichment.trait_candidates,
-                aspect_signals=signals.aspect_signals,
-                goal_signals=signals.goal_signals,
+                aspect_signals=enrichment.aspect_signals,
+                goal_signals=enrichment.goal_signals,
             )
-            for perspective, enrichment, signals in zip(
-                perspectives, enrichments, identity_signals, strict=True
-            )
+            for perspective, enrichment in zip(perspectives, enrichments, strict=True)
         ]
 
         # The two second-wave branches already contain all source-local evidence.
@@ -809,10 +790,10 @@ class EmbodyAgent:
             subtitle_change=observations.subtitle_change or SubtitleChangeProposal(),
             evidence_ids=known,
             aspect_signals=[
-                signal for item in identity_signals for signal in item.aspect_signals
+                signal for item in enrichments for signal in item.aspect_signals
             ],
             goal_signals=[
-                signal for item in identity_signals for signal in item.goal_signals
+                signal for item in enrichments for signal in item.goal_signals
             ],
             llm_calls=list(self.llm_calls),
             observations_unavailable=False,
@@ -852,9 +833,9 @@ class EmbodyAgent:
 
         if on_stage:
             await on_stage(
-                "source:{0} - Step 4: Deterministic source reduction".format(
+                "source:{0} - Step 3: Deterministic source reduction".format(
                     analysis.source_entity_alias
-                ), [4]
+            ), [3]
             )
         existing = current_trait_evidence or []
         incoming = ground_observations(analysis.observations.trait_evidence,

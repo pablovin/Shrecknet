@@ -62,12 +62,11 @@ contradictory, and no-change evidence remains inspectable in the revision ledger
 
 The current embodiment pipeline is scene-centric. A source's scenes are divided
 into analysis chunks of at most five scenes (therefore always within the
-maximum ten-scene window). Up to three chunks for the same source may run
-concurrently against the same source-start identity. A chunk first makes one
-incorporation call with its objective scenes. It then makes two calls in parallel,
-both receiving only the bounded interpretations from that chunk: trait extraction
-produces emotions, beliefs, impacts, and trait candidates; identity-signal
-extraction produces durable aspect and goal signals. Every embodiment generation request sends its Pydantic JSON Schema through
+maximum ten-scene window). A source runs a flat Perspective wave for all chunks
+against the same source-start identity, then a flat Psychological analysis wave.
+The first call receives objective scenes; the second receives only its bounded
+interpretations and produces emotions, beliefs, impacts, trait candidates, and
+durable aspect/goal signals. Every embodiment generation request sends its Pydantic JSON Schema through
 ShreckLLM as a native strict `response_format` request: authored baseline,
 incorporation, both parallel branches, JSON repair, and schema/semantic
 corrections. The explicit prompt contract remains present for model readability.
@@ -81,7 +80,7 @@ returns an out-of-range optional impact, that impact is discarded as a no-op;
 it cannot fail or mutate the source. The backend binds positional references,
 validates the outputs, merges source-local evidence in chronological order, and
 performs trait/profile reduction deterministically. A source with `n`
-analysis chunks therefore normally makes `3n` LLM calls, excluding the authored
+analysis chunks therefore normally makes `2n` LLM calls, excluding the authored
 baseline and repair/correction calls. No LLM receives a cumulative evidence
 ledger, raw scenes after incorporation, or a source-level profile-update payload.
 

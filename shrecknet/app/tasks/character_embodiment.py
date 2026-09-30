@@ -49,14 +49,12 @@ from app.utils.async_helpers import run_async
 from app.utils.job_tracking import mark_job_done, mark_job_failed, mark_job_running, update_job_progress
 
 STEP_NAME: dict[int, str] = {
-    1: "Character incorporation",
-    2: "Trait extraction",
-    3: "Aspect and goal signals",
-    4: "Deterministic source reduction",
+    1: "Perspective",
+    2: "Psychological analysis",
+    3: "Deterministic source reduction",
 }
 
 SCENE_ANALYSIS_CHUNK_SIZE = 5
-SCENE_ANALYSIS_CONCURRENCY = 3
 
 
 def _step_label(steps: list[int]) -> str:
@@ -244,15 +242,26 @@ class _EmbodimentProgress:
     async def chunk_complete(self, index: int, chunk_index: int) -> None:
         async with self.lock:
             chunk = self.chunks[index][chunk_index]
-            chunk["done_steps"] = [1, 2, 3]
+            chunk["done_steps"] = [1, 2]
             chunk["active_steps"] = []
             self.active[index] = sorted({
                 step
                 for item in self.chunks[index]
                 for step in item["active_steps"]
             })
-            if all(item["done_steps"] == [1, 2, 3] for item in self.chunks[index]):
-                self.done[index].update({1, 2, 3})
+            if all(item["done_steps"] == [1, 2] for item in self.chunks[index]):
+                self.done[index].update({1, 2})
+            await self._publish(index, "processing")
+
+    async def chunk_failed(
+        self, index: int, chunk_index: int, *, stage: str, error: Exception,
+    ) -> None:
+        """Expose a failed work unit instead of hiding it behind gather()."""
+        async with self.lock:
+            chunk = self.chunks[index][chunk_index]
+            chunk["active_steps"] = []
+            chunk["failed_stage"] = stage
+            chunk["error"] = _exception_details(error)
             await self._publish(index, "processing")
 
     async def analysis_ready(self, index: int) -> None:
@@ -263,7 +272,7 @@ class _EmbodimentProgress:
 
     async def complete(self, index: int) -> None:
         async with self.lock:
-            self.done[index].update({1, 2, 3, 4})
+            self.done[index].update({1, 2, 3})
             self.active[index] = []
             await self._publish(index, "done", stage="Source complete")
 
@@ -282,8 +291,9 @@ class _EmbodimentProgress:
             {
                 **item,
                 "status": (
+                    "failed" if item.get("error") else
                     "processing" if item["active_steps"] else
-                    "done" if item["done_steps"] == [1, 2, 3] else "pending"
+                    "done" if item["done_steps"] == [1, 2] else "pending"
                 ),
             }
             for item in self.chunks.get(index, [])
@@ -308,13 +318,13 @@ class _EmbodimentProgress:
                 "active_chunk_count": sum(
                     item["status"] == "processing" for item in chunk_states
                 ),
-                "scene_chunk_concurrency": SCENE_ANALYSIS_CONCURRENCY,
+                "execution": "shreckllm_managed",
             },
         }
         completed = sum(len(steps) for steps in self.done.values())
         active_credit = sum(0.5 for steps in self.active.values() if steps)
         calculated = 0.10 + 0.80 * (
-            (completed + active_credit) / max(self.total * 4, 1)
+            (completed + active_credit) / max(self.total * 3, 1)
         )
         self.last_progress = min(0.90, max(self.last_progress, calculated))
         await update_job_progress(self.job_id, self.last_progress, {
@@ -337,6 +347,19 @@ def _merge_observations(target: Any, source: Any) -> Any:
         new_vals = list(getattr(source, field, None) or [])
         setattr(target, field, existing + new_vals)
     return target
+
+
+def _exception_details(error: Exception) -> dict[str, Any]:
+    """Keep polling telemetry safe for job-progress consumers."""
+    candidate: Any = error
+    while candidate is not None:
+        details = getattr(candidate, "details", None)
+        if callable(details):
+            value = details()
+            if isinstance(value, dict):
+                return value
+        candidate = getattr(candidate, "__cause__", None)
+    return {"message": str(error), "error_type": type(error).__name__}
 
 
 def _scene_analysis_chunks(group: dict) -> list[list[dict]]:
@@ -461,6 +484,7 @@ async def _generate(*, draft_id: str, revision: int, job_id: int) -> dict:
             base_url=settings.shreckllm_base_url,
             timeout=settings.shreckllm_request_timeout_s,
             max_retries=settings.shreckllm_max_retries,
+            chat_job_timeout_s=settings.shreckllm_chat_job_timeout_s,
         )
         progress = _EmbodimentProgress(
             job_id=job_id,
@@ -497,7 +521,9 @@ async def _generate(*, draft_id: str, revision: int, job_id: int) -> dict:
                     character_update_model=settings.model_character_agent_update,
                     max_goals=settings.character_agent_embodiment_max_goals,
                     max_aspects=settings.character_agent_embodiment_max_aspects,
-                    semantic_correction_attempts=settings.character_agent_embodiment_semantic_correction_attempts,
+                    # v2 recovery is one JSON repair in the shared stage wrapper;
+                    # failed units are checkpointed instead of triggering hidden LLM loops.
+                    semantic_correction_attempts=0,
                     debug_artifacts=debug_artifacts,
                     debug_source_index=source_index,
                     debug_source_alias=source_alias,
@@ -561,74 +587,71 @@ async def _generate(*, draft_id: str, revision: int, job_id: int) -> dict:
                         source_entity_id=group["source_id"], stage=stage, cache_key=cache_key,
                         model_target=stage_model_targets[stage], payload=value.model_dump(mode="json"))
 
-                semaphore = asyncio.Semaphore(SCENE_ANALYSIS_CONCURRENCY)
                 scene_chunks = _scene_analysis_chunks(group)
                 progress.configure_chunks(bi, scene_chunks)
 
-                async def analyze_chunk(chunk_index: int, chunk_scenes: list[dict]):
-                    async with semaphore:
-                        chunk_agent = make_agent(
-                            source_index=bi,
-                            source_alias=f"{group['source_alias']} (chunk {chunk_index + 1})",
-                        )
-                        agents.append(chunk_agent)
-                        try:
-                            analysis = await chunk_agent.analyze(
-                                source_entity_id=group["source_id"], source_entity_alias=group["source_alias"],
-                                canonical_identity=inputs["canonical_identity"], current_trait_profile=current_profile,
-                                current_aspects=current_aspects, current_goals=current_goals,
-                                scenes=[SceneInput(**scene) for scene in chunk_scenes],
-                                on_stage=progress.callback(bi, chunk_index=chunk_index),
-                            )
-                        except EmbodimentGenerationError as exc:
-                            if len(chunk_scenes) == 1 or exc.category not in {"schema", "semantic", "semantic_reference"}:
-                                raise
-                            logging.getLogger(__name__).warning(
-                                "embodiment_chunk_recovery source_id=%s source_alias=%s "
-                                "chunk_index=%d scene_count=%d failed_stage=%s category=%s",
-                                group["source_id"], group["source_alias"], chunk_index,
-                                len(chunk_scenes), exc.stage, exc.category,
-                            )
-                            recovered = []
-                            for scene_index, scene in enumerate(chunk_scenes):
-                                recovery_agent = make_agent(
-                                    source_index=bi,
-                                    source_alias=(
-                                        f"{group['source_alias']} (chunk {chunk_index + 1}, "
-                                        f"scene {scene_index + 1} recovery)"
-                                    ),
-                                )
-                                agents.append(recovery_agent)
-                                recovered.append(await recovery_agent.analyze(
-                                    source_entity_id=group["source_id"], source_entity_alias=group["source_alias"],
-                                    canonical_identity=inputs["canonical_identity"], current_trait_profile=current_profile,
-                                    current_aspects=current_aspects, current_goals=current_goals,
-                                    scenes=[SceneInput(**scene)], on_stage=progress.callback(
-                                        bi, chunk_index=chunk_index
-                                    ),
-                                ))
-                            result = _merge_chunk_analyses(recovered)
-                            await progress.chunk_complete(bi, chunk_index)
-                            return result
-                        else:
-                            await progress.chunk_complete(bi, chunk_index)
-                            return analysis
+                # A source is chronological, but its chunks are a flat data pipeline:
+                # every perspective call completes before any psychological analysis starts.
+                chunk_agents = [make_agent(
+                    source_index=bi,
+                    source_alias=f"{group['source_alias']} (chunk {index + 1})",
+                ) for index in range(len(scene_chunks))]
+                agents.extend(chunk_agents)
 
-                if len(scene_chunks) == 1 and checkpoints:
-                    analysis = await agent.analyze(
+                async def perspective_chunk(chunk_index: int, chunk_scenes: list[dict]):
+                    await progress.stage(bi, [1], chunk_index=chunk_index)
+                    return await chunk_agents[chunk_index].generate_perspectives(
                         source_entity_id=group["source_id"], source_entity_alias=group["source_alias"],
                         canonical_identity=inputs["canonical_identity"], current_trait_profile=current_profile,
                         current_aspects=current_aspects, current_goals=current_goals,
-                        scenes=[SceneInput(**scene) for scene in group["scenes"]],
-                        on_stage=progress.callback(bi, chunk_index=0), stage_checkpoints=checkpoints, on_checkpoint=save_stage,
+                        scenes=[SceneInput(**scene) for scene in chunk_scenes],
                     )
-                    await progress.chunk_complete(bi, 0)
-                else:
-                    analyses = await asyncio.gather(*[
-                        analyze_chunk(index, scenes)
-                        for index, scenes in enumerate(scene_chunks)
-                    ])
-                    analysis = _merge_chunk_analyses(analyses)
+
+                perspective_results = await asyncio.gather(*[
+                    perspective_chunk(index, scenes) for index, scenes in enumerate(scene_chunks)
+                ], return_exceptions=True)
+                perspective_errors = [item for item in perspective_results if isinstance(item, Exception)]
+                if perspective_errors:
+                    for index, item in enumerate(perspective_results):
+                        if isinstance(item, Exception):
+                            await progress.chunk_failed(bi, index, stage="perspective", error=item)
+                    await progress.failed(bi)
+                    raise EmbodimentGenerationError(
+                        "perspective stage failed for one or more chunks", category="stage_failure",
+                        stage="perspective", source_entity_id=group["source_id"],
+                        source_entity_alias=group["source_alias"], retryable=True,
+                    ) from perspective_errors[0]
+
+                async def psychology_chunk(chunk_index: int, chunk_scenes: list[dict], perspectives):
+                    await progress.stage(bi, [2], chunk_index=chunk_index)
+                    result = await chunk_agents[chunk_index].analyze(
+                        source_entity_id=group["source_id"], source_entity_alias=group["source_alias"],
+                        canonical_identity=inputs["canonical_identity"], current_trait_profile=current_profile,
+                        current_aspects=current_aspects, current_goals=current_goals,
+                        scenes=[SceneInput(**scene) for scene in chunk_scenes],
+                        perspectives_result=perspectives,
+                    )
+                    await progress.chunk_complete(bi, chunk_index)
+                    return result
+
+                analysis_results = await asyncio.gather(*[
+                    psychology_chunk(index, scenes, perspective_results[index])
+                    for index, scenes in enumerate(scene_chunks)
+                ], return_exceptions=True)
+                analysis_errors = [item for item in analysis_results if isinstance(item, Exception)]
+                if analysis_errors:
+                    for index, item in enumerate(analysis_results):
+                        if isinstance(item, Exception):
+                            await progress.chunk_failed(
+                                bi, index, stage="psychological_analysis", error=item,
+                            )
+                    await progress.failed(bi)
+                    raise EmbodimentGenerationError(
+                        "psychological analysis failed for one or more chunks", category="stage_failure",
+                        stage="psychological_analysis", source_entity_id=group["source_id"],
+                        source_entity_alias=group["source_alias"], retryable=True,
+                    ) from analysis_errors[0]
+                analysis = _merge_chunk_analyses(analysis_results)
                 try:
                     result = await agent.apply_profile_update(
                         analysis=analysis,

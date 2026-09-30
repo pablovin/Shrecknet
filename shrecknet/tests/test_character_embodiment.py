@@ -719,7 +719,7 @@ async def test_every_embodiment_generation_call_requests_strict_json_schema():
     )
 
     assert {call["usage_tag"].rsplit(".", 1)[-1] for call in llm.calls} == {
-        "baseline", "character_incorporation", "scene_interpretation", "identity_signals",
+        "baseline", "character_incorporation", "scene_interpretation",
     }
     for call in llm.calls:
         response_format = call["response_format"]
@@ -1120,7 +1120,7 @@ def test_enrichment_candidates_require_explicit_update_intensity():
 
 
 @pytest.mark.asyncio
-async def test_enrichment_omitted_arrays_use_schema_correction_not_json_repair(monkeypatch):
+async def test_enrichment_omitted_arrays_fail_without_hidden_schema_correction(monkeypatch):
     repair_called = False
 
     async def unexpected_repair(**_kwargs):
@@ -1137,49 +1137,23 @@ async def test_enrichment_omitted_arrays_use_schema_correction_not_json_repair(m
                 return json.dumps({'scene_enrichments': [{
                     'emotions': [], 'beliefs': [], 'impacts': [],
                 } for perspective in payload['perspectives']]})
-            if tag.endswith('.scene_interpretation.schema_correction'):
-                self.calls.append(kwargs)
-                correction = json.loads(kwargs['messages'][1]['content'])
-                errors = correction['validation_errors']
-                assert any(error['loc'][-1] == 'trait_candidates' for error in errors)
-                payload = correction['original_input']
-                return json.dumps({'scene_enrichments': [{
-                    'emotions': [], 'beliefs': [], 'impacts': [],
-                    'trait_candidates': [], 'aspect_signals': [], 'goal_signals': [],
-                } for perspective in payload['perspectives']]})
             return await super().chat(**kwargs)
 
     monkeypatch.setattr('app.jobs.character_agent.embody_agent.repair_json_text', unexpected_repair)
     llm = OmittedArraysLLM()
-    analysis = await _agent(llm).analyze(
-        source_entity_id='source', source_entity_alias='Source',
-        canonical_identity=_canonical(), current_trait_profile=TraitProfile(),
-        current_aspects=[], current_goals=[], scenes=scenes(1),
-    )
-
+    with pytest.raises(EmbodimentGenerationError):
+        await _agent(llm).analyze(
+            source_entity_id='source', source_entity_alias='Source',
+            canonical_identity=_canonical(), current_trait_profile=TraitProfile(),
+            current_aspects=[], current_goals=[], scenes=scenes(1),
+        )
     assert repair_called is False
-    assert analysis.perspectives[0].trait_candidates == []
-    assert any(call['usage_tag'].endswith('.schema_correction') for call in llm.calls)
+    assert not any(call['usage_tag'].endswith('.schema_correction') for call in llm.calls)
 
 
 @pytest.mark.asyncio
-async def test_parallel_second_wave_receives_only_bounded_interpretations():
-    class ParallelWaveLLM(BatchLLM):
-        def __init__(self):
-            super().__init__()
-            self.second_wave_started: set[str] = set()
-            self.second_wave_gate = asyncio.Event()
-
-        async def chat(self, **kwargs):
-            stage = kwargs['usage_tag'].rsplit('.', 1)[-1]
-            if stage in {'scene_interpretation', 'identity_signals'}:
-                self.second_wave_started.add(stage)
-                if len(self.second_wave_started) == 2:
-                    self.second_wave_gate.set()
-                await asyncio.wait_for(self.second_wave_gate.wait(), timeout=0.2)
-            return await super().chat(**kwargs)
-
-    llm = ParallelWaveLLM()
+async def test_psychological_analysis_receives_only_bounded_interpretations():
+    llm = BatchLLM()
     result = await _agent(llm).run(
         source_entity_id='source', source_entity_alias='Source',
         canonical_identity=_canonical(), current_trait_profile=TraitProfile(),
@@ -1189,21 +1163,14 @@ async def test_parallel_second_wave_receives_only_bounded_interpretations():
         call['messages'][1]['content'] for call in llm.calls
         if call['usage_tag'].endswith('.scene_interpretation')
     ))
-    signal_payload = json.loads(next(
-        call['messages'][1]['content'] for call in llm.calls
-        if call['usage_tag'].endswith('.identity_signals')
-    ))
-    assert llm.second_wave_started == {'scene_interpretation', 'identity_signals'}
-    assert len(llm.calls) == 3
+    assert len(llm.calls) == 2
     assert not any(call['usage_tag'].endswith('.profile_update') for call in llm.calls)
-    for payload in (trait_payload, signal_payload):
-        assert 'scenes' not in payload
-        assert payload['perspectives'][0]['position'] == 1
-        assert 'scene_id' not in payload['perspectives'][0]
-        assert payload['perspectives'][0]['interpretation']
-        assert 'character_reflection' not in payload['perspectives'][0]
+    assert 'scenes' not in trait_payload
+    assert trait_payload['perspectives'][0]['position'] == 1
+    assert 'scene_id' not in trait_payload['perspectives'][0]
+    assert trait_payload['perspectives'][0]['interpretation']
+    assert 'character_reflection' not in trait_payload['perspectives'][0]
     assert 'current_profile' in trait_payload
-    assert 'current_profile' not in signal_payload
     assert result.trait_evidence
 
 

@@ -357,14 +357,14 @@ Name/story/image derivation continues to use canonical entity information.
 
 ### Source-boundary bundles
 
-Scenes retain `DERIVED_FROM` source grouping and deterministic time order. A source remains one atomic identity-update and revision boundary, but its scene-local work is partitioned into chunks of at most five scenes (therefore always within the ten-scene source-window limit). Up to three chunks run concurrently from the same source-start identity.
+Scenes retain `DERIVED_FROM` source grouping and deterministic time order. A source remains one atomic identity-update and revision boundary, but its scene-local work is partitioned into chunks of at most five scenes. Chronology is sequential only at this source boundary; chunks within a source are executed as observable, flat stage waves and shreckLLM owns provider capacity.
 
 Each chunk has two LLM waves:
 
 1. **Character incorporation** receives the chunk's canonical raw scenes and returns position-bound perspectives and presentation-only reflections.
-2. **Trait extraction** and **aspect/goal signal detection** run in parallel from those perspectives. Neither receives canonical scenes or reflections. Trait extraction returns emotions, beliefs, impacts, and trait candidates. The identity branch returns only durable aspect and goal signals.
+2. **Psychological analysis** receives those perspectives, never canonical scenes or reflections. It returns emotions, beliefs, impacts, trait candidates, and durable aspect/goal signals together.
 
-The backend binds every scene/evidence/target reference by output position, validates the two branches, merges all chunk-local evidence in chronological source order, deduplicates new identity signals, and performs the trait/profile reduction deterministically. It never sends the cumulative historical evidence ledger to an LLM, and there is no profile-update LLM call. Existing aspects and goals are never modified or removed by the deterministic signal reducer; it creates only evidence-backed, non-duplicate additions. The updated identity takes effect only at source end.
+The coordinator completes every chunk's Perspective wave before beginning any chunk's Psychological analysis wave. It binds every scene/evidence/target reference by output position, merges all chunk-local evidence in chronological source order, deduplicates new identity signals, and performs the trait/profile reduction deterministically. It never sends the cumulative historical evidence ledger to an LLM, and there is no profile-update LLM call. Existing aspects and goals are never modified or removed by the deterministic signal reducer; it creates only evidence-backed, non-duplicate additions. The updated identity takes effect only at source end.
 
 ### Frontend job-progress contract
 
@@ -415,7 +415,7 @@ Poll `GET /jobs/42`. `details` is a JSON object when it contains valid JSON. Dur
 }
 ```
 
-Step names are stable: `1` character incorporation, `2` trait extraction, `3` aspect and goal signals, and `4` deterministic source reduction. Render a chunk by its `status`, `scene_count`, `active_steps`, and `done_steps`; up to `scene_chunk_concurrency` chunks may be `processing` at once. A completed bundle has `done_steps: [1,2,3,4]`, empty `active_steps`, and `parallel.active: false`. `GET /character-agents/embodiment-drafts/{draft_id}` remains the reviewed-result endpoint; its proposal and timeline response contract is unchanged.
+Step names are stable: `1` Perspective, `2` Psychological analysis, and `3` Deterministic source reduction. Render a chunk by its `status`, `scene_count`, `active_steps`, and `done_steps`. `parallel.execution` is `shreckllm_managed`: the frontend must not infer a worker-local concurrency limit. A completed bundle has `done_steps: [1,2,3]`, empty `active_steps`, and `parallel.active: false`. `GET /character-agents/embodiment-drafts/{draft_id}` remains the reviewed-result endpoint; its proposal and timeline response contract is unchanged.
 
 ### Regeneration and rollout
 

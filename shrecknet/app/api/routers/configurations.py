@@ -161,6 +161,7 @@ SETTINGS_GROUPS: list[dict[str, Any]] = [
         "fields": [
             "shreckllm_base_url",
             "shreckllm_request_timeout_s",
+            "shreckllm_chat_job_timeout_s",
             "shreckllm_max_retries",
             "llm_prewarm_on_startup",
             "llm_prewarm_timeout_s",
@@ -298,6 +299,7 @@ FIELD_UI_META: dict[str, dict[str, Any]] = {
     "celery_stale_reaper_max_task_age_seconds": {"type": "integer", "help": "Task age threshold for reaper in seconds."},
     "shreckllm_base_url": {"type": "string", "help": "Base URL for shreckLLM service."},
     "shreckllm_request_timeout_s": {"type": "number", "help": "Request timeout when calling shreckLLM."},
+    "shreckllm_chat_job_timeout_s": {"type": "number", "help": "End-to-end deadline while polling a submitted shreckLLM chat job."},
     "shreckllm_max_retries": {"type": "integer", "help": "Retry attempts for shreckLLM calls."},
     "llm_prewarm_on_startup": {"type": "boolean", "help": "Warm Elder, Librarian, Architect, and Novelist LLM targets before the API becomes ready."},
     "llm_prewarm_timeout_s": {"type": "number", "help": "Maximum startup warmup time per unique interactive LLM model."},

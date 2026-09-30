@@ -181,6 +181,9 @@ class Settings(BaseSettings):
 
     shreckllm_base_url: str = "http://shreckllm:8110"
     shreckllm_request_timeout_s: float = 60.0
+    # End-to-end client-side deadline for an asynchronously submitted shreckLLM
+    # job.  This is intentionally separate from the HTTP request timeout.
+    shreckllm_chat_job_timeout_s: float = Field(900.0, ge=30.0, le=7200.0)
     shreckllm_max_retries: int = 2
     llm_prewarm_on_startup: bool = True
     llm_prewarm_timeout_s: float = 300.0

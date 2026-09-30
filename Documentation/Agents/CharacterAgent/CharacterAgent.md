@@ -77,10 +77,9 @@ An agent cannot change `ontology_id`, its embodied entity, `id`,
 Embodiment extracts a provisional authored baseline or preserves unknown values
 in Revision 0. All scenes from a `DERIVED_FROM` source form one chronological
 source bundle and yield one source-level revision. The worker partitions the
-source's ordered scenes into analysis chunks of at most five; up to three chunks
-may create ScenePerspectives in parallel from the same source-start identity.
-For each chunk, trait extraction and aspect/goal signal extraction then run in
-parallel from those interpretations only. The backend merges and reduces the
+source's ordered scenes into analysis chunks of at most five. All chunks complete
+the Perspective wave from the same source-start identity before the Psychological
+analysis wave begins. ShreckLLM owns provider concurrency. The backend merges and reduces the
 source-local outputs deterministically; no LLM receives a cumulative evidence
 history. Source bundles themselves run sequentially, so the resulting revision
 becomes the next source bundle's starting identity.
@@ -288,11 +287,11 @@ request it through `/character-agents/trait-definitions`.
 `character_agent.generate_embodiment` is the Celery task that generates a
 reviewable embodiment draft. It performs one authored-baseline call, then
 processes source bundles in order. For a source with `n` analysis chunks, the
-normal LLM call budget is `3n`: incorporation, then parallel trait extraction
-and aspect/goal signal extraction for each chunk. The source reduction is
+normal LLM call budget is `2n`: Perspective followed by Psychological analysis
+for each chunk. The source reduction is
 backend-owned and deterministic; it does not make a profile-update LLM call or
 send historical evidence to a model. Analysis chunks contain at most five scenes
-and run with a worker-local concurrency cap of three. Checkpoint reuse is
+and submit as a flat stage wave to ShreckLLM. Checkpoint reuse is
 available for the single-chunk source path; enabled debug artifacts deliberately
 disable reuse so the complete run is recorded.
 

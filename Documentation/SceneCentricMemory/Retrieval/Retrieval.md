@@ -118,18 +118,19 @@ Top-level GraphRAG response:
 
 Elder now returns source-grounded payload:
 
-  - includes per-intent retrieval links: `top_k_entities|top_k_scenes|top_k_milestones`
 - `sources[]` (node-backed evidence)
+- `retrieval_plan` (public plan projection)
 - `memory_priors_applied[]`
 - `timings`
 - `trace_id`
+- `pipeline_version`, `llm_usage[]`, and `llm_usage_totals`
 
 ## Latency Visibility
 
 Elder timing fields:
 
-- `decompose_ms`
-- `memory_summary_ms`
+- `grounding_ms`
+- `plan_ms`
 - `retrieve_ms`
 - `consolidate_ms`
 - `rerank_ms`

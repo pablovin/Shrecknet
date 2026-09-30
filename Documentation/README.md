@@ -10,6 +10,11 @@ Welcome to the Shrecknet documentation! This directory contains all organized do
 - [Dispositional traits](./Agents/CharacterAgent/Dispositional%20Traits.md) — constructs, evidence, extraction/query pipelines, source bundles, revisions, and deployment
 - [Historical dispositional-traits design record](./Agents/CharacterAgent/Dispositional%20Traits%20Plan.md) — superseded embodiment design notes; use the current contract above
 
+## Elder
+
+- [Elder query and retrieval](./Agents/Elder/Elder.md) — current runtime and stable contract
+- [Elder Query V3 implementation plan](./Agents/Elder/ELDER_QUERY_V3_IMPLEMENTATION_PLAN.md) — proposed latency, cost, and answer-quality target with compatibility requirements
+
 ## 📚 Documentation Structure
 
 ### [Getting Started](./GettingStarted/)

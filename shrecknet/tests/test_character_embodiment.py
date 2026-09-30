@@ -776,23 +776,25 @@ class BarePerspectiveEvidenceLLM(BatchLLM):
         return raw
 
 
-class DirectionMismatchCorrectionLLM(BatchLLM):
-    """Reproduces a Pydantic model-validator error returned by DeepSeek."""
+class AspectDirectionMismatchCorrectionLLM(BatchLLM):
+    """Reproduces the aspect-direction mismatch returned by DeepSeek."""
 
     async def chat(self, **kwargs):
         usage_tag = kwargs['usage_tag']
         if usage_tag.endswith('.scene_interpretation.schema_correction'):
             self.calls.append(kwargs)
             rejected = json.loads(json.loads(kwargs['messages'][1]['content'])['rejected_output'])
-            rejected['scene_enrichments'][0]['trait_candidates'][0]['direction'] = 'high'
+            rejected['scene_enrichments'][0]['impacts'][0]['direction'] = 'invalidated'
             return json.dumps(rejected)
 
         raw = await super().chat(**kwargs)
         if usage_tag.endswith('.scene_interpretation'):
             payload = json.loads(raw)
-            candidate = payload['scene_enrichments'][0]['trait_candidates'][0]
-            candidate['direction'] = 'midpoint'
-            candidate['expression_z'] = 0.1
+            payload['scene_enrichments'][0]['impacts'] = [{
+                'impact_type': 'aspect_change', 'target_index': 1,
+                'direction': 'threatened', 'magnitude': 65,
+                'description': 'The alliance is strained.',
+            }]
             return json.dumps(payload)
         return raw
 
@@ -968,22 +970,46 @@ async def test_noncanonical_nested_scene_evidence_is_bound_to_parent_position():
 
 
 @pytest.mark.asyncio
-@pytest.mark.skip(reason="the streamlined psychological-analysis stage does not retry semantic corrections")
-async def test_schema_correction_serializes_model_validator_errors():
-    llm = DirectionMismatchCorrectionLLM()
+async def test_scene_analysis_corrects_an_aspect_direction_mismatch():
+    llm = AspectDirectionMismatchCorrectionLLM()
 
     analysis = await _agent(llm).analyze(
         source_entity_id='source', source_entity_alias='Source',
         canonical_identity=_canonical(), current_trait_profile=TraitProfile(),
-        current_aspects=[], current_goals=[], scenes=scenes(2),
+        current_aspects=[{'id': 'aspect-1', 'name': 'Alliance'}],
+        current_goals=[], scenes=scenes(2),
     )
 
     correction = next(call for call in llm.calls if call['usage_tag'].endswith('.schema_correction'))
     payload = json.loads(correction['messages'][1]['content'])
     assert correction['response_format']['type'] == 'json_schema'
     assert correction['response_format']['json_schema']['strict'] is True
-    assert payload['validation_errors'][0]['ctx']['error'] == 'direction and expression_z disagree'
-    assert analysis.observations.trait_evidence[0].pole == 'right'
+    assert payload['validation_errors'][0]['ctx']['error'] == 'impact direction is incompatible with impact_type'
+    assert analysis.perspectives[0].impacts[0].direction.value == 'invalidated'
+    assert analysis.perspectives[0].impacts[0].target_id == 'aspect-1'
+
+
+@pytest.mark.asyncio
+async def test_scene_analysis_schema_separates_goal_and_aspect_impact_directions():
+    llm = BatchLLM()
+    await _agent(llm).analyze(
+        source_entity_id='source', source_entity_alias='Source',
+        canonical_identity=_canonical(), current_trait_profile=TraitProfile(),
+        current_aspects=[{'id': 'aspect-1', 'name': 'Alliance'}],
+        current_goals=[{'id': 'goal-1', 'title': 'Protect the alliance'}],
+        scenes=scenes(1),
+    )
+
+    call = next(call for call in llm.calls if call['usage_tag'].endswith('.scene_interpretation'))
+    impact = call['response_format']['json_schema']['schema']['$defs']['CharacterImpactOutput']
+    assert 'properties' not in impact
+    variants = {item['properties']['impact_type']['const']: item for item in impact['oneOf']}
+    assert variants['goal_change']['properties']['direction']['enum'] == ['advanced', 'threatened']
+    assert variants['goal_change']['properties']['target_index']['maximum'] == 1
+    assert variants['aspect_change']['properties']['direction']['enum'] == [
+        'created', 'reinforced', 'invalidated',
+    ]
+    assert variants['aspect_change']['properties']['target_index']['maximum'] == 1
 
 
 @pytest.mark.asyncio
@@ -1083,7 +1109,7 @@ def test_enrichment_candidates_require_explicit_update_intensity():
 
 
 @pytest.mark.asyncio
-async def test_enrichment_omitted_arrays_fail_without_hidden_schema_correction(monkeypatch):
+async def test_enrichment_omitted_arrays_use_one_schema_correction(monkeypatch):
     repair_called = False
 
     async def unexpected_repair(**_kwargs):
@@ -1111,7 +1137,9 @@ async def test_enrichment_omitted_arrays_fail_without_hidden_schema_correction(m
             current_aspects=[], current_goals=[], scenes=scenes(1),
         )
     assert repair_called is False
-    assert not any(call['usage_tag'].endswith('.schema_correction') for call in llm.calls)
+    assert sum(
+        call['usage_tag'].endswith('.schema_correction') for call in llm.calls
+    ) == 1
 
 
 @pytest.mark.asyncio

@@ -730,7 +730,10 @@ class EmbodyAgent:
                     usage_tag="character_agent.embodiment.scene_interpretation",
                     max_tokens=EMBODIMENT_LLM_MAX_TOKENS, model=self.scene_interpretation_model,
                     source_entity_id=source_entity_id, source_entity_alias=source_entity_alias,
-                    schema_correction_attempts=0,
+                    # A valid JSON response can still violate a conditional
+                    # impact contract. Permit one replacement response rather
+                    # than discarding the entire draft for that model mistake.
+                    schema_correction_attempts=1,
                     output_binding={
                         "collection": "scene_enrichments", "scene_ids": expected_ids,
                         "profile_targets": {"aspects": [a["id"] for a in aspects], "goals": [g["id"] for g in goals]},
@@ -943,17 +946,50 @@ def _model_output_schema(
     required = impact.get("required")
     if not isinstance(properties, dict) or not isinstance(required, list):
         return result
-    properties.pop("target_id", None)
-    properties["target_index"] = {"type": "integer", "minimum": 1}
-    impact["required"] = [field for field in required if field != "target_id"] + ["target_index"]
     targets = (output_binding or {}).get("profile_targets") or {}
-    target_count = max(len(targets.get("aspects", [])), len(targets.get("goals", [])))
+    aspect_count = len(targets.get("aspects", []))
+    goal_count = len(targets.get("goals", []))
+    target_count = max(aspect_count, goal_count)
     impacts = enrichment.get("properties", {}).get("impacts")
     if isinstance(impacts, dict):
         if target_count == 0:
+            properties.pop("target_id", None)
+            properties["target_index"] = {"type": "integer", "minimum": 1}
+            impact["required"] = [
+                field for field in required if field != "target_id"
+            ] + ["target_index"]
             impacts["maxItems"] = 0
-        else:
-            properties["target_index"]["maximum"] = target_count
+            return result
+
+    # Pydantic's persistence model validates this relationship at runtime, but
+    # its generated schema represents the two fields as independent enums.
+    # The LLM-facing contract must make the relationship structural so native
+    # structured-output providers cannot select ``threatened`` for an aspect.
+    variants = []
+    for impact_type, directions, count in (
+        ("goal_change", ("advanced", "threatened"), goal_count),
+        ("aspect_change", ("created", "reinforced", "invalidated"), aspect_count),
+    ):
+        if count == 0:
+            continue
+        variants.append({
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "impact_type": {"const": impact_type},
+                "target_index": {"type": "integer", "minimum": 1, "maximum": count},
+                "direction": {"type": "string", "enum": list(directions)},
+                "magnitude": copy.deepcopy(properties["magnitude"]),
+                "description": copy.deepcopy(properties["description"]),
+            },
+            "required": [
+                "impact_type", "target_index", "direction", "magnitude", "description",
+            ],
+        })
+    impact.pop("properties", None)
+    impact.pop("required", None)
+    impact.pop("additionalProperties", None)
+    impact["oneOf"] = variants
     return result
 
 

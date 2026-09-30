@@ -1,271 +1,72 @@
-# Elder Agent — Query and Retrieval V2
+# Elder Agent — Current Query and Retrieval Contract
 
-This document describes the sole supported Elder query and retrieval system.
+Elder is Shrecknet's retrieval-grounded knowledge agent for canonical `EntityInstance`, `Scene`, and `Milestone` memory. It returns display-ready answers with deterministic, structured source attribution.
 
-## V2 Contract
+This page documents the runtime currently in the repository. The proposed next revision is the [Elder Query V3 implementation plan](./ELDER_QUERY_V3_IMPLEMENTATION_PLAN.md).
 
-The normal path uses independently configured `model_elder_planner`,
-`model_elder_synthesis`, and `model_elder_character_incorporation` targets.
-Planning detects the original query's BCP-47 language while selecting at most
-five retrieval operations. After deterministic retrieval, neutral English
-synthesis returns atomic factual claims with trusted evidence IDs. Character
-incorporation receives only the original query, detected language, agent name,
-description, writing style, and citation-free claim text.
-The synthesis call receives full, atomic source records, including canonical node
-properties, every semantic document for each accepted source, provenance, and temporal
-metadata. Every terminal evidence step declares an `evidence_type`; the server maps
-it to an immutable 12,000–100,000 token target. The source that crosses a step's
-soft target is included in full, then collection for that step stops. Records are
-never partially truncated.
-
-If accepted records exceed the synthesis model context they are processed in
-record-boundary batches and combined by an additional synthesis pass. A single record
-too large for one model call produces a typed capacity failure instead of partial evidence.
-
-## Jobs Overview
-
-Elder is a retrieval-grounded question answering pipeline over scene-centric memory.
-
-Main endpoint:
+## Endpoints
 
 - `POST /jobs/elder/{agent_id}/query`
+- `POST /chat/messages/stream` (stream-compatible request endpoint; response is `ElderQueryResponse`)
 
-Chat stream-compatible endpoint:
+Both require normal authentication and enforce Elder ownership, assigned ontology scope, optional instance scope, and chat ownership. The old `/jobs/elder/chat/messages/stream` path is not registered.
 
-- `POST /chat/messages/stream`
+## Current runtime
 
-Model configuration uses the shared admin endpoints:
+`ElderQueryV2` is the stable orchestrator name. Its public pipeline version is `elder-query-retrieval-v3`.
 
-- `GET /config/` reads all three Elder model targets.
-- `PUT /config/` updates either target.
-- `GET /config/schema` exposes both fields in the Elder group.
-- `GET /llm_status/` reports readiness for both targets.
+1. The API validates the agent, optional `instance_id`, and optional `chat_id`, then loads recent chat history and ontology definitions.
+2. Query grounding resolves aliases by paginating entities in every assigned ontology and applying Python similarity matching. `grounding.py` caches a supplied definitions payload process-locally, but the API still loads definitions for each request.
+3. A narrow exact-entity overview builds a deterministic plan. Other queries call the retrieval planner.
+4. The executor performs bounded deterministic retrieval waves and applies ontology/instance filtering.
+5. Evidence is consolidated by node and hydrated using `complete_source` mode. Terminal planner evidence types use 12k–100k soft token targets.
+6. Existing memory priors are calculated after evidence assembly and adjust source scores; they do not yet constrain retrieval selection.
+7. Neutral structured synthesis produces cited atomic claims. A separate Elder character-incorporation call turns those claims into answer prose. The backend renders trusted superscript source markers.
 
-Planner, synthesis, and character calls request strict JSON Schema output when
-supported. Malformed planner plans, neutral synthesis payloads, and character
-renderer payloads are repaired through the shared `model_agents_repair_json`
-target. The stage-specific Elder model remains responsible for primary generation;
-the global repair target is the single authority for JSON and schema correction.
-Character output contains cohesive passages associated with claim IDs. It may
-reorder, combine, and condense claims, but every claim ID must occur exactly
-once and the prose cannot contain citation markup or source identifiers. The
-backend restores trusted attribution as Unicode superscript numbers in source
-order (`¹`, `²`, …, `¹⁰`). Each number refers to the corresponding one-based
-entry in `sources[]`; full attribution remains available through
-`sources[].evidence_id` and the complete structured source record. Invalid,
-unavailable, or timed-out character rendering is retried once through
-`model_agents_repair_json` with a corrective contract prompt.
-If the configured model fails the contract twice, the Elder request fails
-explicitly; it never presents neutral synthesis as a successful in-character
-answer. When no character target is configured, neutral rendering remains the
-configuration-level fallback.
+When evidence exceeds model capacity, current synthesis batches complete records, creates memoranda, runs an overflow final synthesis, and still runs character rendering. A source that cannot fit a model call produces the typed `elder_evidence_capacity_exceeded` HTTP 413 response.
 
-## Goal
+## Request contract
 
-Given a user question, Elder returns a grounded answer plus explicit source nodes (`EntityInstance`, `Scene`, `Milestone`) used to build the response.
+`ElderQueryRequest` accepts:
 
-The Elder v2 architecture is:
+- `query` — required non-empty user question.
+- `mode` — legacy `nl | context | both`, default `both`. `context` returns an empty answer after retrieval.
+- `include_trace` — includes internal trace data when true.
+- `chat_id` — optional owned Elder chat for recent conversational context.
+- `instance_id` — optional assigned ontology-instance restriction.
+- `node_scope` — legacy retrieval preference, default `everything`.
+- `candidate_limit` — optional 5–200 candidate chunk cap, default 120.
+- `rerank_limit` — optional 1–100 reranked node cap, default 50.
 
-1. Ontology, instance, entity, and conversation grounding
-2. One validated retrieval plan with at most five operations
-3. Parallel deterministic retrieval waves
-4. Unified deduplicated, ordered, fully hydrated evidence
-5. Neutral English atomic-claim synthesis with citation attribution
-6. Cohesive language and character composition
-7. Deterministic superscript rendering with structured source attribution
+`entities_hint` and `grounding_definitions` are internal/API-layer fields and are not frontend controls. Do not send undocumented evidence-budget fields: the current evidence budget is owned by the server's planner evidence type.
 
-### Temporal planning and ordering
+## Response contract
 
-Each retrieval step can explicitly choose `temporal.ordering` (`relevance` or
-`recency`), `temporal.direction` (`ascending` or `descending`), and its own
-result `limit`. The planner normally chooses a limit near 10 for an unspecified
-recent-history request, but this is guidance rather than a fixed window.
+`ElderQueryResponse` returns:
 
-Recency compares `updated_at` first and `created_at` second. Records without
-either timestamp are retained as non-comparable records after timestamped
-results; Elder does not invent a temporal position for them. `FOLLOWED_BY` and
-`PRECEDED_BY` are local source-order relationships and are not used to order
-records across sources.
+- `agent_id`, `query`, and display-ready `answer`
+- `timings` with `grounding_ms`, `plan_ms`, `retrieve_ms`, `consolidate_ms`, `rerank_ms`, `synthesize_ms`, and `total_ms`
+- `retrieval_plan`, including answer goal, selected scope, and public projection of retrieval steps
+- `sources[]`, the evidence supplied to synthesis, ordered so superscripts in `answer` refer to one-based source positions
+- `memory_priors_applied`, `trace_id`, optional `trace`, and `retrieval_debug`
+- `pipeline_version` (`elder-query-retrieval-v3`)
+- `llm_usage[]` and aggregate `llm_usage_totals`
 
-Temporal expansion preserves the planner-selected order through evidence
-consolidation and synthesis. `created_at`, `updated_at`, source/scene identifiers,
-the selected rank, and whether the record was temporally comparable are retained
-in evidence metadata.
+Each `sources[]` item includes its node identity/display data, score, evidence ID, chunks, provenance, temporal position, retrieval methods, canonical text, and safe properties. These are provenance records, not a promise that the full canonical source will always be returned to a client.
 
-For non-temporal plans, evidence remains relevance-ranked. For temporal plans, the
-planner-selected temporal rank takes precedence when the synthesis budget selects
-which sources fit.
+The server writes the same response metadata into assistant chat messages. That metadata currently contains `sources`, timings, plan, priors, trace ID, version, and LLM usage; it is the migration source for V3 structured continuity anchors.
 
-Current implementation is in:
+## Observability
 
-- `shrecknet/app/jobs/elder/elder.py` (stable v2 entrypoint)
-- `shrecknet/app/jobs/elder/query_v2.py`
-- `shrecknet/app/jobs/elder/schemas.py`
-- `shrecknet/app/api/routers/elder.py`
+Elder reports the timings above and emits `[ELDER_LLM_USAGE]` lines with call stage, model, input/output/total tokens, and wait time, followed by one `[ELDER_LLM_USAGE_TOTAL]` line keyed by trace ID and agent ID. Debug artifacts, when `elder_debug_artifacts_enabled` is enabled, are best-effort local files and never alter query execution.
 
-## Runtime Flow
+## Client guidance
 
-### 1. Query Construction
+Render `answer` as the answer and `sources[]` as provenance. Treat timing keys, retrieval-plan operations, evidence chunk length, and pipeline version as evolvable diagnostics. See [Elder Query Contract](./Querry/Querry.MD) for frontend details and the [V3 plan](./ELDER_QUERY_V3_IMPLEMENTATION_PLAN.md) for additive `response_scope` and migration guidance.
 
-- Validates agent and ontology scope.
-- Optionally loads chat memory from `chat_id` (recent messages).
-- Builds one adaptive bounded retrieval plan.
+## Code ownership
 
-Each intent contains:
-
-- `subquery`
-- `target_data_type` (`entity | scene | milestone | mixed`)
-- `reason`
-- `top_k_entities` (retrieved `EntityInstance` node IDs for that subquery)
-- `top_k_scenes` (retrieved `Scene` node IDs for that subquery)
-- `top_k_milestones` (retrieved `Milestone` node IDs for that subquery)
-
-Type guidance used by decomposition:
-
-- `entity`: who/what identity questions
-- `scene`: what happened in context
-- `milestone`: arc progression / when-how evolution
-- `mixed`: broad multi-type question
-
-### Adaptive planning
-
-Elder has one planner-driven execution path. The removed `fast` and `route`
-request fields are not accepted. A deterministic resolved-entity overview
-shortcut remains for narrow profile questions. It selects the single exact
-query entity (confidence `>= 0.99`) and ignores lower-confidence fuzzy candidates.
-If planner generation or validation fails for such a query, the fallback plan
-also uses an exact profile lookup plus entity-bound narrative context rather than
-an unconstrained search over the full conversational query.
-
-### 2. Candidate Generation
-
-For each intent (parallel, bounded concurrency):
-
-- Runs vector retrieval over the V2 `SemanticDocument` index (`semantic_document_vec_idx`).
-- Applies label filtering from `target_data_type`.
-- Uses retrieval windows:
-  - `candidate_limit`
-  - `rerank_limit`
-- Returns node-backed chunks with scores and evidence fields.
-
-### 3. Candidate Consolidation
-
-- Groups results by `node_id`.
-- Preserves node-level survival (no instance-level collapsing).
-- Attaches top evidence chunks per node.
-
-Output object is a `SourceNode` with:
-
-- `node_id`
-- `node_label`
-- `node_name`
-- `score`
-- `evidence_chunks[]`
-
-### 4. Reranking + Memory Priors
-
-- Applies structured priors (not freeform query rewriting):
-  - `entity_prior`
-  - `temporal_prior`
-  - `disambiguation_prior`
-  - `continuity_prior`
-- Records prior traces with:
-  - `type`
-  - `effect`
-  - `targets`
-  - `why`
-  - `impact_on_scores`
-
-### 5. Grounded Synthesis
-
-- Synthesizes answer from source evidence only.
-- Keeps answer aligned with retrieved nodes/chunks.
-- Returns `answer` + `sources` for frontend provenance.
-
-Legacy mode note:
-
-- `mode=context` skips synthesis and returns empty `answer` with populated `sources`.
-
-## Response Contract (Current)
-
-`ElderQueryResponse` now returns:
-
-- `agent_id`
-- `query`
-- `answer`
-- `timings`
-- `sources`
-- `memory_priors_applied`
-- `trace_id`
-- optional `trace`
-- optional `retrieval_debug`
-- additive `pipeline_version` (`elder-query-retrieval-v2`)
-- `llm_usage[]`, one row per Elder LLM call in execution order, with stage,
-  model, input tokens, output tokens, and total tokens
-- `llm_usage_totals`, containing aggregate call and token counts for the request
-
-The same data is printed to service stdout as grep-friendly
-`[ELDER_LLM_USAGE]` per-call lines and one `[ELDER_LLM_USAGE_TOTAL]` line,
-correlated by `trace_id` and `agent_id`.
-
-Requests may add `instance_id` to restrict retrieval to one ontology instance assigned to
-the Elder. Omitting it preserves the existing all-assigned-ontology behavior.
-
-## Latency and Observability
-
-Elder logs and returns step timings:
-
-- `decompose_ms`
-- `memory_summary_ms`
-- `retrieve_ms`
-- `consolidate_ms`
-- `rerank_ms`
-- `synthesize_ms`
-- `total_ms`
-
-In fast mode, `decompose_ms` is minimal because no multi-intent decomposition is executed.
-
-Per-intent logging includes:
-
-- subquery
-- target type
-- duration
-- top node ids
-- retrieval counters (`raw_candidates`, `after_parent_grouping`, `after_dedup`, `final_k`)
-
-## Chat Memory Relation
-
-`chat_id` memory is used as a bounded bias layer in retrieval ranking.
-
-- Memory is summarized from recent turns.
-- Memory does not directly rewrite user intent text.
-- Priors are explicit and traceable in response payload.
-
-When `chat_id` is provided, router-level persistence stores:
-
-- user message,
-- assistant answer,
-- assistant metadata (`sources`, `timings`, `memory_priors_applied`, `trace_id`, optional `trace`).
-
-## Embedding/Reconciliation Relation
-
-Elder depends on scene-centric embedding freshness.
-
-- Backing memory nodes: `EntityInstance`, `Scene`, `Milestone`
-- Retrieval vectors: `SemanticDocument.text_embedding`
-- Load control: scene/milestone writes now trigger coalesced embedding reconciliation jobs instead of broad per-write full-ontology fanout.
-
-## Operational Notes
-
-### Local debug artifacts
-
-`elder_debug_artifacts_enabled` defaults to `true`. Each Elder v2 run writes an ordered
-artifact directory under `local_tests/elder/query_<UTC timestamp>/`, using the configured
-data directory first and the repository database directory as fallback. The files capture
-request grounding, exact planner prompt and raw response, validated plan, deterministic
-retrieval, complete unified evidence, exact synthesis prompts and raw responses, final API
-response, and a manifest. Artifact I/O is best-effort and never changes query execution.
-
-- Elder requires OpenAI configuration for decomposition and synthesis.
-- Retrieval works across all ontologies assigned to the target agent.
-- Frontend should treat `sources` as grounding/provenance and can display labels for explainability.
+- `shrecknet/app/api/routers/elder.py` — HTTP validation, authorization, chat persistence
+- `shrecknet/app/jobs/elder/query_v2.py` — orchestration
+- `shrecknet/app/jobs/elder/grounding.py`, `planner.py`, `executor.py`, and `evidence.py` — pipeline stages
+- `shrecknet/app/jobs/elder/schemas.py` and `v2_schemas.py` — public and internal contracts

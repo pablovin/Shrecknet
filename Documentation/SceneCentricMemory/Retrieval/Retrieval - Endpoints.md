@@ -107,9 +107,9 @@ Request body (key fields):
 ```json
 {
   "query": "who discovered the sigil and in which scene?",
-  "synthesis_evidence_budget_tokens": 100000,
-  "candidate_limit": 40,
-  "rerank_limit": 20,
+  "instance_id": "optional-instance-id",
+  "candidate_limit": 120,
+  "rerank_limit": 50,
   "include_trace": false,
   "chat_id": "optional-chat-id"
 }
@@ -123,8 +123,8 @@ Response shape (current):
   "query": "who discovered the sigil and in which scene?",
   "answer": "Riven discovered the sigil in Gatehouse Confrontation...",
   "timings": {
-    "decompose_ms": 61.2,
-    "memory_summary_ms": 15.4,
+    "grounding_ms": 61.2,
+    "plan_ms": 15.4,
     "retrieve_ms": 148.8,
     "consolidate_ms": 23.1,
     "rerank_ms": 18.5,
@@ -147,6 +147,12 @@ Response shape (current):
       ]
     }
   ],
+  "retrieval_plan": {
+    "answer_goal": "Identify the discoverer and scene.",
+    "response_scope": "standard",
+    "query_intent": {},
+    "steps": []
+  },
   "memory_priors_applied": [
     {
       "type": "entity_prior",
@@ -158,7 +164,10 @@ Response shape (current):
   ],
   "trace_id": "elder-trace-uuid",
   "trace": null,
-  "retrieval_debug": []
+  "retrieval_debug": [],
+  "pipeline_version": "elder-query-retrieval-v3",
+  "llm_usage": [],
+  "llm_usage_totals": {"calls": 0, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
 }
 ```
 
@@ -169,19 +178,20 @@ Response shape (current):
 The older `/jobs/elder/chat/messages/stream` spelling appeared in previous documentation but
 is not the registered route.
 
-Same retrieval controls apply (`candidate_limit`, `rerank_limit`,
-`synthesis_evidence_budget_tokens`, `chat_id`, `include_trace`).
+The same supported request fields apply (`candidate_limit`, `rerank_limit`,
+`instance_id`, `chat_id`, and `include_trace`).
 
-Both Elder endpoints use `elder-query-retrieval-v2` by default. `instance_id` is an optional,
+Both Elder endpoints currently return `elder-query-retrieval-v3`. `instance_id` is an optional,
 additive request field. Responses include `pipeline_version`.
 
-`synthesis_evidence_budget_tokens` defaults to `100000` and accepts
-`1000..1000000`. Elder hydrates sources in retrieval order without per-source
-text truncation. It adds full sources until the aggregate budget is crossed,
-includes the complete source that crosses it, and then stops. The actual evidence
-count may therefore exceed the soft budget by one source.
+`synthesis_evidence_budget_tokens` is not an Elder request field. The current
+server uses planner-owned evidence-type budgets and complete-source hydration.
+The next Elder revision replaces that normal path with compact local hydration and
+response-scope budgets; see [the Elder V3 implementation plan](../../Agents/Elder/ELDER_QUERY_V3_IMPLEMENTATION_PLAN.md).
 
 ## Notes
 
 - Elder response is source-grounded and includes explicit provenance in `sources`.
 - `trace_id` can be used to correlate frontend behavior with backend logs.
+- Clients should treat timings, retrieval-plan steps, source text volume, and
+  `pipeline_version` as extensible diagnostics rather than fixed UI contracts.

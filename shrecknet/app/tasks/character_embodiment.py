@@ -418,9 +418,9 @@ async def _generate(*, draft_id: str, revision: int, job_id: int) -> dict:
                     scene_interpretation_model=settings.model_character_agent_scene_interpretation,
                     max_goals=settings.character_agent_embodiment_max_goals,
                     max_aspects=settings.character_agent_embodiment_max_aspects,
-                    # JSON repair is handled once in the shared stage wrapper;
-                    # failed units surface directly instead of triggering hidden LLM loops.
-                    semantic_correction_attempts=0,
+                    semantic_correction_attempts=(
+                        settings.character_agent_embodiment_semantic_correction_attempts
+                    ),
                     debug_artifacts=debug_artifacts,
                     debug_source_index=source_index,
                     debug_source_alias=source_alias,

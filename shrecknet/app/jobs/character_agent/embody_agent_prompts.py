@@ -79,9 +79,12 @@ an array has no grounded item; never omit an array.
 
 For an impact, use target_index: the one-based position of its target in the
 matching current_profile array. The backend resolves that index to its stable ID.
-When both current_profile arrays are empty, impacts MUST be []. Goal impacts
-allow advanced or threatened. Aspect impacts allow created, reinforced, or
-invalidated.
+When both current_profile arrays are empty, impacts MUST be []. Use exactly one
+of these two forms: a goal_change targets current_profile.goals and has direction
+advanced or threatened; an aspect_change targets current_profile.aspects and has
+direction created, reinforced, or invalidated. Never use threatened or advanced
+for an aspect_change, and never use created, reinforced, or invalidated for a
+goal_change.
 
 INPUT:
 {
@@ -101,7 +104,10 @@ OUTPUT:
   "scene_enrichments": [{
     "emotions":[{"arousal":0..100,"valence":-100..100,"description":"..."}],
     "beliefs":[{"statement":"...","confidence":0..100,"status":"suspected | believed | confirmed | doubted | disproven | superseded"}],
-    "impacts":[{"impact_type":"goal_change | aspect_change","target_index":1,"direction":"advanced | threatened | created | reinforced | invalidated","magnitude":0..100,"description":"..."}],
+    "impacts":[
+      {"impact_type":"goal_change","target_index":1,"direction":"advanced | threatened","magnitude":0..100,"description":"..."},
+      {"impact_type":"aspect_change","target_index":1,"direction":"created | reinforced | invalidated","magnitude":0..100,"description":"..."}
+    ],
     "trait_candidates":[{"trait":"integrity | caution | presence | forbearance | diligence | curiosity | sharing | restlessness","evidence_kind":"behavior","situation_type":"diagnostic value for trait","pole":"left | right","update_intensity":"small | medium | large","expression_z":"non-zero number from -1.9 to 1.9","diagnosticity":0.0,"confidence":0.0,"behavior":"one observed individual choice","justification":"why diagnostic","conditions":{"knowledge":{"status":"supported | contradicted | unknown","justification":"..."},"capability":{"status":"supported | contradicted | unknown","justification":"..."},"options":{"status":"supported | contradicted | unknown","justification":"..."},"freedom":{"status":"supported | contradicted | unknown","justification":"..."}},"comparison_context":"string or null"}],
     "aspect_signals":[{"name":"...","category":"identity | role | status | physical | capability | knowledge | preference | attitude | history","description":"durable character-development fact","importance":1..5,"justification":"...","confidence":0.0}],
     "goal_signals":[{"title":"...","description":"adopted durable commitment","goal_type":"desire | objective | ambition | obligation | avoidance | survival","priority":0..100,"commitment":0..100,"basis":"explicit | inferred","justification":"...","confidence":0.0}]

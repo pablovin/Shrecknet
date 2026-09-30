@@ -109,6 +109,11 @@ requires a matching durable signal and supporting canonical evidence. The final
 update may add at most two aspects and one goal for a source bundle, and only
 when that evidence establishes durable character development; ordinary events,
 passing emotions, group actions, and assigned tasks do not qualify.
+The LLM schema models impact alternatives separately: `goal_change` uses only
+`advanced` or `threatened` and indexes the supplied goals; `aspect_change` uses
+only `created`, `reinforced`, or `invalidated` and indexes the supplied aspects.
+This conditional pairing is enforced before the backend resolves the index to a
+persisted target ID.
 
 The perspective stage receives the current profile as input but not the full
 trait-definition catalogue: it renders grounded perspectives and does not make
@@ -257,12 +262,10 @@ Each analysis chunk runs a bounded two-wave LLM pipeline:
    impacts, and grounded trait candidates) and identity-signal extraction
    (bounded aspect/goal candidate signals).
 
-If a multi-scene chunk exhausts its JSON or semantic correction because its model
-output is malformed or incomplete, the worker automatically retries only that
-chunk as one-scene analysis calls and merges the recovered results. Provider and
-transport failures, and failures from an already one-scene call, still fail the
-draft. This bounded fallback preserves the normal batch cost for healthy output
-and prevents one omitted scene result from discarding a long embodiment run.
+Each malformed non-empty response receives the bounded correction policy
+described above. If that correction is exhausted, the affected source fails and
+the draft remains unfinalized; the worker does not silently substitute a
+different one-scene run. Provider and transport failures also fail the draft.
 
 After all chunks have completed, the worker merges their structured results.
 Deterministic trait acceptance, signal deduplication, and separate STEADINESS

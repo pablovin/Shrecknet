@@ -31,6 +31,7 @@ class _ResolveGraphSession:
                         "entity_definition_id": 45,
                         "entity_alias": "Eldrin",
                         "instance_name": "Eldrin Profile",
+                        "avatar_url": "https://example.test/eldrin.png",
                     }
                 )
             if entity_id == "uuid-2":
@@ -64,6 +65,7 @@ async def test_resolve_entities_returns_ordered_results_and_missing_ids() -> Non
     assert response.results[1].instance_id == "content-instance-uuid"
     assert response.results[1].entity_alias == "Eldrin"
     assert response.results[1].instance_name == "Eldrin Profile"
+    assert response.results[1].avatar_url == "https://example.test/eldrin.png"
 
 
 @pytest.mark.asyncio

@@ -739,7 +739,8 @@ class OntologyInstanceService:
                    toInteger(entity.ontology_id) AS ontology_id,
                    toInteger(entity.entity_definition_id) AS entity_definition_id,
                    entity.alias AS entity_alias,
-                   inst.name AS instance_name
+                   inst.name AS instance_name,
+                   entity.node_avatar_url AS avatar_url
             """,
             entity_ids=requested_ids,
             ontology_id=ontology_id,
@@ -757,6 +758,7 @@ class OntologyInstanceService:
                 entity_definition_id=int(row.get("entity_definition_id") or 0),
                 entity_alias=_normalize_optional_str(row.get("entity_alias")),
                 instance_name=_normalize_optional_str(row.get("instance_name")),
+                avatar_url=_normalize_optional_str(row.get("avatar_url")),
             )
 
         ordered_results: list[OntologyEntityResolveItem] = []
@@ -2600,7 +2602,7 @@ class OntologyInstanceService:
             """
             MATCH (page:OntologyInstance)-[:HAS_SCENE]->(scene:Scene)
             WHERE toInteger(page.ontology_id) = toInteger($ontology_id)
-              AND ($query IS NULL OR toLower(scene.name) CONTAINS $query)
+              AND ($scene_query IS NULL OR toLower(scene.name) CONTAINS $scene_query)
             OPTIONAL MATCH (scene)-[:CONTAINS]->(milestone:Milestone)
             OPTIONAL MATCH (perspective:ScenePerspective)-[:PROJECTS_ON]->(scene)
             OPTIONAL MATCH (page)-[:HAS_ENTITY]->(page_entity:EntityInstance)
@@ -2615,7 +2617,10 @@ class OntologyInstanceService:
             ORDER BY page.name ASC, scene.created_at ASC
             SKIP $skip LIMIT $limit
             """,
-            ontology_id=ontology_id, query=search, skip=skip, limit=limit,
+            ontology_id=ontology_id,
+            scene_query=search,
+            skip=skip,
+            limit=limit,
         )
         return [SceneSummary(**row) for row in await result.data()]
 

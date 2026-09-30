@@ -600,6 +600,7 @@ class OntologyEntityResolveItem(BaseModel):
     entity_definition_id: int
     entity_alias: str | None = None
     instance_name: str | None = None
+    avatar_url: str | None = None
 
 
 class OntologyEntityResolveResponse(BaseModel):

@@ -37,6 +37,13 @@ Readers can post the currently selected Text or Generated text source to Foundry
 chat with its page name and image. A GM can also choose **Show players** on a
 Shrecknet image to open it for every connected player.
 
+Folders, search results, and related records render as image cards that open the
+underlying page. The browser displays a loading indicator while it fetches
+content, including related-record resolution.
+
+The World index uses each displayed entity type's `image_url`; when that is not
+set, it falls back to the owning ontology's `image_url`.
+
 ## v0.1 limits
 
 The module is read-only. It does not create Foundry Actors, Items, Journals, or

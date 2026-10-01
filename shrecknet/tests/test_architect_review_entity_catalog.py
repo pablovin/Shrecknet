@@ -17,8 +17,8 @@ class _CatalogGraph:
     def __init__(self) -> None:
         self.calls: list[tuple[str, dict]] = []
 
-    async def run(self, query: str, *args, **kwargs):
-        del args
+    async def run(self, query: str, parameters: dict | None = None, **kwargs):
+        del parameters
         self.calls.append((query, kwargs))
         if "LIMIT $fetch_limit" in query:
             return _Result([
@@ -57,8 +57,8 @@ async def test_catalog_is_compact_and_uses_keyset_cursor() -> None:
     query, params = graph.calls[0]
     assert "entity.text" not in query
     assert "entity.properties" not in query
-    assert "entity.normalized_name STARTS WITH $query" in query
-    assert params["query"] == "robert heinlein"
+    assert "entity.normalized_name STARTS WITH $name_prefix" in query
+    assert params["name_prefix"] == "robert heinlein"
 
     await service.list_architect_review_entity_catalog(
         ontology_id=7, entity_definition_id=42, query=None, cursor=response.next_cursor, limit=1,

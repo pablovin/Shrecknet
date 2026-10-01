@@ -842,7 +842,7 @@ class OntologyInstanceService:
             else ""
         )
         name_filter = (
-            "AND entity.normalized_name STARTS WITH $query"
+            "AND entity.normalized_name STARTS WITH $name_prefix"
             if normalized_query
             else ""
         )
@@ -878,7 +878,7 @@ class OntologyInstanceService:
             cypher_query,
             ontology_id=ontology_id,
             entity_definition_id=entity_definition_id,
-            query=normalized_query,
+            name_prefix=normalized_query,
             cursor_name=cursor_name,
             cursor_id=cursor_id,
             fetch_limit=limit + 1,

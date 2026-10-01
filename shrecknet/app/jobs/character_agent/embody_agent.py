@@ -1601,6 +1601,10 @@ def _deterministic_profile_result(*, evidence, source_entity_id: str, aspect_sig
     for signal in sorted(aspect_signals, key=lambda item: (-item.confidence, -item.importance, item.name.casefold())):
         key = _normalized_identity_label(signal.name)
         if key in known_aspects:
+            logger.info(
+                "embodiment_duplicate_aspect_signal_ignored source_id=%s name=%s",
+                source_entity_id, signal.name,
+            )
             continue
         known_aspects.add(key)
         aspect_updates.append({"operation": "add", **signal.model_dump(mode="json")})
@@ -1608,6 +1612,10 @@ def _deterministic_profile_result(*, evidence, source_entity_id: str, aspect_sig
     for signal in sorted(goal_signals, key=lambda item: (-item.confidence, -item.priority, item.title.casefold())):
         key = _normalized_identity_label(signal.title)
         if key in known_goals:
+            logger.info(
+                "embodiment_duplicate_goal_signal_ignored source_id=%s title=%s",
+                source_entity_id, signal.title,
+            )
             continue
         known_goals.add(key)
         goal_updates.append({"operation": "add", **signal.model_dump(mode="json")})

@@ -83,7 +83,7 @@ scene reconstruction.
 
 Every embodiment generation request sends its Pydantic JSON Schema through
 ShreckLLM as a native strict `response_format` request: authored baseline,
-incorporation, both parallel branches, JSON repair, and schema/semantic
+incorporation, psychological analysis, JSON repair, and schema/semantic
 corrections. The explicit prompt contract remains present for model readability.
 If a configured provider explicitly rejects structured output, the call is
 retried once without it under a `structured_fallback` usage tag; backend binding,
@@ -102,9 +102,13 @@ ledger, raw scenes after incorporation, or a source-level profile-update payload
 Psychological analysis treats newly grounded durable facts (identity, role,
 affiliation, relationship, capability, status, knowledge, value, preference, or
 history) as positive aspect-signal candidates, and active self-adopted objectives
-or commitments as positive goal-signal candidates. The deterministic reducer
-deduplicates and caps additions per source. Enrichment emits every distinct scene-local trait candidate it can identify;
-there is deliberately **no hard per-scene candidate limit**. Candidates with
+or commitments as positive goal-signal candidates. Existing profile aspects and
+goals are impact targets only: signals must not repeat them. A confirmed,
+important, character-specific revelation about origin, nature, body, identity, or
+constructed status must instead produce a distinct `identity` aspect signal (for
+example, `Belshazar-crafted vessel`). The deterministic reducer logs and ignores
+any duplicate signal, then caps additions per source. Enrichment emits at most
+three distinct scene-local trait candidates. Candidates with
 unknown or contradicted choice conditions remain auditable evidence but cannot
 move a trait estimate. Each scene may emit at most one durable aspect signal and
 one durable goal signal. Signals are evidence, never mutations: they make a

@@ -1285,10 +1285,45 @@ async def test_psychological_analysis_durable_signals_become_identity_additions(
     assert [item.title for item in result.goal_updates] == ['Protect the village']
 
 
+@pytest.mark.asyncio
+async def test_identity_revelation_adds_a_distinct_aspect_when_existing_role_is_reinforced():
+    class DollRevelationLLM(BatchLLM):
+        async def chat(self, **kwargs):
+            raw = await super().chat(**kwargs)
+            if kwargs['usage_tag'].endswith('.scene_interpretation'):
+                payload = json.loads(raw)
+                payload['scene_enrichments'][0]['aspect_signals'] = [{
+                    'name': 'Member of a secret pact', 'category': 'role',
+                    'description': 'The existing pact remains relevant.', 'importance': 4,
+                    'justification': 'The scene reinforces the existing role.', 'confidence': .9,
+                }]
+                payload['scene_enrichments'][1]['aspect_signals'] = [{
+                    'name': 'Belshazar-crafted vessel', 'category': 'identity',
+                    'description': 'Ernst is a constructed vessel whose memories were threaded at creation.',
+                    'importance': 5,
+                    'justification': 'A confirmed revelation establishes Ernst\'s constructed origin.',
+                    'confidence': .95,
+                }]
+                return json.dumps(payload)
+            return raw
+
+    result = await _agent(DollRevelationLLM()).run(
+        source_entity_id='source', source_entity_alias='Source',
+        canonical_identity=_canonical(), current_trait_profile=TraitProfile(),
+        current_aspects=[{'id': 'aspect-pact', 'name': 'Member of a secret pact'}],
+        current_goals=[], scenes=scenes(2), batch_id='source',
+    )
+
+    assert [item.name for item in result.aspect_updates] == ['Belshazar-crafted vessel']
+    assert result.aspect_updates[0].importance == 5
+
+
 def test_second_wave_prompts_are_compact_and_have_separate_contracts():
     assert len(PSYCHOLOGICAL_ANALYSIS_PROMPT) < 7_500
     assert 'trait_candidates' in PSYCHOLOGICAL_ANALYSIS_PROMPT
     assert 'aspect_signals' in PSYCHOLOGICAL_ANALYSIS_PROMPT
+    assert 'Current-profile aspects and goals are impact targets' in PSYCHOLOGICAL_ANALYSIS_PROMPT
+    assert 'mandatory distinct `identity` aspect signal' in PSYCHOLOGICAL_ANALYSIS_PROMPT
     assert 'Authoritative trait definitions and scale' not in PERSPECTIVE_PROMPT
 
 

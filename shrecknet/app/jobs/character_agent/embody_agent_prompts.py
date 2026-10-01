@@ -100,7 +100,8 @@ OUTPUT: {"scene_enrichments":[{"emotions":[{"arousal":0..100,"valence":-100..100
 
 Impacts use target_index from the matching current_profile list. goal_change is
 advanced|threatened; aspect_change is created|reinforced|invalidated. With no
-targets, impacts must be [].
+targets, impacts must be []. Current-profile aspects and goals are impact targets
+only: never repeat their name or title in aspect_signals or goal_signals.
 
 Trait candidates are only distinct diagnostic individual choices, never emotion,
 group action, or repeated evidence. expression_z is nonzero (-1.9..1.9) and its
@@ -114,7 +115,11 @@ curiosity=novelty|exploration|puzzle|unknown_information; sharing=resource_alloc
 restlessness=value_conflict|recurring_value_preference.
 
 An aspect signal needs a grounded durable character fact; a goal signal needs a
-grounded ongoing personal commitment. They are evidence, not mutations. Return
+grounded ongoing personal commitment. They are evidence, not mutations. A
+confirmed, character-specific revelation about origin, nature, body, identity,
+or constructed status is a mandatory distinct `identity` aspect signal when it
+is important to the character. Name the revelation itself (for example,
+"<creator>-crafted vessel"), not an existing relationship, role, or goal. Return
 JSON only."""
 
 

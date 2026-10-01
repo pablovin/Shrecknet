@@ -443,7 +443,8 @@ services:
       SHRECKWORLD_MEDIA_ROOT: /app/media
       SHRECKWORLD_CELERY_BROKER_URL: redis://shreckworld_redis:6379/0
       SHRECKWORLD_CELERY_RESULT_BACKEND: redis://shreckworld_redis:6379/1
-      SHRECKWORLD_SHRECKNET_JWKS_URL: http://shrecknet_api:8110/auth/jwks
+      # shrecknet_api exposes its internal HTTP API on 8100; 8110 belongs to shreckLLM.
+      SHRECKWORLD_SHRECKNET_JWKS_URL: http://shrecknet_api:8100/auth/jwks
       SHRECKWORLD_QDRANT_URL: http://qdrant:6333
     ports:
       - "8121:8120" # host:container; keep the service port internal

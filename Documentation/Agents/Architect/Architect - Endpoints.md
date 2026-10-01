@@ -241,6 +241,81 @@ Compatibility note:
 - Generation currently accepts outputs.scene_proposals or outputs.scenes.
 - Generation currently accepts outputs.milestones_per_scene, outputs.milestone_proposals, or outputs.milestones.
 
+## 9. Review Entity Catalog
+
+All endpoints below require an authenticated user, matching existing ontology-instance reads.
+
+### List entities
+
+- `GET /ontologies/{ontology_id}/architect-review/entity-catalog?entity_definition_id=42&query=robert&limit=50`
+- `entity_definition_id` and `query` are optional. `query` is case-insensitive normalized-name prefix matching.
+- `cursor` is opaque and must be passed unchanged to fetch the next stable, name-ordered page.
+- `limit` defaults to 50 and is between 1 and 200.
+
+The response is intentionally flat. It does not include entity text, properties, or relationships:
+
+```json
+{
+  "results": [{
+    "entity_instance_id": "entity-uuid",
+    "entity_definition_id": 42,
+    "alias": "Robert Heinlein",
+    "instance_id": "instance-uuid",
+    "instance_name": "Authors",
+    "avatar_url": null,
+    "has_agent": true,
+    "agent_id": "agent-uuid",
+    "agent_name": "Julia",
+    "agent_avatar_url": null
+  }],
+  "next_cursor": "WyJyb2JlcnQgaGVpbmxlaW4iLCJlbnRpdHktdXVpZCJd"
+}
+```
+
+### Resolve proposal references
+
+- `POST /ontologies/{ontology_id}/architect-review/entity-catalog/resolve`
+
+```json
+{"entity_instance_ids": ["entity-uuid", "another-entity-uuid"]}
+```
+
+Results retain first-seen request order. Duplicate IDs are removed. Missing IDs and IDs from another ontology are returned in `missing_entity_instance_ids` without exposing their data.
+
+## 10. Compact Run Progress
+
+- `GET /jobs/architect/runs/{run_id}/progress`
+- `GET /jobs/architect/{agent_id}/runs?include=progress`
+
+The single-run endpoint returns run status/timestamps, proposal counts by status, and compact analysis/generation job state. The list endpoint preserves its existing summary fields and adds that object as `progress` for every returned run.
+
+```json
+{
+  "id": "run-uuid",
+  "agent_id": "agent-uuid",
+  "ontology_id": 1,
+  "ontology_instance_id": "instance-uuid",
+  "status": "running",
+  "created_at": "2026-10-01T10:00:00Z",
+  "updated_at": "2026-10-01T10:02:00Z",
+  "proposal_counts": {"pending": 8, "approved": 2},
+  "analysis_job": {
+    "availability": "available",
+    "job_id": 123,
+    "status": "running",
+    "progress": 0.65,
+    "details": {"stage": "entity_extraction"},
+    "error_message": null,
+    "started_at": "2026-10-01T10:00:01Z",
+    "completed_at": null,
+    "updated_at": "2026-10-01T10:02:00Z"
+  },
+  "generation_job": {"availability": "not_started", "job_id": null, "status": null, "progress": null, "details": null, "error_message": null, "started_at": null, "completed_at": null, "updated_at": null}
+}
+```
+
+`availability` is `not_started` when no job has been attached, `available` when the job record exists, and `unavailable` when an old attached job was purged. Clients must treat `unavailable` as terminal for polling and must not request `/jobs/{job_id}`.
+
 ## Enum Notes
 
 Common proposal status values:

@@ -14,6 +14,7 @@ from app.api.deps import (
     get_architect_service,
     get_current_user,
     get_db_session,
+    get_jobs_session,
 )
 from app.api.agent_feature_gate import require_ai_agents_enabled
 from app.core.config_store import get_settings, is_shreckllm_configured
@@ -28,8 +29,10 @@ from app.schemas.architect import (
     ArchitectGenerationRequest,
     ArchitectAnalysisRunRead,
     ArchitectAnalysisRunSummary,
+    ArchitectCompactJobState,
     ArchitectProposalRead,
     ArchitectProposalStatusUpdate,
+    ArchitectRunProgressResponse,
 )
 from app.services.architect_service import ArchitectService
 from app.tasks.architect_analysis import analyze_instance as architect_task
@@ -82,6 +85,64 @@ async def _get_architect_agent_or_404(
             detail=f"Agent job type '{agent.job}' is not 'architect'",
         )
     return agent
+
+
+def _compact_job_details(raw: str | None) -> dict[str, Any] | None:
+    """Expose progress metadata, never persisted proposal or pipeline payloads."""
+    if not isinstance(raw, str):
+        return None
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    allowed = {"status", "stage", "message", "current_step", "total_steps"}
+    return {key: parsed[key] for key in allowed if key in parsed} or None
+
+
+def _compact_job_state(job_id: int | None, job: Any | None) -> ArchitectCompactJobState:
+    if job_id is None:
+        return ArchitectCompactJobState(availability="not_started")
+    if job is None:
+        return ArchitectCompactJobState(availability="unavailable", job_id=job_id)
+    return ArchitectCompactJobState(
+        availability="available",
+        job_id=job.id,
+        status=job.status.value if hasattr(job.status, "value") else str(job.status),
+        progress=job.progress,
+        details=_compact_job_details(job.details),
+        error_message=job.error_message,
+        started_at=job.started_at,
+        completed_at=job.completed_at,
+        updated_at=job.updated_at,
+    )
+
+
+async def _run_progress(
+    run: Any,
+    service: ArchitectService,
+    jobs_session: AsyncSession,
+) -> ArchitectRunProgressResponse:
+    jobs = BackgroundJobRepository(jobs_session)
+    analysis_job = (
+        await jobs.get_by_id(run.background_job_id) if run.background_job_id else None
+    )
+    generation_job = (
+        await jobs.get_by_id(run.generation_job_id) if run.generation_job_id else None
+    )
+    return ArchitectRunProgressResponse(
+        id=run.id,
+        agent_id=run.agent_id,
+        ontology_id=run.ontology_id,
+        ontology_instance_id=run.ontology_instance_id,
+        status=run.status,
+        created_at=run.created_at,
+        updated_at=run.updated_at,
+        proposal_counts=await service.proposal_counts(run.id),
+        analysis_job=_compact_job_state(run.background_job_id, analysis_job),
+        generation_job=_compact_job_state(run.generation_job_id, generation_job),
+    )
 
 
 @router.post(
@@ -167,6 +228,19 @@ async def get_architect_run(
     return ArchitectAnalysisRunRead.model_validate(run)
 
 
+@router.get("/runs/{run_id}/progress", response_model=ArchitectRunProgressResponse)
+async def get_architect_run_progress(
+    run_id: str,
+    _current_user: User = Depends(get_current_user),
+    service: ArchitectService = Depends(get_architect_service),
+    jobs_session: AsyncSession = Depends(get_jobs_session),
+) -> ArchitectRunProgressResponse:
+    run = await service.get_run(run_id, include_proposals=False)
+    if not run:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Architect run not found")
+    return await _run_progress(run, service, jobs_session)
+
+
 @router.get(
     "/{agent_id}/runs",
     response_model=list[ArchitectAnalysisRunSummary],
@@ -175,9 +249,11 @@ async def list_architect_runs(
     agent_id: str,
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
+    include: str | None = Query(None, pattern="^progress$"),
     _current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_db_session),
     service: ArchitectService = Depends(get_architect_service),
+    jobs_session: AsyncSession = Depends(get_jobs_session),
 ) -> list[ArchitectAnalysisRunSummary]:
     await _get_architect_agent_or_404(agent_id, session)
 
@@ -196,6 +272,11 @@ async def list_architect_runs(
                 input_chunk_count=run.input_chunk_count,
                 created_at=run.created_at,
                 updated_at=run.updated_at,
+                progress=(
+                    await _run_progress(run, service, jobs_session)
+                    if include == "progress"
+                    else None
+                ),
             )
         )
     return summaries

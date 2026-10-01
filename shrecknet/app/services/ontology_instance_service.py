@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import json
 import logging
 import re
@@ -21,6 +23,9 @@ from app.schemas.ontology_instance import (
     MilestoneCreate,
     MilestoneRead,
     MilestoneUpdate,
+    ArchitectReviewEntityCatalogItem,
+    ArchitectReviewEntityCatalogPage,
+    ArchitectReviewEntityCatalogResolveResponse,
     OntologyEntityResolveItem,
     OntologyEntityResolveResponse,
     OntologyInstanceCreate,
@@ -106,6 +111,33 @@ def _enqueue_link_instance(instance_id: str) -> None:
 
 def _format_dt(dt: datetime) -> str:
     return dt.strftime(ISO_FORMAT)
+
+
+def _normalize_catalog_name(value: str | None) -> str:
+    return " ".join((value or "").casefold().split())
+
+
+def _encode_catalog_cursor(normalized_name: str, entity_instance_id: str) -> str:
+    raw = json.dumps([normalized_name, entity_instance_id], separators=(",", ":"))
+    return base64.urlsafe_b64encode(raw.encode("utf-8")).decode("ascii").rstrip("=")
+
+
+def _decode_catalog_cursor(cursor: str | None) -> tuple[str | None, str | None]:
+    if not cursor:
+        return None, None
+    try:
+        padded = cursor + "=" * (-len(cursor) % 4)
+        decoded = base64.urlsafe_b64decode(padded.encode("ascii"))
+        value = json.loads(decoded)
+        if (
+            not isinstance(value, list)
+            or len(value) != 2
+            or not all(isinstance(item, str) for item in value)
+        ):
+            raise ValueError
+        return value[0], value[1]
+    except (ValueError, TypeError, UnicodeDecodeError, binascii.Error) as exc:
+        raise ValueError("cursor is invalid") from exc
 
 
 def _parse_dt(raw: str | datetime | Neo4jDateTime | None) -> datetime:
@@ -335,6 +367,7 @@ class OntologyInstanceService:
                         created_at: $created_at,
                         updated_at: $updated_at,
                         alias: $alias,
+                        normalized_name: $normalized_name,
                         is_embedded: false,
                         last_embedded_date: null
                     })
@@ -356,6 +389,7 @@ class OntologyInstanceService:
                     created_at=timestamp,
                     updated_at=timestamp,
                     alias=entity_payload.alias,
+                    normalized_name=_normalize_catalog_name(entity_payload.alias),
                 )
 
             for node in nodes_payload:
@@ -773,6 +807,131 @@ class OntologyInstanceService:
         return OntologyEntityResolveResponse(
             results=ordered_results,
             missing_entity_instance_ids=missing_ids,
+        )
+
+    @staticmethod
+    def _catalog_item(row: dict[str, Any]) -> ArchitectReviewEntityCatalogItem:
+        agent_id = _normalize_optional_str(row.get("agent_id"))
+        return ArchitectReviewEntityCatalogItem(
+            entity_instance_id=str(row["entity_instance_id"]),
+            entity_definition_id=int(row["entity_definition_id"]),
+            alias=_normalize_optional_str(row.get("alias")),
+            instance_id=str(row["instance_id"]),
+            instance_name=_normalize_optional_str(row.get("instance_name")),
+            avatar_url=_normalize_optional_str(row.get("avatar_url")),
+            has_agent=agent_id is not None,
+            agent_id=agent_id,
+            agent_name=_normalize_optional_str(row.get("agent_name")),
+            agent_avatar_url=_normalize_optional_str(row.get("agent_avatar_url")),
+        )
+
+    async def list_architect_review_entity_catalog(
+        self,
+        *,
+        ontology_id: int,
+        entity_definition_id: int | None,
+        query: str | None,
+        cursor: str | None,
+        limit: int,
+    ) -> ArchitectReviewEntityCatalogPage:
+        cursor_name, cursor_id = _decode_catalog_cursor(cursor)
+        normalized_query = _normalize_catalog_name(query)
+        definition_filter = (
+            "AND entity.entity_definition_id = $entity_definition_id"
+            if entity_definition_id is not None
+            else ""
+        )
+        name_filter = (
+            "AND entity.normalized_name STARTS WITH $query"
+            if normalized_query
+            else ""
+        )
+        cursor_filter = (
+            "AND (entity.normalized_name > $cursor_name "
+            "OR (entity.normalized_name = $cursor_name "
+            "AND entity.entity_instance_id > $cursor_id))"
+            if cursor_name is not None
+            else ""
+        )
+        result = await self.graph_session.run(
+            f"""
+            MATCH (entity:EntityInstance)
+            WHERE entity.ontology_id = $ontology_id
+              {definition_filter}
+              {name_filter}
+              {cursor_filter}
+            OPTIONAL MATCH (instance:OntologyInstance {instance_id: entity.instance_id})
+            OPTIONAL MATCH (agent:CharacterAgent)-[:EMBODIES]->(entity)
+            RETURN entity.entity_instance_id AS entity_instance_id,
+                   entity.entity_definition_id AS entity_definition_id,
+                   entity.alias AS alias,
+                   entity.instance_id AS instance_id,
+                   instance.name AS instance_name,
+                   entity.node_avatar_url AS avatar_url,
+                   agent.id AS agent_id,
+                   agent.name AS agent_name,
+                   agent.image_url AS agent_avatar_url,
+                   entity.normalized_name AS normalized_name
+            ORDER BY entity.normalized_name ASC, entity.entity_instance_id ASC
+            LIMIT $fetch_limit
+            """,
+            ontology_id=ontology_id,
+            entity_definition_id=entity_definition_id,
+            query=normalized_query,
+            cursor_name=cursor_name,
+            cursor_id=cursor_id,
+            fetch_limit=limit + 1,
+        )
+        rows = await result.data()
+        page_rows = rows[:limit]
+        next_cursor = None
+        if len(rows) > limit and page_rows:
+            final = page_rows[-1]
+            next_cursor = _encode_catalog_cursor(
+                str(final.get("normalized_name") or ""),
+                str(final["entity_instance_id"]),
+            )
+        return ArchitectReviewEntityCatalogPage(
+            results=[self._catalog_item(row) for row in page_rows],
+            next_cursor=next_cursor,
+        )
+
+    async def resolve_architect_review_entity_catalog(
+        self, *, ontology_id: int, entity_instance_ids: list[str]
+    ) -> ArchitectReviewEntityCatalogResolveResponse:
+        requested_ids = _normalize_id_list(entity_instance_ids)
+        if not requested_ids:
+            raise ValueError("entity_instance_ids cannot be empty")
+        if len(requested_ids) > 200:
+            raise ValueError("entity_instance_ids cannot contain more than 200 ids")
+        result = await self.graph_session.run(
+            """
+            UNWIND $entity_ids AS entity_id
+            OPTIONAL MATCH (entity:EntityInstance {entity_instance_id: entity_id})
+            WHERE entity.ontology_id = $ontology_id
+            OPTIONAL MATCH (instance:OntologyInstance {instance_id: entity.instance_id})
+            OPTIONAL MATCH (agent:CharacterAgent)-[:EMBODIES]->(entity)
+            RETURN entity.entity_instance_id AS entity_instance_id,
+                   entity.entity_definition_id AS entity_definition_id,
+                   entity.alias AS alias,
+                   entity.instance_id AS instance_id,
+                   instance.name AS instance_name,
+                   entity.node_avatar_url AS avatar_url,
+                   agent.id AS agent_id,
+                   agent.name AS agent_name,
+                   agent.image_url AS agent_avatar_url
+            """,
+            entity_ids=requested_ids,
+            ontology_id=ontology_id,
+        )
+        resolved = {
+            str(row["entity_instance_id"]): self._catalog_item(row)
+            for row in await result.data()
+            if row.get("entity_instance_id")
+        }
+        return ArchitectReviewEntityCatalogResolveResponse(
+            results=[resolved[item] for item in requested_ids if item in resolved],
+            missing_entity_instance_ids=[item for item in requested_ids if item not in resolved],
         )
 
     async def count_scenes_by_instances(
@@ -1760,7 +1919,8 @@ class OntologyInstanceService:
                         e.author_type = $author_type,
                         e.author_id = $author_id,
                         e.updated_at = $updated_at,
-                        e.alias = $alias
+                        e.alias = $alias,
+                        e.normalized_name = $normalized_name
                     """,
                     instance_id=instance_id,
                     entity_instance_id=entity_node_id,
@@ -1776,6 +1936,7 @@ class OntologyInstanceService:
                     author_type=entity_payload.author_type.value,
                     author_id=entity_payload.author_id,
                     updated_at=timestamp,
+                    normalized_name=_normalize_catalog_name(entity_payload.alias),
                     alias=entity_payload.alias,
                 )
 

@@ -102,18 +102,23 @@ ledger, raw scenes after incorporation, or a source-level profile-update payload
 Psychological analysis treats newly grounded durable facts (identity, role,
 affiliation, relationship, capability, status, knowledge, value, preference, or
 history) as positive aspect-signal candidates, and active self-adopted objectives
-or commitments as positive goal-signal candidates. Existing profile aspects and
-goals are impact targets only: signals must not repeat them. A confirmed,
-important, character-specific revelation about origin, nature, body, identity, or
-constructed status must instead produce a distinct `identity` aspect signal (for
-example, `Belshazar-crafted vessel`). The deterministic reducer logs and ignores
+or commitments as positive goal-signal candidates. Existing profile aspects are
+impact targets only and cannot be repeated. Generated aspect names are concise,
+present-tense first-person self-statements, so the character-facing UI exposes a
+meaningful claim rather than an abstract category. A confirmed, important,
+character-specific revelation about origin, nature, body, identity, or constructed
+status must instead produce a distinct `identity` aspect signal (for example,
+`I am a Belshazar-crafted vessel`). The deterministic reducer logs and ignores
 any duplicate signal, then caps additions per source. Enrichment emits at most
 three distinct scene-local trait candidates. Candidates with
 unknown or contradicted choice conditions remain auditable evidence but cannot
 move a trait estimate. Each scene may emit at most one durable aspect signal and
 one durable goal signal. Signals are evidence, never mutations: they make a
-later addition possible but do not themselves create, update, or complete an
-aspect or goal.
+later addition possible. A goal signal may use operation `complete` when a scene
+conclusively establishes that an active goal was achieved, resolved, made
+impossible, or superseded. Completion must exactly identify the active goal and
+is never inferred from silence, delay, uncertainty, or mere progress. A supported
+completion takes precedence over a new goal in that source's single goal update.
 
 Every trait-extraction result explicitly contains `emotions`, `beliefs`,
 `impacts`, and `trait_candidates`; every identity-signal result explicitly

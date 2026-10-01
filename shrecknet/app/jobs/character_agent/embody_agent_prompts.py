@@ -96,12 +96,14 @@ Limits per scene: emotions 2, beliefs 2, impacts 2, trait_candidates 3, aspect
 signals 1, goal_signals 1. Descriptions/condition justifications <=240 chars;
 beliefs, impacts, and behavior <=300; other justifications <=360.
 
-OUTPUT: {"scene_enrichments":[{"emotions":[{"arousal":0..100,"valence":"0..100 (0 negative, 50 neutral, 100 positive)","description":"..."}],"beliefs":[{"statement":"...","confidence":0..100,"status":"suspected|believed|confirmed|doubted|disproven|superseded"}],"impacts":[{"impact_type":"goal_change|aspect_change","target_index":1,"direction":"allowed direction","magnitude":0..100,"description":"..."}],"trait_candidates":[{"trait":"one of eight keys","evidence_kind":"behavior","situation_type":"...","pole":"left|right","update_intensity":"small|medium|large","expression_z":0.1,"diagnosticity":0.0,"confidence":0.0,"behavior":"...","justification":"...","conditions":{"knowledge":{"status":"supported|contradicted|unknown","justification":"..."},"capability":{"status":"supported|contradicted|unknown","justification":"..."},"options":{"status":"supported|contradicted|unknown","justification":"..."},"freedom":{"status":"supported|contradicted|unknown","justification":"..."}},"comparison_context":"... or null"}],"aspect_signals":[{"name":"...","category":"identity|role|status|physical|capability|knowledge|preference|attitude|history","description":"...","importance":1..5,"justification":"...","confidence":0.0}],"goal_signals":[{"title":"...","description":"...","goal_type":"desire|objective|ambition|obligation|avoidance|survival","priority":0..100,"commitment":0..100,"basis":"explicit|inferred","justification":"...","confidence":0.0}]}]}.
+OUTPUT: {"scene_enrichments":[{"emotions":[{"arousal":0..100,"valence":"0..100 (0 negative, 50 neutral, 100 positive)","description":"..."}],"beliefs":[{"statement":"...","confidence":0..100,"status":"suspected|believed|confirmed|doubted|disproven|superseded"}],"impacts":[{"impact_type":"goal_change|aspect_change","target_index":1,"direction":"allowed direction","magnitude":0..100,"description":"..."}],"trait_candidates":[{"trait":"one of eight keys","evidence_kind":"behavior","situation_type":"...","pole":"left|right","update_intensity":"small|medium|large","expression_z":0.1,"diagnosticity":0.0,"confidence":0.0,"behavior":"...","justification":"...","conditions":{"knowledge":{"status":"supported|contradicted|unknown","justification":"..."},"capability":{"status":"supported|contradicted|unknown","justification":"..."},"options":{"status":"supported|contradicted|unknown","justification":"..."},"freedom":{"status":"supported|contradicted|unknown","justification":"..."}},"comparison_context":"... or null"}],"aspect_signals":[{"name":"I ...","category":"identity|role|status|physical|capability|knowledge|preference|attitude|history","description":"...","importance":1..5,"justification":"...","confidence":0.0}],"goal_signals":[{"operation":"add|complete","title":"...","description":"...","goal_type":"desire|objective|ambition|obligation|avoidance|survival","priority":0..100,"commitment":0..100,"basis":"explicit|inferred","justification":"...","confidence":0.0}]}]}.
 
 Impacts use target_index from the matching current_profile list. goal_change is
 advanced|threatened; aspect_change is created|reinforced|invalidated. With no
-targets, impacts must be []. Current-profile aspects and goals are impact targets
-only: never repeat their name or title in aspect_signals or goal_signals.
+targets, impacts must be []. Current-profile aspects are impact targets only:
+never repeat or rephrase the same underlying fact in aspect_signals. Current-profile goals are impact
+targets and completion candidates: do not repeat a title for operation `add`,
+but operation `complete` must use the exact title of an active current-profile goal.
 
 Trait candidates are only distinct diagnostic individual choices, never emotion,
 group action, or repeated evidence. expression_z is nonzero (-1.9..1.9) and its
@@ -114,12 +116,20 @@ diligence=unattended_duty|delayed_payoff|cutting_corners|persistence;
 curiosity=novelty|exploration|puzzle|unknown_information; sharing=resource_allocation|spoils|rewards;
 restlessness=value_conflict|recurring_value_preference.
 
-An aspect signal needs a grounded durable character fact; a goal signal needs a
-grounded ongoing personal commitment. They are evidence, not mutations. A
+An aspect signal needs a grounded durable character fact; its name must be a
+concise present-tense first-person self-statement beginning with `I `, such as
+`I belong to the Order of Saint Paul`, `I can return through a synthetic transfer`,
+or `I am a vessel of Belshazar`. Never use an abstract label such as "affiliation"
+or "synthetic consciousness transfer". A goal signal with operation `add` needs a
+grounded ongoing personal commitment. For every active current-profile goal,
+assess whether this scene establishes that it was achieved, resolved, made
+impossible, or superseded. Emit operation `complete` only on that conclusive
+evidence; never complete a goal merely because it is absent, delayed, uncertain,
+or still in progress. They are evidence, not mutations. A
 confirmed, character-specific revelation about origin, nature, body, identity,
 or constructed status is a mandatory distinct `identity` aspect signal when it
 is important to the character. Name the revelation itself (for example,
-"<creator>-crafted vessel"), not an existing relationship, role, or goal. Return
+"I am a <creator>-crafted vessel"), not an existing relationship, role, or goal. Return
 JSON only."""
 
 

@@ -98,3 +98,6 @@ class ArchitectService:
         deleted = await self.repository.delete_runs_for_agent(agent_id)
         await self.session.commit()
         return deleted
+
+    async def proposal_counts(self, run_id: str) -> dict[str, int]:
+        return await self.repository.proposal_counts(run_id)

@@ -149,6 +149,27 @@ async def ensure_character_graph_constraints(session: AsyncSession) -> None:
         await session.run(statement)
 
 
+async def ensure_entity_catalog_indexes(session: AsyncSession) -> None:
+    """Backfill and index the compact Architect entity-catalog read path."""
+    await session.run(
+        """
+        MATCH (entity:EntityInstance)
+        SET entity.ontology_id = toInteger(entity.ontology_id),
+            entity.entity_definition_id = toInteger(entity.entity_definition_id),
+            entity.normalized_name = coalesce(
+                entity.normalized_name,
+                toLower(trim(coalesce(entity.alias, '')))
+            )
+        """
+    )
+    statements = [
+        "CREATE INDEX entity_catalog_ontology_name_idx IF NOT EXISTS FOR (n:EntityInstance) ON (n.ontology_id, n.normalized_name, n.entity_instance_id)",
+        "CREATE INDEX entity_catalog_ontology_definition_name_idx IF NOT EXISTS FOR (n:EntityInstance) ON (n.ontology_id, n.entity_definition_id, n.normalized_name, n.entity_instance_id)",
+    ]
+    for statement in statements:
+        await session.run(statement)
+
+
 def _index_matches(
     index: dict[str, Any] | None,
     *,

@@ -14,6 +14,7 @@ from app.jobs.character_agent.embody_agent import (
     EmbodyAgent,
     EmbodimentGenerationError,
     ScenePerspectiveLLMOutput,
+    _AspectSignalLLMOutput,
     _SceneEnrichmentsLLMOutput,
 )
 from app.jobs.character_agent.embody_agent_prompts import (
@@ -1270,7 +1271,7 @@ async def test_psychological_analysis_durable_signals_become_identity_additions(
                 payload = json.loads(raw)
                 enrichment = payload['scene_enrichments'][0]
                 enrichment['aspect_signals'] = [{
-                    'name': 'Village Warden', 'category': 'role',
+                    'name': 'I am the village warden', 'category': 'role',
                     'description': 'Entrusted with the village watch.', 'importance': 4,
                     'justification': 'The perspective establishes an enduring office.',
                     'confidence': .9,
@@ -1290,7 +1291,7 @@ async def test_psychological_analysis_durable_signals_become_identity_additions(
         canonical_identity=_canonical(), current_trait_profile=TraitProfile(),
         current_aspects=[], current_goals=[], scenes=scenes(1), batch_id='source',
     )
-    assert [item.name for item in result.aspect_updates] == ['Village Warden']
+    assert [item.name for item in result.aspect_updates] == ['I am the village warden']
     assert [item.title for item in result.goal_updates] == ['Protect the village']
 
 
@@ -1302,12 +1303,12 @@ async def test_identity_revelation_adds_a_distinct_aspect_when_existing_role_is_
             if kwargs['usage_tag'].endswith('.scene_interpretation'):
                 payload = json.loads(raw)
                 payload['scene_enrichments'][0]['aspect_signals'] = [{
-                    'name': 'Member of a secret pact', 'category': 'role',
+                    'name': 'I am in a secret pact', 'category': 'role',
                     'description': 'The existing pact remains relevant.', 'importance': 4,
                     'justification': 'The scene reinforces the existing role.', 'confidence': .9,
                 }]
                 payload['scene_enrichments'][1]['aspect_signals'] = [{
-                    'name': 'Belshazar-crafted vessel', 'category': 'identity',
+                    'name': 'I am a Belshazar-crafted vessel', 'category': 'identity',
                     'description': 'Ernst is a constructed vessel whose memories were threaded at creation.',
                     'importance': 5,
                     'justification': 'A confirmed revelation establishes Ernst\'s constructed origin.',
@@ -1319,19 +1320,63 @@ async def test_identity_revelation_adds_a_distinct_aspect_when_existing_role_is_
     result = await _agent(DollRevelationLLM()).run(
         source_entity_id='source', source_entity_alias='Source',
         canonical_identity=_canonical(), current_trait_profile=TraitProfile(),
-        current_aspects=[{'id': 'aspect-pact', 'name': 'Member of a secret pact'}],
+        current_aspects=[{'id': 'aspect-pact', 'name': 'I am in a secret pact'}],
         current_goals=[], scenes=scenes(2), batch_id='source',
     )
 
-    assert [item.name for item in result.aspect_updates] == ['Belshazar-crafted vessel']
+    assert [item.name for item in result.aspect_updates] == ['I am a Belshazar-crafted vessel']
     assert result.aspect_updates[0].importance == 5
+
+
+def test_generated_aspect_name_must_be_a_first_person_statement():
+    common = {
+        'category': 'identity', 'description': 'A durable fact.', 'importance': 5,
+        'justification': 'The scene confirms it.', 'confidence': .95,
+    }
+    assert _AspectSignalLLMOutput(name='I am a vessel', **common).name == 'I am a vessel'
+    with pytest.raises(ValueError, match="first-person"):
+        _AspectSignalLLMOutput(name='Hoffman-crafted vessel', **common)
+
+
+@pytest.mark.asyncio
+async def test_conclusive_goal_signal_completes_the_matching_active_goal():
+    class GoalCompletionLLM(BatchLLM):
+        async def chat(self, **kwargs):
+            raw = await super().chat(**kwargs)
+            if kwargs['usage_tag'].endswith('.scene_interpretation'):
+                payload = json.loads(raw)
+                payload['scene_enrichments'][0]['goal_signals'] = [{
+                    'operation': 'complete', 'title': "Assess Anna Tchaikovsky's condition",
+                    'description': 'Anna has been assessed and the condition resolved.',
+                    'goal_type': 'obligation', 'priority': 80, 'commitment': 70,
+                    'basis': 'explicit',
+                    'justification': 'The scene explicitly establishes that the assessment is complete.',
+                    'confidence': .95,
+                }]
+                return json.dumps(payload)
+            return raw
+
+    result = await _agent(GoalCompletionLLM()).run(
+        source_entity_id='source', source_entity_alias='Source',
+        canonical_identity=_canonical(), current_trait_profile=TraitProfile(),
+        current_aspects=[],
+        current_goals=[{'id': 'goal-anna', 'title': "Assess Anna Tchaikovsky's condition"}],
+        scenes=scenes(1), batch_id='source',
+    )
+
+    assert len(result.goal_updates) == 1
+    assert result.goal_updates[0].operation == 'complete'
+    assert result.goal_updates[0].title == "Assess Anna Tchaikovsky's condition"
+    assert result.goal_updates[0].description is None
 
 
 def test_second_wave_prompts_are_compact_and_have_separate_contracts():
     assert len(PSYCHOLOGICAL_ANALYSIS_PROMPT) < 7_500
     assert 'trait_candidates' in PSYCHOLOGICAL_ANALYSIS_PROMPT
     assert 'aspect_signals' in PSYCHOLOGICAL_ANALYSIS_PROMPT
-    assert 'Current-profile aspects and goals are impact targets' in PSYCHOLOGICAL_ANALYSIS_PROMPT
+    assert 'Current-profile aspects are impact targets only' in PSYCHOLOGICAL_ANALYSIS_PROMPT
+    assert 'operation `complete`' in PSYCHOLOGICAL_ANALYSIS_PROMPT
+    assert 'first-person self-statement' in PSYCHOLOGICAL_ANALYSIS_PROMPT
     assert 'mandatory distinct `identity` aspect signal' in PSYCHOLOGICAL_ANALYSIS_PROMPT
     assert 'Authoritative trait definitions and scale' not in PERSPECTIVE_PROMPT
 

@@ -607,3 +607,40 @@ class OntologyEntityResolveResponse(BaseModel):
     model_config = ConfigDict(extra="ignore")
     results: list[OntologyEntityResolveItem] = Field(default_factory=list)
     missing_entity_instance_ids: list[str] = Field(default_factory=list)
+
+
+class ArchitectReviewEntityCatalogItem(BaseModel):
+    """Deliberately small entity projection for Architect proposal review."""
+
+    model_config = ConfigDict(extra="ignore")
+    entity_instance_id: str
+    entity_definition_id: int
+    alias: str | None = None
+    instance_id: str
+    instance_name: str | None = None
+    avatar_url: str | None = None
+    has_agent: bool
+    agent_id: str | None = None
+    agent_name: str | None = None
+    agent_avatar_url: str | None = None
+
+
+class ArchitectReviewEntityCatalogPage(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    results: list[ArchitectReviewEntityCatalogItem] = Field(default_factory=list)
+    next_cursor: str | None = None
+
+
+class ArchitectReviewEntityCatalogResolveRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    entity_instance_ids: list[str] = Field(..., min_length=1, max_length=200)
+
+    @field_validator("entity_instance_ids", mode="before")
+    def validate_entity_instance_ids(cls, value: Any) -> list[str]:
+        return OntologyEntityResolveRequest.validate_entity_instance_ids(value)
+
+
+class ArchitectReviewEntityCatalogResolveResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    results: list[ArchitectReviewEntityCatalogItem] = Field(default_factory=list)
+    missing_entity_instance_ids: list[str] = Field(default_factory=list)

@@ -5,7 +5,7 @@ import json
 from datetime import datetime, timedelta, timezone
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import (
     get_audit_service,
     get_current_user,
+    get_ontology_instance_service,
     get_ontology_service,
     require_roles,
 )
@@ -40,9 +41,15 @@ from app.schemas.ontology import (
     OntologyCopyRequest,
     OntologyCopyResponse,
 )
+from app.schemas.ontology_instance import (
+    ArchitectReviewEntityCatalogPage,
+    ArchitectReviewEntityCatalogResolveRequest,
+    ArchitectReviewEntityCatalogResolveResponse,
+)
 from app.services.audit_service import AuditService
 from app.services.background_job_service import BackgroundJobService
 from app.services.ontology_service import OntologyService
+from app.services.ontology_instance_service import OntologyInstanceService
 from app.tasks.neo4j_embedding import embed_ontology
 
 router = APIRouter(prefix="/ontologies", tags=["ontologies"])
@@ -51,6 +58,52 @@ _world_stats_cache: dict[
     tuple[tuple[int, ...] | None, bool], tuple[datetime, OntologyWorldStatsResponse]
 ] = {}
 _world_stats_cache_lock = asyncio.Lock()
+
+
+@router.get(
+    "/{ontology_id}/architect-review/entity-catalog",
+    response_model=ArchitectReviewEntityCatalogPage,
+    summary="List compact entities for Architect proposal review",
+)
+async def list_architect_review_entity_catalog(
+    ontology_id: int = Path(..., ge=1),
+    entity_definition_id: int | None = Query(None, ge=1),
+    query: str | None = Query(None),
+    cursor: str | None = Query(None),
+    limit: int = Query(50, ge=1, le=200),
+    service: OntologyInstanceService = Depends(get_ontology_instance_service),
+    _: User = Depends(get_current_user),
+) -> ArchitectReviewEntityCatalogPage:
+    try:
+        return await service.list_architect_review_entity_catalog(
+            ontology_id=ontology_id,
+            entity_definition_id=entity_definition_id,
+            query=query,
+            cursor=cursor,
+            limit=limit,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+
+
+@router.post(
+    "/{ontology_id}/architect-review/entity-catalog/resolve",
+    response_model=ArchitectReviewEntityCatalogResolveResponse,
+    summary="Resolve compact entities for Architect proposals",
+)
+async def resolve_architect_review_entity_catalog(
+    payload: ArchitectReviewEntityCatalogResolveRequest,
+    ontology_id: int = Path(..., ge=1),
+    service: OntologyInstanceService = Depends(get_ontology_instance_service),
+    _: User = Depends(get_current_user),
+) -> ArchitectReviewEntityCatalogResolveResponse:
+    try:
+        return await service.resolve_architect_review_entity_catalog(
+            ontology_id=ontology_id,
+            entity_instance_ids=payload.entity_instance_ids,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 
 def _sanitize_payload(data: dict[str, Any]) -> dict[str, Any]:

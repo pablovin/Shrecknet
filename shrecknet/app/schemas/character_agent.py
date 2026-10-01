@@ -1023,7 +1023,8 @@ class SceneAspectSignal(_StrictModel):
 
 
 class SceneGoalSignal(_StrictModel):
-    """Evidence that one scene may justify a durable goal; never a mutation."""
+    """Evidence that one scene may add or conclusively complete a durable goal."""
+    operation: Literal["add", "complete"] = "add"
     title: str = Field(..., min_length=1, max_length=255)
     description: str = Field(..., min_length=1)
     goal_type: CharacterGoalType

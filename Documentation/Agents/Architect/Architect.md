@@ -77,6 +77,12 @@ Detailed analyze docs:
 - [Scene Proposal.md](Analyse/Scene%20Proposal.md)
 - [Milestones Proposal.md](Analyse/Milestones%20Proposal.md)
 
+## Review Catalog and Run Progress
+
+The Architect review UI uses the ontology-scoped compact entity catalog instead of loading full ontology instances. It returns entity identity, type, parent instance, avatar, and optional embodied CharacterAgent identity only; it never returns entity text, properties, or graph relationships. Catalog reads use normalized-name keyset pagination and ontology-scoped resolution for IDs already present in proposals.
+
+The review UI polls `GET /jobs/architect/runs/{run_id}/progress` (or requests `include=progress` on an agent run list) for compact run status, proposal counts, and analysis/generation job state. A purged background job is reported as `unavailable`, which is a client stop-polling signal.
+
 ## Generate Job
 
 Goal:

@@ -18,7 +18,7 @@ import logging
 import time
 from typing import Any, Callable, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from app.integrations.llm.json_repair import repair_json_text
 from app.integrations.llm.structured_output import (
@@ -202,9 +202,19 @@ class _AspectSignalLLMOutput(BaseModel):
     justification: str = Field(min_length=1, max_length=360)
     confidence: float = Field(ge=0, le=1)
 
+    @field_validator("name")
+    @classmethod
+    def name_is_a_first_person_statement(cls, value: str) -> str:
+        """Keep generated aspect labels in the character's own voice."""
+        normalized = value.strip()
+        if not normalized.casefold().startswith("i "):
+            raise ValueError("aspect signal name must be a first-person statement beginning with 'I '")
+        return normalized
+
 
 class _GoalSignalLLMOutput(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    operation: Literal["add", "complete"] = "add"
     title: str = Field(min_length=1, max_length=255)
     description: str = Field(min_length=1, max_length=360)
     goal_type: CharacterGoalType
@@ -1588,15 +1598,19 @@ def _deterministic_profile_result(*, evidence, source_entity_id: str, aspect_sig
     """Convert independently extracted source signals into safe source operations.
 
     Numeric trait updates are already backend-owned.  Durable signal additions
-    are deduplicated against active state and each other; no model may mutate or
-    remove existing identity state in this reduction.
+    are deduplicated against active state and each other. A scene may also
+    explicitly close one active goal when it establishes resolution; no model
+    may otherwise mutate or remove existing identity state in this reduction.
     """
     proposals = []
     for trait in sorted({item.trait for item in evidence if item.eligible and item.source_group_id == source_entity_id}):
         ids = [item.id for item in evidence if item.trait == trait and item.eligible and item.source_group_id == source_entity_id]
         proposals.append({"trait": trait, "observation_ids": ids, "justification": "Validated source-local behavioral evidence.", "addresses_contradictions": "The deterministic policy retains contradictory evidence without averaging it into a false certainty."})
     known_aspects = {_normalized_identity_label(str(item.get("name") or "")) for item in current_aspects}
-    known_goals = {_normalized_identity_label(str(item.get("title") or "")) for item in current_goals}
+    known_goals = {
+        _normalized_identity_label(str(item.get("title") or "")): str(item.get("title") or "")
+        for item in current_goals
+    }
     aspect_updates = []
     for signal in sorted(aspect_signals, key=lambda item: (-item.confidence, -item.importance, item.name.casefold())):
         key = _normalized_identity_label(signal.name)
@@ -1608,19 +1622,38 @@ def _deterministic_profile_result(*, evidence, source_entity_id: str, aspect_sig
             continue
         known_aspects.add(key)
         aspect_updates.append({"operation": "add", **signal.model_dump(mode="json")})
-    goal_updates = []
+    completion_updates = []
+    additions = []
     for signal in sorted(goal_signals, key=lambda item: (-item.confidence, -item.priority, item.title.casefold())):
         key = _normalized_identity_label(signal.title)
+        if signal.operation == "complete":
+            existing_title = known_goals.get(key)
+            if not existing_title:
+                logger.info(
+                    "embodiment_unknown_goal_completion_ignored source_id=%s title=%s",
+                    source_entity_id, signal.title,
+                )
+                continue
+            completion_updates.append({
+                "operation": "complete",
+                "title": existing_title,
+                "justification": signal.justification,
+                "confidence": signal.confidence,
+                "evidence_ids": signal.evidence_ids,
+            })
+            continue
         if key in known_goals:
             logger.info(
                 "embodiment_duplicate_goal_signal_ignored source_id=%s title=%s",
                 source_entity_id, signal.title,
             )
             continue
-        known_goals.add(key)
-        goal_updates.append({"operation": "add", **signal.model_dump(mode="json")})
+        known_goals[key] = signal.title
+        additions.append({"operation": "add", **signal.model_dump(mode="json", exclude={"operation"})})
     return ProfileUpdateOutput.model_validate({
         "trait_proposals": proposals,
         "aspect_updates": aspect_updates[:2],
-        "goal_updates": goal_updates[:1],
+        # Closing an evidenced resolved commitment is more important than
+        # introducing another one, and the public update contract permits one.
+        "goal_updates": (completion_updates or additions)[:1],
     })

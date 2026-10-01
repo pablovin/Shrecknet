@@ -56,6 +56,7 @@ from app.graphrag.embedding_runtime import (
 )
 from app.graph.neo4j import (
     ensure_character_graph_constraints,
+    ensure_entity_catalog_indexes,
     ensure_elder_hybrid_indexes,
     ensure_temporal_graph_constraints,
     get_driver,
@@ -330,6 +331,7 @@ async def lifespan(_: FastAPI):
                 logger.warning("Cleared %s stale Librarian ingestion locks on startup", lock_record["deleted"])
             await ensure_temporal_graph_constraints(neo4j_session)
             await ensure_character_graph_constraints(neo4j_session)
+            await ensure_entity_catalog_indexes(neo4j_session)
             await ensure_elder_hybrid_indexes(neo4j_session)
             await PdfEmbeddingService(neo4j_session).ensure_vector_index()
     except Exception:

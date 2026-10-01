@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
-from sqlalchemy import Select, delete, select, update
+from sqlalchemy import Select, delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -226,3 +226,15 @@ class ArchitectRepository:
         stmt = select(ArchitectProposal).where(ArchitectProposal.run_id == run_id)
         result = await self.session.execute(stmt)
         return list(result.scalars())
+
+    async def proposal_counts(self, run_id: str) -> dict[str, int]:
+        stmt = (
+            select(ArchitectProposal.status, func.count(ArchitectProposal.id))
+            .where(ArchitectProposal.run_id == run_id)
+            .group_by(ArchitectProposal.status)
+        )
+        result = await self.session.execute(stmt)
+        return {
+            str(status.value if hasattr(status, "value") else status): int(count)
+            for status, count in result.all()
+        }

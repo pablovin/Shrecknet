@@ -100,6 +100,36 @@ class ArchitectAnalysisRunSummary(BaseModel):
     input_chunk_count: int | None
     created_at: datetime
     updated_at: datetime
+    progress: "ArchitectRunProgressResponse | None" = None
+
+
+class ArchitectCompactJobState(BaseModel):
+    """UI-safe status for one Architect background job."""
+
+    availability: Literal["not_started", "available", "unavailable"]
+    job_id: int | None = None
+    status: str | None = None
+    progress: float | None = None
+    details: dict[str, Any] | None = None
+    error_message: str | None = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+class ArchitectRunProgressResponse(BaseModel):
+    """Compact run/job projection for Architect polling clients."""
+
+    id: str
+    agent_id: str | None
+    ontology_id: int | None
+    ontology_instance_id: str
+    status: ArchitectRunStatus
+    created_at: datetime
+    updated_at: datetime
+    proposal_counts: dict[str, int] = Field(default_factory=dict)
+    analysis_job: ArchitectCompactJobState
+    generation_job: ArchitectCompactJobState
 
 
 class ArchitectProposalStatusUpdate(BaseModel):

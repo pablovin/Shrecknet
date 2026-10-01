@@ -357,6 +357,7 @@ async def _execute_generation(
                         """
                         MATCH (e:EntityInstance {entity_instance_id: $entity_id})
                         SET e.alias = coalesce($alias, e.alias),
+                            e.normalized_name = coalesce($normalized_name, e.normalized_name),
                             e.entity_definition_id = coalesce($definition_id, e.entity_definition_id),
                             e.updated_at = datetime(),
                             e.last_updated_date = datetime(),
@@ -366,6 +367,7 @@ async def _execute_generation(
                         """,
                         entity_id=target_entity_id,
                         alias=alias or None,
+                        normalized_name=" ".join((alias or "").casefold().split()) or None,
                         definition_id=definition_id_int,
                         author_id=author_id,
                     )

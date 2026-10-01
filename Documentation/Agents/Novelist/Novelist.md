@@ -18,6 +18,12 @@ The analysis model interprets source material and verifies the final chapter.
 The writer model writes or corrects bounded prose blocks. Configure only
 `model_novelist_analysis` and `model_novelist_writer`.
 
+Analysis responses are locally parsed and checked against their requested JSON
+Schema. If a provider accepts native structured output but returns malformed
+content, Novelist makes one source-preserving retry without the provider-native
+format flag and explicitly includes the required schema. A second malformed or
+schema-invalid response fails the run; it is never used as evidence.
+
 The current source ledger is authoritative. Authority then descends through a
 prior session, graph/world context, CharacterAgent guidance, and writing style.
 Continuity can affect presentation but cannot add facts. Every ledger claim has

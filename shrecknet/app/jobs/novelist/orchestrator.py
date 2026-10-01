@@ -9,12 +9,16 @@ verifies; the writer role only renders ledger-backed prose.
 from __future__ import annotations
 
 import json
+import logging
 import time
 from typing import Any, Awaitable, Callable
+
+from jsonschema import validate as validate_json_schema
 
 from app.integrations.llm.model_policy import LLMTask, ModelPolicy
 from app.integrations.llm.shreckllm_client import ShreckLLMClient
 from app.integrations.llm.structured_output import chat_with_structured_output, strict_json_schema
+from app.jobs.shrecknet.agent import parse_json_deterministically
 from app.jobs.novelist.block_planner import WritingBlock, plan_blocks
 from app.jobs.novelist.evidence_ledger import LedgerScene, NarrativeEvidenceLedger
 from app.jobs.novelist.prose_quality import validate_prose_html
@@ -24,6 +28,8 @@ from app.models.novelist import NovelistStage
 from app.schemas.novelist import NovelistRunCreate
 
 StageCallback = Callable[[NovelistStage, dict[str, Any]], Awaitable[None]]
+
+logger = logging.getLogger(__name__)
 
 _VERIFY_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["issues"], "properties": {"issues": {"type": "array", "items": {"type": "object", "additionalProperties": False, "required": ["block_id", "kind", "detail"], "properties": {"block_id": {"type": "string"}, "kind": {"type": "string"}, "detail": {"type": "string"}}}}}}
 
@@ -42,13 +48,51 @@ class NovelistOrchestrator:
         last: Exception | None = None
         for attempt in range(2):
             try:
-                result = await chat_with_structured_output(llm_client=self.llm_client, model=self.analysis_model, messages=[{"role": "system", "content": prompt}], response_format=response_format, temperature=0.0, return_metadata=True, usage_tag=usage_tag, max_tokens=6000)
+                if attempt == 0:
+                    result = await chat_with_structured_output(
+                        llm_client=self.llm_client,
+                        model=self.analysis_model,
+                        messages=[{"role": "system", "content": prompt}],
+                        response_format=response_format,
+                        temperature=0.0,
+                        return_metadata=True,
+                        usage_tag=usage_tag,
+                        max_tokens=6000,
+                    )
+                else:
+                    # Some OpenAI-compatible providers acknowledge json_schema
+                    # but return a short non-JSON response.  Retrying the same
+                    # native request repeats that provider failure, so make the
+                    # compatibility path explicit while retaining the complete
+                    # source-bearing prompt and validating locally.
+                    fallback_prompt = (
+                        f"{prompt}\n\nNative structured output was not valid. "
+                        "Return one RFC8259 JSON object only: no Markdown, explanation, "
+                        f"or omitted required fields. Required JSON Schema: {json.dumps(schema, ensure_ascii=False)}"
+                    )
+                    result = await self.llm_client.chat(
+                        model=self.analysis_model,
+                        messages=[{"role": "system", "content": fallback_prompt}],
+                        temperature=0.0,
+                        return_metadata=True,
+                        usage_tag=f"{usage_tag}.malformed_structured_fallback",
+                        max_tokens=6000,
+                    )
                 text = result.get("text") if isinstance(result, dict) else result
-                parsed = json.loads(str(text))
+                parsed = parse_json_deterministically(str(text))
+                if not isinstance(parsed, dict):
+                    raise ValueError("structured response must be a JSON object")
+                validate_json_schema(parsed, schema)
                 self.calls.append({"tag": usage_tag, "model": self.analysis_model.model_dump() if hasattr(self.analysis_model, "model_dump") else str(self.analysis_model)})
                 return parsed
             except Exception as exc:
                 last = exc
+                logger.warning(
+                    "novelist_analysis_structured_output_invalid tag=%s attempt=%s error=%s",
+                    usage_tag,
+                    attempt + 1,
+                    exc,
+                )
         raise RuntimeError(f"Novelist analysis structured output failed after retry: {last}") from last
 
     async def _write(self, prompt: str, *, usage_tag: str) -> str:

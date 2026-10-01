@@ -1,7 +1,9 @@
 import pytest
 
+from app.integrations.llm.model_policy import ModelPolicy
 from app.jobs.novelist.block_planner import plan_blocks
 from app.jobs.novelist.evidence_ledger import LedgerFact, LedgerScene, NarrativeEvidenceLedger, SourceSegment, validate_provenance
+from app.jobs.novelist.orchestrator import NovelistOrchestrator
 from app.jobs.novelist.prose_quality import validate_prose_html
 
 
@@ -34,3 +36,38 @@ def test_quality_gate_rejects_lists_repetition_and_short_paragraph_cascade() -> 
 def test_quality_gate_accepts_normal_html_prose() -> None:
     html = "<p>" + "word " * 45 + "</p><p>" + "other " * 48 + "</p>"
     assert validate_prose_html(html) == []
+
+
+class _MalformedStructuredOutputClient:
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    async def chat(self, **kwargs):
+        self.calls.append(kwargs)
+        if kwargs.get("response_format"):
+            return {"text": "I cannot provide that format."}
+        return {"text": '{"status":"ok"}'}
+
+
+@pytest.mark.asyncio
+async def test_analysis_retries_malformed_native_structured_output_with_source_prompt() -> None:
+    client = _MalformedStructuredOutputClient()
+    orchestrator = NovelistOrchestrator(llm_client=client, model_policy=ModelPolicy())
+
+    parsed = await orchestrator._json(
+        "Source-bearing prompt.",
+        {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["status"],
+            "properties": {"status": {"type": "string"}},
+        },
+        "novelist.analysis.interpret",
+    )
+
+    assert parsed == {"status": "ok"}
+    assert len(client.calls) == 2
+    assert client.calls[0]["response_format"]["type"] == "json_schema"
+    assert "response_format" not in client.calls[1]
+    assert client.calls[1]["usage_tag"] == "novelist.analysis.interpret.malformed_structured_fallback"
+    assert "Source-bearing prompt." in client.calls[1]["messages"][0]["content"]

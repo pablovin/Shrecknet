@@ -181,6 +181,14 @@ enabled, every embodiment request creates one timestamped directory under
 payload, raw model response, parsed response, validation error, and correction
 payloads; treat them as local diagnostic data rather than application logs.
 
+Each directory begins with `manifest.json`, which identifies the draft, revision,
+and artifact directory. A call that fails before the provider returns still writes
+its full prompt and payload with `raw_output: null` and the provider error. For
+example, `attempt watchdog exceeded 45.0s` is a shreckLLM provider timeout, not a
+JSON-schema or embodiment-validation failure. Increase the selected shreckLLM
+route's `request_timeout_seconds` only when the provider is expected to complete
+reliably beyond that limit; otherwise select a faster model or reduce its prompt.
+
 - `baseline.log` records the authored-baseline LLM call.
 - One `bundle_XXX_<source>.log` is written for each source-boundary bundle. It
   contains all analysis-chunk calls, including JSON/semantic corrections,

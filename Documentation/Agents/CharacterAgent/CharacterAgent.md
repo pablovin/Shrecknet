@@ -89,7 +89,15 @@ completion budget of 10,000 tokens. This is a cost and failure safeguard, not
 an expected output size: normal five-scene structured responses are much
 smaller. A provider response with `finish_reason: "length"` is never parsed or
 persisted. Character Incorporation alone receives one compact replacement
-request; a second truncated response is rejected.
+request; a second truncated response is rejected. Psychological analysis uses a
+separate bounded, model-only contract: it returns exactly one position-bound
+enrichment per supplied perspective, with capped lists and explanatory text, and
+never writes scene, evidence, episode, availability, or persistent target IDs.
+The backend attaches those references after validation. If psychological output
+truncates, only that already-incorporated perspective batch is split into smaller
+contiguous batches and retried; completed incorporation and successful analysis
+work are retained for the active task attempt. A singleton truncation fails with
+the original categorized provider error.
 
 `CharacterIdentityRevision` stores the profile snapshot and newly introduced
 trait evidence, including evidence that did not change a score.
@@ -285,7 +293,7 @@ of personality. See [CharacterAgent Query](Query/Query.md).
 See [Dispositional traits](Dispositional%20Traits.md) for the complete current
 personality and embodiment contract, including the four-step scene-centric
 source-bundle pipeline, initial authored evidence, candidate/signal rules, debug
-artifacts, checkpoints, revision ownership, and breaking release operations. The
+artifacts, revision ownership, and breaking release operations. The
 registry is the authoritative definition source; SDKs and UI consumers can
 request it through `/character-agents/trait-definitions`.
 

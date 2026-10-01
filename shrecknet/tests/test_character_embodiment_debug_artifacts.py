@@ -28,6 +28,15 @@ def test_embodiment_debug_artifacts_keep_each_bundle_in_one_log(tmp_path) -> Non
     assert '"justification": "kept"' in final
 
 
+def test_enabled_artifacts_write_a_manifest(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("SHRECKNET_DATA_DIR", str(tmp_path))
+    artifacts = EmbodimentDebugArtifacts.create(enabled=True, draft_id="draft", revision=2)
+
+    manifest = next(tmp_path.glob("local_test/character_embodiment/*/manifest.json"))
+    assert artifacts.output_dir is not None
+    assert '"draft_id": "draft"' in manifest.read_text(encoding="utf-8")
+
+
 def test_disabled_embodiment_debug_artifacts_do_not_write() -> None:
     artifacts = EmbodimentDebugArtifacts.create(enabled=False, draft_id="draft", revision=1)
     assert artifacts.output_dir is None

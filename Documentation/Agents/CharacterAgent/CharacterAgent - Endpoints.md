@@ -381,7 +381,7 @@ Each embodiment generation or JSON-repair request is capped at 10,000 completion
 }
 ```
 
-Poll `GET /jobs/42`. `details` is a JSON object when it contains valid JSON. During the parallel second wave, render `active_steps` and `parallel.active_branches` together rather than treating them as sequential stages:
+Poll `GET /jobs/42`. `details` is a JSON object when it contains valid JSON. During concurrent chunk analysis, render `active_steps` and `parallel` together rather than treating chunks as sequential work:
 
 ```json
 {
@@ -390,24 +390,22 @@ Poll `GET /jobs/42`. `details` is a JSON object when it contains valid JSON. Dur
   "status": "running",
   "progress": 0.46,
   "details": {
-    "stage": "Bundle — session_003_manfred_von_killinger — Steps 2-3: Trait",
+    "stage": "Bundle — session_003_manfred_von_killinger — Step 2: Psychological analysis",
     "draft_id": "9b820ec5-5c1a-4bc6-9b01-4cea280e9420",
     "bundles": [{
       "index": 3,
       "source_name": "session_003_manfred_von_killinger",
       "status": "processing",
-      "active_steps": [2, 3],
+      "active_steps": [2],
       "done_steps": [1],
       "elapsed_seconds": 18.4,
-      "checkpointed_stages": ["character_incorporation"],
-      "reused_stages": [],
       "chunks": [
-        {"index": 1, "scene_count": 5, "status": "processing", "active_steps": [2, 3], "done_steps": [1]},
-        {"index": 2, "scene_count": 5, "status": "processing", "active_steps": [2, 3], "done_steps": [1]}
+        {"index": 1, "scene_count": 5, "status": "processing", "active_steps": [2], "done_steps": [1]},
+        {"index": 2, "scene_count": 5, "status": "processing", "active_steps": [2], "done_steps": [1]}
       ],
       "parallel": {
         "active": true,
-        "active_branches": ["Trait extraction", "Aspect and goal signals"],
+        "active_branches": ["Psychological analysis"],
         "active_chunk_count": 2,
         "scene_chunk_concurrency": 3
       }
@@ -426,7 +424,7 @@ draft. Its perspectives, history, and unshared aspect/goal definitions are remov
 canonical entities/scenes remain. This endpoint is not a nondestructive preview.
 
 This personality contract is intentionally breaking. Drain old workers/queued
-jobs, clear old agents and draft/checkpoint payloads, deploy matching consumers,
+jobs, clear old agents and draft payloads, deploy matching consumers,
 and regenerate. There is no conversion or compatibility alias. See
 [deployment and rollback notes](Dispositional%20Traits.md#breaking-deployment).
 

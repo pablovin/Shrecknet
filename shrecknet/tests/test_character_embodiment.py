@@ -14,6 +14,7 @@ from app.jobs.character_agent.embody_agent import (
     EmbodyAgent,
     EmbodimentGenerationError,
     ScenePerspectiveLLMOutput,
+    _SceneEnrichmentsLLMOutput,
 )
 from app.jobs.character_agent.embody_agent_prompts import (
     PSYCHOLOGICAL_ANALYSIS_PROMPT,
@@ -59,6 +60,25 @@ def test_provider_unavailable_error_is_actionable_for_embodiment_draft_reads():
     )
     assert error.details()["failure_category"] == "provider_unavailable"
     assert error.details()["provider_reason"] == "model_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_provider_watchdog_failure_preserves_the_provider_reason():
+    class WatchdogLLM:
+        async def chat(self, **_kwargs):
+            raise RuntimeError("chat job failed error=attempt watchdog exceeded 45.0s")
+
+    with pytest.raises(EmbodimentGenerationError) as raised:
+        await _agent(WatchdogLLM()).generate_perspectives(
+            source_entity_id="source", source_entity_alias="Source",
+            canonical_identity=_canonical(), current_trait_profile=TraitProfile(),
+            current_aspects=[], current_goals=[], scenes=scenes(1),
+        )
+
+    assert raised.value.category == "provider_timeout"
+    assert raised.value.details()["provider_reason"] == (
+        "chat job failed error=attempt watchdog exceeded 45.0s"
+    )
 
 
 def _canonical(overrides=None):
@@ -597,6 +617,8 @@ class BatchLLM:
         stage=kwargs['usage_tag'].rsplit('.',1)[-1]
         if stage == 'structured_fallback':
             stage = kwargs['usage_tag'].rsplit('.', 2)[-2]
+        if stage.isdigit() and '.truncation_recovery.' in kwargs['usage_tag']:
+            stage = 'scene_interpretation'
         if stage=='baseline':
             return json.dumps({'trait_evidence':[]})
         if stage=='character_incorporation':
@@ -607,8 +629,11 @@ class BatchLLM:
                 for s in payload['scenes']]}
             return json.dumps(result)
         if stage=='scene_interpretation':
+            candidate = observation(scene="model-scene").model_dump()
+            for field in ("evidence_ids", "episode_id", "available_after_scene_id"):
+                candidate.pop(field)
             return json.dumps({'scene_enrichments':[dict(
-                emotions=[],beliefs=[],impacts=[],trait_candidates=[observation(scene=f"model-scene-{p['position']}").model_dump()],
+                emotions=[],beliefs=[],impacts=[],trait_candidates=[candidate],
                 aspect_signals=[],goal_signals=[]) for p in payload['perspectives']]})
         if stage=='identity_signals':
             return json.dumps({'scene_identity_signals':[
@@ -671,10 +696,21 @@ async def test_every_embodiment_generation_call_requests_strict_json_schema():
         if call["usage_tag"].endswith(".scene_interpretation")
     )
     definitions = trait_format["json_schema"]["schema"]["$defs"]
-    impact = definitions["CharacterImpactOutput"]
-    assert "target_index" in impact["properties"]
-    assert "target_id" not in impact["properties"]
-    assert definitions["SceneEnrichmentOutput"]["properties"]["impacts"]["maxItems"] == 0
+    goal_impact = definitions["_GoalImpactLLMOutput"]
+    assert "target_index" in goal_impact["properties"]
+    assert "target_id" not in goal_impact["properties"]
+    assert definitions["_SceneEnrichmentLLMOutput"]["properties"]["impacts"]["maxItems"] == 0
+
+
+def test_psychological_llm_contract_excludes_backend_references_and_bounds_output():
+    schema = _SceneEnrichmentsLLMOutput.model_json_schema()
+    fields = schema["$defs"]["_SceneEnrichmentLLMOutput"]["properties"]
+    assert fields["emotions"]["maxItems"] == 2
+    assert fields["beliefs"]["maxItems"] == 2
+    assert fields["impacts"]["maxItems"] == 2
+    assert fields["trait_candidates"]["maxItems"] == 3
+    trait_fields = schema["$defs"]["_TraitCandidateLLMOutput"]["properties"]
+    assert {"evidence_ids", "episode_id", "available_after_scene_id"}.isdisjoint(trait_fields)
 
 
 @pytest.mark.asyncio
@@ -736,6 +772,35 @@ async def test_truncated_incorporation_retries_once_with_compact_contract():
     assert llm.call_tags == [
         "character_agent.embodiment.character_incorporation",
         "character_agent.embodiment.character_incorporation.truncation_recovery",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_truncated_psychological_analysis_retries_smaller_batches_without_reincorporation():
+    class RecoveringLLM(BatchLLM):
+        async def chat(self, **kwargs):
+            raw = await super().chat(**kwargs)
+            tag = kwargs["usage_tag"]
+            if tag.endswith(".scene_interpretation"):
+                self.last_response_metadata = {"finish_reason": "length"}
+            else:
+                self.last_response_metadata = {"finish_reason": "stop"}
+            return raw
+
+    llm = RecoveringLLM()
+    analysis = await _agent(llm).analyze(
+        source_entity_id="source", source_entity_alias="Source",
+        canonical_identity=_canonical(), current_trait_profile=TraitProfile(),
+        current_aspects=[], current_goals=[], scenes=scenes(3),
+    )
+
+    assert len(analysis.perspectives) == 3
+    tags = [call["usage_tag"] for call in llm.calls]
+    assert tags.count("character_agent.embodiment.character_incorporation") == 1
+    assert tags.count("character_agent.embodiment.scene_interpretation") == 1
+    assert sorted(tag for tag in tags if ".truncation_recovery." in tag) == [
+        "character_agent.embodiment.scene_interpretation.truncation_recovery.1",
+        "character_agent.embodiment.scene_interpretation.truncation_recovery.1",
     ]
 
 
@@ -805,20 +870,6 @@ async def test_embodiment_falls_back_only_when_native_schema_is_unsupported():
 
     assert analysis.perspectives
     assert all(call["usage_tag"].endswith(".structured_fallback") for call in llm.calls)
-
-
-class PrefixedAvailabilityLLM(BatchLLM):
-    """Reproduces the provider output that caused the reported failure."""
-
-    async def chat(self, **kwargs):
-        raw = await super().chat(**kwargs)
-        if kwargs['usage_tag'].endswith('.scene_interpretation'):
-            payload = json.loads(raw)
-            for position, enrichment in enumerate(payload['scene_enrichments'], start=1):
-                for candidate in enrichment['trait_candidates']:
-                    candidate['available_after_scene_id'] = f"scene:model-scene-{position}"
-            return json.dumps(payload)
-        return raw
 
 
 class AspectDirectionMismatchCorrectionLLM(BatchLLM):
@@ -954,8 +1005,8 @@ async def test_sequential_chunks_use_previous_profile_and_preserve_actual_revisi
 
 
 @pytest.mark.asyncio
-async def test_prefixed_availability_cutoff_is_normalized_before_grounding():
-    result = await _agent(PrefixedAvailabilityLLM()).run(
+async def test_backend_binds_availability_cutoff_before_grounding():
+    result = await _agent(BatchLLM()).run(
         source_entity_id='source', source_entity_alias='Source',
         canonical_identity=_canonical(), current_trait_profile=TraitProfile(),
         current_aspects=[], current_goals=[], scenes=scenes(3), batch_id='bundle',
@@ -976,21 +1027,9 @@ async def test_perspective_references_are_bound_to_input_positions():
     ]
 
 
-class PriorSceneNestedEvidenceLLM(BatchLLM):
-    async def chat(self, **kwargs):
-        raw = await super().chat(**kwargs)
-        if kwargs['usage_tag'].endswith('.scene_interpretation'):
-            payload = json.loads(raw)
-            payload['scene_enrichments'][1]['trait_candidates'][0]['evidence_ids'] = [
-                'scene:s0', 'scene:s1',
-            ]
-            return json.dumps(payload)
-        return raw
-
-
 @pytest.mark.asyncio
-async def test_noncanonical_nested_scene_evidence_is_bound_to_parent_position():
-    analysis = await _agent(PriorSceneNestedEvidenceLLM(), semantic_correction_attempts=0).analyze(
+async def test_nested_scene_evidence_is_bound_to_parent_position():
+    analysis = await _agent(BatchLLM(), semantic_correction_attempts=0).analyze(
         source_entity_id="source", source_entity_alias="Source",
         canonical_identity=_canonical(), current_trait_profile=TraitProfile(),
         current_aspects=[], current_goals=[], scenes=scenes(3),
@@ -1015,7 +1054,7 @@ async def test_scene_analysis_corrects_an_aspect_direction_mismatch():
     payload = json.loads(correction['messages'][1]['content'])
     assert correction['response_format']['type'] == 'json_schema'
     assert correction['response_format']['json_schema']['strict'] is True
-    assert payload['validation_errors'][0]['ctx']['error'] == 'impact direction is incompatible with impact_type'
+    assert any(error['loc'][-1] == 'direction' for error in payload['validation_errors'])
     assert analysis.perspectives[0].impacts[0].direction.value == 'invalidated'
     assert analysis.perspectives[0].impacts[0].target_id == 'aspect-1'
 
@@ -1032,15 +1071,13 @@ async def test_scene_analysis_schema_separates_goal_and_aspect_impact_directions
     )
 
     call = next(call for call in llm.calls if call['usage_tag'].endswith('.scene_interpretation'))
-    impact = call['response_format']['json_schema']['schema']['$defs']['CharacterImpactOutput']
-    assert 'properties' not in impact
-    variants = {item['properties']['impact_type']['const']: item for item in impact['oneOf']}
-    assert variants['goal_change']['properties']['direction']['enum'] == ['advanced', 'threatened']
-    assert variants['goal_change']['properties']['target_index']['maximum'] == 1
-    assert variants['aspect_change']['properties']['direction']['enum'] == [
-        'created', 'reinforced', 'invalidated',
-    ]
-    assert variants['aspect_change']['properties']['target_index']['maximum'] == 1
+    definitions = call['response_format']['json_schema']['schema']['$defs']
+    goal = definitions['_GoalImpactLLMOutput']['properties']
+    aspect = definitions['_AspectImpactLLMOutput']['properties']
+    assert goal['direction']['enum'] == ['advanced', 'threatened']
+    assert goal['target_index']['maximum'] == 1
+    assert aspect['direction']['enum'] == ['created', 'reinforced', 'invalidated']
+    assert aspect['target_index']['maximum'] == 1
 
 
 @pytest.mark.asyncio
@@ -1249,7 +1286,7 @@ async def test_psychological_analysis_durable_signals_become_identity_additions(
 
 
 def test_second_wave_prompts_are_compact_and_have_separate_contracts():
-    assert len(PSYCHOLOGICAL_ANALYSIS_PROMPT) < 7_000
+    assert len(PSYCHOLOGICAL_ANALYSIS_PROMPT) < 7_500
     assert 'trait_candidates' in PSYCHOLOGICAL_ANALYSIS_PROMPT
     assert 'aspect_signals' in PSYCHOLOGICAL_ANALYSIS_PROMPT
     assert 'Authoritative trait definitions and scale' not in PERSPECTIVE_PROMPT

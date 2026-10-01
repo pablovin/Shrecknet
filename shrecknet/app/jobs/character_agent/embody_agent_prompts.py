@@ -12,7 +12,7 @@ import json
 from app.schemas.character_traits import trait_metadata
 
 TRAIT_CONTRACT = "\nAuthoritative trait definitions and scale:\n" + json.dumps(trait_metadata(), ensure_ascii=False)
-PROMPT_VERSION = "character-embodiment-v22-compact-incorporation"
+PROMPT_VERSION = "character-embodiment-v23-bounded-psychology"
 
 PERSPECTIVE_PROMPT = r"""You are incorporating a character's identity into canonical objective scenes.
 
@@ -83,76 +83,39 @@ the same required perspectives much more compactly. The exact one-perspective-pe
 scene count and every field limit are mandatory. Return JSON only."""
 
 
-ENRICHMENT_PROMPT = r"""You are enriching grounded scene perspectives with immediate psychological effects.
+ENRICHMENT_PROMPT = r"""Stage 2 — enrich grounded character perspectives. Use only each supplied
+perspective; never reconstruct the objective scene, use reflection text, or let
+later positions affect earlier ones. Return exactly one enrichment in input order.
 
-You receive only this character's already-grounded scene perspectives, not raw
-objective scenes. Derive every result from the supplied numbered perspective's summary,
-interpretation, awareness, and confidence. The presentation-only
-character_reflection is intentionally absent. Do not reconstruct or supplement
-the objective scene, and do not create or update profile state. Do not use later perspectives for earlier beliefs. The backend attaches the
-current scene evidence to every generated result and nested candidate.
+Every enrichment MUST contain all six arrays: emotions, beliefs, impacts,
+trait_candidates, aspect_signals, goal_signals. Use [] when unsupported. Never
+return scene_id, evidence_ids, episode_id, available_after_scene_id, or target_id:
+the backend supplies those.
 
-Every scene result MUST contain all six arrays in the output object. Use [] when
-an array has no grounded item; never omit an array.
+Limits per scene: emotions 2, beliefs 2, impacts 2, trait_candidates 3, aspect
+signals 1, goal_signals 1. Descriptions/condition justifications <=240 chars;
+beliefs, impacts, and behavior <=300; other justifications <=360.
 
-For an impact, use target_index: the one-based position of its target in the
-matching current_profile array. The backend resolves that index to its stable ID.
-When both current_profile arrays are empty, impacts MUST be []. Use exactly one
-of these two forms: a goal_change targets current_profile.goals and has direction
-advanced or threatened; an aspect_change targets current_profile.aspects and has
-direction created, reinforced, or invalidated. Never use threatened or advanced
-for an aspect_change, and never use created, reinforced, or invalidated for a
-goal_change.
+OUTPUT: {"scene_enrichments":[{"emotions":[{"arousal":0..100,"valence":-100..100,"description":"..."}],"beliefs":[{"statement":"...","confidence":0..100,"status":"suspected|believed|confirmed|doubted|disproven|superseded"}],"impacts":[{"impact_type":"goal_change|aspect_change","target_index":1,"direction":"allowed direction","magnitude":0..100,"description":"..."}],"trait_candidates":[{"trait":"one of eight keys","evidence_kind":"behavior","situation_type":"...","pole":"left|right","update_intensity":"small|medium|large","expression_z":0.1,"diagnosticity":0.0,"confidence":0.0,"behavior":"...","justification":"...","conditions":{"knowledge":{"status":"supported|contradicted|unknown","justification":"..."},"capability":{"status":"supported|contradicted|unknown","justification":"..."},"options":{"status":"supported|contradicted|unknown","justification":"..."},"freedom":{"status":"supported|contradicted|unknown","justification":"..."}},"comparison_context":"... or null"}],"aspect_signals":[{"name":"...","category":"identity|role|status|physical|capability|knowledge|preference|attitude|history","description":"...","importance":1..5,"justification":"...","confidence":0.0}],"goal_signals":[{"title":"...","description":"...","goal_type":"desire|objective|ambition|obligation|avoidance|survival","priority":0..100,"commitment":0..100,"basis":"explicit|inferred","justification":"...","confidence":0.0}]}]}.
 
-INPUT:
-{
-  "perspectives": [{
-    "position":1,"source_type":"participated | witnessed | heard_about | read_about | inferred | unknown",
-    "awareness_level":0..100,"confidence":0..100,"summary":"...","interpretation":"...",
-    "memory_strength":0..100,"importance":1..5
-  }],
-  "current_profile": {
-    "aspects": [{"position":1,"name":"..."}],
-    "goals": [{"position":1,"title":"..."}]
-  }
-}
+Impacts use target_index from the matching current_profile list. goal_change is
+advanced|threatened; aspect_change is created|reinforced|invalidated. With no
+targets, impacts must be [].
 
-OUTPUT:
-{
-  "scene_enrichments": [{
-    "emotions":[{"arousal":0..100,"valence":-100..100,"description":"..."}],
-    "beliefs":[{"statement":"...","confidence":0..100,"status":"suspected | believed | confirmed | doubted | disproven | superseded"}],
-    "impacts":[
-      {"impact_type":"goal_change","target_index":1,"direction":"advanced | threatened","magnitude":0..100,"description":"..."},
-      {"impact_type":"aspect_change","target_index":1,"direction":"created | reinforced | invalidated","magnitude":0..100,"description":"..."}
-    ],
-    "trait_candidates":[{"trait":"integrity | caution | presence | forbearance | diligence | curiosity | sharing | restlessness","evidence_kind":"behavior","situation_type":"diagnostic value for trait","pole":"left | right","update_intensity":"small | medium | large","expression_z":"non-zero number from -1.9 to 1.9","diagnosticity":0.0,"confidence":0.0,"behavior":"one observed individual choice","justification":"why diagnostic","conditions":{"knowledge":{"status":"supported | contradicted | unknown","justification":"..."},"capability":{"status":"supported | contradicted | unknown","justification":"..."},"options":{"status":"supported | contradicted | unknown","justification":"..."},"freedom":{"status":"supported | contradicted | unknown","justification":"..."}},"comparison_context":"string or null"}],
-    "aspect_signals":[{"name":"...","category":"identity | role | status | physical | capability | knowledge | preference | attitude | history","description":"durable character-development fact","importance":1..5,"justification":"...","confidence":0.0}],
-    "goal_signals":[{"title":"...","description":"adopted durable commitment","goal_type":"desire | objective | ambition | obligation | avoidance | survival","priority":0..100,"commitment":0..100,"basis":"explicit | inferred","justification":"...","confidence":0.0}]
-  }]
-}
+Trait candidates are only distinct diagnostic individual choices, never emotion,
+group action, or repeated evidence. expression_z is nonzero (-1.9..1.9) and its
+sign selects pole (negative=left, positive=right). Pole must agree with expression_z.
+Valid situations:
+integrity=exploitation|self_serving_deception; caution=uncertain_threat|uncertain_dependence|reliance_without_guarantees;
+presence=social_visibility|social_approach|voluntary_contact;
+forbearance=provocation|betrayal|obstruction|retaliation;
+diligence=unattended_duty|delayed_payoff|cutting_corners|persistence;
+curiosity=novelty|exploration|puzzle|unknown_information; sharing=resource_allocation|spoils|rewards;
+restlessness=value_conflict|recurring_value_preference.
 
-Return JSON only."""
-
-ENRICHMENT_PROMPT += r"""
-
-Pole must agree with expression_z: use left only for a negative value and right only for a positive value. Do not emit a trait candidate for neutral, non-diagnostic, or ambiguous behavior.
-Trait candidates cover every distinct diagnostic individual choice expressed in this character's perspective; there is no hard per-scene limit. A perspective's emotion or belief can explain a candidate but is not behavioral evidence by itself. If the perspective reports only a group action without this character's own decision, return no trait candidate. Unknown conditions remain auditable but cannot update a trait. Valid trait/situation pairs: integrity=exploitation|self_serving_deception; caution=uncertain_threat|uncertain_dependence|reliance_without_guarantees; presence=social_visibility|social_approach|voluntary_contact; forbearance=provocation|betrayal|obstruction|retaliation; diligence=unattended_duty|delayed_payoff|cutting_corners|persistence; curiosity=novelty|exploration|puzzle|unknown_information; sharing=resource_allocation|spoils|rewards; restlessness=value_conflict|recurring_value_preference. Pole agrees with expression_z: negative left, positive right. update_intensity measures the source-level influence of this one choice: small is subtle, medium is clear, large is unusually decisive; it is not a personality score. The backend applies right as positive and left as negative, averages same-trait evidence within the source, and makes at most one bounded update per trait/source. Aspect and goal signals are evidence, never mutations: emit at most one of each per scene, only for a durable identity/role/capability/value/status change or personally adopted durable commitment expressed in the perspective; never for a passing emotion, generic scene event, group action, assigned task, or reflection. Return JSON only."""
-
-ENRICHMENT_PROMPT += r"""
-
-ASPECT/GOAL EMISSION RULE — treat these as positive extraction targets, not rare
-exceptions. Emit one aspect signal when a perspective establishes a newly relevant
-durable fact about this character: identity/origin, role or affiliation,
-relationship, enduring capability or limitation, durable condition, status,
-knowledge, value, preference, or history. The fact need not begin in this scene:
-a fact revealed or made character-defining by this scene qualifies. Emit one goal
-signal when the character expresses, adopts, renews, or demonstrably pursues an
-ongoing personal objective, obligation, avoidance, desire, or commitment. A scene
-may emit both. Return [] only when there is no grounded durable fact or continuing
-motivation. The backend deduplicates and caps accepted additions, so prefer a
-specific well-grounded candidate over suppressing a qualifying one. Return JSON only.
-"""
+An aspect signal needs a grounded durable character fact; a goal signal needs a
+grounded ongoing personal commitment. They are evidence, not mutations. Return
+JSON only."""
 
 
 TRAIT_EVIDENCE_CONTRACT = r"""

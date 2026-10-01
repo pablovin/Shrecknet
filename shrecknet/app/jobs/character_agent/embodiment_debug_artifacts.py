@@ -57,7 +57,20 @@ class EmbodimentDebugArtifacts:
         for candidate in candidates:
             try:
                 candidate.mkdir(parents=True, exist_ok=False)
-                return cls(candidate)
+                artifacts = cls(candidate)
+                artifacts._write("manifest.json", {
+                    "record_type": "embodiment_debug_manifest",
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                    "draft_id": draft_id,
+                    "revision": revision,
+                    "artifact_directory": str(candidate),
+                    "contains": [
+                        "LLM prompts and input payloads", "raw provider output when returned",
+                        "parsed output", "provider metadata", "errors and corrections",
+                    ],
+                })
+                logger.info("character_embodiment_debug_artifacts_enabled path=%s", candidate)
+                return artifacts
             except OSError:
                 continue
         logger.warning("character_embodiment_debug_directory_unavailable draft_id=%s", draft_id)

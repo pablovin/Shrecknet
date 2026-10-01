@@ -465,11 +465,7 @@ async def _generate(*, draft_id: str, revision: int, job_id: int) -> dict:
                         if isinstance(item, Exception):
                             await progress.chunk_failed(bi, index, stage="perspective", error=item)
                     await progress.failed(bi)
-                    raise EmbodimentGenerationError(
-                        "perspective stage failed for one or more chunks", category="stage_failure",
-                        stage="perspective", source_entity_id=group["source_id"],
-                        source_entity_alias=group["source_alias"], retryable=True,
-                    ) from perspective_errors[0]
+                    raise perspective_errors[0]
 
                 async def psychology_chunk(chunk_index: int, chunk_scenes: list[dict], perspectives):
                     await progress.stage(bi, [2], chunk_index=chunk_index)
@@ -495,11 +491,7 @@ async def _generate(*, draft_id: str, revision: int, job_id: int) -> dict:
                                 bi, index, stage="psychological_analysis", error=item,
                             )
                     await progress.failed(bi)
-                    raise EmbodimentGenerationError(
-                        "psychological analysis failed for one or more chunks", category="stage_failure",
-                        stage="psychological_analysis", source_entity_id=group["source_id"],
-                        source_entity_alias=group["source_alias"], retryable=True,
-                    ) from analysis_errors[0]
+                    raise analysis_errors[0]
                 analysis = _merge_chunk_analyses(analysis_results)
                 try:
                     result = await agent.apply_profile_update(

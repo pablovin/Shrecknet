@@ -16,7 +16,7 @@ import copy
 import json
 import logging
 import time
-from typing import Any, Callable
+from typing import Any, Callable, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -35,6 +35,9 @@ from app.jobs.character_agent.embody_agent_prompts import (
 )
 from app.jobs.shrecknet.agent import parse_json_deterministically
 from app.schemas.character_agent import (
+    CharacterAspectCategory,
+    CharacterBeliefStatus,
+    CharacterGoalType,
     EmbodyAgentAnalysis,
     EmbodimentObservationsOutput,
     EmbodyAgentResult,
@@ -50,6 +53,7 @@ from app.schemas.character_agent import (
 
 
 from app.schemas.character_traits import TraitProfile, TraitEvidence, TraitProposal
+from app.schemas.character_traits import TraitKey, ZValue
 from app.services.character_trait_service import (
     ground_observations, merge_evidence, update_profile, validate_proposals, validate_scene_grounding, scene_digest,
 )
@@ -141,6 +145,109 @@ class _PerspectivesLLMContainer(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
     perspectives: list[ScenePerspectiveLLMOutput]
+
+
+class _EmotionLLMOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    arousal: int = Field(ge=0, le=100)
+    valence: int = Field(ge=-100, le=100)
+    description: str = Field(min_length=1, max_length=240)
+
+
+class _BeliefLLMOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    statement: str = Field(min_length=1, max_length=300)
+    confidence: int = Field(ge=0, le=100)
+    status: CharacterBeliefStatus
+
+
+class _ChoiceConditionLLMOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    status: Literal["supported", "contradicted", "unknown"]
+    justification: str = Field(min_length=1, max_length=240)
+
+
+class _ChoiceConditionsLLMOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    knowledge: _ChoiceConditionLLMOutput
+    capability: _ChoiceConditionLLMOutput
+    options: _ChoiceConditionLLMOutput
+    freedom: _ChoiceConditionLLMOutput
+
+
+class _TraitCandidateLLMOutput(BaseModel):
+    """Model-owned trait observation fields; provenance is attached by the backend."""
+
+    model_config = ConfigDict(extra="forbid")
+    trait: TraitKey
+    evidence_kind: Literal["behavior"] = "behavior"
+    situation_type: str = Field(min_length=1, max_length=80)
+    pole: Literal["left", "right"]
+    update_intensity: Literal["small", "medium", "large"]
+    expression_z: ZValue
+    diagnosticity: float = Field(ge=0, le=1)
+    confidence: float = Field(ge=0, le=1)
+    behavior: str = Field(min_length=1, max_length=300)
+    justification: str = Field(min_length=1, max_length=360)
+    conditions: _ChoiceConditionsLLMOutput
+    comparison_context: str | None = Field(None, max_length=300)
+
+
+class _AspectSignalLLMOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(min_length=1, max_length=255)
+    category: CharacterAspectCategory
+    description: str = Field(min_length=1, max_length=360)
+    importance: int = Field(ge=1, le=5)
+    justification: str = Field(min_length=1, max_length=360)
+    confidence: float = Field(ge=0, le=1)
+
+
+class _GoalSignalLLMOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    title: str = Field(min_length=1, max_length=255)
+    description: str = Field(min_length=1, max_length=360)
+    goal_type: CharacterGoalType
+    priority: int = Field(ge=0, le=100)
+    commitment: int = Field(ge=0, le=100)
+    basis: Literal["explicit", "inferred"]
+    justification: str = Field(min_length=1, max_length=360)
+    confidence: float = Field(ge=0, le=1)
+
+
+class _GoalImpactLLMOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    impact_type: Literal["goal_change"]
+    target_index: int = Field(ge=1)
+    direction: Literal["advanced", "threatened"]
+    magnitude: int = Field(ge=0, le=100)
+    description: str = Field(min_length=1, max_length=300)
+
+
+class _AspectImpactLLMOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    impact_type: Literal["aspect_change"]
+    target_index: int = Field(ge=1)
+    direction: Literal["created", "reinforced", "invalidated"]
+    magnitude: int = Field(ge=0, le=100)
+    description: str = Field(min_length=1, max_length=300)
+
+
+class _SceneEnrichmentLLMOutput(BaseModel):
+    """Bounded psychological-analysis content without persistence references."""
+
+    model_config = ConfigDict(extra="forbid")
+    emotions: list[_EmotionLLMOutput] = Field(max_length=2)
+    beliefs: list[_BeliefLLMOutput] = Field(max_length=2)
+    impacts: list[_GoalImpactLLMOutput | _AspectImpactLLMOutput] = Field(max_length=2)
+    trait_candidates: list[_TraitCandidateLLMOutput] = Field(max_length=3)
+    aspect_signals: list[_AspectSignalLLMOutput] = Field(max_length=1)
+    goal_signals: list[_GoalSignalLLMOutput] = Field(max_length=1)
+
+
+class _SceneEnrichmentsLLMOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    scene_enrichments: list[_SceneEnrichmentLLMOutput]
 
 
 class UsageTracker:
@@ -341,13 +448,21 @@ class EmbodyAgent:
         except Exception as exc:
             self._debug_call(stage=stage, prompt=prompt, payload=payload, error=str(exc),
                              model=model, usage_tag=usage_tag)
+            provider_reason = str(exc)
+            category = (
+                "provider_timeout"
+                if "watchdog exceeded" in provider_reason.lower()
+                else "transport"
+            )
             raise EmbodimentGenerationError(
                 f"{stage} transport failed",
-                category="transport",
+                category=category,
                 stage=stage,
                 source_entity_id=source_entity_id,
                 source_entity_alias=source_entity_alias,
                 retryable=True,
+                model_name=str(getattr(model, "name", model)),
+                provider_reason=provider_reason,
             ) from exc
         if not str(raw).strip():
             self._debug_call(
@@ -731,6 +846,68 @@ class EmbodyAgent:
             summary, interpretation, reflection,
         )
 
+    async def _analyze_psychological_batch(
+        self, *, source_entity_id: str, source_entity_alias: str,
+        perspectives: list[ScenePerspectiveOutput], aspects: list[dict[str, Any]],
+        goals: list[dict[str, Any]], recovery_depth: int = 0,
+    ) -> list[Any]:
+        """Analyze one perspective batch, splitting only a truncated retry batch."""
+        expected_ids = [perspective.scene_id for perspective in perspectives]
+        profile_targets = {
+            "aspects": [aspect["id"] for aspect in aspects],
+            "goals": [goal["id"] for goal in goals],
+        }
+        payload = {
+            "perspectives": [
+                perspective.model_dump(
+                    mode="json",
+                    exclude={"scene_id", "evidence_ids", "character_reflection", "status"},
+                ) | {"position": index + 1}
+                for index, perspective in enumerate(perspectives)
+            ],
+            "current_profile": {
+                "aspects": [{"position": index + 1, "name": aspect["name"]} for index, aspect in enumerate(aspects)],
+                "goals": [{"position": index + 1, "title": goal["title"]} for index, goal in enumerate(goals)],
+            },
+        }
+        usage_tag = "character_agent.embodiment.scene_interpretation"
+        if recovery_depth:
+            usage_tag += ".truncation_recovery.{0}".format(recovery_depth)
+        try:
+            llm_result = await self._call(
+                prompt=PSYCHOLOGICAL_ANALYSIS_PROMPT, payload=payload,
+                schema=_SceneEnrichmentsLLMOutput, stage="scene trait extraction",
+                usage_tag=usage_tag, max_tokens=EMBODIMENT_LLM_MAX_TOKENS,
+                model=self.scene_interpretation_model, source_entity_id=source_entity_id,
+                source_entity_alias=source_entity_alias, schema_correction_attempts=1,
+                output_binding={
+                    "collection": "scene_enrichments", "scene_ids": expected_ids,
+                    "bind_references": False, "profile_targets": profile_targets,
+                },
+            )
+        except EmbodimentGenerationError as exc:
+            if exc.category != "truncated" or len(perspectives) == 1:
+                raise
+            midpoint = len(perspectives) // 2
+            logger.warning(
+                "psychological_analysis_truncation_recovery source_id=%s source_alias=%s "
+                "scene_count=%d retry_batch_sizes=%s",
+                source_entity_id, source_entity_alias, len(perspectives),
+                (midpoint, len(perspectives) - midpoint),
+            )
+            first = await self._analyze_psychological_batch(
+                source_entity_id=source_entity_id, source_entity_alias=source_entity_alias,
+                perspectives=perspectives[:midpoint], aspects=aspects, goals=goals,
+                recovery_depth=recovery_depth + 1,
+            )
+            second = await self._analyze_psychological_batch(
+                source_entity_id=source_entity_id, source_entity_alias=source_entity_alias,
+                perspectives=perspectives[midpoint:], aspects=aspects, goals=goals,
+                recovery_depth=recovery_depth + 1,
+            )
+            return [*first, *second]
+        return _bind_llm_enrichments(llm_result, expected_ids, profile_targets).scene_enrichments
+
     async def analyze(
         self,
         *,
@@ -809,41 +986,10 @@ class EmbodyAgent:
             await on_stage(
                 "source:{0} - Step 2: Psychological analysis".format(source_entity_alias), [2]
             )
-        trait_payload = {
-            "perspectives": [
-                p.model_dump(
-                    mode="json",
-                    exclude={"scene_id", "evidence_ids", "character_reflection", "status"},
-                ) | {"position": index + 1}
-                for index, p in enumerate(perspectives)
-            ],
-            "current_profile": {
-                "aspects": [{"position": index + 1, "name": a["name"]} for index, a in enumerate(aspects)],
-                "goals": [{"position": index + 1, "title": g["title"]} for index, g in enumerate(goals)],
-            },
-        }
-        enrichment_result = await self._call(
-                    prompt=PSYCHOLOGICAL_ANALYSIS_PROMPT, payload=trait_payload,
-                    schema=SceneEnrichmentsOutput,
-                    semantic_validator=lambda value: _semantic(
-                        lambda: _validate_and_normalize_scene_grounding(
-                            value.scene_enrichments, expected_ids
-                        )
-                    ),
-                    stage="scene trait extraction",
-                    usage_tag="character_agent.embodiment.scene_interpretation",
-                    max_tokens=EMBODIMENT_LLM_MAX_TOKENS, model=self.scene_interpretation_model,
-                    source_entity_id=source_entity_id, source_entity_alias=source_entity_alias,
-                    # A valid JSON response can still violate a conditional
-                    # impact contract. Permit one replacement response rather
-                    # than discarding the entire draft for that model mistake.
-                    schema_correction_attempts=1,
-                    output_binding={
-                        "collection": "scene_enrichments", "scene_ids": expected_ids,
-                        "profile_targets": {"aspects": [a["id"] for a in aspects], "goals": [g["id"] for g in goals]},
-                    },
-                )
-        enrichments = enrichment_result.scene_enrichments
+        enrichments = await self._analyze_psychological_batch(
+            source_entity_id=source_entity_id, source_entity_alias=source_entity_alias,
+            perspectives=perspectives, aspects=aspects, goals=goals,
+        )
         enrichment_ids = [item.scene_id for item in enrichments]
         if enrichment_ids != expected_ids or len(enrichment_ids) != len(set(enrichment_ids)):
             raise EmbodimentGenerationError(
@@ -1047,61 +1193,32 @@ def _model_output_schema(
             perspectives["maxItems"] = len(scene_ids)
         return result
 
-    if schema is not SceneEnrichmentsOutput:
+    if schema is not _SceneEnrichmentsLLMOutput:
         return result
     definitions = result.get("$defs", {})
-    impact = definitions.get("CharacterImpactOutput")
-    enrichment = definitions.get("SceneEnrichmentOutput")
-    if not isinstance(impact, dict) or not isinstance(enrichment, dict):
-        return result
-    properties = impact.get("properties")
-    required = impact.get("required")
-    if not isinstance(properties, dict) or not isinstance(required, list):
+    enrichments = result.get("properties", {}).get("scene_enrichments")
+    scene_ids = (output_binding or {}).get("scene_ids")
+    if isinstance(scene_ids, list) and isinstance(enrichments, dict):
+        enrichments["minItems"] = len(scene_ids)
+        enrichments["maxItems"] = len(scene_ids)
+    goal_impact = definitions.get("_GoalImpactLLMOutput")
+    aspect_impact = definitions.get("_AspectImpactLLMOutput")
+    enrichment = definitions.get("_SceneEnrichmentLLMOutput")
+    if not all(isinstance(item, dict) for item in (goal_impact, aspect_impact, enrichment)):
         return result
     targets = (output_binding or {}).get("profile_targets") or {}
     aspect_count = len(targets.get("aspects", []))
     goal_count = len(targets.get("goals", []))
-    target_count = max(aspect_count, goal_count)
     impacts = enrichment.get("properties", {}).get("impacts")
     if isinstance(impacts, dict):
-        if target_count == 0:
-            properties.pop("target_id", None)
-            properties["target_index"] = {"type": "integer", "minimum": 1}
-            impact["required"] = [
-                field for field in required if field != "target_id"
-            ] + ["target_index"]
+        if aspect_count == 0 and goal_count == 0:
             impacts["maxItems"] = 0
-            return result
-
-    # Pydantic's persistence model validates this relationship at runtime, but
-    # its generated schema represents the two fields as independent enums.
-    # The LLM-facing contract must make the relationship structural so native
-    # structured-output providers cannot select ``threatened`` for an aspect.
-    variants = []
-    for impact_type, directions, count in (
-        ("goal_change", ("advanced", "threatened"), goal_count),
-        ("aspect_change", ("created", "reinforced", "invalidated"), aspect_count),
-    ):
-        if count == 0:
-            continue
-        variants.append({
-            "type": "object",
-            "additionalProperties": False,
-            "properties": {
-                "impact_type": {"const": impact_type},
-                "target_index": {"type": "integer", "minimum": 1, "maximum": count},
-                "direction": {"type": "string", "enum": list(directions)},
-                "magnitude": copy.deepcopy(properties["magnitude"]),
-                "description": copy.deepcopy(properties["description"]),
-            },
-            "required": [
-                "impact_type", "target_index", "direction", "magnitude", "description",
-            ],
-        })
-    impact.pop("properties", None)
-    impact.pop("required", None)
-    impact.pop("additionalProperties", None)
-    impact["oneOf"] = variants
+        else:
+            for definition, count in ((goal_impact, goal_count), (aspect_impact, aspect_count)):
+                properties = definition.get("properties", {})
+                index = properties.get("target_index") if isinstance(properties, dict) else None
+                if isinstance(index, dict) and count:
+                    index["maximum"] = count
     return result
 
 
@@ -1126,6 +1243,31 @@ def _bind_llm_perspectives(
         )
         for perspective, scene_id in zip(value.perspectives, scene_ids, strict=True)
     ])
+
+
+def _bind_llm_enrichments(
+    value: BaseModel, scene_ids: list[str], profile_targets: dict[str, list[str]],
+) -> SceneEnrichmentsOutput:
+    """Attach canonical references after validating the compact model contract."""
+    if not isinstance(value, _SceneEnrichmentsLLMOutput):
+        raise EmbodimentGenerationError("invalid psychological-analysis result")
+    if len(value.scene_enrichments) != len(scene_ids):
+        raise EmbodimentGenerationError(
+            "psychological analysis must return exactly one enrichment per perspective",
+            category="schema", expected_sequence=scene_ids,
+            actual_sequence=[str(index + 1) for index in range(len(value.scene_enrichments))],
+        )
+    parsed = value.model_dump(mode="json")
+    _bind_model_output_references(
+        parsed, collection="scene_enrichments", scene_ids=scene_ids,
+        profile_targets=profile_targets,
+    )
+    try:
+        return SceneEnrichmentsOutput.model_validate(parsed)
+    except ValidationError as exc:
+        raise EmbodimentGenerationError(
+            "invalid bound psychological-analysis output", category="schema",
+        ) from exc
 
 
 def _normalize_position_bound_collection(

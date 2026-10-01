@@ -24,6 +24,11 @@ content, Novelist makes one source-preserving retry without the provider-native
 format flag and explicitly includes the required schema. A second malformed or
 schema-invalid response fails the run; it is never used as evidence.
 
+Every analysis, verification, writing, and correction request carries its
+source-bearing task prompt as a `user` message. Novelist must not submit a
+system-only conversation: provider routing may accept such a request while
+returning an empty visible completion.
+
 The current source ledger is authoritative. Authority then descends through a
 prior session, graph/world context, CharacterAgent guidance, and writing style.
 Continuity can affect presentation but cannot add facts. Every ledger claim has

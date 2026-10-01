@@ -101,6 +101,12 @@ analysis chunks therefore normally makes `3n` LLM calls, excluding the authored
 baseline and repair/correction calls. No LLM receives a cumulative evidence
 ledger, raw scenes after incorporation, or a source-level profile-update payload.
 
+Trait-candidate validation happens at the trait-interpretation output boundary.
+In particular, a negative `expression_z` requires `pole: "left"` and a positive
+value requires `pole: "right"`. A contradictory candidate is rejected as a
+schema error and receives the normal bounded schema-correction call before any
+scene bundle or persistent draft is assembled.
+
 Psychological analysis treats newly grounded durable facts (identity, role,
 affiliation, relationship, capability, status, knowledge, value, preference, or
 history) as positive aspect-signal candidates, and active self-adopted objectives

@@ -18,7 +18,7 @@ import logging
 import time
 from typing import Any, Callable, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from app.integrations.llm.json_repair import repair_json_text
 from app.integrations.llm.structured_output import (
@@ -203,6 +203,14 @@ class _TraitCandidateLLMOutput(BaseModel):
     conditions: _ChoiceConditionsLLMOutput
     comparison_context: str | None = Field(None, max_length=300)
     behavior_indexes: list[int] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def pole_matches_expression_z(self) -> "_TraitCandidateLLMOutput":
+        """Reject contradictory directional evidence at the model-output boundary."""
+        expected_pole = "left" if self.expression_z < 0 else "right"
+        if self.pole != expected_pole:
+            raise ValueError("pole and expression_z disagree")
+        return self
 
 
 class _AspectSignalLLMOutput(BaseModel):

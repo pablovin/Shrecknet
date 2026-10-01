@@ -67,7 +67,29 @@ async def test_analysis_retries_malformed_native_structured_output_with_source_p
 
     assert parsed == {"status": "ok"}
     assert len(client.calls) == 2
+    assert [call["messages"][0]["role"] for call in client.calls] == ["user", "user"]
     assert client.calls[0]["response_format"]["type"] == "json_schema"
     assert "response_format" not in client.calls[1]
     assert client.calls[1]["usage_tag"] == "novelist.analysis.interpret.malformed_structured_fallback"
     assert "Source-bearing prompt." in client.calls[1]["messages"][0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_writer_submits_the_narrative_prompt_as_a_user_turn() -> None:
+    class WriterClient:
+        def __init__(self) -> None:
+            self.calls: list[dict] = []
+
+        async def chat(self, **kwargs):
+            self.calls.append(kwargs)
+            return {"text": "<p>Rendered prose.</p>"}
+
+    client = WriterClient()
+    orchestrator = NovelistOrchestrator(llm_client=client, model_policy=ModelPolicy())
+
+    result = await orchestrator._write("Render this evidence.", usage_tag="novelist.writer.block")
+
+    assert result == "<p>Rendered prose.</p>"
+    assert client.calls[0]["messages"] == [
+        {"role": "user", "content": "Render this evidence."},
+    ]

@@ -52,7 +52,7 @@ class NovelistOrchestrator:
                     result = await chat_with_structured_output(
                         llm_client=self.llm_client,
                         model=self.analysis_model,
-                        messages=[{"role": "system", "content": prompt}],
+                        messages=[{"role": "user", "content": prompt}],
                         response_format=response_format,
                         temperature=0.0,
                         return_metadata=True,
@@ -72,7 +72,7 @@ class NovelistOrchestrator:
                     )
                     result = await self.llm_client.chat(
                         model=self.analysis_model,
-                        messages=[{"role": "system", "content": fallback_prompt}],
+                        messages=[{"role": "user", "content": fallback_prompt}],
                         temperature=0.0,
                         return_metadata=True,
                         usage_tag=f"{usage_tag}.malformed_structured_fallback",
@@ -96,7 +96,7 @@ class NovelistOrchestrator:
         raise RuntimeError(f"Novelist analysis structured output failed after retry: {last}") from last
 
     async def _write(self, prompt: str, *, usage_tag: str) -> str:
-        result = await self.llm_client.chat(model=self.writer_model, messages=[{"role": "system", "content": prompt}], temperature=0.7, return_metadata=True, use_conversation_memory=False, usage_tag=usage_tag, max_tokens=3000)
+        result = await self.llm_client.chat(model=self.writer_model, messages=[{"role": "user", "content": prompt}], temperature=0.7, return_metadata=True, use_conversation_memory=False, usage_tag=usage_tag, max_tokens=3000)
         text = result.get("text") if isinstance(result, dict) else result
         self.calls.append({"tag": usage_tag, "model": self.writer_model.model_dump() if hasattr(self.writer_model, "model_dump") else str(self.writer_model)})
         return str(text or "").strip()

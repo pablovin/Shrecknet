@@ -974,6 +974,51 @@ async def test_trait_interpretation_keeps_only_the_highest_confidence_duplicate_
     assert candidates[0][0]["confidence"] == 0.9
 
 
+@pytest.mark.asyncio
+async def test_trait_interpretation_corrects_a_pole_that_disagrees_with_expression_z():
+    class ContradictoryPoleLLM:
+        def __init__(self):
+            self.calls = []
+
+        async def chat(self, **kwargs):
+            self.calls.append(kwargs)
+            candidate = {
+                "trait": "curiosity", "evidence_kind": "behavior",
+                "situation_type": "exploration", "pole": "left", "expression_z": 0.7,
+                "diagnosticity": 0.8, "confidence": 0.9,
+                "behavior": "Inspected the unfamiliar device.",
+                "justification": "The voluntary investigation is diagnostic of curiosity.",
+                "conditions": {
+                    "knowledge": {"status": "supported", "justification": "The device was visible."},
+                    "capability": {"status": "supported", "justification": "They could inspect it."},
+                    "options": {"status": "supported", "justification": "They could leave it alone."},
+                    "freedom": {"status": "supported", "justification": "No compulsion is described."},
+                },
+                "comparison_context": None, "behavior_indexes": [1],
+            }
+            if kwargs["usage_tag"].endswith(".schema_correction"):
+                candidate["pole"] = "right"
+            return json.dumps({"scene_trait_interpretations": [{"trait_candidates": [candidate]}]})
+
+    perspective = ScenePerspectiveOutput(
+        scene_id="scene-1", evidence_ids=["scene:scene-1"], source_type="participated",
+        awareness_level=90, confidence=90, summary="A device appeared.",
+        interpretation="It might reveal something new.", character_reflection="I want to inspect it.",
+        memory_strength=80, importance=3,
+        behavioral_evidence=[{"action": "Inspected the unfamiliar device.", "context": None,
+                              "source_quote": "inspected the unfamiliar device"}],
+    )
+    llm = ContradictoryPoleLLM()
+
+    candidates = await _agent(llm)._interpret_traits_batch(
+        source_entity_id="source", source_entity_alias="Source", identity=_canonical(),
+        perspectives=[perspective],
+    )
+
+    assert candidates[0][0]["pole"] == "right"
+    assert any(call["usage_tag"].endswith(".schema_correction") for call in llm.calls)
+
+
 def test_trait_interpretation_prompt_requires_one_candidate_per_trait_per_scene():
     assert "FIXED CONSTRAINT" in TRAIT_INTERPRETATION_PROMPT
     assert "only one candidate for each `trait` value" in TRAIT_INTERPRETATION_PROMPT

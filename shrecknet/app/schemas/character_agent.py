@@ -970,8 +970,16 @@ class SceneInput(_StrictModel):
 
 class EmotionalInterpretationOutput(_StrictModel):
     arousal: int = Field(..., ge=0, le=100)
-    valence: int = Field(..., ge=-100, le=100)
+    valence: int = Field(..., ge=0, le=100)
     description: str = Field(..., min_length=1)
+
+    @field_validator("valence", mode="before")
+    @classmethod
+    def normalize_legacy_signed_valence(cls, value: Any) -> Any:
+        """Read old generated signed valence while writing the public 0..100 scale."""
+        if isinstance(value, int) and value < 0:
+            return round((value + 100) / 2)
+        return value
 
 
 class CharacterBeliefOutput(_StrictModel):

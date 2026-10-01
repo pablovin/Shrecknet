@@ -63,6 +63,13 @@ def _props(record: Any, key: str = "node") -> dict[str, Any]:
     return dict(record[key])
 
 
+def _canonical_emotion_valence(value: Any) -> Any:
+    """Translate pre-v3 generated signed valence onto the public 0..100 scale."""
+    if isinstance(value, int) and value < 0:
+        return round((value + 100) / 2)
+    return value
+
+
 def _perspective_props(record: Any, key: str = "node") -> dict[str, Any]:
     """Keep private derived retrieval fields out of strict public schemas."""
     data = _props(record, key)
@@ -1693,6 +1700,8 @@ class CharacterAgentService:
     @staticmethod
     def _child_data(row: Any, kind: str) -> dict[str, Any]:
         data = _props(row)
+        if kind == "emotions":
+            data["valence"] = _canonical_emotion_valence(data.get("valence"))
         if kind == "impacts":
             data["target_id"] = row["target_id"]
             data["target_type"] = row["target_type"]

@@ -205,7 +205,7 @@ Each interpretation node belongs to exactly one perspective:
 
 | Label and relationship | Properties and rules |
 | --- | --- |
-| `ScenePerspective-[:EVOKES]->EmotionalInterpretation` | Unique `id`, `ontology_id`, `arousal` `0..100`, `valence` `0..100`, nonblank `description`, `created_at`, and `updated_at`. Valence uses `0` as maximally negative, `50` as neutral, and `100` as maximally positive. |
+| `ScenePerspective-[:EVOKES]->EmotionalInterpretation` | Unique `id`, `ontology_id`, `arousal` `0..100`, `valence` `0..100`, nonblank `description`, `created_at`, and `updated_at`. Valence uses `0` as maximally negative, `50` as neutral, and `100` as maximally positive. Legacy generated signed values are converted to this scale when read; all new generation and writes use the canonical scale. |
 | `ScenePerspective-[:FORMS_BELIEF]->CharacterBelief` | Unique `id`, `ontology_id`, nonblank `statement`, `confidence` `0..100`, status `suspected`, `believed`, `confirmed`, `doubted`, `disproven`, or `superseded`, and timestamps. A belief can differ from canonical scene truth. |
 | `ScenePerspective-[:HAS_IMPACT]->CharacterImpact` | Unique `id`, `ontology_id`, `impact_type`, `direction`, `magnitude` `0..100`, nonblank `description`, and timestamps. |
 

@@ -25,7 +25,7 @@ from app.schemas.character_agent import (
     CharacterAgentCreateRequest, CharacterAgentRead, CharacterAgentUpdate,
     EmbodimentEvidence, EmbodimentProposal,
     ProfileUpdateOutput,
-    SceneEnrichmentsOutput, SceneInput, ScenePerspectiveOutput,
+    EmotionalInterpretationOutput, SceneEnrichmentsOutput, SceneInput, ScenePerspectiveOutput,
     CharacterTimelineProjection,
 )
 from app.services.character_embodiment_service import CharacterEmbodimentService, _json_safe
@@ -711,6 +711,15 @@ def test_psychological_llm_contract_excludes_backend_references_and_bounds_outpu
     assert fields["trait_candidates"]["maxItems"] == 3
     trait_fields = schema["$defs"]["_TraitCandidateLLMOutput"]["properties"]
     assert {"evidence_ids", "episode_id", "available_after_scene_id"}.isdisjoint(trait_fields)
+
+
+def test_generated_emotion_uses_public_valence_scale_and_normalizes_legacy_values():
+    assert EmotionalInterpretationOutput(
+        arousal=80, valence=25, description="Uneasy.",
+    ).valence == 25
+    assert EmotionalInterpretationOutput(
+        arousal=80, valence=-50, description="Legacy unease.",
+    ).valence == 25
 
 
 @pytest.mark.asyncio

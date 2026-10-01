@@ -58,6 +58,10 @@ def test_emotion_and_impact_validation():
             arousal=-1, valence=50, description="Invalid"
         )
 
+    assert CharacterAgentService._child_data(
+        {"node": {"valence": -50}}, "emotions"
+    )["valence"] == 25
+
     goal = CharacterImpactCreate(
         impact_type="goal_change",
         direction="advanced",

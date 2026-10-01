@@ -14,12 +14,12 @@ from app.api.deps import (
     get_architect_service,
     get_current_user,
     get_db_session,
-    get_jobs_session,
 )
 from app.api.agent_feature_gate import require_ai_agents_enabled
 from app.core.config_store import get_settings, is_shreckllm_configured
 from app.models.agent import Agent
 from app.db.jobs_session import JobsSessionMaker
+from app.db.jobs_session import get_jobs_session
 from app.repositories.background_job_repository import BackgroundJobRepository
 from app.models.architect import ArchitectProposal, ArchitectProposalStatus, ArchitectProposalType
 from app.models.user import User

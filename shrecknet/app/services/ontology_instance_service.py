@@ -2820,7 +2820,7 @@ class OntologyInstanceService:
         self, *, ontology_id: int, actor: User
     ) -> None:
         """Authorize graph reads at the world/ontology boundary before Neo4j is read."""
-        ontology = await self.sql.get(Ontology, ontology_id)
+        ontology = await self.sql_session.get(Ontology, ontology_id)
         if ontology is None:
             raise ValueError("Ontology not found")
 
@@ -2828,7 +2828,7 @@ class OntologyInstanceService:
         if role.lower() in {UserRole.ADMIN.value, UserRole.WORLD_BUILDER.value, UserRole.WRITER.value}:
             return
 
-        allowed = await self.sql.scalar(
+        allowed = await self.sql_session.scalar(
             select(OntologyEntity.id)
             .join(OntologyEntity.players)
             .where(

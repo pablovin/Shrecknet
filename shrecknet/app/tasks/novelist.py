@@ -125,10 +125,19 @@ async def _execute_run(*, run_id: str, request_payload: dict[str, Any], job_id: 
 @celery_app.task(name="novelist.generate_draft")
 def generate_draft(run_id: str, request_payload: dict[str, Any], *, author_type: str = "user", author_id: str | None = None) -> dict[str, Any]:
     async def runner() -> dict[str, Any]:
-        job = await create_background_job(job_type=JobType.NOVELIST_DRAFT, author_type=AuthorType(author_type), author_id=author_id or "system", description=f"Novelist v3 draft generation for run {run_id}")
+        job_id = await create_background_job(
+            job_type=JobType.NOVELIST_DRAFT,
+            author_type=AuthorType(author_type),
+            author_id=author_id or "system",
+            description=f"Novelist v3 draft generation for run {run_id}",
+        )
         async with AsyncSessionMaker() as session:
-            await NovelistRepository(session).attach_background_job(run_id, job.id)
+            await NovelistRepository(session).attach_background_job(run_id, job_id)
             await session.commit()
-        await mark_job_running(job.id)
-        return await _execute_run(run_id=run_id, request_payload=request_payload, job_id=job.id)
+        await mark_job_running(job_id)
+        return await _execute_run(
+            run_id=run_id,
+            request_payload=request_payload,
+            job_id=job_id,
+        )
     return run_async(runner())

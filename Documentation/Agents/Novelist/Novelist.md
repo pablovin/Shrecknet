@@ -45,6 +45,11 @@ usage data. `draft_text` remains final display-ready chapter HTML. The V2
 `critic_notes`, scene results, Elder Q&A, and numbered step outputs are
 deprecated compatibility fields and are not populated by V3.
 
+Each queued run is linked to its background-job record when the Celery worker
+starts. That record provides the queued/running/completed/failed state and
+progress updates; failure to create or link the tracking record prevents the
+pipeline from starting.
+
 Use `previous_novelist_run_id` to reuse a completed V3 ledger. The older
 `previous_session_id` remains a lower-authority graph text lookup.
 

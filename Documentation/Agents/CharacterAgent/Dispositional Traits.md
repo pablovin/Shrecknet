@@ -64,9 +64,11 @@ The current embodiment pipeline is scene-centric. A source's scenes are divided
 into analysis chunks of at most five scenes (therefore always within the
 maximum ten-scene window). A source runs a flat Perspective wave for all chunks
 against the same source-start identity, then a flat Psychological analysis wave.
-The first call receives objective scenes; the second receives only its bounded
-interpretations and produces emotions, beliefs, impacts, trait candidates, and
-durable aspect/goal signals.
+The first call receives objective scenes and returns perspectives plus factual
+behavioral evidence with a short source quotation. The second receives only
+bounded perspectives and produces emotions, beliefs, impacts, and durable
+aspect/goal signals. In parallel, the third receives only validated factual
+behavioral evidence and the authoritative trait registry to produce candidates.
 
 Character Incorporation uses a separate LLM-only perspective contract. It
 contains no `scene_id`, `evidence_ids`, status, database identifier, or other
@@ -95,7 +97,7 @@ returns an out-of-range optional impact, that impact is discarded as a no-op;
 it cannot fail or mutate the source. The backend binds positional references,
 validates the outputs, merges source-local evidence in chronological order, and
 performs trait/profile reduction deterministically. A source with `n`
-analysis chunks therefore normally makes `2n` LLM calls, excluding the authored
+analysis chunks therefore normally makes `3n` LLM calls, excluding the authored
 baseline and repair/correction calls. No LLM receives a cumulative evidence
 ledger, raw scenes after incorporation, or a source-level profile-update payload.
 
@@ -233,20 +235,15 @@ submitting a new embodiment request.
   alone may only seed a provisional value.
 - RESTLESSNESS still requires an explicit value choice or recurring motivated
   preference; it does not require multiple source contexts.
-- A behavioral candidate carries a `left` or `right` pole and an update
-  intensity. Small, medium, and large map deterministically to ±0.05, ±0.10,
-  and ±0.20 z; right is positive and left is negative. Neutral or ambiguous
-  behavior is not a trait candidate.
-- For each trait, the backend averages all eligible contributions from the
-  current source bundle and applies at most one resulting update. It never sums
-  scene-level candidates, so a long source cannot produce a massive jump.
-- One eligible behavioral observation establishes an estimate, and one newly
-  eligible observation can move an existing centre at a later source. The backend
-  records the applied source ID to make replay a no-op. STEADINESS remains
-  separate and still requires repeated comparable behavior.
-- Opposing left/right evidence makes the estimate contested unless the latest three
-  qualifying observations consistently support one pole. Opposite extremes are
-  not averaged into a falsely certain midpoint.
+- A behavioral candidate carries a signed `expression_z`; about 0.3, 0.7, 1.2,
+  and 1.9 mean mild, clear, strong, and exceptional expression. It describes
+  behavior, not confidence. `update_intensity` remains legacy input only.
+- For each trait at a revision cutoff, the backend recomputes the centre from all
+  unique eligible behavioral observations: `mean(expression_z)`. Source and chunk
+  partitions cannot change a score; replay safety is canonical deduplication.
+- Opposing poles retain their calculated centre with `status="contested"` and a
+  contradiction note. Authored-only evidence remains provisional; STEADINESS is
+  recomputed whenever the evidence ledger changes.
 - An LLM may supply an evidence-grounded explanation and citation set, but it
   does not select a numeric estimate or delta. The backend derives and applies
   the transition from validated evidence.

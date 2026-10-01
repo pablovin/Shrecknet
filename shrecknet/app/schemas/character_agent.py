@@ -711,6 +711,7 @@ class ProjectedScenePerspective(_StrictModel):
     emotions: list["EmotionalInterpretationOutput"] = Field(default_factory=list)
     beliefs: list["CharacterBeliefOutput"] = Field(default_factory=list)
     impacts: list[ProjectedCharacterImpact] = Field(default_factory=list)
+    behavioral_evidence: list["BehavioralEvidence"] = Field(default_factory=list)
 
 
 class SourcePerspectiveProjection(_StrictModel):
@@ -1048,6 +1049,14 @@ class ScenePerspectiveOutput(_StrictModel):
     memory_strength: int = Field(..., ge=0, le=100)
     importance: int = Field(..., ge=1, le=5)
     status: ScenePerspectiveStatus = ScenePerspectiveStatus.ACTIVE
+    behavioral_evidence: list["BehavioralEvidence"] = Field(default_factory=list)
+
+
+class BehavioralEvidence(_StrictModel):
+    """A factual, scene-local record used as the sole trait-classification input."""
+    action: str = Field(..., min_length=1, max_length=300)
+    context: str | None = Field(None, max_length=500)
+    source_quote: str = Field(..., min_length=1, max_length=500)
 
 
 class SceneEnrichmentOutput(_StrictModel):
@@ -1062,19 +1071,6 @@ class SceneEnrichmentOutput(_StrictModel):
     trait_candidates: list[TraitObservation] = Field(...)
     aspect_signals: list[SceneAspectSignal] = Field(..., max_length=1)
     goal_signals: list[SceneGoalSignal] = Field(..., max_length=1)
-
-    @model_validator(mode="before")
-    @classmethod
-    def candidates_require_update_intensity(cls, value):
-        if not isinstance(value, dict):
-            return value
-        for candidate in value.get("trait_candidates", []):
-            if isinstance(candidate, dict) and "update_intensity" not in candidate:
-                raise ValueError(
-                    "trait candidates must explicitly include update_intensity"
-                )
-        return value
-
 
 class SceneEnrichmentsOutput(_StrictModel):
     scene_enrichments: list[SceneEnrichmentOutput]

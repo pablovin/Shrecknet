@@ -8,6 +8,12 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from pydantic import ConfigDict
 
 from app.models.ontology import AuthorType
+from app.schemas.character_agent import (
+    CharacterBeliefRead,
+    CharacterImpactRead,
+    EmotionalInterpretationRead,
+    ScenePerspectiveRead,
+)
 
 
 class OntologyInstancePropertyValue(BaseModel):
@@ -357,6 +363,58 @@ class SceneSummary(BaseModel):
     milestone_count: int = 0
     perspective_count: int = 0
     created_at: datetime
+
+
+class SceneGraphEntityReference(BaseModel):
+    """One deduplicated entity referenced by a scene graph projection."""
+
+    model_config = ConfigDict(extra="ignore")
+    id: str
+    canonical_content_slug: str
+    display_name: str
+    avatar_url: str | None = None
+    relation_labels: list[str] = Field(default_factory=list)
+
+
+class SceneGraphSourcePageReference(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str
+    display_name: str
+    avatar_url: str | None = None
+
+
+class SceneGraphNeighborSummary(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str
+    name: str
+    description: str
+    source_page: SceneGraphSourcePageReference
+
+
+class SceneGraphCharacterAgentReference(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str
+    display_name: str
+    avatar_url: str | None = None
+
+
+class SceneGraphPerspective(ScenePerspectiveRead):
+    character_agent: SceneGraphCharacterAgentReference
+    emotions: list[EmotionalInterpretationRead] = Field(default_factory=list)
+    beliefs: list[CharacterBeliefRead] = Field(default_factory=list)
+    impacts: list[CharacterImpactRead] = Field(default_factory=list)
+
+
+class SceneGraphRead(BaseModel):
+    """The complete, UI-ready projection for a single canonical scene."""
+
+    model_config = ConfigDict(extra="ignore")
+    scene: SceneRead
+    source_page: SceneGraphSourcePageReference
+    related_entities: list[SceneGraphEntityReference] = Field(default_factory=list)
+    perspectives: list[SceneGraphPerspective] = Field(default_factory=list)
+    previous_scene: SceneGraphNeighborSummary | None = None
+    next_scene: SceneGraphNeighborSummary | None = None
 
 
 class OntologyInstanceBase(BaseModel):

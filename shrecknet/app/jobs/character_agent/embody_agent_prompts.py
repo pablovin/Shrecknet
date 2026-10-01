@@ -12,7 +12,7 @@ import json
 from app.schemas.character_traits import trait_metadata
 
 TRAIT_CONTRACT = "\nAuthoritative trait definitions and scale:\n" + json.dumps(trait_metadata(), ensure_ascii=False)
-PROMPT_VERSION = "character-embodiment-v23-bounded-psychology"
+PROMPT_VERSION = "character-embodiment-v24-grounded-traits"
 
 PERSPECTIVE_PROMPT = r"""You are incorporating a character's identity into canonical objective scenes.
 
@@ -41,6 +41,11 @@ For every perspective:
   means to this character without retelling the scene.
 - character_reflection: first person, at most two short sentences and 60 words;
   state an immediate personal reaction without dialogue, narration, or monologue.
+- behavioral_evidence: factual individual choices, refusals, or explicit value
+  statements. Each item has action, nullable context, and a short verbatim
+  source_quote. Do not infer motives, alternatives, or later knowledge. Do not
+  include group behavior, witnessed actions, intentions not carried out, or traits.
+  Preserve compulsion and constraints in context. [] is valid when absent.
 
 INPUT:
 {
@@ -68,7 +73,8 @@ OUTPUT — return an object with exactly one key "perspectives":
       "interpretation": "grounded subjective interpretation",
       "character_reflection": "expressive first-person reflection in character voice",
       "memory_strength": 0..100,
-      "importance": 1..5
+      "importance": 1..5,
+      "behavioral_evidence":[{"action":"concrete choice","context":"stakes, knowledge, alternatives, capability, constraints or null","source_quote":"short exact scene passage"}]
     }
   ]
 }
@@ -87,16 +93,16 @@ ENRICHMENT_PROMPT = r"""Stage 2 — enrich grounded character perspectives. Use 
 perspective; never reconstruct the objective scene, use reflection text, or let
 later positions affect earlier ones. Return exactly one enrichment in input order.
 
-Every enrichment MUST contain all six arrays: emotions, beliefs, impacts,
-trait_candidates, aspect_signals, goal_signals. Use [] when unsupported. Never
+Every enrichment MUST contain all five arrays: emotions, beliefs, impacts,
+aspect_signals, goal_signals. Use [] when unsupported. Never
 return scene_id, evidence_ids, episode_id, available_after_scene_id, or target_id:
 the backend supplies those.
 
-Limits per scene: emotions 2, beliefs 2, impacts 2, trait_candidates 3, aspect
+Limits per scene: emotions 2, beliefs 2, impacts 2, aspect
 signals 1, goal_signals 1. Descriptions/condition justifications <=240 chars;
 beliefs, impacts, and behavior <=300; other justifications <=360.
 
-OUTPUT: {"scene_enrichments":[{"emotions":[{"arousal":0..100,"valence":"0..100 (0 negative, 50 neutral, 100 positive)","description":"..."}],"beliefs":[{"statement":"...","confidence":0..100,"status":"suspected|believed|confirmed|doubted|disproven|superseded"}],"impacts":[{"impact_type":"goal_change|aspect_change","target_index":1,"direction":"allowed direction","magnitude":0..100,"description":"..."}],"trait_candidates":[{"trait":"one of eight keys","evidence_kind":"behavior","situation_type":"...","pole":"left|right","update_intensity":"small|medium|large","expression_z":0.1,"diagnosticity":0.0,"confidence":0.0,"behavior":"...","justification":"...","conditions":{"knowledge":{"status":"supported|contradicted|unknown","justification":"..."},"capability":{"status":"supported|contradicted|unknown","justification":"..."},"options":{"status":"supported|contradicted|unknown","justification":"..."},"freedom":{"status":"supported|contradicted|unknown","justification":"..."}},"comparison_context":"... or null"}],"aspect_signals":[{"name":"I ...","category":"identity|role|status|physical|capability|knowledge|preference|attitude|history","description":"...","importance":1..5,"justification":"...","confidence":0.0}],"goal_signals":[{"operation":"add|complete","title":"...","description":"...","goal_type":"desire|objective|ambition|obligation|avoidance|survival","priority":0..100,"commitment":0..100,"basis":"explicit|inferred","justification":"...","confidence":0.0}]}]}.
+OUTPUT: {"scene_enrichments":[{"emotions":[{"arousal":0..100,"valence":"0..100 (0 negative, 50 neutral, 100 positive)","description":"..."}],"beliefs":[{"statement":"...","confidence":0..100,"status":"suspected|believed|confirmed|doubted|disproven|superseded"}],"impacts":[{"impact_type":"goal_change|aspect_change","target_index":1,"direction":"allowed direction","magnitude":0..100,"description":"..."}],"aspect_signals":[{"name":"I ...","category":"identity|role|status|physical|capability|knowledge|preference|attitude|history","description":"...","importance":1..5,"justification":"...","confidence":0.0}],"goal_signals":[{"operation":"add|complete","title":"...","description":"...","goal_type":"desire|objective|ambition|obligation|avoidance|survival","priority":0..100,"commitment":0..100,"basis":"explicit|inferred","justification":"...","confidence":0.0}]}]}.
 
 Impacts use target_index from the matching current_profile list. goal_change is
 advanced|threatened; aspect_change is created|reinforced|invalidated. With no
@@ -104,17 +110,6 @@ targets, impacts must be []. Current-profile aspects are impact targets only:
 never repeat or rephrase the same underlying fact in aspect_signals. Current-profile goals are impact
 targets and completion candidates: do not repeat a title for operation `add`,
 but operation `complete` must use the exact title of an active current-profile goal.
-
-Trait candidates are only distinct diagnostic individual choices, never emotion,
-group action, or repeated evidence. expression_z is nonzero (-1.9..1.9) and its
-sign selects pole (negative=left, positive=right). Pole must agree with expression_z.
-Valid situations:
-integrity=exploitation|self_serving_deception; caution=uncertain_threat|uncertain_dependence|reliance_without_guarantees;
-presence=social_visibility|social_approach|voluntary_contact;
-forbearance=provocation|betrayal|obstruction|retaliation;
-diligence=unattended_duty|delayed_payoff|cutting_corners|persistence;
-curiosity=novelty|exploration|puzzle|unknown_information; sharing=resource_allocation|spoils|rewards;
-restlessness=value_conflict|recurring_value_preference.
 
 An aspect signal needs a grounded durable character fact; its name must be a
 concise present-tense first-person self-statement beginning with `I `, such as
@@ -237,7 +232,7 @@ Return JSON only.
 
 PSYCHOLOGICAL_ANALYSIS_PROMPT = ENRICHMENT_PROMPT + r"""
 This is the complete psychological-analysis stage. Return emotions, beliefs,
-impacts, trait_candidates, aspect_signals, and goal_signals for every
+impacts, aspect_signals, and goal_signals for every
 perspective. Each item must cite exactly the current scene conceptually; the
 backend assigns evidence_ids by position, so omit them from model output.
 """
@@ -245,3 +240,15 @@ backend assigns evidence_ids by position, so omit them from model output.
 # Backend-owned references remain part of the public contract, but are never model supplied.
 PERSPECTIVE_PROMPT += "\nThe backend binds every perspective to exactly its own supplied scene and assigns evidence_ids by position; omit them from model output."
 ENRICHMENT_PROMPT += "\nEach item must cite exactly the current scene conceptually; the backend assigns evidence_ids by position, so omit them from model output."
+
+TRAIT_INTERPRETATION_PROMPT = r"""Stage 3 — interpret factual behavioral evidence into trait candidates.
+You receive compact target identity and numbered scene-local behavioral evidence already
+validated against the original scenes. Do not infer from names, occupation, species, role,
+other characters, or missing evidence. Do not emit a candidate when an action is witnessed,
+group-only, compelled, or otherwise unsupported. Missing evidence is unknown, never neutral.
+Assess both poles using the authoritative definitions, diagnostic situations, and boundary notes.
+At most one candidate per trait per scene; empty arrays are normal. expression_z is a signed
+behavior strength: approximately 0.3 mild, 0.7 clear, 1.2 strong, or 1.9 exceptional. It is not
+confidence. Do not return update_intensity.
+OUTPUT: {"scene_trait_interpretations":[{"trait_candidates":[{"trait":"one of eight keys","evidence_kind":"behavior","situation_type":"registry diagnostic situation","pole":"left|right","expression_z":0.3,"diagnosticity":0.0,"confidence":0.0,"behavior":"concise supplied action","justification":"construct-specific explanation","conditions":{"knowledge":{"status":"supported|contradicted|unknown","justification":"..."},"capability":{"status":"supported|contradicted|unknown","justification":"..."},"options":{"status":"supported|contradicted|unknown","justification":"..."},"freedom":{"status":"supported|contradicted|unknown","justification":"..."}},"comparison_context":"... or null","behavior_indexes":[1]}]}]}.
+Return JSON only.""" + TRAIT_CONTRACT

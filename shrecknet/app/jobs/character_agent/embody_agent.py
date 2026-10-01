@@ -32,12 +32,14 @@ from app.jobs.character_agent.embody_agent_prompts import (
     PSYCHOLOGICAL_ANALYSIS_PROMPT,
     PERSPECTIVE_PROMPT,
     PERSPECTIVE_TRUNCATION_RECOVERY_PROMPT,
+    TRAIT_INTERPRETATION_PROMPT,
 )
 from app.jobs.shrecknet.agent import parse_json_deterministically
 from app.schemas.character_agent import (
     CharacterAspectCategory,
     CharacterBeliefStatus,
     CharacterGoalType,
+    BehavioralEvidence,
     EmbodyAgentAnalysis,
     EmbodimentObservationsOutput,
     EmbodyAgentResult,
@@ -138,6 +140,16 @@ class ScenePerspectiveLLMOutput(BaseModel):
     character_reflection: str = Field(min_length=1, max_length=500)
     memory_strength: int = Field(ge=0, le=100)
     importance: int = Field(ge=1, le=5)
+    behavioral_evidence: list["_BehavioralEvidenceLLMOutput"] = Field(default_factory=list)
+
+
+class _BehavioralEvidenceLLMOutput(BaseModel):
+    """Factual action record whose quotation is verified against the source scene."""
+
+    model_config = ConfigDict(extra="forbid")
+    action: str = Field(min_length=1, max_length=300)
+    context: str | None = Field(None, max_length=500)
+    source_quote: str = Field(min_length=1, max_length=500)
 
 
 class _PerspectivesLLMContainer(BaseModel):
@@ -183,7 +195,6 @@ class _TraitCandidateLLMOutput(BaseModel):
     evidence_kind: Literal["behavior"] = "behavior"
     situation_type: str = Field(min_length=1, max_length=80)
     pole: Literal["left", "right"]
-    update_intensity: Literal["small", "medium", "large"]
     expression_z: ZValue
     diagnosticity: float = Field(ge=0, le=1)
     confidence: float = Field(ge=0, le=1)
@@ -191,6 +202,7 @@ class _TraitCandidateLLMOutput(BaseModel):
     justification: str = Field(min_length=1, max_length=360)
     conditions: _ChoiceConditionsLLMOutput
     comparison_context: str | None = Field(None, max_length=300)
+    behavior_indexes: list[int] = Field(min_length=1)
 
 
 class _AspectSignalLLMOutput(BaseModel):
@@ -250,7 +262,6 @@ class _SceneEnrichmentLLMOutput(BaseModel):
     emotions: list[_EmotionLLMOutput] = Field(max_length=2)
     beliefs: list[_BeliefLLMOutput] = Field(max_length=2)
     impacts: list[_GoalImpactLLMOutput | _AspectImpactLLMOutput] = Field(max_length=2)
-    trait_candidates: list[_TraitCandidateLLMOutput] = Field(max_length=3)
     aspect_signals: list[_AspectSignalLLMOutput] = Field(max_length=1)
     goal_signals: list[_GoalSignalLLMOutput] = Field(max_length=1)
 
@@ -258,6 +269,16 @@ class _SceneEnrichmentLLMOutput(BaseModel):
 class _SceneEnrichmentsLLMOutput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     scene_enrichments: list[_SceneEnrichmentLLMOutput]
+
+
+class _SceneTraitInterpretationLLMOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    trait_candidates: list[_TraitCandidateLLMOutput] = Field(max_length=8)
+
+
+class _SceneTraitInterpretationsLLMOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    scene_trait_interpretations: list[_SceneTraitInterpretationLLMOutput]
 
 
 class UsageTracker:
@@ -817,6 +838,7 @@ class EmbodyAgent:
             )
 
         perspectives = _bind_llm_perspectives(result, expected_ids)
+        _validate_behavioral_evidence(perspectives.perspectives, scene_list)
         _semantic(lambda: _validate_and_normalize_scene_grounding(
             perspectives.perspectives, expected_ids,
         ))
@@ -871,7 +893,7 @@ class EmbodyAgent:
             "perspectives": [
                 perspective.model_dump(
                     mode="json",
-                    exclude={"scene_id", "evidence_ids", "character_reflection", "status"},
+                    exclude={"scene_id", "evidence_ids", "character_reflection", "status", "behavioral_evidence"},
                 ) | {"position": index + 1}
                 for index, perspective in enumerate(perspectives)
             ],
@@ -917,6 +939,61 @@ class EmbodyAgent:
             )
             return [*first, *second]
         return _bind_llm_enrichments(llm_result, expected_ids, profile_targets).scene_enrichments
+
+    async def _interpret_traits_batch(
+        self, *, source_entity_id: str, source_entity_alias: str,
+        identity: dict[str, Any], perspectives: list[ScenePerspectiveOutput],
+    ) -> list[list[dict[str, Any]]]:
+        """Classify only validated factual evidence, never the raw scene or reflection."""
+        expected_ids = [item.scene_id for item in perspectives]
+        payload = {
+            "target": {key: identity.get(key) for key in ("alias", "entity_type", "entity_type_description")},
+            "scenes": [
+                {"position": position, "behavioral_evidence": [
+                    {"position": evidence_position, **record.model_dump(mode="json")}
+                    for evidence_position, record in enumerate(perspective.behavioral_evidence, 1)
+                ]}
+                for position, perspective in enumerate(perspectives, 1)
+            ],
+        }
+        result = await self._call(
+            prompt=TRAIT_INTERPRETATION_PROMPT, payload=payload,
+            schema=_SceneTraitInterpretationsLLMOutput, stage="trait interpretation",
+            usage_tag="character_agent.embodiment.trait_interpretation",
+            max_tokens=EMBODIMENT_LLM_MAX_TOKENS, model=self.scene_interpretation_model,
+            source_entity_id=source_entity_id, source_entity_alias=source_entity_alias,
+            schema_correction_attempts=1,
+            output_binding={"collection": "scene_trait_interpretations", "scene_ids": expected_ids,
+                            "bind_references": False},
+        )
+        if len(result.scene_trait_interpretations) != len(perspectives):
+            raise EmbodimentGenerationError(
+                "trait interpretation must return exactly one result per scene", category="schema",
+                expected_sequence=expected_ids,
+                actual_sequence=[str(index + 1) for index in range(len(result.scene_trait_interpretations))],
+            )
+        candidates: list[list[dict[str, Any]]] = []
+        for scene_id, perspective, interpretation in zip(
+            expected_ids, perspectives, result.scene_trait_interpretations, strict=True,
+        ):
+            scene_candidates: list[dict[str, Any]] = []
+            seen_traits: set[str] = set()
+            for candidate in interpretation.trait_candidates:
+                if candidate.trait in seen_traits:
+                    raise EmbodimentGenerationError("trait interpretation emitted duplicate trait for one scene", category="schema")
+                seen_traits.add(candidate.trait)
+                if any(index < 1 or index > len(perspective.behavioral_evidence) for index in candidate.behavior_indexes):
+                    raise EmbodimentGenerationError("trait interpretation referenced invalid behavioral evidence", category="semantic_reference")
+                value = candidate.model_dump(mode="json")
+                value.pop("behavior_indexes", None)
+                # TraitObservation retains this legacy field for persisted evidence compatibility;
+                # new extraction no longer lets the model choose it.
+                value["update_intensity"] = "medium"
+                value.update(evidence_ids=[f"scene:{scene_id}"], episode_id=f"scene:{scene_id}",
+                             available_after_scene_id=scene_id)
+                scene_candidates.append(value)
+            candidates.append(scene_candidates)
+        return candidates
 
     async def analyze(
         self,
@@ -989,16 +1066,21 @@ class EmbodyAgent:
                 "perspective output scene_ids must match input scene order and be unique"
             )
         _semantic(lambda: _validate_and_normalize_scene_grounding(perspectives, expected_ids))
-        # Step 2 — Per-scene psychological enrichment. It consumes only the
-        # already-grounded character perspective, never the raw objective scene.
-        # Reflection remains presentation-only and cannot manufacture evidence.
+        # Steps 2 and 3 consume distinct incorporation outputs concurrently.
+        # Psychology sees perspectives; trait interpretation sees only validated facts.
         if on_stage:
             await on_stage(
-                "source:{0} - Step 2: Psychological analysis".format(source_entity_alias), [2]
+                "source:{0} - Steps 2-3: Psychological analysis and trait interpretation".format(source_entity_alias), [2, 3]
             )
-        enrichments = await self._analyze_psychological_batch(
-            source_entity_id=source_entity_id, source_entity_alias=source_entity_alias,
-            perspectives=perspectives, aspects=aspects, goals=goals,
+        enrichments, trait_candidates = await asyncio.gather(
+            self._analyze_psychological_batch(
+                source_entity_id=source_entity_id, source_entity_alias=source_entity_alias,
+                perspectives=perspectives, aspects=aspects, goals=goals,
+            ),
+            self._interpret_traits_batch(
+                source_entity_id=source_entity_id, source_entity_alias=source_entity_alias,
+                identity=identity, perspectives=perspectives,
+            ),
         )
         enrichment_ids = [item.scene_id for item in enrichments]
         if enrichment_ids != expected_ids or len(enrichment_ids) != len(set(enrichment_ids)):
@@ -1022,11 +1104,11 @@ class EmbodyAgent:
                 emotions=enrichment.emotions,
                 beliefs=enrichment.beliefs,
                 impacts=enrichment.impacts,
-                trait_candidates=enrichment.trait_candidates,
+                trait_candidates=trait_candidates[index],
                 aspect_signals=enrichment.aspect_signals,
                 goal_signals=enrichment.goal_signals,
             )
-            for perspective, enrichment in zip(perspectives, enrichments, strict=True)
+            for index, (perspective, enrichment) in enumerate(zip(perspectives, enrichments, strict=True))
         ]
 
         # The two second-wave branches already contain all source-local evidence.
@@ -1035,8 +1117,8 @@ class EmbodyAgent:
         observations = EmbodimentObservationsOutput(
             trait_evidence=[
                 candidate
-                for enrichment in enrichments
-                for candidate in enrichment.trait_candidates
+                for scene_candidates in trait_candidates
+                for candidate in scene_candidates
             ],
         )
         _validate_and_normalize_evidence(
@@ -1098,9 +1180,9 @@ class EmbodyAgent:
 
         if on_stage:
             await on_stage(
-                "source:{0} - Step 3: Deterministic source reduction".format(
+                "source:{0} - Step 4: Deterministic source reduction".format(
                     analysis.source_entity_alias
-            ), [3]
+            ), [4]
             )
         existing = current_trait_evidence or []
         incoming = ground_observations(analysis.observations.trait_evidence,
@@ -1203,6 +1285,14 @@ def _model_output_schema(
             perspectives["maxItems"] = len(scene_ids)
         return result
 
+    if schema is _SceneTraitInterpretationsLLMOutput:
+        interpretations = result.get("properties", {}).get("scene_trait_interpretations")
+        scene_ids = (output_binding or {}).get("scene_ids")
+        if isinstance(scene_ids, list) and isinstance(interpretations, dict):
+            interpretations["minItems"] = len(scene_ids)
+            interpretations["maxItems"] = len(scene_ids)
+        return result
+
     if schema is not _SceneEnrichmentsLLMOutput:
         return result
     definitions = result.get("$defs", {})
@@ -1268,6 +1358,11 @@ def _bind_llm_enrichments(
             actual_sequence=[str(index + 1) for index in range(len(value.scene_enrichments))],
         )
     parsed = value.model_dump(mode="json")
+    # Trait candidates are deliberately produced by the independent factual
+    # interpretation stage.  The public assembled schema still exposes them.
+    for item in parsed.get("scene_enrichments", []):
+        if isinstance(item, dict):
+            item["trait_candidates"] = []
     _bind_model_output_references(
         parsed, collection="scene_enrichments", scene_ids=scene_ids,
         profile_targets=profile_targets,
@@ -1278,6 +1373,25 @@ def _bind_llm_enrichments(
         raise EmbodimentGenerationError(
             "invalid bound psychological-analysis output", category="schema",
         ) from exc
+
+
+def _normalize_quote(value: str) -> str:
+    return " ".join(value.split()).casefold()
+
+
+def _validate_behavioral_evidence(
+    perspectives: list[ScenePerspectiveOutput], scene_list: list[dict[str, Any]],
+) -> None:
+    """Drop unverifiable factual records while keeping the scene perspective usable."""
+    for perspective, scene in zip(perspectives, scene_list, strict=True):
+        scene_text = _normalize_quote(" ".join(str(scene.get(key) or "") for key in ("name", "description")))
+        accepted: list[BehavioralEvidence] = []
+        for record in perspective.behavioral_evidence:
+            if _normalize_quote(record.source_quote) in scene_text:
+                accepted.append(record)
+            else:
+                logger.info("embodiment_behavioral_evidence_quote_rejected scene_id=%s", perspective.scene_id)
+        perspective.behavioral_evidence = accepted
 
 
 def _normalize_position_bound_collection(

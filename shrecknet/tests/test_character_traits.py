@@ -96,33 +96,33 @@ def test_required_provenance_and_availability():
         ground_observations([observation(evidence_ids=['scene:s1','scene:s2'])],scene_ids=['s1','s2'],source_group_id='source')
 
 
-def test_conservative_changes_and_deduplication():
+def test_evidence_centre_is_partition_independent_and_replay_safe():
     items=evidence()
     state,_=update_profile(TraitProfile(),items[:1],[proposal(items[:1])],source_group_id='source')
-    assert state.dispositional_traits['integrity'].z==.1
+    assert state.dispositional_traits['integrity'].z==1.2
     state,_=update_profile(state,items,[proposal(items)],source_group_id='source')
-    assert state.dispositional_traits['integrity'].z==.1
+    assert state.dispositional_traits['integrity'].z==1.2
     replay,_=update_profile(state,items,[proposal(items)],source_group_id='source')
-    assert replay.dispositional_traits['integrity'].z==.1
+    assert replay.dispositional_traits['integrity'].z==1.2
     all_items=merge_evidence(items,evidence((1.2,1.2),source='next',offset=3))
     changed,_=update_profile(state,all_items,[proposal(all_items)],source_group_id='next')
-    assert changed.dispositional_traits['integrity'].z==.2
+    assert changed.dispositional_traits['integrity'].z==1.2
     assert len(merge_evidence(items,items))==3
     with pytest.raises(ValueError):
         ground_observations([observation(),observation()],scene_ids=['s1'],source_group_id='source')
 
 
-def test_opposing_extremes_are_contested_not_midpoint():
+def test_opposing_extremes_are_contested_with_a_visible_centre():
     items=evidence((-1.9,1.9,-1.9,1.9))
     state,_=update_profile(TraitProfile(),items,[proposal(items)])
     assert state.dispositional_traits['integrity'].status=='contested'
-    assert state.dispositional_traits['integrity'].z is None
+    assert state.dispositional_traits['integrity'].z == 0
 
 
 def test_restlessness_can_update_from_one_eligible_value_choice():
     items=evidence((1.2,),trait='restlessness')
     state,_=update_profile(TraitProfile(),items,[proposal(items)],source_group_id='source')
-    assert state.dispositional_traits['restlessness'].z==.1
+    assert state.dispositional_traits['restlessness'].z==1.2
 
 
 def test_authored_evidence_is_provisional():
@@ -141,7 +141,7 @@ def test_steadiness_requires_comparable_repetition_not_morality():
     assert state.steadiness.z==1.9
     allocation=evidence((1.9,1.9,1.9),trait='sharing',offset=3)
     state,_=update_profile(state,retaliation+allocation,[proposal(allocation)])
-    assert state.dispositional_traits['forbearance'].z==-.1 and state.steadiness.z==1.9
+    assert state.dispositional_traits['forbearance'].z==-1.9 and state.steadiness.z==1.9
     varied=evidence((-1.9,1.9,-1.9),trait='forbearance')+evidence((1.9,-1.9,1.9),trait='sharing',offset=3)
     state,_=update_profile(TraitProfile(),varied,[])
     assert state.steadiness.z<=-1.2
@@ -169,9 +169,9 @@ def test_manual_override_and_clear():
     state=apply_manual_edits(TraitProfile(),{'integrity':TraitEdit(z=-1.2,reason='Authored sheet.')})
     state,_=update_profile(state,items,[proposal(items)])
     assert state.dispositional_traits['integrity'].z==-1.2
-    assert state.inferred_traits['integrity'].z==.1
+    assert state.inferred_traits['integrity'].z==1.2
     state=apply_manual_edits(state,{'integrity':TraitEdit(z=None,reason='Resume inference.')})
-    assert state.dispositional_traits['integrity'].z==.1 and not state.overrides
+    assert state.dispositional_traits['integrity'].z==1.2 and not state.overrides
 
 
 @pytest.mark.parametrize('count', [0, 1, 9, 10, 11, 21])
@@ -206,7 +206,7 @@ def test_clearing_without_override_keeps_inferred_state():
     items=evidence()
     state,_=update_profile(TraitProfile(),items,[proposal(items)])
     clear=apply_manual_edits(state,{'integrity':TraitEdit(z=None,reason='Already inferred.')})
-    assert clear.dispositional_traits['integrity'].z==.1
+    assert clear.dispositional_traits['integrity'].z==1.2
 
 
 def test_contradictions_change_uncertainty_without_llm_numeric_proposal():
@@ -218,18 +218,18 @@ def test_contradictions_change_uncertainty_without_llm_numeric_proposal():
 def test_evidence_direction_controls_numeric_update():
     items=evidence()
     state,_=update_profile(TraitProfile(),items,[proposal(items)])
-    assert state.dispositional_traits['integrity'].z==.1
+    assert state.dispositional_traits['integrity'].z==1.2
 
 
-def test_source_update_averages_intensities_once_per_trait():
+def test_expression_strength_not_legacy_intensity_controls_centre():
     records=ground_observations([
         observation('s1', update_intensity='small'),
         observation('s2', update_intensity='medium'),
         observation('s3', update_intensity='large'),
     ],scene_ids=['s1','s2','s3'],source_group_id='source')
     state,_=update_profile(TraitProfile(),records,[],source_group_id='source')
-    assert state.dispositional_traits['integrity'].z==pytest.approx((.05+.1+.2)/3, abs=.0001)
-    assert state.dispositional_traits['integrity'].applied_source_ids==['source']
+    assert state.dispositional_traits['integrity'].z==1.2
+    assert state.dispositional_traits['integrity'].applied_source_ids==[]
     replay,_=update_profile(state,records,[],source_group_id='source')
     assert replay.dispositional_traits['integrity'].z==state.dispositional_traits['integrity'].z
 
@@ -241,6 +241,6 @@ def test_source_update_marks_opposing_directions_contested_without_stacking():
         observation('s3', expression_z=1.2, update_intensity='medium'),
     ],scene_ids=['s1','s2','s3'],source_group_id='source')
     state,_=update_profile(TraitProfile(),records,[],source_group_id='source')
-    # Opposing poles remain a contradiction, not an averaged pseudo-centre.
-    assert state.dispositional_traits['integrity'].z is None
+    # Opposing poles retain the evidence centre while signalling the contradiction.
+    assert state.dispositional_traits['integrity'].z == pytest.approx(.4)
     assert state.dispositional_traits['integrity'].status=='contested'

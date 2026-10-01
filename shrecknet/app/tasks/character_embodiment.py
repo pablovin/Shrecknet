@@ -48,7 +48,8 @@ from app.utils.job_tracking import mark_job_done, mark_job_failed, mark_job_runn
 STEP_NAME: dict[int, str] = {
     1: "Perspective",
     2: "Psychological analysis",
-    3: "Deterministic source reduction",
+    3: "Trait interpretation",
+    4: "Deterministic source reduction",
 }
 
 SCENE_ANALYSIS_CHUNK_SIZE = 5

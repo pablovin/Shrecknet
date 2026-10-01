@@ -45,6 +45,7 @@ from app.schemas.ontology_instance import (
     ArchitectReviewEntityCatalogPage,
     ArchitectReviewEntityCatalogResolveRequest,
     ArchitectReviewEntityCatalogResolveResponse,
+    SceneGraphRead,
 )
 from app.services.audit_service import AuditService
 from app.services.background_job_service import BackgroundJobService
@@ -58,6 +59,34 @@ _world_stats_cache: dict[
     tuple[tuple[int, ...] | None, bool], tuple[datetime, OntologyWorldStatsResponse]
 ] = {}
 _world_stats_cache_lock = asyncio.Lock()
+
+
+@router.get(
+    "/{ontology_id}/scenes/{scene_id}/graph",
+    response_model=SceneGraphRead,
+    summary="Read an authorized, UI-ready scene graph projection",
+)
+async def get_scene_graph(
+    ontology_id: int = Path(..., ge=1),
+    scene_id: str = Path(..., min_length=1),
+    actor: User = Depends(get_current_user),
+    service: OntologyInstanceService = Depends(get_ontology_instance_service),
+) -> SceneGraphRead:
+    """Return canonical scene data and only perspectives visible to this actor."""
+    try:
+        await service.assert_ontology_graph_read_access(
+            ontology_id=ontology_id, actor=actor
+        )
+        role = actor.role.value if hasattr(actor.role, "value") else str(actor.role)
+        return await service.get_scene_graph(
+            ontology_id=ontology_id,
+            scene_id=scene_id,
+            include_private_perspectives=role.lower() == UserRole.ADMIN.value,
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
 
 @router.get(

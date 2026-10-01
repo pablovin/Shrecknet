@@ -16,12 +16,10 @@ from app.schemas.character_traits import (
     TraitEstimate, TraitEvidence, TraitObservation, TraitProfile, TraitProposal,
 )
 
-POLICY_VERSION = 'evidence-policy-v4-bipolar-three-sample-steadiness'
+POLICY_VERSION = 'evidence-policy-v5-expression-centre'
 MIN_CONFIDENCE = 0.7
 MIN_DIAGNOSTICITY = 0.7
 MIN_EPISODES = 1
-MIN_DIRECTIONAL_NEW_EPISODES = 1
-MIN_STEADINESS_NEW_EPISODES = 2
 MIN_SPREAD_EPISODES = 3
 MIN_COMPARISON_GROUPS = 1
 MIN_GROUP_EPISODES = 3
@@ -127,68 +125,29 @@ def apply_manual_edits(profile: TraitProfile, edits: dict[str, TraitEdit]) -> Tr
     return result
 
 
-def _source_delta(items: list[TraitEvidence]) -> float:
-    """Average one source's eligible directional evidence for one trait.
-
-    This is deliberately an average, not a sum: a source with many scenes
-    cannot manufacture a larger personality jump than a source with one
-    decisive eligible choice. Midpoint evidence remains auditable but moves
-    neither pole.
-    """
-    contributions = [
-        (1 if item.pole == 'right' else -1)
-        * UPDATE_MAGNITUDES[item.update_intensity]
-        for item in items
-    ]
-    return round(sum(contributions) / len(contributions), 4) if contributions else 0.0
-
-
-def _bounded_z(previous: TraitEstimate, delta: float) -> float:
-    baseline = previous.z if previous.z is not None else 0.0
-    return round(max(-1.9, min(1.9, baseline + delta)), 4)
-
-
 def _directional(previous: TraitEstimate, key: str, proposal: TraitProposal | None,
                  evidence: list[TraitEvidence], source_group_id: str | None) -> TraitEstimate:
     items = [item for item in evidence if item.trait == key and item.eligible]
     behavioral = [item for item in items if item.evidence_kind == 'behavior']
-    source_behavioral = [
-        item for item in behavioral
-        if source_group_id is None or item.source_group_id == source_group_id
-    ]
     result = previous.model_copy(deep=True)
     result.qualifying_count = len(behavioral)
     result.observation_ids = [item.id for item in items]
-    poles = {item.pole for item in behavioral}
-    opposed = {'left', 'right'} <= poles
-    if opposed:
-        result.uncertainty = ['Contradictory diagnostic behavior remains in the evidence history.']
-        if len(behavioral) < 3 or len({item.pole for item in behavioral[-3:]}) > 1:
-            result.status = 'contested'
-            return result
     if len(behavioral) < MIN_EPISODES:
         authored = [item for item in items if item.evidence_kind == 'authored_disposition']
-        if previous.z is None and authored and not behavioral and proposal:
-            result.z = _source_delta(authored)
+        if previous.z is None and authored and not behavioral:
+            result.z = round(sum(item.expression_z for item in authored if item.expression_z is not None) / len(authored), 4)
             result.status = 'provisional'
             result.uncertainty = ['Authored disposition; insufficient independent behavioral evidence.']
         return result
-    if (previous.z is not None
-            and len(behavioral) - previous.accepted_count < MIN_DIRECTIONAL_NEW_EPISODES):
-        return result
-    if source_group_id is not None and source_group_id in previous.applied_source_ids:
-        return result
-    delta = _source_delta(source_behavioral)
-    if delta == 0:
-        if source_behavioral and {'left', 'right'} <= {item.pole for item in source_behavioral}:
-            result.status = 'contested'
-            result.uncertainty = ['This source contains opposing diagnostic behavior; no net update was applied.']
-        return result
-    result.z = _bounded_z(previous, delta)
-    result.status = 'supported'
+    result.z = round(sum(item.expression_z for item in behavioral if item.expression_z is not None) / len(behavioral), 4)
     result.accepted_count = len(behavioral)
-    if source_group_id is not None:
-        result.applied_source_ids = [*previous.applied_source_ids, source_group_id]
+    if {'left', 'right'} <= {item.pole for item in behavioral}:
+        result.status = 'contested'
+        result.uncertainty = ['Opposing diagnostic behavior is retained; the displayed centre is their evidence mean.']
+    else:
+        result.status = 'supported'
+        result.uncertainty = []
+    result.applied_source_ids = []
     return result
 
 
@@ -212,9 +171,6 @@ def _steadiness(profile: TraitProfile, evidence: list[TraitEvidence]) -> TraitEs
                 f'{len(groups)}/{MIN_COMPARISON_GROUPS} repeated contexts.'
             ],
         )
-    previous = profile.inferred_traits.get('steadiness', profile.steadiness)
-    if previous.z is not None and len(items) - previous.accepted_count < MIN_STEADINESS_NEW_EPISODES:
-        return previous.model_copy(deep=True)
     squared = 0.0
     for group in groups.values():
         values = [item.expression_z for item in group if item.expression_z is not None]

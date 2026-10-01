@@ -17,7 +17,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.config_store import get_settings
-from app.models.ontology import OntologyEntity
+from app.models.ontology import Ontology, OntologyEntity
+from app.models.user import User, UserRole
 from app.repositories.ontology_repository import OntologyRepository
 from app.schemas.ontology_instance import (
     MilestoneCreate,
@@ -44,8 +45,19 @@ from app.schemas.ontology_instance import (
     OntologyInstanceSummaryPage,
     SceneCreate,
     SceneRead,
+    SceneGraphCharacterAgentReference,
+    SceneGraphEntityReference,
+    SceneGraphNeighborSummary,
+    SceneGraphPerspective,
+    SceneGraphRead,
+    SceneGraphSourcePageReference,
     SceneSummary,
     SceneUpdate,
+)
+from app.schemas.character_agent import (
+    CharacterBeliefRead,
+    CharacterImpactRead,
+    EmotionalInterpretationRead,
 )
 
 from neo4j.time import DateTime as Neo4jDateTime
@@ -2803,6 +2815,238 @@ class OntologyInstanceService:
         if not record or not record.get("scene"):
             raise ValueError("Scene not found")
         return await self._scene_node_to_read(node=record["scene"])
+
+    async def assert_ontology_graph_read_access(
+        self, *, ontology_id: int, actor: User
+    ) -> None:
+        """Authorize graph reads at the world/ontology boundary before Neo4j is read."""
+        ontology = await self.sql.get(Ontology, ontology_id)
+        if ontology is None:
+            raise ValueError("Ontology not found")
+
+        role = actor.role.value if hasattr(actor.role, "value") else str(actor.role)
+        if role.lower() in {UserRole.ADMIN.value, UserRole.WORLD_BUILDER.value, UserRole.WRITER.value}:
+            return
+
+        allowed = await self.sql.scalar(
+            select(OntologyEntity.id)
+            .join(OntologyEntity.players)
+            .where(
+                OntologyEntity.ontology_id == ontology_id,
+                User.id == actor.id,
+            )
+            .limit(1)
+        )
+        if allowed is None:
+            # Do not disclose whether the requested world has a graph.
+            raise PermissionError("You do not have access to this world")
+
+    async def get_scene_graph(
+        self, *, ontology_id: int, scene_id: str, include_private_perspectives: bool
+    ) -> SceneGraphRead:
+        """Build a bounded scene projection with batched entity and perspective reads."""
+        core_result = await self.graph_session.run(
+            """
+            MATCH (page:OntologyInstance)-[:HAS_SCENE]->(scene:Scene {id: $scene_id})
+            WHERE toInteger(page.ontology_id) = toInteger($ontology_id)
+              AND toInteger(scene.ontology_id) = toInteger($ontology_id)
+            OPTIONAL MATCH (scene)-[:CONTAINS]->(milestone:Milestone)
+            RETURN page, scene, collect(DISTINCT milestone) AS milestones
+            """,
+            ontology_id=ontology_id,
+            scene_id=scene_id,
+        )
+        core = await core_result.single()
+        if not core or core.get("scene") is None:
+            raise ValueError("Scene not found")
+
+        page, scene_node = dict(core["page"]), dict(core["scene"])
+        instance_id = str(page.get("instance_id") or "")
+
+        scene_detail = await self._scene_graph_scene_read(
+            scene_node=scene_node, instance_id=instance_id, ontology_id=ontology_id,
+            milestones=[dict(node) for node in core.get("milestones") or [] if node],
+        )
+        entities = await self._scene_graph_entities(
+            instance_id=instance_id, scene_id=scene_id
+        )
+        perspectives = await self._scene_graph_perspectives(
+            scene_id=scene_id, include_private=include_private_perspectives
+        )
+        previous_scene, next_scene = await self._scene_graph_neighbors(
+            scene_id=scene_id, ontology_id=ontology_id
+        )
+        return SceneGraphRead(
+            scene=scene_detail,
+            source_page=SceneGraphSourcePageReference(
+                id=instance_id, display_name=str(page.get("name") or instance_id),
+            ),
+            related_entities=entities,
+            perspectives=perspectives,
+            previous_scene=previous_scene,
+            next_scene=next_scene,
+        )
+
+    async def _scene_graph_scene_read(self, *, scene_node: dict[str, Any], instance_id: str,
+                                       ontology_id: int, milestones: list[dict[str, Any]]) -> SceneRead:
+        scene_id = str(scene_node.get("id") or "")
+        relations_result = await self.graph_session.run(
+            """
+            MATCH (scene:Scene {id:$scene_id})
+            OPTIONAL MATCH (scene)-[:DERIVED_FROM]->(derived:EntityInstance)
+            OPTIONAL MATCH (scene)-[rel:RELATES_TO]->(related:EntityInstance)
+            OPTIONAL MATCH (scene)-[:FOLLOWED_BY]->(next:Scene)
+            OPTIONAL MATCH (scene)-[:PRECEDED_BY]->(previous:Scene)
+            RETURN head(collect(DISTINCT derived.entity_instance_id)) AS derived_from,
+                   collect(DISTINCT {entity_instance_id: related.entity_instance_id, label: rel.label}) AS relates_to,
+                   head(collect(DISTINCT next.id)) AS next_id,
+                   head(collect(DISTINCT previous.id)) AS previous_id
+            """, scene_id=scene_id,
+        )
+        scene_relations = await relations_result.single() or {}
+        milestone_reads = await self._scene_graph_milestones(scene_id, milestones)
+        return SceneRead(
+            id=scene_id, instance_id=instance_id, ontology_id=ontology_id,
+            name=str(scene_node.get("name") or ""), description=str(scene_node.get("description") or ""),
+            created_by_type=scene_node.get("created_by_type") or "human",
+            created_by_author=scene_node.get("created_by_author") or "",
+            local_order={"followed_by_scene_id": scene_relations.get("next_id"), "preceded_by_scene_id": scene_relations.get("previous_id")},
+            derived_from={"entity_instance_id": scene_relations.get("derived_from") or ""},
+            relates_to=[item for item in scene_relations.get("relates_to") or [] if item.get("entity_instance_id")],
+            created_at=_parse_dt(scene_node.get("created_at")), updated_at=_parse_dt(scene_node.get("updated_at")),
+            milestones=milestone_reads,
+        )
+
+    async def _scene_graph_milestones(self, scene_id: str, milestones: list[dict[str, Any]]) -> list[MilestoneRead]:
+        if not milestones:
+            return []
+        result = await self.graph_session.run(
+            """
+            MATCH (:Scene {id:$scene_id})-[:CONTAINS]->(milestone:Milestone)
+            OPTIONAL MATCH (milestone)-[:DERIVED_FROM]->(derived:EntityInstance)
+            OPTIONAL MATCH (milestone)-[rel:RELATES_TO]->(related:EntityInstance)
+            OPTIONAL MATCH (milestone)-[:FOLLOWED_BY]->(next:Milestone)
+            OPTIONAL MATCH (milestone)-[:PRECEDED_BY]->(previous:Milestone)
+            RETURN milestone.id AS id, head(collect(DISTINCT derived.entity_instance_id)) AS derived_from,
+                   collect(DISTINCT {entity_instance_id: related.entity_instance_id, label: rel.label}) AS relates_to,
+                   head(collect(DISTINCT next.id)) AS next_id, head(collect(DISTINCT previous.id)) AS previous_id
+            """, scene_id=scene_id,
+        )
+        details = {str(row["id"]): row async for row in result}
+        reads = []
+        for node in milestones:
+            detail = details.get(str(node.get("id")), {})
+            reads.append(await self._milestone_node_to_read(
+                node=node, scene_id=scene_id, derived_from_entity_id=detail.get("derived_from"),
+                relates_to=[item for item in detail.get("relates_to") or [] if item.get("entity_instance_id")],
+                local_order={"followed_by_milestone_id": detail.get("next_id"), "preceded_by_milestone_id": detail.get("previous_id")},
+            ))
+        return reads
+
+    async def _scene_graph_entities(
+        self, *, instance_id: str, scene_id: str
+    ) -> list[SceneGraphEntityReference]:
+        """Collect relation labels first, then hydrate each entity exactly once."""
+        relations_result = await self.graph_session.run(
+            """
+            MATCH (scene:Scene {id:$scene_id})-[rel:DERIVED_FROM|RELATES_TO]->(entity:EntityInstance)
+            RETURN entity.entity_instance_id AS id,
+                   CASE WHEN type(rel) = 'DERIVED_FROM' THEN 'derived_from' ELSE coalesce(rel.label, 'related_to') END AS label
+            UNION
+            MATCH (:Scene {id:$scene_id})-[:CONTAINS]->(:Milestone)-[rel:DERIVED_FROM|RELATES_TO]->(entity:EntityInstance)
+            RETURN entity.entity_instance_id AS id,
+                   CASE WHEN type(rel) = 'DERIVED_FROM' THEN 'derived_from' ELSE coalesce(rel.label, 'related_to') END AS label
+            """, scene_id=scene_id,
+        )
+        labels_by_id: dict[str, set[str]] = {}
+        async for row in relations_result:
+            entity_id = str(row.get("id") or "").strip()
+            if entity_id:
+                labels_by_id.setdefault(entity_id, set()).add(str(row.get("label") or "related_to"))
+        if not labels_by_id:
+            return []
+
+        metadata_result = await self.graph_session.run(
+            """
+            UNWIND $entity_ids AS entity_id
+            MATCH (:OntologyInstance {instance_id:$instance_id})-[:HAS_ENTITY]->(entity:EntityInstance {entity_instance_id:entity_id})
+            RETURN entity.entity_instance_id AS id, entity.alias AS alias, entity.node_avatar_url AS avatar_url
+            """, instance_id=instance_id, entity_ids=list(labels_by_id),
+        )
+        metadata = {str(row["id"]): row async for row in metadata_result}
+        references = []
+        for entity_id in sorted(labels_by_id):
+            row = metadata.get(entity_id)
+            if row is None:
+                continue
+            display_name = str(row.get("alias") or entity_id)
+            slug = re.sub(r"[^a-z0-9]+", "-", display_name.casefold()).strip("-") or entity_id
+            references.append(SceneGraphEntityReference(
+                id=entity_id, canonical_content_slug=slug, display_name=display_name,
+                avatar_url=_normalize_optional_str(row.get("avatar_url")),
+                relation_labels=sorted(labels_by_id[entity_id]),
+            ))
+        return references
+
+    async def _scene_graph_perspectives(
+        self, *, scene_id: str, include_private: bool
+    ) -> list[SceneGraphPerspective]:
+        result = await self.graph_session.run(
+            """
+            MATCH (agent:CharacterAgent)-[:HAS_PERSPECTIVE]->(perspective:ScenePerspective)-[:PROJECTS_ON]->(:Scene {id:$scene_id})
+            WHERE $include_private OR coalesce(agent.visibility, 'private') = 'public'
+            RETURN agent, perspective,
+                   [(perspective)-[:EVOKES]->(emotion) | properties(emotion)] AS emotions,
+                   [(perspective)-[:FORMS_BELIEF]->(belief) | properties(belief)] AS beliefs,
+                   [(perspective)-[:HAS_IMPACT]->(impact) | properties(impact)] AS impacts
+            ORDER BY perspective.created_at ASC, perspective.id ASC
+            """, scene_id=scene_id, include_private=include_private,
+        )
+        perspectives: list[SceneGraphPerspective] = []
+        async for row in result:
+            agent, perspective = dict(row["agent"]), dict(row["perspective"])
+            perspective_data = {
+                key: value for key, value in perspective.items()
+                if key in SceneGraphPerspective.model_fields
+            }
+            perspectives.append(SceneGraphPerspective(
+                **perspective_data,
+                character_agent=SceneGraphCharacterAgentReference(
+                    id=str(agent.get("id") or ""), display_name=str(agent.get("name") or agent.get("id") or ""),
+                    avatar_url=_normalize_optional_str(agent.get("image_url")),
+                ),
+                emotions=[EmotionalInterpretationRead.model_validate(item) for item in row.get("emotions") or []],
+                beliefs=[CharacterBeliefRead.model_validate(item) for item in row.get("beliefs") or []],
+                impacts=[CharacterImpactRead.model_validate(item) for item in row.get("impacts") or []],
+            ))
+        return perspectives
+
+    async def _scene_graph_neighbors(self, *, scene_id: str, ontology_id: int) -> tuple[SceneGraphNeighborSummary | None, SceneGraphNeighborSummary | None]:
+        result = await self.graph_session.run(
+            """
+            MATCH (scene:Scene {id:$scene_id})
+            OPTIONAL MATCH (scene)-[:PRECEDED_BY]->(previous:Scene)<-[:HAS_SCENE]-(previous_page:OntologyInstance)
+            WHERE previous IS NULL OR toInteger(previous.ontology_id) = toInteger($ontology_id)
+            OPTIONAL MATCH (scene)-[:FOLLOWED_BY]->(next:Scene)<-[:HAS_SCENE]-(next_page:OntologyInstance)
+            WHERE next IS NULL OR toInteger(next.ontology_id) = toInteger($ontology_id)
+            RETURN previous, previous_page, next, next_page
+            """, scene_id=scene_id, ontology_id=ontology_id,
+        )
+        row = await result.single() or {}
+
+        def as_summary(node: Any, page: Any) -> SceneGraphNeighborSummary | None:
+            if node is None or page is None:
+                return None
+            node_data, page_data = dict(node), dict(page)
+            return SceneGraphNeighborSummary(
+                id=str(node_data.get("id") or ""), name=str(node_data.get("name") or ""),
+                description=str(node_data.get("description") or ""),
+                source_page=SceneGraphSourcePageReference(
+                    id=str(page_data.get("instance_id") or ""),
+                    display_name=str(page_data.get("name") or page_data.get("instance_id") or ""),
+                ),
+            )
+        return as_summary(row.get("previous"), row.get("previous_page")), as_summary(row.get("next"), row.get("next_page"))
 
     async def _assert_scene_exists(self, *, instance_id: str, scene_id: str) -> None:
         result = await self.graph_session.run(

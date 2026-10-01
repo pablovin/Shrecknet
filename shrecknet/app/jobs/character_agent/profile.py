@@ -349,6 +349,7 @@ def _build_timeline(
                     memory_strength=p.memory_strength, importance=p.importance,
                     status=p.status,
                     emotions=p.emotions, beliefs=p.beliefs,
+                    behavioral_evidence=p.behavioral_evidence,
                     impacts=[ProjectedCharacterImpact(
                         **impact.model_dump(mode="json"),
                         target=target_references[impact.target_id],
@@ -377,5 +378,4 @@ def _build_timeline(
         revisions=revisions,
         source_projections=source_projections,
     ).model_dump_json()
-
 

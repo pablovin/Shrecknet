@@ -58,6 +58,7 @@ Detailed API documentation for specific features
 - [Architect API Examples](./API/ARCHITECT_API_EXAMPLES.md)
 - [Favorite Ontology Instances API](./API/FAVORITE_ONTOLOGY_INSTANCES_API.md)
 - [Foundry Integration API](./API/FOUNDRY_INTEGRATION_API.md)
+- [Scene Graph API](./API/SCENE_GRAPH_API.md)
 
 ### [AI Agents](./AIAgents/)
 Documentation for AI agent systems

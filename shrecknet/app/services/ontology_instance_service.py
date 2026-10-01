@@ -853,8 +853,7 @@ class OntologyInstanceService:
             if cursor_name is not None
             else ""
         )
-        result = await self.graph_session.run(
-            f"""
+        cypher_query = f"""
             MATCH (entity:EntityInstance)
             WHERE entity.ontology_id = $ontology_id
               {definition_filter}
@@ -874,7 +873,9 @@ class OntologyInstanceService:
                    entity.normalized_name AS normalized_name
             ORDER BY entity.normalized_name ASC, entity.entity_instance_id ASC
             LIMIT $fetch_limit
-            """,
+            """
+        result = await self.graph_session.run(
+            cypher_query,
             ontology_id=ontology_id,
             entity_definition_id=entity_definition_id,
             query=normalized_query,

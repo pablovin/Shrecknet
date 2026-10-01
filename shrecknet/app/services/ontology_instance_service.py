@@ -860,7 +860,7 @@ class OntologyInstanceService:
               {definition_filter}
               {name_filter}
               {cursor_filter}
-            OPTIONAL MATCH (instance:OntologyInstance {instance_id: entity.instance_id})
+            OPTIONAL MATCH (instance:OntologyInstance {{instance_id: entity.instance_id}})
             OPTIONAL MATCH (agent:CharacterAgent)-[:EMBODIES]->(entity)
             RETURN entity.entity_instance_id AS entity_instance_id,
                    entity.entity_definition_id AS entity_definition_id,

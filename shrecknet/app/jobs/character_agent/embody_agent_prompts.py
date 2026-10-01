@@ -247,7 +247,10 @@ validated against the original scenes. Do not infer from names, occupation, spec
 other characters, or missing evidence. Do not emit a candidate when an action is witnessed,
 group-only, compelled, or otherwise unsupported. Missing evidence is unknown, never neutral.
 Assess both poles using the authoritative definitions, diagnostic situations, and boundary notes.
-At most one candidate per trait per scene; empty arrays are normal. expression_z is a signed
+FIXED CONSTRAINT: each scene may contain only one candidate for each `trait` value.
+Before returning JSON, check every `trait_candidates` array and remove duplicate
+trait values; choose the single best-supported candidate and return empty arrays
+when there is no qualifying evidence. Empty arrays are normal. expression_z is a signed
 behavior strength: approximately 0.3 mild, 0.7 clear, 1.2 strong, or 1.9 exceptional. It is not
 confidence. Do not return update_intensity.
 OUTPUT: {"scene_trait_interpretations":[{"trait_candidates":[{"trait":"one of eight keys","evidence_kind":"behavior","situation_type":"registry diagnostic situation","pole":"left|right","expression_z":0.3,"diagnosticity":0.0,"confidence":0.0,"behavior":"concise supplied action","justification":"construct-specific explanation","conditions":{"knowledge":{"status":"supported|contradicted|unknown","justification":"..."},"capability":{"status":"supported|contradicted|unknown","justification":"..."},"options":{"status":"supported|contradicted|unknown","justification":"..."},"freedom":{"status":"supported|contradicted|unknown","justification":"..."}},"comparison_context":"... or null","behavior_indexes":[1]}]}]}.

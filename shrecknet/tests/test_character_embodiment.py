@@ -21,6 +21,7 @@ from app.jobs.character_agent.embody_agent_prompts import (
     PSYCHOLOGICAL_ANALYSIS_PROMPT,
     PERSPECTIVE_PROMPT,
     PROMPT_VERSION,
+    TRAIT_INTERPRETATION_PROMPT,
 )
 from app.schemas.character_agent import (
     CharacterAgentCreateRequest, CharacterAgentRead, CharacterAgentUpdate,
@@ -931,6 +932,51 @@ class MalformedObservationsLLM(BatchLLM):
 def scenes(count, offset=0):
     return [SceneInput(scene_id=f's{i}',name='Choice',description='Free, known and safe choice.',created_at=f'{i:03}')
             for i in range(offset,offset+count)]
+
+
+@pytest.mark.asyncio
+async def test_trait_interpretation_keeps_only_the_highest_confidence_duplicate_trait():
+    class DuplicateTraitLLM:
+        async def chat(self, **_kwargs):
+            candidate = {
+                "trait": "curiosity", "evidence_kind": "behavior",
+                "situation_type": "exploration", "pole": "right", "expression_z": 0.7,
+                "diagnosticity": 0.8, "confidence": 0.4,
+                "behavior": "Inspected the unfamiliar device.",
+                "justification": "The voluntary investigation is diagnostic of curiosity.",
+                "conditions": {
+                    "knowledge": {"status": "supported", "justification": "The device was visible."},
+                    "capability": {"status": "supported", "justification": "They could inspect it."},
+                    "options": {"status": "supported", "justification": "They could leave it alone."},
+                    "freedom": {"status": "supported", "justification": "No compulsion is described."},
+                },
+                "comparison_context": None, "behavior_indexes": [1],
+            }
+            stronger = {**candidate, "confidence": 0.9, "expression_z": 1.2}
+            return json.dumps({"scene_trait_interpretations": [{"trait_candidates": [candidate, stronger]}]})
+
+    perspective = ScenePerspectiveOutput(
+        scene_id="scene-1", evidence_ids=["scene:scene-1"], source_type="participated",
+        awareness_level=90, confidence=90, summary="A device appeared.",
+        interpretation="It might reveal something new.", character_reflection="I want to inspect it.",
+        memory_strength=80, importance=3,
+        behavioral_evidence=[{"action": "Inspected the unfamiliar device.", "context": None,
+                              "source_quote": "inspected the unfamiliar device"}],
+    )
+
+    candidates = await _agent(DuplicateTraitLLM())._interpret_traits_batch(
+        source_entity_id="source", source_entity_alias="Source", identity=_canonical(),
+        perspectives=[perspective],
+    )
+
+    assert len(candidates[0]) == 1
+    assert candidates[0][0]["trait"] == "curiosity"
+    assert candidates[0][0]["confidence"] == 0.9
+
+
+def test_trait_interpretation_prompt_requires_one_candidate_per_trait_per_scene():
+    assert "FIXED CONSTRAINT" in TRAIT_INTERPRETATION_PROMPT
+    assert "only one candidate for each `trait` value" in TRAIT_INTERPRETATION_PROMPT
 
 
 @pytest.mark.asyncio

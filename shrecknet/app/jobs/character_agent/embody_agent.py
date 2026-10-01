@@ -977,11 +977,23 @@ class EmbodyAgent:
             expected_ids, perspectives, result.scene_trait_interpretations, strict=True,
         ):
             scene_candidates: list[dict[str, Any]] = []
-            seen_traits: set[str] = set()
+            selected_candidates: dict[str, _TraitCandidateLLMOutput] = {}
+            duplicate_traits: set[str] = set()
             for candidate in interpretation.trait_candidates:
-                if candidate.trait in seen_traits:
-                    raise EmbodimentGenerationError("trait interpretation emitted duplicate trait for one scene", category="schema")
-                seen_traits.add(candidate.trait)
+                existing = selected_candidates.get(candidate.trait)
+                if existing is None:
+                    selected_candidates[candidate.trait] = candidate
+                    continue
+                duplicate_traits.add(candidate.trait)
+                # A strict greater-than intentionally preserves the first item on a tie.
+                if candidate.confidence > existing.confidence:
+                    selected_candidates[candidate.trait] = candidate
+            if duplicate_traits:
+                logger.warning(
+                    "embodiment_duplicate_scene_trait_candidates_reduced scene_id=%s traits=%s",
+                    scene_id, sorted(duplicate_traits),
+                )
+            for candidate in selected_candidates.values():
                 if any(index < 1 or index > len(perspective.behavioral_evidence) for index in candidate.behavior_indexes):
                     raise EmbodimentGenerationError("trait interpretation referenced invalid behavioral evidence", category="semantic_reference")
                 value = candidate.model_dump(mode="json")

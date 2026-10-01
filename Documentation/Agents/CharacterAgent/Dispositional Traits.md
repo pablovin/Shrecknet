@@ -112,7 +112,11 @@ character-specific revelation about origin, nature, body, identity, or construct
 status must instead produce a distinct `identity` aspect signal (for example,
 `I am a Belshazar-crafted vessel`). The deterministic reducer logs and ignores
 any duplicate signal, then caps additions per source. Enrichment emits at most
-three distinct scene-local trait candidates. Candidates with
+three distinct scene-local trait candidates. Each scene may contain only one candidate for a
+given trait. The trait-interpretation prompt enforces this fixed constraint; as a defensive
+backend safeguard, duplicate trait candidates from a model response are reduced to the one
+with the highest `confidence` (with the first returned candidate retained when confidence is
+tied) before grounding. Candidates with
 unknown or contradicted choice conditions remain auditable evidence but cannot
 move a trait estimate. Each scene may emit at most one durable aspect signal and
 one durable goal signal. Signals are evidence, never mutations: they make a

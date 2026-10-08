@@ -3009,6 +3009,14 @@ class OntologyInstanceService:
                 key: value for key, value in perspective.items()
                 if key in SceneGraphPerspective.model_fields
             }
+            if not perspective_data.get("perspective"):
+                legacy_text = [
+                    perspective.get("interpretation"),
+                    perspective.get("character_reflection"),
+                ]
+                perspective_data["perspective"] = "\n\n".join(
+                    str(value).strip() for value in legacy_text if value and str(value).strip()
+                ) or str(perspective.get("summary") or "")
             perspectives.append(SceneGraphPerspective(
                 **perspective_data,
                 character_agent=SceneGraphCharacterAgentReference(

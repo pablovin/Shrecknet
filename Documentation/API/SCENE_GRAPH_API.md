@@ -32,8 +32,8 @@ The response has these top-level fields:
   `display_name`, `avatar_url`, and every normalized `relation_labels` value.
   `derived_from` is included as a relation label for provenance edges.
 - `perspectives`: visibility-authorized Character Agent perspectives. Every item
-  contains its agent display reference plus its `emotions`, `beliefs`, and
-  `impacts` aggregates.
+  contains `source_type`, `perspective`, its agent display reference, and its
+  `emotions`, `beliefs`, and `impacts` aggregates.
 - `previous_scene` and `next_scene`: nullable summaries linked by the scene's
   `PRECEDED_BY` and `FOLLOWED_BY` timeline edges.
 

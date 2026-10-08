@@ -3,13 +3,13 @@
 IDENTITY_DESCRIPTION_PROMPT resolves narrative grounding when absent and
 refreshes it after embodiment; it never supplies numerical trait evidence.
 For each source scene chunk, PERSPECTIVE_PROMPT runs first:
-    objective scenes -> subjective perspectives + factual behavioral_evidence.
+    objective scenes -> psychologically distinctive subjective perspectives.
     A truncated response retries with PERSPECTIVE_TRUNCATION_RECOVERY_PROMPT.
 After perspective validation, two calls run in parallel for that chunk:
     PSYCHOLOGICAL_ANALYSIS_PROMPT (built from ENRICHMENT_PROMPT):
-        perspectives + identity_description -> emotions, beliefs, impacts, signals.
+        canonical scenes + source_type/perspectives + identity_description -> emotions, beliefs, impacts, signals.
     TRAIT_INTERPRETATION_PROMPT:
-        perspectives + identity_description + validated behavioral_evidence -> candidates.
+        canonical scenes + perspectives + identity_description -> candidates.
 The backend combines both branches and deterministically updates the draft
 profile in source order. No prompt receives a cumulative raw-evidence ledger or produces
 public output; the reviewable draft is assembled by the backend.
@@ -37,7 +37,7 @@ IDENTITY_TRAIT_DESCRIPTION_CONTRACT = (
         for key in DIRECTIONAL_TRAITS
     ], ensure_ascii=False)
 )
-PROMPT_VERSION = "character-embodiment-v27-compact-identity-description"
+PROMPT_VERSION = "character-embodiment-v28-psychological-perspective"
 
 # Execution order: Stage 0, once when description is absent and once after
 # scene processing to refresh it from the resulting current state.
@@ -114,7 +114,7 @@ Return JSON only.""" + IDENTITY_TRAIT_DESCRIPTION_CONTRACT
 # Stage 1: objective scenes to subjective perspectives.
 # Purpose: Extract one grounded subjective perspective per objective scene.
 # Used by: EmbodyAgent._incorporate_perspectives, the first chunk call.
-# Expected: Ordered JSON perspectives with compact state and behavioral evidence.
+# Expected: Ordered JSON perspectives with psychologically grounded subjective text.
 PERSPECTIVE_PROMPT = r"""You are incorporating a character's identity into canonical objective scenes.
 
 Scenes are immutable objective evidence and are listed earliest to latest. The
@@ -132,22 +132,17 @@ respecting only facts available at each scene.
 Return every perspective in the same order as the input positions. The backend binds
 position 1 to the first scene, position 2 to the second, and so on.
 
-This is compact structured character-state extraction, not prose generation,
-narration, roleplay, a memoir, dialogue, or stream of consciousness. Do not
-repeat information across fields or retell the scene.
+This is compact structured character-state extraction, not narration, roleplay,
+a memoir, dialogue, or stream of consciousness. Do not retell the scene.
 
 For every perspective:
-- summary: exactly one sentence, at most 40 words; state what the character
-  understands happened without interpreting motives.
-- interpretation: at most two short sentences and 80 words; state what the event
-  means to this character without retelling the scene.
-- character_reflection: first person, at most two short sentences and 60 words;
-  state an immediate personal reaction without dialogue, narration, or monologue.
-- behavioral_evidence: factual individual choices, refusals, or explicit value
-  statements. Each item has action, nullable context, and a short verbatim
-  source_quote. Do not infer motives, alternatives, or later knowledge. Do not
-  include group behavior, witnessed actions, intentions not carried out, or traits.
-  Preserve compulsion and constraints in context. [] is valid when absent.
+- perspective: at most 120 words; explain what the experience means to this
+  character specifically. Let established personality, values, fears, motivations,
+  and beliefs shape what they notice, conclude, and feel. Distinguish what they
+  know from what they suspect, and do not present mistaken beliefs as objective
+  facts. Describe meaningful internal change when supported by this scene and
+  what the character knows; do not reduce the account to an immediate emotion.
+  Keep the interpretation grounded and concise without retelling the scene.
 
 INPUT:
 {
@@ -170,14 +165,7 @@ OUTPUT — return an object with exactly one key "perspectives":
   "perspectives": [
     {
       "source_type": "participated | witnessed | heard_about | read_about | inferred | unknown",
-      "awareness_level": 0..100,
-      "confidence": 0..100,
-      "summary": "concise factual summary",
-      "interpretation": "grounded subjective interpretation",
-      "character_reflection": "expressive first-person reflection in character voice",
-      "memory_strength": 0..100,
-      "importance": 1..5,
-      "behavioral_evidence":[{"action":"concrete choice","context":"stakes, knowledge, alternatives, capability, constraints or null","source_quote":"short exact scene passage"}]
+      "perspective": "psychologically distinctive subjective account, including supported internal change"
     }
   ]
 }
@@ -197,14 +185,31 @@ scene count and every field limit are mandatory. Return JSON only."""
 
 
 # Execution order: Stage 2 branch, parallel with TRAIT_INTERPRETATION_PROMPT after Stage 1.
-# Stages 2 and 3 run in parallel after Stage 1; Stage 2 consumes perspectives.
-# Purpose: Define psychological enrichment from position-bound perspectives.
+# Stages 2 and 3 receive canonical scene context and the Stage 1 interpretation.
+# Purpose: Define psychological enrichment from canonical scenes and grounded character interpretations.
 # Used by: PSYCHOLOGICAL_ANALYSIS_PROMPT for the second scene-chunk call.
 # Expected: Ordered JSON enrichments with emotions, beliefs, impacts, and signals.
-ENRICHMENT_PROMPT = r"""Stage 2 — enrich grounded character perspectives. Use each supplied
-perspective and identity_description as stable character grounding; never reconstruct
-the objective scene, use reflection text, or let
-later positions affect earlier ones. Return exactly one enrichment in input order.
+ENRICHMENT_PROMPT = r"""Stage 2 — enrich grounded character perspectives. For every ordered
+scene item, use its canonical scene name and description together with the
+agent_scene_interpretation source_type and perspective from Stage 1. Use
+identity_description as established psychological grounding. Interpret each
+scene through what this character knows and how their distinctive personality,
+values, fears, motivations, and beliefs shape its meaning. Capture supported
+internal changes, not just immediate emotions. Do not contradict the canonical
+scene facts, treat the character's uncertainty as fact, or let later positions
+affect earlier ones. Return exactly one enrichment per input scene, in order.
+
+INPUT JSON:
+{"identity_description":{"identity_summary":"...","psychological_summary":"...","personality_traits":[{"trait":"...","description":"..."}]},"scenes":[{"position":1,"scene":{"name":"canonical scene name","description":"canonical scene description"},"agent_scene_interpretation":{"source_type":"participated|witnessed|heard_about|read_about|inferred|unknown","perspective":"the character's subjective interpretation"}}],"current_profile":{"aspects":[{"position":1,"name":"..."}],"goals":[{"position":1,"title":"..."}]}}
+
+Input meanings: identity_description is the established narrative portrait;
+scenes is the ordered list of canonical records, where position binds the item
+to its output, scene.name and scene.description are objective source facts, and
+agent_scene_interpretation.source_type describes how the character knows the
+scene while perspective describes its subjective meaning to them. Current
+profile lists are active aspects and goals available as impact targets, indexed
+by position. Do not treat interpretation as an objective fact or identity
+description as proof that a particular reaction occurred.
 
 Every enrichment MUST contain all five arrays: emotions, beliefs, impacts,
 aspect_signals, goal_signals. Use [] when unsupported. Never
@@ -257,23 +262,29 @@ PERSPECTIVE_PROMPT += "\nThe backend binds every perspective to exactly its own 
 ENRICHMENT_PROMPT += "\nEach item must cite exactly the current scene conceptually; the backend assigns evidence_ids by position, so omit them from model output."
 
 # Execution order: Stage 3 branch, parallel with PSYCHOLOGICAL_ANALYSIS_PROMPT after Stage 1.
-# Stage 3 consumes only validated behavioral evidence from Stage 1, not Stage 2.
-# Purpose: Classify validated scene behavior against the directional trait registry.
+# Stage 3 receives canonical scene context and the Stage 1 interpretation.
+# Purpose: Classify grounded character-specific trait signals against the directional trait registry.
 # Used by: EmbodyAgent._interpret_traits_batch after perspective validation.
 # Expected: Ordered JSON scene_trait_interpretations with supported candidates.
-TRAIT_INTERPRETATION_PROMPT = r"""Stage 3 — interpret factual perspective behavior into trait observations.
-INPUT: target {alias, entity_type, entity_type_description, identity_description}; scenes is an ordered list of
-{position, perspective:{summary, interpretation}, behavioral_evidence:[{action, context, source_quote}]}. Perspective text and identity_description supply context; only
-behavioral_evidence supports a polarity observation. Each item is
-validated against its canonical source scene and describes this character only.
+TRAIT_INTERPRETATION_PROMPT = r"""Stage 3 — interpret canonical scenes through this character's grounded perspective to identify supported trait observations.
+INPUT JSON:
+{"target":{"alias":"character alias","entity_type":"canonical ontology type","entity_type_description":"type meaning or null","identity_description":{"identity_summary":"...","psychological_summary":"...","personality_traits":[{"trait":"trait key","description":"..."}]}},"scenes":[{"position":1,"scene":{"name":"canonical scene name","description":"canonical scene description"},"agent_scene_interpretation":{"source_type":"participated|witnessed|heard_about|read_about|inferred|unknown","perspective":"the character's subjective interpretation"}}]}
+
+Input meanings: target identifies the character being interpreted; identity_description
+provides established psychological context, not proof that a trait was expressed
+in a particular scene. scenes is ordered and position binds each result to one
+scene. scene.name and scene.description are canonical objective facts.
+agent_scene_interpretation.source_type says how the character knows the scene;
+perspective says what the character understood and what the experience means
+to them. The scene is canonical objective context; the interpretation is what
+this character understood and experienced. Use identity_description to understand distinctive psychology, but do not assume its claims prove a trait. Consider choices, expressed values, and meaningful psychological responses in context. A strong feeling alone does not establish a trait. Do not infer from names, occupation, species, role, other characters, or unsupported assumptions. Interpret only this character, respecting the source_type and what the character could know.
 Return one scene_trait_interpretations item for each input scene, in order.
-Use identity_description only as context; never infer polarity from its claims.
-Observations must be justified by scene behavior, including behavior that
-contradicts the description. Do not infer from names, occupation, species, role,
-other characters, generated reflections, or missing evidence. Each scene has at
+Observations must be justified by the supplied canonical scene and character
+interpretation, including evidence that contradicts the identity description.
+Each scene has at
 most one observation per trait.
-Only emit a trait when the supplied behavior reveals a meaningful, voluntary
-choice. Missing or ambiguous evidence is unknown, never midpoint. Return empty
-trait_candidates arrays normally.
+Only emit a trait when the scene and interpretation support a meaningful,
+character-specific disposition or choice. Missing or ambiguous evidence is
+unknown, never midpoint. Return empty trait_candidates arrays normally.
 OUTPUT: {"scene_trait_interpretations":[{"trait_candidates":[{"trait":"one of eight keys","polarity":"low|high","situation_type":"diagnostic:relationship:stakes|unspecified","justification":"brief grounded reason"}]}]}.
 Return JSON only.""" + TRAIT_EVIDENCE_CONTRACT + TRAIT_CONTRACT

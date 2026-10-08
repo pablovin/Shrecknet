@@ -56,6 +56,7 @@ from app.graphrag.embedding_runtime import (
 )
 from app.graph.neo4j import (
     ensure_character_graph_constraints,
+    migrate_scene_perspective_contract,
     ensure_entity_catalog_indexes,
     ensure_elder_hybrid_indexes,
     ensure_temporal_graph_constraints,
@@ -331,6 +332,9 @@ async def lifespan(_: FastAPI):
                 logger.warning("Cleared %s stale Librarian ingestion locks on startup", lock_record["deleted"])
             await ensure_temporal_graph_constraints(neo4j_session)
             await ensure_character_graph_constraints(neo4j_session)
+            migrated_perspectives = await migrate_scene_perspective_contract(neo4j_session)
+            if migrated_perspectives:
+                logger.info("Migrated %s legacy ScenePerspective records", migrated_perspectives)
             await ensure_entity_catalog_indexes(neo4j_session)
             await ensure_elder_hybrid_indexes(neo4j_session)
             await PdfEmbeddingService(neo4j_session).ensure_vector_index()

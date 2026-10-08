@@ -56,11 +56,12 @@ Identity mode makes one substantive deliberation call. The worker loads the
 active identity, all active aspects/goals, and only active
 `(:CharacterAgent)-[:HAS_PERSPECTIVE]->(:ScenePerspective)` records owned by
 the queried agent. It deterministically ranks the character's own subjective
-memories and supplies at most five relevant memories to the model.
+memories and supplies at most five relevant memories to the model. Perspective
+memory content is a single subjective text field plus linked emotions, beliefs,
+and impacts; the canonical scene itself is not sent.
 
-A memory contains the perspective's remembered summary, interpretation,
-reflection, emotions, beliefs (including their current status), and lasting
-impacts. Canonical `Scene` text, other characters' perspectives, and arbitrary
+A memory contains the perspective text, emotions, beliefs (including their
+current status), and lasting impacts. Canonical `Scene` text, other characters' perspectives, and arbitrary
 graph facts are never retrieved for this path. A memory is subjective rather
 than objective truth; doubted, disproven, and superseded beliefs remain
 historical beliefs.

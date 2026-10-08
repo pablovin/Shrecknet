@@ -77,8 +77,11 @@ Embodiment loads the persisted `identity_description`, generating one from the
 entity name/type/descriptor/text/properties and current goals, aspects, and trait
 definitions/values only when none exists. It grounds perspective extraction,
 psychological analysis, and scene trait interpretation across all chunks. Trait
-interpretation remains behavior-based and may contradict the narrative
-foundation. After processing, embodiment refreshes and persists the description
+interpretation considers canonical scene facts through the character's grounded
+perspective and may contradict the narrative foundation. The perspective is
+shaped by established personality, values, fears, motivations, and beliefs, and
+captures supported internal changes as well as immediate reactions. After
+processing, embodiment refreshes and persists the description
 from the final identity state. An accepted draft carries this refreshed value to
 the CharacterAgent. Narrative descriptions do not initialize numerical trait
 points; new characters remain unknown until scene behavior supplies evidence.
@@ -93,7 +96,9 @@ All scenes from a `DERIVED_FROM` source form one chronological
 source bundle and yield one source-level revision. The worker partitions each
 source's ordered scenes into chunks of at most five. All Perspective calls finish
 before Psychological analysis and Trait interpretation run in parallel for each
-chunk. ShreckLLM owns provider concurrency. The backend merges chunk results
+chunk. Both analysis stages receive each canonical scene's name and description
+together with the preceding interpretation's `source_type` and `perspective`.
+ShreckLLM owns provider concurrency. The backend merges chunk results
 and reduces source-local outputs deterministically; no LLM receives a cumulative
 evidence history. Source bundles run sequentially, so the resulting revision
 becomes the next source bundle's starting identity.
@@ -120,12 +125,17 @@ identifies the actual starting revision. Manual point edits preserve history and
 record their actor and reason. See [Dispositional traits](Dispositional%20Traits.md)
 for constructs, scales, eligibility, consistency, and chronology limitations.
 
-Timeline display references and behavioral-evidence records are structured draft
-and API data. They are included in the generated memory document, but are not
+Timeline display references are structured draft and API data. They are not
 written as `ScenePerspective` node properties because Neo4j properties support
-only scalar values or arrays of scalar values. Their graph-backed counterparts
-(scene projections, emotions, beliefs, and impacts) are persisted through the
-relationships shown above.
+only scalar values or arrays of scalar values. Scene projections, emotions,
+beliefs, and impacts are persisted through the relationships shown above. Trait
+interpretation receives canonical scene context and the same grounded subjective
+interpretation; the pipeline does not extract or persist a separate
+`behavioral_evidence` field. Legacy graph nodes carrying that retired property
+are projected through the current schema, which omits it; no migration is needed
+because the field was never persisted as a Neo4j node property. Previously saved
+draft timelines are also read compatibly by dropping that retired field before
+the current strict projection schema is applied.
 
 ## `CharacterAspect` node schema
 
@@ -201,6 +211,15 @@ can append perspectives for newly created scenes using the same profile rules.
 
 ### `ScenePerspective`
 
+Perspectives are standalone scene records. `generated_with_revision_id` records
+which CharacterIdentityRevision informed generated content; it does not version
+the perspective or create perspective revisions. Legacy nodes are projected on
+read by combining their old `interpretation` and `character_reflection` values;
+the old fields are not returned by the API. On application startup, a Neo4j
+migration stores that combined text as `perspective` (falling back to old
+`summary`), removes the retired properties, and clears derived memory caches so
+they are rebuilt from the simplified contract.
+
 | Property | Type | Required | Rules and meaning |
 | --- | --- | --- | --- |
 | `id` | string | yes | Service-generated globally unique UUID. |
@@ -208,14 +227,7 @@ can append perspectives for newly created scenes using the same profile rules.
 | `character_agent_id` | string | yes | Immutable indexed ownership reference. |
 | `scene_id` | string | yes | Immutable indexed canonical-scene reference. |
 | `source_type` | enum | yes | `participated`, `witnessed`, `heard_about`, `read_about`, `inferred`, or `unknown`. |
-| `awareness_level` | integer | yes | Awareness of the canonical scene, `0..100`. |
-| `confidence` | integer | yes | Certainty in the perspective, `0..100`. |
-| `summary` | string | yes | Nonblank remembered account of what happened. |
-| `interpretation` | string | yes | Nonblank character-specific meaning. |
-| `character_reflection` | string or null | no | Expressive first-person presentation text; excluded from psychological evidence and downstream profile reasoning. |
-| `memory_strength` | integer | yes | Availability of the memory, `0..100`. |
-| `importance` | integer | yes | Longitudinal relevance, `1..5`. |
-| `status` | enum | yes | `active`, `superseded`, or `forgotten`; defaults to `active`. |
+| `perspective` | string | yes | Nonblank psychologically distinctive account of what the experience means to this character, shaped by established personality, values, fears, motivations, and beliefs; includes supported internal change and distinguishes knowledge from uncertainty. |
 | `created_at` | datetime string | yes | UTC creation timestamp. |
 | `updated_at` | datetime string | yes | UTC timestamp of the last semantic update. |
 

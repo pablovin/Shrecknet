@@ -149,6 +149,41 @@ async def ensure_character_graph_constraints(session: AsyncSession) -> None:
         await session.run(statement)
 
 
+async def migrate_scene_perspective_contract(session: AsyncSession) -> int:
+    """Collapse legacy perspective fields and invalidate their derived memories."""
+    result = await session.run(
+        """
+        MATCH (perspective:ScenePerspective)
+        WHERE perspective.summary IS NOT NULL
+           OR perspective.interpretation IS NOT NULL
+           OR perspective.character_reflection IS NOT NULL
+           OR perspective.awareness_level IS NOT NULL
+           OR perspective.memory_strength IS NOT NULL
+           OR perspective.importance IS NOT NULL
+           OR perspective.status IS NOT NULL
+           OR perspective.confidence IS NOT NULL
+        WITH perspective,
+             trim(coalesce(perspective.interpretation, '') + '\n' +
+                  coalesce(perspective.character_reflection, '')) AS legacy_text
+        SET perspective.perspective = coalesce(
+            perspective.perspective,
+            CASE WHEN legacy_text <> '' THEN legacy_text
+                 ELSE coalesce(perspective.summary, '') END
+        )
+        REMOVE perspective.summary, perspective.interpretation,
+               perspective.character_reflection, perspective.awareness_level,
+               perspective.confidence, perspective.memory_strength,
+               perspective.importance, perspective.status,
+               perspective.memory_document, perspective.memory_embedding,
+               perspective.memory_embedding_model, perspective.memory_embedding_version,
+               perspective.memory_embedded_at
+        RETURN count(perspective) AS migrated
+        """
+    )
+    record = await result.single()
+    return int(record["migrated"] or 0) if record else 0
+
+
 async def ensure_entity_catalog_indexes(session: AsyncSession) -> None:
     """Backfill and index the compact Architect entity-catalog read path."""
     await session.run(

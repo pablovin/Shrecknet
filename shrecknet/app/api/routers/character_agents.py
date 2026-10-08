@@ -39,7 +39,7 @@ from app.schemas.character_agent import (
     CharacterImpactCreate, CharacterImpactRead, CharacterImpactUpdate,
     EmotionalInterpretationCreate, EmotionalInterpretationRead,
     EmotionalInterpretationUpdate, ScenePerspectiveAggregateRead,
-    ScenePerspectiveCreate, ScenePerspectiveRead, ScenePerspectiveStatus,
+    ScenePerspectiveCreate, ScenePerspectiveRead,
     ScenePerspectiveUpdate,
     CharacterIdentityRevisionRead, CharacterIdentityChangeRead,
 )
@@ -390,7 +390,6 @@ async def get_character_agent_query_job(
 @router.get("/{agent_id}/perspectives", response_model=list[ScenePerspectiveRead])
 async def list_perspectives(
     agent_id: str,
-    status_filter: ScenePerspectiveStatus | None = Query(None, alias="status"),
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
     actor: User = Depends(get_current_user),
@@ -398,7 +397,6 @@ async def list_perspectives(
 ):
     return await svc.list_perspectives(
         agent_id,
-        status_filter.value if status_filter else None,
         skip,
         limit,
         public_only=not _is_admin(actor),

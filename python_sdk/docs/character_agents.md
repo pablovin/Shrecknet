@@ -109,12 +109,7 @@ perspective = await sdk.character_agents.create_perspective(
     ScenePerspectiveCreate(
         scene_id="scene-31",
         source_type="witnessed",
-        awareness_level=80,
-        confidence=70,
-        summary="The guard fell at the western gate.",
-        interpretation="The keep can no longer protect its own people.",
-        memory_strength=90,
-        importance=5,
+        perspective="The keep can no longer protect its people. I fear we were not ready.",
     ),
 )
 
@@ -151,7 +146,8 @@ await sdk.character_agents.create_impact(
 ```
 
 `get_perspective()` returns the nested aggregate. `list_perspectives()` supports
-`status`, `skip`, and `limit`. The resource also exposes `get`, `update`, and
+`skip` and `limit`. A perspective contains `source_type` and one `perspective`
+text field. The resource also exposes `get`, `update`, and
 `delete` methods for perspectives and for each child type.
 
 Generation results only prefill the frontend form. Neo4j is changed only when

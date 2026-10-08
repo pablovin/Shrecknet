@@ -5,7 +5,8 @@ work and refreshed once after all source bundles. Three LLM calls normally run
 for each source scene chunk:
   1. Character incorporation grounded by the identity description
   2. Psychological enrichment and trait interpretation in parallel, both
-     grounded by the description and validated perspectives
+     receiving canonical scenes and the Stage 1 source_type/perspective;
+     each also receives its stage-specific identity/profile context
 
 The backend then validates, grounds, and reduces extracted candidates
 deterministically. A source's chunks share one starting identity; source bundles
@@ -42,7 +43,6 @@ from app.schemas.character_agent import (
     CharacterAspectCategory,
     CharacterBeliefStatus,
     CharacterGoalType,
-    BehavioralEvidence,
     EmbodyAgentAnalysis,
     EmbodimentObservationsOutput,
     EmbodyAgentResult,
@@ -144,23 +144,7 @@ class ScenePerspectiveLLMOutput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     source_type: ScenePerspectiveSourceType
-    awareness_level: int = Field(ge=0, le=100)
-    confidence: int = Field(ge=0, le=100)
-    summary: str = Field(min_length=1, max_length=300)
-    interpretation: str = Field(min_length=1, max_length=700)
-    character_reflection: str = Field(min_length=1, max_length=500)
-    memory_strength: int = Field(ge=0, le=100)
-    importance: int = Field(ge=1, le=5)
-    behavioral_evidence: list["_BehavioralEvidenceLLMOutput"] = Field(default_factory=list)
-
-
-class _BehavioralEvidenceLLMOutput(BaseModel):
-    """Factual action record whose quotation is verified against the source scene."""
-
-    model_config = ConfigDict(extra="forbid")
-    action: str = Field(min_length=1, max_length=300)
-    context: str | None = Field(None, max_length=500)
-    source_quote: str = Field(min_length=1, max_length=500)
+    perspective: str = Field(min_length=1, max_length=900)
 
 
 class _PerspectivesLLMContainer(BaseModel):
@@ -849,7 +833,6 @@ class EmbodyAgent:
             )
 
         perspectives = _bind_llm_perspectives(result, expected_ids)
-        _validate_behavioral_evidence(perspectives.perspectives, scene_list)
         _semantic(lambda: _validate_and_normalize_scene_grounding(
             perspectives.perspectives, expected_ids,
         ))
@@ -864,20 +847,14 @@ class EmbodyAgent:
         self, *, source_entity_id: str, source_entity_alias: str,
         perspectives: list[ScenePerspectiveOutput],
     ) -> None:
-        def stats(field: str) -> tuple[int, int, float]:
-            lengths = [len(getattr(item, field)) for item in perspectives]
-            return min(lengths), max(lengths), round(sum(lengths) / len(lengths), 1)
-
         metadata = self._llm.last_response_metadata
-        summary = stats("summary")
-        interpretation = stats("interpretation")
-        reflection = stats("character_reflection")
+        perspective_lengths = [len(item.perspective) for item in perspectives]
         logger.info(
             "character_incorporation_completed source_id=%s source_alias=%s "
             "scene_count=%d perspective_count=%d provider=%s requested_model=%s "
             "resolved_model=%s reasoning_enabled=%s requested_max_tokens=%d "
             "prompt_tokens=%s completion_tokens=%s finish_reason=%s response_chars=%s "
-            "duration_ms=%s summary_chars=%s interpretation_chars=%s reflection_chars=%s",
+            "duration_ms=%s perspective_chars=%s",
             source_entity_id, source_entity_alias, len(perspectives), len(perspectives),
             getattr(self.character_incorporation_model, "provider", None),
             getattr(self.character_incorporation_model, "name", self.character_incorporation_model),
@@ -886,13 +863,15 @@ class EmbodyAgent:
             metadata.get("completion_tokens"), metadata.get("finish_reason"),
             self._llm.calls[-1].output_chars if self._llm.calls else None,
             round((self._llm.last_elapsed_seconds or 0) * 1000, 2),
-            summary, interpretation, reflection,
+            (min(perspective_lengths), max(perspective_lengths),
+             round(sum(perspective_lengths) / len(perspective_lengths), 1)),
         )
 
     async def _analyze_psychological_batch(
         self, *, source_entity_id: str, source_entity_alias: str,
         perspectives: list[ScenePerspectiveOutput], aspects: list[dict[str, Any]],
-        goals: list[dict[str, Any]], identity_description: Any = None, recovery_depth: int = 0,
+        goals: list[dict[str, Any]], scene_contexts: list[dict[str, Any]],
+        identity_description: Any = None, recovery_depth: int = 0,
     ) -> list[Any]:
         """Analyze one perspective batch, splitting only a truncated retry batch."""
         expected_ids = [perspective.scene_id for perspective in perspectives]
@@ -902,11 +881,14 @@ class EmbodyAgent:
         }
         payload = {
             "identity_description": identity_description,
-            "perspectives": [
-                perspective.model_dump(
-                    mode="json",
-                    exclude={"scene_id", "evidence_ids", "character_reflection", "status", "behavioral_evidence"},
-                ) | {"position": index + 1}
+            "scenes": [
+                {
+                    **scene_contexts[index],
+                    "agent_scene_interpretation": {
+                        "source_type": perspective.source_type.value,
+                        "perspective": perspective.perspective,
+                    },
+                }
                 for index, perspective in enumerate(perspectives)
             ],
             "current_profile": {
@@ -942,12 +924,14 @@ class EmbodyAgent:
             first = await self._analyze_psychological_batch(
                 source_entity_id=source_entity_id, source_entity_alias=source_entity_alias,
                 perspectives=perspectives[:midpoint], aspects=aspects, goals=goals,
+                scene_contexts=scene_contexts[:midpoint],
                 identity_description=identity_description,
                 recovery_depth=recovery_depth + 1,
             )
             second = await self._analyze_psychological_batch(
                 source_entity_id=source_entity_id, source_entity_alias=source_entity_alias,
                 perspectives=perspectives[midpoint:], aspects=aspects, goals=goals,
+                scene_contexts=scene_contexts[midpoint:],
                 identity_description=identity_description,
                 recovery_depth=recovery_depth + 1,
             )
@@ -957,8 +941,9 @@ class EmbodyAgent:
     async def _interpret_traits_batch(
         self, *, source_entity_id: str, source_entity_alias: str,
         identity: dict[str, Any], perspectives: list[ScenePerspectiveOutput],
+        scene_contexts: list[dict[str, Any]],
     ) -> list[list[dict[str, Any]]]:
-        """Classify only validated factual evidence, never the raw scene or reflection."""
+        """Interpret trait signals from canonical scenes and grounded perspectives."""
         expected_ids = [item.scene_id for item in perspectives]
         payload = {
             "target": {key: identity.get(key) for key in (
@@ -966,17 +951,13 @@ class EmbodyAgent:
             )},
             "scenes": [
                 {
-                    "position": position,
-                    "perspective": {
-                        "summary": perspective.summary,
-                        "interpretation": perspective.interpretation,
+                    **scene_contexts[index],
+                    "agent_scene_interpretation": {
+                        "source_type": perspective.source_type.value,
+                        "perspective": perspective.perspective,
                     },
-                    "behavioral_evidence": [
-                        {"position": evidence_position, **record.model_dump(mode="json")}
-                        for evidence_position, record in enumerate(perspective.behavioral_evidence, 1)
-                    ],
                 }
-                for position, perspective in enumerate(perspectives, 1)
+                for index, perspective in enumerate(perspectives)
             ],
         }
         result = await self._call(
@@ -1036,6 +1017,10 @@ class EmbodyAgent:
              "created_at": scene.created_at}
             for index, scene in enumerate(scenes)
         ]
+        scene_contexts = [
+            {"position": index + 1, "scene": {"name": scene.name, "description": scene.description}}
+            for index, scene in enumerate(scenes)
+        ]
         known = {f"scene:{s.scene_id}" for s in scenes}
         identity = {
             key: canonical_identity.get(key)
@@ -1086,8 +1071,8 @@ class EmbodyAgent:
                 "perspective output scene_ids must match input scene order and be unique"
             )
         _semantic(lambda: _validate_and_normalize_scene_grounding(perspectives, expected_ids))
-        # Steps 2 and 3 consume distinct incorporation outputs concurrently.
-        # Psychology sees perspectives; trait interpretation sees only validated facts.
+        # Steps 2 and 3 both receive canonical scene context and the same grounded
+        # character interpretation, alongside their stage-specific context.
         if on_stage:
             await on_stage(
                 "source:{0} - Steps 2-3: Psychological analysis and trait interpretation".format(source_entity_alias), [2, 3]
@@ -1096,11 +1081,12 @@ class EmbodyAgent:
             self._analyze_psychological_batch(
                 source_entity_id=source_entity_id, source_entity_alias=source_entity_alias,
                 perspectives=perspectives, aspects=aspects, goals=goals,
+                scene_contexts=scene_contexts,
                 identity_description=canonical_identity.get("identity_description"),
             ),
             self._interpret_traits_batch(
                 source_entity_id=source_entity_id, source_entity_alias=source_entity_alias,
-                identity=identity, perspectives=perspectives,
+                identity=identity, perspectives=perspectives, scene_contexts=scene_contexts,
             ),
         )
         enrichment_ids = [item.scene_id for item in enrichments]
@@ -1381,7 +1367,7 @@ def _bind_llm_enrichments(
         )
     parsed = value.model_dump(mode="json")
     # Trait candidates are deliberately produced by the independent factual
-    # interpretation stage.  The public assembled schema still exposes them.
+    # interpretation stage. The assembled schema retains those boundary fields.
     for item in parsed.get("scene_enrichments", []):
         if isinstance(item, dict):
             item["trait_candidates"] = []
@@ -1395,25 +1381,6 @@ def _bind_llm_enrichments(
         raise EmbodimentGenerationError(
             "invalid bound psychological-analysis output", category="schema",
         ) from exc
-
-
-def _normalize_quote(value: str) -> str:
-    return " ".join(value.split()).casefold()
-
-
-def _validate_behavioral_evidence(
-    perspectives: list[ScenePerspectiveOutput], scene_list: list[dict[str, Any]],
-) -> None:
-    """Drop unverifiable factual records while keeping the scene perspective usable."""
-    for perspective, scene in zip(perspectives, scene_list, strict=True):
-        scene_text = _normalize_quote(" ".join(str(scene.get(key) or "") for key in ("name", "description")))
-        accepted: list[BehavioralEvidence] = []
-        for record in perspective.behavioral_evidence:
-            if _normalize_quote(record.source_quote) in scene_text:
-                accepted.append(record)
-            else:
-                logger.info("embodiment_behavioral_evidence_quote_rejected scene_id=%s", perspective.scene_id)
-        perspective.behavioral_evidence = accepted
 
 
 def _normalize_position_bound_collection(

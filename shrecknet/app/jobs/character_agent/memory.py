@@ -19,12 +19,8 @@ from app.graphrag.embedding_service import EmbeddingService
 def render_memory_document(memory: dict[str, Any]) -> str:
     """Render the searchable subjective record without opaque graph IDs."""
     lines = [
-        "Remembered event:", str(memory.get("summary") or ""),
-        "Meaning:", str(memory.get("interpretation") or ""),
+        "Perspective:", str(memory.get("perspective") or ""),
     ]
-    reflection = memory.get("character_reflection")
-    if reflection:
-        lines.extend(("Reflection:", str(reflection)))
     emotions = memory.get("emotions") or []
     if emotions:
         lines.append("Emotional residue:")
@@ -82,14 +78,13 @@ async def select_relevant_memories(
         overlap = len(query_tokens & _tokens(document)) / max(1, len(query_tokens))
         semantic = _cosine(query_vector or [], item.get("memory_embedding") or [])
         relevance = (0.82 * max(0.0, semantic) + 0.18 * overlap) if semantic is not None else overlap
-        score = relevance + (int(item.get("memory_strength") or 0) / 1000) + (int(item.get("importance") or 0) / 500)
+        score = relevance
         # Low-information queries must not inject arbitrary memories.
         if relevance >= 0.12:
             ranked.append((score, item))
     ranked.sort(key=lambda row: (-row[0], str(row[1].get("id") or "")))
     allowed = (
-        "summary", "interpretation", "character_reflection", "source_type",
-        "confidence", "memory_strength", "importance", "emotions", "beliefs",
+        "perspective", "source_type", "emotions", "beliefs",
         "impacts",
     )
     # Ranking needs internal IDs/vectors, but public prompting does not. Keeping

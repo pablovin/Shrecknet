@@ -33,14 +33,11 @@ INPUT JSON:
     "goals": [{"title": "string", "priority": 0, "commitment": 0, "description": "string or null"}]
   },
   "memories": [{
-    "summary": "subjective remembered account",
-    "interpretation": "character-specific meaning",
-    "character_reflection": "optional expression",
+    "perspective": "subjective account including understanding, meaning, feelings, beliefs, and uncertainty",
     "emotions": [{"description": "feeling"}],
     "beliefs": [{"statement": "belief", "status": "suspected|believed|confirmed|doubted|disproven|superseded"}],
     "impacts": [{"impact_type": "string", "direction": "string", "description": "string", "target_name": "string or null"}],
-    "source_type": "how this character knows it",
-    "confidence": 0, "memory_strength": 0, "importance": 1
+    "source_type": "how this character knows it"
   }],
   "query": "caller task", "context": "caller JSON or null",
   "instruction": "caller instruction or null",

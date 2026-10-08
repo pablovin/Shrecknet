@@ -182,9 +182,16 @@ owning CharacterAgent's visibility rules.
 - `GET|PATCH|DELETE .../emotions/{emotion_id}`
 - Equivalent nested CRUD under `beliefs` and `impacts`
 
-The perspective list accepts `status`, `skip`, and `limit`, returns all statuses
-unless filtered, and contains lightweight perspective records. The detail
-response embeds ordered `emotions`, `beliefs`, and `impacts`.
+The perspective list accepts `skip` and `limit` and contains lightweight
+perspective records. The detail response embeds ordered `emotions`, `beliefs`,
+and `impacts`. The perspective payload contains `source_type` and `perspective`;
+the retired summary, reflection, confidence, awareness, memory-strength,
+importance, and lifecycle fields are no longer accepted or returned.
+Legacy graph records remain readable: `perspective` is composed from the old
+`interpretation` and `character_reflection` fields, with `summary` as a fallback
+when those fields are absent. Application startup persists that conversion and
+removes the old fields; obsolete memory embeddings are cleared and use lexical
+retrieval until their perspective is refreshed.
 
 Example perspective creation:
 
@@ -192,14 +199,7 @@ Example perspective creation:
 {
   "scene_id": "scene-31",
   "source_type": "witnessed",
-  "awareness_level": 80,
-  "confidence": 70,
-  "summary": "The guard fell at the western gate.",
-  "interpretation": "The keep can no longer protect its own people.",
-  "character_reflection": "I can still hear the gate splintering. We were never safe there.",
-  "memory_strength": 90,
-  "importance": 5,
-  "status": "active"
+  "perspective": "The keep can no longer protect its people. I fear we were not ready."
 }
 ```
 
@@ -408,8 +408,8 @@ Scenes retain `DERIVED_FROM` source grouping and deterministic time order. A sou
 
 Each chunk has two LLM waves and three normal calls:
 
-1. **Character incorporation** uses `PERSPECTIVE_PROMPT` with the chunk's canonical raw scenes. It returns position-bound perspectives, reflections, and factual `behavioral_evidence`.
-2. **Psychological analysis** uses `PSYCHOLOGICAL_ANALYSIS_PROMPT` with bounded perspectives. It returns emotions, beliefs, impacts, and durable aspect/goal signals. In parallel, **Trait interpretation** uses `TRAIT_INTERPRETATION_PROMPT` with validated factual `behavioral_evidence` and returns directional trait candidates. Neither call receives canonical scenes.
+1. **Character incorporation** uses `PERSPECTIVE_PROMPT` with the chunk's canonical scenes and identity description. It returns one psychologically distinctive subjective `perspective` and `source_type` per scene. The perspective reflects established personality, values, fears, motivations, and beliefs, and captures supported internal change.
+2. **Psychological analysis** uses `PSYCHOLOGICAL_ANALYSIS_PROMPT` with each canonical scene's name and description plus the preceding interpretation's `source_type` and `perspective`. It returns emotions, beliefs, impacts, and durable aspect/goal signals. In parallel, **Trait interpretation** receives the same per-scene canonical context and interpretation, alongside the target identity, and returns directional trait candidates. Neither stage receives a separate `behavioral_evidence` extraction.
 
 The coordinator completes every chunk's Perspective call before beginning the parallel analysis calls. It binds every scene/evidence/target reference by output position, merges chunk results in source scene order, deduplicates new identity signals, and performs one trait/profile reduction for the source. It never sends the cumulative historical evidence ledger to an LLM, and there is no profile-update LLM call. Existing aspects and goals are never modified or removed by the deterministic signal reducer; it creates only evidence-backed, non-duplicate additions. The updated identity takes effect only at source end. See the [extraction flow](Dispositional%20Traits.md#extraction-and-evidence).
 
@@ -486,7 +486,7 @@ and regenerate. There is no conversion or compatibility alias. See
 
 ### Configuration
 
-- `model_character_agent_character_incorporation`: batch perspectives/reflections.
+- `model_character_agent_character_incorporation`: batch scene perspectives.
 - `model_character_agent_scene_interpretation`: narrative identity description
   generation/refresh, per-scene psychological enrichment, and trait interpretation.
 - `model_character_agent_deliberation`: v3 query deliberation. `model_character_agent_framing`

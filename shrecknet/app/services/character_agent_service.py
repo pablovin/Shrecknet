@@ -75,8 +75,13 @@ def _canonical_emotion_valence(value: Any) -> Any:
 
 
 def _perspective_props(record: Any, key: str = "node") -> dict[str, Any]:
-    """Keep private derived retrieval fields out of strict public schemas."""
+    """Project legacy graph records onto the current perspective contract."""
     data = _props(record, key)
+    if not data.get("perspective"):
+        legacy_parts = [data.get("interpretation"), data.get("character_reflection")]
+        data["perspective"] = "\n\n".join(
+            str(part).strip() for part in legacy_parts if part and str(part).strip()
+        ) or str(data.get("summary") or "")
     return {name: value for name, value in data.items() if name in ScenePerspectiveRead.model_fields}
 
 
@@ -500,7 +505,7 @@ class CharacterAgentService:
         # roll back an accepted identity; lexical memory documents are already
         # present as a safe fallback.
         if timeline:
-            for perspective in await self.list_perspectives(result["id"], "active", 0, 10_000):
+            for perspective in await self.list_perspectives(result["id"], 0, 10_000):
                 await self.refresh_perspective_memory(result["id"], perspective.id)
         agent = CharacterAgentRead.model_validate(_agent_data(result))
         if draft:
@@ -577,18 +582,19 @@ class CharacterAgentService:
             CALL {
               WITH agent
               OPTIONAL MATCH (agent)-[:HAS_PERSPECTIVE]->(perspective:ScenePerspective)
-              WHERE perspective.status = 'active'
               WITH perspective
-              ORDER BY perspective.importance DESC, perspective.memory_strength DESC,
-                       perspective.updated_at DESC, perspective.id ASC
+              ORDER BY perspective.updated_at DESC, perspective.id ASC
               RETURN collect(CASE WHEN perspective IS NULL THEN null ELSE {
-                id: perspective.id, summary: perspective.summary,
-                interpretation: perspective.interpretation,
-                character_reflection: perspective.character_reflection,
-                source_type: perspective.source_type, confidence: perspective.confidence,
-                memory_strength: perspective.memory_strength, importance: perspective.importance,
-                memory_document: perspective.memory_document,
-                memory_embedding: perspective.memory_embedding,
+                id: perspective.id,
+                perspective: CASE WHEN perspective.perspective IS NOT NULL
+                  THEN perspective.perspective
+                  ELSE trim(coalesce(perspective.interpretation, '') + '\n' +
+                            coalesce(perspective.character_reflection, '')) END,
+                source_type: perspective.source_type,
+                memory_document: CASE WHEN perspective.perspective IS NOT NULL
+                  THEN perspective.memory_document ELSE null END,
+                memory_embedding: CASE WHEN perspective.perspective IS NOT NULL
+                  THEN perspective.memory_embedding ELSE null END,
                 emotions: [(perspective)-[:EVOKES]->(emotion:EmotionalInterpretation) |
                   {description: emotion.description, arousal: emotion.arousal, valence: emotion.valence}],
                 beliefs: [(perspective)-[:FORMS_BELIEF]->(belief:CharacterBelief) |
@@ -880,7 +886,7 @@ class CharacterAgentService:
         draft.status = CharacterEmbodimentDraftStatus.ACCEPTED
         draft.active_entity_key = None
         await self.sql.commit()
-        for perspective in await self.list_perspectives(node_id, "active", 0, 10_000):
+        for perspective in await self.list_perspectives(node_id, 0, 10_000):
             await self.refresh_perspective_memory(node_id, perspective.id)
         return CharacterAgentRead.model_validate(_agent_data(updated))
 
@@ -1251,11 +1257,6 @@ class CharacterAgentService:
                         exclude={
                             "scene_id", "scene", "evidence", "emotions",
                             "beliefs", "impacts", "evidence_ids",
-                            # Behavioral evidence is retained in the timeline
-                            # and memory document for auditability, but it is a
-                            # list of structured records rather than a Neo4j
-                            # property value.
-                            "behavioral_evidence",
                         },
                     ),
                     "created_at": timestamp, "updated_at": timestamp,
@@ -1817,7 +1818,7 @@ class CharacterAgentService:
         return await self.get_perspective(agent_id, perspective_id)
 
     async def list_perspectives(
-        self, agent_id: str, status: str | None, skip: int, limit: int,
+        self, agent_id: str, skip: int, limit: int,
         public_only: bool = False,
     ) -> list[ScenePerspectiveRead]:
         if not await self._one(
@@ -1832,13 +1833,11 @@ class CharacterAgentService:
             """
             MATCH (:CharacterAgent {id:$agent_id})-[:HAS_PERSPECTIVE]->
                   (perspective:ScenePerspective)
-            WHERE $status IS NULL OR perspective.status=$status
             RETURN perspective AS node
             ORDER BY perspective.created_at ASC, perspective.id ASC
             SKIP $skip LIMIT $limit
             """,
             agent_id=agent_id,
-            status=status,
             skip=skip,
             limit=limit,
         )

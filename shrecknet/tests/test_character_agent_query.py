@@ -26,7 +26,7 @@ SNAPSHOT = {
     "memories": [{
         "id": "memory-1", "summary": "Gawaine fought beside Cwenhild at Bedegraine.",
         "interpretation": "His courage became recklessness near glory.",
-        "source_type": "participated", "confidence": 90, "memory_strength": 90, "importance": 5,
+        "source_type": "participated", "perspective": "I stood beside them and felt the threat growing.",
         "emotions": [{"description": "Pride mixed with worry."}],
         "beliefs": [{"statement": "Gawaine seeks glory.", "status": "believed", "confidence": 70}],
         "impacts": [{"impact_type": "goal_change", "direction": "advanced", "description": "Protect the line.", "target_name": "Protect Arthur's reign"}],

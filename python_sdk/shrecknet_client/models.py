@@ -250,24 +250,12 @@ class CharacterIdentityChangeRead(BaseModel):
 class ScenePerspectiveCreate(BaseModel):
     scene_id: str
     source_type: str
-    awareness_level: int
-    confidence: int
-    summary: str
-    interpretation: str
-    memory_strength: int
-    importance: int
-    status: str = "active"
+    perspective: str
 
 
 class ScenePerspectiveUpdate(BaseModel):
     source_type: str | None = None
-    awareness_level: int | None = None
-    confidence: int | None = None
-    summary: str | None = None
-    interpretation: str | None = None
-    memory_strength: int | None = None
-    importance: int | None = None
-    status: str | None = None
+    perspective: str | None = None
 
 
 class EmotionalInterpretationCreate(BaseModel):
@@ -346,13 +334,7 @@ class ScenePerspectiveRead(BaseModel):
     generated_with_revision_id: str | None = None
     source_group_id: str | None = None
     source_type: str
-    awareness_level: int
-    confidence: int
-    summary: str
-    interpretation: str
-    memory_strength: int
-    importance: int
-    status: str
+    perspective: str
     created_at: datetime
     updated_at: datetime
 

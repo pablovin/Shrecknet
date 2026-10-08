@@ -67,12 +67,6 @@ class ScenePerspectiveSourceType(str, Enum):
     UNKNOWN = "unknown"
 
 
-class ScenePerspectiveStatus(str, Enum):
-    ACTIVE = "active"
-    SUPERSEDED = "superseded"
-    FORGOTTEN = "forgotten"
-
-
 class CharacterBeliefStatus(str, Enum):
     SUSPECTED = "suspected"
     BELIEVED = "believed"
@@ -545,7 +539,7 @@ class CharacterGoalRead(_StrictModel):
 
 
 class _NarrativeFields(_StrictModel):
-    @field_validator("description", "summary", "interpretation", "statement", check_fields=False)
+    @field_validator("description", "summary", "interpretation", "statement", "perspective", check_fields=False)
     @classmethod
     def strip_narrative(cls, value: str | None) -> str | None:
         if value is None:
@@ -647,26 +641,12 @@ class CharacterImpactRead(_StrictModel):
 class ScenePerspectiveCreate(_NarrativeFields):
     scene_id: str = Field(..., min_length=1)
     source_type: ScenePerspectiveSourceType
-    awareness_level: int = Field(..., ge=0, le=100)
-    confidence: int = Field(..., ge=0, le=100)
-    summary: str = Field(..., min_length=1)
-    interpretation: str = Field(..., min_length=1)
-    character_reflection: str | None = Field(None, min_length=1)
-    memory_strength: int = Field(..., ge=0, le=100)
-    importance: int = Field(..., ge=1, le=5)
-    status: ScenePerspectiveStatus = ScenePerspectiveStatus.ACTIVE
+    perspective: str = Field(..., min_length=1)
 
 
 class ScenePerspectiveUpdate(_NarrativeFields):
     source_type: ScenePerspectiveSourceType | None = None
-    awareness_level: int | None = Field(None, ge=0, le=100)
-    confidence: int | None = Field(None, ge=0, le=100)
-    summary: str | None = Field(None, min_length=1)
-    interpretation: str | None = Field(None, min_length=1)
-    character_reflection: str | None = Field(None, min_length=1)
-    memory_strength: int | None = Field(None, ge=0, le=100)
-    importance: int | None = Field(None, ge=1, le=5)
-    status: ScenePerspectiveStatus | None = None
+    perspective: str | None = Field(None, min_length=1)
 
 
 class ScenePerspectiveRead(_StrictModel):
@@ -678,14 +658,7 @@ class ScenePerspectiveRead(_StrictModel):
     generated_with_revision_id: str | None = None
     source_group_id: str | None = None
     source_type: ScenePerspectiveSourceType
-    awareness_level: int
-    confidence: int
-    summary: str
-    interpretation: str
-    character_reflection: str | None = None
-    memory_strength: int
-    importance: int
-    status: ScenePerspectiveStatus
+    perspective: str
     created_at: datetime
     updated_at: datetime
 
@@ -741,18 +714,19 @@ class ProjectedScenePerspective(_StrictModel):
     evidence_ids: list[str] = Field(default_factory=list)
     evidence: list[DisplayReference] = Field(default_factory=list)
     source_type: ScenePerspectiveSourceType
-    awareness_level: int = Field(..., ge=0, le=100)
-    confidence: int = Field(..., ge=0, le=100)
-    summary: str = Field(..., min_length=1)
-    interpretation: str = Field(..., min_length=1)
-    character_reflection: str | None = Field(None, min_length=1)
-    memory_strength: int = Field(..., ge=0, le=100)
-    importance: int = Field(..., ge=1, le=5)
-    status: ScenePerspectiveStatus = ScenePerspectiveStatus.ACTIVE
+    perspective: str = Field(..., min_length=1)
     emotions: list["EmotionalInterpretationOutput"] = Field(default_factory=list)
     beliefs: list["CharacterBeliefOutput"] = Field(default_factory=list)
     impacts: list[ProjectedCharacterImpact] = Field(default_factory=list)
-    behavioral_evidence: list["BehavioralEvidence"] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def discard_retired_behavioral_evidence(cls, value: Any) -> Any:
+        """Read older persisted draft projections without re-exposing the retired field."""
+        if isinstance(value, dict) and "behavioral_evidence" in value:
+            value = dict(value)
+            value.pop("behavioral_evidence", None)
+        return value
 
 
 class SourcePerspectiveProjection(_StrictModel):
@@ -1097,22 +1071,7 @@ class ScenePerspectiveOutput(_StrictModel):
     scene_id: str
     evidence_ids: list[str] = Field(min_length=1)
     source_type: ScenePerspectiveSourceType
-    awareness_level: int = Field(..., ge=0, le=100)
-    confidence: int = Field(..., ge=0, le=100)
-    summary: str = Field(..., min_length=1)
-    interpretation: str = Field(..., min_length=1)
-    character_reflection: str = Field(..., min_length=1)
-    memory_strength: int = Field(..., ge=0, le=100)
-    importance: int = Field(..., ge=1, le=5)
-    status: ScenePerspectiveStatus = ScenePerspectiveStatus.ACTIVE
-    behavioral_evidence: list["BehavioralEvidence"] = Field(default_factory=list)
-
-
-class BehavioralEvidence(_StrictModel):
-    """A factual, scene-local record used as the sole trait-classification input."""
-    action: str = Field(..., min_length=1, max_length=300)
-    context: str | None = Field(None, max_length=500)
-    source_quote: str = Field(..., min_length=1, max_length=500)
+    perspective: str = Field(..., min_length=1)
 
 
 class SceneEnrichmentOutput(_StrictModel):

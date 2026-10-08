@@ -55,13 +55,7 @@ class Client:
             "character_agent_id": "agent-1",
             "scene_id": "scene-1",
             "source_type": "witnessed",
-            "awareness_level": 80,
-            "confidence": 70,
-            "summary": "The guard fell.",
-            "interpretation": "The keep is unsafe.",
-            "memory_strength": 90,
-            "importance": 5,
-            "status": "active",
+            "perspective": "The keep is unsafe, and I fear we were not prepared.",
             "created_at": NOW,
             "updated_at": NOW,
             "emotions": [],
@@ -79,12 +73,7 @@ async def test_scene_perspective_and_impact_sdk_contracts():
         ScenePerspectiveCreate(
             scene_id="scene-1",
             source_type="witnessed",
-            awareness_level=80,
-            confidence=70,
-            summary="The guard fell.",
-            interpretation="The keep is unsafe.",
-            memory_strength=90,
-            importance=5,
+            perspective="The keep is unsafe, and I fear we were not prepared.",
         ),
     )
     assert perspective.id == "perspective-1"

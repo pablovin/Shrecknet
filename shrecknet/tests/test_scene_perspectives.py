@@ -4,7 +4,7 @@ import pytest
 from fastapi import HTTPException
 from pydantic import ValidationError
 
-from app.graph.neo4j import ensure_character_graph_constraints
+from app.graph.neo4j import ensure_character_graph_constraints, migrate_scene_perspective_contract
 from app.db.migrations import migrate_scene_perspective_audit_types
 from app.schemas.character_agent import (
     CharacterImpactCreate,
@@ -13,7 +13,7 @@ from app.schemas.character_agent import (
     ScenePerspectiveCreate,
     ScenePerspectiveUpdate,
 )
-from app.services.character_agent_service import CharacterAgentService
+from app.services.character_agent_service import CharacterAgentService, _perspective_props
 from app.api.routers.character_agents import get_perspective, list_perspectives
 from sqlalchemy import create_engine
 
@@ -22,30 +22,57 @@ def _perspective(**overrides):
     values = {
         "scene_id": "scene-1",
         "source_type": "witnessed",
-        "awareness_level": 80,
-        "confidence": 70,
-        "summary": "The guard fell.",
-        "interpretation": "The keep is no longer safe.",
-        "memory_strength": 90,
-        "importance": 5,
+        "perspective": "The keep is no longer safe, and I may have misunderstood why the guard fell.",
     }
     values.update(overrides)
     return ScenePerspectiveCreate(**values)
 
 
 def test_scene_perspective_contract_is_strict_and_ownership_is_immutable():
-    perspective = _perspective(summary="  The guard fell.  ")
-    assert perspective.summary == "The guard fell."
-    assert perspective.status.value == "active"
+    perspective = _perspective(perspective="  The keep is not safe.  ")
+    assert perspective.perspective == "The keep is not safe."
 
     with pytest.raises(ValidationError):
-        _perspective(awareness_level=101)
+        _perspective(perspective=" ")
     with pytest.raises(ValidationError):
-        _perspective(importance=0)
-    with pytest.raises(ValidationError):
-        _perspective(summary=" ")
+        _perspective(summary="legacy field")
     with pytest.raises(ValidationError):
         ScenePerspectiveUpdate(scene_id="other")
+
+
+def test_legacy_perspective_records_read_as_the_new_contract():
+    projected = _perspective_props({"node": {
+        "id": "p1", "ontology_id": 1, "character_agent_id": "a1",
+        "scene_id": "s1", "source_type": "witnessed",
+        "interpretation": "The keep is unsafe.",
+        "character_reflection": "I should have seen it coming.",
+        "summary": "Old canonical recap.", "awareness_level": 80,
+        "confidence": 70, "memory_strength": 90, "importance": 4,
+        "status": "active", "created_at": "2025-01-01T00:00:00Z",
+        "updated_at": "2025-01-01T00:00:00Z",
+    }})
+    assert projected["perspective"] == "The keep is unsafe.\n\nI should have seen it coming."
+    assert not {"summary", "interpretation", "character_reflection", "status"} & projected.keys()
+
+
+@pytest.mark.asyncio
+async def test_legacy_perspective_migration_collapses_fields_and_clears_derived_cache():
+    class Result:
+        async def single(self):
+            return {"migrated": 3}
+
+    class Session:
+        query = ""
+        async def run(self, query):
+            self.query = query
+            return Result()
+
+    session = Session()
+    assert await migrate_scene_perspective_contract(session) == 3
+    assert "perspective.interpretation" in session.query
+    assert "perspective.character_reflection" in session.query
+    assert "perspective.memory_embedding" in session.query
+    assert "perspective.status" in session.query
 
 
 def test_emotion_and_impact_validation():
@@ -204,9 +231,9 @@ async def test_perspective_reads_mirror_character_visibility():
     player = type("User", (), {"role": "player"})()
     admin = type("User", (), {"role": "admin"})()
 
-    await list_perspectives("agent-1", None, 0, 50, player, service)
+    await list_perspectives("agent-1", 0, 50, player, service)
     await get_perspective("agent-1", "perspective-1", player, service)
-    await list_perspectives("agent-1", None, 0, 50, admin, service)
+    await list_perspectives("agent-1", 0, 50, admin, service)
 
     assert service.calls[0][2]["public_only"] is True
     assert service.calls[1][2]["public_only"] is True

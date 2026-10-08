@@ -15,7 +15,6 @@ from app.jobs.character_agent.embody_agent import (
     EmbodimentGenerationError,
     ScenePerspectiveLLMOutput,
     _AspectSignalLLMOutput,
-    _BaselineTraitObservationsLLMOutput,
     _SceneEnrichmentsLLMOutput,
     _SceneTraitInterpretationsLLMOutput,
 )
@@ -29,7 +28,8 @@ from app.schemas.character_agent import (
     CharacterAgentCreateRequest, CharacterAgentRead, CharacterAgentUpdate,
     EmbodimentEvidence, EmbodimentProposal,
     ProfileUpdateOutput,
-    EmotionalInterpretationOutput, SceneEnrichmentsOutput, SceneInput, ScenePerspectiveOutput,
+    EmotionalInterpretationOutput, ProjectedScenePerspective, SceneEnrichmentsOutput,
+    SceneInput, ScenePerspectiveOutput,
     CharacterTimelineProjection,
 )
 from app.services.character_embodiment_service import CharacterEmbodimentService, _json_safe
@@ -477,17 +477,7 @@ async def test_timeline_persists_removed_impact_target_as_inactive_assignment():
             "perspectives": [{
                 "scene_id": "scene-1",
                 "source_type": "participated",
-                "awareness_level": 100,
-                "confidence": 100,
-                "summary": "Mara trusted someone.",
-                "interpretation": "The trust was misplaced.",
-                "memory_strength": 80,
-                "importance": 4,
-                "behavioral_evidence": [{
-                    "action": "Bonded with two other individuals in the café",
-                    "context": "Amid threats and whispers, forming an alliance with unlikely allies",
-                    "source_quote": "three unlikely allies bond amid threats and whispers",
-                }],
+                "perspective": "Mara's trust was misplaced.",
                 "impacts": [{
                     "impact_type": "aspect_change",
                     "target_id": "aspect:trusting",
@@ -596,10 +586,7 @@ def test_embody_agent_result_aggregates_stats():
         perspectives=[
             ScenePerspectiveBundleOutput(
                 scene_id="sc1", source_type="participated", evidence_ids=["scene:sc1"],
-                awareness_level=50, confidence=50,
-                summary="Test.", interpretation="Test.",
-                character_reflection="I remember this.",
-                memory_strength=50, importance=3, status="active",
+                perspective="Test.",
             ),
         ],
         observations=EmbodimentObservationsOutput(),
@@ -638,24 +625,20 @@ class BatchLLM:
             return json.dumps({'trait_evidence':[]})
         if stage=='character_incorporation':
             result={'perspectives':[dict(
-                source_type='participated',awareness_level=90,confidence=90,
-                summary='Returned an untraceable overpayment.',interpretation='Keeping it would exploit another.',
-                character_reflection='REFLECTION MUST NOT BECOME EVIDENCE',memory_strength=80,importance=3,
-                behavioral_evidence=[{'action':'Returned an untraceable overpayment.',
-                    'context':'The character could keep it.',
-                    'source_quote':'returned an untraceable overpayment'}])
+                source_type='participated',
+                perspective='I could have kept the overpayment, but doing so would exploit another. I returned it because fairness matters to me.')
                 for s in payload['scenes']]}
             return json.dumps(result)
         if stage=='scene_interpretation':
             return json.dumps({'scene_enrichments':[dict(
                 emotions=[],beliefs=[],impacts=[],
-                aspect_signals=[],goal_signals=[]) for p in payload['perspectives']]})
+                aspect_signals=[],goal_signals=[]) for p in payload['scenes']]})
         if stage=='trait_interpretation':
             return json.dumps({'scene_trait_interpretations':[
                 {'trait_candidates': [{'trait':'integrity','polarity':'high',
                     'situation_type':'exploitation:other:ordinary',
-                    'justification':'Returned an untraceable overpayment despite a choice to keep it.'}]
-                 if item['behavioral_evidence'] else []} for item in payload['scenes']
+                    'justification':"The character's interpretation makes clear that fairness shaped a voluntary choice."}]
+                 for item in payload['scenes']
             ]})
         if stage=='identity_signals':
             return json.dumps({'scene_identity_signals':[
@@ -697,7 +680,6 @@ async def test_single_scene_unwrapped_perspective_is_normalized_without_retry():
 async def test_every_embodiment_generation_call_requests_strict_json_schema():
     llm = BatchLLM()
     agent = _agent(llm)
-    await agent.initialize(canonical_identity=_canonical(), entity_id="e1")
     await agent.run(
         source_entity_id="source", source_entity_alias="Source",
         canonical_identity=_canonical(), current_trait_profile=TraitProfile(),
@@ -705,7 +687,7 @@ async def test_every_embodiment_generation_call_requests_strict_json_schema():
     )
 
     assert {call["usage_tag"].rsplit(".", 1)[-1] for call in llm.calls} == {
-        "baseline", "character_incorporation", "scene_interpretation", "trait_interpretation",
+        "character_incorporation", "scene_interpretation", "trait_interpretation",
     }
     for call in llm.calls:
         assert call["max_tokens"] == EMBODIMENT_LLM_MAX_TOKENS == 10_000
@@ -735,9 +717,8 @@ def test_psychological_llm_contract_excludes_backend_references_and_bounds_outpu
 
 def test_trait_llm_schemas_have_only_four_semantic_fields():
     expected = {"trait", "polarity", "situation_type", "justification"}
-    for output_type in (_BaselineTraitObservationsLLMOutput, _SceneTraitInterpretationsLLMOutput):
-        schema = output_type.model_json_schema()
-        assert set(schema["$defs"]["_TraitCandidateLLMOutput"]["properties"]) == expected
+    schema = _SceneTraitInterpretationsLLMOutput.model_json_schema()
+    assert set(schema["$defs"]["_TraitCandidateLLMOutput"]["properties"]) == expected
 
 
 def test_generated_emotion_uses_public_valence_scale_and_normalizes_legacy_values():
@@ -764,20 +745,18 @@ async def test_incorporation_schema_has_exact_count_and_only_llm_owned_fields():
     assert perspectives["minItems"] == perspectives["maxItems"] == 3
     fields = schema["$defs"]["ScenePerspectiveLLMOutput"]["properties"]
     assert {"scene_id", "evidence_ids", "status"}.isdisjoint(fields)
-    assert fields["summary"]["maxLength"] == 300
-    assert fields["interpretation"]["maxLength"] == 700
-    assert fields["character_reflection"]["maxLength"] == 500
+    assert fields["perspective"]["maxLength"] == 900
+    assert {"summary", "interpretation", "character_reflection", "awareness_level",
+            "confidence", "memory_strength", "importance"}.isdisjoint(fields)
 
 
 def test_incorporation_llm_text_fields_are_bounded():
     valid = {
-        "source_type": "participated", "awareness_level": 50, "confidence": 50,
-        "summary": "Summary.", "interpretation": "Interpretation.",
-        "character_reflection": "I react.", "memory_strength": 50, "importance": 3,
+        "source_type": "participated", "perspective": "A subjective perspective.",
     }
     assert ScenePerspectiveLLMOutput.model_validate(valid)
-    with pytest.raises(ValueError, match="String should have at most 300 characters"):
-        ScenePerspectiveLLMOutput.model_validate(valid | {"summary": "x" * 301})
+    with pytest.raises(ValueError, match="String should have at most 900 characters"):
+        ScenePerspectiveLLMOutput.model_validate(valid | {"perspective": "x" * 901})
 
 
 @pytest.mark.asyncio
@@ -971,16 +950,13 @@ async def test_trait_interpretation_rejects_duplicate_trait_for_one_perspective(
 
     perspective = ScenePerspectiveOutput(
         scene_id="scene-1", evidence_ids=["scene:scene-1"], source_type="participated",
-        awareness_level=90, confidence=90, summary="A device appeared.",
-        interpretation="It might reveal something new.", character_reflection="I want to inspect it.",
-        memory_strength=80, importance=3,
-        behavioral_evidence=[{"action": "Inspected the unfamiliar device.", "context": None,
-                              "source_quote": "inspected the unfamiliar device"}],
+        perspective="I think the device may reveal something new, and I want to inspect it.",
     )
+    scene_contexts = [{"position": 1, "scene": {"name": "The device", "description": "Mara inspects it."}}]
     with pytest.raises(EmbodimentGenerationError, match="duplicate trait candidate"):
         await _agent(DuplicateTraitLLM())._interpret_traits_batch(
             source_entity_id="source", source_entity_alias="Source", identity=_canonical(),
-            perspectives=[perspective],
+            perspectives=[perspective], scene_contexts=scene_contexts,
         )
 
 
@@ -998,16 +974,13 @@ async def test_trait_interpretation_corrects_invalid_context():
 
     perspective = ScenePerspectiveOutput(
         scene_id="scene-1", evidence_ids=["scene:scene-1"], source_type="participated",
-        awareness_level=90, confidence=90, summary="A device appeared.",
-        interpretation="It might reveal something new.", character_reflection="I want to inspect it.",
-        memory_strength=80, importance=3,
-        behavioral_evidence=[{"action": "Inspected the unfamiliar device.", "context": None,
-                              "source_quote": "inspected the unfamiliar device"}],
+        perspective="I think the device may reveal something new, and I want to inspect it.",
     )
+    scene_contexts = [{"position": 1, "scene": {"name": "The device", "description": "Mara inspects it."}}]
     llm = ContextLLM()
     candidates = await _agent(llm)._interpret_traits_batch(
         source_entity_id="source", source_entity_alias="Source", identity=_canonical(),
-        perspectives=[perspective],
+        perspectives=[perspective], scene_contexts=scene_contexts,
     )
     assert candidates[0][0]["perspective_id"] == perspective.id
     assert candidates[0][0]["polarity"] == "high"
@@ -1015,7 +988,7 @@ async def test_trait_interpretation_corrects_invalid_context():
 
 
 def test_trait_interpretation_prompt_requires_one_candidate_per_trait_per_perspective():
-    assert "at most one observation per trait" in TRAIT_INTERPRETATION_PROMPT
+    assert "at most one observation per trait" in " ".join(TRAIT_INTERPRETATION_PROMPT.split())
     assert "polarity" in TRAIT_INTERPRETATION_PROMPT
     assert "ST EADINESS".replace(" ", "") in TRAIT_INTERPRETATION_PROMPT
 
@@ -1206,47 +1179,25 @@ async def test_batch_rejects_future_grounding_and_unknown_trait_evidence(corrupt
         assert result.trait_evidence == [] and result.trait_changes == []
 
 
-@pytest.mark.asyncio
-async def test_authored_only_initialization_is_one_call_and_unknown_is_preserved():
-    llm=BatchLLM()
-    profile,evidence,observations=await _agent(llm).initialize(canonical_identity=_canonical(),entity_id='e')
-    assert len(llm.calls)==1 and evidence==[]
-    assert all(value.point is None for value in profile.dispositional_traits.values())
-    payload=json.loads(llm.calls[0]['messages'][1]['content'])
-    assert payload['identity']['authored_text']=='Canonical authored biography.'
-    assert 'generated_text' not in payload['identity']
-
-
-@pytest.mark.asyncio
-async def test_authored_baseline_binds_provenance_after_four_field_llm_output():
-    class BaselineLLM:
-        async def chat(self, **_kwargs):
-            return json.dumps({'trait_evidence': [{
-                'trait': 'forbearance', 'polarity': 'high',
-                'situation_type': 'unspecified',
-                'justification': 'The authored identity explicitly says she forgives those who wrong her.',
-            }]})
-
-    profile, evidence, _ = await _agent(BaselineLLM()).initialize(
-        canonical_identity=_canonical({'authored_text': 'She forgives those who wrong her.'}),
-        entity_id='e1',
-    )
-    assert profile.estimate('forbearance').point == 6
-    assert profile.estimate('forbearance').observation_count == 0
-    assert evidence[0].evidence_ids == ['identity:e1']
-    assert evidence[0].perspective_id is None
-
-
 def test_complete_prompt_contracts():
-    from app.jobs.character_agent.embody_agent_prompts import BASELINE_PROMPT
-    assert 'at most 40 words' in PERSPECTIVE_PROMPT
-    assert 'behavioral_evidence' in PERSPECTIVE_PROMPT
+    assert 'at most 120 words' in PERSPECTIVE_PROMPT
+    assert 'behavioral_evidence' not in PERSPECTIVE_PROMPT
+    assert 'fears' in PERSPECTIVE_PROMPT and 'internal change' in PERSPECTIVE_PROMPT
     for field in ('emotions', 'beliefs', 'impacts', 'aspect_signals', 'goal_signals'):
         assert field in PSYCHOLOGICAL_ANALYSIS_PROMPT
     for field in ('trait_candidates', 'polarity', 'situation_type', 'justification'):
         assert field in TRAIT_INTERPRETATION_PROMPT
-    assert 'authored_disposition' in BASELINE_PROMPT
     assert 'expression_z' not in TRAIT_INTERPRETATION_PROMPT
+
+
+def test_legacy_draft_behavioral_evidence_is_discarded_from_projection():
+    perspective = ProjectedScenePerspective.model_validate({
+        "scene_id": "scene-1",
+        "source_type": "participated",
+        "perspective": "Fairness matters to me.",
+        "behavioral_evidence": [{"action": "retired"}],
+    })
+    assert "behavioral_evidence" not in perspective.model_dump(mode="json")
 
 
 def test_enrichment_requires_explicit_noop_arrays():
@@ -1299,7 +1250,7 @@ async def test_enrichment_omitted_arrays_use_one_schema_correction(monkeypatch):
                 payload = json.loads(kwargs['messages'][1]['content'])
                 return json.dumps({'scene_enrichments': [{
                     'emotions': [], 'beliefs': [], 'impacts': [],
-                } for perspective in payload['perspectives']]})
+                } for perspective in payload['scenes']]})
             return await super().chat(**kwargs)
 
     monkeypatch.setattr('app.jobs.character_agent.embody_agent.repair_json_text', unexpected_repair)
@@ -1317,25 +1268,33 @@ async def test_enrichment_omitted_arrays_use_one_schema_correction(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_psychological_analysis_receives_only_bounded_interpretations():
+async def test_analysis_stages_receive_canonical_scenes_and_grounded_interpretations():
     llm = BatchLLM()
     result = await _agent(llm).run(
         source_entity_id='source', source_entity_alias='Source',
         canonical_identity=_canonical(), current_trait_profile=TraitProfile(),
         current_aspects=[], current_goals=[], scenes=scenes(1), batch_id='source',
     )
-    trait_payload = json.loads(next(
+    enrichment_payload = json.loads(next(
         call['messages'][1]['content'] for call in llm.calls
         if call['usage_tag'].endswith('.scene_interpretation')
     ))
+    trait_payload = json.loads(next(
+        call['messages'][1]['content'] for call in llm.calls
+        if call['usage_tag'].endswith('.trait_interpretation')
+    ))
     assert len(llm.calls) == 3
     assert not any(call['usage_tag'].endswith('.profile_update') for call in llm.calls)
-    assert 'scenes' not in trait_payload
-    assert trait_payload['perspectives'][0]['position'] == 1
-    assert 'scene_id' not in trait_payload['perspectives'][0]
-    assert trait_payload['perspectives'][0]['interpretation']
-    assert 'character_reflection' not in trait_payload['perspectives'][0]
-    assert 'current_profile' in trait_payload
+    for payload in (enrichment_payload, trait_payload):
+        scene_input = payload['scenes'][0]
+        assert scene_input['position'] == 1
+        assert scene_input['scene']['name'] == 'Choice'
+        assert scene_input['scene']['description'] == scenes(1)[0].description
+        assert scene_input['agent_scene_interpretation']['source_type'] == 'participated'
+        assert scene_input['agent_scene_interpretation']['perspective']
+        assert 'behavioral_evidence' not in scene_input
+    assert 'current_profile' in enrichment_payload
+    assert 'target' in trait_payload
     assert result.trait_evidence
 
 

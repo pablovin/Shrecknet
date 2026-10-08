@@ -31,9 +31,11 @@ from app.integrations.llm.structured_output import (
 )
 from app.integrations.llm.shreckllm_client import LLMProviderUnavailableError
 from app.jobs.character_agent.embodiment_debug_artifacts import EmbodimentDebugArtifacts
+from app.jobs.character_agent.profile import _stable_profile_id
 from app.jobs.character_agent.embody_agent_prompts import (
     IDENTITY_DESCRIPTION_PROMPT,
     PSYCHOLOGICAL_ANALYSIS_PROMPT,
+    PSYCHOLOGICAL_CONSOLIDATION_PROMPT,
     PERSPECTIVE_PROMPT,
     PERSPECTIVE_TRUNCATION_RECOVERY_PROMPT,
     TRAIT_INTERPRETATION_PROMPT,
@@ -41,13 +43,13 @@ from app.jobs.character_agent.embody_agent_prompts import (
 from app.jobs.shrecknet.agent import parse_json_deterministically
 from app.schemas.character_agent import (
     CharacterAspectCategory,
-    CharacterBeliefStatus,
     CharacterGoalType,
     EmbodyAgentAnalysis,
     EmbodimentObservationsOutput,
     EmbodyAgentResult,
     LLMCallRecord,
-    ProfileUpdateOutput,
+    AspectUpdateData,
+    GoalUpdateData,
     SceneInput,
     SceneEnrichmentsOutput,
     ScenePerspectiveBundleOutput,
@@ -165,7 +167,12 @@ class _BeliefLLMOutput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     statement: str = Field(min_length=1, max_length=300)
     confidence: int = Field(ge=0, le=100)
-    status: CharacterBeliefStatus
+
+
+class _ProfileEventLLMOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    kind: Literal["aspect", "goal"]
+    description: str = Field(min_length=1, max_length=300)
 
 
 class _TraitCandidateLLMOutput(BaseModel):
@@ -190,65 +197,41 @@ class _TraitCandidateLLMOutput(BaseModel):
         return self
 
 
-class _AspectSignalLLMOutput(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    name: str = Field(min_length=1, max_length=255)
-    category: CharacterAspectCategory
-    description: str = Field(min_length=1, max_length=360)
-    importance: int = Field(ge=1, le=5)
-    justification: str = Field(min_length=1, max_length=360)
-    confidence: float = Field(ge=0, le=1)
-
-    @field_validator("name")
-    @classmethod
-    def name_is_a_first_person_statement(cls, value: str) -> str:
-        """Keep generated aspect labels in the character's own voice."""
-        normalized = value.strip()
-        if not normalized.casefold().startswith("i "):
-            raise ValueError("aspect signal name must be a first-person statement beginning with 'I '")
-        return normalized
-
-
-class _GoalSignalLLMOutput(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    operation: Literal["add", "complete"] = "add"
-    title: str = Field(min_length=1, max_length=255)
-    description: str = Field(min_length=1, max_length=360)
-    goal_type: CharacterGoalType
-    priority: int = Field(ge=0, le=100)
-    commitment: int = Field(ge=0, le=100)
-    basis: Literal["explicit", "inferred"]
-    justification: str = Field(min_length=1, max_length=360)
-    confidence: float = Field(ge=0, le=1)
-
-
-class _GoalImpactLLMOutput(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    impact_type: Literal["goal_change"]
-    target_index: int = Field(ge=1)
-    direction: Literal["advanced", "threatened"]
-    magnitude: int = Field(ge=0, le=100)
-    description: str = Field(min_length=1, max_length=300)
-
-
-class _AspectImpactLLMOutput(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    impact_type: Literal["aspect_change"]
-    target_index: int = Field(ge=1)
-    direction: Literal["created", "reinforced", "invalidated"]
-    magnitude: int = Field(ge=0, le=100)
-    description: str = Field(min_length=1, max_length=300)
-
-
 class _SceneEnrichmentLLMOutput(BaseModel):
     """Bounded psychological-analysis content without persistence references."""
 
     model_config = ConfigDict(extra="forbid")
     emotions: list[_EmotionLLMOutput] = Field(max_length=2)
     beliefs: list[_BeliefLLMOutput] = Field(max_length=2)
-    impacts: list[_GoalImpactLLMOutput | _AspectImpactLLMOutput] = Field(max_length=2)
-    aspect_signals: list[_AspectSignalLLMOutput] = Field(max_length=1)
-    goal_signals: list[_GoalSignalLLMOutput] = Field(max_length=1)
+    profile_events: list[_ProfileEventLLMOutput] = Field(max_length=2)
+
+
+class _ConsolidationOperation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    operation: Literal["add", "update", "status", "reinforce"]
+    target_id: str | None = None
+    candidate_id: str | None = None
+    name: str | None = Field(None, max_length=255)
+    title: str | None = Field(None, max_length=255)
+    description: str | None = Field(None, max_length=1000)
+    category: CharacterAspectCategory | None = None
+    goal_type: CharacterGoalType | None = None
+    status: Literal["active", "inactive", "completed", "abandoned", "superseded"] | None = None
+    justification: str = Field(min_length=1, max_length=500)
+    event_references: list[int] = Field(min_length=1)
+
+
+class _PsychologicalConsolidationOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    aspect_operations: list[_ConsolidationOperation]
+    goal_operations: list[_ConsolidationOperation]
+    focused_aspects: list[str] = Field(max_length=10)
+    focused_goals: list[str] = Field(max_length=10)
+
+
+class _ConsolidationEnvelope(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    consolidation: _PsychologicalConsolidationOutput
 
 
 class _SceneEnrichmentsLLMOutput(BaseModel):
@@ -324,7 +307,6 @@ class EmbodyAgent:
     def __init__(
         self, *, llm_client, character_incorporation_model,
         scene_interpretation_model,
-        max_goals: int = 10, max_aspects: int = 20,
         semantic_correction_attempts: int = 1,
         debug_artifacts: EmbodimentDebugArtifacts | None = None,
         debug_source_index: int | None = None,
@@ -333,8 +315,7 @@ class EmbodyAgent:
         self._llm = UsageTracker(llm_client)
         self.character_incorporation_model = character_incorporation_model
         self.scene_interpretation_model = scene_interpretation_model
-        self.max_goals = max_goals
-        self.max_aspects = max_aspects
+        self._identity_description = None
         self.semantic_correction_attempts = semantic_correction_attempts
         self.semantic_correction_count = 0
         self._debug_artifacts = debug_artifacts
@@ -891,10 +872,6 @@ class EmbodyAgent:
                 }
                 for index, perspective in enumerate(perspectives)
             ],
-            "current_profile": {
-                "aspects": [{"position": index + 1, "name": aspect["name"]} for index, aspect in enumerate(aspects)],
-                "goals": [{"position": index + 1, "title": goal["title"]} for index, goal in enumerate(goals)],
-            },
         }
         usage_tag = "character_agent.embodiment.scene_interpretation"
         if recovery_depth:
@@ -908,7 +885,7 @@ class EmbodyAgent:
                 source_entity_alias=source_entity_alias, schema_correction_attempts=1,
                 output_binding={
                     "collection": "scene_enrichments", "scene_ids": expected_ids,
-                    "bind_references": False, "profile_targets": profile_targets,
+                    "bind_references": False,
                 },
             )
         except EmbodimentGenerationError as exc:
@@ -943,22 +920,11 @@ class EmbodyAgent:
         identity: dict[str, Any], perspectives: list[ScenePerspectiveOutput],
         scene_contexts: list[dict[str, Any]],
     ) -> list[list[dict[str, Any]]]:
-        """Interpret trait signals from canonical scenes and grounded perspectives."""
+        """Interpret trait signals from canonical scenes without prior personality context."""
         expected_ids = [item.scene_id for item in perspectives]
         payload = {
-            "target": {key: identity.get(key) for key in (
-                "alias", "entity_type", "entity_type_description", "identity_description",
-            )},
-            "scenes": [
-                {
-                    **scene_contexts[index],
-                    "agent_scene_interpretation": {
-                        "source_type": perspective.source_type.value,
-                        "perspective": perspective.perspective,
-                    },
-                }
-                for index, perspective in enumerate(perspectives)
-            ],
+            "target": {"alias": identity.get("alias")},
+            "scenes": scene_contexts,
         }
         result = await self._call(
             prompt=TRAIT_INTERPRETATION_PROMPT, payload=payload,
@@ -1009,6 +975,7 @@ class EmbodyAgent:
         on_stage: Any = None,
         perspectives_result: _PerspectivesContainer | None = None,
     ) -> EmbodyAgentAnalysis:
+        self._identity_description = canonical_identity.get("identity_description")
         if not scenes:
             raise EmbodimentGenerationError("no scenes provided for embodiment")
 
@@ -1071,8 +1038,8 @@ class EmbodyAgent:
                 "perspective output scene_ids must match input scene order and be unique"
             )
         _semantic(lambda: _validate_and_normalize_scene_grounding(perspectives, expected_ids))
-        # Steps 2 and 3 both receive canonical scene context and the same grounded
-        # character interpretation, alongside their stage-specific context.
+        # Stage 2 receives the grounded interpretation; Stage 3 receives canonical
+        # scenes and trait definitions only to prevent personality feedback.
         if on_stage:
             await on_stage(
                 "source:{0} - Steps 2-3: Psychological analysis and trait interpretation".format(source_entity_alias), [2, 3]
@@ -1086,7 +1053,8 @@ class EmbodyAgent:
             ),
             self._interpret_traits_batch(
                 source_entity_id=source_entity_id, source_entity_alias=source_entity_alias,
-                identity=identity, perspectives=perspectives, scene_contexts=scene_contexts,
+                identity=canonical_identity,
+                perspectives=perspectives, scene_contexts=scene_contexts,
             ),
         )
         enrichment_ids = [item.scene_id for item in enrichments]
@@ -1095,25 +1063,13 @@ class EmbodyAgent:
                 "trait extraction output scene_ids must match input scene order and be unique"
             )
         _semantic(lambda: _validate_and_normalize_scene_grounding(enrichments, expected_ids))
-        aspect_ids = {item["id"] for item in aspects}
-        goal_ids = {item["id"] for item in goals}
-        for enrichment in enrichments:
-            for impact in enrichment.impacts:
-                permitted_ids = goal_ids if impact.impact_type.value == "goal_change" else aspect_ids
-                if impact.target_id not in permitted_ids:
-                    raise EmbodimentGenerationError(
-                        "scene trait extraction referenced an unknown profile target"
-                    )
-
         bundles = [
             ScenePerspectiveBundleOutput(
                 **perspective.model_dump(mode="json"),
                 emotions=enrichment.emotions,
                 beliefs=enrichment.beliefs,
-                impacts=enrichment.impacts,
+                profile_events=enrichment.profile_events,
                 trait_candidates=trait_candidates[index],
-                aspect_signals=enrichment.aspect_signals,
-                goal_signals=enrichment.goal_signals,
             )
             for index, (perspective, enrichment) in enumerate(zip(perspectives, enrichments, strict=True))
         ]
@@ -1142,16 +1098,13 @@ class EmbodyAgent:
             scene_input_digests={s.scene_id: scene_digest(s.model_dump()) for s in scenes},
             source_entity_id=source_entity_id,
             source_entity_alias=str(source_entity_alias),
+            identity_description=IdentityDescription.model_validate(canonical_identity["identity_description"])
+                if canonical_identity.get("identity_description") else None,
             perspectives=bundles,
             observations=observations,
             subtitle_change=observations.subtitle_change or SubtitleChangeProposal(),
             evidence_ids=known,
-            aspect_signals=[
-                signal for item in enrichments for signal in item.aspect_signals
-            ],
-            goal_signals=[
-                signal for item in enrichments for signal in item.goal_signals
-            ],
+            profile_events=[event for item in bundles for event in item.profile_events],
             llm_calls=list(self.llm_calls),
             observations_unavailable=False,
         )
@@ -1182,16 +1135,15 @@ class EmbodyAgent:
                 trait_profile=current_trait_profile.model_copy(deep=True),
                 trait_evidence=[], trait_changes=[], batch_id=batch_id,
                 aspect_updates=[], goal_updates=[],
+                focused_aspects=[str(x["id"]) for x in current_aspects if x.get("in_focus")][:10],
+                focused_goals=[str(x["id"]) for x in current_goals if x.get("in_focus")][:10],
                 subtitle_change=SubtitleChangeProposal(),
                 llm_calls=list(self.llm_calls),
             )
 
         if on_stage:
-            await on_stage(
-                "source:{0} - Step 3: Deterministic source reduction".format(
-                    analysis.source_entity_alias
-            ), [3]
-            )
+            await on_stage("source:{0} - Step 3: deterministic trait aggregation".format(
+                analysis.source_entity_alias), [3])
         existing = current_trait_evidence or []
         incoming = ground_observations(analysis.observations.trait_evidence,
             scene_ids=[p.scene_id for p in analysis.perspectives],
@@ -1199,13 +1151,9 @@ class EmbodyAgent:
             source_group_id=analysis.source_entity_id,
             offset=max((e.chronological_position for e in existing), default=-1) + 1)
         accumulated = merge_evidence(existing, incoming)
-        profile_result = _deterministic_profile_result(
-            evidence=accumulated,
-            source_entity_id=analysis.source_entity_id,
-            aspect_signals=analysis.aspect_signals,
-            goal_signals=analysis.goal_signals,
-            current_aspects=current_aspects,
-            current_goals=current_goals,
+        profile_result = await self._consolidate_profile(
+            analysis=analysis, current_aspects=current_aspects,
+            current_goals=current_goals, on_stage=on_stage,
         )
         trait_profile, trait_changes = update_profile(
             current_trait_profile,
@@ -1223,11 +1171,130 @@ class EmbodyAgent:
             trait_evidence=incoming,
             trait_changes=trait_changes,
             batch_id=batch_id,
-            aspect_updates=profile_result.aspect_updates,
-            goal_updates=profile_result.goal_updates,
+            aspect_updates=profile_result["aspect_updates"],
+            goal_updates=profile_result["goal_updates"],
+            focused_aspects=profile_result["focused_aspects"],
+            focused_goals=profile_result["focused_goals"],
             subtitle_change=analysis.subtitle_change,
-            llm_calls=list(self.llm_calls),
+            llm_calls=[*analysis.llm_calls, *self.llm_calls],
         )
+
+    async def _consolidate_profile(
+        self, *, analysis: EmbodyAgentAnalysis,
+        current_aspects: list[dict[str, Any]], current_goals: list[dict[str, Any]],
+        on_stage: Any = None,
+    ) -> dict[str, Any]:
+        events = list(analysis.profile_events)
+        if not events:
+            return {"aspect_updates": [], "goal_updates": [],
+                    "focused_aspects": [str(x["id"]) for x in current_aspects if x.get("in_focus")][:10],
+                    "focused_goals": [str(x["id"]) for x in current_goals if x.get("in_focus")][:10]}
+        if on_stage:
+            await on_stage("source:{0} - Stage 4: psychological consolidation".format(
+                analysis.source_entity_alias), [4])
+        payload = {
+            "identity_description": analysis.identity_description.model_dump(mode="json")
+                if analysis.identity_description else None,
+            "events": [{"position": i, "kind": event.kind.value if hasattr(event.kind, "value") else event.kind,
+                        "description": event.description, "scene_id": event.scene_id}
+                       for i, event in enumerate(events, 1)],
+            "aspects": [{key: item.get(key) for key in
+                         ("id", "name", "description", "category", "status", "in_focus")}
+                        for item in current_aspects],
+            "goals": [{key: item.get(key) for key in
+                       ("id", "title", "description", "goal_type", "status", "in_focus")}
+                      for item in current_goals],
+        }
+        output = await self._call(
+            prompt=PSYCHOLOGICAL_CONSOLIDATION_PROMPT, payload=payload,
+            schema=_ConsolidationEnvelope, stage="psychological consolidation",
+            usage_tag="character_agent.embodiment.psychological_consolidation",
+            max_tokens=EMBODIMENT_LLM_MAX_TOKENS,
+            model=self.scene_interpretation_model,
+            source_entity_id=analysis.source_entity_id,
+            source_entity_alias=analysis.source_entity_alias,
+            schema_correction_attempts=1,
+        )
+        consolidation = output.consolidation
+        aspect_ids = {str(item.get("id")) for item in current_aspects}
+        goal_ids = {str(item.get("id")) for item in current_goals}
+        candidate_ids: set[str] = set()
+
+        def convert(items, *, kind: str):
+            result = []
+            known = aspect_ids if kind == "aspect" else goal_ids
+            for op in items:
+                if any(index < 1 or index > len(events) for index in op.event_references):
+                    raise EmbodimentGenerationError("consolidation cited an unknown event", category="semantic_reference")
+                expected_kind = "aspect" if kind == "aspect" else "goal"
+                if any(events[index - 1].kind != expected_kind for index in op.event_references):
+                    raise EmbodimentGenerationError("consolidation cited an event of the wrong kind", category="semantic_reference")
+                if (kind == "aspect" and op.goal_type is not None) or (kind == "goal" and op.category is not None):
+                    raise EmbodimentGenerationError("consolidation supplied a category for the wrong profile type", category="schema")
+                if op.operation == "status" and op.status is None:
+                    raise EmbodimentGenerationError("status operation requires a lifecycle status", category="schema")
+                if op.operation in {"update", "reinforce"} and op.status is not None:
+                    raise EmbodimentGenerationError("lifecycle changes require a status operation", category="schema")
+                if op.operation == "add":
+                    if op.target_id is not None:
+                        raise EmbodimentGenerationError("consolidation add cannot target an existing ID", category="semantic_reference")
+                    label = op.name if kind == "aspect" else op.title
+                    if not op.candidate_id or not label:
+                        raise EmbodimentGenerationError("consolidation add needs candidate_id and name", category="schema")
+                    if kind == "aspect" and not label.strip().casefold().startswith("i "):
+                        raise EmbodimentGenerationError("aspect name must be a first-person defining statement", category="schema")
+                    stable = _stable_profile_id(kind, label)
+                    if op.candidate_id != stable or stable in candidate_ids:
+                        raise EmbodimentGenerationError("invalid or duplicate source candidate ID", category="semantic_reference")
+                    candidate_ids.add(stable)
+                elif op.target_id not in known and op.target_id not in candidate_ids:
+                    raise EmbodimentGenerationError("consolidation referenced unknown profile ID", category="semantic_reference")
+                elif op.candidate_id is not None:
+                    raise EmbodimentGenerationError("existing-item operation cannot use candidate_id", category="semantic_reference")
+                citations = sorted({f"scene:{events[i-1].scene_id}" for i in op.event_references if events[i-1].scene_id})
+                common = {"operation": op.operation, "target_id": op.target_id,
+                          "candidate_id": op.candidate_id, "justification": op.justification,
+                          "evidence_ids": citations, "event_references": op.event_references}
+                if kind == "aspect":
+                    label = op.name or next((x["name"] for x in current_aspects if str(x.get("id")) == op.target_id), "")
+                    result.append(AspectUpdateData.model_validate({**common, "name": label,
+                        "category": op.category, "description": op.description, "status": op.status}))
+                else:
+                    label = op.title or next((x["title"] for x in current_goals if str(x.get("id")) == op.target_id), "")
+                    result.append(GoalUpdateData.model_validate({**common, "title": label,
+                        "goal_type": op.goal_type, "description": op.description, "status": op.status}))
+            return result
+
+        aspects = convert(consolidation.aspect_operations, kind="aspect")
+        goals = convert(consolidation.goal_operations, kind="goal")
+        all_ids = aspect_ids | goal_ids | candidate_ids
+        focus_aspects, focus_goals = consolidation.focused_aspects, consolidation.focused_goals
+        if len(set(focus_aspects)) != len(focus_aspects) or len(set(focus_goals)) != len(focus_goals):
+            raise EmbodimentGenerationError("duplicate focus reference", category="semantic_reference")
+        aspect_candidate_ids = {op.candidate_id for op in aspects if op.candidate_id}
+        goal_candidate_ids = {op.candidate_id for op in goals if op.candidate_id}
+        if not set(focus_aspects) <= aspect_ids | aspect_candidate_ids:
+            raise EmbodimentGenerationError("aspect focus references a non-aspect", category="semantic_reference")
+        if not set(focus_goals) <= goal_ids | goal_candidate_ids:
+            raise EmbodimentGenerationError("goal focus references a non-goal", category="semantic_reference")
+        if not set(focus_aspects + focus_goals) <= all_ids:
+            raise EmbodimentGenerationError("focus references unknown profile ID", category="semantic_reference")
+        aspect_state = {str(x.get("id")): getattr(x.get("status", "active"), "value", x.get("status", "active")) for x in current_aspects}
+        goal_state = {str(x.get("id")): getattr(x.get("status", "active"), "value", x.get("status", "active")) for x in current_goals}
+        for op in aspects:
+            key = op.candidate_id if op.operation.value == "add" else op.target_id
+            if key and (op.operation.value in {"add", "status"}):
+                aspect_state[str(key)] = op.status.value if op.status else "active"
+        for op in goals:
+            key = op.candidate_id if op.operation.value == "add" else op.target_id
+            if key and (op.operation.value in {"add", "status"}):
+                goal_state[str(key)] = op.status.value if op.status else "active"
+        if any(aspect_state.get(item) != "active" for item in focus_aspects):
+            raise EmbodimentGenerationError("inactive aspect cannot be focused", category="semantic_reference")
+        if any(goal_state.get(item) != "active" for item in focus_goals):
+            raise EmbodimentGenerationError("resolved goal cannot be focused", category="semantic_reference")
+        return {"aspect_updates": aspects, "goal_updates": goals,
+                "focused_aspects": focus_aspects, "focused_goals": focus_goals}
 
     async def run(
         self,
@@ -1277,13 +1344,7 @@ class EmbodyAgent:
 def _model_output_schema(
     schema: type[BaseModel], output_binding: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    """Return the contract the model actually writes, not the persistence shape.
-
-    Incorporation emits only model-owned perspective fields and has an exact
-    position-bound array length. Impacts select a supplied profile target by
-    one-based ``target_index``. The backend resolves that transient index to the
-    persisted ``target_id`` before Pydantic validates the persistence schema.
-    """
+    """Return the model-owned schema with exact position-bound list length."""
     result = copy.deepcopy(schema.model_json_schema())
     if schema is _PerspectivesLLMContainer:
         scene_ids = (output_binding or {}).get("scene_ids")
@@ -1303,30 +1364,11 @@ def _model_output_schema(
 
     if schema is not _SceneEnrichmentsLLMOutput:
         return result
-    definitions = result.get("$defs", {})
     enrichments = result.get("properties", {}).get("scene_enrichments")
     scene_ids = (output_binding or {}).get("scene_ids")
     if isinstance(scene_ids, list) and isinstance(enrichments, dict):
         enrichments["minItems"] = len(scene_ids)
         enrichments["maxItems"] = len(scene_ids)
-    goal_impact = definitions.get("_GoalImpactLLMOutput")
-    aspect_impact = definitions.get("_AspectImpactLLMOutput")
-    enrichment = definitions.get("_SceneEnrichmentLLMOutput")
-    if not all(isinstance(item, dict) for item in (goal_impact, aspect_impact, enrichment)):
-        return result
-    targets = (output_binding or {}).get("profile_targets") or {}
-    aspect_count = len(targets.get("aspects", []))
-    goal_count = len(targets.get("goals", []))
-    impacts = enrichment.get("properties", {}).get("impacts")
-    if isinstance(impacts, dict):
-        if aspect_count == 0 and goal_count == 0:
-            impacts["maxItems"] = 0
-        else:
-            for definition, count in ((goal_impact, goal_count), (aspect_impact, aspect_count)):
-                properties = definition.get("properties", {})
-                index = properties.get("target_index") if isinstance(properties, dict) else None
-                if isinstance(index, dict) and count:
-                    index["maximum"] = count
     return result
 
 
@@ -1365,22 +1407,24 @@ def _bind_llm_enrichments(
             category="schema", expected_sequence=scene_ids,
             actual_sequence=[str(index + 1) for index in range(len(value.scene_enrichments))],
         )
-    parsed = value.model_dump(mode="json")
-    # Trait candidates are deliberately produced by the independent factual
-    # interpretation stage. The assembled schema retains those boundary fields.
-    for item in parsed.get("scene_enrichments", []):
-        if isinstance(item, dict):
-            item["trait_candidates"] = []
-    _bind_model_output_references(
-        parsed, collection="scene_enrichments", scene_ids=scene_ids,
-        profile_targets=profile_targets,
-    )
-    try:
-        return SceneEnrichmentsOutput.model_validate(parsed)
-    except ValidationError as exc:
-        raise EmbodimentGenerationError(
-            "invalid bound psychological-analysis output", category="schema",
-        ) from exc
+    if len(value.scene_enrichments) != len(scene_ids):
+        raise EmbodimentGenerationError("psychological analysis scene count mismatch", category="schema")
+    records = []
+    for scene_id, enrichment in zip(scene_ids, value.scene_enrichments, strict=True):
+        evidence_id = f"scene:{scene_id}"
+        records.append({
+            "scene_id": scene_id,
+            "evidence_ids": [evidence_id],
+            "emotions": [item.model_dump(mode="json") for item in enrichment.emotions],
+            "beliefs": [item.model_dump(mode="json") for item in enrichment.beliefs],
+            "profile_events": [
+                {**event.model_dump(mode="json"), "scene_id": scene_id,
+                 "evidence_ids": [evidence_id]}
+                for event in enrichment.profile_events
+            ],
+            "trait_candidates": [],
+        })
+    return SceneEnrichmentsOutput.model_validate({"scene_enrichments": records})
 
 
 def _normalize_position_bound_collection(
@@ -1418,91 +1462,6 @@ def _normalize_position_bound_collection(
     return parsed
 
 
-def _bind_model_output_references(
-    value: Any, *, collection: str | None = None, scene_ids: list[str] | None = None,
-    profile_targets: dict[str, list[str]] | None = None,
-    evidence_ids: list[str] | None = None,
-) -> None:
-    """Attach backend-owned identifiers to position-bound model output."""
-    if not isinstance(value, dict):
-        return
-    if collection and scene_ids is not None:
-        records = value.get(collection)
-        if isinstance(records, list):
-            for index, record in enumerate(records):
-                scene_id = (
-                    scene_ids[index] if index < len(scene_ids)
-                    else f"__extra_position_{index + 1}"
-                )
-                if isinstance(record, dict):
-                    _bind_scene_local_references(record, scene_id, profile_targets)
-    if evidence_ids is not None:
-        for key in ("aspect_updates", "goal_updates"):
-            for update in value.get(key, []):
-                if not isinstance(update, dict):
-                    continue
-                indexes = update.pop("evidence_indexes", None)
-                if isinstance(indexes, list) and all(isinstance(index, int) for index in indexes):
-                    update["evidence_ids"] = [
-                        evidence_ids[index - 1] for index in indexes
-                        if 1 <= index <= len(evidence_ids)
-                    ]
-
-
-def _bind_scene_local_references(
-    item: dict[str, Any], scene_id: str, profile_targets: dict[str, list[str]] | None,
-) -> None:
-    item["scene_id"] = scene_id
-    canonical_evidence_id = f"scene:{scene_id}"
-    item["evidence_ids"] = [canonical_evidence_id]
-    _bind_evidence_references(item, canonical_evidence_id, scene_id)
-    for key in ("trait_candidates", "aspect_signals", "goal_signals"):
-        for nested in item.get(key, []):
-            if isinstance(nested, dict):
-                nested["evidence_ids"] = [canonical_evidence_id]
-                if key == "trait_candidates":
-                    nested["episode_id"] = canonical_evidence_id
-                    nested["available_after_scene_id"] = scene_id
-
-    if "impacts" in item:
-        resolved_impacts = []
-        for impact in item["impacts"]:
-            if not isinstance(impact, dict) or profile_targets is None:
-                continue
-            target_index = impact.pop("target_index", None)
-            impact.pop("target_id", None)
-            target_kind = "goals" if impact.get("impact_type") == "goal_change" else "aspects"
-            targets = profile_targets.get(target_kind, [])
-            if not isinstance(target_index, int) or not 1 <= target_index <= len(targets):
-                logger.info(
-                    "embodiment_unresolvable_impact_dropped scene_id=%s impact_type=%s target_index=%s",
-                    scene_id, impact.get("impact_type"), target_index,
-                )
-                continue
-            impact["target_id"] = targets[target_index - 1]
-            resolved_impacts.append(impact)
-        item["impacts"] = resolved_impacts
-
-
-def _bind_evidence_references(value: Any, evidence_id: str, scene_id: str | None = None) -> None:
-    if isinstance(value, list):
-        for item in value:
-            _bind_evidence_references(item, evidence_id, scene_id)
-        return
-    if not isinstance(value, dict):
-        return
-    if "evidence_ids" in value:
-        value["evidence_ids"] = [evidence_id]
-    if "evidence_id" in value:
-        value["evidence_id"] = evidence_id
-    if "episode_id" in value:
-        value["episode_id"] = evidence_id
-    if scene_id is not None and "available_after_scene_id" in value:
-        value["available_after_scene_id"] = scene_id
-    for nested in value.values():
-        _bind_evidence_references(nested, evidence_id, scene_id)
-
-
 def _collect_evidence_ids(data: Any) -> set[str]:
     """Recursively collect all evidence_id and evidence_ids values from nested dicts/lists."""
     ids: set[str] = set()
@@ -1525,9 +1484,6 @@ _OBSERVATION_EVIDENCE_LISTS = {
     "recurring_behaviours", "motivations", "values", "fears", "conflicts",
     "relationships", "contradictions", "evidence_gaps",
 }
-_PROFILE_EVIDENCE_LISTS = {
-    "aspect_updates", "goal_updates",
-}
 
 
 def _drop_ungrounded_output_items(
@@ -1544,8 +1500,6 @@ def _drop_ungrounded_output_items(
     fields: set[str]
     if schema is EmbodimentObservationsOutput:
         fields = _OBSERVATION_EVIDENCE_LISTS
-    elif schema is ProfileUpdateOutput:
-        fields = _PROFILE_EVIDENCE_LISTS
     else:
         return 0
 
@@ -1662,67 +1616,3 @@ def _semantic(action):
         return action()
     except ValueError as exc:
         raise EmbodimentGenerationError(str(exc), category="semantic_reference") from exc
-
-
-def _normalized_identity_label(value: str) -> str:
-    return " ".join(value.casefold().split())
-
-
-def _deterministic_profile_result(*, evidence, source_entity_id: str, aspect_signals, goal_signals, current_aspects, current_goals) -> ProfileUpdateOutput:
-    """Convert independently extracted source signals into safe source operations.
-
-    Numeric trait updates are already backend-owned.  Durable signal additions
-    are deduplicated against active state and each other. A scene may also
-    explicitly close one active goal when it establishes resolution; no model
-    may otherwise mutate or remove existing identity state in this reduction.
-    """
-    known_aspects = {_normalized_identity_label(str(item.get("name") or "")) for item in current_aspects}
-    known_goals = {
-        _normalized_identity_label(str(item.get("title") or "")): str(item.get("title") or "")
-        for item in current_goals
-    }
-    aspect_updates = []
-    for signal in sorted(aspect_signals, key=lambda item: (-item.confidence, -item.importance, item.name.casefold())):
-        key = _normalized_identity_label(signal.name)
-        if key in known_aspects:
-            logger.info(
-                "embodiment_duplicate_aspect_signal_ignored source_id=%s name=%s",
-                source_entity_id, signal.name,
-            )
-            continue
-        known_aspects.add(key)
-        aspect_updates.append({"operation": "add", **signal.model_dump(mode="json")})
-    completion_updates = []
-    additions = []
-    for signal in sorted(goal_signals, key=lambda item: (-item.confidence, -item.priority, item.title.casefold())):
-        key = _normalized_identity_label(signal.title)
-        if signal.operation == "complete":
-            existing_title = known_goals.get(key)
-            if not existing_title:
-                logger.info(
-                    "embodiment_unknown_goal_completion_ignored source_id=%s title=%s",
-                    source_entity_id, signal.title,
-                )
-                continue
-            completion_updates.append({
-                "operation": "complete",
-                "title": existing_title,
-                "justification": signal.justification,
-                "confidence": signal.confidence,
-                "evidence_ids": signal.evidence_ids,
-            })
-            continue
-        if key in known_goals:
-            logger.info(
-                "embodiment_duplicate_goal_signal_ignored source_id=%s title=%s",
-                source_entity_id, signal.title,
-            )
-            continue
-        known_goals[key] = signal.title
-        additions.append({"operation": "add", **signal.model_dump(mode="json", exclude={"operation"})})
-    return ProfileUpdateOutput.model_validate({
-        "aspect_updates": aspect_updates[:2],
-        # Closing an evidenced resolved commitment is more important than
-        # introducing another one, and the public update contract permits one.
-        "goal_updates": (completion_updates or additions)[:1],
-    })

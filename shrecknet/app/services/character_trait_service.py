@@ -192,35 +192,30 @@ def scene_digest(scene: dict) -> str:
 
 
 def chunk_source_scenes(groups: list[dict]) -> list[dict]:
-    """Return exactly one chronological embodiment bundle for every source.
-
-    The historical name is retained for callers, but this deliberately does not
-    chunk.  A source's complete scene set is the atomic evidence boundary: one
-    analysis pass and one resulting identity revision.  Payload/provider limits
-    therefore fail visibly at the LLM boundary instead of silently splitting or
-    omitting evidence.
-    """
-    bundles: list[dict] = []
+    """Return chronological contiguous source runs; scene chunking happens later."""
+    scenes = []
     seen: set[str] = set()
     for group in groups:
-        scenes = sorted(group.get('scenes', []), key=lambda scene: (
-            scene.get('created_at') or '', scene['scene_id'],
-        ))
-        if not scenes:
-            continue
-        for scene in scenes:
+        for scene in group.get('scenes', []):
             if scene['scene_id'] in seen:
                 raise ValueError('duplicate canonical scene in source groups')
             seen.add(scene['scene_id'])
-        source_id = str(group.get('source_id') or '__orphan__')
+            source_id = group.get('source_id')
+            # Unrelated scenes without a DERIVED_FROM source are separate runs.
+            run_key = str(source_id) if source_id else f"__orphan__:{scene['scene_id']}"
+            scenes.append((scene, run_key, group.get('source_alias') or 'Unknown source'))
+    scenes.sort(key=lambda item: (item[0].get('created_at') or '', item[0]['scene_id']))
+    runs: list[dict] = []
+    for scene, run_key, alias in scenes:
+        if not runs or runs[-1]['source_id'] != run_key:
+            runs.append({'source_id': run_key, 'source_alias': alias, 'scenes': []})
+        runs[-1]['scenes'].append(scene)
+    bundles: list[dict] = []
+    for run_index, run in enumerate(runs):
         bundle = {
-            'source_id': source_id,
-            'source_alias': group.get('source_alias') or 'Unknown source',
-            'scenes': scenes,
+            **run,
         }
-        material = json.dumps(bundle, sort_keys=True, ensure_ascii=False)
+        material = json.dumps({**bundle, 'run_index': run_index}, sort_keys=True, ensure_ascii=False)
         bundle['batch_id'] = hashlib.sha256(material.encode()).hexdigest()[:24]
         bundles.append(bundle)
-    return sorted(bundles, key=lambda bundle: (
-        bundle['scenes'][0].get('created_at') or '', bundle['source_id'],
-    ))
+    return bundles

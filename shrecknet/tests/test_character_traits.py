@@ -141,14 +141,14 @@ def test_steadiness_full_scale_remains_accessible_with_enough_comparable_evidenc
     assert state.steadiness.point == 1
 
 
-def test_authored_baseline_and_manual_override():
+def test_authored_description_does_not_seed_points_and_manual_override():
     baseline = TraitObservation(trait='integrity', evidence_kind='authored_disposition',
         polarity='high', situation_type='exploitation', justification='Explicit authored disposition.',
         evidence_ids=['identity:e'])
     prior = ground_observations([baseline], scene_ids=[], source_group_id='e',
         authored_evidence_ids={'identity:e'})
     state, _ = update_profile(TraitProfile(), prior)
-    assert state.estimate('integrity').point == 6
+    assert state.estimate('integrity').point is None
     assert state.estimate('integrity').observation_count == 0
     state = apply_manual_edits(state, {'integrity': TraitEdit(point=2, reason='Author choice')})
     items = evidence((1,) * 10)

@@ -28,10 +28,7 @@ def render_memory_document(memory: dict[str, Any]) -> str:
     beliefs = memory.get("beliefs") or []
     if beliefs:
         lines.append("Beliefs:")
-        lines.extend(
-            f"- {item.get('statement', '')} ({item.get('status', 'unknown')})"
-            for item in beliefs
-        )
+        lines.extend(f"- {item.get('statement', '')}" for item in beliefs)
     impacts = memory.get("impacts") or []
     if impacts:
         lines.append("Lasting consequences:")

@@ -7,21 +7,17 @@ For each source scene chunk, PERSPECTIVE_PROMPT runs first:
     A truncated response retries with PERSPECTIVE_TRUNCATION_RECOVERY_PROMPT.
 After perspective validation, two calls run in parallel for that chunk:
     PSYCHOLOGICAL_ANALYSIS_PROMPT (built from ENRICHMENT_PROMPT):
-        canonical scenes + source_type/perspectives + identity_description -> emotions, beliefs, impacts, signals.
+        canonical scenes + source_type/perspectives + identity_description -> emotions, beliefs, profile_events.
     TRAIT_INTERPRETATION_PROMPT:
-        canonical scenes + perspectives + identity_description -> candidates.
-The backend combines both branches and deterministically updates the draft
-profile in source order. No prompt receives a cumulative raw-evidence ledger or produces
-public output; the reviewable draft is assembled by the backend.
+        canonical scenes + authoritative trait meanings -> candidates.
+After all chunks for one source, one optional consolidation call reconciles its
+profile events with current character state. Trait aggregation remains
+deterministic. Prompts do not receive full scene history or produce public output.
 """
 import json
 from app.jobs.character_agent.trait_evidence_contract import TRAIT_EVIDENCE_CONTRACT
-from app.schemas.character_traits import DIRECTIONAL_TRAITS, TRAIT_BY_KEY, trait_metadata
+from app.schemas.character_traits import DIRECTIONAL_TRAITS, TRAIT_BY_KEY
 
-# Purpose: Supply the complete trait definitions and scoring contract.
-# Used by: TRAIT_INTERPRETATION_PROMPT only.
-# Expected: Scene trait extraction uses the authoritative definitions and constraints.
-TRAIT_CONTRACT = "\nAuthoritative trait definitions and scale:\n" + json.dumps(trait_metadata(), ensure_ascii=False)
 # Purpose: Supply only the eight narrative trait meanings and pole descriptions.
 # Used by: IDENTITY_DESCRIPTION_PROMPT.
 # Expected: Psychological synthesis can describe traits without scoring machinery.
@@ -37,7 +33,7 @@ IDENTITY_TRAIT_DESCRIPTION_CONTRACT = (
         for key in DIRECTIONAL_TRAITS
     ], ensure_ascii=False)
 )
-PROMPT_VERSION = "character-embodiment-v28-psychological-perspective"
+PROMPT_VERSION = "character-embodiment-v30-scene-grounded-traits"
 
 # Execution order: Stage 0, once when description is absent and once after
 # scene processing to refresh it from the resulting current state.
@@ -123,6 +119,10 @@ not as evidence of behavior in any scene. For
 each scene, produce exactly one compact grounded subjective perspective. Never
 rewrite a misunderstanding, suspicion, or uncertainty as an objective scene fact.
 
+If the character did not participate in or witness the event, describe only what they
+could plausibly know from the available information. If their awareness is not established,
+ do not invent memories, emotional reactions, or conclusions.
+
 Use only facts available to the character at each scene. The whole source bundle is
 visible to you, but later revelations must never become earlier knowledge.
 The backend assigns every canonical scene and evidence_ids reference. Do not return IDs or
@@ -130,7 +130,8 @@ evidence references; return one result for each numbered input position. Use
 identity_description to understand the character's established outlook while
 respecting only facts available at each scene.
 Return every perspective in the same order as the input positions. The backend binds
-position 1 to the first scene, position 2 to the second, and so on.
+position 1 to the first scene, position 2 to the second, and so on
+.
 
 This is compact structured character-state extraction, not narration, roleplay,
 a memoir, dialogue, or stream of consciousness. Do not retell the scene.
@@ -188,103 +189,168 @@ scene count and every field limit are mandatory. Return JSON only."""
 # Stages 2 and 3 receive canonical scene context and the Stage 1 interpretation.
 # Purpose: Define psychological enrichment from canonical scenes and grounded character interpretations.
 # Used by: PSYCHOLOGICAL_ANALYSIS_PROMPT for the second scene-chunk call.
-# Expected: Ordered JSON enrichments with emotions, beliefs, impacts, and signals.
+# Expected: Ordered JSON enrichments with emotions, beliefs, and profile events.
 ENRICHMENT_PROMPT = r"""Stage 2 — enrich grounded character perspectives. For every ordered
 scene item, use its canonical scene name and description together with the
 agent_scene_interpretation source_type and perspective from Stage 1. Use
 identity_description as established psychological grounding. Interpret each
 scene through what this character knows and how their distinctive personality,
 values, fears, motivations, and beliefs shape its meaning. Capture supported
-internal changes, not just immediate emotions. Do not contradict the canonical
-scene facts, treat the character's uncertainty as fact, or let later positions
-affect earlier ones. Return exactly one enrichment per input scene, in order.
+internal changes, not just immediate emotions. Do not contradict canonical
+scene facts, treat uncertainty as fact, or let later positions affect earlier
+ones. Return exactly one enrichment per input scene, in order.
 
 INPUT JSON:
-{"identity_description":{"identity_summary":"...","psychological_summary":"...","personality_traits":[{"trait":"...","description":"..."}]},"scenes":[{"position":1,"scene":{"name":"canonical scene name","description":"canonical scene description"},"agent_scene_interpretation":{"source_type":"participated|witnessed|heard_about|read_about|inferred|unknown","perspective":"the character's subjective interpretation"}}],"current_profile":{"aspects":[{"position":1,"name":"..."}],"goals":[{"position":1,"title":"..."}]}}
+{"identity_description":{"identity_summary":"...","psychological_summary":"...","personality_traits":[{"trait":"...","description":"..."}]},"scenes":[{"position":1,"scene":{"name":"canonical scene name","description":"canonical scene description"},"agent_scene_interpretation":{"source_type":"participated|witnessed|heard_about|read_about|inferred|unknown","perspective":"the character's subjective interpretation"}}]}
 
 Input meanings: identity_description is the established narrative portrait;
-scenes is the ordered list of canonical records, where position binds the item
-to its output, scene.name and scene.description are objective source facts, and
-agent_scene_interpretation.source_type describes how the character knows the
-scene while perspective describes its subjective meaning to them. Current
-profile lists are active aspects and goals available as impact targets, indexed
-by position. Do not treat interpretation as an objective fact or identity
-description as proof that a particular reaction occurred.
+scenes is the ordered list of canonical records, where position binds each item
+to its output. scene.name and scene.description are objective source facts;
+source_type describes how the character knows the scene and perspective its
+subjective meaning. Do not treat interpretation as objective fact or identity
+description as proof that a reaction occurred.
 
-Every enrichment MUST contain all five arrays: emotions, beliefs, impacts,
-aspect_signals, goal_signals. Use [] when unsupported. Never
-return scene_id, evidence_ids, episode_id, available_after_scene_id, or target_id:
-the backend supplies those.
+Every enrichment MUST contain all three arrays: emotions, beliefs, profile_events.
+Use [] when unsupported. Never return scene or evidence IDs; the backend binds
+each result to its input scene.
 
-Limits per scene: emotions 2, beliefs 2, impacts 2, aspect
-signals 1, goal_signals 1. Descriptions/condition justifications <=240 chars;
-beliefs, impacts, and behavior <=300; other justifications <=360.
+Limits per scene: emotions 2, beliefs 2, profile_events 2. Text fields are at
+most 300 characters.
 
-OUTPUT: {"scene_enrichments":[{"emotions":[{"arousal":0..100,"valence":"0..100 (0 negative, 50 neutral, 100 positive)","description":"..."}],"beliefs":[{"statement":"...","confidence":0..100,"status":"suspected|believed|confirmed|doubted|disproven|superseded"}],"impacts":[{"impact_type":"goal_change|aspect_change","target_index":1,"direction":"allowed direction","magnitude":0..100,"description":"..."}],"aspect_signals":[{"name":"I ...","category":"identity|role|status|physical|capability|knowledge|preference|attitude|history","description":"...","importance":1..5,"justification":"...","confidence":0.0}],"goal_signals":[{"operation":"add|complete","title":"...","description":"...","goal_type":"desire|objective|ambition|obligation|avoidance|survival","priority":0..100,"commitment":0..100,"basis":"explicit|inferred","justification":"...","confidence":0.0}]}]}.
+OUTPUT: {"scene_enrichments":[{"emotions":[{"arousal":0..100,"valence":0..100 (0 negative, 50 neutral, 100 positive),"description":"..."}],"beliefs":[{"statement":"...","confidence":0..100}],"profile_events":[{"kind":"aspect|goal","description":"brief significant evidence-grounded development"}]}]}.
 
-Impacts use target_index from the matching current_profile list. goal_change is
-advanced|threatened; aspect_change is created|reinforced|invalidated. With no
-targets, impacts must be []. Current-profile aspects are impact targets only:
-never repeat or rephrase the same underlying fact in aspect_signals. Current-profile goals are impact
-targets and completion candidates: do not repeat a title for operation `add`,
-but operation `complete` must use the exact title of an active current-profile goal.
-
-An aspect signal needs a grounded durable character fact; its name must be a
-concise present-tense first-person self-statement beginning with `I `, such as
-`I belong to the Order of Saint Paul`, `I can return through a synthetic transfer`,
-or `I am a vessel of Belshazar`. Never use an abstract label such as "affiliation"
-or "synthetic consciousness transfer". A goal signal with operation `add` needs a
-grounded ongoing personal commitment. For every active current-profile goal,
-assess whether this scene establishes that it was achieved, resolved, made
-impossible, or superseded. Emit operation `complete` only on that conclusive
-evidence; never complete a goal merely because it is absent, delayed, uncertain,
-or still in progress. They are evidence, not mutations. A
-confirmed, character-specific revelation about origin, nature, body, identity,
-or constructed status is a mandatory distinct `identity` aspect signal when it
-is important to the character. Name the revelation itself (for example,
-"I am a <creator>-crafted vessel"), not an existing relationship, role, or goal. Return
-JSON only."""
-
+Most scenes should produce no profile_events. Include only significant identity
+revelations, lasting circumstances, genuine personal commitments, or meaningful
+resolutions. Events are candidates, not final aspects/goals or status changes.
+Do not duplicate the subjective perspective or add numerical ratings. Return JSON only."""
 
 # Execution order: Stage 2 call, after perspective validation, parallel with Stage 3.
 # Purpose: Apply the enrichment contract to a whole perspective chunk.
 # Used by: EmbodyAgent._analyze_psychological_batch after perspectives are bound.
 # Expected: One ordered JSON scene_enrichments item per input perspective.
 PSYCHOLOGICAL_ANALYSIS_PROMPT = ENRICHMENT_PROMPT + r"""
-This is the complete psychological-analysis stage. Return emotions, beliefs,
-impacts, aspect_signals, and goal_signals for every
-perspective. Each item must cite exactly the current scene conceptually; the
+This is the complete psychological-enrichment stage. Return emotions, beliefs,
+and profile_events for every perspective. Each item must cite exactly the current scene conceptually; the
 backend assigns evidence_ids by position, so omit them from model output.
 """
+
+# Execution order: Stage 4, once after every Stage 2 chunk in a source bundle.
+# Purpose: Reconcile sparse profile events with historical character state.
+# Used by: EmbodyAgent.apply_profile_update, only when profile events exist.
+# Expected: Ordered aspect/goal operations and current focus references.
+PSYCHOLOGICAL_CONSOLIDATION_PROMPT = r"""Stage 4 — consolidate one chronological source bundle's profile events.
+You receive identity_description, source-local profile_events in scene order,
+and existing aspects/goals with stable IDs, descriptions, lifecycle status, and
+focus. The input includes historical out-of-focus items. Do not request or infer
+full scene history.
+
+Merge semantically equivalent events. Ignore trivial, temporary, redundant, or
+unsupported candidates. Reconcile meaningful events by adding a genuinely new
+item, materially updating an existing description, changing lifecycle status,
+reinforcing an existing item without duplication, or making no change. An item
+introduced and resolved in this source must have ordered add then status
+operations. Cite event positions and give a short justification for each
+operation. References must be an existing backend ID or a source-local candidate
+ID of the form aspect:<stable-name> or goal:<stable-title>.
+
+Never resolve a goal only because it is absent or old. Never deactivate an
+enduring fact only because it is old. Active unresolved goals may leave focus
+without changing status; foundational aspects may remain focused without recent
+mention. Select at most ten currently active aspects and ten currently active
+goals. Focus selection considers enduring identity and recent developments but
+uses no importance scores. Never delete history.
+
+INPUT JSON:
+{"identity_description":{"identity_summary":"...","psychological_summary":"...","personality_traits":[]},"events":[{"position":1,"kind":"aspect|goal","description":"...","scene_id":"backend reference"}],"aspects":[{"id":"backend ID","name":"I ...","description":"...","category":"existing category","status":"active|inactive","in_focus":true}],"goals":[{"id":"backend ID","title":"...","description":"...","goal_type":"existing type","status":"active|completed|abandoned|superseded","in_focus":true}]}
+
+OUTPUT JSON:
+{"consolidation":{"aspect_operations":[{"operation":"add|update|status|reinforce","target_id":"existing backend ID or null","candidate_id":"source-local ID or null","name":"first-person defining statement","description":"...","category":"identity|role|status|physical|capability|knowledge|preference|attitude|history","status":"active|inactive|null","justification":"...","event_references":[1]}],"goal_operations":[{"operation":"add|update|status|reinforce","target_id":"existing backend ID or null","candidate_id":"source-local ID or null","title":"...","description":"...","goal_type":"desire|objective|ambition|obligation|avoidance|survival","status":"active|completed|abandoned|superseded|null","justification":"...","event_references":[1]}],"focused_aspects":["existing backend ID or source-local candidate ID"],"focused_goals":["existing backend ID or source-local candidate ID"]}}
+
+For add, target_id must be null, candidate_id must be unique, and status must
+be active. If the item is introduced and resolved in this source, add it first
+and then emit a status operation that records the later transition.
+For update/status/reinforce, target_id must identify an input item and
+candidate_id must be null. Status operations require a status. Updates change
+meaning only when evidence materially evolves it. Reinforcement must not
+duplicate an item or fabricate a description change. Focus references must
+resolve after ordered operations and point only to active items. Return JSON only."""
 
 # Backend-owned references remain part of the public contract, but are never model supplied.
 PERSPECTIVE_PROMPT += "\nThe backend binds every perspective to exactly its own supplied scene and assigns evidence_ids by position; omit them from model output."
 ENRICHMENT_PROMPT += "\nEach item must cite exactly the current scene conceptually; the backend assigns evidence_ids by position, so omit them from model output."
 
 # Execution order: Stage 3 branch, parallel with PSYCHOLOGICAL_ANALYSIS_PROMPT after Stage 1.
-# Stage 3 receives canonical scene context and the Stage 1 interpretation.
+# Stage 3 receives canonical scene context and authoritative trait definitions;
+# identity descriptions and generated perspectives are excluded.
 # Purpose: Classify grounded character-specific trait signals against the directional trait registry.
 # Used by: EmbodyAgent._interpret_traits_batch after perspective validation.
 # Expected: Ordered JSON scene_trait_interpretations with supported candidates.
-TRAIT_INTERPRETATION_PROMPT = r"""Stage 3 — interpret canonical scenes through this character's grounded perspective to identify supported trait observations.
+TRAIT_INTERPRETATION_PROMPT = r"""Stage 3 — interpret canonical scenes to identify supported trait observations.
 INPUT JSON:
-{"target":{"alias":"character alias","entity_type":"canonical ontology type","entity_type_description":"type meaning or null","identity_description":{"identity_summary":"...","psychological_summary":"...","personality_traits":[{"trait":"trait key","description":"..."}]}},"scenes":[{"position":1,"scene":{"name":"canonical scene name","description":"canonical scene description"},"agent_scene_interpretation":{"source_type":"participated|witnessed|heard_about|read_about|inferred|unknown","perspective":"the character's subjective interpretation"}}]}
+{"target":{"alias":"character alias"},"scenes":[{"position":1,"scene":{"name":"canonical scene name","description":"canonical objective scene description"}}]}
 
-Input meanings: target identifies the character being interpreted; identity_description
-provides established psychological context, not proof that a trait was expressed
-in a particular scene. scenes is ordered and position binds each result to one
-scene. scene.name and scene.description are canonical objective facts.
-agent_scene_interpretation.source_type says how the character knows the scene;
-perspective says what the character understood and what the experience means
-to them. The scene is canonical objective context; the interpretation is what
-this character understood and experienced. Use identity_description to understand distinctive psychology, but do not assume its claims prove a trait. Consider choices, expressed values, and meaningful psychological responses in context. A strong feeling alone does not establish a trait. Do not infer from names, occupation, species, role, other characters, or unsupported assumptions. Interpret only this character, respecting the source_type and what the character could know.
-Return one scene_trait_interpretations item for each input scene, in order.
-Observations must be justified by the supplied canonical scene and character
-interpretation, including evidence that contradicts the identity description.
-Each scene has at
-most one observation per trait.
-Only emit a trait when the scene and interpretation support a meaningful,
-character-specific disposition or choice. Missing or ambiguous evidence is
-unknown, never midpoint. Return empty trait_candidates arrays normally.
-OUTPUT: {"scene_trait_interpretations":[{"trait_candidates":[{"trait":"one of eight keys","polarity":"low|high","situation_type":"diagnostic:relationship:stakes|unspecified","justification":"brief grounded reason"}]}]}.
-Return JSON only.""" + TRAIT_EVIDENCE_CONTRACT + TRAIT_CONTRACT
+Identify personality trait observations for this character
+across the supplied chronological scenes.
+
+Use only canonical scene facts to identify the character's
+choices, actions, and explicitly expressed values. Do not
+use generated perspectives, identity descriptions, or prior
+personality summaries as evidence or interpretation.
+
+For each scene, identify supported observations using
+the eight established personality dimensions.
+
+Rules:
+- Focus on meaningful voluntary choices, expressed values,
+  and clearly demonstrated dispositional responses.
+- Interpret behavior within circumstances, knowledge, and
+  available alternatives explicitly established by the scene.
+- Do not mistake temporary emotions, intentions, or
+  experiences for enduring personality dispositions.
+- Do not infer traits from identity, role, species, or
+  previous personality descriptions.
+- Preserve evidence that differs from patterns visible across the supplied scenes.
+- Ground every observation and justification in the canonical
+  scene. Do not infer unstated motivations or alternatives.
+- Consider only this character's own behavior and values.
+- Omit compelled, ambiguous, or non-diagnostic evidence.
+- Return at most one observation per trait per scene.
+- Return empty arrays when no meaningful evidence exists.
+- Never generate numerical trait values or STEADINESS.
+- Preserve scene ordering.
+
+
+OUTPUT JSON SCHEMA (return exactly this object shape, with one result per input scene in the same order):
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["scene_trait_interpretations"],
+  "properties": {
+    "scene_trait_interpretations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["trait_candidates"],
+        "properties": {
+          "trait_candidates": {
+            "type": "array",
+            "maxItems": 8,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["trait", "polarity", "situation_type", "justification"],
+              "properties": {
+                "trait": {"enum": ["integrity", "caution", "presence", "forbearance", "diligence", "curiosity", "sharing", "restlessness"]},
+                "polarity": {"enum": ["low", "high"]},
+                "situation_type": {"type": "string", "minLength": 1, "maxLength": 80, "description": "diagnostic:relationship:stakes or unspecified; use the diagnostic values and rules below"},
+                "justification": {"type": "string", "minLength": 1, "maxLength": 360}
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+Return JSON only.""" + IDENTITY_TRAIT_DESCRIPTION_CONTRACT + TRAIT_EVIDENCE_CONTRACT

@@ -124,7 +124,7 @@ def test_generated_aspect_and_goal_reads_accept_embodiment_provenance():
         "updated_at": "2026-07-25T10:00:00Z",
     }
     aspect = CharacterAspectRead.model_validate({
-        "id": "aspect-1", "ontology_id": 42, "name": "Investigator",
+        "id": "aspect-1", "ontology_id": 42, "name": "I investigate dangerous events",
         "normalized_name": "investigator", "category": "role", "status": "active",
         "justification": "Repeatedly investigates dangerous events.",
         "confidence": 0.9, "evidence_ids": '["scene:1"]',
@@ -132,21 +132,17 @@ def test_generated_aspect_and_goal_reads_accept_embodiment_provenance():
     })
     goal = CharacterGoalRead.model_validate({
         "id": "goal-1", "ontology_id": 42, "title": "Find the truth",
-        "goal_type": "objective", "status": "active", "priority": 90,
-        "commitment": 85, "justification": "The objective remains unresolved.",
-        "confidence": 0.8, "basis": "inferred",
+        "goal_type": "objective",
         "evidence_ids": '["scene:2"]',
         "generated_by_embodiment_draft_id": "draft-1", **timestamps,
     })
     assignment = CharacterAspectAssignmentRead.model_validate({
-        "aspect": aspect.model_dump(), "importance": 5, "intensity": 80,
-        "status": "active", "justification": "Central to the character.",
-        "confidence": 0.9, "evidence_ids": '["scene:1"]', **timestamps,
+        "aspect": aspect.model_dump(), "status": "active", "in_focus": True,
+        "evidence_ids": '["scene:1"]', **timestamps,
     })
 
     assert aspect.evidence_ids == ["scene:1"]
     assert goal.evidence_ids == ["scene:2"]
-    assert goal.basis == "inferred"
     assert assignment.evidence_ids == ["scene:1"]
 
 

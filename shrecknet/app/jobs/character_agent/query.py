@@ -162,15 +162,15 @@ class CharacterAgentQueryJob:
                            if profile.steadiness.point is None else
                            f"Computed from {profile.steadiness.observation_count} comparable perspectives."},
             "aspects": [
-                {key: item.get(key) for key in ("name", "category", "importance", "description")}
+                {key: item.get(key) for key in ("name", "category", "description", "status", "in_focus")}
                 for item in snapshot["aspects"]
             ],
             "goals": [
                 {
                     "title": item.get("title") or item.get("name"),
-                    "priority": item.get("priority"),
-                    "commitment": item.get("commitment"),
                     "description": item.get("description"),
+                    "status": item.get("status"),
+                    "in_focus": item.get("in_focus"),
                 }
                 for item in snapshot["goals"]
             ],

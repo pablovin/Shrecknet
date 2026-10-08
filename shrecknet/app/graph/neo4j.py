@@ -184,6 +184,54 @@ async def migrate_scene_perspective_contract(session: AsyncSession) -> int:
     return int(record["migrated"] or 0) if record else 0
 
 
+async def migrate_character_profile_assignments(session: AsyncSession) -> int:
+    """Move legacy lifecycle/focus state onto character-owned relationships."""
+    await session.run(
+        """
+        MATCH (agent:CharacterAgent)-[rel:PURSUES]->(goal:CharacterGoal)
+        WITH agent, rel, goal,
+             CASE WHEN rel.status IS NOT NULL THEN rel.status
+                  WHEN count { MATCH (:CharacterAgent)-[:PURSUES]->(goal) } = 1
+                    THEN coalesce(goal.status, 'active')
+                  ELSE 'active' END AS status
+        SET rel.status=status
+        """
+    )
+    result = await session.run(
+        """
+        MATCH (agent:CharacterAgent)-[rel:HAS_ASPECT]->(:CharacterAspect)
+        WITH agent, rel ORDER BY coalesce(rel.in_focus, false) DESC,
+             coalesce(toString(rel.updated_at), toString(rel.created_at), '') DESC
+        WITH agent, collect(rel) AS relationships
+        UNWIND relationships AS rel
+        WITH rel, [item IN relationships
+                   WHERE coalesce(item.status, 'active') = 'active'][..10] AS focused
+        SET rel.status=coalesce(rel.status, 'active'),
+            rel.in_focus=rel IN focused
+        RETURN count(rel) AS migrated
+        """
+    )
+    aspect_record = await result.single()
+    result = await session.run(
+        """
+        MATCH (agent:CharacterAgent)-[rel:PURSUES]->(:CharacterGoal)
+        WITH agent, rel ORDER BY coalesce(rel.in_focus, false) DESC,
+             coalesce(toString(rel.updated_at), toString(rel.created_at), '') DESC
+        WITH agent, collect(rel) AS relationships
+        UNWIND relationships AS rel
+        WITH rel, [item IN relationships
+                   WHERE coalesce(item.status, 'active') = 'active'][..10] AS focused
+        SET rel.status=coalesce(rel.status, 'active'),
+            rel.in_focus=rel IN focused
+        RETURN count(rel) AS migrated
+        """
+    )
+    goal_record = await result.single()
+    return int((aspect_record["migrated"] or 0) if aspect_record else 0) + int(
+        (goal_record["migrated"] or 0) if goal_record else 0
+    )
+
+
 async def ensure_entity_catalog_indexes(session: AsyncSession) -> None:
     """Backfill and index the compact Architect entity-catalog read path."""
     await session.run(

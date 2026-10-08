@@ -369,14 +369,15 @@ class CharacterEmbodimentService:
                       WITH agent
                       OPTIONAL MATCH (agent)-[assignment:HAS_ASPECT]->
                                      (aspect:CharacterAspect)
-                      WHERE coalesce(assignment.status, 'active') = 'active'
                       RETURN collect({
                         id: aspect.id,
                         name: aspect.name,
                         category: aspect.category,
                         description: aspect.description,
-                        importance: assignment.importance,
-                        intensity: assignment.intensity,
+                        status: coalesce(assignment.status, aspect.status, 'active'),
+                        in_focus: coalesce(assignment.in_focus, true),
+                        evidence_ids: assignment.evidence_ids,
+                        justification: assignment.justification,
                         created_at: assignment.created_at
                       }) AS aspects
                     }
@@ -384,14 +385,15 @@ class CharacterEmbodimentService:
                       WITH agent
                       OPTIONAL MATCH (agent)-[pursuit:PURSUES]->
                                      (goal:CharacterGoal)
-                      WHERE coalesce(pursuit.status, goal.status, 'active') = 'active'
                       RETURN collect({
                         id: goal.id,
                         title: goal.title,
                         description: goal.description,
                         goal_type: goal.goal_type,
-                        priority: coalesce(pursuit.priority, goal.priority),
-                        commitment: coalesce(pursuit.commitment, goal.commitment),
+                        status: coalesce(pursuit.status, goal.status, 'active'),
+                        in_focus: coalesce(pursuit.in_focus, true),
+                        evidence_ids: pursuit.evidence_ids,
+                        justification: pursuit.justification,
                         created_at: pursuit.created_at
                       }) AS goals
                     }
@@ -537,8 +539,6 @@ class CharacterEmbodimentService:
             llm_client=llm_client,
             character_incorporation_model=settings.model_character_agent_character_incorporation,
             scene_interpretation_model=settings.model_character_agent_scene_interpretation,
-            max_aspects=settings.character_agent_embodiment_max_aspects,
-            max_goals=settings.character_agent_embodiment_max_goals,
             semantic_correction_attempts=settings.character_agent_embodiment_semantic_correction_attempts,
         )
         identity_description = existing_identity or await identity_job.generate_identity_description(
@@ -550,8 +550,6 @@ class CharacterEmbodimentService:
             job = EmbodyAgent(llm_client=llm_client,
                 character_incorporation_model=settings.model_character_agent_character_incorporation,
                 scene_interpretation_model=settings.model_character_agent_scene_interpretation,
-                max_aspects=settings.character_agent_embodiment_max_aspects,
-                max_goals=settings.character_agent_embodiment_max_goals,
                 semantic_correction_attempts=settings.character_agent_embodiment_semantic_correction_attempts)
             scene_inputs = [SceneInput(**scene) for scene in chunk["scenes"]]
             perspectives = await job.generate_perspectives(
@@ -571,8 +569,7 @@ class CharacterEmbodimentService:
                 canonical_identity=inputs["canonical_identity"], current_trait_profile=profile,
                 current_aspects=aspects, current_goals=goals, current_subtitle=subtitle,
                 per_bundle_results=[result], starting_revision=number,
-                max_aspects=settings.character_agent_embodiment_max_aspects,
-                max_goals=settings.character_agent_embodiment_max_goals))
+            ))
             agent = (await service.get_agent(agent_id)).model_dump(mode="json")
             async def persist(tx):
                 await service._persist_timeline_tx(tx, agent, timeline, _now(), append=True,
@@ -581,8 +578,8 @@ class CharacterEmbodimentService:
             await self.graph.execute_write(persist)
             profile = result.trait_profile
             evidence = merge_evidence(evidence, result.trait_evidence)
-            _apply_aspect_ops(aspects, result.aspect_updates, max_active=settings.character_agent_embodiment_max_aspects)
-            _apply_goal_ops(goals, result.goal_updates, max_active=settings.character_agent_embodiment_max_goals)
+            _apply_aspect_ops(aspects, result.aspect_updates, focused_ids=result.focused_aspects)
+            _apply_goal_ops(goals, result.goal_updates, focused_ids=result.focused_goals)
             subtitle = timeline.revisions[-1].subtitle
             number += 1
 

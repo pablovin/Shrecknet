@@ -64,6 +64,13 @@ from .models import (
     CharacterAgentRead,
     CharacterAgentCreateRequest,
     CharacterAgentUpdate,
+    CharacterAspectAssignmentCreate,
+    CharacterAspectAssignmentRead,
+    CharacterAspectAssignmentUpdate,
+    CharacterGoalAssignmentRead,
+    CharacterGoalAssignmentUpdate,
+    CharacterGoalAssignmentCreate,
+    CharacterGoalAssignmentCreate,
     CharacterIdentityRevisionRead,
     CharacterIdentityChangeRead,
     EmbodimentDraftCreate,
@@ -334,6 +341,50 @@ class CharacterAgentsAPI:
             json=payload.model_dump(mode="json", exclude_unset=True),
         )
         return CharacterAgentRead.model_validate(data)
+
+    async def list_aspects(self, character_agent_id: str) -> list[CharacterAspectAssignmentRead]:
+        data = await self._client.raw_request("GET", f"/character-agents/{character_agent_id}/aspects")
+        return [CharacterAspectAssignmentRead.model_validate(item) for item in data]
+
+    async def assign_aspect(
+        self, character_agent_id: str, payload: CharacterAspectAssignmentCreate,
+    ) -> CharacterAspectAssignmentRead:
+        data = await self._client.raw_request(
+            "POST", f"/character-agents/{character_agent_id}/aspects",
+            json=payload.model_dump(exclude_none=True),
+        )
+        return CharacterAspectAssignmentRead.model_validate(data)
+
+    async def update_aspect_assignment(
+        self, character_agent_id: str, aspect_id: str, payload: CharacterAspectAssignmentUpdate,
+    ) -> CharacterAspectAssignmentRead:
+        data = await self._client.raw_request(
+            "PATCH", f"/character-agents/{character_agent_id}/aspects/{aspect_id}",
+            json=payload.model_dump(exclude_unset=True, exclude_none=True),
+        )
+        return CharacterAspectAssignmentRead.model_validate(data)
+
+    async def list_goals(self, character_agent_id: str) -> list[CharacterGoalAssignmentRead]:
+        data = await self._client.raw_request("GET", f"/character-agents/{character_agent_id}/goals")
+        return [CharacterGoalAssignmentRead.model_validate(item) for item in data]
+
+    async def pursue_goal(
+        self, character_agent_id: str, payload: CharacterGoalAssignmentCreate,
+    ) -> CharacterGoalAssignmentRead:
+        data = await self._client.raw_request(
+            "POST", f"/character-agents/{character_agent_id}/goals",
+            json=payload.model_dump(exclude_none=True),
+        )
+        return CharacterGoalAssignmentRead.model_validate(data)
+
+    async def update_goal_assignment(
+        self, character_agent_id: str, goal_id: str, payload: CharacterGoalAssignmentUpdate,
+    ) -> CharacterGoalAssignmentRead:
+        data = await self._client.raw_request(
+            "PATCH", f"/character-agents/{character_agent_id}/goals/{goal_id}",
+            json=payload.model_dump(exclude_unset=True, exclude_none=True),
+        )
+        return CharacterGoalAssignmentRead.model_validate(data)
 
     async def list_revisions(
         self, character_agent_id: str, *, skip: int = 0, limit: int = 100,

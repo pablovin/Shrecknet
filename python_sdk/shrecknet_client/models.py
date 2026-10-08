@@ -137,11 +137,10 @@ class CharacterAgentEmbeddedAspect(BaseModel):
     name: str
     category: str
     description: str | None = None
-    importance: int
-    intensity: int | None = None
+    status: str = "active"
+    in_focus: bool = True
     justification: str | None = None
     evidence_ids: list[str] = Field(default_factory=list)
-    confidence: float | None = None
 
 
 class CharacterAgentEmbeddedGoal(BaseModel):
@@ -150,12 +149,76 @@ class CharacterAgentEmbeddedGoal(BaseModel):
     description: str | None = None
     goal_type: str
     status: str = "active"
-    priority: int = 50
-    commitment: int = 50
+    in_focus: bool = True
     justification: str | None = None
-    basis: str | None = None
     evidence_ids: list[str] = Field(default_factory=list)
-    confidence: float | None = None
+
+
+class CharacterAspectRead(BaseModel):
+    id: str
+    ontology_id: int
+    name: str
+    normalized_name: str
+    category: str
+    description: str | None = None
+    evidence_ids: list[str] = Field(default_factory=list)
+    generated_by_embodiment_draft_id: str | None = None
+    obtained_from_scene_id: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class CharacterAspectAssignmentCreate(BaseModel):
+    character_aspect_id: str
+    status: str = "active"
+    in_focus: bool = True
+
+
+class CharacterAspectAssignmentUpdate(BaseModel):
+    status: str | None = None
+    in_focus: bool | None = None
+
+
+class CharacterAspectAssignmentRead(BaseModel):
+    aspect: CharacterAspectRead
+    status: str
+    in_focus: bool
+    justification: str | None = None
+    evidence_ids: list[str] = Field(default_factory=list)
+    created_at: datetime
+    updated_at: datetime
+
+
+class CharacterGoalRead(BaseModel):
+    id: str
+    ontology_id: int
+    title: str
+    description: str | None = None
+    goal_type: str
+    evidence_ids: list[str] = Field(default_factory=list)
+    generated_by_embodiment_draft_id: str | None = None
+    obtained_from_scene_id: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class CharacterGoalAssignmentRead(BaseModel):
+    goal: CharacterGoalRead
+    status: str
+    in_focus: bool
+    justification: str | None = None
+    evidence_ids: list[str] = Field(default_factory=list)
+    created_at: datetime
+    updated_at: datetime
+
+
+class CharacterGoalAssignmentCreate(BaseModel):
+    character_goal_id: str
+
+
+class CharacterGoalAssignmentUpdate(BaseModel):
+    status: str | None = None
+    in_focus: bool | None = None
 
 
 class CharacterAgentCreateRequest(BaseModel):
@@ -280,13 +343,11 @@ class EmotionalInterpretationRead(EmotionalInterpretationCreate):
 class CharacterBeliefCreate(BaseModel):
     statement: str
     confidence: int
-    status: str
 
 
 class CharacterBeliefUpdate(BaseModel):
     statement: str | None = None
     confidence: int | None = None
-    status: str | None = None
 
 
 class CharacterBeliefRead(CharacterBeliefCreate):

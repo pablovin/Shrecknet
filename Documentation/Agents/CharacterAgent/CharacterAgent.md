@@ -21,7 +21,7 @@ flowchart LR
     P -->|PROJECTS_ON| S
     P -->|EVOKES| E[EmotionalInterpretation]
     P -->|FORMS_BELIEF| B[CharacterBelief]
-    P -->|HAS_IMPACT| I[CharacterImpact]
+    P -->|HAS_IMPACT, legacy| I[CharacterImpact]
     I -->|AFFECTS| X
     I -->|AFFECTS| G
     I -.->|CAUSED_BY, optional| M[Milestone]
@@ -92,16 +92,27 @@ sent to this synthesis call; if one exists, the orchestration reuses it to groun
 the scene stages. The final refresh uses the same compact input with accumulated
 state. The output has `identity_summary`, `psychological_summary`, and
 `personality_traits` entries with established trait keys and narrative descriptions.
+Trait interpretation does not receive the persisted `identity_description` or
+its `personality_traits`, avoiding feedback from earlier narrative summaries.
+It receives only the canonical scene and the authoritative trait descriptions
+from `IDENTITY_TRAIT_DESCRIPTION_CONTRACT`; generated perspectives are not sent
+to trait interpretation.
 All scenes from a `DERIVED_FROM` source form one chronological
 source bundle and yield one source-level revision. The worker partitions each
 source's ordered scenes into chunks of at most five. All Perspective calls finish
 before Psychological analysis and Trait interpretation run in parallel for each
-chunk. Both analysis stages receive each canonical scene's name and description
-together with the preceding interpretation's `source_type` and `perspective`.
+chunk. Psychological analysis receives each canonical scene's name and
+description together with the preceding interpretation's `source_type` and
+`perspective`. Trait interpretation receives only each canonical scene and the
+character alias; the backend binds its ordered outputs to the validated
+perspective IDs after generation.
 ShreckLLM owns provider concurrency. The backend merges chunk results
-and reduces source-local outputs deterministically; no LLM receives a cumulative
-evidence history. Source bundles run sequentially, so the resulting revision
-becomes the next source bundle's starting identity.
+and collects enrichment events. One optional Stage 4 consolidation call then
+reconciles those events with the latest profile for the source bundle. Trait
+aggregation remains deterministic and independent. No LLM receives a cumulative
+scene history. Source bundles run sequentially, so the resulting revision becomes
+the next source bundle's starting identity. Only current focus is capped: ten
+active aspects and ten active goals. Historical records remain available.
 
 Every embodiment LLM request, including a JSON-repair request, has a maximum
 completion budget of 10,000 tokens. This is a cost and failure safeguard, not
@@ -128,7 +139,7 @@ for constructs, scales, eligibility, consistency, and chronology limitations.
 Timeline display references are structured draft and API data. They are not
 written as `ScenePerspective` node properties because Neo4j properties support
 only scalar values or arrays of scalar values. Scene projections, emotions,
-beliefs, and impacts are persisted through the relationships shown above. Trait
+beliefs are persisted through the relationships shown above; legacy impacts remain readable. Trait
 interpretation receives canonical scene context and the same grounded subjective
 interpretation; the pipeline does not extract or persist a separate
 `behavioral_evidence` field. Legacy graph nodes carrying that retired property
@@ -144,7 +155,7 @@ Label: `CharacterAspect`
 A CharacterAspect is a reusable piece of identity, role, state, capability,
 knowledge, preference, attitude, history, or physical characterization.
 Multiple CharacterAgents in the same ontology may share one aspect definition;
-assignment-specific strength and notes belong to the `HAS_ASPECT` relationship.
+character-specific status and focus belong to the `HAS_ASPECT` relationship.
 
 | Property | Type | Required | Rules and meaning |
 | --- | --- | --- | --- |
@@ -154,9 +165,6 @@ assignment-specific strength and notes belong to the `HAS_ASPECT` relationship.
 | `normalized_name` | string | yes | Derived by trimming, collapsing whitespace, and Unicode case-folding `name`. The pair (`ontology_id`, `normalized_name`) is unique. |
 | `category` | string enum | yes | One of `identity`, `role`, `status`, `physical`, `capability`, `knowledge`, `preference`, `attitude`, or `history`. |
 | `description` | string or null | no | Free-form definition. |
-| `status` | string enum | yes | `active` or `inactive`; defaults to `active`. |
-| `justification` | string or null | no | Embodiment explanation for generated definitions. |
-| `confidence` | number or null | no | Embodiment confidence from `0` through `1`. |
 | `evidence_ids` | JSON string | no | Stable source evidence IDs for generated definitions; returned by the API as a string array. |
 | `generated_by_embodiment_draft_id` | string or null | no | Draft that originally generated the definition. |
 | `created_at` | datetime string | yes | UTC ISO-8601 creation timestamp. |
@@ -181,12 +189,6 @@ pursue the same goal definition.
 | `title` | string | yes | Nonblank display title, maximum 255 characters. |
 | `description` | string or null | no | Free-form goal definition. |
 | `goal_type` | string enum | yes | One of `desire`, `objective`, `ambition`, `obligation`, `avoidance`, or `survival`. |
-| `status` | string enum | yes | `active`, `completed`, `abandoned`, or `superseded`; defaults to `active`. |
-| `priority` | integer | yes | Importance from `0` through `100`; defaults to `50`. |
-| `commitment` | integer | yes | Character commitment from `0` through `100`; defaults to `50`. |
-| `justification` | string or null | no | Embodiment explanation for generated goals. |
-| `confidence` | number or null | no | Embodiment confidence from `0` through `1`. |
-| `basis` | string or null | no | `explicit` or `inferred` for generated goals. |
 | `evidence_ids` | JSON string | no | Stable source evidence IDs for generated goals; returned by the API as a string array. |
 | `generated_by_embodiment_draft_id` | string or null | no | Draft that originally generated the goal. |
 | `created_at` | datetime string | yes | UTC ISO-8601 creation timestamp. |
@@ -238,24 +240,24 @@ Each interpretation node belongs to exactly one perspective:
 | Label and relationship | Properties and rules |
 | --- | --- |
 | `ScenePerspective-[:EVOKES]->EmotionalInterpretation` | Unique `id`, `ontology_id`, `arousal` `0..100`, `valence` `0..100`, nonblank `description`, `created_at`, and `updated_at`. Valence uses `0` as maximally negative, `50` as neutral, and `100` as maximally positive. Legacy generated signed values are converted to this scale when read; all new generation and writes use the canonical scale. |
-| `ScenePerspective-[:FORMS_BELIEF]->CharacterBelief` | Unique `id`, `ontology_id`, nonblank `statement`, `confidence` `0..100`, status `suspected`, `believed`, `confirmed`, `doubted`, `disproven`, or `superseded`, and timestamps. A belief can differ from canonical scene truth. |
-| `ScenePerspective-[:HAS_IMPACT]->CharacterImpact` | Unique `id`, `ontology_id`, `impact_type`, `direction`, `magnitude` `0..100`, nonblank `description`, and timestamps. |
+| `ScenePerspective-[:FORMS_BELIEF]->CharacterBelief` | Unique `id`, `ontology_id`, nonblank `statement`, `confidence` `0..100`, and timestamps. A belief is a historical snapshot and can differ from canonical scene truth; contradictory beliefs from different scenes coexist and are interpreted chronologically. |
+| `ScenePerspective-[:HAS_IMPACT]->CharacterImpact` | Legacy historical records only. New embodiment does not create impacts. |
 
 Every `CharacterImpact` has exactly one `AFFECTS` target that was assigned to
 the owning character when the impact was created. `goal_change` impacts target
 a `CharacterGoal` and use `advanced` or `threatened`. `aspect_change` impacts
 a `CharacterAspect` and use `created`, `reinforced`, or `invalidated`.
 An optional `CAUSED_BY` target must be a `Milestone` contained by the projected
-scene. Deleting that milestone removes the optional edge without deleting the
-impact.
+scene. Legacy records remain readable; the new embodiment pipeline does not
+write impacts.
 
 ## Relationship schema
 
 | Pattern | Cardinality and scope | Relationship properties | Meaning |
 | --- | --- | --- | --- |
 | `(:CharacterAgent)-[:EMBODIES]->(:EntityInstance)` | Exactly one relationship is created for each agent. An entity can be embodied by at most one CharacterAgent under the supported write path, enforced by unique `embodied_entity_instance_id`. Both nodes must have the requested `ontology_id`. | None. | Binds the simulation identity to its canonical world entity. |
-| `(:CharacterAgent)-[:HAS_ASPECT]->(:CharacterAspect)` | Zero or more per agent. The same aspect may be used by multiple agents. Duplicate agent-to-aspect assignments and cross-ontology assignments are rejected. | `importance`: integer `1..5`; `intensity`: integer `0..100` or null; `notes`: string or null; `status`: `active` or `inactive`; `created_at`: UTC ISO-8601 datetime; `updated_at`: UTC ISO-8601 datetime. | Assigns an aspect with character-specific strength, state, and notes. |
-| `(:CharacterAgent)-[:PURSUES]->(:CharacterGoal)` | Zero or more per agent. The same goal may be pursued by multiple agents. Duplicate agent-to-goal pursuits and cross-ontology pursuits are rejected. | `created_at`: UTC ISO-8601 datetime. | Marks a goal as pursued by the character. Priority, commitment, and lifecycle status live on the goal node rather than the relationship. |
+| `(:CharacterAgent)-[:HAS_ASPECT]->(:CharacterAspect)` | Zero or more per agent. The same definition may be assigned to multiple agents. Duplicate and cross-ontology assignments are rejected. | `status`: `active` or `inactive`; `in_focus`: boolean; backend-managed provenance and UTC timestamps. At most ten active assignments may be in focus. | Stores character-specific aspect lifecycle and current focus. Leaving focus never changes status or deletes history. |
+| `(:CharacterAgent)-[:PURSUES]->(:CharacterGoal)` | Zero or more per agent. The same definition may be pursued by multiple agents. Duplicate and cross-ontology pursuits are rejected. | `status`: `active`, `completed`, `abandoned`, or `superseded`; `in_focus`: boolean; backend-managed evidence and UTC timestamps. At most ten active goals may be in focus. | Stores character-specific goal lifecycle and current focus. Out-of-focus unresolved goals remain active and historical. |
 | `(:CharacterAspect)-[:OBTAINED_FROM]->(:Scene)` | Optional; the service maintains at most one provenance scene per aspect. The scene must have the same `ontology_id`. | None. | Records the scene from which the aspect was obtained. |
 | `(:CharacterGoal)-[:OBTAINED_FROM]->(:Scene)` | Optional; the service maintains at most one provenance scene per goal. The scene must have the same `ontology_id`. | None. | Records the scene from which the goal was obtained. |
 | `(:CharacterAgent)-[:HAS_PERSPECTIVE]->(:ScenePerspective)` | Zero or more perspectives; each perspective has exactly one owning agent. | None. | Owns subjective scene memory. |
@@ -322,25 +324,33 @@ of personality. See [CharacterAgent Query](Query/Query.md).
 
 ## Evidence-grounded embodiment
 
-See [Dispositional traits](Dispositional%20Traits.md) for the complete current
-personality and embodiment contract, including the four-step scene-centric
-source-bundle pipeline, initial authored evidence, candidate/signal rules, debug
-artifacts, revision ownership, and breaking release operations. The
-registry is the authoritative definition source; SDKs and UI consumers can
-request it through `/character-agents/trait-definitions`.
+See [Dispositional traits](Dispositional%20Traits.md) for the trait contract.
+This page documents psychological enrichment, source-level consolidation,
+relationship-owned aspect/goal state, and historical scene memories.
 
 ### Background jobs
 
-`character_agent.generate_embodiment` is the Celery task that generates a
-reviewable embodiment draft. It performs one authored-baseline call, then
-processes source bundles in order. For a source with `n` chunks of at most five
-scenes, the normal LLM call budget is `3n`: one Perspective call followed by
-parallel Psychological analysis and Trait interpretation calls per chunk. See the
-[extraction flow](Dispositional%20Traits.md#extraction-and-evidence) for
-their inputs and outputs. The source reduction is
-backend-owned and deterministic; it does not make a profile-update LLM call or
-send historical evidence to a model. Each request executes a complete,
-self-contained run and records its full debug trace when enabled.
+`character_agent.generate_embodiment` generates a reviewable embodiment draft.
+It creates or reuses identity description, processes source bundles in
+chronological order, and processes each source's scene chunks in parallel.
+Each chunk runs perspective extraction, then psychological enrichment and trait
+interpretation in parallel. After all chunks for a source finish, Stage 4 makes
+one consolidation call if any profile events were found; otherwise it is
+skipped. Trait aggregation remains deterministic. Thus one source uses
+`3n + (events ? 1 : 0)` scene-stage calls for `n` chunks, plus identity calls
+and bounded recovery/correction calls. Consolidation receives the current
+profile and source-local events, not cumulative scene history. The resulting
+revision updates the working profile for the next source.
+
+Stage 2 returns scene-owned emotions and beliefs plus sparse profile events.
+It does not produce final aspects/goals or lifecycle statuses. Stage 4 may add,
+materially update, reinforce, deactivate/reactivate aspects, resolve/reactivate
+goals, and refresh focus. It preserves history and never resolves an item only
+because it is old or unmentioned. Focus contains at most ten active aspects and
+ten active goals; focus changes do not alter lifecycle status. See the
+[redesign implementation record](Psychological%20Enrichment%20and%20Consolidation%20Redesign%20Plan.md)
+for the migration and verification details.
+
 
 `character_agent.query` is the Celery task for asynchronous identity-grounded or
 generic queries. It reloads the applicable graph identity, reports the

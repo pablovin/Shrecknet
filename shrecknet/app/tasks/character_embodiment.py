@@ -48,8 +48,9 @@ from app.utils.job_tracking import mark_job_done, mark_job_failed, mark_job_runn
 
 STEP_NAME: dict[int, str] = {
     1: "Perspective",
-    2: "Psychological analysis and trait interpretation",
-    3: "Deterministic source reduction",
+    2: "Psychological enrichment",
+    3: "Trait interpretation and aggregation",
+    4: "Psychological consolidation",
 }
 
 SCENE_ANALYSIS_CHUNK_SIZE = 5
@@ -170,14 +171,14 @@ class _EmbodimentProgress:
     async def chunk_complete(self, index: int, chunk_index: int) -> None:
         async with self.lock:
             chunk = self.chunks[index][chunk_index]
-            chunk["done_steps"] = [1, 2]
+            chunk["done_steps"] = [1, 2, 3, 4]
             chunk["active_steps"] = []
             self.active[index] = sorted({
                 step
                 for item in self.chunks[index]
                 for step in item["active_steps"]
             })
-            if all(item["done_steps"] == [1, 2] for item in self.chunks[index]):
+            if all(item["done_steps"] == [1, 2, 3, 4] for item in self.chunks[index]):
                 self.done[index].update({1, 2})
             await self._publish(index, "processing")
 
@@ -317,8 +318,7 @@ def _merge_chunk_analyses(analyses: list[EmbodyAgentAnalysis]) -> EmbodyAgentAna
         "observations": observations,
         "subtitle_change": subtitle,
         "evidence_ids": set().union(*(analysis.evidence_ids for analysis in analyses)),
-        "aspect_signals": [item for analysis in analyses for item in analysis.aspect_signals],
-        "goal_signals": [item for analysis in analyses for item in analysis.goal_signals],
+        "profile_events": [item for analysis in analyses for item in analysis.profile_events],
         "llm_calls": [item for analysis in analyses for item in analysis.llm_calls],
         "observations_unavailable": any(analysis.observations_unavailable for analysis in analyses),
     })
@@ -417,8 +417,6 @@ async def _generate(*, draft_id: str, revision: int, job_id: int) -> dict:
                     llm_client=client,
                     character_incorporation_model=settings.model_character_agent_character_incorporation,
                     scene_interpretation_model=settings.model_character_agent_scene_interpretation,
-                    max_goals=settings.character_agent_embodiment_max_goals,
-                    max_aspects=settings.character_agent_embodiment_max_aspects,
                     semantic_correction_attempts=(
                         settings.character_agent_embodiment_semantic_correction_attempts
                     ),
@@ -527,11 +525,11 @@ async def _generate(*, draft_id: str, revision: int, job_id: int) -> dict:
                 current_evidence = merge_evidence(current_evidence, result.trait_evidence)
                 _apply_aspect_ops(
                     current_aspects, result.aspect_updates,
-                    max_active=settings.character_agent_embodiment_max_aspects,
+                    focused_ids=result.focused_aspects,
                 )
                 _apply_goal_ops(
                     current_goals, result.goal_updates,
-                    max_active=settings.character_agent_embodiment_max_goals,
+                    focused_ids=result.focused_goals,
                 )
                 br_sub = result.subtitle_change
                 if br_sub.operation == "set":
@@ -624,11 +622,10 @@ async def _generate(*, draft_id: str, revision: int, job_id: int) -> dict:
                 "name": a.get("name", ""),
                 "category": a.get("category", "identity"),
                 "description": a.get("description"),
-                "importance": a.get("importance", 3),
-                "intensity": a.get("intensity"),
-                "justification": a.get("justification") or "Proposed aspect.",
-                "confidence": a.get("confidence") or 0.5,
-                "evidence_ids": a.get("evidence_ids") or ["generated"],
+                "status": a.get("status", "active"),
+                "in_focus": bool(a.get("in_focus")),
+                "justification": a.get("justification") or "",
+                "evidence_ids": a.get("evidence_ids") or [],
             }
             for a in current_aspects
         ]
@@ -638,13 +635,10 @@ async def _generate(*, draft_id: str, revision: int, job_id: int) -> dict:
                 "title": g.get("title", ""),
                 "description": g.get("description") or g.get("title", ""),
                 "goal_type": g.get("goal_type", "desire"),
-                "status": "active",
-                "priority": g.get("priority", 50),
-                "commitment": g.get("commitment", 50),
-                "justification": g.get("justification") or "Proposed goal.",
-                "confidence": g.get("confidence") or 0.5,
-                "evidence_ids": g.get("evidence_ids") or ["generated"],
-                "basis": g.get("basis", "inferred"),
+                "status": g.get("status", "active"),
+                "in_focus": bool(g.get("in_focus")),
+                "justification": g.get("justification") or "",
+                "evidence_ids": g.get("evidence_ids") or [],
             }
             for g in current_goals
         ]
@@ -676,8 +670,6 @@ async def _generate(*, draft_id: str, revision: int, job_id: int) -> dict:
             current_subtitle=initial_subtitle,
             per_bundle_results=per_bundle_results,
             starting_revision=max(0, int(inputs.get("latest_revision", -1))),
-            max_aspects=settings.character_agent_embodiment_max_aspects,
-            max_goals=settings.character_agent_embodiment_max_goals,
             source_groups=source_groups,
         )
         debug_artifacts.write_final(

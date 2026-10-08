@@ -57,8 +57,9 @@ are rejected by the new runtime schema.
 flowchart TD
     A[Persistent identity_description] --> B[Stage 0: load or generate narrative grounding]
     C[Canonical scene] --> D[Stage 1: grounded perspective and quoted behavior]
+    C --> F[Stage 3: categorical trait interpretation]
     D --> E[Backend quote validation and perspective ID]
-    E --> F[Stage 3: categorical trait interpretation]
+    T[Authoritative trait meanings] --> F
     E --> G[Stage 2: psychological enrichment]
     F --> H[Backend validates, binds and deduplicates trait evidence]
     H --> I
@@ -68,10 +69,13 @@ flowchart TD
 
 `identity_description` contains narrative summaries and trait descriptions,
 without points or polarity. It is loaded once per embodiment job, or generated
-from the entity and current profile if absent, and supplied to perspective,
-psychological, and trait interpretation stages. After all scenes are processed,
-it is refreshed once from the final current state. It never contributes authored
-trait evidence to the numerical profile.
+from the entity and current profile if absent, and supplied to perspective and
+psychological stages. Stage 3 does not receive this description or its
+`personality_traits`; it receives only canonical scenes and the authoritative
+`IDENTITY_TRAIT_DESCRIPTION_CONTRACT` meanings. After all
+scenes are processed, the identity description is refreshed once from the final
+current state. It never contributes authored trait evidence to the numerical
+profile.
 
 Stage 1 binds one perspective to each canonical scene. It records factual
 behavior with a source quote. The backend checks that quote against the scene.
@@ -84,12 +88,16 @@ deterministic source update. A source with `n` chunks normally makes `3n` LLM
 calls. Identity-description generation adds a call if the field is absent and
 one refresh call per embodiment job; repairs and provider retries
 may add calls.
-Stage 3 sees only validated behavior, not raw scene text, generated reflections,
-or a prior inferred personality. Each candidate has exactly `trait`,
+Stage 3 sees canonical scene facts and the authoritative trait meanings, but no
+identity description, prior personality description, or generated perspective.
+Each candidate has exactly `trait`,
 `polarity: low|high`, `situation_type`, and a brief grounded `justification`.
 The backend adds `perspective_id`, evidence ID, source and revision ownership,
 chronological position, and policy version. The LLM never supplies a point,
 intensity, numeric confidence, diagnosticity, or four choice-condition objects.
+The shared `TRAIT_EVIDENCE_CONTRACT` requires clearly demonstrated dispositional
+responses; temporary emotional experiences by themselves are not converted into
+trait evidence.
 
 Do not extract from compelled or ambiguous action, group-only or witnessed
 behavior, an unavailable alternative, or a behavior that does not reveal the
@@ -169,7 +177,14 @@ unknown; mixed point-5 evidence is not presented as proof of an average nature.
 The administrator evidence endpoint is
 `GET /character-agents/{agent_id}/trait-evidence`; its records have
 `perspective_id`, `polarity`, `situation_type`, `justification`, and backend
-provenance. Revisions allow reconstruction and audit. Manual edits use
+provenance. Each evidence record is stored on its `CharacterIdentityRevision`
+with `revision_id`, `source_group_id`, batch ownership, and the originating
+perspective plus `scene:<scene_id>` reference. The revision is also connected to
+its source entity through `CONSOLIDATED_FROM`. This maps every retained trait
+observation back to the source and scene that produced it. STEADINESS is derived
+from those same contextual observations and appears as its own trait change and
+revision estimate; it does not require a separate model-generated score.
+Revisions allow reconstruction and audit. Manual edits use
 `{"point": 7, "reason": "..."}`; `point: null` clears an override.
 
 Deployment of this breaking contract requires a backup and regeneration of

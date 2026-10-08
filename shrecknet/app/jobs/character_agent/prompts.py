@@ -29,13 +29,13 @@ INPUT JSON:
     "identity_description": {"identity_summary":"original background and defining characteristics", "psychological_summary":"original motivations, fears, beliefs, ambitions, conflicts", "personality_traits":[{"trait":"established trait key","description":"narrative trait description"}]} or null,
     "traits": {"trait_key": {"point": "integer 1..9 or null", "status": "unknown|provisional|supported|manual", "summary": "brief evidence interpretation", "left": "pole", "right": "pole"}},
     "steadiness": {"point": "integer 1..9 or null", "status": "unknown|provisional|supported|manual", "summary": "brief consistency interpretation"},
-    "aspects": [{"name": "string", "category": "string", "importance": 1, "description": "string or null"}],
-    "goals": [{"title": "string", "priority": 0, "commitment": 0, "description": "string or null"}]
+    "aspects": [{"name": "first-person defining statement", "category": "string", "description": "string or null", "status": "active|inactive", "in_focus": true}],
+    "goals": [{"title": "personal commitment", "description": "string or null", "status": "active|completed|abandoned|superseded", "in_focus": true}]
   },
   "memories": [{
     "perspective": "subjective account including understanding, meaning, feelings, beliefs, and uncertainty",
     "emotions": [{"description": "feeling"}],
-    "beliefs": [{"statement": "belief", "status": "suspected|believed|confirmed|doubted|disproven|superseded"}],
+    "beliefs": [{"statement": "historical belief snapshot"}],
     "impacts": [{"impact_type": "string", "direction": "string", "description": "string", "target_name": "string or null"}],
     "source_type": "how this character knows it"
   }],
@@ -49,8 +49,8 @@ context, and supplied memories. Treat identity_description as the original
 psychological foundation. The current trait profile, goals, aspects, and later
 memories represent accumulated development and take precedence where they
 conflict with that foundation. Memories are subjective, not objective truth.
-Treat doubted, disproven, and superseded beliefs as historical beliefs rather
-than facts. If no memory is supplied, do not invent one. Traits bias behaviour;
+Use scene chronology to interpret beliefs; contradictory beliefs from different
+scenes may coexist. If no memory is supplied, do not invent one. Traits bias behaviour;
 aspects, goals, memories, and current context may outweigh them. Unknown point
 values are not midpoint values. Point 5 with mixed evidence is not proof of an
 inherently average disposition. Steadiness constrains consistency only when it

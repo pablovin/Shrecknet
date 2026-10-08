@@ -15,136 +15,81 @@ def _stable_profile_id(kind: str, value: str) -> str:
 
 
 def _apply_aspect_ops(
-    aspects: list[dict], updates: list, *, max_active: int | None = None,
+    aspects: list[dict], updates: list, *,
+    focused_ids: list[str] | None = None,
 ) -> None:
     for upd in updates:
         op = upd.operation.value
-        if op == "remove":
-            key = _profile_key(upd.name)
-            aspects[:] = [
-                a for a in aspects if _profile_key(a.get("name")) != key
-            ]
-        elif op == "update":
-            for a in aspects:
-                if _profile_key(a.get("name")) == _profile_key(upd.name):
-                    changes = {
-                        "justification": upd.justification,
-                        "confidence": upd.confidence,
-                        "evidence_ids": list(upd.evidence_ids),
-                    }
-                    for field in ("category", "description", "importance", "intensity"):
-                        value = getattr(upd, field)
-                        if value is not None:
-                            changes[field] = value
-                    a.update(changes)
-                    break
-            else:
-                aspects.append(dict(
-                    id=_stable_profile_id("aspect", upd.name),
-                    name=upd.name, category=upd.category or "identity",
-                    description=upd.description, importance=upd.importance or 3,
-                    intensity=upd.intensity, justification=upd.justification,
-                    confidence=upd.confidence, evidence_ids=list(upd.evidence_ids),
-                    _profile_is_new=True,
-                ))
-        elif op == "add":
+        target_id = upd.target_id or upd.candidate_id
+        existing = next((a for a in aspects if str(a.get("id")) == str(target_id)), None)
+        if op == "add":
             aspects.append(dict(
-                id=_stable_profile_id("aspect", upd.name),
+                id=upd.candidate_id or _stable_profile_id("aspect", upd.name),
                 name=upd.name, category=upd.category or "identity",
-                description=upd.description, importance=upd.importance or 3,
-                intensity=upd.intensity, justification=upd.justification,
-                confidence=upd.confidence, evidence_ids=list(upd.evidence_ids),
-                _profile_is_new=True,
+                description=upd.description, status=upd.status or "active",
+                in_focus=False, justification=upd.justification,
+                evidence_ids=list(upd.evidence_ids),
             ))
-    _retain_strongest_profile_items(
-        aspects, max_active=max_active, score_field="importance",
-        default_score=3,
-    )
+        elif existing is not None:
+            if op in ("update", "reinforce"):
+                if upd.name:
+                    existing["name"] = upd.name
+                if upd.description is not None:
+                    existing["description"] = upd.description
+                if upd.category is not None:
+                    existing["category"] = upd.category.value
+                existing["justification"] = upd.justification
+                existing["evidence_ids"] = sorted(set(existing.get("evidence_ids", [])) | set(upd.evidence_ids))
+            elif op == "status":
+                existing["justification"] = upd.justification
+                existing["evidence_ids"] = sorted(set(existing.get("evidence_ids", [])) | set(upd.evidence_ids))
+            if upd.status is not None:
+                existing["status"] = upd.status.value
+    if focused_ids is not None:
+        focused = set(focused_ids)
+        for item in aspects:
+            item["in_focus"] = str(item.get("id")) in focused
+    if sum(bool(a.get("in_focus")) for a in aspects if a.get("status", "active") == "active") > 10:
+        raise ValueError("focused aspect limit exceeded")
 
 
 def _apply_goal_ops(
-    goals: list[dict], updates: list, *, max_active: int | None = None,
+    goals: list[dict], updates: list, *,
+    focused_ids: list[str] | None = None,
 ) -> None:
     for upd in updates:
         op = upd.operation.value
-        if op in ("remove", "complete"):
-            key = _profile_key(upd.title)
-            goals[:] = [
-                g for g in goals if _profile_key(g.get("title")) != key
-            ]
-        elif op == "update":
-            for g in goals:
-                if _profile_key(g.get("title")) == _profile_key(upd.title):
-                    changes = {
-                        "justification": upd.justification,
-                        "confidence": upd.confidence,
-                        "evidence_ids": list(upd.evidence_ids),
-                    }
-                    for field in (
-                        "description", "goal_type", "priority", "commitment", "basis",
-                    ):
-                        value = getattr(upd, field)
-                        if value is not None:
-                            changes[field] = value
-                    g.update(changes)
-                    break
-            else:
-                goals.append(dict(
-                    id=_stable_profile_id("goal", upd.title),
-                    title=upd.title, description=upd.description or upd.title,
-                    goal_type=upd.goal_type or "desire",
-                    priority=50 if upd.priority is None else upd.priority,
-                    commitment=50 if upd.commitment is None else upd.commitment,
-                    basis=upd.basis or "inferred",
-                    justification=upd.justification, confidence=upd.confidence,
-                    evidence_ids=list(upd.evidence_ids or ["generated"]),
-                    _profile_is_new=True,
-                ))
-        elif op == "add":
+        target_id = upd.target_id or upd.candidate_id
+        existing = next((g for g in goals if str(g.get("id")) == str(target_id)), None)
+        if op == "add":
             goals.append(dict(
-                id=_stable_profile_id("goal", upd.title),
+                id=upd.candidate_id or _stable_profile_id("goal", upd.title),
                 title=upd.title, description=upd.description or upd.title,
-                goal_type=upd.goal_type or "desire",
-                priority=50 if upd.priority is None else upd.priority,
-                commitment=50 if upd.commitment is None else upd.commitment,
-                basis=upd.basis or "inferred",
-                justification=upd.justification, confidence=upd.confidence,
-                evidence_ids=list(upd.evidence_ids or ["generated"]),
-                _profile_is_new=True,
+                goal_type=upd.goal_type or "desire", status=upd.status or "active",
+                in_focus=False, justification=upd.justification,
+                evidence_ids=list(upd.evidence_ids),
             ))
-    _retain_strongest_profile_items(
-        goals, max_active=max_active, score_field="priority",
-        default_score=50,
-    )
-
-
-def _retain_strongest_profile_items(
-    items: list[dict],
-    *,
-    max_active: int | None,
-    score_field: str,
-    default_score: int,
-) -> None:
-    """Keep high-value active items, preferring newer items when scores tie."""
-    if max_active is None or len(items) <= max_active:
-        return
-
-    def score(item: dict) -> int:
-        value = item.get(score_field)
-        return default_score if value is None else int(value)
-
-    ranked = sorted(
-        enumerate(items),
-        key=lambda pair: (
-            score(pair[1]),
-            bool(pair[1].get("_profile_is_new")),
-            str(pair[1].get("created_at") or ""),
-            pair[0],
-        ),
-        reverse=True,
-    )
-    retained = {index for index, _item in ranked[:max_active]}
-    items[:] = [item for index, item in enumerate(items) if index in retained]
+        elif existing is not None:
+            if op in ("update", "reinforce"):
+                if upd.title:
+                    existing["title"] = upd.title
+                if upd.description is not None:
+                    existing["description"] = upd.description
+                if upd.goal_type is not None:
+                    existing["goal_type"] = upd.goal_type.value
+                existing["justification"] = upd.justification
+                existing["evidence_ids"] = sorted(set(existing.get("evidence_ids", [])) | set(upd.evidence_ids))
+            elif op == "status":
+                existing["justification"] = upd.justification
+                existing["evidence_ids"] = sorted(set(existing.get("evidence_ids", [])) | set(upd.evidence_ids))
+            if upd.status is not None:
+                existing["status"] = upd.status.value
+    if focused_ids is not None:
+        focused = set(focused_ids)
+        for item in goals:
+            item["in_focus"] = str(item.get("id")) in focused
+    if sum(bool(g.get("in_focus")) for g in goals if g.get("status", "active") == "active") > 10:
+        raise ValueError("focused goal limit exceeded")
 
 
 def _profile_key(value: Any) -> str:
@@ -163,8 +108,6 @@ def _build_timeline(
     *,
     initial_evidence: list[TraitEvidence] | None = None,
     starting_revision: int = 0,
-    max_aspects: int | None = None,
-    max_goals: int | None = None,
     source_groups: list[dict[str, Any]] | None = None,
 ) -> str:
     from app.services.character_agent_service import _normalize_name
@@ -178,11 +121,8 @@ def _build_timeline(
             name=a.get("name", ""),
             category=a.get("category", "identity"),
             description=a.get("description"),
-            importance=a.get("importance", 3),
-            intensity=a.get("intensity"),
-            justification=a.get("justification") or "Proposed aspect.",
-            confidence=a.get("confidence") or 0.5,
-            evidence_ids=a.get("evidence_ids") or ["generated"],
+            status=a.get("status", "active"), in_focus=bool(a.get("in_focus")),
+            justification=a.get("justification") or "", evidence_ids=a.get("evidence_ids") or [],
         )
 
     def map_goal(g: dict) -> EmbodimentGoalProposal:
@@ -191,12 +131,8 @@ def _build_timeline(
             title=g.get("title", ""),
             description=g.get("description") or g.get("title", ""),
             goal_type=g.get("goal_type", "desire"),
-            priority=g.get("priority", 50),
-            commitment=g.get("commitment", 50),
-            justification=g.get("justification") or "Proposed goal.",
-            confidence=g.get("confidence") or 0.5,
-            evidence_ids=g.get("evidence_ids") or ["generated"],
-            basis="inferred",
+            status=g.get("status", "active"), in_focus=bool(g.get("in_focus")),
+            justification=g.get("justification") or "", evidence_ids=g.get("evidence_ids") or [],
         )
 
     alias = str(canonical_identity.get("alias") or source_entity_alias)
@@ -273,10 +209,12 @@ def _build_timeline(
 
         cum_profile = br.trait_profile.model_copy(deep=True)
         _apply_aspect_ops(
-            cum_aspects, br.aspect_updates, max_active=max_aspects,
+            cum_aspects, br.aspect_updates,
+            focused_ids=br.focused_aspects,
         )
         _apply_goal_ops(
-            cum_goals, br.goal_updates, max_active=max_goals,
+            cum_goals, br.goal_updates,
+            focused_ids=br.focused_goals,
         )
 
         br_sub = getattr(br, "subtitle_change", None)
@@ -304,33 +242,28 @@ def _build_timeline(
 
         b_aspects: list[EmbodimentAspectProposal] = []
         for upd in br.aspect_updates:
-            if upd.operation.value in ("add", "update"):
+            if upd.operation.value in ("add", "update", "reinforce", "status"):
                 b_aspects.append(EmbodimentAspectProposal(
-                    suggestion_id=_id("aspect", upd.name),
+                    suggestion_id=upd.candidate_id or upd.target_id or _id("aspect", upd.name),
                     name=upd.name,
                     category=upd.category or "identity",
                     description=upd.description,
-                    importance=upd.importance or 3,
-                    intensity=upd.intensity,
+                    status=upd.status or "active", in_focus=False,
                     justification=upd.justification,
-                    confidence=upd.confidence,
-                    evidence_ids=list(upd.evidence_ids or ["generated"]),
+                    evidence_ids=list(upd.evidence_ids),
                 ))
 
         b_goals: list[EmbodimentGoalProposal] = []
         for upd in br.goal_updates:
-            if upd.operation.value in ("add", "update"):
+            if upd.operation.value in ("add", "update", "reinforce", "status"):
                 b_goals.append(EmbodimentGoalProposal(
-                    suggestion_id=_id("goal", upd.title),
+                    suggestion_id=upd.candidate_id or upd.target_id or _id("goal", upd.title),
                     title=upd.title,
                     description=upd.description or upd.title,
                     goal_type=upd.goal_type or "desire",
-                    priority=upd.priority or 50,
-                    commitment=upd.commitment or 50,
+                    status=upd.status or "active", in_focus=False,
                     justification=upd.justification,
-                    confidence=upd.confidence,
-                    evidence_ids=list(upd.evidence_ids or ["generated"]),
-                    basis=upd.basis or "inferred",
+                    evidence_ids=list(upd.evidence_ids),
                 ))
 
         source_projections.append(CharacterSourceProjection(
@@ -345,10 +278,6 @@ def _build_timeline(
                     source_digest=br.scene_input_digests.get(p.scene_id),
                     perspective=p.perspective,
                     emotions=p.emotions, beliefs=p.beliefs,
-                    impacts=[ProjectedCharacterImpact(
-                        **impact.model_dump(mode="json"),
-                        target=target_references[impact.target_id],
-                    ) for impact in p.impacts],
                 )
                 for p in br.perspectives
             ],
@@ -359,9 +288,13 @@ def _build_timeline(
             source_group=source_reference,
             aspects=b_aspects,
             goals=b_goals,
+            aspect_operations=list(br.aspect_updates),
+            goal_operations=list(br.goal_updates),
+            focused_aspects=list(br.focused_aspects),
+            focused_goals=list(br.focused_goals),
             completed_goal_titles=[
                 upd.title for upd in br.goal_updates
-                if upd.operation.value == "complete"
+                if upd.status is not None and upd.status.value == "completed"
             ],
             subtitle_change=(getattr(br, "subtitle_change", None)
                              or SubtitleChangeProposal()),

@@ -30,7 +30,8 @@ from app.schemas.character_agent import (
     CharacterAspectAssignmentCreate, CharacterAspectAssignmentRead,
     CharacterAspectAssignmentUpdate, CharacterAspectCreate, CharacterAspectRead,
     CharacterAspectUpdate, CharacterGoalAssignmentCreate, CharacterGoalCreate,
-    CharacterGoalRead, CharacterGoalUpdate,
+    CharacterGoalRead, CharacterGoalAssignmentRead, CharacterGoalUpdate,
+    CharacterGoalAssignmentUpdate,
     CharacterEmbodimentCandidatePage,
     CharacterAgentQueryJobRead, CharacterAgentQueryQueued, CharacterAgentQueryRequest,
     EmbodimentDraftCreate, EmbodimentDraftRead, EmbodimentDraftStart,
@@ -779,16 +780,26 @@ async def unassign_aspect(agent_id: str, aspect_id: str, actor: User = Depends(g
     return Response(status_code=204)
 
 
-@router.get("/{agent_id}/goals", response_model=list[CharacterGoalRead])
+@router.get("/{agent_id}/goals", response_model=list[CharacterGoalAssignmentRead])
 async def list_agent_goals(agent_id: str, actor: User = Depends(get_current_user), svc: CharacterAgentService = Depends(service)):
     return await svc.list_agent_goals(agent_id, public_only=not _is_admin(actor))
 
 
-@router.post("/{agent_id}/goals", response_model=CharacterGoalRead, status_code=201)
+@router.post("/{agent_id}/goals", response_model=CharacterGoalAssignmentRead, status_code=201)
 async def pursue_goal(agent_id: str, payload: CharacterGoalAssignmentCreate, actor: User = Depends(get_current_admin_user),
                       svc: CharacterAgentService = Depends(service), audit: AuditService = Depends(get_audit_service)):
     result = await svc.pursue_goal(agent_id, payload.character_goal_id)
     await audit_event(audit, actor, AuditAction.CREATE, AuditEntityType.CHARACTER_GOAL_PURSUIT, payload.character_goal_id)
+    return result
+
+
+@router.patch("/{agent_id}/goals/{goal_id}", response_model=CharacterGoalAssignmentRead)
+async def update_goal_assignment(agent_id: str, goal_id: str, payload: CharacterGoalAssignmentUpdate,
+                                 actor: User = Depends(get_current_admin_user),
+                                 svc: CharacterAgentService = Depends(service),
+                                 audit: AuditService = Depends(get_audit_service)):
+    result = await svc.update_goal_assignment(agent_id, goal_id, payload)
+    await audit_event(audit, actor, AuditAction.UPDATE, AuditEntityType.CHARACTER_GOAL_PURSUIT, goal_id)
     return result
 
 

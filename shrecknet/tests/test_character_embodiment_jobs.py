@@ -210,12 +210,12 @@ def test_embodiment_start_contract_supports_update_and_confirmed_replacement():
 def test_character_agent_update_contract_accepts_reviewed_draft_payload():
     update = CharacterAgentEmbodimentUpdate(
         embodiment_draft_id="draft-1",
-        aspects=[{"name": "Protective", "category": "attitude", "importance": 4}],
+        aspects=[{"name": "I protect the group", "category": "attitude", "in_focus": True}],
         goals=[{"title": "Keep the group safe", "goal_type": "obligation"}],
     )
 
     assert update.embodiment_draft_id == "draft-1"
-    assert update.aspects[0].name == "Protective"
+    assert update.aspects[0].name == "I protect the group"
     assert update.goals[0].title == "Keep the group safe"
 
 
@@ -253,7 +253,7 @@ async def test_reviewed_update_appends_once_without_replacing_the_agent():
         target_character_agent_id="agent-1", created_by_user_id=11,
         ontology_id=7, source_entity_id="entity-1", timeline_projection=timeline.model_dump_json(),
         source_evidence_ids="[]", provider="provider", model="model", prompt_version="v1",
-        active_entity_key="entity-1",
+        active_entity_key="entity-1", generated_proposal="{}",
     )
     agent = {
         "id": "agent-1", "ontology_id": 7, "embodied_entity_instance_id": "entity-1",
@@ -305,10 +305,10 @@ async def test_embodiment_job_progress_uses_three_consistent_source_steps(monkey
     await progress.chunk_complete(0, 0)
     await progress.stage(0, [3])
     assert published[-1]["bundles"][0]["parallel"]["active_branches"] == [
-        "Deterministic source reduction"
+        "Trait interpretation and aggregation"
     ]
     await progress.complete(0)
     bundle = published[-1]["bundles"][0]
     assert bundle["done_steps"] == [1, 2, 3]
     assert bundle["active_steps"] == []
-    assert bundle["chunks"][0]["done_steps"] == [1, 2]
+    assert bundle["chunks"][0]["done_steps"] == [1, 2, 3, 4]

@@ -67,15 +67,6 @@ class ScenePerspectiveSourceType(str, Enum):
     UNKNOWN = "unknown"
 
 
-class CharacterBeliefStatus(str, Enum):
-    SUSPECTED = "suspected"
-    BELIEVED = "believed"
-    CONFIRMED = "confirmed"
-    DOUBTED = "doubted"
-    DISPROVEN = "disproven"
-    SUPERSEDED = "superseded"
-
-
 class CharacterImpactType(str, Enum):
     GOAL_CHANGE = "goal_change"
     ASPECT_CHANGE = "aspect_change"
@@ -238,11 +229,10 @@ class EmbodimentAspectProposal(_StrictModel):
     name: str = Field(..., min_length=1, max_length=255)
     category: CharacterAspectCategory
     description: str | None = None
-    importance: int = Field(..., ge=1, le=5)
-    intensity: int | None = Field(None, ge=0, le=100)
-    justification: str = Field(..., min_length=1)
-    confidence: float = Field(..., ge=0, le=1)
-    evidence_ids: list[str] = Field(..., min_length=1)
+    status: CharacterAspectStatus = CharacterAspectStatus.ACTIVE
+    in_focus: bool = True
+    justification: str = Field(default="", max_length=500)
+    evidence_ids: list[str] = Field(default_factory=list)
 
 
 class EmbodimentGoalProposal(_StrictModel):
@@ -251,12 +241,9 @@ class EmbodimentGoalProposal(_StrictModel):
     description: str = Field(..., min_length=1)
     goal_type: CharacterGoalType
     status: CharacterGoalStatus = CharacterGoalStatus.ACTIVE
-    priority: int = Field(..., ge=0, le=100)
-    commitment: int = Field(..., ge=0, le=100)
-    justification: str = Field(..., min_length=1)
-    confidence: float = Field(..., ge=0, le=1)
-    evidence_ids: list[str] = Field(..., min_length=1)
-    basis: Literal["explicit", "inferred"]
+    in_focus: bool = True
+    justification: str = Field(default="", max_length=500)
+    evidence_ids: list[str] = Field(default_factory=list)
 
 
 class EmbodimentAspectsProposal(_StrictModel):
@@ -286,6 +273,10 @@ class EmbodimentProposal(_StrictModel):
         ]
         if len(identifiers) != len(set(identifiers)):
             raise ValueError("aspect and goal suggestion IDs must be unique")
+        if sum(item.status == CharacterAspectStatus.ACTIVE and item.in_focus for item in self.aspects) > 10:
+            raise ValueError("at most ten aspects may be in focus")
+        if sum(item.status == CharacterGoalStatus.ACTIVE and item.in_focus for item in self.goals) > 10:
+            raise ValueError("at most ten goals may be in focus")
         return self
 
 
@@ -294,11 +285,10 @@ class CharacterAgentEmbeddedAspect(_StrictModel):
     name: str = Field(..., min_length=1, max_length=255)
     category: CharacterAspectCategory
     description: str | None = None
-    importance: int = Field(..., ge=1, le=5)
-    intensity: int | None = Field(None, ge=0, le=100)
+    status: CharacterAspectStatus = CharacterAspectStatus.ACTIVE
+    in_focus: bool = True
     justification: str | None = None
     evidence_ids: list[str] = Field(default_factory=list)
-    confidence: float | None = Field(None, ge=0, le=1)
 
 
 class CharacterAgentEmbeddedGoal(_StrictModel):
@@ -307,18 +297,23 @@ class CharacterAgentEmbeddedGoal(_StrictModel):
     description: str | None = None
     goal_type: CharacterGoalType
     status: CharacterGoalStatus = CharacterGoalStatus.ACTIVE
-    priority: int = Field(50, ge=0, le=100)
-    commitment: int = Field(50, ge=0, le=100)
+    in_focus: bool = True
     justification: str | None = None
-    basis: Literal["explicit", "inferred"] | None = None
     evidence_ids: list[str] = Field(default_factory=list)
-    confidence: float | None = Field(None, ge=0, le=1)
 
 
 class CharacterAgentCreateRequest(CharacterAgentCreate):
     embodiment_draft_id: str | None = Field(None, min_length=1)
     aspects: list[CharacterAgentEmbeddedAspect] = Field(default_factory=list)
     goals: list[CharacterAgentEmbeddedGoal] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_focus_capacity(self):
+        if sum(item.status == CharacterAspectStatus.ACTIVE and item.in_focus for item in self.aspects) > 10:
+            raise ValueError("at most ten aspects may be in focus")
+        if sum(item.status == CharacterGoalStatus.ACTIVE and item.in_focus for item in self.goals) > 10:
+            raise ValueError("at most ten goals may be in focus")
+        return self
 
 
 class CharacterAgentEmbodimentUpdate(CharacterAgentUpdate):
@@ -330,6 +325,10 @@ class CharacterAgentEmbodimentUpdate(CharacterAgentUpdate):
     def require_reviewed_assignments(self):
         if self.embodiment_draft_id and (self.aspects is None or self.goals is None):
             raise ValueError("reviewed embodiment updates must include aspects and goals")
+        if self.aspects is not None and sum(item.status == CharacterAspectStatus.ACTIVE and item.in_focus for item in self.aspects) > 10:
+            raise ValueError("at most ten aspects may be in focus")
+        if self.goals is not None and sum(item.status == CharacterGoalStatus.ACTIVE and item.in_focus for item in self.goals) > 10:
+            raise ValueError("at most ten goals may be in focus")
         return self
 
 
@@ -390,7 +389,6 @@ class CharacterAspectCreate(_StrictModel):
     name: str = Field(..., min_length=1, max_length=255)
     category: CharacterAspectCategory
     description: str | None = None
-    status: CharacterAspectStatus = CharacterAspectStatus.ACTIVE
     obtained_from_scene_id: str | None = None
 
     @field_validator("name")
@@ -406,7 +404,6 @@ class CharacterAspectUpdate(_StrictModel):
     name: str | None = Field(None, min_length=1, max_length=255)
     category: CharacterAspectCategory | None = None
     description: str | None = None
-    status: CharacterAspectStatus | None = None
     obtained_from_scene_id: str | None = None
 
     @field_validator("name")
@@ -427,14 +424,20 @@ class CharacterAspectRead(_StrictModel):
     normalized_name: str
     category: CharacterAspectCategory
     description: str | None = None
-    status: CharacterAspectStatus
-    justification: str | None = None
-    confidence: float | None = Field(None, ge=0, le=1)
     evidence_ids: list[str] = Field(default_factory=list)
     generated_by_embodiment_draft_id: str | None = None
     obtained_from_scene_id: str | None = None
     created_at: datetime
     updated_at: datetime
+
+    @model_validator(mode="before")
+    @classmethod
+    def project_legacy_definition(cls, value: Any) -> Any:
+        if isinstance(value, dict):
+            value = dict(value)
+            for key in ("status", "importance", "intensity", "confidence", "justification"):
+                value.pop(key, None)
+        return value
 
     @field_validator("evidence_ids", mode="before")
     @classmethod
@@ -444,27 +447,20 @@ class CharacterAspectRead(_StrictModel):
 
 class CharacterAspectAssignmentCreate(_StrictModel):
     character_aspect_id: str
-    importance: int = Field(..., ge=1, le=5)
-    intensity: int | None = Field(None, ge=0, le=100)
-    notes: str | None = None
     status: CharacterAspectStatus = CharacterAspectStatus.ACTIVE
+    in_focus: bool = True
 
 
 class CharacterAspectAssignmentUpdate(_StrictModel):
-    importance: int | None = Field(None, ge=1, le=5)
-    intensity: int | None = Field(None, ge=0, le=100)
-    notes: str | None = None
     status: CharacterAspectStatus | None = None
+    in_focus: bool | None = None
 
 
 class CharacterAspectAssignmentRead(_StrictModel):
     aspect: CharacterAspectRead
-    importance: int
-    intensity: int | None = None
-    notes: str | None = None
     status: CharacterAspectStatus
+    in_focus: bool
     justification: str | None = None
-    confidence: float | None = Field(None, ge=0, le=1)
     evidence_ids: list[str] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
@@ -480,9 +476,6 @@ class CharacterGoalCreate(_StrictModel):
     title: str = Field(..., min_length=1, max_length=255)
     description: str | None = None
     goal_type: CharacterGoalType
-    status: CharacterGoalStatus = CharacterGoalStatus.ACTIVE
-    priority: int = Field(50, ge=0, le=100)
-    commitment: int = Field(50, ge=0, le=100)
     obtained_from_scene_id: str | None = None
 
     @field_validator("title")
@@ -498,9 +491,6 @@ class CharacterGoalUpdate(_StrictModel):
     title: str | None = Field(None, min_length=1, max_length=255)
     description: str | None = None
     goal_type: CharacterGoalType | None = None
-    status: CharacterGoalStatus | None = None
-    priority: int | None = Field(None, ge=0, le=100)
-    commitment: int | None = Field(None, ge=0, le=100)
     obtained_from_scene_id: str | None = None
 
     @field_validator("title")
@@ -520,15 +510,33 @@ class CharacterGoalRead(_StrictModel):
     title: str
     description: str | None = None
     goal_type: CharacterGoalType
-    status: CharacterGoalStatus
-    priority: int
-    commitment: int
-    justification: str | None = None
-    confidence: float | None = Field(None, ge=0, le=1)
     evidence_ids: list[str] = Field(default_factory=list)
-    basis: Literal["explicit", "inferred"] | None = None
     generated_by_embodiment_draft_id: str | None = None
     obtained_from_scene_id: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+    @model_validator(mode="before")
+    @classmethod
+    def project_legacy_definition(cls, value: Any) -> Any:
+        if isinstance(value, dict):
+            value = dict(value)
+            for key in ("status", "priority", "commitment", "confidence", "basis", "justification"):
+                value.pop(key, None)
+        return value
+
+    @field_validator("evidence_ids", mode="before")
+    @classmethod
+    def parse_evidence_ids(cls, value: Any) -> list[str]:
+        return _evidence_ids(value)
+
+
+class CharacterGoalAssignmentRead(_StrictModel):
+    goal: CharacterGoalRead
+    status: CharacterGoalStatus
+    in_focus: bool
+    justification: str | None = None
+    evidence_ids: list[str] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
 
@@ -536,6 +544,11 @@ class CharacterGoalRead(_StrictModel):
     @classmethod
     def parse_evidence_ids(cls, value: Any) -> list[str]:
         return _evidence_ids(value)
+
+
+class CharacterGoalAssignmentUpdate(_StrictModel):
+    status: CharacterGoalStatus | None = None
+    in_focus: bool | None = None
 
 
 class _NarrativeFields(_StrictModel):
@@ -572,13 +585,11 @@ class EmotionalInterpretationRead(EmotionalInterpretationCreate):
 class CharacterBeliefCreate(_NarrativeFields):
     statement: str = Field(..., min_length=1)
     confidence: int = Field(..., ge=0, le=100)
-    status: CharacterBeliefStatus
 
 
 class CharacterBeliefUpdate(_NarrativeFields):
     statement: str | None = Field(None, min_length=1)
     confidence: int | None = Field(None, ge=0, le=100)
-    status: CharacterBeliefStatus | None = None
 
 
 class CharacterBeliefRead(CharacterBeliefCreate):
@@ -586,6 +597,14 @@ class CharacterBeliefRead(CharacterBeliefCreate):
     ontology_id: int
     created_at: datetime
     updated_at: datetime
+
+    @model_validator(mode="before")
+    @classmethod
+    def project_legacy_status(cls, value: Any) -> Any:
+        if isinstance(value, dict):
+            value = dict(value)
+            value.pop("status", None)
+        return value
 
 
 class CharacterImpactCreate(_NarrativeFields):
@@ -781,6 +800,10 @@ class CharacterSourceProjection(_StrictModel):
     aspects: list[EmbodimentAspectProposal] = Field(default_factory=list)
     goals: list[EmbodimentGoalProposal] = Field(default_factory=list)
     completed_goal_titles: list[str] = Field(default_factory=list)
+    aspect_operations: list[AspectUpdateData] = Field(default_factory=list)
+    goal_operations: list[GoalUpdateData] = Field(default_factory=list)
+    focused_aspects: list[str] = Field(default_factory=list, max_length=10)
+    focused_goals: list[str] = Field(default_factory=list, max_length=10)
     subtitle_change: SubtitleChangeProposal = Field(default_factory=SubtitleChangeProposal)
     llm_calls: list["LLMCallRecord"] = Field(default_factory=list)
     resulting_revision: CharacterIdentityRevisionProjection
@@ -1015,55 +1038,13 @@ class EmotionalInterpretationOutput(_StrictModel):
 class CharacterBeliefOutput(_StrictModel):
     statement: str = Field(..., min_length=1)
     confidence: int = Field(..., ge=0, le=100)
-    status: CharacterBeliefStatus
 
 
-class CharacterImpactOutput(_StrictModel):
-    impact_type: CharacterImpactType
-    target_id: str = Field(..., min_length=1)
-    direction: CharacterImpactDirection
-    magnitude: int = Field(..., ge=0, le=100)
-    description: str = Field(..., min_length=1)
-
-    @model_validator(mode="after")
-    def valid_direction(self):
-        permitted = (
-            {CharacterImpactDirection.ADVANCED, CharacterImpactDirection.THREATENED}
-            if self.impact_type == CharacterImpactType.GOAL_CHANGE
-            else {
-                CharacterImpactDirection.CREATED,
-                CharacterImpactDirection.REINFORCED,
-                CharacterImpactDirection.INVALIDATED,
-            }
-        )
-        if self.direction not in permitted:
-            raise ValueError("impact direction is incompatible with impact_type")
-        return self
-
-
-class SceneAspectSignal(_StrictModel):
-    """Evidence that one scene may justify a durable aspect; never a mutation."""
-    name: str = Field(..., min_length=1, max_length=255)
-    category: CharacterAspectCategory
-    description: str = Field(..., min_length=1)
-    importance: int = Field(..., ge=1, le=5)
-    justification: str = Field(..., min_length=1)
-    confidence: float = Field(..., ge=0, le=1)
-    evidence_ids: list[str] = Field(..., min_length=1)
-
-
-class SceneGoalSignal(_StrictModel):
-    """Evidence that one scene may add or conclusively complete a durable goal."""
-    operation: Literal["add", "complete"] = "add"
-    title: str = Field(..., min_length=1, max_length=255)
-    description: str = Field(..., min_length=1)
-    goal_type: CharacterGoalType
-    priority: int = Field(..., ge=0, le=100)
-    commitment: int = Field(..., ge=0, le=100)
-    basis: Literal["explicit", "inferred"]
-    justification: str = Field(..., min_length=1)
-    confidence: float = Field(..., ge=0, le=1)
-    evidence_ids: list[str] = Field(..., min_length=1)
+class ProfileEventOutput(_StrictModel):
+    kind: Literal["aspect", "goal"]
+    description: str = Field(..., min_length=1, max_length=300)
+    scene_id: str | None = None
+    evidence_ids: list[str] = Field(default_factory=list)
 
 
 class ScenePerspectiveOutput(_StrictModel):
@@ -1082,10 +1063,8 @@ class SceneEnrichmentOutput(_StrictModel):
     # corrected rather than silently defaulting to an empty list.
     emotions: list[EmotionalInterpretationOutput] = Field(...)
     beliefs: list[CharacterBeliefOutput] = Field(...)
-    impacts: list[CharacterImpactOutput] = Field(...)
+    profile_events: list[ProfileEventOutput] = Field(default_factory=list)
     trait_candidates: list[TraitObservation] = Field(...)
-    aspect_signals: list[SceneAspectSignal] = Field(..., max_length=1)
-    goal_signals: list[SceneGoalSignal] = Field(..., max_length=1)
 
 class SceneEnrichmentsOutput(_StrictModel):
     scene_enrichments: list[SceneEnrichmentOutput]
@@ -1094,10 +1073,8 @@ class SceneEnrichmentsOutput(_StrictModel):
 class ScenePerspectiveBundleOutput(ScenePerspectiveOutput):
     emotions: list[EmotionalInterpretationOutput] = Field(default_factory=list)
     beliefs: list[CharacterBeliefOutput] = Field(default_factory=list)
-    impacts: list[CharacterImpactOutput] = Field(default_factory=list)
+    profile_events: list[ProfileEventOutput] = Field(default_factory=list)
     trait_candidates: list[TraitObservation] = Field(default_factory=list)
-    aspect_signals: list[SceneAspectSignal] = Field(default_factory=list)
-    goal_signals: list[SceneGoalSignal] = Field(default_factory=list)
 
 
 class EmbodimentObservationsOutput(_StrictModel):
@@ -1116,54 +1093,43 @@ class EmbodimentObservationsOutput(_StrictModel):
 class AspectUpdateOperationType(str, Enum):
     ADD = "add"
     UPDATE = "update"
-    REMOVE = "remove"
+    STATUS = "status"
+    REINFORCE = "reinforce"
 
 
 class AspectUpdateData(_StrictModel):
     operation: AspectUpdateOperationType
+    target_id: str | None = None
+    candidate_id: str | None = None
     name: str = Field(..., min_length=1, max_length=255)
     category: CharacterAspectCategory | None = None
     description: str | None = None
-    importance: int | None = Field(None, ge=1, le=5)
-    intensity: int | None = Field(None, ge=0, le=100)
+    status: CharacterAspectStatus | None = None
+    in_focus: bool | None = None
     justification: str = Field(..., min_length=1)
-    confidence: float = Field(..., ge=0, le=1)
     evidence_ids: list[str] = Field(..., min_length=1)
-
-
-class AspectUpdateOutput(_StrictModel):
-    aspect_updates: list[AspectUpdateData] = Field(default_factory=list)
+    event_references: list[int] = Field(default_factory=list)
 
 
 class GoalUpdateOperationType(str, Enum):
     ADD = "add"
     UPDATE = "update"
-    REMOVE = "remove"
-    COMPLETE = "complete"
+    STATUS = "status"
+    REINFORCE = "reinforce"
 
 
 class GoalUpdateData(_StrictModel):
     operation: GoalUpdateOperationType
+    target_id: str | None = None
+    candidate_id: str | None = None
     title: str = Field(..., min_length=1, max_length=255)
     description: str | None = None
     goal_type: CharacterGoalType | None = None
-    priority: int | None = Field(None, ge=0, le=100)
-    commitment: int | None = Field(None, ge=0, le=100)
-    basis: Literal["explicit", "inferred"] | None = None
+    status: CharacterGoalStatus | None = None
+    in_focus: bool | None = None
     justification: str = Field(..., min_length=1)
-    confidence: float = Field(..., ge=0, le=1)
     evidence_ids: list[str] = Field(..., min_length=1)
-
-
-class GoalUpdateOutput(_StrictModel):
-    goal_updates: list[GoalUpdateData] = Field(default_factory=list)
-
-
-class ProfileUpdateOutput(_StrictModel):
-    """One atomic, validated update of the persistent character profile."""
-
-    aspect_updates: list[AspectUpdateData] = Field(default_factory=list, max_length=2)
-    goal_updates: list[GoalUpdateData] = Field(default_factory=list, max_length=1)
+    event_references: list[int] = Field(default_factory=list)
 
 
 class LLMCallRecord(_StrictModel):
@@ -1184,12 +1150,12 @@ class EmbodyAgentAnalysis(_StrictModel):
 
     source_entity_id: str
     source_entity_alias: str
+    identity_description: IdentityDescription | None = None
     perspectives: list[ScenePerspectiveBundleOutput]
     observations: EmbodimentObservationsOutput
     subtitle_change: SubtitleChangeProposal = Field(default_factory=SubtitleChangeProposal)
     evidence_ids: set[str] = Field(default_factory=set)
-    aspect_signals: list[SceneAspectSignal] = Field(default_factory=list)
-    goal_signals: list[SceneGoalSignal] = Field(default_factory=list)
+    profile_events: list[ProfileEventOutput] = Field(default_factory=list)
     llm_calls: list[LLMCallRecord]
     observations_unavailable: bool = False
 
@@ -1206,6 +1172,8 @@ class EmbodyAgentResult(_StrictModel):
     batch_id: str | None = None
     aspect_updates: list[AspectUpdateData]
     goal_updates: list[GoalUpdateData]
+    focused_aspects: list[str] = Field(default_factory=list, max_length=10)
+    focused_goals: list[str] = Field(default_factory=list, max_length=10)
     subtitle_change: SubtitleChangeProposal = Field(default_factory=SubtitleChangeProposal)
     llm_calls: list[LLMCallRecord]
 

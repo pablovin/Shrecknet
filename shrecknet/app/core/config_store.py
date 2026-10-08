@@ -250,8 +250,6 @@ class Settings(BaseSettings):
     model_character_agent_scene_interpretation: LLMModelTarget = Field(
         default_factory=lambda: LLMModelTarget(provider="", name="")
     )
-    character_agent_embodiment_max_aspects: int = Field(12, ge=0, le=50)
-    character_agent_embodiment_max_goals: int = Field(8, ge=0, le=50)
     character_agent_embodiment_semantic_correction_attempts: int = Field(
         1, ge=0, le=3
     )

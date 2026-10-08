@@ -24,7 +24,7 @@ from app.schemas.character_agent import (
     CharacterAspectAssignmentCreate, CharacterAspectAssignmentRead,
     CharacterAspectAssignmentUpdate, CharacterAspectCreate, CharacterAspectRead,
     CharacterAspectUpdate, CharacterGoalCreate, CharacterGoalRead,
-    CharacterGoalUpdate, CharacterEmbodimentCandidate,
+    CharacterGoalUpdate, CharacterGoalAssignmentRead, CharacterGoalAssignmentUpdate, CharacterEmbodimentCandidate,
     CharacterEmbodimentCandidatePage,
     CharacterBeliefCreate, CharacterBeliefRead, CharacterBeliefUpdate,
     CharacterImpactCreate, CharacterImpactRead, CharacterImpactUpdate,
@@ -387,12 +387,10 @@ class CharacterAgentService:
                 definition_props = {
                     "id": aspect_id, "ontology_id": ontology_id, "name": item["name"],
                     "normalized_name": normalized, "category": item["category"],
-                    "description": item.get("description"), "status": "active",
+                    "description": item.get("description"),
                     "created_at": timestamp, "updated_at": timestamp,
                     "generated_by_embodiment_draft_id": draft_id,
                     "evidence_ids": json.dumps(item["evidence_ids"]),
-                    "confidence": item.get("confidence"),
-                    "justification": item.get("justification"),
                 }
                 aspect_result = await tx.run(
                     """
@@ -400,15 +398,17 @@ class CharacterAgentService:
                     MERGE (aspect:CharacterAspect {ontology_id:$ontology_id, normalized_name:$normalized})
                     ON CREATE SET aspect=$props
                     MERGE (agent)-[rel:HAS_ASPECT]->(aspect)
-                    ON CREATE SET rel.importance=$importance, rel.intensity=$intensity,
-                      rel.status='active', rel.created_at=$timestamp, rel.updated_at=$timestamp,
-                      rel.evidence_ids=$evidence_ids, rel.confidence=$confidence,
+                    ON CREATE SET rel.status=$status, rel.in_focus=$in_focus,
+                      rel.name=$name, rel.category=$category, rel.description=$description,
+                      rel.created_at=$timestamp, rel.updated_at=$timestamp,
+                      rel.evidence_ids=$evidence_ids,
                       rel.justification=$justification
                     RETURN aspect.id AS id
                     """, agent_id=node_id, ontology_id=ontology_id, normalized=normalized,
-                    props=definition_props, importance=item["importance"],
-                    intensity=item.get("intensity"), timestamp=timestamp,
-                    evidence_ids=json.dumps(item["evidence_ids"]), confidence=item.get("confidence"),
+                    props=definition_props, status=item["status"], in_focus=item["in_focus"],
+                    name=item["name"], category=item["category"], description=item.get("description"),
+                    timestamp=timestamp,
+                    evidence_ids=json.dumps(item["evidence_ids"]),
                     justification=item.get("justification"),
                 )
                 aspect_row = await aspect_result.single()
@@ -435,27 +435,24 @@ class CharacterAgentService:
                         props={
                             "id": goal_id, "ontology_id": ontology_id, "title": item["title"],
                             "description": item["description"], "goal_type": item["goal_type"],
-                            "status": item["status"], "priority": item["priority"],
-                            "commitment": item["commitment"], "created_at": timestamp,
+                            "created_at": timestamp,
                             "updated_at": timestamp, "generated_by_embodiment_draft_id": draft_id,
                             "evidence_ids": json.dumps(item["evidence_ids"]),
-                            "confidence": item.get("confidence"), "basis": item.get("basis"),
-                            "justification": item.get("justification"),
                         },
                     )
                 await tx.run(
                     """
                     MATCH (agent:CharacterAgent {id:$agent_id}), (goal:CharacterGoal {id:$goal_id})
                     MERGE (agent)-[rel:PURSUES]->(goal)
-                    ON CREATE SET rel.created_at=$timestamp, rel.evidence_ids=$evidence_ids,
-                      rel.confidence=$confidence, rel.justification=$justification,
-                      rel.status=$status, rel.priority=$priority, rel.commitment=$commitment
+                    ON CREATE SET rel.created_at=$timestamp, rel.updated_at=$timestamp,
+                      rel.evidence_ids=$evidence_ids, rel.justification=$justification,
+                      rel.status=$status, rel.in_focus=$in_focus,
+                      rel.title=$title, rel.description=$description, rel.goal_type=$goal_type
                     """, agent_id=node_id, goal_id=goal_id, timestamp=timestamp,
                     evidence_ids=json.dumps(item["evidence_ids"]),
-                    confidence=item.get("confidence"),
                     justification=item.get("justification"),
-                    status=item["status"], priority=item["priority"],
-                    commitment=item["commitment"],
+                    status=item["status"], in_focus=item["in_focus"],
+                    title=item["title"], description=item["description"], goal_type=item["goal_type"],
                 )
                 profile_target_ids[
                     str(item.get("suggestion_id") or item["title"])
@@ -555,28 +552,30 @@ class CharacterAgentService:
             CALL {
               WITH agent
               OPTIONAL MATCH (agent)-[assignment:HAS_ASPECT]->(aspect:CharacterAspect)
-              WHERE aspect.status = 'active' AND coalesce(assignment.status, 'active') = 'active'
+              WHERE coalesce(assignment.status, aspect.status, 'active') = 'active'
+                AND coalesce(assignment.in_focus, true) = true
               WITH aspect, assignment
-              ORDER BY assignment.importance DESC, assignment.intensity DESC, aspect.id ASC
+              ORDER BY assignment.updated_at DESC, assignment.created_at DESC, aspect.id ASC
               RETURN collect(CASE WHEN aspect IS NULL THEN null ELSE {
-                id: aspect.id, name: aspect.name, category: aspect.category,
-                description: aspect.description, importance: assignment.importance,
-                intensity: assignment.intensity, notes: assignment.notes
+                id: aspect.id, name: coalesce(assignment.name, aspect.name),
+                category: coalesce(assignment.category, aspect.category),
+                description: coalesce(assignment.description, aspect.description),
+                status: coalesce(assignment.status, aspect.status, 'active'), in_focus: true
               } END) AS aspects
             }
             CALL {
               WITH agent
               OPTIONAL MATCH (agent)-[pursuit:PURSUES]->(goal:CharacterGoal)
-              WHERE coalesce(pursuit.status, goal.status) = 'active'
+              WHERE coalesce(pursuit.status, goal.status, 'active') = 'active'
+                AND coalesce(pursuit.in_focus, true) = true
               WITH goal, pursuit
-              // Legacy fallback was: ORDER BY goal.priority DESC
-              ORDER BY coalesce(pursuit.priority, goal.priority) DESC,
-                       coalesce(pursuit.commitment, goal.commitment) DESC, goal.id ASC
+              ORDER BY pursuit.updated_at DESC, pursuit.created_at DESC, goal.id ASC
               RETURN collect(CASE WHEN goal IS NULL THEN null ELSE {
-                id: goal.id, title: goal.title, description: goal.description,
-                goal_type: goal.goal_type, status: coalesce(pursuit.status, goal.status),
-                priority: coalesce(pursuit.priority, goal.priority),
-                commitment: coalesce(pursuit.commitment, goal.commitment)
+                id: goal.id, title: coalesce(pursuit.title, goal.title),
+                description: coalesce(pursuit.description, goal.description),
+                goal_type: coalesce(pursuit.goal_type, goal.goal_type),
+                status: coalesce(pursuit.status, goal.status, 'active'),
+                in_focus: true
               } END) AS goals
             }
             CALL {
@@ -598,7 +597,7 @@ class CharacterAgentService:
                 emotions: [(perspective)-[:EVOKES]->(emotion:EmotionalInterpretation) |
                   {description: emotion.description, arousal: emotion.arousal, valence: emotion.valence}],
                 beliefs: [(perspective)-[:FORMS_BELIEF]->(belief:CharacterBelief) |
-                  {statement: belief.statement, status: belief.status, confidence: belief.confidence}],
+                  {statement: belief.statement, confidence: belief.confidence}],
                 impacts: [(perspective)-[:HAS_IMPACT]->(impact:CharacterImpact)-[:AFFECTS]->(target) |
                   {impact_type: impact.impact_type, direction: impact.direction,
                    description: impact.description, target_name: coalesce(target.title, target.name)}]
@@ -800,12 +799,12 @@ class CharacterAgentService:
             # becomes the current assignment snapshot in one graph transaction.
             await tx.run(
                 "MATCH (agent:CharacterAgent {id:$id})-[rel:HAS_ASPECT]->() "
-                "SET rel.status='inactive', rel.updated_at=$timestamp",
+                "SET rel.in_focus=false, rel.updated_at=$timestamp",
                 id=node_id, timestamp=timestamp,
             )
             await tx.run(
                 "MATCH (agent:CharacterAgent {id:$id})-[rel:PURSUES]->() "
-                "SET rel.status='superseded', rel.updated_at=$timestamp",
+                "SET rel.in_focus=false, rel.updated_at=$timestamp",
                 id=node_id, timestamp=timestamp,
             )
             for item in aspects:
@@ -814,17 +813,17 @@ class CharacterAgentService:
                     "MATCH (agent:CharacterAgent {id:$agent_id}) "
                     "MERGE (aspect:CharacterAspect {ontology_id:$ontology_id, normalized_name:$normalized}) "
                     "ON CREATE SET aspect.id=$new_id, aspect.name=$name, aspect.category=$category, "
-                    "aspect.description=$description, aspect.status='active', "
+                    "aspect.description=$description, "
                     "aspect.created_at=$timestamp, aspect.updated_at=$timestamp, "
                     "aspect.generated_by_embodiment_draft_id=$draft_id "
                     "MERGE (agent)-[rel:HAS_ASPECT]->(aspect) "
-                    "SET rel.importance=$importance, rel.intensity=$intensity, rel.status='active', "
+                    "SET rel.status=$status, rel.in_focus=$in_focus, "
                     "rel.updated_at=$timestamp, rel.evidence_ids=$evidence_ids "
                     "RETURN aspect.id AS id",
                     agent_id=node_id, ontology_id=draft.ontology_id, normalized=normalized,
                     new_id=str(uuid4()), name=item.name, category=item.category.value,
                     description=item.description, timestamp=timestamp, draft_id=draft.id,
-                    importance=item.importance, intensity=item.intensity,
+                    status=item.status.value, in_focus=item.in_focus,
                     evidence_ids=json.dumps(item.evidence_ids),
                 )
                 aspect_row = await aspect_result.single()
@@ -846,8 +845,7 @@ class CharacterAgentService:
                         props={
                             "id": goal_id, "ontology_id": draft.ontology_id,
                             "title": item.title, "description": item.description,
-                            "goal_type": item.goal_type.value, "status": item.status.value,
-                            "priority": item.priority, "commitment": item.commitment,
+                            "goal_type": item.goal_type.value,
                             "created_at": timestamp, "updated_at": timestamp,
                             "generated_by_embodiment_draft_id": draft.id,
                         },
@@ -855,10 +853,10 @@ class CharacterAgentService:
                 await tx.run(
                     "MATCH (agent:CharacterAgent {id:$agent_id}), (goal:CharacterGoal {id:$goal_id}) "
                     "MERGE (agent)-[rel:PURSUES]->(goal) "
-                    "SET rel.status=$status, rel.priority=$priority, rel.commitment=$commitment, "
+                    "SET rel.status=$status, rel.in_focus=$in_focus, "
                     "rel.updated_at=$timestamp, rel.evidence_ids=$evidence_ids",
                     agent_id=node_id, goal_id=goal_id, status=item.status.value,
-                    priority=item.priority, commitment=item.commitment, timestamp=timestamp,
+                    in_focus=item.in_focus, timestamp=timestamp,
                     evidence_ids=json.dumps(item.evidence_ids),
                 )
                 goal_ids.append(goal_id)
@@ -1015,10 +1013,10 @@ class CharacterAgentService:
                     })
                     ON CREATE SET aspect=$props
                     MERGE (agent)-[rel:HAS_ASPECT]->(aspect)
-                    ON CREATE SET rel.importance=$importance, rel.intensity=$intensity,
-                      rel.status='inactive', rel.created_at=$timestamp,
+                    ON CREATE SET rel.status=$status, rel.in_focus=$in_focus,
+                      rel.created_at=$timestamp,
                       rel.updated_at=$timestamp, rel.evidence_ids=$evidence_ids,
-                      rel.confidence=$confidence, rel.justification=$justification
+                      rel.justification=$justification
                     RETURN aspect.id AS id
                     """,
                     agent_id=agent["id"],
@@ -1031,15 +1029,13 @@ class CharacterAgentService:
                         "normalized_name": normalized,
                         "category": item.category.value,
                         "description": item.description,
-                        "status": "active",
                         "created_at": timestamp,
                         "updated_at": timestamp,
                     },
-                    importance=item.importance,
-                    intensity=item.intensity,
+                    status=item.status.value,
+                    in_focus=item.in_focus,
                     timestamp=timestamp,
                     evidence_ids=json.dumps(item.evidence_ids),
-                    confidence=item.confidence,
                     justification=item.justification,
                 )
                 row = await result.single()
@@ -1072,15 +1068,9 @@ class CharacterAgentService:
                             "title": item.title,
                             "description": item.description,
                             "goal_type": item.goal_type.value,
-                            "status": item.status.value,
-                            "priority": item.priority,
-                            "commitment": item.commitment,
                             "created_at": timestamp,
                             "updated_at": timestamp,
                             "evidence_ids": json.dumps(item.evidence_ids),
-                            "confidence": item.confidence,
-                            "basis": item.basis,
-                            "justification": item.justification,
                         },
                     )
                 await tx.run(
@@ -1090,18 +1080,16 @@ class CharacterAgentService:
                     MERGE (agent)-[rel:PURSUES]->(goal)
                     ON CREATE SET rel.created_at=$timestamp,
                       rel.updated_at=$timestamp, rel.evidence_ids=$evidence_ids,
-                      rel.confidence=$confidence, rel.justification=$justification,
-                      rel.status='inactive', rel.priority=$priority,
-                      rel.commitment=$commitment
+                      rel.justification=$justification,
+                      rel.status=$status, rel.in_focus=$in_focus
                     """,
                     agent_id=agent["id"],
                     goal_id=goal_id,
                     timestamp=timestamp,
                     evidence_ids=json.dumps(item.evidence_ids),
-                    confidence=item.confidence,
                     justification=item.justification,
-                    priority=item.priority,
-                    commitment=item.commitment,
+                    status=item.status.value,
+                    in_focus=item.in_focus,
                 )
                 profile_target_ids[generated_id] = goal_id
         revision_ids: dict[int, str] = {}
@@ -1127,6 +1115,7 @@ class CharacterAgentService:
                     str(item.suggestion_id or item.name),
                 )
                 for item in revision.active_aspects
+                if item.status.value == "active" and item.in_focus
             ]
             goal_ids = [
                 profile_target_ids.get(
@@ -1134,6 +1123,7 @@ class CharacterAgentService:
                     str(item.suggestion_id or item.title),
                 )
                 for item in revision.active_goals
+                if item.status.value == "active" and item.in_focus
             ]
             await self._create_revision_tx(
                 tx, snapshot, revision_id, revision.revision_number, timestamp,
@@ -1165,76 +1155,120 @@ class CharacterAgentService:
                         justification=subtitle_change.justification,
                         evidence_ids=subtitle_change.evidence_ids,
                     )
-                for kind, old_ids, new_ids in (
-                    ("aspect", {
-                        str(item.suggestion_id or item.name)
-                        for item in previous.active_aspects
-                    }, set(aspect_ids)),
-                    ("goal", {
-                        str(item.suggestion_id or item.title)
-                        for item in previous.active_goals
-                    }, set(goal_ids)),
+                for kind, operations, before_items in (
+                    ("aspect", projection.aspect_operations, previous.active_aspects),
+                    ("goal", projection.goal_operations, previous.active_goals),
                 ):
-                    for item_id in sorted(old_ids ^ new_ids):
+                    for operation in operations:
+                        key = operation.target_id or operation.candidate_id
+                        key = str(key or "")
+                        if not key:
+                            continue
+                        resolved_id = profile_target_ids.get(key, key)
+                        before = next((item for item in before_items
+                                       if str(item.suggestion_id or
+                                              (item.name if kind == "aspect" else item.title)) in {key, resolved_id}), None)
+                        await self._create_change_tx(
+                            tx, agent["id"], revision_id, revision.revision_number,
+                            timestamp, change_type=kind, field_name=resolved_id,
+                            previous=before.model_dump(mode="json") if before else None,
+                            new=operation.model_dump(mode="json"),
+                            provenance_type="generated",
+                            source_group_id=revision.source_group_id,
+                            justification=operation.justification,
+                            evidence_ids=operation.evidence_ids,
+                        )
+                for kind, previous_items, current_items, selected, name_field in (
+                    ("aspect", previous.active_aspects, revision.active_aspects,
+                     projection.focused_aspects, "name"),
+                    ("goal", previous.active_goals, revision.active_goals,
+                     projection.focused_goals, "title"),
+                ):
+                    previous_focus = {
+                        profile_target_ids.get(str(item.suggestion_id or getattr(item, name_field)),
+                                               str(item.suggestion_id or getattr(item, name_field)))
+                        for item in previous_items if item.in_focus
+                    }
+                    current_ids = {
+                        profile_target_ids.get(str(item.suggestion_id or getattr(item, name_field)),
+                                               str(item.suggestion_id or getattr(item, name_field)))
+                        for item in current_items
+                    }
+                    current_focus = {
+                        profile_target_ids.get(item, item) for item in selected
+                    }
+                    for item_id in sorted(previous_focus ^ current_focus):
+                        item = next((entry for entry in current_items
+                                     if profile_target_ids.get(str(entry.suggestion_id or getattr(entry, name_field)),
+                                                               str(entry.suggestion_id or getattr(entry, name_field))) == item_id), None)
                         await self._create_change_tx(
                             tx, agent["id"], revision_id, revision.revision_number,
                             timestamp, change_type=kind, field_name=item_id,
-                            previous="active" if item_id in old_ids else None,
-                            new="active" if item_id in new_ids else "inactive",
-                            provenance_type="generated",
-                            source_group_id=revision.source_group_id,
+                            previous={"in_focus": item_id in previous_focus},
+                            new={"in_focus": item_id in current_focus},
+                            provenance_type="generated", source_group_id=revision.source_group_id,
+                            justification="Psychological focus was refreshed for this source.",
+                            evidence_ids=[f"scene:{scene_id}" for scene_id in revision.scene_ids],
                         )
             previous = revision
 
         final_revision = timeline.revisions[-1]
         await tx.run("MATCH (agent:CharacterAgent {id:$id}) SET agent.trait_profile=$profile, agent.subtitle=$subtitle, agent.updated_at=$timestamp",
             id=agent["id"], profile=final_revision.trait_profile.storage_json(), subtitle=final_revision.subtitle, timestamp=timestamp)
-        final_aspect_ids = [
-            profile_target_ids.get(
-                str(item.suggestion_id or item.name),
-                str(item.suggestion_id or item.name),
-            )
-            for item in final_revision.active_aspects
-        ]
-        final_goal_ids = [
-            profile_target_ids.get(
-                str(item.suggestion_id or item.title),
-                str(item.suggestion_id or item.title),
-            )
-            for item in final_revision.active_goals
-        ]
-        completed_goal_titles = {
-            _normalize_name(title)
-            for projection in timeline.source_projections
-            for title in projection.completed_goal_titles
+        aspect_status = {
+            profile_target_ids.get(str(item.suggestion_id or item.name), str(item.suggestion_id or item.name)):
+            item.status.value for item in final_revision.active_aspects
         }
+        aspect_profile_by_id = {
+            profile_target_ids.get(str(item.suggestion_id or item.name), str(item.suggestion_id or item.name)):
+                {"name": item.name, "category": item.category.value, "description": item.description}
+            for item in final_revision.active_aspects
+        }
+        aspect_focus = [
+            profile_target_ids.get(str(item.suggestion_id or item.name), str(item.suggestion_id or item.name))
+            for item in final_revision.active_aspects if item.in_focus
+        ]
+        goal_status = {
+            profile_target_ids.get(str(item.suggestion_id or item.title), str(item.suggestion_id or item.title)):
+            item.status.value for item in final_revision.active_goals
+        }
+        goal_profile_by_id = {
+            profile_target_ids.get(str(item.suggestion_id or item.title), str(item.suggestion_id or item.title)):
+                {"title": item.title, "goal_type": item.goal_type.value, "description": item.description}
+            for item in final_revision.active_goals
+        }
+        goal_focus = [
+            profile_target_ids.get(str(item.suggestion_id or item.title), str(item.suggestion_id or item.title))
+            for item in final_revision.active_goals if item.in_focus
+        ]
         await tx.run(
             """
             MATCH (agent:CharacterAgent {id:$agent_id})-[rel:HAS_ASPECT]->
                   (aspect:CharacterAspect)
-            SET rel.status = CASE
-              WHEN aspect.id IN $active_ids THEN 'active' ELSE 'inactive'
-            END,
+            SET rel += coalesce(($profile_by_id)[aspect.id], {}),
+            rel.status = coalesce(($status_by_id)[aspect.id], rel.status, 'active'),
+            rel.in_focus = aspect.id IN $focus_ids,
             rel.updated_at=$timestamp
             """,
             agent_id=agent["id"],
-            active_ids=final_aspect_ids,
+            status_by_id=aspect_status,
+            profile_by_id=aspect_profile_by_id,
+            focus_ids=aspect_focus,
             timestamp=timestamp,
         )
         await tx.run(
             """
             MATCH (agent:CharacterAgent {id:$agent_id})-[rel:PURSUES]->
                   (goal:CharacterGoal)
-            SET rel.status = CASE
-              WHEN goal.id IN $active_ids THEN 'active'
-              WHEN toLower(trim(goal.title)) IN $completed_titles THEN 'completed'
-              ELSE 'superseded'
-            END,
+            SET rel += coalesce(($profile_by_id)[goal.id], {}),
+            rel.status = coalesce(($status_by_id)[goal.id], rel.status, 'active'),
+            rel.in_focus = goal.id IN $focus_ids,
             rel.updated_at=$timestamp
             """,
             agent_id=agent["id"],
-            active_ids=final_goal_ids,
-            completed_titles=sorted(completed_goal_titles),
+            status_by_id=goal_status,
+            profile_by_id=goal_profile_by_id,
+            focus_ids=goal_focus,
             timestamp=timestamp,
         )
 
@@ -1593,6 +1627,14 @@ class CharacterAgentService:
 
     async def assign_aspect(self, agent_id: str, payload: CharacterAspectAssignmentCreate) -> CharacterAspectAssignmentRead:
         values = payload.model_dump(mode="json"); aspect_id = values.pop("character_aspect_id"); timestamp = _now()
+        if values["status"] == "active" and values["in_focus"]:
+            count = await self._one(
+                "MATCH (:CharacterAgent {id:$agent})-[r:HAS_ASPECT]->(:CharacterAspect) "
+                "WHERE coalesce(r.status,'active')='active' AND coalesce(r.in_focus,false)=true "
+                "RETURN count(r) AS count", agent=agent_id,
+            )
+            if int(count["count"] or 0) >= 10:
+                raise HTTPException(status_code=422, detail="At most ten aspects may be in focus")
         values.update(created_at=timestamp, updated_at=timestamp)
         row = await self._one(
             """
@@ -1622,7 +1664,16 @@ class CharacterAgentService:
 
     def _aspect_assignment(self, row) -> CharacterAspectAssignmentRead:
         aspect = _props(row, "aspect"); aspect["obtained_from_scene_id"] = row["obtained_from_scene_id"]
-        rel = dict(row["rel"])
+        rel_data = dict(row["rel"])
+        for key in ("name", "category", "description"):
+            if rel_data.get(key) is not None:
+                aspect[key] = rel_data[key]
+        rel = {key: value for key, value in rel_data.items()
+               if key in {"status", "in_focus", "justification", "evidence_ids", "created_at", "updated_at"}}
+        rel.setdefault("status", "active")
+        rel.setdefault("in_focus", True)
+        rel.setdefault("created_at", aspect.get("created_at"))
+        rel.setdefault("updated_at", aspect.get("updated_at"))
         return CharacterAspectAssignmentRead(aspect=CharacterAspectRead.model_validate(aspect), **rel)
 
     async def list_agent_aspects(
@@ -1646,6 +1697,18 @@ class CharacterAgentService:
 
     async def update_assignment(self, agent_id: str, aspect_id: str, payload: CharacterAspectAssignmentUpdate) -> CharacterAspectAssignmentRead:
         changes = payload.model_dump(exclude_unset=True, mode="json"); changes["updated_at"] = _now()
+        if changes.get("in_focus") is True and changes.get("status") in (None, "active"):
+            count = await self._one(
+                "MATCH (:CharacterAgent {id:$agent})-[r:HAS_ASPECT]->(:CharacterAspect) "
+                "WHERE coalesce(r.status,'active')='active' AND coalesce(r.in_focus,false)=true "
+                "RETURN count(r) AS count", agent=agent_id,
+            )
+            current = await self._one(
+                "MATCH (:CharacterAgent {id:$agent})-[r:HAS_ASPECT]->(:CharacterAspect {id:$aspect}) "
+                "RETURN r.in_focus AS in_focus", agent=agent_id, aspect=aspect_id,
+            )
+            if int(count["count"] or 0) >= 10 and not (current and current["in_focus"]):
+                raise HTTPException(status_code=422, detail="At most ten aspects may be in focus")
         row = await self._one(
             "MATCH (:CharacterAgent {id:$agent})-[rel:HAS_ASPECT]->(aspect:CharacterAspect {id:$aspect}) "
             "SET rel += $changes WITH aspect, rel "
@@ -1658,27 +1721,41 @@ class CharacterAgentService:
             raise HTTPException(status_code=404, detail="Aspect assignment not found")
         return self._aspect_assignment(row)
 
-    async def pursue_goal(self, agent_id: str, goal_id: str) -> CharacterGoalRead:
+    async def pursue_goal(self, agent_id: str, goal_id: str) -> CharacterGoalAssignmentRead:
+        count = await self._one(
+            "MATCH (:CharacterAgent {id:$agent})-[r:PURSUES]->(:CharacterGoal) "
+            "WHERE coalesce(r.status,'active')='active' AND coalesce(r.in_focus,false)=true "
+            "RETURN count(r) AS count", agent=agent_id,
+        )
+        if int(count["count"] or 0) >= 10:
+            raise HTTPException(status_code=422, detail="At most ten goals may be in focus")
         row = await self._one(
             "MATCH (agent:CharacterAgent {id:$agent}), (goal:CharacterGoal {id:$goal}) "
             "WHERE agent.ontology_id=goal.ontology_id AND NOT (agent)-[:PURSUES]->(goal) "
             "// CREATE (agent)-[:PURSUES {created_at:$now}]->(goal) WITH goal OPTIONAL MATCH\n"
-            "CREATE (agent)-[:PURSUES {created_at:$now, status:coalesce(goal.status,'active'), "
-            "priority:coalesce(goal.priority,50), commitment:coalesce(goal.commitment,50)}]->(goal) "
+            "CREATE (agent)-[rel:PURSUES {created_at:$now, updated_at:$now, status:'active', in_focus:true}]->(goal) "
             "WITH goal "
             "OPTIONAL MATCH (goal)-[obtained_rel]->(scene:Scene) "
             "WHERE type(obtained_rel) = 'OBTAINED_FROM' "
-            "RETURN goal AS node, scene.id AS obtained_from_scene_id",
+            "RETURN goal AS node, rel AS rel, scene.id AS obtained_from_scene_id",
             agent=agent_id, goal=goal_id, now=_now(),
         )
         if not row:
             await self._assignment_error(agent_id, goal_id, "CharacterGoal", "PURSUES")
         data = _props(row); data["obtained_from_scene_id"] = row["obtained_from_scene_id"]
-        return CharacterGoalRead.model_validate(data)
+        return CharacterGoalAssignmentRead(
+            goal=CharacterGoalRead.model_validate(data),
+            status=row["rel"].get("status", "active"),
+            in_focus=row["rel"].get("in_focus", True),
+            justification=row["rel"].get("justification"),
+            evidence_ids=row["rel"].get("evidence_ids") or [],
+            created_at=row["rel"].get("created_at"),
+            updated_at=row["rel"].get("updated_at"),
+        )
 
     async def list_agent_goals(
         self, agent_id: str, public_only: bool = False
-    ) -> list[CharacterGoalRead]:
+    ) -> list[CharacterGoalAssignmentRead]:
         if not await self._one(
             "MATCH (n:CharacterAgent {id:$id}) "
             "WHERE NOT $public_only OR coalesce(n.visibility, 'private') = 'public' "
@@ -1687,28 +1764,69 @@ class CharacterAgentService:
             public_only=public_only,
         ):
             raise HTTPException(status_code=404, detail="CharacterAgent not found")
-        return [CharacterGoalRead.model_validate(x) for x in await self._list_related_goals(agent_id)]
+        return [CharacterGoalAssignmentRead.model_validate(x) for x in await self._list_related_goals(agent_id)]
+
+    async def update_goal_assignment(
+        self, agent_id: str, goal_id: str, payload: CharacterGoalAssignmentUpdate,
+    ) -> CharacterGoalAssignmentRead:
+        changes = payload.model_dump(exclude_unset=True, mode="json")
+        if changes.get("in_focus") is True and changes.get("status") in (None, "active"):
+            count = await self._one(
+                "MATCH (:CharacterAgent {id:$agent})-[r:PURSUES]->(:CharacterGoal) "
+                "WHERE coalesce(r.status,'active')='active' AND coalesce(r.in_focus,false)=true "
+                "RETURN count(r) AS count", agent=agent_id,
+            )
+            current = await self._one(
+                "MATCH (:CharacterAgent {id:$agent})-[r:PURSUES]->(:CharacterGoal {id:$goal}) "
+                "RETURN r.in_focus AS in_focus", agent=agent_id, goal=goal_id,
+            )
+            if int(count["count"] or 0) >= 10 and not (current and current["in_focus"]):
+                raise HTTPException(status_code=422, detail="At most ten goals may be in focus")
+        changes["updated_at"] = _now()
+        result = await self.graph.run(
+            "MATCH (:CharacterAgent {id:$agent})-[r:PURSUES]->(goal:CharacterGoal {id:$goal}) "
+            "SET r += $changes WITH goal, r "
+            "OPTIONAL MATCH (goal)-[obtained_rel]->(scene:Scene) "
+            "WHERE type(obtained_rel)='OBTAINED_FROM' "
+            "RETURN goal AS node, r AS rel, scene.id AS obtained_from_scene_id",
+            agent=agent_id, goal=goal_id, changes=changes,
+        )
+        row = await result.single()
+        if not row:
+            raise HTTPException(status_code=404, detail="Goal pursuit not found")
+        data = _props(row, "node"); data["obtained_from_scene_id"] = row["obtained_from_scene_id"]
+        rel = dict(row["rel"])
+        return CharacterGoalAssignmentRead(
+            goal=CharacterGoalRead.model_validate(data), status=rel.get("status", "active"),
+            in_focus=rel.get("in_focus", False), justification=rel.get("justification"),
+            evidence_ids=rel.get("evidence_ids") or [], created_at=rel.get("created_at"),
+            updated_at=rel.get("updated_at"),
+        )
 
     async def _list_related_goals(self, agent_id: str):
         result = await self.graph.run(
             "MATCH (:CharacterAgent {id:$id})-[pursuit:PURSUES]->(node:CharacterGoal) "
             "OPTIONAL MATCH (node)-[obtained_rel]->(scene:Scene) "
             "WHERE type(obtained_rel) = 'OBTAINED_FROM' "
-            "RETURN node, scene.id AS obtained_from_scene_id, "
-            "coalesce(pursuit.status,node.status) AS pursuit_status, "
-            "coalesce(pursuit.priority,node.priority) AS pursuit_priority, "
-            "coalesce(pursuit.commitment,node.commitment) AS pursuit_commitment "
+            "RETURN node, pursuit.title AS title, pursuit.description AS description, "
+            "pursuit.goal_type AS goal_type, scene.id AS obtained_from_scene_id, "
+            "coalesce(pursuit.status,node.status,'active') AS pursuit_status, "
+            "coalesce(pursuit.in_focus,true) AS in_focus, pursuit.justification AS justification, "
+            "pursuit.evidence_ids AS evidence_ids, pursuit.created_at AS created_at, "
+            "pursuit.updated_at AS updated_at "
             "ORDER BY node.created_at DESC, node.id ASC", id=agent_id,
         )
         rows=[]
         async for row in result:
-            data=_props(row)
-            data.update(
-                status=row["pursuit_status"], priority=row["pursuit_priority"],
-                commitment=row["pursuit_commitment"],
-                obtained_from_scene_id=row["obtained_from_scene_id"],
-            )
-            rows.append(data)
+            data=_props(row, "node")
+            for key in ("title", "description", "goal_type"):
+                if row.get(key) is not None:
+                    data[key] = row[key]
+            data.update(obtained_from_scene_id=row["obtained_from_scene_id"])
+            rows.append({"goal": data, "status": row["pursuit_status"],
+                         "in_focus": row["in_focus"], "justification": row["justification"],
+                         "evidence_ids": row["evidence_ids"] or [],
+                         "created_at": row["created_at"], "updated_at": row["updated_at"]})
         return rows
 
     async def _require_perspective_owner(

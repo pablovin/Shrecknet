@@ -72,9 +72,10 @@ agent = await sdk.character_agents.create(
         background_story="Edited final story",
         aspects=[
             CharacterAgentEmbeddedAspect(
-                name="Frontier leader",
+                name="I lead the frontier settlement",
                 category="role",
-                importance=5,
+                status="active",
+                in_focus=True,
             )
         ],
     )
@@ -128,7 +129,6 @@ await sdk.character_agents.create_belief(
     CharacterBeliefCreate(
         statement="Lancelot killed the guard.",
         confidence=60,
-        status="believed",
     ),
 )
 await sdk.character_agents.create_impact(
@@ -149,6 +149,12 @@ await sdk.character_agents.create_impact(
 `skip` and `limit`. A perspective contains `source_type` and one `perspective`
 text field. The resource also exposes `get`, `update`, and
 `delete` methods for perspectives and for each child type.
+
+Aspect and goal assignment lifecycle/focus is character-specific. Use
+`list_aspects`, `assign_aspect`, and `update_aspect_assignment`, plus
+`list_goals`, `pursue_goal`, and `update_goal_assignment`. Assignment writes
+accept `status` and `in_focus`; each category permits at most ten focused active
+records. Definitions can be shared without sharing lifecycle or focus.
 
 Generation results only prefill the frontend form. Neo4j is changed only when
 the normal `create` call submits the edited aggregate.
@@ -193,13 +199,17 @@ await sdk.character_agents.update(
 ```
 
 Embodiment processes source bundles chronologically. A source remains one
-identity-update/revision boundary, but its ordered scenes are divided into
-analysis chunks of at most five. Up to three chunks run concurrently from the
-same source-start identity; each makes incorporation, psychological enrichment,
-and categorical trait interpretation calls. The server merges them before one
-deterministic source-level profile update, so a source with `n` chunks normally
-makes `3n` LLM calls, plus authored initialization and any
-repair/correction calls. The server applies the draft's generated profile during
+identity-update/revision boundary, and its ordered scenes are divided into
+chunks of at most five. Chunks run perspective extraction, then psychological
+enrichment and trait interpretation in parallel. After every chunk completes,
+the server makes one optional Stage 4 consolidation call if profile events were
+found. A source with `n` chunks therefore makes `3n` scene-stage calls plus at
+most one consolidation call, in addition to identity and bounded recovery calls.
+Consolidation compares source-local events with current and historical profile
+items, updates character-specific lifecycle/focus, and selects at most ten
+focused active aspects and goals. It does not receive full scene history.
+Emotions and beliefs remain linked to their originating perspective; beliefs
+are historical snapshots without lifecycle status. The server applies the draft's generated profile during
 creation; submit only changed point selections in `trait_edits`, with reasons.
 Evidence continues accumulating beneath a manual override. STEADINESS is inferred
 separately from repeated comparable behavior and never controls query temperature.

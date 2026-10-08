@@ -42,7 +42,7 @@ async def test_embodiment_sdk_start_and_create_contracts():
             ontology_id=3, entity_instance_id="e1", embodiment_draft_id="d1",
             name="Mara", background_story="Story",
             aspects=[CharacterAgentEmbeddedAspect(
-                name="Leader", category="role", importance=5
+                name="I lead the settlement", category="role", in_focus=True
             )],
         )
     )

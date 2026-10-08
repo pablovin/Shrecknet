@@ -21,7 +21,9 @@ async with Shrecknet(token="...") as sdk:
 ```
 
 By default, the query uses the CharacterAgent's identity, traits, aspects, and
-goals. Identity queries use one deliberation call with deterministic retrieval of
+goals. Identity queries also include the persistent narrative `identity_description`;
+demonstrated development in current state takes precedence if it conflicts with
+that foundation. Queries use one deliberation call with deterministic retrieval of
 the queried character's own scene perspectives; no other character or canonical
 scene memory is supplied. Set `use_character_identity=False` to use neutral
 single-call deliberation without
@@ -53,6 +55,9 @@ from shrecknet_client.models import (
 started = await sdk.character_agents.start_embodiment(
     EmbodimentDraftCreate(ontology_id=12, entity_instance_id="entity-mara")
 )
+
+# Drafts remain discoverable after the initiating client disconnects.
+recent = await sdk.character_agents.list_embodiments(12)
 
 draft = await sdk.character_agents.get_embodiment(started.draft_id)
 # Poll started.job_id until done, then copy draft.proposal into the form.
@@ -160,9 +165,9 @@ background job. Graph mutations and raw trait-evidence inspection require an adm
 ## Dispositional personality
 
 Agent reads expose typed `trait_profile.dispositional_traits` and separate
-`trait_profile.steadiness`. Each estimate includes a bounded z estimate, status,
-evidence counts and uncertainty. Unknown has null z; zero is an internal
-estimate only—scene evidence uses explicit left/right poles.
+`trait_profile.steadiness`. Each estimate includes an integer `point` from 1 to 9 or null, status,
+`observation_count`, and `observation_ids` referring to `ScenePerspective.id`.
+Unknown has null point; point 5 with opposing evidence is mixed, not automatically average.
 Fetch authoritative constructs, poles and situations with
 `await sdk.character_agents.trait_definitions()`; do not maintain separate UI
 meaning dictionaries.
@@ -174,7 +179,7 @@ from shrecknet_client.models import CharacterAgentUpdate
 await sdk.character_agents.update(
     agent.id,
     CharacterAgentUpdate(trait_edits={
-        "integrity": TraitEdit(z=1.2, reason="Authored character sheet.")
+        "integrity": TraitEdit(point=7, reason="Authored character sheet.")
     }),
 )
 evidence = await sdk.character_agents.list_trait_evidence(
@@ -186,7 +191,7 @@ changes = await sdk.character_agents.list_identity_changes(agent.id, change_type
 await sdk.character_agents.update(
     agent.id,
     CharacterAgentUpdate(trait_edits={
-        "integrity": TraitEdit(z=None, reason="Resume evidence-derived estimate.")
+        "integrity": TraitEdit(point=None, reason="Resume evidence-derived estimate.")
     }),
 )
 ```
@@ -194,16 +199,18 @@ await sdk.character_agents.update(
 Embodiment processes source bundles chronologically. A source remains one
 identity-update/revision boundary, but its ordered scenes are divided into
 analysis chunks of at most five. Up to three chunks run concurrently from the
-same source-start identity; each makes incorporation and enrichment calls. The
-server merges them before one source-level profile update, so a source with `n`
-chunks normally makes `2n + 1` LLM calls, plus authored initialization and any
+same source-start identity; each makes incorporation, psychological enrichment,
+and categorical trait interpretation calls. The server merges them before one
+deterministic source-level profile update, so a source with `n` chunks normally
+makes `3n` LLM calls, plus authored initialization and any
 repair/correction calls. The server applies the draft's generated profile during
-creation; submit only changed z selections in `trait_edits`, with reasons.
+creation; submit only changed point selections in `trait_edits`, with reasons.
 Evidence continues accumulating beneath a manual override. STEADINESS is inferred
 separately from repeated comparable behavior and never controls query temperature.
 
-This is a breaking contract requiring old CharacterAgents, drafts and checkpoints
-to be cleared and regenerated with matching backend/worker/SDK versions. Starting
+This is a breaking contract requiring trait evidence and profiles to be
+regenerated from source material with matching backend/worker/SDK versions.
+Old z-format trait data is not accepted by the point-based runtime. Starting
 a draft for an already embodied entity replaces its existing identity. See the
 [canonical personality documentation](../../Documentation/Agents/CharacterAgent/Dispositional%20Traits.md)
 and [runnable lifecycle example](../examples/10_character_agent/01_dispositional_lifecycle.py).

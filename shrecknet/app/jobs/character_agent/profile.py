@@ -339,7 +339,7 @@ def _build_timeline(
             batch_id=br.batch_id,
             perspectives=[
                 ProjectedScenePerspective(
-                    scene_id=p.scene_id, scene=scene_reference(p.scene_id),
+                    id=p.id, scene_id=p.scene_id, scene=scene_reference(p.scene_id),
                     source_type=p.source_type, evidence_ids=p.evidence_ids,
                     evidence=evidence_references(p.evidence_ids),
                     source_digest=br.scene_input_digests.get(p.scene_id),
@@ -378,4 +378,3 @@ def _build_timeline(
         revisions=revisions,
         source_projections=source_projections,
     ).model_dump_json()
-

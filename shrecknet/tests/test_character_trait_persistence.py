@@ -37,8 +37,8 @@ class ManualGraph:
 async def test_manual_edit_creates_typed_snapshot_and_actor_audit():
     graph=ManualGraph()
     result=await CharacterAgentService(None,graph).update_agent('a',CharacterAgentUpdate(
-        trait_edits={'integrity':TraitEdit(z=1.2,reason='Authored by administrator.')}),user_id=12)
-    assert result.trait_profile.dispositional_traits['integrity'].z==1.2
+        trait_edits={'integrity':TraitEdit(point=7,reason='Authored by administrator.')}),user_id=12)
+    assert result.trait_profile.dispositional_traits['integrity'].point==7
     snapshots=[p['props'] for q,p in graph.calls if 'CREATE (revision:CharacterIdentityRevision)' in q]
     changes=[p['props'] for q,p in graph.calls if 'CREATE (change:CharacterIdentityChange)' in q]
     assert snapshots[0]['revision_number']==5
@@ -46,9 +46,9 @@ async def test_manual_edit_creates_typed_snapshot_and_actor_audit():
     assert json.loads(snapshots[0]['active_goal_ids'])==['goal-1']
     assert changes[0]['actor_user_id']==12 and changes[0]['field_name']=='integrity'
     assert changes[0]['provenance_type']=='manual' and changes[0]['justification']=='Authored by administrator.'
-    assert json.loads(changes[0]['new_value'])['z']==1.2
+    assert json.loads(changes[0]['new_value'])['point']==7
     assert changes[0]['evidence_ids']=='[]'
-    assert 'point' not in json.loads(graph.agent['trait_profile'])['dispositional_traits']['integrity']
+    assert 'z' not in json.loads(graph.agent['trait_profile'])['dispositional_traits']['integrity']
 
 
 @pytest.mark.asyncio
@@ -75,9 +75,9 @@ def test_sdk_reads_backend_profile_without_contract_drift(monkeypatch):
     backend=CharacterAgentRead.model_validate({**graph.agent,'entity_instance_id':'e',
         'trait_profile':TraitProfile.model_validate_json(graph.agent['trait_profile'])})
     sdk=SDKRead.model_validate(backend.model_dump(mode='json'))
-    assert sdk.trait_profile.dispositional_traits['integrity'].z is None
-    edit=SDKUpdate(trait_edits={'integrity':{'z':None,'reason':'Resume inference.'}})
-    assert CharacterAgentUpdate.model_validate(edit.model_dump(exclude_unset=True)).trait_edits['integrity'].z is None
+    assert sdk.trait_profile.dispositional_traits['integrity'].point is None
+    edit=SDKUpdate(trait_edits={'integrity':{'point':None,'reason':'Resume inference.'}})
+    assert CharacterAgentUpdate.model_validate(edit.model_dump(exclude_unset=True)).trait_edits['integrity'].point is None
 
 
 @pytest.mark.asyncio
@@ -93,6 +93,31 @@ async def test_trait_metadata_and_raw_evidence_have_correct_auth_dependencies():
     assert value==trait_metadata() and len(value['traits'])==9
 
 
+@pytest.mark.asyncio
+async def test_referenced_perspective_cannot_be_deleted_without_trait_regeneration():
+    class Graph:
+        def __init__(self): self.calls = []
+        async def run(self, query, **params):
+            self.calls.append(query)
+            async def rows():
+                yield {'evidence': json.dumps([{'perspective_id': 'perspective-1'}])}
+            return rows()
+
+    graph = Graph()
+    with pytest.raises(HTTPException) as raised:
+        await CharacterAgentService(None, graph).delete_perspective('agent-1', 'perspective-1')
+    assert raised.value.status_code == 409
+    assert len(graph.calls) == 1
+
+
+def test_old_z_profile_requires_regeneration_instead_of_conversion():
+    from app.services.character_agent_service import _read_profile
+    with pytest.raises(HTTPException) as raised:
+        _read_profile(json.dumps({'version': 'dispositions-v2-bipolar-evidence',
+                                  'dispositional_traits': {}, 'steadiness': {'z': 0}}))
+    assert raised.value.status_code == 409
+
+
 @pytest.mark.parametrize("revisions", [[], [
     {"revision_number": 0, "name": "Mara"},
     {"revision_number": 2, "name": "Mara"},
@@ -101,6 +126,30 @@ def test_timeline_rejects_missing_baseline_or_unmatched_revisions(revisions):
     from pydantic import ValidationError
     with pytest.raises(ValidationError):
         CharacterTimelineProjection.model_validate({"revisions": revisions})
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('field,value', [
+    ('perspective_id', 'foreign-perspective'),
+    ('evidence_ids', ['scene:foreign-scene']),
+    ('source_group_id', 'foreign-source'),
+])
+async def test_timeline_rejects_trait_evidence_outside_its_perspective_batch(field, value):
+    from pydantic import ValidationError
+    from test_character_embodiment import BatchLLM, _agent, _canonical, scenes
+    from app.jobs.character_agent.profile import _build_timeline
+
+    result = await _agent(BatchLLM()).run(source_entity_id='source', source_entity_alias='Source',
+        canonical_identity=_canonical(), current_trait_profile=TraitProfile(),
+        current_aspects=[], current_goals=[], scenes=scenes(1))
+    timeline = CharacterTimelineProjection.model_validate_json(
+        _build_timeline('e', 'Mara', _canonical(), TraitProfile(), [], [], None, [result]))
+    data = timeline.model_dump(mode='json')
+    assert data['revisions'][1]['trait_evidence']
+    data['revisions'][1]['trait_evidence'][0][field] = value
+    data['source_projections'][0]['resulting_revision'] = data['revisions'][1]
+    with pytest.raises(ValidationError, match='trait evidence must cite a perspective'):
+        CharacterTimelineProjection.model_validate(data)
 
 
 @pytest.mark.asyncio

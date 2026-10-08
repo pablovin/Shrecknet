@@ -9,9 +9,9 @@ from shrecknet_client.resources import CharacterAgentsAPI
 
 
 def profile_fixture():
-    estimate = {"z": None, "status": "unknown"}
+    estimate = {"point": None, "status": "unknown", "observation_count": 0, "observation_ids": []}
     keys = ("integrity", "caution", "presence", "forbearance", "diligence", "curiosity", "sharing", "restlessness")
-    return {"version": "dispositions-v1", "dispositional_traits": {key: estimate for key in keys}, "steadiness": estimate}
+    return {"version": "dispositions-v3-points-perspectives", "dispositional_traits": {key: estimate for key in keys}, "steadiness": estimate}
 
 
 class Client:
@@ -48,7 +48,7 @@ async def test_embodiment_sdk_start_and_create_contracts():
     )
     assert started.job_id == 1
     assert agent.id == "a1"
-    assert client.calls[0][2]["json"] == {"ontology_id": 3, "entity_instance_id": "e1"}
+    assert client.calls[0][2]["json"] == {"ontology_id": 3, "entity_instance_id": "e1", "replace_existing": False}
     assert client.calls[1][2]["json"]["embodiment_draft_id"] == "d1"
 
 
@@ -64,17 +64,20 @@ async def test_sdk_preserves_explicit_null_when_clearing_override():
                 'created_by_user_id':1,'created_at':'2026-09-21T00:00:00Z','updated_at':'2026-09-21T00:00:00Z',
                 'trait_profile':profile_fixture()}
     client=PatchClient()
-    await CharacterAgentsAPI(client).update('a1',CharacterAgentUpdate(trait_edits={'integrity':TraitEdit(z=None,reason='Resume evidence.')}))
-    assert client.calls[0][2]['json']=={'trait_edits':{'integrity':{'z':None,'reason':'Resume evidence.'}}}
+    await CharacterAgentsAPI(client).update('a1',CharacterAgentUpdate(trait_edits={'integrity':TraitEdit(point=None,reason='Resume evidence.')}))
+    assert client.calls[0][2]['json']=={'trait_edits':{'integrity':{'point':None,'reason':'Resume evidence.'}}}
 
 
 def test_sdk_types_unknown_profile_and_rejects_invalid_edits():
     from pydantic import ValidationError
     from shrecknet_client.character_traits import TraitEdit, TraitProfile
     profile=TraitProfile.model_validate(profile_fixture())
-    assert profile.dispositional_traits['integrity'].z is None
-    for value in (-2, 2, True, float("nan")):
-        with pytest.raises(ValidationError): TraitEdit(z=value,reason='Invalid')
+    assert profile.dispositional_traits['integrity'].point is None
+    for value in (-2, 0, 10, True, 2.5, float("nan")):
+        with pytest.raises(ValidationError): TraitEdit(point=value,reason='Invalid')
+    with pytest.raises(ValidationError): TraitEdit(z=1.2, reason='Old field')
+    with pytest.raises(ValidationError):
+        TraitProfile.model_validate({**profile_fixture(), 'version': 'dispositions-v2-bipolar-evidence'})
 
 
 @pytest.mark.asyncio

@@ -9,6 +9,8 @@
 > budget, source splitting, and `character_agent_embodiment_scene_batch_size` do
 > not describe deployed behavior. Do not use this document as an operational or
 > API contract.
+> Its z-based representation and scoring proposal are also superseded by the
+> point-based runtime contract. Retain this page for historical context only.
 
 This historical plan was written to replace the personality layer described in
 [CharacterAgent](CharacterAgent.md), its [HTTP contracts](CharacterAgent%20-%20Endpoints.md),
@@ -139,7 +141,7 @@ in the same stage.
 
 Proposed starting policy, centralized and versioned:
 
-1. Qualifying behavioral evidence requires supported choice conditions, confidence at least 0.7, and diagnosticity at least 0.7.
+1. Qualifying behavioral evidence requires supported choice conditions, confidence at least 0.5, and diagnosticity at least 0.5.
 2. Establish a supported directional estimate only after at least three independent qualifying episodes. Before that, retain unknown. One explicit, well-grounded authored stable-disposition statement may seed a **provisional** directional z estimate; a bare adjective cannot.
 3. RESTLESSNESS requires explicit value-choice evidence or recurring motivated preferences. Its supported estimate requires at least three qualifying value choices across at least two source contexts. Investigating an artifact alone is ineligible.
 4. An already accepted directional estimate can move by at most one z contribution at an update, and only after at least two new independent qualifying episodes since its last accepted change. Duplicated/replayed evidence does not unlock another movement.

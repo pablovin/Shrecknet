@@ -15,7 +15,9 @@ from app.jobs.character_agent.embody_agent import (
     EmbodimentGenerationError,
     ScenePerspectiveLLMOutput,
     _AspectSignalLLMOutput,
+    _BaselineTraitObservationsLLMOutput,
     _SceneEnrichmentsLLMOutput,
+    _SceneTraitInterpretationsLLMOutput,
 )
 from app.jobs.character_agent.embody_agent_prompts import (
     PSYCHOLOGICAL_ANALYSIS_PROMPT,
@@ -42,7 +44,7 @@ from app.schemas.character_traits import TraitProfile
 
 
 def _profile_update_output():
-    return json.dumps({"trait_proposals": [], "aspect_updates": [], "goal_updates": []})
+    return json.dumps({"aspect_updates": [], "goal_updates": []})
 
 
 def test_provider_unavailable_error_is_actionable_for_embodiment_draft_reads():
@@ -481,6 +483,11 @@ async def test_timeline_persists_removed_impact_target_as_inactive_assignment():
                 "interpretation": "The trust was misplaced.",
                 "memory_strength": 80,
                 "importance": 4,
+                "behavioral_evidence": [{
+                    "action": "Bonded with two other individuals in the café",
+                    "context": "Amid threats and whispers, forming an alliance with unlikely allies",
+                    "source_quote": "three unlikely allies bond amid threats and whispers",
+                }],
                 "impacts": [{
                     "impact_type": "aspect_change",
                     "target_id": "aspect:trusting",
@@ -542,6 +549,12 @@ async def test_timeline_persists_removed_impact_target_as_inactive_assignment():
         "created_at": "2026-07-29T00:00:00+00:00",
         "updated_at": "2026-07-29T00:00:00+00:00",
     }
+
+    perspective = next(
+        params for query, params in tx.calls
+        if "CREATE (perspective:ScenePerspective)" in query
+    )
+    assert "behavioral_evidence" not in perspective["props"]
 
     # Exercise every graph ``props`` payload emitted by a fully hydrated
     # timeline. Neo4j permits scalar values and lists of scalars, never maps
@@ -627,16 +640,23 @@ class BatchLLM:
             result={'perspectives':[dict(
                 source_type='participated',awareness_level=90,confidence=90,
                 summary='Returned an untraceable overpayment.',interpretation='Keeping it would exploit another.',
-                character_reflection='REFLECTION MUST NOT BECOME EVIDENCE',memory_strength=80,importance=3)
+                character_reflection='REFLECTION MUST NOT BECOME EVIDENCE',memory_strength=80,importance=3,
+                behavioral_evidence=[{'action':'Returned an untraceable overpayment.',
+                    'context':'The character could keep it.',
+                    'source_quote':'returned an untraceable overpayment'}])
                 for s in payload['scenes']]}
             return json.dumps(result)
         if stage=='scene_interpretation':
-            candidate = observation(scene="model-scene").model_dump()
-            for field in ("evidence_ids", "episode_id", "available_after_scene_id"):
-                candidate.pop(field)
             return json.dumps({'scene_enrichments':[dict(
-                emotions=[],beliefs=[],impacts=[],trait_candidates=[candidate],
+                emotions=[],beliefs=[],impacts=[],
                 aspect_signals=[],goal_signals=[]) for p in payload['perspectives']]})
+        if stage=='trait_interpretation':
+            return json.dumps({'scene_trait_interpretations':[
+                {'trait_candidates': [{'trait':'integrity','polarity':'high',
+                    'situation_type':'exploitation:other:ordinary',
+                    'justification':'Returned an untraceable overpayment despite a choice to keep it.'}]
+                 if item['behavioral_evidence'] else []} for item in payload['scenes']
+            ]})
         if stage=='identity_signals':
             return json.dumps({'scene_identity_signals':[
                 {'aspect_signals': [], 'goal_signals': []} for _ in payload['perspectives']
@@ -685,7 +705,7 @@ async def test_every_embodiment_generation_call_requests_strict_json_schema():
     )
 
     assert {call["usage_tag"].rsplit(".", 1)[-1] for call in llm.calls} == {
-        "baseline", "character_incorporation", "scene_interpretation",
+        "baseline", "character_incorporation", "scene_interpretation", "trait_interpretation",
     }
     for call in llm.calls:
         assert call["max_tokens"] == EMBODIMENT_LLM_MAX_TOKENS == 10_000
@@ -710,9 +730,14 @@ def test_psychological_llm_contract_excludes_backend_references_and_bounds_outpu
     assert fields["emotions"]["maxItems"] == 2
     assert fields["beliefs"]["maxItems"] == 2
     assert fields["impacts"]["maxItems"] == 2
-    assert fields["trait_candidates"]["maxItems"] == 3
-    trait_fields = schema["$defs"]["_TraitCandidateLLMOutput"]["properties"]
-    assert {"evidence_ids", "episode_id", "available_after_scene_id"}.isdisjoint(trait_fields)
+    assert "trait_candidates" not in fields
+
+
+def test_trait_llm_schemas_have_only_four_semantic_fields():
+    expected = {"trait", "polarity", "situation_type", "justification"}
+    for output_type in (_BaselineTraitObservationsLLMOutput, _SceneTraitInterpretationsLLMOutput):
+        schema = output_type.model_json_schema()
+        assert set(schema["$defs"]["_TraitCandidateLLMOutput"]["properties"]) == expected
 
 
 def test_generated_emotion_uses_public_valence_scale_and_normalizes_legacy_values():
@@ -930,30 +955,19 @@ class MalformedObservationsLLM(BatchLLM):
 
 
 def scenes(count, offset=0):
-    return [SceneInput(scene_id=f's{i}',name='Choice',description='Free, known and safe choice.',created_at=f'{i:03}')
+    return [SceneInput(scene_id=f's{i}',name='Choice',description='Free, known and safe choice. Mara returned an untraceable overpayment when she could keep it.',created_at=f'{i:03}')
             for i in range(offset,offset+count)]
 
 
 @pytest.mark.asyncio
-async def test_trait_interpretation_keeps_only_the_highest_confidence_duplicate_trait():
+async def test_trait_interpretation_rejects_duplicate_trait_for_one_perspective():
     class DuplicateTraitLLM:
-        async def chat(self, **_kwargs):
-            candidate = {
-                "trait": "curiosity", "evidence_kind": "behavior",
-                "situation_type": "exploration", "pole": "right", "expression_z": 0.7,
-                "diagnosticity": 0.8, "confidence": 0.4,
-                "behavior": "Inspected the unfamiliar device.",
-                "justification": "The voluntary investigation is diagnostic of curiosity.",
-                "conditions": {
-                    "knowledge": {"status": "supported", "justification": "The device was visible."},
-                    "capability": {"status": "supported", "justification": "They could inspect it."},
-                    "options": {"status": "supported", "justification": "They could leave it alone."},
-                    "freedom": {"status": "supported", "justification": "No compulsion is described."},
-                },
-                "comparison_context": None, "behavior_indexes": [1],
-            }
-            stronger = {**candidate, "confidence": 0.9, "expression_z": 1.2}
-            return json.dumps({"scene_trait_interpretations": [{"trait_candidates": [candidate, stronger]}]})
+        async def chat(self, **kwargs):
+            candidate = {"trait": "curiosity", "polarity": "high",
+                "situation_type": "exploration:other:ordinary",
+                "justification": "A voluntary investigation reveals curiosity."}
+            return json.dumps({"scene_trait_interpretations": [
+                {"trait_candidates": [candidate, candidate]}]})
 
     perspective = ScenePerspectiveOutput(
         scene_id="scene-1", evidence_ids=["scene:scene-1"], source_type="participated",
@@ -963,42 +977,24 @@ async def test_trait_interpretation_keeps_only_the_highest_confidence_duplicate_
         behavioral_evidence=[{"action": "Inspected the unfamiliar device.", "context": None,
                               "source_quote": "inspected the unfamiliar device"}],
     )
-
-    candidates = await _agent(DuplicateTraitLLM())._interpret_traits_batch(
-        source_entity_id="source", source_entity_alias="Source", identity=_canonical(),
-        perspectives=[perspective],
-    )
-
-    assert len(candidates[0]) == 1
-    assert candidates[0][0]["trait"] == "curiosity"
-    assert candidates[0][0]["confidence"] == 0.9
+    with pytest.raises(EmbodimentGenerationError, match="duplicate trait candidate"):
+        await _agent(DuplicateTraitLLM())._interpret_traits_batch(
+            source_entity_id="source", source_entity_alias="Source", identity=_canonical(),
+            perspectives=[perspective],
+        )
 
 
 @pytest.mark.asyncio
-async def test_trait_interpretation_corrects_a_pole_that_disagrees_with_expression_z():
-    class ContradictoryPoleLLM:
-        def __init__(self):
-            self.calls = []
-
+async def test_trait_interpretation_corrects_invalid_context():
+    class ContextLLM:
+        def __init__(self): self.calls = []
         async def chat(self, **kwargs):
             self.calls.append(kwargs)
-            candidate = {
-                "trait": "curiosity", "evidence_kind": "behavior",
-                "situation_type": "exploration", "pole": "left", "expression_z": 0.7,
-                "diagnosticity": 0.8, "confidence": 0.9,
-                "behavior": "Inspected the unfamiliar device.",
-                "justification": "The voluntary investigation is diagnostic of curiosity.",
-                "conditions": {
-                    "knowledge": {"status": "supported", "justification": "The device was visible."},
-                    "capability": {"status": "supported", "justification": "They could inspect it."},
-                    "options": {"status": "supported", "justification": "They could leave it alone."},
-                    "freedom": {"status": "supported", "justification": "No compulsion is described."},
-                },
-                "comparison_context": None, "behavior_indexes": [1],
-            }
-            if kwargs["usage_tag"].endswith(".schema_correction"):
-                candidate["pole"] = "right"
-            return json.dumps({"scene_trait_interpretations": [{"trait_candidates": [candidate]}]})
+            situation = ("exploration:other:ordinary" if kwargs["usage_tag"].endswith(".schema_correction")
+                         else "exploration:unknown:ordinary")
+            return json.dumps({"scene_trait_interpretations": [{"trait_candidates": [{
+                "trait": "curiosity", "polarity": "high", "situation_type": situation,
+                "justification": "The voluntary investigation reveals curiosity."}]}]})
 
     perspective = ScenePerspectiveOutput(
         scene_id="scene-1", evidence_ids=["scene:scene-1"], source_type="participated",
@@ -1008,20 +1004,20 @@ async def test_trait_interpretation_corrects_a_pole_that_disagrees_with_expressi
         behavioral_evidence=[{"action": "Inspected the unfamiliar device.", "context": None,
                               "source_quote": "inspected the unfamiliar device"}],
     )
-    llm = ContradictoryPoleLLM()
-
+    llm = ContextLLM()
     candidates = await _agent(llm)._interpret_traits_batch(
         source_entity_id="source", source_entity_alias="Source", identity=_canonical(),
         perspectives=[perspective],
     )
-
-    assert candidates[0][0]["pole"] == "right"
+    assert candidates[0][0]["perspective_id"] == perspective.id
+    assert candidates[0][0]["polarity"] == "high"
     assert any(call["usage_tag"].endswith(".schema_correction") for call in llm.calls)
 
 
-def test_trait_interpretation_prompt_requires_one_candidate_per_trait_per_scene():
-    assert "FIXED CONSTRAINT" in TRAIT_INTERPRETATION_PROMPT
-    assert "only one candidate for each `trait` value" in TRAIT_INTERPRETATION_PROMPT
+def test_trait_interpretation_prompt_requires_one_candidate_per_trait_per_perspective():
+    assert "at most one observation per trait" in TRAIT_INTERPRETATION_PROMPT
+    assert "polarity" in TRAIT_INTERPRETATION_PROMPT
+    assert "ST EADINESS".replace(" ", "") in TRAIT_INTERPRETATION_PROMPT
 
 
 @pytest.mark.asyncio
@@ -1100,7 +1096,7 @@ async def test_sequential_chunks_use_previous_profile_and_preserve_actual_revisi
     timeline=CharacterTimelineProjection.model_validate_json(_build_timeline('e','Mara',_canonical(),TraitProfile(),[],[],None,results))
     assert [r.revision_number for r in timeline.revisions]==[0,1,2]
     assert [p.starting_revision_number for p in timeline.source_projections]==[0,1]
-    assert timeline.revisions[0].trait_profile.dispositional_traits['integrity'].z is None
+    assert timeline.revisions[0].trait_profile.dispositional_traits['integrity'].point is None
     assert [len(r.trait_evidence) for r in timeline.revisions]==[0,3,3]
     assert len(ledger)==6
 
@@ -1112,7 +1108,7 @@ async def test_backend_binds_availability_cutoff_before_grounding():
         canonical_identity=_canonical(), current_trait_profile=TraitProfile(),
         current_aspects=[], current_goals=[], scenes=scenes(3), batch_id='bundle',
     )
-    assert [item.available_after_scene_id for item in result.trait_evidence] == ['s0', 's1', 's2']
+    assert [item.perspective_id for item in result.trait_evidence] == [p.id for p in result.perspectives]
 
 
 @pytest.mark.asyncio
@@ -1215,26 +1211,42 @@ async def test_authored_only_initialization_is_one_call_and_unknown_is_preserved
     llm=BatchLLM()
     profile,evidence,observations=await _agent(llm).initialize(canonical_identity=_canonical(),entity_id='e')
     assert len(llm.calls)==1 and evidence==[]
-    assert all(value.z is None for value in profile.dispositional_traits.values())
+    assert all(value.point is None for value in profile.dispositional_traits.values())
     payload=json.loads(llm.calls[0]['messages'][1]['content'])
     assert payload['identity']['authored_text']=='Canonical authored biography.'
     assert 'generated_text' not in payload['identity']
 
 
+@pytest.mark.asyncio
+async def test_authored_baseline_binds_provenance_after_four_field_llm_output():
+    class BaselineLLM:
+        async def chat(self, **_kwargs):
+            return json.dumps({'trait_evidence': [{
+                'trait': 'forbearance', 'polarity': 'high',
+                'situation_type': 'unspecified',
+                'justification': 'The authored identity explicitly says she forgives those who wrong her.',
+            }]})
+
+    profile, evidence, _ = await _agent(BaselineLLM()).initialize(
+        canonical_identity=_canonical({'authored_text': 'She forgives those who wrong her.'}),
+        entity_id='e1',
+    )
+    assert profile.estimate('forbearance').point == 6
+    assert profile.estimate('forbearance').observation_count == 0
+    assert evidence[0].evidence_ids == ['identity:e1']
+    assert evidence[0].perspective_id is None
+
+
 def test_complete_prompt_contracts():
     from app.jobs.character_agent.embody_agent_prompts import BASELINE_PROMPT
-    for field in ('conditions', 'diagnosticity', 'comparison_context'):
-        assert field in PSYCHOLOGICAL_ANALYSIS_PROMPT
-    assert 'update_intensity' in PSYCHOLOGICAL_ANALYSIS_PROMPT
-    assert 'Do not return IDs or\nevidence references' in PERSPECTIVE_PROMPT
     assert 'at most 40 words' in PERSPECTIVE_PROMPT
-    assert 'evidence_ids' in PSYCHOLOGICAL_ANALYSIS_PROMPT
-    assert 'must cite exactly the current scene' in PSYCHOLOGICAL_ANALYSIS_PROMPT
-    assert 'Pole must agree with expression_z' in PSYCHOLOGICAL_ANALYSIS_PROMPT
-    for field in ('emotions', 'beliefs', 'impacts', 'trait_candidates', 'aspect_signals', 'goal_signals'):
-        assert f'"{field}"' in PSYCHOLOGICAL_ANALYSIS_PROMPT
-    assert 'MUST contain all six arrays' in PSYCHOLOGICAL_ANALYSIS_PROMPT
+    assert 'behavioral_evidence' in PERSPECTIVE_PROMPT
+    for field in ('emotions', 'beliefs', 'impacts', 'aspect_signals', 'goal_signals'):
+        assert field in PSYCHOLOGICAL_ANALYSIS_PROMPT
+    for field in ('trait_candidates', 'polarity', 'situation_type', 'justification'):
+        assert field in TRAIT_INTERPRETATION_PROMPT
     assert 'authored_disposition' in BASELINE_PROMPT
+    assert 'expression_z' not in TRAIT_INTERPRETATION_PROMPT
 
 
 def test_enrichment_requires_explicit_noop_arrays():
@@ -1254,28 +1266,20 @@ def test_enrichment_requires_explicit_noop_arrays():
     assert validated.scene_enrichments[0].trait_candidates == []
 
 
-def test_enrichment_candidates_require_explicit_update_intensity():
-    candidate = {
-        'trait': 'curiosity', 'evidence_kind': 'behavior',
-        'situation_type': 'exploration', 'pole': 'right',
-        'expression_z': .7, 'diagnosticity': .9, 'confidence': .9,
-        'behavior': 'Chose to investigate the unknown.',
-        'justification': 'The choice is diagnostic.',
-        'evidence_ids': ['scene:s1'], 'episode_id': 'scene:s1',
-        'available_after_scene_id': 's1',
-        'conditions': {name: {'status': 'supported', 'justification': 'Known.'}
-                       for name in ('knowledge', 'capability', 'options', 'freedom')},
-        'comparison_context': None,
-    }
+def test_enrichment_candidates_reject_old_numeric_contract():
+    candidate = {'trait': 'curiosity', 'polarity': 'high',
+        'situation_type': 'exploration:other:ordinary',
+        'justification': 'A voluntary investigation reveals curiosity.',
+        'perspective_id': 'perspective-1', 'evidence_ids': ['scene:s1']}
     payload = {'scene_enrichments': [{
         'scene_id': 's1', 'evidence_ids': ['scene:s1'], 'emotions': [],
         'beliefs': [], 'impacts': [], 'trait_candidates': [candidate],
         'aspect_signals': [], 'goal_signals': [],
     }]}
-    with pytest.raises(ValueError, match='update_intensity'):
-        SceneEnrichmentsOutput.model_validate(payload)
-    candidate['update_intensity'] = 'medium'
     assert SceneEnrichmentsOutput.model_validate(payload).scene_enrichments
+    candidate['expression_z'] = .7
+    with pytest.raises(ValueError, match='expression_z'):
+        SceneEnrichmentsOutput.model_validate(payload)
 
 
 @pytest.mark.asyncio
@@ -1324,7 +1328,7 @@ async def test_psychological_analysis_receives_only_bounded_interpretations():
         call['messages'][1]['content'] for call in llm.calls
         if call['usage_tag'].endswith('.scene_interpretation')
     ))
-    assert len(llm.calls) == 2
+    assert len(llm.calls) == 3
     assert not any(call['usage_tag'].endswith('.profile_update') for call in llm.calls)
     assert 'scenes' not in trait_payload
     assert trait_payload['perspectives'][0]['position'] == 1
@@ -1339,8 +1343,8 @@ async def test_psychological_analysis_receives_only_bounded_interpretations():
 async def test_perspective_generation_receives_no_inferred_profile():
     llm = BatchLLM()
     profile = TraitProfile()
-    profile.dispositional_traits['integrity'].z = 1.2
-    profile.dispositional_traits['integrity'].status = 'supported'
+    profile.dispositional_traits['integrity'].point = 7
+    profile.dispositional_traits['integrity'].status = 'provisional'
     await _agent(llm).run(
         source_entity_id='source', source_entity_alias='Source',
         canonical_identity=_canonical(), current_trait_profile=profile,
@@ -1463,7 +1467,8 @@ async def test_conclusive_goal_signal_completes_the_matching_active_goal():
 
 def test_second_wave_prompts_are_compact_and_have_separate_contracts():
     assert len(PSYCHOLOGICAL_ANALYSIS_PROMPT) < 7_500
-    assert 'trait_candidates' in PSYCHOLOGICAL_ANALYSIS_PROMPT
+    assert 'trait_candidates' not in PSYCHOLOGICAL_ANALYSIS_PROMPT
+    assert 'trait_candidates' in TRAIT_INTERPRETATION_PROMPT
     assert 'aspect_signals' in PSYCHOLOGICAL_ANALYSIS_PROMPT
     assert 'Current-profile aspects are impact targets only' in PSYCHOLOGICAL_ANALYSIS_PROMPT
     assert 'operation `complete`' in PSYCHOLOGICAL_ANALYSIS_PROMPT
@@ -1516,14 +1521,17 @@ async def test_timeline_persists_evidence_with_single_eligible_numeric_change():
     assert projection.source_group.name == 'Case file'
     assert projection.perspectives[0].scene.name == 'The first choice'
     assert projection.perspectives[0].evidence[0].description == 'A voluntary and informed choice.'
-    assert 'point' not in projection.trait_changes[0].current.model_dump(mode='json')
+    assert projection.trait_changes[0].current.point == 6
     tx=_TimelineTx()
     await CharacterAgentService(None,None)._persist_timeline_tx(tx,{'id':'a','ontology_id':1,'name':'Mara'},timeline,
         '2026-09-21',provider='test',model='test',prompt_version=PROMPT_VERSION)
     revisions=[params['props'] for q,params in tx.calls if 'CREATE (revision:CharacterIdentityRevision)' in q]
     assert len(revisions)==2 and len(json.loads(revisions[1]['trait_evidence']))==1
-    assert json.loads(revisions[1]['trait_profile'])['dispositional_traits']['integrity']['z'] == .1
+    assert json.loads(revisions[1]['trait_profile'])['dispositional_traits']['integrity']['point'] == 6
     perspective=next(params for q,params in tx.calls if 'CREATE (perspective:ScenePerspective)' in q)
+    assert perspective['props']['id'] == projection.perspectives[0].id
+    assert json.loads(revisions[1]['trait_evidence'])[0]['perspective_id'] == perspective['props']['id']
+    assert json.loads(revisions[1]['trait_evidence'])[0]['revision_id'] == revisions[1]['id']
     assert perspective['revision_id']==revisions[0]['id']
     assert 'scene' not in perspective['props']
     assert 'evidence' not in perspective['props']

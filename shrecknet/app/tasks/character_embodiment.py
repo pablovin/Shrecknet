@@ -41,15 +41,15 @@ from app.schemas.character_agent import (
     ProjectedScenePerspective,
     SceneInput,
     SubtitleChangeProposal,
+    IdentityDescription,
 )
 from app.utils.async_helpers import run_async
 from app.utils.job_tracking import mark_job_done, mark_job_failed, mark_job_running, update_job_progress
 
 STEP_NAME: dict[int, str] = {
     1: "Perspective",
-    2: "Psychological analysis",
-    3: "Trait interpretation",
-    4: "Deterministic source reduction",
+    2: "Psychological analysis and trait interpretation",
+    3: "Deterministic source reduction",
 }
 
 SCENE_ANALYSIS_CHUNK_SIZE = 5
@@ -428,12 +428,24 @@ async def _generate(*, draft_id: str, revision: int, job_id: int) -> dict:
                 )
             initializer = make_agent()
             agents.append(initializer)
-            current_profile, current_evidence, _ = await initializer.initialize(
-                canonical_identity=inputs["canonical_identity"], entity_id=draft.source_entity_id)
-            initial_profile = current_profile.model_copy(deep=True)
-            initial_evidence = list(current_evidence)
+            current_profile = inputs["trait_profile"]
+            current_evidence = list(inputs["trait_evidence"])
+            existing_identity = inputs.get("identity_description")
+            if isinstance(existing_identity, str):
+                try:
+                    existing_identity = json.loads(existing_identity)
+                except ValueError:
+                    existing_identity = None
+            existing_identity = IdentityDescription.model_validate(existing_identity) if existing_identity else None
+            identity_description = existing_identity or await initializer.generate_identity_description(
+                canonical_identity=inputs["canonical_identity"], current_profile=current_profile,
+                current_aspects=inputs["current_aspects"], current_goals=inputs["current_goals"],
+            )
             total_llm_calls += len(initializer.llm_calls)
             total_tokens_est += sum(item.total_tokens_est for item in initializer.llm_calls)
+            inputs["canonical_identity"]["identity_description"] = identity_description.model_dump(mode="json")
+            initial_profile = current_profile.model_copy(deep=True)
+            initial_evidence = list(current_evidence)
             for bi, group in enumerate(source_groups):
                 agent = make_agent(source_index=bi, source_alias=group["source_alias"])
                 agents.append(agent)
@@ -543,6 +555,17 @@ async def _generate(*, draft_id: str, revision: int, job_id: int) -> dict:
                 total_semantic_corrections += agent.semantic_correction_count
                 per_bundle_results.append(result)
 
+            # Refresh once from the final accumulated identity after all scene
+            # chunks; the starting description grounded every stage above.
+            prior_identity_calls = len(initializer.llm_calls)
+            identity_description = await initializer.generate_identity_description(
+                canonical_identity=inputs["canonical_identity"], current_profile=current_profile,
+                current_aspects=current_aspects, current_goals=current_goals,
+            )
+            refresh_calls = initializer.llm_calls[prior_identity_calls:]
+            total_llm_calls += len(refresh_calls)
+            total_tokens_est += sum(item.total_tokens_est for item in refresh_calls)
+
         finally:
             await client.aclose()
 
@@ -587,7 +610,7 @@ async def _generate(*, draft_id: str, revision: int, job_id: int) -> dict:
             else {}
         )
         obs_dict["identity_description"] = {
-            "text": str(inputs["canonical_identity"].get("alias", "Character")),
+            "text": identity_description.identity_summary,
             "evidence_ids": [f"identity:{draft.source_entity_id}"],
         }
         obs_dict["important_experiences"] = []
@@ -636,6 +659,7 @@ async def _generate(*, draft_id: str, revision: int, job_id: int) -> dict:
             ),
             "image_url": inputs["canonical_identity"].get("avatar_url"),
             "trait_profile": current_profile.model_dump(mode="json"),
+            "identity_description": identity_description.model_dump(mode="json"),
             "aspects": final_aspects_for_proposal,
             "goals": final_goals_for_proposal,
         })
@@ -651,6 +675,7 @@ async def _generate(*, draft_id: str, revision: int, job_id: int) -> dict:
             current_goals=inputs["current_goals"],
             current_subtitle=initial_subtitle,
             per_bundle_results=per_bundle_results,
+            starting_revision=max(0, int(inputs.get("latest_revision", -1))),
             max_aspects=settings.character_agent_embodiment_max_aspects,
             max_goals=settings.character_agent_embodiment_max_goals,
             source_groups=source_groups,

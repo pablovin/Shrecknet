@@ -332,7 +332,15 @@ class CharacterEmbodimentService:
         ).single()
         agent = _json_safe(dict(agent_row["agent"])) if agent_row and agent_row["agent"] else None
 
-        trait_profile = TraitProfile.model_validate_json(agent["trait_profile"]) if agent else TraitProfile()
+        if agent:
+            try:
+                trait_profile = TraitProfile.model_validate_json(agent.get("trait_profile") or "")
+            except ValueError as exc:
+                raise ValueError(
+                    "Existing CharacterAgent has an old trait profile; back it up, delete it, and regenerate from source scenes"
+                ) from exc
+        else:
+            trait_profile = TraitProfile()
         trait_evidence = []
         latest_revision = -1
         processed_scene_ids = set()
@@ -463,6 +471,9 @@ class CharacterEmbodimentService:
 
         return {
             "canonical_identity": canonical_identity,
+            "identity_description": (
+                agent.get("identity_description") if agent else None
+            ),
             "trait_profile": trait_profile,
             "trait_evidence": trait_evidence,
             "latest_revision": latest_revision,
@@ -514,6 +525,27 @@ class CharacterEmbodimentService:
         number = inputs["latest_revision"]
         subtitle = inputs["canonical_identity"].get("subtitle")
         service = CharacterAgentService(self.sql, self.graph)
+        from app.schemas.character_agent import IdentityDescription
+        existing_identity = inputs.get("identity_description")
+        if isinstance(existing_identity, str):
+            try:
+                existing_identity = json.loads(existing_identity)
+            except ValueError:
+                existing_identity = None
+        existing_identity = IdentityDescription.model_validate(existing_identity) if existing_identity else None
+        identity_job = EmbodyAgent(
+            llm_client=llm_client,
+            character_incorporation_model=settings.model_character_agent_character_incorporation,
+            scene_interpretation_model=settings.model_character_agent_scene_interpretation,
+            max_aspects=settings.character_agent_embodiment_max_aspects,
+            max_goals=settings.character_agent_embodiment_max_goals,
+            semantic_correction_attempts=settings.character_agent_embodiment_semantic_correction_attempts,
+        )
+        identity_description = existing_identity or await identity_job.generate_identity_description(
+            canonical_identity=inputs["canonical_identity"], current_profile=profile,
+            current_aspects=aspects, current_goals=goals,
+        )
+        inputs["canonical_identity"]["identity_description"] = identity_description.model_dump(mode="json")
         for chunk in chunk_source_scenes(groups):
             job = EmbodyAgent(llm_client=llm_client,
                 character_incorporation_model=settings.model_character_agent_character_incorporation,
@@ -553,6 +585,20 @@ class CharacterEmbodimentService:
             _apply_goal_ops(goals, result.goal_updates, max_active=settings.character_agent_embodiment_max_goals)
             subtitle = timeline.revisions[-1].subtitle
             number += 1
+
+        # Refresh the saved narrative foundation once after the complete append
+        # operation, using the final point profile, active aspects, and goals.
+        refreshed_identity = await identity_job.generate_identity_description(
+            canonical_identity=inputs["canonical_identity"], current_profile=profile,
+            current_aspects=aspects, current_goals=goals,
+        )
+        async def persist_identity(tx):
+            await tx.run(
+                "MATCH (agent:CharacterAgent {id:$id}) SET agent.identity_description=$identity",
+                id=agent_id,
+                identity=json.dumps(refreshed_identity.model_dump(mode="json"), ensure_ascii=False),
+            )
+        await self.graph.execute_write(persist_identity)
 
     @staticmethod
     def read(draft: CharacterEmbodimentDraft) -> EmbodimentDraftRead:

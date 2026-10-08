@@ -1,12 +1,15 @@
 """Scene-centric source-boundary CharacterAgent embodiment generation.
 
-Two LLM calls run for each source chunk:
-  1. Character incorporation
-  2. Scene psychological analysis and scene-local candidate extraction
+The persistent identity description is loaded or generated once before scene
+work and refreshed once after all source bundles. Three LLM calls normally run
+for each source scene chunk:
+  1. Character incorporation grounded by the identity description
+  2. Psychological enrichment and trait interpretation in parallel, both
+     grounded by the description and validated perspectives
 
 The backend then validates, grounds, and reduces extracted candidates
-deterministically. Source bundles run sequentially and accumulate grounded
-evidence; each produces one scene-associated revision.
+deterministically. A source's chunks share one starting identity; source bundles
+run sequentially and each produces one revision.
 """
 
 from __future__ import annotations
@@ -28,7 +31,7 @@ from app.integrations.llm.structured_output import (
 from app.integrations.llm.shreckllm_client import LLMProviderUnavailableError
 from app.jobs.character_agent.embodiment_debug_artifacts import EmbodimentDebugArtifacts
 from app.jobs.character_agent.embody_agent_prompts import (
-    BASELINE_PROMPT,
+    IDENTITY_DESCRIPTION_PROMPT,
     PSYCHOLOGICAL_ANALYSIS_PROMPT,
     PERSPECTIVE_PROMPT,
     PERSPECTIVE_TRUNCATION_RECOVERY_PROMPT,
@@ -51,20 +54,21 @@ from app.schemas.character_agent import (
     ScenePerspectiveOutput,
     ScenePerspectiveSourceType,
     SubtitleChangeProposal,
+    IdentityDescription,
+    IdentityPersonalityTrait,
 )
 
 
-from app.schemas.character_traits import TraitProfile, TraitEvidence, TraitProposal
-from app.schemas.character_traits import TraitKey, ZValue
+from app.schemas.character_traits import TraitProfile, TraitEvidence, DIRECTIONAL_TRAITS
+from app.schemas.character_traits import TraitKey, TRAIT_BY_KEY
 from app.services.character_trait_service import (
-    ground_observations, merge_evidence, update_profile, validate_proposals, validate_scene_grounding, scene_digest,
+    ground_observations, merge_evidence, update_profile, validate_scene_grounding, scene_digest,
 )
 
 logger = logging.getLogger(__name__)
 
-# Embodiment works on chunks of at most five scenes. This ceiling is not an
-# expected response size; it prevents a malformed response from consuming an
-# unbounded provider-default completion budget.
+# Source scenes are analyzed in chunks of at most five, then combined before
+# one source-level reduction and revision. Bound each provider response explicitly.
 EMBODIMENT_LLM_MAX_TOKENS = 10_000
 
 
@@ -127,6 +131,13 @@ class _PerspectivesContainer(BaseModel):
     perspectives: list[ScenePerspectiveOutput]
 
 
+class _IdentityDescriptionOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    identity_summary: str = Field(min_length=1)
+    psychological_summary: str = Field(min_length=1)
+    personality_traits: list[IdentityPersonalityTrait]
+
+
 class ScenePerspectiveLLMOutput(BaseModel):
     """Compact model-owned fields for one position-bound scene perspective."""
 
@@ -173,43 +184,25 @@ class _BeliefLLMOutput(BaseModel):
     status: CharacterBeliefStatus
 
 
-class _ChoiceConditionLLMOutput(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    status: Literal["supported", "contradicted", "unknown"]
-    justification: str = Field(min_length=1, max_length=240)
-
-
-class _ChoiceConditionsLLMOutput(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    knowledge: _ChoiceConditionLLMOutput
-    capability: _ChoiceConditionLLMOutput
-    options: _ChoiceConditionLLMOutput
-    freedom: _ChoiceConditionLLMOutput
-
-
 class _TraitCandidateLLMOutput(BaseModel):
     """Model-owned trait observation fields; provenance is attached by the backend."""
 
     model_config = ConfigDict(extra="forbid")
     trait: TraitKey
-    evidence_kind: Literal["behavior"] = "behavior"
     situation_type: str = Field(min_length=1, max_length=80)
-    pole: Literal["left", "right"]
-    expression_z: ZValue
-    diagnosticity: float = Field(ge=0, le=1)
-    confidence: float = Field(ge=0, le=1)
-    behavior: str = Field(min_length=1, max_length=300)
+    polarity: Literal["low", "high"]
     justification: str = Field(min_length=1, max_length=360)
-    conditions: _ChoiceConditionsLLMOutput
-    comparison_context: str | None = Field(None, max_length=300)
-    behavior_indexes: list[int] = Field(min_length=1)
 
     @model_validator(mode="after")
-    def pole_matches_expression_z(self) -> "_TraitCandidateLLMOutput":
-        """Reject contradictory directional evidence at the model-output boundary."""
-        expected_pole = "left" if self.expression_z < 0 else "right"
-        if self.pole != expected_pole:
-            raise ValueError("pole and expression_z disagree")
+    def valid_context(self):
+        if self.situation_type == "unspecified":
+            return self
+        parts = self.situation_type.split(":")
+        if (len(parts) != 3
+            or parts[0] not in TRAIT_BY_KEY[self.trait].diagnostic_situations
+            or parts[1] not in {"friend", "enemy", "other"}
+            or parts[2] not in {"ordinary", "high_stakes"}):
+            raise ValueError("invalid trait situation context")
         return self
 
 
@@ -749,29 +742,38 @@ class EmbodyAgent:
 
         raise AssertionError("semantic validation loop did not return or raise")
 
-    async def initialize(self, *, canonical_identity: dict[str, Any], entity_id: str):
-        evidence_id = f"identity:{entity_id}"
-        known = {evidence_id}
-        def validate(value):
-            _validate_and_normalize_evidence(value, allowed_ids=known, stage="authored baseline")
-            _semantic(lambda: ground_observations(value.trait_evidence, scene_ids=[],
-                source_group_id=entity_id, authored_evidence_ids=known))
+    async def generate_identity_description(
+        self, *, canonical_identity: dict[str, Any], current_profile: TraitProfile,
+        current_aspects: list[dict[str, Any]], current_goals: list[dict[str, Any]],
+    ) -> IdentityDescription:
+        """Synthesize the persistent narrative identity once per embodiment phase."""
+        payload = {
+            "name": canonical_identity.get("alias") or "Character",
+            "entity_type": canonical_identity.get("entity_type") or "Unknown",
+            "entity_descriptor": canonical_identity.get("entity_type_description"),
+            "autogenerated_text": canonical_identity.get("generated_text"),
+            "text": canonical_identity.get("authored_text"),
+            "properties": [
+                {"name": str(name), "value": value}
+                for name, value in (canonical_identity.get("properties") or {}).items()
+            ],
+            "goals": [{"name": item.get("title") or item.get("name"),
+                       "description": item.get("description")}
+                      for item in current_goals],
+            "aspects": [{"name": item.get("name"), "type": item.get("category"),
+                         "descriptor": item.get("description")}
+                        for item in current_aspects],
+            "traits": [{"name": key, "value": current_profile.estimate(key).point}
+                       for key in DIRECTIONAL_TRAITS],
+        }
         output = await self._call(
-            prompt=BASELINE_PROMPT,
-            payload={"identity": {key: canonical_identity.get(key) for key in
-                ("alias", "authored_text", "properties", "entity_type")}, "allowed_evidence_ids": [evidence_id]},
-            schema=EmbodimentObservationsOutput, stage="authored baseline",
-            usage_tag="character_agent.embodiment.baseline", max_tokens=EMBODIMENT_LLM_MAX_TOKENS,
-            model=self.scene_interpretation_model, semantic_validator=validate,
-            output_binding={"evidence_id": evidence_id},
+            prompt=IDENTITY_DESCRIPTION_PROMPT, payload=payload,
+            schema=_IdentityDescriptionOutput, stage="identity description",
+            usage_tag="character_agent.embodiment.identity_description",
+            max_tokens=EMBODIMENT_LLM_MAX_TOKENS,
+            model=self.scene_interpretation_model,
         )
-        evidence = ground_observations(output.trait_evidence, scene_ids=[],
-            source_group_id=entity_id, authored_evidence_ids=known)
-        proposals = [TraitProposal(trait=item.trait,
-            observation_ids=[item.id], justification=item.justification,
-            addresses_contradictions="Authored baseline only.") for item in evidence if item.eligible]
-        profile, _ = update_profile(TraitProfile(), evidence, proposals)
-        return profile, evidence, output
+        return IdentityDescription.model_validate(output.model_dump(mode="json"))
 
     async def generate_perspectives(
         self,
@@ -784,7 +786,7 @@ class EmbodyAgent:
         current_goals: list[dict[str, Any]],
         scenes: list[SceneInput],
     ) -> _PerspectivesContainer:
-        """Run the flat first wave for one chunk; it never starts another LLM call."""
+        """Run the perspective stage for one source scene chunk."""
         if not scenes:
             raise EmbodimentGenerationError("no scenes provided for embodiment")
         expected_ids = [scene.scene_id for scene in scenes]
@@ -793,6 +795,7 @@ class EmbodyAgent:
             source_entity_alias=source_entity_alias,
             identity={key: canonical_identity.get(key) for key in (
                 "alias", "subtitle", "entity_type", "entity_type_description", "properties",
+                "identity_description",
             )},
             scene_list=[
                 {"position": index + 1, "name": scene.name,
@@ -889,7 +892,7 @@ class EmbodyAgent:
     async def _analyze_psychological_batch(
         self, *, source_entity_id: str, source_entity_alias: str,
         perspectives: list[ScenePerspectiveOutput], aspects: list[dict[str, Any]],
-        goals: list[dict[str, Any]], recovery_depth: int = 0,
+        goals: list[dict[str, Any]], identity_description: Any = None, recovery_depth: int = 0,
     ) -> list[Any]:
         """Analyze one perspective batch, splitting only a truncated retry batch."""
         expected_ids = [perspective.scene_id for perspective in perspectives]
@@ -898,6 +901,7 @@ class EmbodyAgent:
             "goals": [goal["id"] for goal in goals],
         }
         payload = {
+            "identity_description": identity_description,
             "perspectives": [
                 perspective.model_dump(
                     mode="json",
@@ -938,11 +942,13 @@ class EmbodyAgent:
             first = await self._analyze_psychological_batch(
                 source_entity_id=source_entity_id, source_entity_alias=source_entity_alias,
                 perspectives=perspectives[:midpoint], aspects=aspects, goals=goals,
+                identity_description=identity_description,
                 recovery_depth=recovery_depth + 1,
             )
             second = await self._analyze_psychological_batch(
                 source_entity_id=source_entity_id, source_entity_alias=source_entity_alias,
                 perspectives=perspectives[midpoint:], aspects=aspects, goals=goals,
+                identity_description=identity_description,
                 recovery_depth=recovery_depth + 1,
             )
             return [*first, *second]
@@ -955,12 +961,21 @@ class EmbodyAgent:
         """Classify only validated factual evidence, never the raw scene or reflection."""
         expected_ids = [item.scene_id for item in perspectives]
         payload = {
-            "target": {key: identity.get(key) for key in ("alias", "entity_type", "entity_type_description")},
+            "target": {key: identity.get(key) for key in (
+                "alias", "entity_type", "entity_type_description", "identity_description",
+            )},
             "scenes": [
-                {"position": position, "behavioral_evidence": [
-                    {"position": evidence_position, **record.model_dump(mode="json")}
-                    for evidence_position, record in enumerate(perspective.behavioral_evidence, 1)
-                ]}
+                {
+                    "position": position,
+                    "perspective": {
+                        "summary": perspective.summary,
+                        "interpretation": perspective.interpretation,
+                    },
+                    "behavioral_evidence": [
+                        {"position": evidence_position, **record.model_dump(mode="json")}
+                        for evidence_position, record in enumerate(perspective.behavioral_evidence, 1)
+                    ],
+                }
                 for position, perspective in enumerate(perspectives, 1)
             ],
         }
@@ -986,31 +1001,16 @@ class EmbodyAgent:
         ):
             scene_candidates: list[dict[str, Any]] = []
             selected_candidates: dict[str, _TraitCandidateLLMOutput] = {}
-            duplicate_traits: set[str] = set()
             for candidate in interpretation.trait_candidates:
-                existing = selected_candidates.get(candidate.trait)
-                if existing is None:
-                    selected_candidates[candidate.trait] = candidate
-                    continue
-                duplicate_traits.add(candidate.trait)
-                # A strict greater-than intentionally preserves the first item on a tie.
-                if candidate.confidence > existing.confidence:
-                    selected_candidates[candidate.trait] = candidate
-            if duplicate_traits:
-                logger.warning(
-                    "embodiment_duplicate_scene_trait_candidates_reduced scene_id=%s traits=%s",
-                    scene_id, sorted(duplicate_traits),
-                )
+                if candidate.trait in selected_candidates:
+                    raise EmbodimentGenerationError(
+                        "duplicate trait candidate for one perspective", category="schema",
+                    )
+                selected_candidates[candidate.trait] = candidate
             for candidate in selected_candidates.values():
-                if any(index < 1 or index > len(perspective.behavioral_evidence) for index in candidate.behavior_indexes):
-                    raise EmbodimentGenerationError("trait interpretation referenced invalid behavioral evidence", category="semantic_reference")
                 value = candidate.model_dump(mode="json")
-                value.pop("behavior_indexes", None)
-                # TraitObservation retains this legacy field for persisted evidence compatibility;
-                # new extraction no longer lets the model choose it.
-                value["update_intensity"] = "medium"
-                value.update(evidence_ids=[f"scene:{scene_id}"], episode_id=f"scene:{scene_id}",
-                             available_after_scene_id=scene_id)
+                value.update(evidence_kind="behavior", perspective_id=perspective.id,
+                             evidence_ids=[f"scene:{scene_id}"])
                 scene_candidates.append(value)
             candidates.append(scene_candidates)
         return candidates
@@ -1041,7 +1041,7 @@ class EmbodyAgent:
             key: canonical_identity.get(key)
             for key in (
                 "alias", "subtitle", "entity_type",
-                "entity_type_description", "properties",
+                "entity_type_description", "properties", "identity_description",
             )
         }
         aspects = [
@@ -1096,6 +1096,7 @@ class EmbodyAgent:
             self._analyze_psychological_batch(
                 source_entity_id=source_entity_id, source_entity_alias=source_entity_alias,
                 perspectives=perspectives, aspects=aspects, goals=goals,
+                identity_description=canonical_identity.get("identity_description"),
             ),
             self._interpret_traits_batch(
                 source_entity_id=source_entity_id, source_entity_alias=source_entity_alias,
@@ -1147,6 +1148,7 @@ class EmbodyAgent:
         _semantic(lambda: ground_observations(
             observations.trait_evidence,
             scene_ids=expected_ids,
+            perspective_ids=[p.id for p in perspectives],
             source_group_id=source_entity_id,
         ))
 
@@ -1200,13 +1202,14 @@ class EmbodyAgent:
 
         if on_stage:
             await on_stage(
-                "source:{0} - Step 4: Deterministic source reduction".format(
+                "source:{0} - Step 3: Deterministic source reduction".format(
                     analysis.source_entity_alias
-            ), [4]
+            ), [3]
             )
         existing = current_trait_evidence or []
         incoming = ground_observations(analysis.observations.trait_evidence,
             scene_ids=[p.scene_id for p in analysis.perspectives],
+            perspective_ids=[p.id for p in analysis.perspectives],
             source_group_id=analysis.source_entity_id,
             offset=max((e.chronological_position for e in existing), default=-1) + 1)
         accumulated = merge_evidence(existing, incoming)
@@ -1221,7 +1224,6 @@ class EmbodyAgent:
         trait_profile, trait_changes = update_profile(
             current_trait_profile,
             accumulated,
-            profile_result.trait_proposals,
             source_group_id=analysis.source_entity_id,
         )
 
@@ -1451,8 +1453,8 @@ def _normalize_position_bound_collection(
 
 def _bind_model_output_references(
     value: Any, *, collection: str | None = None, scene_ids: list[str] | None = None,
-    evidence_id: str | None = None, profile_targets: dict[str, list[str]] | None = None,
-    observation_ids: list[str] | None = None, evidence_ids: list[str] | None = None,
+    profile_targets: dict[str, list[str]] | None = None,
+    evidence_ids: list[str] | None = None,
 ) -> None:
     """Attach backend-owned identifiers to position-bound model output."""
     if not isinstance(value, dict):
@@ -1467,19 +1469,6 @@ def _bind_model_output_references(
                 )
                 if isinstance(record, dict):
                     _bind_scene_local_references(record, scene_id, profile_targets)
-    if evidence_id is not None:
-        _bind_authored_evidence_references(value, evidence_id)
-
-    if observation_ids is not None:
-        for proposal in value.get("trait_proposals", []):
-            if not isinstance(proposal, dict):
-                continue
-            indexes = proposal.pop("observation_indexes", None)
-            if isinstance(indexes, list) and all(isinstance(index, int) for index in indexes):
-                proposal["observation_ids"] = [
-                    observation_ids[index - 1] for index in indexes
-                    if 1 <= index <= len(observation_ids)
-                ]
     if evidence_ids is not None:
         for key in ("aspect_updates", "goal_updates"):
             for update in value.get(key, []):
@@ -1526,16 +1515,6 @@ def _bind_scene_local_references(
             impact["target_id"] = targets[target_index - 1]
             resolved_impacts.append(impact)
         item["impacts"] = resolved_impacts
-
-
-def _bind_authored_evidence_references(value: dict[str, Any], evidence_id: str) -> None:
-    """Attach the one canonical identity citation to baseline observations."""
-    for observation in value.get("trait_evidence", []):
-        if isinstance(observation, dict):
-            observation["evidence_ids"] = [evidence_id]
-            observation["episode_id"] = evidence_id
-            observation["available_after_scene_id"] = None
-    _bind_evidence_references(value, evidence_id)
 
 
 def _bind_evidence_references(value: Any, evidence_id: str, scene_id: str | None = None) -> None:
@@ -1718,12 +1697,6 @@ def _semantic(action):
         raise EmbodimentGenerationError(str(exc), category="semantic_reference") from exc
 
 
-def _validate_profile_update(value, *, allowed_ids: set[str], evidence: list[TraitEvidence]) -> None:
-    for item in [*value.aspect_updates, *value.goal_updates]:
-        _validate_and_normalize_evidence(item, allowed_ids=allowed_ids, stage="profile updates")
-    _semantic(lambda: validate_proposals(value.trait_proposals, evidence))
-
-
 def _normalized_identity_label(value: str) -> str:
     return " ".join(value.casefold().split())
 
@@ -1736,10 +1709,6 @@ def _deterministic_profile_result(*, evidence, source_entity_id: str, aspect_sig
     explicitly close one active goal when it establishes resolution; no model
     may otherwise mutate or remove existing identity state in this reduction.
     """
-    proposals = []
-    for trait in sorted({item.trait for item in evidence if item.eligible and item.source_group_id == source_entity_id}):
-        ids = [item.id for item in evidence if item.trait == trait and item.eligible and item.source_group_id == source_entity_id]
-        proposals.append({"trait": trait, "observation_ids": ids, "justification": "Validated source-local behavioral evidence.", "addresses_contradictions": "The deterministic policy retains contradictory evidence without averaging it into a false certainty."})
     known_aspects = {_normalized_identity_label(str(item.get("name") or "")) for item in current_aspects}
     known_goals = {
         _normalized_identity_label(str(item.get("title") or "")): str(item.get("title") or "")
@@ -1785,7 +1754,6 @@ def _deterministic_profile_result(*, evidence, source_entity_id: str, aspect_sig
         known_goals[key] = signal.title
         additions.append({"operation": "add", **signal.model_dump(mode="json", exclude={"operation"})})
     return ProfileUpdateOutput.model_validate({
-        "trait_proposals": proposals,
         "aspect_updates": aspect_updates[:2],
         # Closing an evidenced resolved commitment is more important than
         # introducing another one, and the public update contract permits one.

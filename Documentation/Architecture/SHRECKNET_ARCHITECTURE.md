@@ -66,19 +66,21 @@ persistence migration or service restart.
 ## CharacterAgent dispositional evidence ownership
 
 `app/schemas/character_traits.py` owns trait definitions, diagnostic affordances,
-scale conversion and boundary contracts. `app/services/character_trait_service.py`
-owns eligibility, deduplication, conservative acceptance, manual overrides and
+point scale and perspective-boundary contracts. `app/services/character_trait_service.py`
+owns deduplication, recency-weighted point aggregation, manual overrides and
 within-context STEADINESS. `app/jobs/character_agent/profile.py` supplies shared
 profile/timeline lifecycle operations to draft generation and Architect append.
 Existing CharacterAgent services retain Neo4j transaction ownership; Celery entry
 points retain job lifecycle. Each source is one atomic identity-update
 bundle and produces exactly one revision containing every scene used. Its
 scene-local work is partitioned into chunks of at most five scenes; up to three
-chunks run concurrently. Each chunk first incorporates the supplied scenes, then
-performs one bounded psychological-analysis call that extracts traits and
-aspect/goal signals from the resulting interpretations. Source reduction is
-backend-owned and deterministic, so the normal call budget is `2n` for `n`
-chunks, plus the one-time authored baseline and any repair/correction calls. A
+chunks run concurrently. Each embodiment job loads or generates one persistent
+narrative `identity_description`; each chunk incorporates scenes, then runs
+psychological analysis and trait interpretation in parallel from its
+perspectives and that description. Source reduction is backend-owned and
+deterministic. The normal scene call budget is `3n` for `n` chunks, plus one
+identity refresh and, when the field is absent, one initial generation, along
+with any repair/correction calls. A
 truncated psychological response is discarded and only its completed perspective
 batch is retried in smaller contiguous sub-batches; no incomplete JSON is used.
 No LLM receives an accumulated evidence ledger. Revision JSON contains source-local evidence, including no-change observations. See

@@ -72,6 +72,17 @@ business rules in routers, task entry points, model files, or the SDK.
 - Keep prompts beside the job that owns them and begin each prompt module with a
   clear docstring describing what each prompt is used for, the pipeline execution
   order, the data passed between stages, and the expected result of every stage.
+- Put a short source-code header immediately above each prompt definition. State
+  its purpose, the job and stage or call site that uses it, and the expected
+  output. Do the same for shared prompt fragments and recovery variants, naming
+  the prompts that compose them. Keep these maintainer headers in comments rather
+  than sending them to the model unless the content is part of the model contract.
+- Arrange prompt definitions in execution order, with shared contract fragments
+  immediately before their first dependent prompt and recovery variants beside
+  their normal prompt. Show the same ordered flow in the module docstring and
+  canonical agent documentation: inputs, outputs, parallel branches, retries,
+  backend-only steps, and prompts retained without an active call site. If a
+  pipeline changes, update that flow and the definition order together.
 - Make every LLM prompt self-contained. Write all input parameter names, nesting,
   meanings, allowed values, and relevant constraints directly in the prompt; do
   not require the model to infer its input contract from Python code alone.

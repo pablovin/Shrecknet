@@ -21,8 +21,13 @@ The writer model writes or corrects bounded prose blocks. Configure only
 Analysis responses are locally parsed and checked against their requested JSON
 Schema. If a provider accepts native structured output but returns malformed
 content, Novelist makes one source-preserving retry without the provider-native
-format flag and explicitly includes the required schema. A second malformed or
-schema-invalid response fails the run; it is never used as evidence.
+format flag. The retry includes the rejected output, parser or schema error,
+and the required schema, including the rule that a nested mapping cannot be
+returned as the root object. If both responses are recognizably just a
+string-valued nested mapping (for example `player_character_mapping`), Novelist
+makes one targeted repair request that retains that mapping and requires the
+complete root ledger with source-backed scenes. Other second malformed or
+schema-invalid responses fail the run; they are never used as evidence.
 
 Every analysis, verification, writing, and correction request carries its
 source-bearing task prompt as a `user` message. Novelist must not submit a

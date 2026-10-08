@@ -46,7 +46,10 @@ class NovelistOrchestrator:
     async def _json(self, prompt: str, schema: dict[str, Any], usage_tag: str) -> dict[str, Any]:
         response_format = strict_json_schema("novelist_v3", schema)
         last: Exception | None = None
-        for attempt in range(2):
+        rejected_output = ""
+        unwrapped_mapping: tuple[str, dict[str, str]] | None = None
+        for attempt in range(3):
+            parsed: Any = None
             try:
                 if attempt == 0:
                     result = await chat_with_structured_output(
@@ -59,7 +62,7 @@ class NovelistOrchestrator:
                         usage_tag=usage_tag,
                         max_tokens=6000,
                     )
-                else:
+                elif attempt == 1:
                     # Some OpenAI-compatible providers acknowledge json_schema
                     # but return a short non-JSON response.  Retrying the same
                     # native request repeats that provider failure, so make the
@@ -67,8 +70,13 @@ class NovelistOrchestrator:
                     # source-bearing prompt and validating locally.
                     fallback_prompt = (
                         f"{prompt}\n\nNative structured output was not valid. "
-                        "Return one RFC8259 JSON object only: no Markdown, explanation, "
-                        f"or omitted required fields. Required JSON Schema: {json.dumps(schema, ensure_ascii=False)}"
+                        "Repair the rejected response below. Return one RFC8259 JSON object only: "
+                        "no Markdown, explanation, or omitted required fields. The root object "
+                        "must contain exactly the keys required by the schema; never return the "
+                        "value of a nested field, such as player_character_mapping, by itself. "
+                        f"Rejected response: {rejected_output[:16_000]}\n"
+                        f"Validation error: {last}\n"
+                        f"Required JSON Schema: {json.dumps(schema, ensure_ascii=False)}"
                     )
                     result = await self.llm_client.chat(
                         model=self.analysis_model,
@@ -78,7 +86,29 @@ class NovelistOrchestrator:
                         usage_tag=f"{usage_tag}.malformed_structured_fallback",
                         max_tokens=6000,
                     )
+                else:
+                    if unwrapped_mapping is None:
+                        raise last or ValueError("structured response could not be repaired")
+                    field, mapping = unwrapped_mapping
+                    repair_prompt = (
+                        f"{prompt}\n\nThe previous response was only the value of `{field}`, "
+                        "not the required root JSON object. Preserve that mapping as the value "
+                        f"of the `{field}` key, then complete every other required root key from "
+                        "the source. In particular, include at least one source-backed scene. "
+                        "Return one RFC8259 JSON object only—no Markdown or explanation. "
+                        f"The unwrapped mapping was: {json.dumps(mapping, ensure_ascii=False)}\n"
+                        f"Required JSON Schema: {json.dumps(schema, ensure_ascii=False)}"
+                    )
+                    result = await self.llm_client.chat(
+                        model=self.analysis_model,
+                        messages=[{"role": "user", "content": repair_prompt}],
+                        temperature=0.0,
+                        return_metadata=True,
+                        usage_tag=f"{usage_tag}.unwrapped_mapping_repair",
+                        max_tokens=6000,
+                    )
                 text = result.get("text") if isinstance(result, dict) else result
+                rejected_output = str(text)
                 parsed = parse_json_deterministically(str(text))
                 if not isinstance(parsed, dict):
                     raise ValueError("structured response must be a JSON object")
@@ -87,13 +117,31 @@ class NovelistOrchestrator:
                 return parsed
             except Exception as exc:
                 last = exc
+                if isinstance(parsed, dict):
+                    unwrapped_mapping = self._unwrapped_string_mapping(parsed, schema)
                 logger.warning(
                     "novelist_analysis_structured_output_invalid tag=%s attempt=%s error=%s",
                     usage_tag,
                     attempt + 1,
                     exc,
                 )
-        raise RuntimeError(f"Novelist analysis structured output failed after retry: {last}") from last
+        raise RuntimeError(f"Novelist analysis structured output failed after retries: {last}") from last
+
+    @staticmethod
+    def _unwrapped_string_mapping(value: dict[str, Any], schema: dict[str, Any]) -> tuple[str, dict[str, str]] | None:
+        """Recognize a provider returning a string-valued nested map as its root."""
+        properties = schema.get("properties")
+        if not isinstance(properties, dict) or not value or set(value) & set(properties):
+            return None
+        if not all(isinstance(key, str) and isinstance(item, str) for key, item in value.items()):
+            return None
+        for field, field_schema in properties.items():
+            if not isinstance(field_schema, dict) or field_schema.get("type") != "object":
+                continue
+            additional = field_schema.get("additionalProperties")
+            if isinstance(additional, dict) and additional.get("type") == "string":
+                return field, value
+        return None
 
     async def _write(self, prompt: str, *, usage_tag: str) -> str:
         result = await self.llm_client.chat(model=self.writer_model, messages=[{"role": "user", "content": prompt}], temperature=0.7, return_metadata=True, use_conversation_memory=False, usage_tag=usage_tag, max_tokens=3000)

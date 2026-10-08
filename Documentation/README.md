@@ -9,6 +9,7 @@ Welcome to the Shrecknet documentation! This directory contains all organized do
 - [CharacterAgent endpoints](./Agents/CharacterAgent/CharacterAgent%20-%20Endpoints.md)
 - [Dispositional traits](./Agents/CharacterAgent/Dispositional%20Traits.md) — constructs, evidence, extraction/query pipelines, source bundles, revisions, and deployment
 - [Historical dispositional-traits design record](./Agents/CharacterAgent/Dispositional%20Traits%20Plan.md) — superseded embodiment design notes; use the current contract above
+- [Point based traits implementation record](./Agents/CharacterAgent/Point-Based%20Traits%20Redesign%20Plan.md) — equations, graph contract, flow, cutover, and verification decisions
 
 ## Elder
 

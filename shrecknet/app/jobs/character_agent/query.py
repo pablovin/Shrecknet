@@ -134,7 +134,19 @@ class CharacterAgentQueryJob:
         profile = TraitProfile.model_validate(character["trait_profile"])
         traits = {
             key: {
-                "z": profile.estimate(key).z,
+                "point": profile.estimate(key).point,
+                "status": profile.estimate(key).status,
+                "summary": (
+                    "No grounded disposition is known."
+                    if profile.estimate(key).status == "unknown"
+                    else "Administrator-selected point; scene evidence remains recorded separately."
+                    if profile.estimate(key).status == "manual"
+                    else "Provisional authored disposition; no scene behavior has been observed."
+                    if profile.estimate(key).observation_count == 0
+                    else "Mixed or context-dependent polarity across perspectives."
+                    if profile.estimate(key).point == 5
+                    else f"Derived from {profile.estimate(key).observation_count} grounded perspective observations."
+                ),
                 "left": definition.left_pole,
                 "right": definition.right_pole,
             }
@@ -143,8 +155,12 @@ class CharacterAgentQueryJob:
         return {
             "name": character["name"],
             "subtitle": character.get("subtitle"),
+            "identity_description": character.get("identity_description"),
             "traits": traits,
-            "steadiness": profile.steadiness.z,
+            "steadiness": {"point": profile.steadiness.point, "status": profile.steadiness.status,
+                           "summary": "Comparable perspective evidence is insufficient."
+                           if profile.steadiness.point is None else
+                           f"Computed from {profile.steadiness.observation_count} comparable perspectives."},
             "aspects": [
                 {key: item.get(key) for key in ("name", "category", "importance", "description")}
                 for item in snapshot["aspects"]

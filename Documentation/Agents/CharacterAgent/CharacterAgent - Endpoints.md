@@ -56,22 +56,27 @@ Example response:
     "entity_instance_id": "entity-mara",
     "name": "Mara",
     "background_story": "A guarded ruler responsible for a frontier village.",
+    "identity_description": {
+      "identity_summary": "A frontier ruler shaped by responsibility for her village.",
+      "psychological_summary": "She fears failing those who depend on her and struggles to balance safety with trust.",
+      "personality_traits": [{"trait": "caution", "description": "She seeks safeguards before exposing others to uncertain danger."}]
+    },
     "image_url": null,
     "status": "active",
     "visibility": "public",
     "trait_profile": {
-      "version": "dispositions-v1",
+      "version": "dispositions-v3-points-perspectives",
       "dispositional_traits": {
-        "integrity": {"z": null, "status": "unknown", "qualifying_count": 0, "observation_ids": [], "uncertainty": [], "accepted_count": 0, "comparison_group_count": 0, "required_qualifying_count": 0, "required_comparison_group_count": 0, "applied_source_ids": []},
-        "caution": {"z": null, "status": "unknown", "qualifying_count": 0, "observation_ids": [], "uncertainty": [], "accepted_count": 0, "comparison_group_count": 0, "required_qualifying_count": 0, "required_comparison_group_count": 0, "applied_source_ids": []},
-        "presence": {"z": null, "status": "unknown", "qualifying_count": 0, "observation_ids": [], "uncertainty": [], "accepted_count": 0, "comparison_group_count": 0, "required_qualifying_count": 0, "required_comparison_group_count": 0, "applied_source_ids": []},
-        "forbearance": {"z": null, "status": "unknown", "qualifying_count": 0, "observation_ids": [], "uncertainty": [], "accepted_count": 0, "comparison_group_count": 0, "required_qualifying_count": 0, "required_comparison_group_count": 0, "applied_source_ids": []},
-        "diligence": {"z": null, "status": "unknown", "qualifying_count": 0, "observation_ids": [], "uncertainty": [], "accepted_count": 0, "comparison_group_count": 0, "required_qualifying_count": 0, "required_comparison_group_count": 0, "applied_source_ids": []},
-        "curiosity": {"z": null, "status": "unknown", "qualifying_count": 0, "observation_ids": [], "uncertainty": [], "accepted_count": 0, "comparison_group_count": 0, "required_qualifying_count": 0, "required_comparison_group_count": 0, "applied_source_ids": []},
-        "sharing": {"z": null, "status": "unknown", "qualifying_count": 0, "observation_ids": [], "uncertainty": [], "accepted_count": 0, "comparison_group_count": 0, "required_qualifying_count": 0, "required_comparison_group_count": 0, "applied_source_ids": []},
-        "restlessness": {"z": null, "status": "unknown", "qualifying_count": 0, "observation_ids": [], "uncertainty": [], "accepted_count": 0, "comparison_group_count": 0, "required_qualifying_count": 0, "required_comparison_group_count": 0, "applied_source_ids": []}
+        "integrity": {"point": null, "status": "unknown", "observation_count": 0, "observation_ids": []},
+        "caution": {"point": null, "status": "unknown", "observation_count": 0, "observation_ids": []},
+        "presence": {"point": null, "status": "unknown", "observation_count": 0, "observation_ids": []},
+        "forbearance": {"point": null, "status": "unknown", "observation_count": 0, "observation_ids": []},
+        "diligence": {"point": null, "status": "unknown", "observation_count": 0, "observation_ids": []},
+        "curiosity": {"point": null, "status": "unknown", "observation_count": 0, "observation_ids": []},
+        "sharing": {"point": null, "status": "unknown", "observation_count": 0, "observation_ids": []},
+        "restlessness": {"point": null, "status": "unknown", "observation_count": 0, "observation_ids": []}
       },
-      "steadiness": {"z": null, "status": "unknown", "qualifying_count": 0, "observation_ids": [], "uncertainty": [], "accepted_count": 0, "comparison_group_count": 0, "required_qualifying_count": 3, "required_comparison_group_count": 1, "applied_source_ids": []},
+      "steadiness": {"point": null, "status": "unknown", "observation_count": 0, "observation_ids": []},
       "overrides": {}, "inferred_traits": {}
     },
     "id": "agent-8c01",
@@ -278,30 +283,39 @@ complete display references.
 
 CRUD remains under `/character-agents`, `/character-aspects`, and `/character-goals`.
 CharacterAgent reads include `trait_profile.dispositional_traits` and separate
-`trait_profile.steadiness`. Every slot has z, bounded z estimate, status, evidence
-counts/references, and uncertainty. Unknown is null, not z=0. See the complete
+`trait_profile.steadiness`. Every slot has `point` (integer 1–9 or null), status, `observation_count`,
+and `observation_ids` containing `ScenePerspective.id` values. Unknown is null,
+not point 5. See the complete
 [trait specification and policy](Dispositional%20Traits.md).
 
-Authenticated metadata: `GET /character-agents/trait-definitions` returns the
-registry and scale mapping. The percentile reference is the general human population.
+Reads also return `identity_description`, an object with `identity_summary`,
+`psychological_summary`, and `personality_traits` entries (`trait`, `description`).
+It is server-generated during embodiment, is included in the reviewed draft
+proposal, and is stored when that draft is accepted. Legacy agents without the
+property return `null`; it is not part of caller-supplied create/update fields.
 
-Administrator create/PATCH inputs use z edits rather than raw profiles:
+Authenticated metadata: `GET /character-agents/trait-definitions` returns the
+registry and 1–9 point scale.
+
+Administrator create/PATCH inputs use point edits rather than raw profiles:
 
 ```json
 {
   "trait_edits": {
-    "integrity": {"z": 1.2, "reason": "Authored character sheet."},
-    "sharing": {"z": -0.7, "reason": "Scrupulous but ungenerous."}
+    "integrity": {"point": 7, "reason": "Authored character sheet."},
+    "sharing": {"point": 3, "reason": "Scrupulous but ungenerous."}
   }
 }
 ```
 
-Each slot accepts a finite number from -1.9 through 1.9. Omitted slots are retained. A nonblank
-reason is required. `{"trait_edits":{"integrity":{"z":null,"reason":"Resume evidence."}}}`
+Each slot accepts a strict integer from 1 through 9. Omitted slots are retained. A nonblank
+reason is required. `{"trait_edits":{"integrity":{"point":null,"reason":"Resume evidence."}}}`
 clears that manual override and restores the current inferred value, possibly unknown.
-Raw z, caller-invented evidence, unknown trait names, and removed personality fields
+Raw z values, caller-invented evidence, unknown trait names, and removed personality fields
 are not accepted as edits (`422`). Graph mutation remains administrator-only.
 Manual values stay effective while underlying evidence accumulates.
+Reading an agent whose stored trait profile still uses the old format returns
+`409` with a regeneration message; it is never silently converted to points.
 
 `GET /character-agents/{agent_id}/revisions` returns immutable profile snapshots,
 batch IDs and scene IDs. `GET /character-agents/{agent_id}/identity-changes` accepts
@@ -312,7 +326,8 @@ version, and actor ID for manual changes.
 `GET /character-agents/{agent_id}/trait-evidence` is administrator-only. Filters:
 `trait` (directional key), `revision` (inclusive cutoff), `skip` (default 0), and
 `limit` (default 100, maximum 500). It returns structured observations with
-eligibility/exclusion reasons; it includes weak and no-change evidence. Raw trait
+perspective IDs, polarity, context, justification, and revision provenance.
+It includes observations even when they do not change the rounded point. Raw trait
 observations are not included in public revision responses. Visibility rules for
 existing profile and history reads continue to apply.
 
@@ -320,20 +335,35 @@ existing profile and history reads continue to apply.
 
 1. Administrator submits `POST /character-agents/embodiment-drafts` with
    `{"ontology_id":12,"entity_instance_id":"entity-mara"}`. AI agents must be
-   enabled and configured. Response `202` includes draft/job IDs and polling URLs.
+   enabled and configured. For an update proposal, include
+   `target_character_agent_id`. Response `202` includes draft/job IDs and polling URLs.
+   A repeated request for the same active draft returns its existing identifiers.
+   To replace a terminal proposal after confirmation, set `replace_existing: true`.
+   An active queued or generating draft cannot be replaced.
 2. Poll `GET /jobs/{job_id}` and
-   `GET /character-agents/embodiment-drafts/{draft_id}`. States remain `queued`,
+   `GET /character-agents/embodiment-drafts/{draft_id}`. To rediscover the
+   administrator's recent drafts after navigation or reload, call
+   `GET /character-agents/embodiment-drafts?ontology_id=12&limit=20`. This
+   admin-only list includes draft/job IDs, target agent, status, timestamps, and
+   safe failure text; it is scoped to the authenticated administrator. States remain `queued`,
    `generating`, `ready`, `failed`, and `accepted`.
    When the selected LLM provider or model is unavailable, a failed draft's
    `error_message` names the provider, selected model, and safe availability
    reason, then instructs the administrator to configure an available model and
    retry. Job details additionally use `failure_category: "provider_unavailable"`.
-3. Review `proposal.trait_profile`, aspects/goals, source evidence and timeline.
+3. Review `proposal.identity_description` alongside `proposal.trait_profile`,
+   aspects/goals, source evidence and timeline. The description is generated or
+   reused before scene processing, refreshed once from the final state, and
+   committed to the CharacterAgent when the draft is accepted.
    The server-owned profile is the inference baseline; do not submit that entire
    read object as a write payload.
-4. Submit the normal creation aggregate with the draft ID and any manual z
-   edits. Identical z values preserve inferred provenance; different z values produce
-   a final manual revision after the generated timeline.
+4. For a new agent, submit the normal creation aggregate with the draft ID and
+   any manual point edits. For an update proposal, submit the reviewed profile fields,
+   complete aspect/goal arrays, and draft ID through
+   `PATCH /character-agents/{character_agent_id}`. Identical point values preserve
+   inferred provenance; different point values produce a final manual revision after
+   the generated timeline. Updating an existing agent appends its generated
+   source revisions and commits the reviewed profile and assignments atomically.
 
 ```json
 {
@@ -343,7 +373,7 @@ existing profile and history reads continue to apply.
   "name": "Mara of the Frontier",
   "background_story": "The administrator-reviewed history.",
   "visibility": "private",
-  "trait_edits": {"integrity":{"z":1.2,"reason":"Reviewed authored characterization."}},
+  "trait_edits": {"integrity":{"point":7,"reason":"Reviewed authored characterization."}},
   "aspects": [],
   "goals": []
 }
@@ -354,16 +384,34 @@ provenance must belong to the draft. Retrying an accepted draft returns its
 existing agent. Manual creation without a draft starts unobserved slots as unknown.
 Name/story/image derivation continues to use canonical entity information.
 
+Update requests use the same fields as a reviewed create payload except that
+`ontology_id` and `entity_instance_id` remain owned by the existing agent:
+
+```json
+{
+  "embodiment_draft_id": "draft-123",
+  "name": "Mara of the Frontier",
+  "background_story": "The administrator-reviewed history.",
+  "trait_edits": {},
+  "aspects": [],
+  "goals": []
+}
+```
+
+The draft must belong to the authenticated administrator and target the selected
+agent. Repeating a successful save for the same draft returns the current agent
+without appending a second revision.
+
 ### Source-boundary bundles
 
-Scenes retain `DERIVED_FROM` source grouping and deterministic time order. A source remains one atomic identity-update and revision boundary, but its scene-local work is partitioned into chunks of at most five scenes. Chronology is sequential only at this source boundary; chunks within a source are executed as observable, flat stage waves and shreckLLM owns provider capacity.
+Scenes retain `DERIVED_FROM` source grouping and deterministic time order. A source is one atomic identity-update and revision boundary. Its scene-local work is partitioned into chunks of at most five scenes, all sharing the same source-start identity. Source bundles run sequentially. ShreckLLM owns provider capacity.
 
-Each chunk has two LLM waves:
+Each chunk has two LLM waves and three normal calls:
 
-1. **Character incorporation** receives the chunk's canonical raw scenes and returns position-bound perspectives and presentation-only reflections.
-2. **Psychological analysis** receives those perspectives, never canonical scenes or reflections. It returns emotions, beliefs, impacts, trait candidates, and durable aspect/goal signals together.
+1. **Character incorporation** uses `PERSPECTIVE_PROMPT` with the chunk's canonical raw scenes. It returns position-bound perspectives, reflections, and factual `behavioral_evidence`.
+2. **Psychological analysis** uses `PSYCHOLOGICAL_ANALYSIS_PROMPT` with bounded perspectives. It returns emotions, beliefs, impacts, and durable aspect/goal signals. In parallel, **Trait interpretation** uses `TRAIT_INTERPRETATION_PROMPT` with validated factual `behavioral_evidence` and returns directional trait candidates. Neither call receives canonical scenes.
 
-The coordinator completes every chunk's Perspective wave before beginning any chunk's Psychological analysis wave. It binds every scene/evidence/target reference by output position, merges all chunk-local evidence in chronological source order, deduplicates new identity signals, and performs the trait/profile reduction deterministically. It never sends the cumulative historical evidence ledger to an LLM, and there is no profile-update LLM call. Existing aspects and goals are never modified or removed by the deterministic signal reducer; it creates only evidence-backed, non-duplicate additions. The updated identity takes effect only at source end.
+The coordinator completes every chunk's Perspective call before beginning the parallel analysis calls. It binds every scene/evidence/target reference by output position, merges chunk results in source scene order, deduplicates new identity signals, and performs one trait/profile reduction for the source. It never sends the cumulative historical evidence ledger to an LLM, and there is no profile-update LLM call. Existing aspects and goals are never modified or removed by the deterministic signal reducer; it creates only evidence-backed, non-duplicate additions. The updated identity takes effect only at source end. See the [extraction flow](Dispositional%20Traits.md#extraction-and-evidence).
 
 Each embodiment generation or JSON-repair request is capped at 10,000 completion tokens. This cap is a provider-cost safeguard; a response stopped for length is rejected as truncated and cannot become a draft result.
 
@@ -381,7 +429,7 @@ Each embodiment generation or JSON-repair request is capped at 10,000 completion
 }
 ```
 
-Poll `GET /jobs/42`. `details` is a JSON object when it contains valid JSON. During concurrent chunk analysis, render `active_steps` and `parallel` together rather than treating chunks as sequential work:
+Poll `GET /jobs/42`. `details` is a JSON object when it contains valid JSON. During concurrent chunk analysis, render `active_steps` and `parallel` together:
 
 ```json
 {
@@ -390,7 +438,7 @@ Poll `GET /jobs/42`. `details` is a JSON object when it contains valid JSON. Dur
   "status": "running",
   "progress": 0.46,
   "details": {
-    "stage": "Bundle — session_003_manfred_von_killinger — Step 2: Psychological analysis",
+    "stage": "Bundle — session_003_manfred_von_killinger — Step 2: Psychological analysis and trait interpretation",
     "draft_id": "9b820ec5-5c1a-4bc6-9b01-4cea280e9420",
     "bundles": [{
       "index": 3,
@@ -405,23 +453,31 @@ Poll `GET /jobs/42`. `details` is a JSON object when it contains valid JSON. Dur
       ],
       "parallel": {
         "active": true,
-        "active_branches": ["Psychological analysis"],
+        "active_branches": ["Psychological analysis and trait interpretation"],
         "active_chunk_count": 2,
-        "scene_chunk_concurrency": 3
+        "execution": "shreckllm_managed"
       }
     }]
   }
 }
 ```
 
-Step names are stable: `1` Perspective, `2` Psychological analysis, and `3` Deterministic source reduction. Render a chunk by its `status`, `scene_count`, `active_steps`, and `done_steps`. `parallel.execution` is `shreckllm_managed`: the frontend must not infer a worker-local concurrency limit. A completed bundle has `done_steps: [1,2,3]`, empty `active_steps`, and `parallel.active: false`. `GET /character-agents/embodiment-drafts/{draft_id}` remains the reviewed-result endpoint; its proposal and timeline response contract is unchanged.
+Step names are stable: `1` Perspective, `2` Psychological analysis and trait interpretation, and `3` Deterministic source reduction. Render a chunk by its `status`, `scene_count`, `active_steps`, and `done_steps`. `parallel.execution` is `shreckllm_managed`: the frontend must not infer a worker-local concurrency limit. A completed bundle has `done_steps: [1,2,3]`, empty `active_steps`, and `parallel.active: false`. `GET /character-agents/embodiment-drafts/{draft_id}` returns the reviewed result and its point-based trait profile.
 
-### Regeneration and rollout
+### Regeneration and lifecycle safety
 
-Starting an embodiment draft for an already embodied entity deletes its current
-CharacterAgent aggregate through the existing cleanup path, then generates a new
-draft. Its perspectives, history, and unshared aspect/goal definitions are removed;
-canonical entities/scenes remain. This endpoint is not a nondestructive preview.
+Starting an embodiment draft never deletes a CharacterAgent or its history. If the
+entity already has an agent, the request must name that exact agent in
+`target_character_agent_id`; otherwise the endpoint returns `409`. An active draft
+is returned idempotently. A ready or failed draft is retained until an administrator
+explicitly confirms replacement with `replace_existing: true`. Draft detail reads
+are scoped to their creating administrator. Generation remains a proposal: agent
+profile, aspects, goals, and memory are committed only through the reviewed save flow.
+
+The personality contract is intentionally breaking. Drain old workers/queued
+jobs, clear old agents and draft payloads, deploy matching consumers,
+and regenerate. There is no conversion or compatibility alias. See
+[deployment and rollback notes](Dispositional%20Traits.md#breaking-deployment).
 
 This personality contract is intentionally breaking. Drain old workers/queued
 jobs, clear old agents and draft payloads, deploy matching consumers,
@@ -431,8 +487,8 @@ and regenerate. There is no conversion or compatibility alias. See
 ### Configuration
 
 - `model_character_agent_character_incorporation`: batch perspectives/reflections.
-- `model_character_agent_scene_interpretation`: authored baseline and per-scene
-  psychological enrichment/candidate extraction.
+- `model_character_agent_scene_interpretation`: narrative identity description
+  generation/refresh, per-scene psychological enrichment, and trait interpretation.
 - `model_character_agent_deliberation`: v3 query deliberation. `model_character_agent_framing`
   is retained as an unused compatibility setting and should not be configured for new deployments.
 - `model_agents_repair_json`: query final repair target.

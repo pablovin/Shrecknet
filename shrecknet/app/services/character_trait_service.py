@@ -1,35 +1,26 @@
-"""Deterministic evidence gates and conservative personality update policy.
-
-Thresholds and the spread-to-sheet conversion are versioned engineering policy,
-not calibrated psychometric claims. LLMs propose; this module accepts transitions.
-"""
+"""Deterministic point scoring and perspective-grounded trait evidence."""
 from __future__ import annotations
 
 import hashlib
 import json
-import math
 from collections import defaultdict
+from decimal import Decimal, ROUND_HALF_UP
 from typing import Iterable
 
 from app.schemas.character_traits import (
-    ChoiceConditions, DIRECTIONAL_TRAITS, SPEC_VERSION, TraitChange, TraitEdit,
-    TraitEstimate, TraitEvidence, TraitObservation, TraitProfile, TraitProposal,
+    DIRECTIONAL_TRAITS, EVIDENCE_POLICY_VERSION, TraitChange, TraitEdit, TraitEstimate,
+    TraitEvidence, TraitObservation, TraitProfile,
 )
 
-POLICY_VERSION = 'evidence-policy-v5-expression-centre'
-MIN_CONFIDENCE = 0.7
-MIN_DIAGNOSTICITY = 0.7
-MIN_EPISODES = 1
-MIN_SPREAD_EPISODES = 3
-MIN_COMPARISON_GROUPS = 1
-MIN_GROUP_EPISODES = 3
-STEADINESS_WINDOW_EPISODES = 30
-UPDATE_MAGNITUDES = {'small': 0.05, 'medium': 0.10, 'large': 0.20}
+POLICY_VERSION = EVIDENCE_POLICY_VERSION
+RECENCY = 0.9
+SMOOTHING = 4
+STEADINESS_WINDOW = 12
+MIN_COMPARABLE = 3
 
 
 def validate_scene_grounding(items, scene_ids: list[str]) -> None:
-    positions = {f'scene:{scene}': i for i, scene in enumerate(scene_ids)}
-    if [item.scene_id for item in items] != scene_ids or len(positions) != len(scene_ids):
+    if [item.scene_id for item in items] != scene_ids or len(set(scene_ids)) != len(scene_ids):
         raise ValueError('scene outputs must match the exact unique input order')
     for item in items:
         if set(item.evidence_ids) != {f'scene:{item.scene_id}'}:
@@ -38,73 +29,54 @@ def validate_scene_grounding(items, scene_ids: list[str]) -> None:
 
 def ground_observations(
     observations: Iterable[TraitObservation], *, scene_ids: list[str], source_group_id: str,
-    offset: int = 0, authored_evidence_ids: set[str] | None = None,
+    perspective_ids: list[str] | None = None, offset: int = 0,
+    authored_evidence_ids: set[str] | None = None,
 ) -> list[TraitEvidence]:
-    positions = {f'scene:{scene}': i for i, scene in enumerate(scene_ids)}
+    perspective_ids = perspective_ids or []
+    if scene_ids and len(scene_ids) != len(perspective_ids):
+        raise ValueError('each scene requires one preassigned perspective ID')
+    if len(set(perspective_ids)) != len(perspective_ids):
+        raise ValueError('perspective IDs must be unique')
+    positions = {pid: i for i, pid in enumerate(perspective_ids)}
     authored = authored_evidence_ids or set()
     result = []
     for observation in observations:
-        refs = set(observation.evidence_ids)
         if observation.evidence_kind == 'authored_disposition':
-            if not refs <= authored or observation.episode_id not in authored:
-                raise ValueError('authored observation must cite supplied canonical authored evidence')
-            if observation.available_after_scene_id is not None:
-                raise ValueError('authored baseline cannot claim a scene cutoff')
+            if not set(observation.evidence_ids) <= authored or not observation.evidence_ids:
+                raise ValueError('authored observation must cite supplied identity evidence')
             position = offset
+            identity = observation.evidence_ids[0]
         else:
-            if not refs <= set(positions) or observation.episode_id not in positions:
-                raise ValueError('observation references unknown scene evidence or episode')
-            if observation.episode_id not in refs:
-                raise ValueError('observation must cite its canonical episode')
-            latest = max(positions[ref] for ref in refs)
-            if observation.available_after_scene_id != scene_ids[latest]:
-                raise ValueError('observation availability must equal its latest contributing scene')
-            position = offset + latest
-        exclusions = []
-        if observation.confidence < MIN_CONFIDENCE:
-            exclusions.append('insufficient_confidence')
-        if observation.diagnosticity < MIN_DIAGNOSTICITY:
-            exclusions.append('insufficient_diagnosticity')
-        if observation.expression_z is None:
-            exclusions.append('expression_unknown')
-        if observation.evidence_kind == 'behavior':
-            for key in ChoiceConditions.model_fields:
-                if getattr(observation.conditions, key).status != 'supported':
-                    exclusions.append(f'{key}_not_supported')
-        identity = f'{source_group_id}:{observation.episode_id}:{observation.trait}'
-        record_id = 'trait:' + hashlib.sha256(identity.encode()).hexdigest()[:24]
-        result.append(TraitEvidence(
-            **observation.model_dump(), id=record_id, source_group_id=source_group_id,
-            chronological_position=position, eligible=not exclusions, exclusions=exclusions,
-        ))
-    # An extractor cannot inflate support by repeating the same episode/trait.
+            pid = observation.perspective_id
+            if pid not in positions:
+                raise ValueError('observation references an unknown perspective')
+            scene_id = scene_ids[positions[pid]]
+            if observation.evidence_ids != [f'scene:{scene_id}']:
+                raise ValueError('perspective observation must cite its own canonical scene')
+            position = offset + positions[pid]
+            identity = pid
+        record_id = 'trait:' + hashlib.sha256(
+            f'{source_group_id}:{identity}:{observation.trait}'.encode()
+        ).hexdigest()[:24]
+        result.append(TraitEvidence(**observation.model_dump(), id=record_id,
+            source_group_id=source_group_id, chronological_position=position,
+            policy_version=POLICY_VERSION))
     if len({item.id for item in result}) != len(result):
-        raise ValueError('duplicate trait observations for the same canonical episode')
+        raise ValueError('duplicate trait observations for the same perspective')
     return result
 
 
 def merge_evidence(existing: list[TraitEvidence], incoming: list[TraitEvidence]) -> list[TraitEvidence]:
-    by_episode = {(item.episode_id, item.trait): item for item in existing}
+    by_id = {item.id: item for item in existing}
     for item in incoming:
-        key = (item.episode_id, item.trait)
-        prior = by_episode.get(key)
-        if prior and prior.model_dump() != item.model_dump():
+        prior = by_id.get(item.id)
+        if prior and prior.model_dump(exclude={'revision_id'}) != item.model_dump(exclude={'revision_id'}):
             raise ValueError('changed previously processed evidence requires regeneration')
-        by_episode[key] = item
-    return sorted(by_episode.values(), key=lambda item: (item.chronological_position, item.id))
+        by_id[item.id] = prior if prior and prior.revision_id else item
+    return sorted(by_id.values(), key=lambda item: (item.chronological_position, item.id))
 
 
-def validate_proposals(proposals: list[TraitProposal], evidence: list[TraitEvidence]) -> None:
-    lookup = {item.id: item for item in evidence}
-    if len({p.trait for p in proposals}) != len(proposals):
-        raise ValueError('trait proposals must be unique')
-    for proposal in proposals:
-        if any(ref not in lookup or lookup[ref].trait != proposal.trait or not lookup[ref].eligible
-               for ref in proposal.observation_ids):
-            raise ValueError('trait proposal must cite eligible observations for that trait')
-
-
-def _set(profile: TraitProfile, key: str, estimate: TraitEstimate):
+def _set(profile: TraitProfile, key: str, estimate: TraitEstimate) -> None:
     if key == 'steadiness':
         profile.steadiness = estimate
     else:
@@ -114,118 +86,103 @@ def _set(profile: TraitProfile, key: str, estimate: TraitEstimate):
 def apply_manual_edits(profile: TraitProfile, edits: dict[str, TraitEdit]) -> TraitProfile:
     result = profile.model_copy(deep=True)
     for key, edit in edits.items():
-        if edit.z is None:
+        if edit.point is None:
             result.overrides.pop(key, None)
             _set(result, key, result.inferred_traits.pop(key, result.estimate(key)))
         else:
-            if key not in result.overrides:
-                result.inferred_traits[key] = result.estimate(key).model_copy(deep=True)
+            inferred = result.inferred_traits.get(key, result.estimate(key))
+            result.inferred_traits[key] = inferred.model_copy(deep=True)
             result.overrides[key] = edit
-            _set(result, key, TraitEstimate(z=edit.z, status='manual'))
+            _set(result, key, TraitEstimate(point=edit.point, status='manual',
+                observation_count=inferred.observation_count,
+                observation_ids=list(inferred.observation_ids)))
     return result
 
 
-def _directional(previous: TraitEstimate, key: str, proposal: TraitProposal | None,
-                 evidence: list[TraitEvidence], source_group_id: str | None) -> TraitEstimate:
-    items = [item for item in evidence if item.trait == key and item.eligible]
-    behavioral = [item for item in items if item.evidence_kind == 'behavior']
-    result = previous.model_copy(deep=True)
-    result.qualifying_count = len(behavioral)
-    result.observation_ids = [item.id for item in items]
-    if len(behavioral) < MIN_EPISODES:
-        authored = [item for item in items if item.evidence_kind == 'authored_disposition']
-        if previous.z is None and authored and not behavioral:
-            result.z = round(sum(item.expression_z for item in authored if item.expression_z is not None) / len(authored), 4)
-            result.status = 'provisional'
-            result.uncertainty = ['Authored disposition; insufficient independent behavioral evidence.']
-        return result
-    result.z = round(sum(item.expression_z for item in behavioral if item.expression_z is not None) / len(behavioral), 4)
-    result.accepted_count = len(behavioral)
-    if {'left', 'right'} <= {item.pole for item in behavioral}:
-        result.status = 'contested'
-        result.uncertainty = ['Opposing diagnostic behavior is retained; the displayed centre is their evidence mean.']
-    else:
-        result.status = 'supported'
-        result.uncertainty = []
-    result.applied_source_ids = []
-    return result
+def _rounded(value: float) -> int:
+    displacement = Decimal(str(value)) - Decimal(5)
+    magnitude = int(abs(displacement).quantize(Decimal('1'), rounding=ROUND_HALF_UP))
+    return max(1, min(9, 5 + (magnitude if displacement >= 0 else -magnitude)))
 
 
-def _steadiness(profile: TraitProfile, evidence: list[TraitEvidence]) -> TraitEstimate:
+def _directional(key: str, evidence: list[TraitEvidence]) -> TraitEstimate:
+    items = [item for item in evidence if item.trait == key and item.evidence_kind == 'behavior']
+    items.sort(key=lambda item: (item.chronological_position, item.id))
+    if not items:
+        return TraitEstimate()
+    n = len(items)
+    weights = [RECENCY ** (n - index - 1) for index in range(n)]
+    weighted = sum(weight * (1 if item.polarity == 'high' else -1)
+                   for weight, item in zip(weights, items, strict=True))
+    total = sum(weights)
+    mean = weighted / total
+    ids = [item.perspective_id for item in items]
+    if len(set(ids)) != n:
+        raise ValueError('duplicate perspective evidence for a trait')
+    return TraitEstimate(point=_rounded(5 + 4 * mean * n / (n + SMOOTHING)),
+        status='supported' if n >= 2 else 'provisional',
+        observation_count=n, observation_ids=ids)
+
+
+def _steadiness(evidence: list[TraitEvidence]) -> TraitEstimate:
     groups = defaultdict(list)
-    eligible = [item for item in evidence if item.eligible and item.evidence_kind == 'behavior']
-    eligible = sorted(eligible, key=lambda item: (item.chronological_position, item.id))[-STEADINESS_WINDOW_EPISODES:]
-    for item in eligible:
-        # Situation types are registry-owned categories. Narrative prose is
-        # retained for audit, never used as an unreliable equality key.
-        groups[(item.trait, item.situation_type)].append(item)
-    groups = {key: items for key, items in groups.items() if len(items) >= MIN_GROUP_EPISODES}
-    items = [item for group in groups.values() for item in group]
-    if len(groups) < MIN_COMPARISON_GROUPS or len(items) < MIN_SPREAD_EPISODES:
-        return TraitEstimate(
-            qualifying_count=len(items), comparison_group_count=len(groups),
-            required_qualifying_count=MIN_SPREAD_EPISODES,
-            required_comparison_group_count=MIN_COMPARISON_GROUPS,
-            uncertainty=[
-                f'Insufficient repeated comparable behavior: {len(items)}/{MIN_SPREAD_EPISODES} qualifying observations, '
-                f'{len(groups)}/{MIN_COMPARISON_GROUPS} repeated contexts.'
-            ],
-        )
-    squared = 0.0
-    for group in groups.values():
-        values = [item.expression_z for item in group if item.expression_z is not None]
-        mean = sum(values) / len(values)
-        squared += sum((value - mean) ** 2 for value in values)
-    spread = math.sqrt(squared / len(items))
-    z = round(1.9 - 3.8 * min(spread / 1.9, 1), 4)
-    return TraitEstimate(z=z, status='provisional',
-        observation_ids=[item.id for item in items], qualifying_count=len(items), accepted_count=len(items),
-        comparison_group_count=len(groups), required_qualifying_count=MIN_SPREAD_EPISODES,
-        required_comparison_group_count=MIN_COMPARISON_GROUPS,
-        uncertainty=['Engineering estimate of within-context spread; not population calibrated.'])
+    for item in sorted(evidence, key=lambda value: (value.chronological_position, value.id)):
+        if item.evidence_kind == 'behavior' and item.situation_type != 'unspecified':
+            groups[(item.trait, item.situation_type)].append(item)
+    groups = [items[-STEADINESS_WINDOW:] for items in groups.values() if len(items) >= MIN_COMPARABLE]
+    groups = [items for items in groups if len(items) >= MIN_COMPARABLE]
+    if not groups:
+        return TraitEstimate()
+    mass, disagreement = 0.0, 0.0
+    included = []
+    for items in groups:
+        n = len(items)
+        high = sum(RECENCY ** (n - i - 1) for i, item in enumerate(items) if item.polarity == 'high')
+        low = sum(RECENCY ** (n - i - 1) for i, item in enumerate(items) if item.polarity == 'low')
+        mass += high + low
+        disagreement += 2 * min(high, low)
+        included.extend(items)
+    ids = [item.perspective_id for item in sorted(included, key=lambda value: (value.chronological_position, value.id))]
+    ids = list(dict.fromkeys(ids))
+    m = len(ids)
+    D = disagreement / mass
+    return TraitEstimate(point=_rounded(5 + 4 * (1 - 2 * D) * m / (m + SMOOTHING)),
+        status='supported' if m >= 6 and len(groups) >= 2 else 'provisional',
+        observation_count=m, observation_ids=ids)
 
 
 def update_profile(
-    profile: TraitProfile,
-    evidence: list[TraitEvidence],
-    proposals: list[TraitProposal],
-    *,
-    source_group_id: str | None = None,
+    profile: TraitProfile, evidence: list[TraitEvidence],
+    *, source_group_id: str | None = None,
 ) -> tuple[TraitProfile, list[TraitChange]]:
-    """Apply at most one bounded update per directional trait/source bundle.
-
-    Numeric change comes exclusively from eligible evidence in ``source_group_id``:
-    right/left poles carry the candidate's small/medium/large magnitude and
-    same-trait contributions are averaged. LLM proposals provide traceable
-    explanations only; they cannot choose a numeric personality value.
-    """
-    validate_proposals(proposals, evidence)
     result = profile.model_copy(deep=True)
-    proposals_by_trait = {p.trait: p for p in proposals}
     for key in DIRECTIONAL_TRAITS:
-        previous = result.inferred_traits.get(key, result.estimate(key))
-        estimate = _directional(
-            previous, key, proposals_by_trait.get(key), evidence, source_group_id,
-        )
+        estimate = _directional(key, evidence)
         if key in result.overrides:
             result.inferred_traits[key] = estimate
+            _set(result, key, TraitEstimate(point=result.overrides[key].point,
+                status='manual', observation_count=estimate.observation_count,
+                observation_ids=list(estimate.observation_ids)))
         else:
             _set(result, key, estimate)
-    spread = _steadiness(result, evidence)
+    spread = _steadiness(evidence)
     if 'steadiness' in result.overrides:
         result.inferred_traits['steadiness'] = spread
+        _set(result, 'steadiness', TraitEstimate(point=result.overrides['steadiness'].point,
+            status='manual', observation_count=spread.observation_count,
+            observation_ids=list(spread.observation_ids)))
     else:
         result.steadiness = spread
+    lookup = {item.perspective_id: item for item in evidence if item.perspective_id}
     changes = []
-    lookup = {item.id: item for item in evidence}
     for key in (*DIRECTIONAL_TRAITS, 'steadiness'):
         before, after = profile.estimate(key), result.estimate(key)
         if before != after:
-            proposal = proposals_by_trait.get(key)
             changes.append(TraitChange(trait=key, previous=before, current=after,
-                justification=proposal.justification if proposal else 'Accumulated evidence and consistency policy.',
-                observation_ids=after.observation_ids,
-                evidence_ids=sorted({ref for oid in after.observation_ids for ref in lookup[oid].evidence_ids})))
+                justification='Accumulated perspective evidence.',
+                observation_ids=list(after.observation_ids),
+                evidence_ids=sorted({ref for pid in after.observation_ids
+                                     for ref in lookup[pid].evidence_ids})))
     return result, changes
 
 

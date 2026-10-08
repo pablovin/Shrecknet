@@ -1,23 +1,20 @@
 """Authoritative dispositional constructs, scale, and evidence boundary contracts.
 
-The eight directional traits describe centres; STEADINESS describes comparable
-within-character spread. All narrative estimates are engineering judgments.
+Eight directional points describe recurring choices; STEADINESS describes
+within-context consistency. All estimates are engineering judgments.
 """
 from __future__ import annotations
 
 import json
-import math
 from dataclasses import asdict, dataclass
-from typing import Annotated, Any, Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 TraitKey = Literal['integrity', 'caution', 'presence', 'forbearance', 'diligence', 'curiosity', 'sharing', 'restlessness']
 SlotKey = Literal['integrity', 'caution', 'presence', 'forbearance', 'diligence', 'curiosity', 'sharing', 'restlessness', 'steadiness']
-ZValue = Annotated[float, Field(ge=-1.9, le=1.9)]
-ANCHORS = (-1.9, -1.2, -0.7, -0.3, 0.0, 0.3, 0.7, 1.2, 1.9)
-PERCENTILES = (3, 12, 24, 38, 50, 62, 76, 88, 97)
-SPEC_VERSION = 'dispositions-v2-bipolar-evidence'
+SPEC_VERSION = 'dispositions-v3-points-perspectives'
+EVIDENCE_POLICY_VERSION = 'point-evidence-v1'
 
 @dataclass(frozen=True)
 class TraitDefinition:
@@ -90,18 +87,16 @@ DIRECTIONAL_TRAITS = tuple(d.key for d in TRAIT_DEFINITIONS if d.kind == 'direct
 TRAIT_BY_KEY = {d.key: d for d in TRAIT_DEFINITIONS}
 
 
-def _legacy_point_to_z(point: int) -> float:
-    if type(point) is not int or not 1 <= point <= 9:
-        raise ValueError('point must be an integer from 1 through 9')
-    return ANCHORS[point - 1]
-
-
-
 def trait_metadata() -> dict[str, Any]:
     return {'version': SPEC_VERSION, 'traits': [asdict(d) for d in TRAIT_DEFINITIONS],
-            'z_range': {'minimum': -1.9, 'maximum': 1.9},
-            'reference_anchors': [{'z': z, 'percentile': PERCENTILES[i]} for i, z in enumerate(ANCHORS)],
-            'percentile_reference': 'general human population'}
+            'point_range': {'minimum': 1, 'maximum': 9},
+            'point_reference': '1 low pole, 5 mixed/centre, 9 high pole',
+            'situation_context': {
+                'format': '<diagnostic>:<relationship>:<stakes> or unspecified',
+                'relationships': ['friend', 'enemy', 'other'],
+                'stakes': ['ordinary', 'high_stakes'],
+                'unspecified': 'directional evidence only; excluded from steadiness',
+            }}
 
 
 class StrictModel(BaseModel):
@@ -109,81 +104,27 @@ class StrictModel(BaseModel):
 
 
 class TraitEstimate(StrictModel):
-    z: ZValue | None = None
-    status: Literal['unknown', 'provisional', 'supported', 'contested', 'manual'] = 'unknown'
+    point: int | None = Field(default=None, ge=1, le=9, strict=True)
+    status: Literal['unknown', 'provisional', 'supported', 'manual'] = 'unknown'
+    observation_count: int = Field(default=0, ge=0)
     observation_ids: list[str] = Field(default_factory=list)
-    qualifying_count: int = Field(0, ge=0)
-    uncertainty: list[str] = Field(default_factory=list)
-    accepted_count: int = Field(0, ge=0)
-    comparison_group_count: int = Field(0, ge=0)
-    required_qualifying_count: int = Field(0, ge=0)
-    required_comparison_group_count: int = Field(0, ge=0)
-    applied_source_ids: list[str] = Field(default_factory=list)
-
-    @model_validator(mode='before')
-    @classmethod
-    def decode_legacy_point(cls, value):
-        if isinstance(value, dict):
-            value = dict(value)
-            # Comparison windows were removed in v2. Old revisions remain
-            # readable, but new profiles no longer expose this ineffective gate.
-            value.pop('comparison_start', None)
-            if isinstance(value.get('z'), bool):
-                raise ValueError('z cannot be boolean')
-            if 'point' in value:
-                supplied = value.pop('point')
-                if isinstance(supplied, bool):
-                    raise ValueError('legacy point cannot be boolean')
-                legacy_z = _legacy_point_to_z(supplied) if supplied is not None else None
-                if value.get('z') is None:
-                    value['z'] = legacy_z
-                elif value['z'] != legacy_z:
-                    raise ValueError('legacy point must match z')
-        return value
 
     @model_validator(mode='after')
     def valid_estimate(self):
-        if self.z is not None:
-            if not math.isfinite(self.z) or not -1.9 <= self.z <= 1.9:
-                raise ValueError('stored z must be finite and between -1.9 and 1.9')
-            # A source can average several fixed contributions (for example,
-            # 0.05 and 0.10), so inferred values retain controlled precision
-            # instead of being forced onto presentation anchors.
-        if self.status == 'unknown' and self.z is not None:
-            raise ValueError('unknown is not a midpoint')
-        if self.status in ('provisional', 'supported', 'manual') and self.z is None:
-            raise ValueError('estimated state requires z')
+        if self.observation_count != len(self.observation_ids) or len(set(self.observation_ids)) != len(self.observation_ids):
+            raise ValueError('observation count must match unique perspective IDs')
+        if (self.status == 'unknown') != (self.point is None):
+            raise ValueError('unknown must have null point; estimated states require a point')
+        if self.status == 'unknown' and self.observation_count:
+            raise ValueError('unknown estimate cannot cite contributing perspectives')
+        if self.status == 'supported' and self.observation_count < 2:
+            raise ValueError('supported estimate requires independent perspectives')
         return self
 
 
 class TraitEdit(StrictModel):
-    z: ZValue | None
+    point: int | None = Field(ge=1, le=9, strict=True)
     reason: str = Field(min_length=1, max_length=2000)
-
-    @model_validator(mode='before')
-    @classmethod
-    def decode_legacy_point(cls, value):
-        if isinstance(value, dict):
-            value = dict(value)
-            if isinstance(value.get('z'), bool):
-                raise ValueError('z cannot be boolean')
-            if 'point' not in value:
-                return value
-            point = value.pop('point')
-            legacy_z = _legacy_point_to_z(point) if point is not None else None
-            if value.get('z') is None:
-                value['z'] = legacy_z
-            elif value['z'] != legacy_z:
-                raise ValueError('legacy point must match z')
-        return value
-
-    @model_validator(mode='after')
-    def nonblank(self):
-        if isinstance(self.z, bool):
-            raise ValueError('z cannot be boolean')
-        if not self.reason.strip():
-            raise ValueError('manual edit requires a reason')
-        return self
 
 
 class TraitProfile(StrictModel):
@@ -192,21 +133,6 @@ class TraitProfile(StrictModel):
     steadiness: TraitEstimate = Field(default_factory=TraitEstimate)
     inferred_traits: dict[SlotKey, TraitEstimate] = Field(default_factory=dict)
     overrides: dict[SlotKey, TraitEdit] = Field(default_factory=dict)
-
-    @model_validator(mode='before')
-    @classmethod
-    def upgrade_legacy_profile_version(cls, value):
-        """Read v1 profiles under the current evidence contract.
-
-        Trait centres remain signed z values, so the profile itself needs no
-        numerical conversion. TraitEvidence is regenerated separately; this
-        compatibility path only keeps existing CharacterAgent reads and queries
-        available while that happens.
-        """
-        if isinstance(value, dict) and value.get('version') == 'dispositions-v1':
-            value = dict(value)
-            value['version'] = SPEC_VERSION
-        return value
 
     @model_validator(mode='after')
     def complete(self):
@@ -221,69 +147,29 @@ class TraitProfile(StrictModel):
         return json.dumps(self.model_dump(mode='json', round_trip=True))
 
 
-class ChoiceCondition(StrictModel):
-    status: Literal['supported', 'contradicted', 'unknown']
-    justification: str = Field(min_length=1)
-
-
-class ChoiceConditions(StrictModel):
-    knowledge: ChoiceCondition
-    capability: ChoiceCondition
-    options: ChoiceCondition
-    freedom: ChoiceCondition
-
-
 class TraitObservation(StrictModel):
     trait: TraitKey
     evidence_kind: Literal['behavior', 'authored_disposition'] = 'behavior'
-    situation_type: str
-    pole: Literal['left', 'right']
-    update_intensity: Literal['small', 'medium', 'large'] = 'medium'
-    expression_z: ZValue
-    diagnosticity: float = Field(ge=0, le=1)
-    confidence: float = Field(ge=0, le=1)
-    behavior: str = Field(min_length=1)
+    polarity: Literal['low', 'high']
+    situation_type: str = Field(min_length=1)
     justification: str = Field(min_length=1)
-    evidence_ids: list[str] = Field(min_length=1)
-    episode_id: str = Field(min_length=1)
-    available_after_scene_id: str | None = None
-    conditions: ChoiceConditions
-    comparison_context: str | None = Field(None, max_length=1000)
-
-    @model_validator(mode='before')
-    @classmethod
-    def decode_legacy_expression_point(cls, value):
-        if isinstance(value, dict):
-            value = dict(value)
-            legacy_direction = value.pop('direction', None)
-            if 'pole' not in value and legacy_direction is not None:
-                legacy_poles = {'low': 'left', 'high': 'right'}
-                if legacy_direction not in legacy_poles:
-                    raise ValueError('legacy midpoint evidence cannot be used as a directional update; regenerate it')
-                value['pole'] = legacy_poles[legacy_direction]
-            if isinstance(value.get('expression_z'), bool):
-                raise ValueError('expression_z cannot be boolean')
-            if 'expression_point' not in value:
-                return value
-            point = value.pop('expression_point')
-            legacy_z = _legacy_point_to_z(point) if point is not None else None
-            if value.get('expression_z') is None:
-                value['expression_z'] = legacy_z
-            elif value['expression_z'] != legacy_z:
-                raise ValueError('legacy expression point must match expression_z')
-        return value
+    perspective_id: str | None = None
+    evidence_ids: list[str] = Field(default_factory=list)
 
     @model_validator(mode='after')
     def diagnostic(self):
-        if isinstance(self.expression_z, bool):
-            raise ValueError('expression_z cannot be boolean')
-        if self.situation_type not in TRAIT_BY_KEY[self.trait].diagnostic_situations:
+        parts = self.situation_type.split(':')
+        diagnostic = parts[0] in TRAIT_BY_KEY[self.trait].diagnostic_situations
+        comparable = (len(parts) == 3 and parts[1] in {'friend', 'enemy', 'other'}
+                      and parts[2] in {'ordinary', 'high_stakes'})
+        if self.situation_type != 'unspecified' and not diagnostic:
             raise ValueError('situation is not diagnostic of this trait')
-        if self.expression_z == 0:
-            raise ValueError('zero expression is not a directional update')
-        pole = 'left' if self.expression_z < 0 else 'right'
-        if self.pole != pole:
-            raise ValueError('pole and expression_z disagree')
+        if self.evidence_kind == 'behavior' and self.situation_type != 'unspecified' and not comparable:
+            raise ValueError('behavioral situation requires diagnostic:relationship:stakes')
+        if self.evidence_kind == 'behavior' and not self.perspective_id:
+            raise ValueError('behavioral evidence requires a perspective ID')
+        if self.evidence_kind == 'authored_disposition' and self.perspective_id:
+            raise ValueError('authored disposition cannot claim a perspective')
         return self
 
 
@@ -291,24 +177,8 @@ class TraitEvidence(TraitObservation):
     id: str
     source_group_id: str
     chronological_position: int = Field(ge=0)
-    eligible: bool
-    exclusions: list[str] = Field(default_factory=list)
-
-
-class TraitProposal(StrictModel):
-    trait: TraitKey
-
-    @model_validator(mode='before')
-    @classmethod
-    def discard_legacy_point(cls, value):
-        if isinstance(value, dict) and 'point' in value:
-            value = dict(value)
-            value.pop('point')
-        return value
-
-    observation_ids: list[str] = Field(min_length=1)
-    justification: str = Field(min_length=1)
-    addresses_contradictions: str = Field(min_length=1)
+    policy_version: Literal['point-evidence-v1']
+    revision_id: str | None = None
 
 
 class TraitChange(StrictModel):

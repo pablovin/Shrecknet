@@ -34,6 +34,20 @@ SNAPSHOT = {
 }
 
 
+def test_query_trait_summary_distinguishes_unknown_from_mixed_point_five():
+    profile = TraitProfile()
+    profile.dispositional_traits['curiosity'].point = 5
+    profile.dispositional_traits['curiosity'].status = 'supported'
+    profile.dispositional_traits['curiosity'].observation_ids = ['perspective-1', 'perspective-2']
+    profile.dispositional_traits['curiosity'].observation_count = 2
+    snapshot = {**SNAPSHOT, 'character_agent': {
+        **SNAPSHOT['character_agent'], 'trait_profile': profile.model_dump(mode='json')}}
+    compact = CharacterAgentQueryJob._compact_character(snapshot)
+    assert 'Mixed or context-dependent' in compact['traits']['curiosity']['summary']
+    assert compact['traits']['integrity']['point'] is None
+    assert 'No grounded disposition' in compact['traits']['integrity']['summary']
+
+
 @pytest.mark.asyncio
 async def test_identity_query_is_one_deliberation_call_with_owner_memory():
     llm = FakeLLM([RESULT])

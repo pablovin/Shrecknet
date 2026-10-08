@@ -71,11 +71,15 @@ embeddings fall back to owner-scoped lexical ranking; they never widen graph
 scope. These vectors are separate from the ordinary `SemanticDocument` scene
 corpus, so non-character scene search is unchanged.
 
-The deliberation payload has compact traits (z and poles), steadiness, complete
+The deliberation payload includes the persistent `identity_description` as the
+original psychological foundation, alongside compact traits (point, status, poles, and a short
+backend-derived evidence summary), steadiness, complete
 active aspects/goals with descriptions, caller query/context/instruction, and
-the selected memories. It contains no opaque IDs, evidence IDs, qualifying
-counts, model-selected selectors, or framing summaries. Unknown traits remain
-unknown; z=0 is an evidenced midpoint. Traits bias behaviour while goals,
+the selected memories. Demonstrated development in current traits, goals,
+aspects, and memories takes precedence when it conflicts with the original
+description. It contains no opaque IDs, evidence IDs, raw observation
+ledger, model-selected selectors, or framing summaries. Unknown traits remain
+unknown; point 5 can reflect mixed evidence. Traits bias behaviour while goals,
 aspects, memories, and current context may outweigh them.
 
 The main call requests native strict JSON for the response envelope. Its output

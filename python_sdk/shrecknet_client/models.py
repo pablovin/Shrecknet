@@ -86,6 +86,8 @@ class CharacterAgentQueryJobRead(BaseModel):
 class EmbodimentDraftCreate(BaseModel):
     ontology_id: int
     entity_instance_id: str
+    target_character_agent_id: str | None = None
+    replace_existing: bool = False
 
 
 class EmbodimentDraftStart(BaseModel):
@@ -94,6 +96,18 @@ class EmbodimentDraftStart(BaseModel):
     status: str
     draft_url: str
     job_url: str
+
+
+class EmbodimentDraftSummary(BaseModel):
+    id: str
+    ontology_id: int
+    source_entity_id: str
+    target_character_agent_id: str | None = None
+    status: str
+    background_job_id: int | None = None
+    error_message: str | None = None
+    created_at: datetime
+    updated_at: datetime
 
 
 class EmbodimentDraftRead(BaseModel):
@@ -162,6 +176,7 @@ class CharacterAgentCreateRequest(BaseModel):
 
 class CharacterAgentRead(BaseModel):
     trait_profile: TraitProfile
+    identity_description: dict[str, Any] | None = None
     embodiment_draft_id: str | None = None
     id: str
     ontology_id: int
@@ -188,6 +203,9 @@ class CharacterAgentUpdate(BaseModel):
     status: str | None = None
     visibility: str | None = None
     trait_edits: dict[SlotKey, TraitEdit] = Field(default_factory=dict)
+    embodiment_draft_id: str | None = None
+    aspects: list[CharacterAgentEmbeddedAspect] | None = None
+    goals: list[CharacterAgentEmbeddedGoal] | None = None
 
 
 class CharacterIdentityRevisionRead(BaseModel):

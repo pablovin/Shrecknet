@@ -68,6 +68,7 @@ from .models import (
     CharacterIdentityChangeRead,
     EmbodimentDraftCreate,
     EmbodimentDraftRead,
+    EmbodimentDraftSummary,
     EmbodimentDraftStart,
     CharacterBeliefCreate,
     CharacterBeliefRead,
@@ -400,6 +401,15 @@ class CharacterAgentsAPI:
             "GET", f"/character-agents/embodiment-drafts/{draft_id}"
         )
         return EmbodimentDraftRead.model_validate(data)
+
+    async def list_embodiments(
+        self, ontology_id: int, *, limit: int = 20
+    ) -> list[EmbodimentDraftSummary]:
+        data = await self._client.raw_request(
+            "GET", "/character-agents/embodiment-drafts",
+            params={"ontology_id": ontology_id, "limit": limit},
+        )
+        return [EmbodimentDraftSummary.model_validate(item) for item in data]
 
     @staticmethod
     def _perspective_path(character_agent_id: str, perspective_id: str | None = None) -> str:

@@ -6,11 +6,12 @@ import json
 from datetime import datetime
 from enum import Enum
 from typing import Any, Literal
+from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from app.models.character_embodiment import CharacterEmbodimentDraftStatus
 from app.schemas.character_traits import (
-    SlotKey, TraitEdit, TraitProfile, TraitObservation, TraitEvidence, TraitProposal, TraitChange,
+    SlotKey, TraitKey, TraitEdit, TraitProfile, TraitObservation, TraitEvidence, TraitChange,
 )
 
 
@@ -98,6 +99,17 @@ class _StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class IdentityPersonalityTrait(_StrictModel):
+    trait: TraitKey
+    description: str = Field(..., min_length=1)
+
+
+class IdentityDescription(_StrictModel):
+    identity_summary: str = Field(..., min_length=1)
+    psychological_summary: str = Field(..., min_length=1)
+    personality_traits: list[IdentityPersonalityTrait] = Field(...)
+
+
 def _evidence_ids(value: Any) -> list[str]:
     if value in (None, ""):
         return []
@@ -162,6 +174,7 @@ class CharacterAgentUpdate(_StrictModel):
 class CharacterAgentRead(CharacterAgentCreate):
     trait_edits: dict[SlotKey, TraitEdit] = Field(default_factory=dict, exclude=True)
     trait_profile: TraitProfile = Field(default_factory=TraitProfile)
+    identity_description: IdentityDescription | None = None
     id: str
     name: str
     background_story: str
@@ -268,6 +281,7 @@ class EmbodimentProposal(_StrictModel):
     status: CharacterAgentStatus = CharacterAgentStatus.ACTIVE
     visibility: CharacterAgentVisibility = CharacterAgentVisibility.PRIVATE
     trait_profile: TraitProfile = Field(default_factory=TraitProfile)
+    identity_description: IdentityDescription | None = None
     aspects: list[EmbodimentAspectProposal] = Field(default_factory=list)
     goals: list[EmbodimentGoalProposal] = Field(default_factory=list)
 
@@ -313,9 +327,23 @@ class CharacterAgentCreateRequest(CharacterAgentCreate):
     goals: list[CharacterAgentEmbeddedGoal] = Field(default_factory=list)
 
 
+class CharacterAgentEmbodimentUpdate(CharacterAgentUpdate):
+    embodiment_draft_id: str | None = Field(None, min_length=1)
+    aspects: list[CharacterAgentEmbeddedAspect] | None = None
+    goals: list[CharacterAgentEmbeddedGoal] | None = None
+
+    @model_validator(mode="after")
+    def require_reviewed_assignments(self):
+        if self.embodiment_draft_id and (self.aspects is None or self.goals is None):
+            raise ValueError("reviewed embodiment updates must include aspects and goals")
+        return self
+
+
 class EmbodimentDraftCreate(_StrictModel):
     ontology_id: int = Field(..., ge=1)
     entity_instance_id: str = Field(..., min_length=1)
+    target_character_agent_id: str | None = Field(None, min_length=1)
+    replace_existing: bool = False
 
 
 class EmbodimentDraftStart(_StrictModel):
@@ -324,6 +352,18 @@ class EmbodimentDraftStart(_StrictModel):
     status: CharacterEmbodimentDraftStatus
     draft_url: str
     job_url: str
+
+
+class EmbodimentDraftSummary(_StrictModel):
+    id: str
+    ontology_id: int
+    source_entity_id: str
+    target_character_agent_id: str | None = None
+    status: CharacterEmbodimentDraftStatus
+    background_job_id: int | None = None
+    error_message: str | None = None
+    created_at: datetime
+    updated_at: datetime
 
 
 class EmbodimentDraftRead(_StrictModel):
@@ -694,6 +734,7 @@ class ProjectedTraitChange(TraitChange):
 
 
 class ProjectedScenePerspective(_StrictModel):
+    id: str = Field(default_factory=lambda: str(uuid4()))
     source_digest: str | None = None
     scene_id: str
     scene: DisplayReference | None = None
@@ -794,6 +835,20 @@ class CharacterTimelineProjection(_StrictModel):
             if (projection.batch_id != revision.batch_id
                     or projection.source_group_id != revision.source_group_id):
                 raise ValueError("timeline batch provenance must match its revision")
+            perspective_scenes = {item.id: item.scene_id for item in projection.perspectives}
+            if len(perspective_scenes) != len(projection.perspectives):
+                raise ValueError("timeline perspective IDs must be unique")
+            observed_traits: set[tuple[str, str]] = set()
+            for item in revision.trait_evidence:
+                if (item.evidence_kind != "behavior"
+                        or item.perspective_id not in perspective_scenes
+                        or item.evidence_ids != [f"scene:{perspective_scenes[item.perspective_id]}"]
+                        or item.source_group_id != projection.source_group_id):
+                    raise ValueError("trait evidence must cite a perspective and scene in its source batch")
+                key = (item.perspective_id, item.trait)
+                if key in observed_traits:
+                    raise ValueError("one trait observation is allowed per perspective")
+                observed_traits.add(key)
             seen_scenes.update(scene_ids)
         return self
 
@@ -1038,6 +1093,7 @@ class SceneGoalSignal(_StrictModel):
 
 
 class ScenePerspectiveOutput(_StrictModel):
+    id: str = Field(default_factory=lambda: str(uuid4()))
     scene_id: str
     evidence_ids: list[str] = Field(min_length=1)
     source_type: ScenePerspectiveSourceType
@@ -1147,16 +1203,8 @@ class GoalUpdateOutput(_StrictModel):
 class ProfileUpdateOutput(_StrictModel):
     """One atomic, validated update of the persistent character profile."""
 
-    trait_proposals: list[TraitProposal] = Field(default_factory=list, max_length=8)
     aspect_updates: list[AspectUpdateData] = Field(default_factory=list, max_length=2)
     goal_updates: list[GoalUpdateData] = Field(default_factory=list, max_length=1)
-
-    @model_validator(mode="after")
-    def validate_unique_trait_proposals(self) -> "ProfileUpdateOutput":
-        trait_names = [item.trait for item in self.trait_proposals]
-        if len(set(trait_names)) != len(trait_names):
-            raise ValueError("trait_proposals must contain unique traits")
-        return self
 
 
 class LLMCallRecord(_StrictModel):

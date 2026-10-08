@@ -20,7 +20,7 @@ from app.models.ontology import Ontology, OntologyEntity, OntologyProperty, Prop
 from app.models.character_embodiment import CharacterEmbodimentDraft, CharacterEmbodimentDraftStatus
 
 from app.schemas.character_agent import (
-    CharacterAgentCreate, CharacterAgentCreateRequest, CharacterAgentRead, CharacterAgentUpdate,
+    CharacterAgentCreate, CharacterAgentCreateRequest, CharacterAgentEmbodimentUpdate, CharacterAgentRead, CharacterAgentUpdate,
     CharacterAspectAssignmentCreate, CharacterAspectAssignmentRead,
     CharacterAspectAssignmentUpdate, CharacterAspectCreate, CharacterAspectRead,
     CharacterAspectUpdate, CharacterGoalCreate, CharacterGoalRead,
@@ -33,6 +33,7 @@ from app.schemas.character_agent import (
     ScenePerspectiveCreate, ScenePerspectiveRead, ScenePerspectiveUpdate,
     CharacterIdentityRevisionRead, CharacterIdentityChangeRead,
     CharacterTimelineProjection,
+    IdentityDescription,
 )
 
 
@@ -46,9 +47,12 @@ logger = logging.getLogger(__name__)
 
 
 def _read_profile(value) -> TraitProfile:
-    if isinstance(value, str):
-        return TraitProfile.model_validate_json(value)
-    return TraitProfile.model_validate(value) if value is not None else TraitProfile()
+    try:
+        if isinstance(value, str):
+            return TraitProfile.model_validate_json(value)
+        return TraitProfile.model_validate(value) if value is not None else TraitProfile()
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail="CharacterAgent trait profile requires point-based regeneration") from exc
 
 
 def _now() -> str:
@@ -90,6 +94,15 @@ def _agent_data(data: dict[str, Any]) -> dict[str, Any]:
     }
     projected["entity_instance_id"] = data["embodied_entity_instance_id"]
     projected["trait_profile"] = _read_profile(data.get("trait_profile"))
+    identity_description = data.get("identity_description")
+    if isinstance(identity_description, str):
+        try:
+            identity_description = json.loads(identity_description)
+        except ValueError:
+            identity_description = None
+    projected["identity_description"] = (
+        IdentityDescription.model_validate(identity_description) if identity_description else None
+    )
     projected.setdefault("visibility", "private")
     return projected
 
@@ -295,6 +308,12 @@ class CharacterAgentService:
             "created_by_user_id": user_id, "created_at": timestamp, "updated_at": timestamp,
             "embodiment_draft_id": draft_id,
         }
+        if draft and draft.generated_proposal:
+            proposal_data = json.loads(draft.generated_proposal)
+            if proposal_data.get("identity_description"):
+                agent_props["identity_description"] = json.dumps(
+                    proposal_data["identity_description"], ensure_ascii=False,
+                )
         aspects = [item.model_dump(mode="json") for item in payload.aspects]
         goals = [item.model_dump(mode="json") for item in payload.goals]
         timeline = (
@@ -305,7 +324,7 @@ class CharacterAgentService:
         generated_profile = timeline.revisions[-1].trait_profile if timeline else TraitProfile()
         # A reviewed unchanged value keeps its generated provenance.
         edits = {key: edit for key, edit in payload.trait_edits.items()
-                 if not timeline or edit.z != generated_profile.estimate(key).z}
+                 if not timeline or edit.point != generated_profile.estimate(key).point}
         final_profile = apply_manual_edits(generated_profile, edits)
         agent_props["trait_profile"] = final_profile.storage_json()
 
@@ -596,6 +615,8 @@ class CharacterAgentService:
                 "name": str(agent.get("name") or row["entity"].get("alias") or "Character"),
                 "subtitle": agent.get("subtitle"),
                 "background_story": str(agent.get("background_story") or ""),
+                "identity_description": _agent_data(agent).get("identity_description").model_dump(mode="json")
+                if _agent_data(agent).get("identity_description") else None,
                 "trait_profile": profile.model_dump(mode="json"),
             },
             "aspects": [dict(item) for item in row["aspects"]],
@@ -619,7 +640,9 @@ class CharacterAgentService:
         if row["status"] != "active":
             raise HTTPException(status_code=409, detail="CharacterAgent is not active")
 
-    async def update_agent(self, node_id: str, payload: CharacterAgentUpdate, user_id: int | None = None) -> CharacterAgentRead:
+    async def update_agent(self, node_id: str, payload: CharacterAgentUpdate | CharacterAgentEmbodimentUpdate, user_id: int | None = None) -> CharacterAgentRead:
+        if isinstance(payload, CharacterAgentEmbodimentUpdate) and payload.embodiment_draft_id:
+            return await self._update_agent_from_embodiment(node_id, payload, user_id)
         changes = payload.model_dump(exclude_unset=True, mode="json", exclude={"trait_edits"})
         timestamp = _now()
         changes["updated_at"] = timestamp
@@ -671,6 +694,196 @@ class CharacterAgentService:
             raise HTTPException(status_code=404, detail="CharacterAgent not found")
         return CharacterAgentRead.model_validate(_agent_data(_props(row)))
 
+    async def _update_agent_from_embodiment(
+        self,
+        node_id: str,
+        payload: CharacterAgentEmbodimentUpdate,
+        user_id: int | None,
+    ) -> CharacterAgentRead:
+        draft = await self.sql.get(CharacterEmbodimentDraft, payload.embodiment_draft_id)
+        if not draft:
+            raise HTTPException(status_code=404, detail="Embodiment draft not found")
+        if user_id is not None and draft.created_by_user_id != user_id:
+            raise HTTPException(status_code=404, detail="Embodiment draft not found")
+        if draft.status == CharacterEmbodimentDraftStatus.ACCEPTED and draft.target_character_agent_id == node_id:
+            return await self.get_agent(node_id)
+        if draft.status != CharacterEmbodimentDraftStatus.READY:
+            raise HTTPException(status_code=409, detail="Embodiment draft is not ready")
+        if draft.target_character_agent_id != node_id:
+            raise HTTPException(status_code=400, detail="Embodiment draft does not target this CharacterAgent")
+
+        if not draft.timeline_projection:
+            raise HTTPException(status_code=409, detail="Embodiment draft has no review timeline")
+        timeline = CharacterTimelineProjection.model_validate_json(draft.timeline_projection)
+        if not timeline.revisions:
+            raise HTTPException(status_code=409, detail="Embodiment draft has no review timeline")
+        generated_revision = timeline.revisions[-1]
+        generated_profile = generated_revision.trait_profile
+        final_profile = apply_manual_edits(generated_profile, payload.trait_edits)
+        aspects = payload.aspects if payload.aspects is not None else []
+        goals = payload.goals if payload.goals is not None else []
+        known_evidence = set(json.loads(draft.source_evidence_ids or "[]"))
+        referenced = {
+            evidence_id
+            for item in [*aspects, *goals]
+            for evidence_id in item.evidence_ids
+        }
+        if not referenced <= known_evidence:
+            raise HTTPException(status_code=422, detail="Update payload references unknown draft evidence")
+
+        changes = payload.model_dump(
+            exclude_unset=True,
+            mode="json",
+            exclude={"trait_edits", "embodiment_draft_id", "aspects", "goals"},
+        )
+        proposal_data = json.loads(draft.generated_proposal or "{}")
+        if proposal_data.get("identity_description"):
+            changes["identity_description"] = json.dumps(
+                proposal_data["identity_description"], ensure_ascii=False,
+            )
+        changes["embodiment_draft_id"] = draft.id
+        timestamp = _now()
+        changes["updated_at"] = timestamp
+        aspect_ids: list[str] = []
+        goal_ids: list[str] = []
+
+        async def work(tx):
+            result = await tx.run(
+                "MATCH (agent:CharacterAgent {id:$id})-[:EMBODIES]->(entity:EntityInstance) "
+                "RETURN agent, entity.entity_instance_id AS entity_id",
+                id=node_id,
+            )
+            row = await result.single()
+            if not row:
+                raise HTTPException(status_code=404, detail="CharacterAgent not found")
+            agent = _props(row, "agent")
+            if (
+                str(row["entity_id"]) != draft.source_entity_id
+                or int(agent.get("ontology_id") or 0) != draft.ontology_id
+            ):
+                raise HTTPException(status_code=409, detail="Embodiment draft no longer matches this CharacterAgent")
+
+            await tx.run(
+                "MATCH (agent:CharacterAgent {id:$id}) SET agent += $changes",
+                id=node_id,
+                changes=changes,
+            )
+            agent.update(changes)
+            agent["trait_profile"] = final_profile.storage_json()
+            agent["updated_at"] = timestamp
+
+            await self._persist_timeline_tx(
+                tx,
+                agent,
+                timeline,
+                timestamp,
+                provider=draft.provider,
+                model=draft.model,
+                prompt_version=draft.prompt_version,
+                append=True,
+            )
+            agent.update(changes)
+            agent["trait_profile"] = final_profile.storage_json()
+            await tx.run(
+                "MATCH (agent:CharacterAgent {id:$id}) "
+                "SET agent += $changes, agent.trait_profile=$profile",
+                id=node_id, changes=changes, profile=agent["trait_profile"],
+            )
+
+            # The generated source history is retained. The reviewed form then
+            # becomes the current assignment snapshot in one graph transaction.
+            await tx.run(
+                "MATCH (agent:CharacterAgent {id:$id})-[rel:HAS_ASPECT]->() "
+                "SET rel.status='inactive', rel.updated_at=$timestamp",
+                id=node_id, timestamp=timestamp,
+            )
+            await tx.run(
+                "MATCH (agent:CharacterAgent {id:$id})-[rel:PURSUES]->() "
+                "SET rel.status='superseded', rel.updated_at=$timestamp",
+                id=node_id, timestamp=timestamp,
+            )
+            for item in aspects:
+                normalized = _normalize_name(item.name)
+                aspect_result = await tx.run(
+                    "MATCH (agent:CharacterAgent {id:$agent_id}) "
+                    "MERGE (aspect:CharacterAspect {ontology_id:$ontology_id, normalized_name:$normalized}) "
+                    "ON CREATE SET aspect.id=$new_id, aspect.name=$name, aspect.category=$category, "
+                    "aspect.description=$description, aspect.status='active', "
+                    "aspect.created_at=$timestamp, aspect.updated_at=$timestamp, "
+                    "aspect.generated_by_embodiment_draft_id=$draft_id "
+                    "MERGE (agent)-[rel:HAS_ASPECT]->(aspect) "
+                    "SET rel.importance=$importance, rel.intensity=$intensity, rel.status='active', "
+                    "rel.updated_at=$timestamp, rel.evidence_ids=$evidence_ids "
+                    "RETURN aspect.id AS id",
+                    agent_id=node_id, ontology_id=draft.ontology_id, normalized=normalized,
+                    new_id=str(uuid4()), name=item.name, category=item.category.value,
+                    description=item.description, timestamp=timestamp, draft_id=draft.id,
+                    importance=item.importance, intensity=item.intensity,
+                    evidence_ids=json.dumps(item.evidence_ids),
+                )
+                aspect_row = await aspect_result.single()
+                if aspect_row:
+                    aspect_ids.append(str(aspect_row["id"]))
+            for item in goals:
+                normalized = _normalize_name(item.title)
+                goal_lookup = await tx.run(
+                    "MATCH (goal:CharacterGoal {ontology_id:$ontology_id}) "
+                    "WHERE toLower(trim(goal.title))=$normalized "
+                    "RETURN goal.id AS id ORDER BY goal.created_at, goal.id LIMIT 1",
+                    ontology_id=draft.ontology_id, normalized=normalized,
+                )
+                goal_row = await goal_lookup.single()
+                goal_id = str(goal_row["id"]) if goal_row else str(uuid4())
+                if not goal_row:
+                    await tx.run(
+                        "CREATE (goal:CharacterGoal) SET goal=$props",
+                        props={
+                            "id": goal_id, "ontology_id": draft.ontology_id,
+                            "title": item.title, "description": item.description,
+                            "goal_type": item.goal_type.value, "status": item.status.value,
+                            "priority": item.priority, "commitment": item.commitment,
+                            "created_at": timestamp, "updated_at": timestamp,
+                            "generated_by_embodiment_draft_id": draft.id,
+                        },
+                    )
+                await tx.run(
+                    "MATCH (agent:CharacterAgent {id:$agent_id}), (goal:CharacterGoal {id:$goal_id}) "
+                    "MERGE (agent)-[rel:PURSUES]->(goal) "
+                    "SET rel.status=$status, rel.priority=$priority, rel.commitment=$commitment, "
+                    "rel.updated_at=$timestamp, rel.evidence_ids=$evidence_ids",
+                    agent_id=node_id, goal_id=goal_id, status=item.status.value,
+                    priority=item.priority, commitment=item.commitment, timestamp=timestamp,
+                    evidence_ids=json.dumps(item.evidence_ids),
+                )
+                goal_ids.append(goal_id)
+
+            final_revision_number = generated_revision.revision_number + 1
+            await tx.run(
+                "MATCH (agent:CharacterAgent {id:$id}) "
+                "SET agent.trait_profile=$profile, agent.updated_at=$timestamp",
+                id=node_id, profile=final_profile.storage_json(), timestamp=timestamp,
+            )
+            agent["trait_profile"] = final_profile.storage_json()
+            revision_id = str(uuid4())
+            await self._create_revision_tx(
+                tx, agent, revision_id, final_revision_number, timestamp,
+                provenance_type="manual", active_aspect_ids=aspect_ids,
+                active_goal_ids=goal_ids,
+            )
+            await self._record_manual_traits_tx(
+                tx, node_id, revision_id, final_revision_number, timestamp,
+                generated_profile, final_profile, payload.trait_edits, user_id,
+            )
+            return agent
+
+        updated = await self.graph.execute_write(work)
+        draft.status = CharacterEmbodimentDraftStatus.ACCEPTED
+        draft.active_entity_key = None
+        await self.sql.commit()
+        for perspective in await self.list_perspectives(node_id, "active", 0, 10_000):
+            await self.refresh_perspective_memory(node_id, perspective.id)
+        return CharacterAgentRead.model_validate(_agent_data(updated))
+
     async def _record_manual_traits_tx(self, tx, agent_id, revision_id, number, timestamp,
                                         before, after, edits, user_id):
         for key, edit in edits.items():
@@ -697,7 +910,10 @@ class CharacterAgentService:
             "name": str(agent.get("name") or "Character"),
             "subtitle": agent.get("subtitle"),
             "trait_profile": profile.storage_json(),
-            "trait_evidence": json.dumps([item.model_dump(mode="json") for item in (trait_evidence or [])]),
+            "trait_evidence": json.dumps([
+                {**item.model_dump(mode="json"), "revision_id": revision_id}
+                for item in (trait_evidence or [])
+            ]),
             "batch_id": batch_id, "scene_ids": json.dumps(scene_ids or []),
             "active_aspect_ids": json.dumps(active_aspect_ids or []),
             "active_goal_ids": json.dumps(active_goal_ids or []),
@@ -1019,7 +1235,7 @@ class CharacterAgentService:
         for projection in timeline.source_projections:
             starting_revision_id = revision_ids[projection.starting_revision_number]
             for item in projection.perspectives:
-                perspective_id = str(uuid4())
+                perspective_id = item.id
                 memory_document = render_memory_document(item.model_dump(mode="json"))
                 props = {
                     "id": perspective_id, "ontology_id": agent["ontology_id"],
@@ -1035,6 +1251,11 @@ class CharacterAgentService:
                         exclude={
                             "scene_id", "scene", "evidence", "emotions",
                             "beliefs", "impacts", "evidence_ids",
+                            # Behavioral evidence is retained in the timeline
+                            # and memory document for auditability, but it is a
+                            # list of structured records rather than a Neo4j
+                            # property value.
+                            "behavioral_evidence",
                         },
                     ),
                     "created_at": timestamp, "updated_at": timestamp,
@@ -1667,6 +1888,15 @@ class CharacterAgentService:
         return await self.get_perspective(agent_id, perspective_id)
 
     async def delete_perspective(self, agent_id: str, perspective_id: str) -> None:
+        revisions = await self.graph.run(
+            "MATCH (:CharacterAgent {id:$agent_id})-[:HAS_REVISION]->(r:CharacterIdentityRevision) "
+            "RETURN r.trait_evidence AS evidence",
+            agent_id=agent_id,
+        )
+        async for revision in revisions:
+            if any(item.get("perspective_id") == perspective_id
+                   for item in json.loads(revision["evidence"] or "[]")):
+                raise HTTPException(status_code=409, detail="Regenerate trait evidence before deleting this perspective")
         result = await self.graph.run(
             """
             MATCH (:CharacterAgent {id:$agent_id})-[:HAS_PERSPECTIVE]->

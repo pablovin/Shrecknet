@@ -75,6 +75,71 @@ async def test_analysis_retries_malformed_native_structured_output_with_source_p
 
 
 @pytest.mark.asyncio
+async def test_analysis_fallback_repairs_an_unwrapped_player_character_mapping() -> None:
+    class IncompleteLedgerClient:
+        def __init__(self) -> None:
+            self.calls: list[dict] = []
+
+        async def chat(self, **kwargs):
+            self.calls.append(kwargs)
+            if kwargs.get("response_format"):
+                return {"text": '{"Alice":"Alicia"}'}
+            return {"text": '{"chapter_title":null,"player_character_mapping":{"Alice":"Alicia"},"scenes":[{}]}'}
+
+    client = IncompleteLedgerClient()
+    orchestrator = NovelistOrchestrator(llm_client=client, model_policy=ModelPolicy())
+    schema = {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["chapter_title", "player_character_mapping", "scenes"],
+        "properties": {
+            "chapter_title": {"type": ["string", "null"]},
+            "player_character_mapping": {"type": "object", "additionalProperties": {"type": "string"}},
+            "scenes": {"type": "array", "minItems": 1, "items": {"type": "object"}},
+        },
+    }
+
+    parsed = await orchestrator._json("Source-bearing prompt.", schema, "novelist.analysis.interpret")
+
+    assert parsed["player_character_mapping"] == {"Alice": "Alicia"}
+    fallback_prompt = client.calls[1]["messages"][0]["content"]
+    assert 'Rejected response: {"Alice":"Alicia"}' in fallback_prompt
+    assert "never return the value of a nested field" in fallback_prompt
+
+
+@pytest.mark.asyncio
+async def test_analysis_uses_targeted_repair_when_mapping_is_unwrapped_twice() -> None:
+    class RepeatedUnwrappedMappingClient:
+        def __init__(self) -> None:
+            self.calls: list[dict] = []
+
+        async def chat(self, **kwargs):
+            self.calls.append(kwargs)
+            if len(self.calls) < 3:
+                return {"text": '{"Alice":"Alicia"}'}
+            return {"text": '{"chapter_title":null,"player_character_mapping":{"Alice":"Alicia"},"scenes":[{}]}'}
+
+    client = RepeatedUnwrappedMappingClient()
+    orchestrator = NovelistOrchestrator(llm_client=client, model_policy=ModelPolicy())
+    schema = {
+        "type": "object", "additionalProperties": False,
+        "required": ["chapter_title", "player_character_mapping", "scenes"],
+        "properties": {
+            "chapter_title": {"type": ["string", "null"]},
+            "player_character_mapping": {"type": "object", "additionalProperties": {"type": "string"}},
+            "scenes": {"type": "array", "minItems": 1, "items": {"type": "object"}},
+        },
+    }
+
+    parsed = await orchestrator._json("Source-bearing prompt.", schema, "novelist.analysis.interpret")
+
+    assert parsed["player_character_mapping"] == {"Alice": "Alicia"}
+    assert len(client.calls) == 3
+    assert client.calls[2]["usage_tag"] == "novelist.analysis.interpret.unwrapped_mapping_repair"
+    assert "include at least one source-backed scene" in client.calls[2]["messages"][0]["content"]
+
+
+@pytest.mark.asyncio
 async def test_writer_submits_the_narrative_prompt_as_a_user_turn() -> None:
     class WriterClient:
         def __init__(self) -> None:

@@ -82,6 +82,9 @@ class CharacterIncorporationError(RuntimeError):
     """Raised when a required configured character renderer cannot honor its contract."""
 
 
+# Purpose: Turn citation-free grounded claims into a character-voiced answer.
+# Used by: character_incorporation's renderer for Elder and Librarian responses.
+# Expected: JSON rendered_passages covering each claim ID exactly once.
 CHARACTER_RENDERER_SYSTEM_PROMPT = """You are a grounded character-response composer.
 
 INPUT CONTRACT:

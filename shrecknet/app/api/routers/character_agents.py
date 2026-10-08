@@ -6,7 +6,7 @@ import json
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from neo4j import AsyncSession
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 
 from app.api.deps import (
@@ -26,7 +26,7 @@ from app.models.background_job import AuthorType, JobStatus, JobType
 from app.models.character_embodiment import CharacterEmbodimentDraft, CharacterEmbodimentDraftStatus
 from app.schemas.character_traits import TraitKey, TraitEvidence, trait_metadata
 from app.schemas.character_agent import (
-    CharacterAgentCreateRequest, CharacterAgentRead, CharacterAgentStatus, CharacterAgentUpdate,
+    CharacterAgentCreateRequest, CharacterAgentEmbodimentUpdate, CharacterAgentRead, CharacterAgentStatus,
     CharacterAspectAssignmentCreate, CharacterAspectAssignmentRead,
     CharacterAspectAssignmentUpdate, CharacterAspectCreate, CharacterAspectRead,
     CharacterAspectUpdate, CharacterGoalAssignmentCreate, CharacterGoalCreate,
@@ -34,6 +34,7 @@ from app.schemas.character_agent import (
     CharacterEmbodimentCandidatePage,
     CharacterAgentQueryJobRead, CharacterAgentQueryQueued, CharacterAgentQueryRequest,
     EmbodimentDraftCreate, EmbodimentDraftRead, EmbodimentDraftStart,
+    EmbodimentDraftSummary,
     CharacterBeliefCreate, CharacterBeliefRead, CharacterBeliefUpdate,
     CharacterImpactCreate, CharacterImpactRead, CharacterImpactUpdate,
     EmotionalInterpretationCreate, EmotionalInterpretationRead,
@@ -151,15 +152,44 @@ async def start_embodiment_draft(
         raise HTTPException(status_code=404, detail="EntityInstance not found")
     if int(row["ontology_id"] or 0) != payload.ontology_id:
         raise HTTPException(status_code=400, detail="EntityInstance does not belong to ontology")
-    if row["agent_id"]:
-        await svc.delete_agent(row["agent_id"])
-    await sql.execute(delete(CharacterEmbodimentDraft).where(
-        CharacterEmbodimentDraft.source_entity_id == payload.entity_instance_id,
-        CharacterEmbodimentDraft.status.in_([
-            CharacterEmbodimentDraftStatus.QUEUED, CharacterEmbodimentDraftStatus.GENERATING,
-            CharacterEmbodimentDraftStatus.READY, CharacterEmbodimentDraftStatus.FAILED,
-        ]),
-    ))
+    embodied_agent_id = row["agent_id"]
+    if embodied_agent_id != payload.target_character_agent_id:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "EntityInstance is already embodied by another CharacterAgent; "
+                "provide its ID to generate an update proposal"
+                if embodied_agent_id
+                else "Target CharacterAgent is not embodied by this EntityInstance"
+            ),
+        )
+
+    existing_result = await sql.execute(
+        select(CharacterEmbodimentDraft).where(
+            CharacterEmbodimentDraft.active_entity_key == payload.entity_instance_id
+        ).order_by(CharacterEmbodimentDraft.created_at.desc())
+    )
+    existing_draft = existing_result.scalars().first()
+    if existing_draft:
+        if existing_draft.created_by_user_id != actor.id:
+            raise HTTPException(status_code=409, detail="Another administrator has an active embodiment draft for this entity")
+        if existing_draft.target_character_agent_id != payload.target_character_agent_id:
+            raise HTTPException(status_code=409, detail="An embodiment draft already exists for this entity")
+        if not payload.replace_existing or existing_draft.status in (
+            CharacterEmbodimentDraftStatus.QUEUED,
+            CharacterEmbodimentDraftStatus.GENERATING,
+        ):
+            if existing_draft.background_job_id is None:
+                raise HTTPException(status_code=409, detail="Existing embodiment draft has no background job")
+            return EmbodimentDraftStart(
+                draft_id=existing_draft.id,
+                job_id=existing_draft.background_job_id,
+                status=existing_draft.status,
+                draft_url=f"/character-agents/embodiment-drafts/{existing_draft.id}",
+                job_url=f"/jobs/{existing_draft.background_job_id}",
+            )
+        await sql.delete(existing_draft)
+        await sql.flush()
     draft = CharacterEmbodimentDraft(
         id=str(uuid4()), ontology_id=payload.ontology_id,
         source_entity_id=payload.entity_instance_id, created_by_user_id=actor.id,
@@ -184,12 +214,48 @@ async def start_embodiment_draft(
     )
 
 
-@router.get("/embodiment-drafts/{draft_id}", response_model=EmbodimentDraftRead)
-async def get_embodiment_draft(
-    draft_id: str, _: User = Depends(get_current_admin_user),
+@router.get("/embodiment-drafts", response_model=list[EmbodimentDraftSummary])
+async def list_embodiment_drafts(
+    ontology_id: int = Query(..., ge=1),
+    limit: int = Query(20, ge=1, le=100),
+    actor: User = Depends(get_current_admin_user),
     sql: AsyncSessionCompat = Depends(get_db_session),
 ):
-    return CharacterEmbodimentService.read(await _draft_or_404(sql, draft_id))
+    result = await sql.execute(
+        select(CharacterEmbodimentDraft)
+        .where(
+            CharacterEmbodimentDraft.ontology_id == ontology_id,
+            CharacterEmbodimentDraft.created_by_user_id == actor.id,
+            CharacterEmbodimentDraft.status != CharacterEmbodimentDraftStatus.ACCEPTED,
+        )
+        .order_by(CharacterEmbodimentDraft.updated_at.desc())
+        .limit(limit)
+    )
+    return [
+        EmbodimentDraftSummary(
+            id=draft.id,
+            ontology_id=draft.ontology_id,
+            source_entity_id=draft.source_entity_id,
+            target_character_agent_id=draft.target_character_agent_id,
+            status=draft.status,
+            background_job_id=draft.background_job_id,
+            error_message=draft.error_message,
+            created_at=draft.created_at,
+            updated_at=draft.updated_at,
+        )
+        for draft in result.scalars().all()
+    ]
+
+
+@router.get("/embodiment-drafts/{draft_id}", response_model=EmbodimentDraftRead)
+async def get_embodiment_draft(
+    draft_id: str, actor: User = Depends(get_current_admin_user),
+    sql: AsyncSessionCompat = Depends(get_db_session),
+):
+    draft = await _draft_or_404(sql, draft_id)
+    if draft.created_by_user_id != actor.id:
+        raise HTTPException(status_code=404, detail="Embodiment draft not found")
+    return CharacterEmbodimentService.read(draft)
 
 
 @router.get("/trait-definitions")
@@ -670,7 +736,7 @@ async def delete_perspective_impact(
 
 
 @router.patch("/{agent_id}", response_model=CharacterAgentRead)
-async def update_agent(agent_id: str, payload: CharacterAgentUpdate, actor: User = Depends(get_current_admin_user),
+async def update_agent(agent_id: str, payload: CharacterAgentEmbodimentUpdate, actor: User = Depends(get_current_admin_user),
                        svc: CharacterAgentService = Depends(service), audit: AuditService = Depends(get_audit_service)):
     result = await svc.update_agent(agent_id, payload, user_id=actor.id)
     await audit_event(audit, actor, AuditAction.UPDATE, AuditEntityType.CHARACTER_AGENT, agent_id)

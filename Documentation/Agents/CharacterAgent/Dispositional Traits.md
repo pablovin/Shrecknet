@@ -70,8 +70,9 @@ flowchart TD
 `identity_description` contains narrative summaries and trait descriptions,
 without points or polarity. It is loaded once per embodiment job, or generated
 from the entity and current profile if absent, and supplied to perspective and
-psychological stages. Stage 3 does not receive this description or its
-`personality_traits`; it receives only canonical scenes and the authoritative
+psychological stages. Stage 3 receives `identity_summary` and
+`psychological_summary` as context, but not `personality_traits`. Trait
+observations must be grounded in canonical scenes, using the authoritative
 `IDENTITY_TRAIT_DESCRIPTION_CONTRACT` meanings. After all
 scenes are processed, the identity description is refreshed once from the final
 current state. It never contributes authored trait evidence to the numerical
@@ -88,8 +89,9 @@ deterministic source update. A source with `n` chunks normally makes `3n` LLM
 calls. Identity-description generation adds a call if the field is absent and
 one refresh call per embodiment job; repairs and provider retries
 may add calls.
-Stage 3 sees canonical scene facts and the authoritative trait meanings, but no
-identity description, prior personality description, or generated perspective.
+Stage 3 sees canonical scene facts, the two narrative summaries as context, and
+the authoritative trait meanings. It receives no prior `personality_traits` or
+generated perspective; summaries cannot establish trait evidence.
 Each candidate has exactly `trait`,
 `polarity: low|high`, `situation_type`, and a brief grounded `justification`.
 The backend adds `perspective_id`, evidence ID, source and revision ownership,

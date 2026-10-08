@@ -287,15 +287,20 @@ ENRICHMENT_PROMPT += "\nEach item must cite exactly the current scene conceptual
 # Expected: Ordered JSON scene_trait_interpretations with supported candidates.
 TRAIT_INTERPRETATION_PROMPT = r"""Stage 3 — interpret canonical scenes to identify supported trait observations.
 INPUT JSON:
-{"target":{"alias":"character alias"},"scenes":[{"position":1,"scene":{"name":"canonical scene name","description":"canonical objective scene description"}}]}
+{"target":{"alias":"character alias","identity_summary":"narrative background summary","psychological_summary":"motivations, values, fears and outlook summary"},"scenes":[{"position":1,"scene":{"name":"canonical scene name","description":"canonical objective scene description"}}]}
+
+`identity_summary` and `psychological_summary` provide concise context for
+interpreting the character's choices. They are not evidence that a disposition
+was demonstrated. The target never includes prior `personality_traits`.
 
 Identify personality trait observations for this character
 across the supplied chronological scenes.
 
-Use only canonical scene facts to identify the character's
-choices, actions, and explicitly expressed values. Do not
-use generated perspectives, identity descriptions, or prior
-personality summaries as evidence or interpretation.
+Use identity_summary and psychological_summary only as background
+for understanding the character. Use canonical scene facts to
+identify choices, actions, and explicitly expressed values. The
+summaries are not evidence that a trait was demonstrated. Do not
+use generated perspectives or prior personality_traits.
 
 For each scene, identify supported observations using
 the eight established personality dimensions.

@@ -222,8 +222,12 @@ async def test_trait_interpretation_payload_uses_scenes_without_personality_or_p
     agent = _agent(llm)
     await agent._interpret_traits_batch(
         source_entity_id="source", source_entity_alias="Source",
-        identity={"alias": "Mara", "identity_description": {"personality_traits": [
-            {"trait": "integrity", "description": "biased old wording"}]}},
+        identity={"alias": "Mara", "identity_description": {
+            "identity_summary": "A person with a secret past.",
+            "psychological_summary": "Values loyalty and fears betrayal.",
+            "personality_traits": [
+                {"trait": "integrity", "description": "biased old wording"}],
+        }},
         perspectives=[ScenePerspectiveOutput(
             scene_id="scene-1", evidence_ids=["scene:scene-1"], source_type="participated",
             perspective="Mara refuses to exploit an unobserved opportunity.",
@@ -232,6 +236,10 @@ async def test_trait_interpretation_payload_uses_scenes_without_personality_or_p
     )
     payload = json.loads(llm.calls[0]["messages"][1]["content"])
     assert payload == {
-        "target": {"alias": "Mara"},
+        "target": {
+            "alias": "Mara",
+            "identity_summary": "A person with a secret past.",
+            "psychological_summary": "Values loyalty and fears betrayal.",
+        },
         "scenes": [{"scene": {"name": "Choice", "description": "Mara chooses."}, "position": 1}],
     }

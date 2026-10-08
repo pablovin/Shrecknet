@@ -922,8 +922,13 @@ class EmbodyAgent:
     ) -> list[list[dict[str, Any]]]:
         """Interpret trait signals from canonical scenes without prior personality context."""
         expected_ids = [item.scene_id for item in perspectives]
+        identity_description = identity.get("identity_description") or {}
         payload = {
-            "target": {"alias": identity.get("alias")},
+            "target": {
+                "alias": identity.get("alias"),
+                "identity_summary": identity_description.get("identity_summary"),
+                "psychological_summary": identity_description.get("psychological_summary"),
+            },
             "scenes": scene_contexts,
         }
         result = await self._call(

@@ -154,7 +154,7 @@ async def test_consolidation_adds_revelation_with_source_provenance():
             "candidate_id": "aspect:i-am-an-artificial-vessel",
             "name": "I am an artificial vessel", "description": "Created by another person.",
             "category": "identity", "status": "active", "justification": "A defining revelation.",
-            "event_references": [1],
+            "event_references": ["event-001"],
         }],
         "goal_operations": [],
         "focused_aspects": ["aspect:i-am-an-artificial-vessel"], "focused_goals": [],

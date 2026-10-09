@@ -218,7 +218,7 @@ class _ConsolidationOperation(BaseModel):
     goal_type: CharacterGoalType | None = None
     status: Literal["active", "inactive", "completed", "abandoned", "superseded"] | None = None
     justification: str = Field(min_length=1, max_length=500)
-    event_references: list[int] = Field(min_length=1)
+    event_references: list[str] = Field(min_length=1)
 
 
 class _PsychologicalConsolidationOutput(BaseModel):
@@ -1197,25 +1197,70 @@ class EmbodyAgent:
         if on_stage:
             await on_stage("source:{0} - Stage 4: psychological consolidation".format(
                 analysis.source_entity_alias), [4])
+        event_by_id = {
+            f"event-{i:03d}": (i, event)
+            for i, event in enumerate(events, 1)
+        }
         payload = {
             "identity_description": analysis.identity_description.model_dump(mode="json")
                 if analysis.identity_description else None,
-            "events": [{"position": i, "kind": event.kind.value if hasattr(event.kind, "value") else event.kind,
+            "events": [{"id": event_id, "kind": event.kind.value if hasattr(event.kind, "value") else event.kind,
                         "description": event.description, "scene_id": event.scene_id}
-                       for i, event in enumerate(events, 1)],
+                       for event_id, (_, event) in event_by_id.items()],
             "aspects": [{key: item.get(key) for key in
                          ("id", "name", "description", "category", "status", "in_focus")}
                         for item in current_aspects],
             "goals": [{key: item.get(key) for key in
                        ("id", "title", "description", "goal_type", "status", "in_focus")}
-                      for item in current_goals],
+                       for item in current_goals],
         }
+
+        def validate_event_references(value: BaseModel) -> None:
+            consolidation_value = value.consolidation
+            for operations, expected_kind in (
+                (consolidation_value.aspect_operations, "aspect"),
+                (consolidation_value.goal_operations, "goal"),
+            ):
+                for operation in operations:
+                    if operation.operation == "status" and operation.status is None:
+                        raise EmbodimentGenerationError(
+                            "status operation requires a lifecycle status",
+                            category="schema",
+                        )
+                    if operation.operation in {"update", "reinforce"} and operation.status is not None:
+                        raise EmbodimentGenerationError(
+                            "update and reinforce operations cannot change lifecycle status; split the change into an update or reinforce followed by a status operation",
+                            category="schema",
+                        )
+                    for event_id in operation.event_references:
+                        event_entry = event_by_id.get(event_id)
+                        if event_entry is None:
+                            raise EmbodimentGenerationError(
+                                f"consolidation cited unknown event {event_id}",
+                                category="semantic_reference",
+                                offending_ids={event_id},
+                                allowed_ids=set(event_by_id),
+                            )
+                        event = event_entry[1]
+                        actual_kind = event.kind.value if hasattr(event.kind, "value") else event.kind
+                        if actual_kind != expected_kind:
+                            raise EmbodimentGenerationError(
+                                f"consolidation {expected_kind} operation cited {actual_kind} event {event_id}",
+                                category="semantic_reference",
+                                offending_ids={event_id},
+                                allowed_ids={
+                                    candidate_id for candidate_id, (_, candidate) in event_by_id.items()
+                                    if (candidate.kind.value if hasattr(candidate.kind, "value") else candidate.kind) == expected_kind
+                                },
+                            )
+
         output = await self._call(
             prompt=PSYCHOLOGICAL_CONSOLIDATION_PROMPT, payload=payload,
             schema=_ConsolidationEnvelope, stage="psychological consolidation",
             usage_tag="character_agent.embodiment.psychological_consolidation",
             max_tokens=EMBODIMENT_LLM_MAX_TOKENS,
             model=self.scene_interpretation_model,
+            semantic_validator=validate_event_references,
             source_entity_id=analysis.source_entity_id,
             source_entity_alias=analysis.source_entity_alias,
             schema_correction_attempts=1,
@@ -1229,17 +1274,8 @@ class EmbodyAgent:
             result = []
             known = aspect_ids if kind == "aspect" else goal_ids
             for op in items:
-                if any(index < 1 or index > len(events) for index in op.event_references):
-                    raise EmbodimentGenerationError("consolidation cited an unknown event", category="semantic_reference")
-                expected_kind = "aspect" if kind == "aspect" else "goal"
-                if any(events[index - 1].kind != expected_kind for index in op.event_references):
-                    raise EmbodimentGenerationError("consolidation cited an event of the wrong kind", category="semantic_reference")
                 if (kind == "aspect" and op.goal_type is not None) or (kind == "goal" and op.category is not None):
                     raise EmbodimentGenerationError("consolidation supplied a category for the wrong profile type", category="schema")
-                if op.operation == "status" and op.status is None:
-                    raise EmbodimentGenerationError("status operation requires a lifecycle status", category="schema")
-                if op.operation in {"update", "reinforce"} and op.status is not None:
-                    raise EmbodimentGenerationError("lifecycle changes require a status operation", category="schema")
                 if op.operation == "add":
                     if op.target_id is not None:
                         raise EmbodimentGenerationError("consolidation add cannot target an existing ID", category="semantic_reference")
@@ -1256,10 +1292,12 @@ class EmbodyAgent:
                     raise EmbodimentGenerationError("consolidation referenced unknown profile ID", category="semantic_reference")
                 elif op.candidate_id is not None:
                     raise EmbodimentGenerationError("existing-item operation cannot use candidate_id", category="semantic_reference")
-                citations = sorted({f"scene:{events[i-1].scene_id}" for i in op.event_references if events[i-1].scene_id})
+                referenced = [event_by_id[event_id] for event_id in op.event_references]
+                citations = sorted({f"scene:{event.scene_id}" for _, event in referenced if event.scene_id})
                 common = {"operation": op.operation, "target_id": op.target_id,
                           "candidate_id": op.candidate_id, "justification": op.justification,
-                          "evidence_ids": citations, "event_references": op.event_references}
+                          "evidence_ids": citations,
+                          "event_references": [position for position, _ in referenced]}
                 if kind == "aspect":
                     label = op.name or next((x["name"] for x in current_aspects if str(x.get("id")) == op.target_id), "")
                     result.append(AspectUpdateData.model_validate({**common, "name": label,

@@ -113,6 +113,15 @@ aggregation remains deterministic and independent. No LLM receives a cumulative
 scene history. Source bundles run sequentially, so the resulting revision becomes
 the next source bundle's starting identity. Only current focus is capped: ten
 active aspects and ten active goals. Historical records remain available.
+The backend assigns each event a source-local ID, and consolidation operations
+cite those IDs rather than list positions. The backend validates that each ID
+exists and has the same kind as the operation; a mismatch receives a bounded
+semantic correction attempt before the source fails. Updates and reinforcements
+cannot change lifecycle status; if both content and status change, consolidation
+emits an update or reinforcement followed by a separate status operation. These
+invariants are checked before accepting the model response and receive one
+bounded correction attempt. Persisted operation provenance retains original
+numeric event positions for compatibility.
 
 Every embodiment LLM request, including a JSON-repair request, has a maximum
 completion budget of 10,000 tokens. This is a cost and failure safeguard, not

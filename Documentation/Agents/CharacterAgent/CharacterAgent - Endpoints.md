@@ -419,6 +419,10 @@ Each chunk has two LLM waves and three normal calls:
 
 After all scene chunks for a source complete, the backend makes one Stage 4 consolidation call if profile events exist. Consolidation deduplicates candidates, reconciles lifecycle and descriptions against current and historical profile items, and selects at most ten focused active aspects and goals. It cites source events; the backend validates IDs, transitions, focus, and provenance. No full-history input is sent. Trait aggregation remains deterministic. The source-level revision becomes the next source's working profile.
 
+Stage 4 receives backend-assigned source-local event IDs such as `event-001` and must cite those IDs in operation `event_references`. Aspect operations may cite only aspect events, and goal operations may cite only goal events. Unknown or wrong-kind references trigger one bounded semantic correction attempt; if the corrected output remains invalid, the source fails without applying a profile update. Persisted draft operation provenance retains numeric event positions for compatibility.
+
+`update` and `reinforce` operations cannot set lifecycle `status`. When the evidence supports both a content change and a status transition, Stage 4 must emit the content operation first and a separate `status` operation second. A missing status on a `status` operation is also rejected. These rules are checked before accepting consolidation output and receive the same bounded correction attempt.
+
 Each embodiment generation or JSON-repair request is capped at 10,000 completion tokens. This cap is a provider-cost safeguard; a response stopped for length is rejected as truncated and cannot become a draft result.
 
 ### Frontend job-progress contract

@@ -20,12 +20,12 @@ from app.schemas.character_agent import (
 
 class _LLM:
     def __init__(self, response):
-        self.response = response
+        self.responses = response if isinstance(response, list) else [response]
         self.calls = []
 
     async def chat(self, **kwargs):
         self.calls.append(kwargs)
-        return self.response
+        return self.responses[min(len(self.calls) - 1, len(self.responses) - 1)]
 
 
 def _analysis(events):
@@ -93,7 +93,7 @@ async def test_consolidation_adds_candidate_and_rejects_unknown_focus_ids():
             "operation": "add", "target_id": None, "candidate_id": "aspect:i-am-a-vessel",
             "name": "I am a vessel", "description": "Artificially created.",
             "category": "identity", "status": "active", "justification": "The revelation changes self-understanding.",
-            "event_references": [1],
+            "event_references": ["event-001"],
         }],
         "goal_operations": [],
         "focused_aspects": ["aspect:i-am-a-vessel"], "focused_goals": [],
@@ -136,13 +136,13 @@ async def test_goal_can_be_introduced_and_completed_in_one_source_bundle():
                 "operation": "add", "target_id": None, "candidate_id": "goal:find-my-maker",
                 "title": "Find my maker", "description": "Discover who created me.",
                 "goal_type": "objective", "status": "active",
-                "justification": "The character makes a clear commitment.", "event_references": [1],
+                "justification": "The character makes a clear commitment.", "event_references": ["event-001"],
             },
             {
                 "operation": "status", "target_id": "goal:find-my-maker", "candidate_id": None,
                 "title": "Find my maker", "description": None, "goal_type": None,
                 "status": "completed", "justification": "The character learns the creator's identity.",
-                "event_references": [2],
+                "event_references": ["event-002"],
             },
         ],
         "focused_aspects": [], "focused_goals": [],
@@ -163,6 +163,118 @@ async def test_goal_can_be_introduced_and_completed_in_one_source_bundle():
     assert goals[0]["status"] == "completed"
     assert goals[0]["in_focus"] is False
     assert goals[0]["evidence_ids"] == ["scene:scene-1", "scene:scene-2"]
+
+
+@pytest.mark.asyncio
+async def test_cross_kind_event_reference_is_corrected_and_uses_backend_event_ids():
+    invalid = {"consolidation": {
+        "aspect_operations": [{
+            "operation": "add", "target_id": None, "candidate_id": "aspect:i-am-a-keeper",
+            "name": "I am a keeper", "description": "Protects the archive.",
+            "category": "role", "status": "active", "justification": "A lasting role.",
+            "event_references": ["event-002"],
+        }],
+        "goal_operations": [], "focused_aspects": ["aspect:i-am-a-keeper"], "focused_goals": [],
+    }}
+    corrected = json.loads(json.dumps(invalid))
+    corrected["consolidation"]["aspect_operations"][0]["event_references"] = ["event-001"]
+    llm = _LLM([json.dumps(invalid), json.dumps(corrected)])
+    agent = EmbodyAgent(
+        llm_client=llm, character_incorporation_model="model", scene_interpretation_model="model",
+    )
+    events = [
+        ProfileEventOutput(kind="aspect", description="Protects the archive.", scene_id="scene-a"),
+        ProfileEventOutput(kind="goal", description="Vows to find the archive.", scene_id="scene-b"),
+    ]
+
+    result = await agent._consolidate_profile(
+        analysis=_analysis(events), current_aspects=[], current_goals=[],
+    )
+
+    assert len(llm.calls) == 2
+    assert llm.calls[0]["messages"][1]["content"].find('"id": "event-001"') >= 0
+    assert result["aspect_updates"][0].event_references == [1]
+    assert result["aspect_updates"][0].evidence_ids == ["scene:scene-a"]
+
+    agent = EmbodyAgent(
+        llm_client=_LLM(json.dumps(invalid)), character_incorporation_model="model",
+        scene_interpretation_model="model",
+    )
+    with pytest.raises(EmbodimentGenerationError, match="cited goal event"):
+        await agent._consolidate_profile(
+            analysis=_analysis(events), current_aspects=[], current_goals=[],
+        )
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_change_is_corrected_into_separate_ordered_operations():
+    invalid = {"consolidation": {
+        "aspect_operations": [],
+        "goal_operations": [{
+            "operation": "update", "target_id": "goal-1", "candidate_id": None,
+            "title": "Find my maker", "description": "The search is complete.",
+            "goal_type": "objective", "status": "completed",
+            "justification": "The character discovers their creator.",
+            "event_references": ["event-001"],
+        }],
+        "focused_aspects": [], "focused_goals": [],
+    }}
+    corrected = {"consolidation": {
+        "aspect_operations": [],
+        "goal_operations": [
+            {
+                "operation": "update", "target_id": "goal-1", "candidate_id": None,
+                "title": "Find my maker", "description": "The search is complete.",
+                "goal_type": "objective", "status": None,
+                "justification": "The character's understanding changed.",
+                "event_references": ["event-001"],
+            },
+            {
+                "operation": "status", "target_id": "goal-1", "candidate_id": None,
+                "title": "Find my maker", "description": None,
+                "goal_type": None, "status": "completed",
+                "justification": "The character discovers their creator.",
+                "event_references": ["event-001"],
+            },
+        ],
+        "focused_aspects": [], "focused_goals": [],
+    }}
+    llm = _LLM([json.dumps(invalid), json.dumps(corrected)])
+    agent = EmbodyAgent(
+        llm_client=llm, character_incorporation_model="model", scene_interpretation_model="model",
+    )
+    events = [ProfileEventOutput(
+        kind="goal", description="Discovers who created him.", scene_id="scene-1",
+    )]
+
+    result = await agent._consolidate_profile(
+        analysis=_analysis(events), current_aspects=[],
+        current_goals=[{
+            "id": "goal-1", "title": "Find my maker", "description": "Discover who created me.",
+            "goal_type": "objective", "status": "active", "in_focus": True,
+        }],
+    )
+
+    assert len(llm.calls) == 2
+    assert [operation.operation.value for operation in result["goal_updates"]] == ["update", "status"]
+    goals = [{
+        "id": "goal-1", "title": "Find my maker", "description": "Discover who created me.",
+        "goal_type": "objective", "status": "active", "in_focus": True,
+    }]
+    _apply_goal_ops(goals, result["goal_updates"], focused_ids=[])
+    assert goals[0]["description"] == "The search is complete."
+    assert goals[0]["status"] == "completed"
+
+    agent = EmbodyAgent(
+        llm_client=_LLM(json.dumps(invalid)), character_incorporation_model="model",
+        scene_interpretation_model="model",
+    )
+    with pytest.raises(EmbodimentGenerationError, match="cannot change lifecycle status"):
+        await agent._consolidate_profile(
+            analysis=_analysis(events), current_aspects=[], current_goals=[{
+                "id": "goal-1", "title": "Find my maker", "status": "active",
+            }],
+        )
 
 
 def test_profile_operations_preserve_history_and_separate_focus_from_status():

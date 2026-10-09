@@ -249,8 +249,11 @@ unsupported candidates. Reconcile meaningful events by adding a genuinely new
 item, materially updating an existing description, changing lifecycle status,
 reinforcing an existing item without duplication, or making no change. An item
 introduced and resolved in this source must have ordered add then status
-operations. Cite event positions and give a short justification for each
-operation. References must be an existing backend ID or a source-local candidate
+operations. Cite the supplied event IDs and give a short justification for each
+operation. Each event ID is backend assigned and identifies exactly one event;
+never infer or construct an event ID. Every cited event must match the operation
+kind: aspect operations cite only aspect events, and goal operations cite only
+goal events. References must be an existing backend ID or a source-local candidate
 ID of the form aspect:<stable-name> or goal:<stable-title>.
 
 Never resolve a goal only because it is absent or old. Never deactivate an
@@ -261,16 +264,22 @@ goals. Focus selection considers enduring identity and recent developments but
 uses no importance scores. Never delete history.
 
 INPUT JSON:
-{"identity_description":{"identity_summary":"...","psychological_summary":"...","personality_traits":[]},"events":[{"position":1,"kind":"aspect|goal","description":"...","scene_id":"backend reference"}],"aspects":[{"id":"backend ID","name":"I ...","description":"...","category":"existing category","status":"active|inactive","in_focus":true}],"goals":[{"id":"backend ID","title":"...","description":"...","goal_type":"existing type","status":"active|completed|abandoned|superseded","in_focus":true}]}
+{"identity_description":{"identity_summary":"...","psychological_summary":"...","personality_traits":[]},"events":[{"id":"event-001 (backend-assigned source-local event ID)","kind":"aspect|goal","description":"...","scene_id":"backend reference"}],"aspects":[{"id":"backend ID","name":"I ...","description":"...","category":"existing category","status":"active|inactive","in_focus":true}],"goals":[{"id":"backend ID","title":"...","description":"...","goal_type":"existing type","status":"active|completed|abandoned|superseded","in_focus":true}]}
 
 OUTPUT JSON:
-{"consolidation":{"aspect_operations":[{"operation":"add|update|status|reinforce","target_id":"existing backend ID or null","candidate_id":"source-local ID or null","name":"first-person defining statement","description":"...","category":"identity|role|status|physical|capability|knowledge|preference|attitude|history","status":"active|inactive|null","justification":"...","event_references":[1]}],"goal_operations":[{"operation":"add|update|status|reinforce","target_id":"existing backend ID or null","candidate_id":"source-local ID or null","title":"...","description":"...","goal_type":"desire|objective|ambition|obligation|avoidance|survival","status":"active|completed|abandoned|superseded|null","justification":"...","event_references":[1]}],"focused_aspects":["existing backend ID or source-local candidate ID"],"focused_goals":["existing backend ID or source-local candidate ID"]}}
+{"consolidation":{"aspect_operations":[{"operation":"add|update|status|reinforce","target_id":"existing backend ID or null","candidate_id":"source-local ID or null","name":"first-person defining statement","description":"...","category":"identity|role|status|physical|capability|knowledge|preference|attitude|history","status":"active|inactive|null","justification":"...","event_references":["event-001"]}],"goal_operations":[{"operation":"add|update|status|reinforce","target_id":"existing backend ID or null","candidate_id":"source-local ID or null","title":"...","description":"...","goal_type":"desire|objective|ambition|obligation|avoidance|survival","status":"active|completed|abandoned|superseded|null","justification":"...","event_references":["event-001"]}],"focused_aspects":["existing backend ID or source-local candidate ID"],"focused_goals":["existing backend ID or source-local candidate ID"]}}
 
+`event_references` contains one or more supplied event ID strings, never numeric
+positions. Every ID must exist and its event kind must match the operation list.
 For add, target_id must be null, candidate_id must be unique, and status must
 be active. If the item is introduced and resolved in this source, add it first
 and then emit a status operation that records the later transition.
 For update/status/reinforce, target_id must identify an input item and
-candidate_id must be null. Status operations require a status. Updates change
+candidate_id must be null. Status operations require a status. Update and
+reinforce operations must set status to null. If an item needs both a content
+change and a lifecycle change, emit the update or reinforce first, then a
+separate status operation for the same target, citing the supporting event IDs
+in each operation. Updates change
 meaning only when evidence materially evolves it. Reinforcement must not
 duplicate an item or fabricate a description change. Focus references must
 resolve after ordered operations and point only to active items. Return JSON only."""

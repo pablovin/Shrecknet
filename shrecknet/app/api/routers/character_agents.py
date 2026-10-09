@@ -259,6 +259,28 @@ async def get_embodiment_draft(
     return CharacterEmbodimentService.read(draft)
 
 
+@router.delete("/embodiment-drafts/{draft_id}", status_code=204)
+async def delete_embodiment_draft(
+    draft_id: str,
+    actor: User = Depends(get_current_admin_user),
+    sql: AsyncSessionCompat = Depends(get_db_session),
+) -> Response:
+    draft = await _draft_or_404(sql, draft_id)
+    if draft.created_by_user_id != actor.id:
+        raise HTTPException(status_code=404, detail="Embodiment draft not found")
+    if draft.status not in (
+        CharacterEmbodimentDraftStatus.READY,
+        CharacterEmbodimentDraftStatus.FAILED,
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail="Only ready or failed embodiment drafts can be deleted",
+        )
+    await sql.delete(draft)
+    await sql.commit()
+    return Response(status_code=204)
+
+
 @router.get("/trait-definitions")
 async def get_trait_definitions(_: User = Depends(get_current_user)):
     return trait_metadata()

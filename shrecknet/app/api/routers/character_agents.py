@@ -407,9 +407,16 @@ async def get_character_agent_query_job(
         job.author_type != AuthorType.USER or str(job.author_id) != str(actor.id)
     ):
         raise HTTPException(status_code=403, detail="Not authorized to read this query job")
-    try:
-        details = json.loads(job.details or "{}")
-    except (TypeError, ValueError):
+    if isinstance(job.details, dict):
+        details = job.details
+    elif isinstance(job.details, str):
+        try:
+            parsed_details = json.loads(job.details)
+        except ValueError:
+            details = {}
+        else:
+            details = parsed_details if isinstance(parsed_details, dict) else {}
+    else:
         details = {}
     if details.get("character_agent_id") != agent_id:
         raise HTTPException(status_code=404, detail="CharacterAgent query job not found")

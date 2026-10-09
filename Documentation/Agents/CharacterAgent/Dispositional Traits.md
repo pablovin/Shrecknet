@@ -92,11 +92,17 @@ may add calls.
 Stage 3 sees canonical scene facts, the two narrative summaries as context, and
 the authoritative trait meanings. It receives no prior `personality_traits` or
 generated perspective; summaries cannot establish trait evidence.
-Each candidate has exactly `trait`,
-`polarity: low|high`, `situation_type`, and a brief grounded `justification`.
-The backend adds `perspective_id`, evidence ID, source and revision ownership,
-chronological position, and policy version. The LLM never supplies a point,
-intensity, numeric confidence, diagnosticity, or four choice-condition objects.
+Each internal model-facing candidate has `trait`, `diagnostic_situation`,
+`relationship`, `stakes`, `polarity`, and a brief grounded `justification`.
+Its schema specializes `diagnostic_situation` to the values registered for that
+trait. `relationship` is `friend|enemy|other`; `stakes` is
+`ordinary|high_stakes`. All three context fields are null together for
+unspecified context. The backend constructs the existing persisted
+`situation_type` (`diagnostic:relationship:stakes` or `unspecified`) after
+validating the model contract, then adds `perspective_id`, evidence ID, source
+and revision ownership, chronological position, and policy version. The LLM
+never supplies a point, intensity, numeric confidence, diagnosticity, or four
+choice-condition objects.
 The shared `TRAIT_EVIDENCE_CONTRACT` requires clearly demonstrated dispositional
 responses; temporary emotional experiences by themselves are not converted into
 trait evidence.

@@ -12,7 +12,8 @@ After perspective validation, two calls run in parallel for that chunk:
         canonical scenes + authoritative trait meanings -> candidates.
 After all chunks for one source, one optional consolidation call reconciles its
 profile events with current character state using typed ordered operations and local
-references. Every stage shares a bounded validation retry budget; truncated
+references. Validated chunk outputs are checkpointed and reused only when input
+fingerprints match. Every stage shares a bounded validation retry budget; truncated
 psychological batches split until single scenes. Backend reducers validate and
 apply lifecycle/focus rules before acceptance. Trait aggregation remains
 deterministic. Prompts do not receive full scene history or produce public output.
@@ -36,7 +37,7 @@ IDENTITY_TRAIT_DESCRIPTION_CONTRACT = (
         for key in DIRECTIONAL_TRAITS
     ], ensure_ascii=False)
 )
-PROMPT_VERSION = "character-embodiment-v31-validated-consolidation"
+PROMPT_VERSION = "character-embodiment-v32-typed-trait-context"
 
 # Execution order: Stage 0, once when description is absent and once after
 # scene processing to refresh it from the resulting current state.
@@ -284,40 +285,19 @@ Rules:
 - Preserve scene ordering.
 
 
-OUTPUT JSON SCHEMA (return exactly this object shape, with one result per input scene in the same order):
-{
-  "type": "object",
-  "additionalProperties": false,
-  "required": ["scene_trait_interpretations"],
-  "properties": {
-    "scene_trait_interpretations": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["trait_candidates"],
-        "properties": {
-          "trait_candidates": {
-            "type": "array",
-            "maxItems": 8,
-            "items": {
-              "type": "object",
-              "additionalProperties": false,
-              "required": ["trait", "polarity", "situation_type", "justification"],
-              "properties": {
-                "trait": {"enum": ["integrity", "caution", "presence", "forbearance", "diligence", "curiosity", "sharing", "restlessness"]},
-                "polarity": {"enum": ["low", "high"]},
-                "situation_type": {"type": "string", "minLength": 1, "maxLength": 80, "description": "diagnostic:relationship:stakes or unspecified; use the diagnostic values and rules below"},
-                "justification": {"type": "string", "minLength": 1, "maxLength": 360}
-              }
-            }
-          }
-        }
-      }
-    }
-  }
-}
-Return JSON only.""" + IDENTITY_TRAIT_DESCRIPTION_CONTRACT + TRAIT_EVIDENCE_CONTRACT
+OUTPUT (return exactly one result per input scene in the same order):
+{"scene_trait_interpretations":[{"trait_candidates":[{"trait":"one of the eight directional trait keys","diagnostic_situation":"a diagnostic value allowed for that trait, or null","relationship":"friend|enemy|other, or null","stakes":"ordinary|high_stakes, or null","polarity":"low|high","justification":"..."}]}]}
+
+All candidate keys are required and additional keys are forbidden. Each scene may
+contain at most eight candidates, with at most one candidate for each trait.
+`justification` is a nonempty string of at most 360 characters. For a specified
+context, diagnostic_situation, relationship, and stakes must all be non-null. For
+unspecified context, all three must be null. Allowed diagnostic_situation values
+are trait-specific:
+""" + json.dumps({key: list(TRAIT_BY_KEY[key].diagnostic_situations) for key in DIRECTIONAL_TRAITS}, ensure_ascii=False) + r"""
+The backend constructs the persisted situation_type as
+`diagnostic_situation:relationship:stakes`, or `unspecified` when all three
+fields are null. Never return a compound situation string. Return JSON only.""" + IDENTITY_TRAIT_DESCRIPTION_CONTRACT + TRAIT_EVIDENCE_CONTRACT
 
 
 # Execution order: Stage 4, after all Stage 2/3 chunks for one source; skipped without events.

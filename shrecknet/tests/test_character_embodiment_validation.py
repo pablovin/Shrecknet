@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 from jsonschema import Draft202012Validator
+from pydantic import TypeAdapter, ValidationError
 
 from app.jobs.character_agent.embody_agent import (
     EmbodyAgent, EmbodimentGenerationError, _PerspectivesLLMContainer,
@@ -177,7 +178,8 @@ def test_explicit_format_incompatibility_triggers_fallback(message):
 
 @pytest.mark.asyncio
 async def test_duplicate_traits_are_corrected_inside_validation():
-    candidate = {"trait": "integrity", "situation_type": "unspecified", "polarity": "high", "justification": "A voluntary fair choice."}
+    candidate = {"trait": "integrity", "diagnostic_situation": None, "relationship": None,
+                 "stakes": None, "polarity": "high", "justification": "A voluntary fair choice."}
     invalid = {"scene_trait_interpretations": [{"trait_candidates": [candidate, candidate]}]}
     valid = {"scene_trait_interpretations": [{"trait_candidates": [candidate]}]}
     provider = Responses(json.dumps(invalid), json.dumps(valid))
@@ -186,6 +188,21 @@ async def test_duplicate_traits_are_corrected_inside_validation():
         output_binding={"collection": "scene_trait_interpretations", "scene_ids": ["s1"]})
     assert len(result.scene_trait_interpretations[0].trait_candidates) == 1
     assert len(provider.calls) == 2
+
+
+def test_trait_contract_types_diagnostics_by_trait_and_maps_persisted_context():
+    from app.jobs.character_agent.embody_agent import _TraitCandidateLLMOutput, _trait_situation_type
+
+    valid = {"trait": "caution", "diagnostic_situation": "uncertain_threat",
+             "relationship": "other", "stakes": "high_stakes", "polarity": "high",
+             "justification": "Mara seeks cover before entering known danger."}
+    adapter = TypeAdapter(_TraitCandidateLLMOutput)
+    candidate = adapter.validate_python(valid)
+    assert _trait_situation_type(candidate) == "uncertain_threat:other:high_stakes"
+    with pytest.raises(ValidationError):
+        adapter.validate_python({**valid, "diagnostic_situation": "exploitation"})
+    with pytest.raises(ValidationError):
+        adapter.validate_python({**valid, "relationship": None})
 
 
 @pytest.mark.asyncio
@@ -309,6 +326,34 @@ def test_provider_schema_matches_runtime_typed_contract():
         ConsolidationEnvelope.model_validate(invalid)
 
 
+def test_trait_provider_schema_encodes_trait_specific_context_and_unspecified_shape():
+    from app.jobs.character_agent.embody_agent import _SceneTraitInterpretationsLLMOutput
+
+    schema = _model_output_schema(_SceneTraitInterpretationsLLMOutput, {"scene_ids": ["s1"]})
+    Draft202012Validator.check_schema(schema)
+    validator = Draft202012Validator(schema)
+    valid = {"scene_trait_interpretations": [{"trait_candidates": [{
+        "trait": "caution", "diagnostic_situation": "uncertain_threat",
+        "relationship": "other", "stakes": "high_stakes", "polarity": "high",
+        "justification": "Mara seeks cover before approaching the known danger.",
+    }]}]}
+    validator.validate(valid)
+    assert list(validator.iter_errors({"scene_trait_interpretations": [{"trait_candidates": [{
+        **valid["scene_trait_interpretations"][0]["trait_candidates"][0],
+        "diagnostic_situation": "exploitation",
+    }]}]}))
+    invalid = {"scene_trait_interpretations": [{"trait_candidates": [{
+        **valid["scene_trait_interpretations"][0]["trait_candidates"][0],
+        "relationship": None,
+    }]}]}
+    assert list(validator.iter_errors(invalid))
+    unspecified = {"scene_trait_interpretations": [{"trait_candidates": [{
+        "trait": "integrity", "diagnostic_situation": None, "relationship": None,
+        "stakes": None, "polarity": "high", "justification": "She refuses a free unfair gain.",
+    }]}]}
+    validator.validate(unspecified)
+
+
 @pytest.mark.parametrize("operation", ["update", "reinforce", "status"])
 @pytest.mark.parametrize("kind", ["aspect", "goal"])
 def test_all_existing_operation_variants_use_kind_specific_contracts(kind, operation):
@@ -425,10 +470,45 @@ async def test_single_agent_analysis_calls_are_not_counted_twice():
 
 
 def test_scene_checkpoint_requires_matching_fingerprint_and_valid_analysis():
-    from app.tasks.character_embodiment import _checkpoint_analysis
+    from app.tasks.character_embodiment import CHECKPOINT_VERSION, _checkpoint_analysis
     from test_character_embodiment import _analysis
     analysis = _analysis([]).model_dump(mode="json")
-    checkpoint = {"version": 1, "key": "same", "analysis": analysis}
+    checkpoint = {"version": CHECKPOINT_VERSION, "key": "same", "analysis": analysis}
     assert _checkpoint_analysis(checkpoint, checkpoint_key="same") is not None
     assert _checkpoint_analysis(checkpoint, checkpoint_key="changed") is None
     assert _checkpoint_analysis({**checkpoint, "analysis": {"bad": True}}, checkpoint_key="same") is None
+
+
+def test_chunk_checkpoint_reuses_only_complete_matching_outputs():
+    from app.tasks.character_embodiment import CHECKPOINT_VERSION, _checkpoint_chunk, _chunk_checkpoint_key
+    from app.schemas.character_agent import ScenePerspectiveBundleOutput
+    from test_character_embodiment import _analysis
+
+    perspective = ScenePerspectiveBundleOutput(
+        scene_id="s1", evidence_ids=["scene:s1"], source_type="participated",
+        perspective="I chose to help.",
+    )
+    analysis = _analysis([]).model_copy(update={"perspectives": [perspective]})
+    raw = {
+        "version": CHECKPOINT_VERSION, "key": "chunk-fingerprint",
+        "perspectives": {"perspectives": [perspective.model_dump(mode="json")]},
+        "analysis": analysis.model_dump(mode="json"),
+    }
+    bound_perspectives, bound_analysis = _checkpoint_chunk(
+        raw, chunk_key="chunk-fingerprint", scene_ids=["s1"],
+    )
+    assert [item.scene_id for item in bound_perspectives.perspectives] == ["s1"]
+    assert [item.scene_id for item in bound_analysis.perspectives] == ["s1"]
+    assert _checkpoint_chunk(raw, chunk_key="changed", scene_ids=["s1"]) == (None, None)
+    assert _checkpoint_chunk(raw, chunk_key="chunk-fingerprint", scene_ids=["s2"]) == (None, None)
+    common = {"profile": "same", "prompt": "v2"}
+    old_keys = [
+        _chunk_checkpoint_key(common, 0, [{"scene_id": "s1"}]),
+        _chunk_checkpoint_key(common, 1, [{"scene_id": "s2"}]),
+    ]
+    new_keys = [
+        _chunk_checkpoint_key(common, 0, [{"scene_id": "changed"}]),
+        _chunk_checkpoint_key(common, 1, [{"scene_id": "s2"}]),
+    ]
+    assert old_keys[0] != new_keys[0]
+    assert old_keys[1] == new_keys[1]

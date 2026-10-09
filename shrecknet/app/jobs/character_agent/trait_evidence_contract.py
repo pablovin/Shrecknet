@@ -12,13 +12,16 @@ parallel. No prompt produces a point or public trait profile.
 TRAIT_EVIDENCE_CONTRACT = r"""
 For each supported trait, return exactly:
 {"trait":"integrity|caution|presence|forbearance|diligence|curiosity|sharing|restlessness",
+ "diagnostic_situation":"a diagnostic value allowed for the selected trait, or null",
+ "relationship":"friend|enemy|other, or null",
+ "stakes":"ordinary|high_stakes, or null",
  "polarity":"low|high",
- "situation_type":"diagnostic:relationship:stakes or unspecified",
  "justification":"one brief reason grounded in the canonical scene and character interpretation"}.
-The diagnostic part must be a diagnostic_situations value for that trait.
-Relationship is friend, enemy, or other; stakes is ordinary or high_stakes.
-Use unspecified if the context is insufficient for comparison. The backend
-attaches perspective and scene references; never output IDs, scores, numeric
+The diagnostic_situation must be in the allowed list for the selected trait.
+For a specified context, all three context fields must be non-null. Use null for
+all three when context is insufficient for comparison. The backend constructs
+the persisted situation_type and attaches perspective and scene references;
+never output IDs, scores, numeric
 intensity, confidence, choice-condition objects, or STEADINESS.
 Emit no observation for compelled, ambiguous, merely witnessed, group-only, or
 non-diagnostic behavior, or when the character lacks a meaningful alternative.

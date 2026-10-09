@@ -24,9 +24,9 @@ import json
 import logging
 import re
 import time
-from typing import Any, Callable, Literal
+from typing import Annotated, Any, Callable, Literal, Union
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, create_model, model_validator
 
 from app.integrations.llm.structured_output import (
     strict_json_schema,
@@ -61,7 +61,7 @@ from app.schemas.character_agent import (
 
 
 from app.schemas.character_traits import TraitProfile, TraitEvidence, DIRECTIONAL_TRAITS
-from app.schemas.character_traits import TraitKey, TRAIT_BY_KEY
+from app.schemas.character_traits import TRAIT_BY_KEY
 from app.services.character_trait_service import (
     ground_observations, merge_evidence, update_profile, validate_scene_grounding, scene_digest,
 )
@@ -174,26 +174,43 @@ class _ProfileEventLLMOutput(BaseModel):
     description: str = Field(min_length=1, max_length=300)
 
 
-class _TraitCandidateLLMOutput(BaseModel):
-    """Model-owned trait observation fields; provenance is attached by the backend."""
+class _TraitCandidateFields(BaseModel):
+    """Shared typed model fields; allowed diagnostics are specialized per trait."""
 
     model_config = ConfigDict(extra="forbid")
-    trait: TraitKey
-    situation_type: str = Field(min_length=1, max_length=80)
+    diagnostic_situation: str | None
+    relationship: Literal["friend", "enemy", "other"] | None
+    stakes: Literal["ordinary", "high_stakes"] | None
     polarity: Literal["low", "high"]
     justification: str = Field(min_length=1, max_length=360)
 
     @model_validator(mode="after")
-    def valid_context(self):
-        if self.situation_type == "unspecified":
-            return self
-        parts = self.situation_type.split(":")
-        if (len(parts) != 3
-            or parts[0] not in TRAIT_BY_KEY[self.trait].diagnostic_situations
-            or parts[1] not in {"friend", "enemy", "other"}
-            or parts[2] not in {"ordinary", "high_stakes"}):
-            raise ValueError("invalid trait situation context")
+    def context_is_complete_or_unspecified(self):
+        values = (self.diagnostic_situation, self.relationship, self.stakes)
+        if any(value is None for value in values) and any(value is not None for value in values):
+            raise ValueError("trait situation fields must all be set or all be null")
         return self
+
+
+_TraitCandidateVariants = tuple(
+    create_model(
+        f"_{key.title()}TraitCandidateLLMOutput",
+        __base__=_TraitCandidateFields,
+        trait=(Literal[key], ...),
+        diagnostic_situation=(Literal[tuple(definition.diagnostic_situations)] | None, ...),
+    )
+    for key, definition in TRAIT_BY_KEY.items()
+    if key in DIRECTIONAL_TRAITS
+)
+_TraitCandidateLLMOutput = Annotated[
+    Union[_TraitCandidateVariants], Field(discriminator="trait")
+]
+
+
+def _trait_situation_type(candidate: _TraitCandidateFields) -> str:
+    if candidate.diagnostic_situation is None:
+        return "unspecified"
+    return ":".join((candidate.diagnostic_situation, candidate.relationship, candidate.stakes))
 
 
 class _SceneEnrichmentLLMOutput(BaseModel):
@@ -743,7 +760,12 @@ class EmbodyAgent:
         ):
             scene_candidates: list[dict[str, Any]] = []
             for candidate in interpretation.trait_candidates:
-                value = candidate.model_dump(mode="json")
+                value = {
+                    "trait": candidate.trait,
+                    "polarity": candidate.polarity,
+                    "situation_type": _trait_situation_type(candidate),
+                    "justification": candidate.justification,
+                }
                 value.update(evidence_kind="behavior", perspective_id=perspective.id,
                              evidence_ids=[f"scene:{scene_id}"])
                 scene_candidates.append(value)
@@ -1081,6 +1103,28 @@ def _model_output_schema(
         if isinstance(scene_ids, list) and isinstance(interpretations, dict):
             interpretations["minItems"] = len(scene_ids)
             interpretations["maxItems"] = len(scene_ids)
+        definitions = result.get("$defs", {})
+        for key, definition in TRAIT_BY_KEY.items():
+            if key not in DIRECTIONAL_TRAITS:
+                continue
+            name = f"_{key.title()}TraitCandidateLLMOutput"
+            variant = definitions.get(name)
+            if not isinstance(variant, dict):
+                continue
+            properties = variant.get("properties", {})
+            diagnostics = list(definition.diagnostic_situations)
+            variant["anyOf"] = [
+                {"type": "object", "properties": {field: {"type": "null"} for field in ("diagnostic_situation", "relationship", "stakes")}},
+                {"type": "object", "properties": {
+                    "diagnostic_situation": {"enum": diagnostics, "type": "string"},
+                    "relationship": {"enum": ["friend", "enemy", "other"], "type": "string"},
+                    "stakes": {"enum": ["ordinary", "high_stakes"], "type": "string"},
+                }},
+            ]
+        candidate_union = definitions.get("_SceneTraitInterpretationLLMOutput", {}).get("properties", {}).get("trait_candidates", {}).get("items", {})
+        if isinstance(candidate_union, dict) and "oneOf" in candidate_union:
+            candidate_union["anyOf"] = candidate_union.pop("oneOf")
+            candidate_union.pop("discriminator", None)
         return result
 
     if schema is not _SceneEnrichmentsLLMOutput:

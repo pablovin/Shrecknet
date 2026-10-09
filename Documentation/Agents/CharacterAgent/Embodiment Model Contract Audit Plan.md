@@ -1,7 +1,7 @@
 # Embodiment model contract audit plan
 
-**Status:** proposed; audit findings recorded 2026-10-09. This plan is for the
-follow-up contract redesign. The current runtime contract remains documented in
+**Status:** implemented; provider live-compatibility verification remains an
+operational check. Initial audit findings recorded 2026-10-09. The current runtime contract remains documented in
 [CharacterAgent](CharacterAgent.md); the previous reliability implementation
 record describes the completed typed-consolidation and unified-validation work.
 
@@ -205,3 +205,29 @@ before implementation and document a migration only if storage needs to change.
 Related pages: [CharacterAgent runtime contract](CharacterAgent.md),
 [trait contract](Dispositional%20Traits.md), and
 [structured output reliability implementation record](Embodiment%20Structured%20Output%20Reliability%20Plan.md).
+
+## Execution record
+
+The audit and first implementation pass are complete. Stage 3 now emits a
+trait-discriminated candidate shape with typed diagnostic values, relationship,
+stakes, and explicit all-null unspecified context. The provider schema is
+generated from `TRAIT_BY_KEY`, uses provider-compatible `anyOf` branches, and
+does not rely on Pydantic-only trait/diagnostic matching. The backend maps the
+validated shape to the existing `TraitObservation.situation_type` contract.
+
+Draft checkpoints now retain independently fingerprinted Stage 1 perspectives
+and Stage 2/3 analyses per scene chunk, plus the merged source analysis used by
+Stage 4. Successful chunks are saved before surfacing a sibling failure; a
+retry validates and reuses matching chunks and reruns only missing or stale
+stages. Checkpoint version 2 invalidates the previous whole-source format. The
+CharacterAgent runtime and trait pages document the updated wire and recovery
+contracts.
+
+The five-stage contract matrix above records the completed code/prompt/schema
+audit. Existing Stage 0, 1, 2, and 4 model representations were retained where
+the audit found no clear backend derivation or a useful lower-complexity wire
+shape; their semantic decisions remain explicit and validated at the current
+boundaries. The plan's offline schema/runtime and retry tests pass. Live checks
+against configured OpenRouter/provider model targets were not possible in this
+workspace and remain part of the deployment check. The full CharacterAgent test
+suite passed from `shrecknet/`.

@@ -21,6 +21,7 @@ from app.integrations.llm.shreckllm_client import ShreckLLMClient
 from app.jobs.character_agent.embody_agent import (
     EmbodyAgent,
     EmbodimentGenerationError,
+    _PerspectivesContainer,
 )
 from app.jobs.character_agent.embodiment_debug_artifacts import EmbodimentDebugArtifacts
 from app.jobs.character_agent.embody_agent_prompts import PROMPT_VERSION
@@ -29,7 +30,7 @@ from app.models.character_embodiment import (
     CharacterEmbodimentDraftStatus,
 )
 from app.services.character_embodiment_service import CharacterEmbodimentService
-from app.schemas.character_agent import EmbodyAgentAnalysis
+from app.schemas.character_agent import EmbodyAgentAnalysis, LLMCallRecord
 from app.schemas.character_traits import TraitProfile, TraitEvidence
 from app.services.character_trait_service import chunk_source_scenes, merge_evidence
 from app.jobs.character_agent.profile import _build_timeline, _apply_aspect_ops, _apply_goal_ops, _stable_profile_id
@@ -55,12 +56,21 @@ STEP_NAME: dict[int, str] = {
 }
 
 SCENE_ANALYSIS_CHUNK_SIZE = 5
-CHECKPOINT_VERSION = 1
+CHECKPOINT_VERSION = 2
 
 
 def _checkpoint_digest(value: Any) -> str:
     encoded = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _chunk_checkpoint_key(common_material: dict[str, Any], chunk_index: int, scenes: list[dict]) -> str:
+    """Fingerprint shared upstream state plus only this chunk's ordered inputs."""
+    return _checkpoint_digest({
+        "common": common_material,
+        "chunk_index": chunk_index,
+        "scenes": scenes,
+    })
 
 
 def _checkpoint_analysis(raw: Any, *, checkpoint_key: str) -> EmbodyAgentAnalysis | None:
@@ -73,6 +83,33 @@ def _checkpoint_analysis(raw: Any, *, checkpoint_key: str) -> EmbodyAgentAnalysi
         return EmbodyAgentAnalysis.model_validate(raw["analysis"])
     except Exception:
         return None
+
+
+def _checkpoint_chunk(raw: Any, *, chunk_key: str, scene_ids: list[str]):
+    """Load independently validated scene-stage outputs for one exact chunk."""
+    if not isinstance(raw, dict) or raw.get("version") != CHECKPOINT_VERSION or raw.get("key") != chunk_key:
+        return None, None
+    perspective_value = None
+    analysis_value = None
+    try:
+        perspective_value = _PerspectivesContainer.model_validate(raw["perspectives"])
+        if [item.scene_id for item in perspective_value.perspectives] != scene_ids:
+            perspective_value = None
+    except Exception:
+        perspective_value = None
+    try:
+        analysis_value = EmbodyAgentAnalysis.model_validate(raw["analysis"])
+        if [item.scene_id for item in analysis_value.perspectives] != scene_ids:
+            analysis_value = None
+    except Exception:
+        analysis_value = None
+    if perspective_value is None and analysis_value is not None:
+        # A complete analysis contains the same bound perspectives and can
+        # safely serve as Stage 1 input if only the separate record was corrupt.
+        perspective_value = _PerspectivesContainer(perspectives=[
+            item.model_copy(deep=True) for item in analysis_value.perspectives
+        ])
+    return perspective_value, analysis_value
 
 
 def _step_label(steps: list[int]) -> str:
@@ -504,23 +541,83 @@ async def _generate(*, draft_id: str, revision: int, job_id: int) -> dict:
                     },
                 }
                 checkpoint_key = _checkpoint_digest(checkpoint_material)
-                if checkpoint_store.get(f"source:{bi}", {}).get("key") != checkpoint_key:
-                    checkpoint_store.pop(f"source:{bi}", None)
-                cached_analysis = _checkpoint_analysis(
-                    checkpoint_store.get(f"source:{bi}"), checkpoint_key=checkpoint_key,
-                )
+                source_checkpoint = checkpoint_store.get(f"source:{bi}")
+                if (not isinstance(source_checkpoint, dict)
+                        or source_checkpoint.get("version") != CHECKPOINT_VERSION):
+                    source_checkpoint = {"version": CHECKPOINT_VERSION, "key": checkpoint_key, "chunks": {}}
+                elif source_checkpoint.get("key") != checkpoint_key:
+                    # The full-source aggregate is stale, but independently
+                    # fingerprinted chunks may still match their exact inputs.
+                    source_checkpoint.pop("analysis", None)
+                    source_checkpoint["key"] = checkpoint_key
+                chunks_store = source_checkpoint.get("chunks")
+                if not isinstance(chunks_store, dict):
+                    chunks_store = {}
+                source_checkpoint["chunks"] = chunks_store
+                checkpoint_store[f"source:{bi}"] = source_checkpoint
 
+                async def persist_chunk_checkpoints() -> bool:
+                    await sql.refresh(draft)
+                    if draft.generation_revision != revision:
+                        return False
+                    draft.generation_checkpoints = json.dumps(checkpoint_store, ensure_ascii=False)
+                    await sql.commit()
+                    return True
+
+                cached_analysis = _checkpoint_analysis(source_checkpoint, checkpoint_key=checkpoint_key)
                 if cached_analysis is not None:
                     analysis = cached_analysis
                     await progress.analysis_ready(bi)
                 else:
-                    # A source is chronological, but its chunks are a flat data pipeline:
-                    # every perspective call completes before any psychological analysis starts.
+                    common_chunk_material = {key: value for key, value in checkpoint_material.items() if key != "scenes"}
+                    chunk_keys = [
+                        _chunk_checkpoint_key(common_chunk_material, index, scenes)
+                        for index, scenes in enumerate(scene_chunks)
+                    ]
+                    chunks_store = {
+                        str(index): record
+                        for index, key in enumerate(chunk_keys)
+                        if isinstance((record := chunks_store.get(str(index))), dict)
+                        and record.get("key") == key
+                    }
+                    source_checkpoint["chunks"] = chunks_store
                     chunk_agents = [make_agent(
                         source_index=bi,
                         source_alias=f"{group['source_alias']} (chunk {index + 1})",
                     ) for index in range(len(scene_chunks))]
                     agents.extend(chunk_agents)
+                    perspective_results: list[Any] = [None] * len(scene_chunks)
+                    analysis_results: list[Any] = [None] * len(scene_chunks)
+                    perspective_call_records: list[list[dict[str, Any]]] = [[] for _ in scene_chunks]
+
+                    for index, scenes in enumerate(scene_chunks):
+                        scene_ids = [str(scene["scene_id"]) for scene in scenes]
+                        cached_perspectives, cached_chunk_analysis = _checkpoint_chunk(
+                            chunks_store.get(str(index)), chunk_key=chunk_keys[index], scene_ids=scene_ids,
+                        )
+                        if cached_perspectives is None and cached_chunk_analysis is None:
+                            chunks_store.pop(str(index), None)
+                        elif cached_perspectives is not None:
+                            normalized = chunks_store.get(str(index), {})
+                            if not isinstance(normalized, dict):
+                                normalized = {}
+                            normalized.pop("analysis", None)
+                            normalized.update({
+                                "version": CHECKPOINT_VERSION, "key": chunk_keys[index],
+                                "perspectives": cached_perspectives.model_dump(mode="json"),
+                            })
+                            if cached_chunk_analysis is not None:
+                                normalized["analysis"] = cached_chunk_analysis.model_dump(mode="json")
+                            chunks_store[str(index)] = normalized
+                        perspective_results[index] = cached_perspectives
+                        analysis_results[index] = cached_chunk_analysis
+                        chunk_record = chunks_store.get(str(index), {})
+                        if isinstance(chunk_record, dict) and chunk_record.get("key") == chunk_keys[index]:
+                            records = chunk_record.get("perspective_llm_calls", [])
+                            if isinstance(records, list):
+                                perspective_call_records[index] = records
+                        if cached_chunk_analysis is not None:
+                            await progress.chunk_complete(bi, index)
 
                     async def perspective_chunk(chunk_index: int, chunk_scenes: list[dict]):
                         await progress.stage(bi, [1], chunk_index=chunk_index)
@@ -531,53 +628,83 @@ async def _generate(*, draft_id: str, revision: int, job_id: int) -> dict:
                             scenes=[SceneInput(**scene) for scene in chunk_scenes],
                         )
 
-                    perspective_results = await asyncio.gather(*[
-                        perspective_chunk(index, scenes) for index, scenes in enumerate(scene_chunks)
+                    missing_perspectives = [index for index, result in enumerate(perspective_results) if result is None]
+                    generated_perspectives = await asyncio.gather(*[
+                        perspective_chunk(index, scene_chunks[index]) for index in missing_perspectives
                     ], return_exceptions=True)
-                    perspective_errors = [item for item in perspective_results if isinstance(item, Exception)]
+                    perspective_errors = []
+                    for index, output in zip(missing_perspectives, generated_perspectives, strict=True):
+                        if isinstance(output, Exception):
+                            perspective_errors.append(output)
+                        else:
+                            perspective_results[index] = output
+                            perspective_call_records[index] = [call.model_dump(mode="json") for call in chunk_agents[index].llm_calls]
+                            chunks_store[str(index)] = {
+                                "version": CHECKPOINT_VERSION, "key": chunk_keys[index],
+                                "perspectives": output.model_dump(mode="json"),
+                                "perspective_llm_calls": perspective_call_records[index],
+                            }
+                    if missing_perspectives and not await persist_chunk_checkpoints():
+                        return {"draft_id": draft_id, "status": "superseded"}
                     if perspective_errors:
-                        for index, item in enumerate(perspective_results):
-                            if isinstance(item, Exception):
-                                await progress.chunk_failed(bi, index, stage="perspective", error=item)
+                        for index, output in zip(missing_perspectives, generated_perspectives, strict=True):
+                            if isinstance(output, Exception):
+                                await progress.chunk_failed(bi, index, stage="perspective", error=output)
                         await progress.failed(bi)
                         raise perspective_errors[0]
 
                     async def psychology_chunk(chunk_index: int, chunk_scenes: list[dict], perspectives):
-                        await progress.stage(bi, [2], chunk_index=chunk_index)
-                        result = await chunk_agents[chunk_index].analyze(
+                        await progress.stage(bi, [2, 3], chunk_index=chunk_index)
+                        return await chunk_agents[chunk_index].analyze(
                             source_entity_id=group["source_id"], source_entity_alias=group["source_alias"],
                             canonical_identity=inputs["canonical_identity"], current_trait_profile=current_profile,
                             current_aspects=current_aspects, current_goals=current_goals,
                             scenes=[SceneInput(**scene) for scene in chunk_scenes],
                             perspectives_result=perspectives,
                         )
-                        await progress.chunk_complete(bi, chunk_index)
-                        return result
 
-                    analysis_results = await asyncio.gather(*[
-                        psychology_chunk(index, scenes, perspective_results[index])
-                        for index, scenes in enumerate(scene_chunks)
+                    missing_analyses = [index for index, result in enumerate(analysis_results) if result is None]
+                    generated_analyses = await asyncio.gather(*[
+                        psychology_chunk(index, scene_chunks[index], perspective_results[index])
+                        for index in missing_analyses
                     ], return_exceptions=True)
-                    analysis_errors = [item for item in analysis_results if isinstance(item, Exception)]
+                    analysis_errors = []
+                    for index, output in zip(missing_analyses, generated_analyses, strict=True):
+                        if isinstance(output, Exception):
+                            analysis_errors.append(output)
+                            continue
+                        if perspective_call_records[index]:
+                            known_calls = {(call.stage, call.usage_tag) for call in output.llm_calls}
+                            prior_calls = [LLMCallRecord.model_validate(item) for item in perspective_call_records[index]]
+                            output = output.model_copy(update={
+                                "llm_calls": [*output.llm_calls, *[
+                                    call for call in prior_calls if (call.stage, call.usage_tag) not in known_calls
+                                ]],
+                            })
+                        analysis_results[index] = output
+                        old = chunks_store.get(str(index), {})
+                        chunks_store[str(index)] = {
+                            **(old if isinstance(old, dict) else {}),
+                            "version": CHECKPOINT_VERSION, "key": chunk_keys[index],
+                            "perspectives": perspective_results[index].model_dump(mode="json"),
+                            "perspective_llm_calls": perspective_call_records[index],
+                            "analysis": output.model_dump(mode="json"),
+                        }
+                        await progress.chunk_complete(bi, index)
+                    if missing_analyses and not await persist_chunk_checkpoints():
+                        return {"draft_id": draft_id, "status": "superseded"}
                     if analysis_errors:
-                        for index, item in enumerate(analysis_results):
-                            if isinstance(item, Exception):
-                                await progress.chunk_failed(
-                                    bi, index, stage="psychological_analysis", error=item,
-                                )
+                        for index, output in zip(missing_analyses, generated_analyses, strict=True):
+                            if isinstance(output, Exception):
+                                await progress.chunk_failed(bi, index, stage="psychological_analysis", error=output)
                         await progress.failed(bi)
                         raise analysis_errors[0]
+
                     analysis = _merge_chunk_analyses(analysis_results)
-                    checkpoint_store[f"source:{bi}"] = {
-                        "version": CHECKPOINT_VERSION,
-                        "key": checkpoint_key,
-                        "analysis": analysis.model_dump(mode="json"),
-                    }
-                    await sql.refresh(draft)
-                    if draft.generation_revision != revision:
+                    source_checkpoint["analysis"] = analysis.model_dump(mode="json")
+                    await progress.analysis_ready(bi)
+                    if not await persist_chunk_checkpoints():
                         return {"draft_id": draft_id, "status": "superseded"}
-                    draft.generation_checkpoints = json.dumps(checkpoint_store, ensure_ascii=False)
-                    await sql.commit()
                 try:
                     result = await agent.apply_profile_update(
                         analysis=analysis,

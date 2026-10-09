@@ -96,7 +96,8 @@ class BatchLLM:
             return json.dumps({"scene_trait_interpretations": [
                 {"trait_candidates": [{
                     "trait": "integrity", "polarity": "high",
-                    "situation_type": "exploitation:other:ordinary",
+                    "diagnostic_situation": "exploitation", "relationship": "other",
+                    "stakes": "ordinary",
                     "justification": "The perspective describes a voluntary choice shaped by fairness.",
                 }]} for _ in payload["scenes"]
             ]})
@@ -270,6 +271,8 @@ def test_prompt_contracts_describe_the_new_execution_order():
     assert "impacts" not in PSYCHOLOGICAL_ANALYSIS_PROMPT
     assert "perspective" in PERSPECTIVE_PROMPT
     assert "trait" in TRAIT_INTERPRETATION_PROMPT.lower()
+    assert "diagnostic_situation" in TRAIT_INTERPRETATION_PROMPT
+    assert '"situation_type"' not in TRAIT_INTERPRETATION_PROMPT
     assert "clearly demonstrated dispositional responses" in TRAIT_INTERPRETATION_PROMPT
     assert '"personality_traits"' not in TRAIT_INTERPRETATION_PROMPT
     assert "Established personality dimensions and meanings" in TRAIT_INTERPRETATION_PROMPT

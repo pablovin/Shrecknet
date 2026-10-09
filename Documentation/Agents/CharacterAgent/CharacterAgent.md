@@ -426,16 +426,18 @@ and bounded recovery/correction calls. Consolidation receives the current
 profile and source-local events, not cumulative scene history. The resulting
 revision updates the working profile for the next source.
 
-After all chunks for a source pass validation, the worker stores a draft-local
-checkpoint of their merged analysis before Stage 4. If consolidation fails, a
-retry reloads canonical scenes and the current CharacterAgent profile and reuses
-the checkpoint only when the ordered scenes, source batch, source-start trait
-profile/evidence, aspect/goal state, identity description, prompt version, chunk
-size, and scene model targets still match. The cached analysis is validated
-against the current `EmbodyAgentAnalysis` schema before use. A mismatch or
-corrupt checkpoint causes normal scene processing; it is never applied to a
-changed source or a different preceding revision. Profile operations and the
-timeline revision are still produced in source order on retry, so a failed
+Each successful chunk's validated Stage 1 perspectives and Stage 2/3 analysis
+are stored in the draft-local checkpoint before the next recovery boundary. A
+retry reuses each chunk only when its source-start profile/evidence, assigned
+scenes and positions, identity description, prompt version, chunk size, and model
+targets match. If one chunk fails, completed chunks remain reusable; if Stage 2
+or 3 fails, that chunk's validated perspectives remain reusable. Once all chunks
+pass, their merged analysis is also checkpointed before Stage 4. A consolidation
+retry reloads the current CharacterAgent profile and reuses that merged analysis
+only when the complete source and upstream profile fingerprint still match.
+Checkpoint records are validated against the current Pydantic contracts and
+scene order. A mismatch or corrupt record is ignored. Profile operations and the
+timeline revision are produced in source order, so a failed chunk or
 consolidation does not publish a partial source revision.
 
 Stage 2 returns scene-owned emotions and beliefs plus sparse profile events.
@@ -464,27 +466,27 @@ output contracts.
 
 ### Reliability deployment and compatibility
 
-The LLM wire contract uses `character-embodiment-v31-validated-consolidation`.
+The LLM wire contract uses `character-embodiment-v32-typed-trait-context`.
 Public drafts, reviewed create/update requests, numeric event positions, stored
 stable IDs, timeline projections, and SDK models retain their existing shapes.
 No graph/database backfill is required. The configuration-key migration above is
 automatic; an existing custom retry limit is preserved. Completed source
-analyses are checkpointed in the SQL draft before consolidation and reused on
-retry only while their source and upstream profile fingerprints remain valid.
-This avoids repeating scene LLM calls after a late source consolidation failure;
-the failed consolidation itself runs again against the freshly loaded profile.
+analyses and individually validated chunk outputs are checkpointed in the SQL
+draft and reused only while their source, chunk, and upstream profile
+fingerprints remain valid. A failed chunk is regenerated independently; a failed
+consolidation runs again against the freshly loaded profile without repeating
+valid scene analysis.
 
 Drain active embodiment tasks and restart API/workers with matching code and
-prompts. Old intermediate LLM output must not be reused with the new contract;
-this pipeline currently keeps successful split work only in the active attempt.
-Existing completed reviewable drafts remain usable. Roll back code and prompts
+prompts. Old intermediate LLM output is rejected by the checkpoint version and
+per-stage fingerprints. Existing completed reviewable drafts remain usable. Roll back code and prompts
 together and regenerate failed in-flight work. The legacy configuration input
 alias remains accepted by this release; when rolling back to older code, restore
 the old configuration key with the desired limit before restarting, since older
 code does not recognize the new canonical key. Do not rewrite persisted IDs.
 
-A failed source contributes no accepted profile update. Its validated scene
-analysis checkpoint may remain available for a compatible retry, but no
+A failed source contributes no accepted profile update. Its validated scene and
+chunk analysis checkpoints may remain available for a compatible retry, but no
 consolidated profile update or timeline revision is accepted until the source
 finishes. Draft generation publishes
 its reviewable result after all sources succeed. Scene append commits each

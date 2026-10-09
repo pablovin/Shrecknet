@@ -40,6 +40,7 @@ class CharacterEmbodimentDraft(Base):
     observations: Mapped[str | None] = mapped_column(Text, nullable=True)
     generated_proposal: Mapped[str | None] = mapped_column(Text, nullable=True)
     timeline_projection: Mapped[str | None] = mapped_column(Text, nullable=True)
+    generation_checkpoints: Mapped[str | None] = mapped_column(Text, nullable=True)
     provider: Mapped[str | None] = mapped_column(String(100), nullable=True)
     model: Mapped[str | None] = mapped_column(String(255), nullable=True)
     prompt_version: Mapped[str | None] = mapped_column(String(64), nullable=True)

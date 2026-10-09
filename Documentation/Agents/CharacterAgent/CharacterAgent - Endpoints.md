@@ -27,10 +27,13 @@ administrator-only `PATCH /character-agents/{character_agent_id}` route. Graph
 records without this property are treated as private.
 
 Legacy agent nodes with retired personality fields are included in administrator
-list and detail reads. Those fields are omitted from the current response shape;
-an absent `trait_profile` is returned as the current unknown profile. The normal
+list and detail reads. Those fields are omitted from the current response shape.
+If a stored `trait_profile` uses an obsolete format, reads return the current
+unknown profile and set `trait_profile_requires_regeneration: true`. This is a
+read-only fallback: it does not convert or rewrite stored data. The normal
 administrator-only `DELETE /character-agents/{character_agent_id}` route can be
-used to remove them.
+used to remove these agents. Operations that need the stored trait estimates
+still return `409` and require point-based regeneration.
 
 ## Authenticated-user examples
 
@@ -321,7 +324,9 @@ Raw z values, caller-invented evidence, unknown trait names, and removed persona
 are not accepted as edits (`422`). Graph mutation remains administrator-only.
 Manual values stay effective while underlying evidence accumulates.
 Reading an agent whose stored trait profile still uses the old format returns
-`409` with a regeneration message; it is never silently converted to points.
+the unknown profile and `trait_profile_requires_regeneration: true` from list and
+detail reads. Operations that need the stored estimates return `409` with a
+regeneration message; the profile is never silently converted to points.
 
 `GET /character-agents/{agent_id}/revisions` returns immutable profile snapshots,
 batch IDs and scene IDs. `GET /character-agents/{agent_id}/identity-changes` accepts
@@ -345,7 +350,11 @@ existing profile and history reads continue to apply.
    `target_character_agent_id`. Response `202` includes draft/job IDs and polling URLs.
    A repeated request for the same active draft returns its existing identifiers.
    To replace a terminal proposal after confirmation, set `replace_existing: true`.
-   An active queued or generating draft cannot be replaced.
+   For a `failed` draft this retries the same draft ID with an incremented
+   `generation_revision`, retaining validated scene checkpoints for fingerprint
+   validation and reuse. For a `ready` draft it starts a fresh generation on the
+   same draft after clearing its prior review result. An active queued or
+   generating draft cannot be replaced.
 2. Poll `GET /jobs/{job_id}` and
    `GET /character-agents/embodiment-drafts/{draft_id}`. To rediscover the
    administrator's recent drafts after navigation or reload, call

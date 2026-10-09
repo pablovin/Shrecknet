@@ -185,6 +185,13 @@ Fetch authoritative constructs, poles and situations with
 `await sdk.character_agents.trait_definitions()`; do not maintain separate UI
 meaning dictionaries.
 
+If an agent has a stored trait profile from an obsolete format, list and detail
+reads return an all-unknown profile and set
+`trait_profile_requires_regeneration=True`. This preserves access to the agent
+for inspection and deletion without converting or rewriting its stored data.
+Operations that require current trait estimates can still return `409` until the
+profile is regenerated.
+
 ```python
 from shrecknet_client.character_traits import TraitEdit
 from shrecknet_client.models import CharacterAgentUpdate

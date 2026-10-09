@@ -189,8 +189,31 @@ async def start_embodiment_draft(
                 draft_url=f"/character-agents/embodiment-drafts/{existing_draft.id}",
                 job_url=f"/jobs/{existing_draft.background_job_id}",
             )
-        await sql.delete(existing_draft)
-        await sql.flush()
+        # A failed retry keeps validated source checkpoints on the same draft;
+        # a ready proposal replacement starts a clean generation.
+        if existing_draft.status == CharacterEmbodimentDraftStatus.READY:
+            existing_draft.generation_checkpoints = None
+        existing_draft.generation_revision += 1
+        existing_draft.status = CharacterEmbodimentDraftStatus.QUEUED
+        existing_draft.error_message = None
+        existing_draft.generated_at = None
+        existing_draft.evidence_snapshot = None
+        existing_draft.source_evidence_ids = None
+        existing_draft.evidence_cutoff = None
+        existing_draft.observations = None
+        existing_draft.generated_proposal = None
+        existing_draft.timeline_projection = None
+        draft = existing_draft
+        job_id = await _enqueue_draft(draft, actor)
+        await sql.commit()
+        generate_character_embodiment.delay(
+            draft_id=draft.id, revision=draft.generation_revision, job_id=job_id,
+        )
+        return EmbodimentDraftStart(
+            draft_id=draft.id, job_id=job_id, status=draft.status,
+            draft_url=f"/character-agents/embodiment-drafts/{draft.id}",
+            job_url=f"/jobs/{job_id}",
+        )
     draft = CharacterEmbodimentDraft(
         id=str(uuid4()), ontology_id=payload.ontology_id,
         source_entity_id=payload.entity_instance_id, created_by_user_id=actor.id,

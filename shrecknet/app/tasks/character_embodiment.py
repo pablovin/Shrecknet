@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import hashlib
 import logging
 import re
 import time
@@ -54,6 +55,24 @@ STEP_NAME: dict[int, str] = {
 }
 
 SCENE_ANALYSIS_CHUNK_SIZE = 5
+CHECKPOINT_VERSION = 1
+
+
+def _checkpoint_digest(value: Any) -> str:
+    encoded = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _checkpoint_analysis(raw: Any, *, checkpoint_key: str) -> EmbodyAgentAnalysis | None:
+    """Load a validated cached source analysis, ignoring corrupt or incompatible data."""
+    if not isinstance(raw, dict) or raw.get("version") != CHECKPOINT_VERSION:
+        return None
+    if raw.get("key") != checkpoint_key or not isinstance(raw.get("analysis"), dict):
+        return None
+    try:
+        return EmbodyAgentAnalysis.model_validate(raw["analysis"])
+    except Exception:
+        return None
 
 
 def _step_label(steps: list[int]) -> str:
@@ -380,6 +399,19 @@ async def _generate(*, draft_id: str, revision: int, job_id: int) -> dict:
                     description=s["description"], created_at=s["created_at"],
                 ))
 
+        # Checkpoints are draft-local and only reused when all scene inputs,
+        # upstream working state, and generation contracts still match.
+        try:
+            checkpoint_store = json.loads(draft.generation_checkpoints or "{}")
+            if not isinstance(checkpoint_store, dict):
+                checkpoint_store = {}
+        except (TypeError, ValueError):
+            checkpoint_store = {}
+        checkpoint_store = {
+            key: value for key, value in checkpoint_store.items()
+            if key.startswith("source:")
+        }
+
         # Cumulative state that carries across bundles
         current_profile = inputs["trait_profile"]
         current_evidence = list(inputs["trait_evidence"])
@@ -450,60 +482,102 @@ async def _generate(*, draft_id: str, revision: int, job_id: int) -> dict:
                 scene_chunks = _scene_analysis_chunks(group)
                 progress.configure_chunks(bi, scene_chunks)
 
-                # A source is chronological, but its chunks are a flat data pipeline:
-                # every perspective call completes before any psychological analysis starts.
-                chunk_agents = [make_agent(
-                    source_index=bi,
-                    source_alias=f"{group['source_alias']} (chunk {index + 1})",
-                ) for index in range(len(scene_chunks))]
-                agents.extend(chunk_agents)
+                checkpoint_material = {
+                    "version": CHECKPOINT_VERSION,
+                    "source_id": group["source_id"],
+                    "batch_id": group["batch_id"],
+                    "scenes": [
+                        {"scene_id": scene["scene_id"], "name": scene["name"],
+                         "description": scene["description"], "created_at": scene["created_at"]}
+                        for scene in group["scenes"]
+                    ],
+                    "profile": current_profile.model_dump(mode="json"),
+                    "trait_evidence": [item.model_dump(mode="json") for item in current_evidence],
+                    "aspects": current_aspects,
+                    "goals": current_goals,
+                    "identity_description": identity_description.model_dump(mode="json"),
+                    "prompt_version": PROMPT_VERSION,
+                    "chunk_size": SCENE_ANALYSIS_CHUNK_SIZE,
+                    "models": {
+                        "identity": settings.model_character_agent_character_incorporation.model_dump(mode="json"),
+                        "scene": settings.model_character_agent_scene_interpretation.model_dump(mode="json"),
+                    },
+                }
+                checkpoint_key = _checkpoint_digest(checkpoint_material)
+                if checkpoint_store.get(f"source:{bi}", {}).get("key") != checkpoint_key:
+                    checkpoint_store.pop(f"source:{bi}", None)
+                cached_analysis = _checkpoint_analysis(
+                    checkpoint_store.get(f"source:{bi}"), checkpoint_key=checkpoint_key,
+                )
 
-                async def perspective_chunk(chunk_index: int, chunk_scenes: list[dict]):
-                    await progress.stage(bi, [1], chunk_index=chunk_index)
-                    return await chunk_agents[chunk_index].generate_perspectives(
-                        source_entity_id=group["source_id"], source_entity_alias=group["source_alias"],
-                        canonical_identity=inputs["canonical_identity"], current_trait_profile=current_profile,
-                        current_aspects=current_aspects, current_goals=current_goals,
-                        scenes=[SceneInput(**scene) for scene in chunk_scenes],
-                    )
+                if cached_analysis is not None:
+                    analysis = cached_analysis
+                    await progress.analysis_ready(bi)
+                else:
+                    # A source is chronological, but its chunks are a flat data pipeline:
+                    # every perspective call completes before any psychological analysis starts.
+                    chunk_agents = [make_agent(
+                        source_index=bi,
+                        source_alias=f"{group['source_alias']} (chunk {index + 1})",
+                    ) for index in range(len(scene_chunks))]
+                    agents.extend(chunk_agents)
 
-                perspective_results = await asyncio.gather(*[
-                    perspective_chunk(index, scenes) for index, scenes in enumerate(scene_chunks)
-                ], return_exceptions=True)
-                perspective_errors = [item for item in perspective_results if isinstance(item, Exception)]
-                if perspective_errors:
-                    for index, item in enumerate(perspective_results):
-                        if isinstance(item, Exception):
-                            await progress.chunk_failed(bi, index, stage="perspective", error=item)
-                    await progress.failed(bi)
-                    raise perspective_errors[0]
+                    async def perspective_chunk(chunk_index: int, chunk_scenes: list[dict]):
+                        await progress.stage(bi, [1], chunk_index=chunk_index)
+                        return await chunk_agents[chunk_index].generate_perspectives(
+                            source_entity_id=group["source_id"], source_entity_alias=group["source_alias"],
+                            canonical_identity=inputs["canonical_identity"], current_trait_profile=current_profile,
+                            current_aspects=current_aspects, current_goals=current_goals,
+                            scenes=[SceneInput(**scene) for scene in chunk_scenes],
+                        )
 
-                async def psychology_chunk(chunk_index: int, chunk_scenes: list[dict], perspectives):
-                    await progress.stage(bi, [2], chunk_index=chunk_index)
-                    result = await chunk_agents[chunk_index].analyze(
-                        source_entity_id=group["source_id"], source_entity_alias=group["source_alias"],
-                        canonical_identity=inputs["canonical_identity"], current_trait_profile=current_profile,
-                        current_aspects=current_aspects, current_goals=current_goals,
-                        scenes=[SceneInput(**scene) for scene in chunk_scenes],
-                        perspectives_result=perspectives,
-                    )
-                    await progress.chunk_complete(bi, chunk_index)
-                    return result
+                    perspective_results = await asyncio.gather(*[
+                        perspective_chunk(index, scenes) for index, scenes in enumerate(scene_chunks)
+                    ], return_exceptions=True)
+                    perspective_errors = [item for item in perspective_results if isinstance(item, Exception)]
+                    if perspective_errors:
+                        for index, item in enumerate(perspective_results):
+                            if isinstance(item, Exception):
+                                await progress.chunk_failed(bi, index, stage="perspective", error=item)
+                        await progress.failed(bi)
+                        raise perspective_errors[0]
 
-                analysis_results = await asyncio.gather(*[
-                    psychology_chunk(index, scenes, perspective_results[index])
-                    for index, scenes in enumerate(scene_chunks)
-                ], return_exceptions=True)
-                analysis_errors = [item for item in analysis_results if isinstance(item, Exception)]
-                if analysis_errors:
-                    for index, item in enumerate(analysis_results):
-                        if isinstance(item, Exception):
-                            await progress.chunk_failed(
-                                bi, index, stage="psychological_analysis", error=item,
-                            )
-                    await progress.failed(bi)
-                    raise analysis_errors[0]
-                analysis = _merge_chunk_analyses(analysis_results)
+                    async def psychology_chunk(chunk_index: int, chunk_scenes: list[dict], perspectives):
+                        await progress.stage(bi, [2], chunk_index=chunk_index)
+                        result = await chunk_agents[chunk_index].analyze(
+                            source_entity_id=group["source_id"], source_entity_alias=group["source_alias"],
+                            canonical_identity=inputs["canonical_identity"], current_trait_profile=current_profile,
+                            current_aspects=current_aspects, current_goals=current_goals,
+                            scenes=[SceneInput(**scene) for scene in chunk_scenes],
+                            perspectives_result=perspectives,
+                        )
+                        await progress.chunk_complete(bi, chunk_index)
+                        return result
+
+                    analysis_results = await asyncio.gather(*[
+                        psychology_chunk(index, scenes, perspective_results[index])
+                        for index, scenes in enumerate(scene_chunks)
+                    ], return_exceptions=True)
+                    analysis_errors = [item for item in analysis_results if isinstance(item, Exception)]
+                    if analysis_errors:
+                        for index, item in enumerate(analysis_results):
+                            if isinstance(item, Exception):
+                                await progress.chunk_failed(
+                                    bi, index, stage="psychological_analysis", error=item,
+                                )
+                        await progress.failed(bi)
+                        raise analysis_errors[0]
+                    analysis = _merge_chunk_analyses(analysis_results)
+                    checkpoint_store[f"source:{bi}"] = {
+                        "version": CHECKPOINT_VERSION,
+                        "key": checkpoint_key,
+                        "analysis": analysis.model_dump(mode="json"),
+                    }
+                    await sql.refresh(draft)
+                    if draft.generation_revision != revision:
+                        return {"draft_id": draft_id, "status": "superseded"}
+                    draft.generation_checkpoints = json.dumps(checkpoint_store, ensure_ascii=False)
+                    await sql.commit()
                 try:
                     result = await agent.apply_profile_update(
                         analysis=analysis,
@@ -657,6 +731,8 @@ async def _generate(*, draft_id: str, revision: int, job_id: int) -> dict:
             "aspects": final_aspects_for_proposal,
             "goals": final_goals_for_proposal,
         })
+        # Keep only checkpoints compatible with the exact inputs used here.
+        draft.generation_checkpoints = json.dumps(checkpoint_store, ensure_ascii=False)
 
         # Build timeline with per-bundle revisions
         draft.timeline_projection = _build_timeline(

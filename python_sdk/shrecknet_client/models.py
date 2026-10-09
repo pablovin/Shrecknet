@@ -239,6 +239,7 @@ class CharacterAgentCreateRequest(BaseModel):
 
 class CharacterAgentRead(BaseModel):
     trait_profile: TraitProfile
+    trait_profile_requires_regeneration: bool = False
     identity_description: dict[str, Any] | None = None
     embodiment_draft_id: str | None = None
     id: str

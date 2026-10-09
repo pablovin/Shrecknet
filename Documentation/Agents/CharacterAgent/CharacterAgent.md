@@ -123,13 +123,18 @@ active aspects and ten active goals. Historical records remain available.
 The backend assigns each event a source-local ID such as `event-001`.
 Consolidation cites these strings; aspect operations may cite only aspect events,
 and goal operations only goal events. Stored draft/timeline `event_references`
-remain numeric positions. Model-facing targets use `{"scope":"existing","index":1}`
-for the one-based position in the supplied aspect/goal table, or
-`{"scope":"new","index":1}` for the first preceding addition of that kind.
-Focus may address any addition after ordered operations. Canonical target IDs,
-new stable IDs, scene IDs, and evidence provenance are backend-owned. Renaming an
-item preserves its ID; slug collisions with existing items or other additions
-are rejected, including collisions caused by punctuation or non-ASCII labels.
+remain numeric positions. Operation targets use `{"scope":"existing","index":1}`
+for a one-based position in the supplied profile table, or
+`{"scope":"new","index":1}` for an earlier addition in that kind's ordered
+operation list. Focus arrays may reference only pre-existing profile items.
+Each add operation declares its initial focus preference with `in_focus`; the
+backend combines those preferences with existing-item focus selections after all
+operations and excludes items whose final status is resolved or inactive. This
+removes new-item indexes from the focus decision while preserving ordered
+add-then-status transitions. Canonical target IDs, new stable IDs, scene IDs, and
+evidence provenance are backend-owned. Renaming an item preserves its ID; slug
+collisions with existing items or other additions are rejected, including
+collisions caused by punctuation or non-ASCII labels.
 
 `consolidation.py` contains typed add/update/reinforce/status model contracts and
 reference binding into the existing `AspectUpdateData`/`GoalUpdateData` objects.
@@ -417,6 +422,18 @@ and bounded recovery/correction calls. Consolidation receives the current
 profile and source-local events, not cumulative scene history. The resulting
 revision updates the working profile for the next source.
 
+After all chunks for a source pass validation, the worker stores a draft-local
+checkpoint of their merged analysis before Stage 4. If consolidation fails, a
+retry reloads canonical scenes and the current CharacterAgent profile and reuses
+the checkpoint only when the ordered scenes, source batch, source-start trait
+profile/evidence, aspect/goal state, identity description, prompt version, chunk
+size, and scene model targets still match. The cached analysis is validated
+against the current `EmbodyAgentAnalysis` schema before use. A mismatch or
+corrupt checkpoint causes normal scene processing; it is never applied to a
+changed source or a different preceding revision. Profile operations and the
+timeline revision are still produced in source order on retry, so a failed
+consolidation does not publish a partial source revision.
+
 Stage 2 returns scene-owned emotions and beliefs plus sparse profile events.
 It does not produce final aspects/goals or lifecycle statuses. Stage 4 may add,
 materially update, reinforce, deactivate/reactivate aspects, resolve/reactivate
@@ -447,7 +464,11 @@ The LLM wire contract uses `character-embodiment-v31-validated-consolidation`.
 Public drafts, reviewed create/update requests, numeric event positions, stored
 stable IDs, timeline projections, and SDK models retain their existing shapes.
 No graph/database backfill is required. The configuration-key migration above is
-automatic; an existing custom retry limit is preserved.
+automatic; an existing custom retry limit is preserved. Completed source
+analyses are checkpointed in the SQL draft before consolidation and reused on
+retry only while their source and upstream profile fingerprints remain valid.
+This avoids repeating scene LLM calls after a late source consolidation failure;
+the failed consolidation itself runs again against the freshly loaded profile.
 
 Drain active embodiment tasks and restart API/workers with matching code and
 prompts. Old intermediate LLM output must not be reused with the new contract;
@@ -458,7 +479,10 @@ alias remains accepted by this release; when rolling back to older code, restore
 the old configuration key with the desired limit before restarting, since older
 code does not recognize the new canonical key. Do not rewrite persisted IDs.
 
-A failed source contributes no accepted profile update. Draft generation publishes
+A failed source contributes no accepted profile update. Its validated scene
+analysis checkpoint may remain available for a compatible retry, but no
+consolidated profile update or timeline revision is accepted until the source
+finishes. Draft generation publishes
 its reviewable result after all sources succeed. Scene append commits each
 successful source run separately: failure of a later source or the final identity
 refresh does not roll back earlier valid revisions. The legacy internal

@@ -93,10 +93,11 @@ async def test_consolidation_adds_candidate_and_rejects_unknown_focus_ids():
                                'name': 'I am a vessel',
                                'description': 'Artificially created.',
                                'category': 'identity',
+                               'in_focus': True,
                                'justification': 'The revelation changes self-understanding.',
                                'event_references': ['event-001']}],
         "goal_operations": [],
-        "focused_aspects": [{'scope': 'new', 'index': 1}], "focused_goals": [],
+        "focused_aspects": [], "focused_goals": [],
     }}
     llm = _LLM(json.dumps(answer))
     agent = EmbodyAgent(
@@ -112,13 +113,14 @@ async def test_consolidation_adds_candidate_and_rejects_unknown_focus_ids():
     assert len(llm.calls) == 1
     assert result["aspect_updates"][0].candidate_id == "aspect:i-am-a-vessel"
     assert result["aspect_updates"][0].evidence_ids == ["scene:scene-9"]
+    assert result["focused_aspects"] == ["aspect:i-am-a-vessel"]
 
-    answer["consolidation"]["focused_aspects"] = [{"scope": "new", "index": 99}]
+    answer["consolidation"]["focused_aspects"] = [{"scope": "existing", "index": 99}]
     agent = EmbodyAgent(
         llm_client=_LLM(json.dumps(answer)), character_incorporation_model="model",
         scene_interpretation_model="model",
     )
-    with pytest.raises(EmbodimentGenerationError, match="reference new:99"):
+    with pytest.raises(EmbodimentGenerationError):
         await agent._consolidate_profile(
             analysis=_analysis([ProfileEventOutput(
                 kind="aspect", description="A revelation.", scene_id="scene-9",
@@ -136,6 +138,7 @@ async def test_goal_can_be_introduced_and_completed_in_one_source_bundle():
              'title': 'Find my maker',
              'description': 'Discover who created me.',
              'goal_type': 'objective',
+             'in_focus': True,
              'justification': 'The character makes a clear commitment.',
              'event_references': ['event-001']},
             {'operation': 'status',
@@ -161,6 +164,7 @@ async def test_goal_can_be_introduced_and_completed_in_one_source_bundle():
     assert len(goals) == 1
     assert goals[0]["status"] == "completed"
     assert goals[0]["in_focus"] is False
+    assert result["focused_goals"] == []
     assert goals[0]["evidence_ids"] == ["scene:scene-1", "scene:scene-2"]
 
 
@@ -171,9 +175,10 @@ async def test_cross_kind_event_reference_is_corrected_and_uses_backend_event_id
                                'name': 'I am a keeper',
                                'description': 'Protects the archive.',
                                'category': 'role',
+                               'in_focus': True,
                                'justification': 'A lasting role.',
                                'event_references': ['event-002']}],
-        "goal_operations": [], "focused_aspects": [{'scope': 'new', 'index': 1}], "focused_goals": [],
+        "goal_operations": [], "focused_aspects": [], "focused_goals": [],
     }}
     corrected = json.loads(json.dumps(invalid))
     corrected["consolidation"]["aspect_operations"][0]["event_references"] = ["event-001"]

@@ -153,10 +153,11 @@ async def test_consolidation_adds_revelation_with_source_provenance():
                                'name': 'I am an artificial vessel',
                                'description': 'Created by another person.',
                                'category': 'identity',
+                               'in_focus': True,
                                'justification': 'A defining revelation.',
                                'event_references': ['event-001']}],
         "goal_operations": [],
-        "focused_aspects": [{'scope': 'new', 'index': 1}], "focused_goals": [],
+        "focused_aspects": [], "focused_goals": [],
     }}
     llm = FakeLLM(json.dumps(response))
     event = ProfileEventOutput(
@@ -168,6 +169,7 @@ async def test_consolidation_adds_revelation_with_source_provenance():
     op = result["aspect_updates"][0]
     assert op.candidate_id == "aspect:i-am-an-artificial-vessel"
     assert op.evidence_ids == ["scene:s1"]
+    assert result["focused_aspects"] == [op.candidate_id]
     assert len(llm.calls) == 1
 
 

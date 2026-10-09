@@ -99,6 +99,52 @@ def test_legacy_agent_properties_are_ignored_by_current_read_contract():
     }).intersection(read)
 
 
+def test_obsolete_trait_profile_stays_readable_for_inspection_and_deletion():
+    legacy = {
+        "id": "legacy-agent", "ontology_id": 42,
+        "embodied_entity_instance_id": "entity-1", "name": "Mara",
+        "background_story": "A legacy agent.", "status": "active",
+        "created_by_user_id": 7,
+        "created_at": "2025-01-01T00:00:00Z",
+        "updated_at": "2025-01-01T00:00:00Z",
+        "trait_profile": {"version": "dispositions-v1", "trusting_suspicious": 61},
+    }
+
+    read = CharacterAgentRead.model_validate(_agent_data(legacy, allow_legacy_profile=True))
+    assert read.id == "legacy-agent"
+    assert read.trait_profile_requires_regeneration is True
+    assert all(slot.point is None for slot in read.trait_profile.dispositional_traits.values())
+
+
+@pytest.mark.asyncio
+async def test_list_agents_keeps_legacy_profile_agent_and_other_agents_visible():
+    from app.services.character_agent_service import CharacterAgentService
+
+    def node(agent_id, profile):
+        return {
+            "id": agent_id, "ontology_id": 42,
+            "embodied_entity_instance_id": f"entity-{agent_id}", "name": agent_id,
+            "background_story": "A character.", "status": "active",
+            "created_by_user_id": 7,
+            "created_at": "2025-01-01T00:00:00Z",
+            "updated_at": "2025-01-01T00:00:00Z",
+            "trait_profile": profile,
+        }
+
+    class Graph:
+        async def run(self, *_args, **_kwargs):
+            async def rows():
+                yield {"agent": node("legacy-agent", {"version": "dispositions-v1", "trusting_suspicious": 61})}
+                yield {"agent": node("current-agent", None)}
+            return rows()
+
+    agents = await CharacterAgentService(None, Graph()).list_agents(42, None, None, 0, 200)
+
+    assert [agent.id for agent in agents] == ["legacy-agent", "current-agent"]
+    assert agents[0].trait_profile_requires_regeneration is True
+    assert agents[1].trait_profile_requires_regeneration is False
+
+
 def test_aspect_goal_and_assignment_enums_and_bounds():
     aspect = CharacterAspectCreate(
         ontology_id=42, name="  Expert   Archer  ", category="capability"

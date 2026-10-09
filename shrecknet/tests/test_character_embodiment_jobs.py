@@ -182,7 +182,7 @@ async def test_starting_creation_for_an_embodied_entity_never_deletes_the_agent(
 
 
 @pytest.mark.asyncio
-async def test_confirmed_replacement_deletes_only_the_terminal_draft(monkeypatch):
+async def test_confirmed_replacement_reuses_ready_draft_with_fresh_generation(monkeypatch):
     monkeypatch.setattr(character_agents, "require_ai_agents_enabled", lambda: None)
     monkeypatch.setattr(character_agents, "get_settings", lambda: object())
     monkeypatch.setattr(character_agents, "is_shreckllm_configured", lambda _settings: True)
@@ -193,6 +193,8 @@ async def test_confirmed_replacement_deletes_only_the_terminal_draft(monkeypatch
     monkeypatch.setattr(character_agents.generate_character_embodiment, "delay", lambda **kwargs: delayed.append(kwargs))
     previous = _active_draft()
     previous.status = CharacterEmbodimentDraftStatus.READY
+    previous.generation_revision = 1
+    previous.generation_checkpoints = '{"source:0":{"version":1}}'
     sql = _Sql(previous)
 
     started = await character_agents.start_embodiment_draft(
@@ -203,12 +205,46 @@ async def test_confirmed_replacement_deletes_only_the_terminal_draft(monkeypatch
         SimpleNamespace(id=11), sql, _Graph("agent-1"), None,
     )
 
-    assert sql.deleted
+    assert not sql.deleted
     assert sql.committed
-    assert sql.added.id == started.draft_id
-    assert started.draft_id != previous.id
+    assert started.draft_id == previous.id
+    assert previous.generation_revision == 2
+    assert previous.generation_checkpoints is None
     assert started.job_id == 20
-    assert delayed == [{"draft_id": started.draft_id, "revision": 1, "job_id": 20}]
+    assert delayed == [{"draft_id": started.draft_id, "revision": 2, "job_id": 20}]
+
+
+@pytest.mark.asyncio
+async def test_confirmed_retry_preserves_draft_checkpoints_and_increments_revision(monkeypatch):
+    monkeypatch.setattr(character_agents, "require_ai_agents_enabled", lambda: None)
+    monkeypatch.setattr(character_agents, "get_settings", lambda: object())
+    monkeypatch.setattr(character_agents, "is_shreckllm_configured", lambda _settings: True)
+    async def create_job(**_kwargs):
+        return 21
+    monkeypatch.setattr(character_agents, "create_background_job", create_job)
+    delayed = []
+    monkeypatch.setattr(character_agents.generate_character_embodiment, "delay", lambda **kwargs: delayed.append(kwargs))
+    previous = _active_draft()
+    previous.status = CharacterEmbodimentDraftStatus.FAILED
+    previous.generation_revision = 1
+    previous.generation_checkpoints = '{"source:0":{"version":1}}'
+    sql = _Sql(previous)
+
+    started = await character_agents.start_embodiment_draft(
+        EmbodimentDraftCreate(
+            ontology_id=7, entity_instance_id="entity-1",
+            target_character_agent_id="agent-1", replace_existing=True,
+        ),
+        SimpleNamespace(id=11), sql, _Graph("agent-1"), None,
+    )
+
+    assert started.draft_id == previous.id
+    assert started.job_id == 21
+    assert previous.generation_revision == 2
+    assert previous.generation_checkpoints == '{"source:0":{"version":1}}'
+    assert previous.status == CharacterEmbodimentDraftStatus.QUEUED
+    assert not sql.deleted
+    assert delayed == [{"draft_id": previous.id, "revision": 2, "job_id": 21}]
 
 
 def test_embodiment_start_contract_supports_update_and_confirmed_replacement():

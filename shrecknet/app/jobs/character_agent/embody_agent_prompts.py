@@ -348,7 +348,7 @@ Each operation must be exactly one of the following shapes. All listed keys are
 required, no extra keys are allowed. A nullable content field explicitly set to
 null on update/reinforce means preserve its current value.
 Aspect add:
-{"operation":"add","name":"I am a defining first-person statement","description":"text or null","category":"identity|role|status|physical|capability|knowledge|preference|attitude|history","justification":"...","event_references":["event-001"]}
+{"operation":"add","name":"I am a defining first-person statement","description":"text or null","category":"identity|role|status|physical|capability|knowledge|preference|attitude|history","in_focus":true,"justification":"...","event_references":["event-001"]}
 Aspect update:
 {"operation":"update","target":{"scope":"existing|new","index":1},"name":"I ... or null","description":"text or null","category":"identity|role|status|physical|capability|knowledge|preference|attitude|history|null","justification":"...","event_references":["event-001"]}
 Aspect reinforce:
@@ -356,7 +356,7 @@ Aspect reinforce:
 Aspect status:
 {"operation":"status","target":{"scope":"existing|new","index":1},"status":"active|inactive","justification":"...","event_references":["event-001"]}
 Goal add:
-{"operation":"add","title":"...","description":"text or null","goal_type":"desire|objective|ambition|obligation|avoidance|survival","justification":"...","event_references":["event-001"]}
+{"operation":"add","title":"...","description":"text or null","goal_type":"desire|objective|ambition|obligation|avoidance|survival","in_focus":true,"justification":"...","event_references":["event-001"]}
 Goal update:
 {"operation":"update","target":{"scope":"existing|new","index":1},"title":"text or null","description":"text or null","goal_type":"desire|objective|ambition|obligation|avoidance|survival|null","justification":"...","event_references":["event-001"]}
 Goal reinforce:
@@ -364,15 +364,21 @@ Goal reinforce:
 Goal status:
 {"operation":"status","target":{"scope":"existing|new","index":1},"status":"active|completed|abandoned|superseded","justification":"...","event_references":["event-001"]}
 
-Each focus element has exactly {"scope":"existing|new","index":1}.
-Scope existing addresses the input array of the matching kind. Scope new
-addresses the one-based occurrence of an add in that kind's operation list.
-For operations, a new target must have been added earlier in the same list.
-Focus may reference any addition after all operations are applied. Never return
+Each focus element has exactly {"scope":"existing","index":1} and addresses
+the matching kind's input array. Focus arrays select only pre-existing items;
+never list newly added items there. Every add operation has a required boolean
+in_focus field that declares the item's initial focus preference. This preference
+applies only if the item is still active after all ordered operations. The
+backend derives final focus from these add preferences, the existing-item focus
+arrays, and lifecycle operations. Never return
 canonical IDs, candidate_id, target_id, scene IDs, evidence IDs, or numeric event
 references. Never invent an event or target; no forward operation references.
 
 Operations execute in list order. Additions start active without a status field.
+An addition with in_focus true is initially selected for focus; if a later
+status operation completes, abandons, supersedes, or deactivates it, it cannot
+remain focused unless a later status operation in the same sequence explicitly
+reactivates it. The backend evaluates focus after the complete ordered sequence.
 An item introduced and resolved in this source needs add then status operations,
 using scope new and the same new index. Update changes material content and must
 supply at least one non-null content field. Reinforce records further evidence

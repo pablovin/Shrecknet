@@ -1039,7 +1039,7 @@ async def migrate_page_visits(engine: AsyncEngine) -> None:
             )
             logger.info("page_visit_stats table created")
 def migrate_character_embodiment_timeline_column(sync_conn) -> None:
-    """Add timeline projection storage to existing embodiment draft tables."""
+    """Add timeline projection and resumable stage checkpoint storage."""
     inspector = inspect(sync_conn)
     if "character_embodiment_drafts" not in inspector.get_table_names():
         return
@@ -1050,4 +1050,8 @@ def migrate_character_embodiment_timeline_column(sync_conn) -> None:
     if "timeline_projection" not in columns:
         sync_conn.execute(text(
             "ALTER TABLE character_embodiment_drafts ADD COLUMN timeline_projection TEXT"
+        ))
+    if "generation_checkpoints" not in columns:
+        sync_conn.execute(text(
+            "ALTER TABLE character_embodiment_drafts ADD COLUMN generation_checkpoints TEXT"
         ))

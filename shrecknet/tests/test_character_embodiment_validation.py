@@ -200,7 +200,7 @@ def response(operations=None, focus=None):
     return {"consolidation": {"aspect_operations": [], "goal_operations": operations or [], "focused_aspects": [], "focused_goals": focus or []}}
 
 
-ADD = {"operation": "add", "title": "Find my maker", "description": None, "goal_type": "objective", "justification": "A clear commitment.", "event_references": ["event-001"]}
+ADD = {"operation": "add", "title": "Find my maker", "description": None, "goal_type": "objective", "in_focus": False, "justification": "A clear commitment.", "event_references": ["event-001"]}
 NEW = {"scope": "new", "index": 1}
 EVENTS = [ProfileEventOutput(kind="goal", description="A clear commitment.", scene_id="s1")]
 
@@ -214,7 +214,7 @@ def test_reference_indexes_are_strict(index):
 @pytest.mark.parametrize("operations,focus,match", [
     ([ADD, ADD], [], "duplicate"),
     ([{"operation": "status", "target": NEW, "status": "completed", "justification": "Done", "event_references": ["event-001"]}, ADD], [], "unavailable"),
-    ([ADD], [NEW, NEW], "duplicate focus"),
+    ([ADD], [NEW, NEW], "scope"),
     ([ADD], [{"scope": "existing", "index": 1}], "unavailable"),
     ([{**ADD, "event_references": ["event-999"]}], [], "unknown event"),
 ])
@@ -258,11 +258,11 @@ async def test_consolidation_exposes_only_local_references_and_corrects_invalid_
 
 
 def test_new_goal_rename_resolution_and_reactivation_use_same_reducers():
-    operations = [ADD,
+    operations = [{**ADD, "in_focus": True},
         {"operation": "update", "target": NEW, "title": "Meet my maker", "description": None, "goal_type": None, "justification": "A refined commitment.", "event_references": ["event-001"]},
         {"operation": "status", "target": NEW, "status": "completed", "justification": "Done", "event_references": ["event-001"]},
         {"operation": "status", "target": NEW, "status": "active", "justification": "Explicitly renewed", "event_references": ["event-001"]}]
-    prepared = prepare_consolidation(ConsolidationEnvelope.model_validate(response(operations, [NEW])), events=EVENTS, aspects=[], goals=[])
+    prepared = prepare_consolidation(ConsolidationEnvelope.model_validate(response(operations, [])), events=EVENTS, aspects=[], goals=[])
     goals = []
     _apply_goal_ops(goals, prepared["goal_updates"], focused_ids=prepared["focused_goals"])
     assert goals[0]["id"] == "goal:find-my-maker"
@@ -286,9 +286,11 @@ def test_provider_schema_matches_runtime_typed_contract():
     schema = _model_output_schema(ConsolidationEnvelope, None)
     validator = Draft202012Validator(schema)
     validator.check_schema(schema)
-    valid = response([ADD], [NEW])
+    valid = response([ADD], [])
     validator.validate(valid)
     assert ConsolidationEnvelope.model_validate(valid)
+    invalid_focus = response([ADD], [NEW])
+    assert list(validator.iter_errors(invalid_focus))
     invalid = response([{**ADD, "status": "completed"}])
     assert list(validator.iter_errors(invalid))
     with pytest.raises(ValueError):
@@ -408,3 +410,13 @@ async def test_single_agent_analysis_calls_are_not_counted_twice():
         canonical_identity=_canonical(), current_trait_profile=TraitProfile(),
         current_aspects=[], current_goals=[], scenes=scenes(1))
     assert len(provider.calls) == len(result.llm_calls) == result.total_llm_calls == 3
+
+
+def test_scene_checkpoint_requires_matching_fingerprint_and_valid_analysis():
+    from app.tasks.character_embodiment import _checkpoint_analysis
+    from test_character_embodiment import _analysis
+    analysis = _analysis([]).model_dump(mode="json")
+    checkpoint = {"version": 1, "key": "same", "analysis": analysis}
+    assert _checkpoint_analysis(checkpoint, checkpoint_key="same") is not None
+    assert _checkpoint_analysis(checkpoint, checkpoint_key="changed") is None
+    assert _checkpoint_analysis({**checkpoint, "analysis": {"bad": True}}, checkpoint_key="same") is None

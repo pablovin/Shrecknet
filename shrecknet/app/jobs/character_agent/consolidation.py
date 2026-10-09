@@ -24,6 +24,13 @@ class ProfileReference(BaseModel):
     index: int = Field(strict=True, ge=1)
 
 
+class ExistingProfileReference(BaseModel):
+    """Focus reference to an item that existed before this consolidation."""
+    model_config = ConfigDict(extra="forbid")
+    scope: Literal["existing"]
+    index: int = Field(strict=True, ge=1)
+
+
 class _EvidenceOperation(BaseModel):
     model_config = ConfigDict(extra="forbid")
     justification: str = Field(min_length=1, max_length=500)
@@ -42,6 +49,7 @@ class AspectAdd(_EvidenceOperation):
     name: str = Field(min_length=1, max_length=255)
     description: str | None = Field(max_length=1000)
     category: CharacterAspectCategory
+    in_focus: bool
 
 
 class GoalAdd(_EvidenceOperation):
@@ -49,6 +57,7 @@ class GoalAdd(_EvidenceOperation):
     title: str = Field(min_length=1, max_length=255)
     description: str | None = Field(max_length=1000)
     goal_type: CharacterGoalType
+    in_focus: bool
 
 
 class AspectUpdate(_EvidenceOperation):
@@ -105,8 +114,8 @@ class PsychologicalConsolidationOutput(BaseModel):
     # specific discriminator/oneOf support; Pydantic enforces the same variants.
     aspect_operations: list[AspectAdd | AspectUpdate | AspectReinforce | AspectStatusChange]
     goal_operations: list[GoalAdd | GoalUpdate | GoalReinforce | GoalStatusChange]
-    focused_aspects: list[ProfileReference] = Field(max_length=10)
-    focused_goals: list[ProfileReference] = Field(max_length=10)
+    focused_aspects: list[ExistingProfileReference] = Field(max_length=10)
+    focused_goals: list[ExistingProfileReference] = Field(max_length=10)
 
 
 class ConsolidationEnvelope(BaseModel):
@@ -163,6 +172,16 @@ def prepare_consolidation(value: ConsolidationEnvelope, *, events: list,
             reduce(state, [update])
             updates.append(update)
         focused_ids = [resolve(reference) for reference in focus]
+        focused_ids.extend(
+            str(item["candidate_id"])
+            for operation, item in zip(operations, updates)
+            if operation.operation == "add" and item.in_focus
+        )
+        # Additions can be resolved later in this source. Their initial focus
+        # preference applies only if their final lifecycle state remains active.
+        by_id = {str(item.get("id")): item for item in state}
+        focused_ids = [item_id for item_id in focused_ids
+                       if by_id.get(item_id, {}).get("status", "active") == "active"]
         reduce(state, [], focused_ids=focused_ids)
         result[f"{kind}_updates"] = updates
         result[f"focused_{'aspects' if kind == 'aspect' else 'goals'}"] = focused_ids

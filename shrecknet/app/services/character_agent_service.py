@@ -85,7 +85,7 @@ def _perspective_props(record: Any, key: str = "node") -> dict[str, Any]:
     return {name: value for name, value in data.items() if name in ScenePerspectiveRead.model_fields}
 
 
-def _agent_data(data: dict[str, Any]) -> dict[str, Any]:
+def _agent_data(data: dict[str, Any], *, allow_legacy_profile: bool = False) -> dict[str, Any]:
     """Project a graph node onto the current public CharacterAgent contract.
 
     CharacterAgent nodes predate the dispositional-traits model and can retain
@@ -98,7 +98,16 @@ def _agent_data(data: dict[str, Any]) -> dict[str, Any]:
         if key in CharacterAgentRead.model_fields
     }
     projected["entity_instance_id"] = data["embodied_entity_instance_id"]
-    projected["trait_profile"] = _read_profile(data.get("trait_profile"))
+    projected["trait_profile_requires_regeneration"] = False
+    try:
+        projected["trait_profile"] = _read_profile(data.get("trait_profile"))
+    except HTTPException as exc:
+        if not allow_legacy_profile or exc.status_code != 409:
+            raise
+        # Keep legacy nodes inspectable/deletable without translating or
+        # rewriting their obsolete trait format.
+        projected["trait_profile"] = TraitProfile()
+        projected["trait_profile_requires_regeneration"] = True
     identity_description = data.get("identity_description")
     if isinstance(identity_description, str):
         try:
@@ -529,7 +538,7 @@ class CharacterAgentService:
             f"MATCH (agent:CharacterAgent){where} RETURN agent "
             "ORDER BY agent.created_at DESC, agent.id ASC SKIP $skip LIMIT $limit", **params,
         )
-        return [CharacterAgentRead.model_validate(_agent_data(_props(row, "agent"))) async for row in result]
+        return [CharacterAgentRead.model_validate(_agent_data(_props(row, "agent"), allow_legacy_profile=True)) async for row in result]
 
     async def get_agent(self, node_id: str, public_only: bool = False) -> CharacterAgentRead:
         row = await self._one(
@@ -541,7 +550,7 @@ class CharacterAgentService:
         )
         if not row:
             raise HTTPException(status_code=404, detail="CharacterAgent not found")
-        return CharacterAgentRead.model_validate(_agent_data(_props(row)))
+        return CharacterAgentRead.model_validate(_agent_data(_props(row), allow_legacy_profile=True))
 
     async def load_query_snapshot(self, node_id: str, public_only: bool = False) -> dict[str, Any]:
         """Load the complete active character identity in one graph operation."""

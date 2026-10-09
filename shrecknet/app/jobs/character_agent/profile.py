@@ -54,7 +54,7 @@ def _apply_profile_ops(items: list[dict], updates: list, *, kind: str,
             state.append(dict(
                 id=candidate_id, **{label: getattr(upd, label),
                     classification: getattr(getattr(upd, classification), "value", getattr(upd, classification)) or default_classification},
-                description=description, status="active", in_focus=False,
+                description=description, status="active", in_focus=bool(upd.in_focus),
                 justification=upd.justification, evidence_ids=list(upd.evidence_ids),
             ))
         else:

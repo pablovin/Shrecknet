@@ -159,6 +159,7 @@ class CharacterAgentUpdate(_StrictModel):
 class CharacterAgentRead(CharacterAgentCreate):
     trait_edits: dict[SlotKey, TraitEdit] = Field(default_factory=dict, exclude=True)
     trait_profile: TraitProfile = Field(default_factory=TraitProfile)
+    trait_profile_requires_regeneration: bool = False
     identity_description: IdentityDescription | None = None
     id: str
     name: str

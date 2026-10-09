@@ -1,4 +1,4 @@
-"""Internal contracts for the two-stage CharacterAgent query pipeline."""
+"""Internal contracts for CharacterAgent decision making."""
 
 from __future__ import annotations
 

@@ -14,7 +14,7 @@
 
 This historical plan was written to replace the personality layer described in
 [CharacterAgent](CharacterAgent.md), its [HTTP contracts](CharacterAgent%20-%20Endpoints.md),
-and its [query pipeline](Query/Query.md). Those pages, together with the
+and its [decision-making pipeline](Query/Query.md). Those pages, together with the
 [current dispositional-traits contract](Dispositional%20Traits.md), describe the
 implemented behavior.
 
@@ -261,7 +261,7 @@ Frontend handoff: render directional z values, distinguish unknown from z=0, dis
 | 2 | Evidence validators, accumulation policy, separate spread estimator | Deduplication, confounds, contradictions, minimum counts, and provenance pass focused tests. |
 | 3 | Baseline extraction and sequential source chunks of up to ten scenes, prompts, coordinator, checkpoints | Authored-only input works; four-call batching, scene-attributed evidence, cutoff validation, actual revision links, and retry behavior are correct. |
 | 4 | Graph persistence, acceptance, manual edits, Architect append | Atomic writes, monotonic revision numbers, duplicate prevention, and concurrent-write failure paths pass. |
-| 5 | Query framing/hydration/deliberation | Affordances select only valid directional traits; unknowns and STEADINESS remain separate; temperature is unchanged. |
+| 5 | Decision-making identity hydration and deliberation | Current traits and STEADINESS remain separate; owner-scoped memory retrieval uses the decision and context; temperature is unchanged. |
 | 6 | Routes, SDK, example, metadata/evidence inspection | API and SDK round trips agree; authorization and scope tests pass. |
 | 7 | Canonical docs, release checklist, semantic evaluation | End-to-end regeneration and query review pass; old active personality semantics are absent. |
 

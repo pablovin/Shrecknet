@@ -1,4 +1,4 @@
-"""Single-deliberation, owner-memory-grounded CharacterAgent queries."""
+"""Single-deliberation, owner-memory-grounded CharacterAgent decision making."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from app.core.config_store import LLMModelTarget
 from app.integrations.llm.shreckllm_client import ShreckLLMClient
 from app.integrations.llm.structured_output import strict_json_schema
 from app.jobs.character_agent.memory import select_relevant_memories
-from app.jobs.character_agent.prompts import QUERY_PROMPT, GENERIC_QUERY_PROMPT
+from app.jobs.character_agent.prompts import DECISION_MAKING_PROMPT, GENERIC_DECISION_MAKING_PROMPT
 from app.jobs.character_agent.schemas import CharacterDeliberation
 from app.jobs.shrecknet.agent import parse_json_deterministically, repair_invalid_json
 from app.schemas.character_agent import CharacterAgentQueryRequest, CharacterAgentQueryResult
@@ -28,7 +28,7 @@ class CharacterGenerationError(RuntimeError):
     """A generation stage could not satisfy its deterministic contract."""
 
 
-class CharacterAgentQueryJob:
+class CharacterAgentDecisionMakingJob:
     def __init__(
         self, *, llm_client: ShreckLLMClient, deliberation_model: LLMModelTarget,
         repair_model: LLMModelTarget, framing_model: LLMModelTarget | None = None,
@@ -37,7 +37,7 @@ class CharacterAgentQueryJob:
         self.llm = llm_client
         self.deliberation_model = deliberation_model
         self.repair_model = repair_model
-        self.framing_model = framing_model  # v2 constructor compatibility; never used.
+        self.framing_model = framing_model  # Legacy constructor compatibility; never used.
         self.report_stage = report_stage
 
     async def _report(self, stage: str, progress: float) -> None:
@@ -54,11 +54,11 @@ class CharacterAgentQueryJob:
             return {
                 key: child[:RATIONALE_MAX_CHARACTERS]
                 if key == "rationale" and isinstance(child, str)
-                else CharacterAgentQueryJob._cap_rationale(child)
+                else CharacterAgentDecisionMakingJob._cap_rationale(child)
                 for key, child in value.items()
             }
         if isinstance(value, list):
-            return [CharacterAgentQueryJob._cap_rationale(item) for item in value]
+            return [CharacterAgentDecisionMakingJob._cap_rationale(item) for item in value]
         return value
 
     @staticmethod
@@ -118,7 +118,7 @@ class CharacterAgentQueryJob:
         content = {"type": "string"} if request.response_format.type == "text" else (
             self._response_schema(request) or {}
         )
-        return strict_json_schema("character_agent_query", {
+        return strict_json_schema("character_agent_decision_making", {
             "type": "object",
             "additionalProperties": False,
             "required": ["content", "decision_basis"],
@@ -155,6 +155,7 @@ class CharacterAgentQueryJob:
         return {
             "name": character["name"],
             "subtitle": character.get("subtitle"),
+            "background_story": character.get("background_story") or None,
             "identity_description": character.get("identity_description"),
             "traits": traits,
             "steadiness": {"point": profile.steadiness.point, "status": profile.steadiness.status,
@@ -200,21 +201,27 @@ class CharacterAgentQueryJob:
             payload = {
                 "character": self._compact_character(snapshot),
                 "memories": await select_relevant_memories(
-                    query=request.query, memories=snapshot.get("memories", [])
+                    query=request.query,
+                    context=request.context,
+                    identity={
+                        "character": self._compact_character(snapshot),
+                        "instruction": request.system_instruction,
+                    },
+                    memories=snapshot.get("memories", []),
                 ),
                 "query": request.query,
                 "context": request.context,
                 "instruction": request.system_instruction,
                 "response_format": self._response_format_payload(request),
             }
-            prompt, usage_tag = QUERY_PROMPT, "character_agent.query"
+            prompt, usage_tag = DECISION_MAKING_PROMPT, "character_agent.decision_making"
         else:
             payload = {
                 "query": request.query, "context": request.context,
                 "instruction": request.system_instruction,
                 "response_format": self._response_format_payload(request),
             }
-            prompt, usage_tag = GENERIC_QUERY_PROMPT, "character_agent.generic_query"
+            prompt, usage_tag = GENERIC_DECISION_MAKING_PROMPT, "character_agent.generic_decision_making"
 
         await self._report("deliberating", .55)
         # Do not fall back to an unstructured second deliberation call. A

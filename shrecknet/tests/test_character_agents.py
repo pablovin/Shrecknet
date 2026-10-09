@@ -268,7 +268,7 @@ async def test_authenticated_reads_are_public_only_while_admin_reads_are_unrestr
     monkeypatch.setattr(router, "is_shreckllm_configured", lambda _settings: True)
     monkeypatch.setattr(router, "create_background_job", create_job)
     monkeypatch.setattr(
-        router.run_character_agent_query, "delay", lambda **_kwargs: None
+        router.run_character_agent_decision_making, "delay", lambda **_kwargs: None
     )
     service = _ReadService()
     user = SimpleNamespace(id=1, role="player")
@@ -297,6 +297,11 @@ async def test_authenticated_reads_are_public_only_while_admin_reads_are_unrestr
 async def test_generic_query_checks_access_without_loading_character_identity(monkeypatch):
     import app.api.routers.character_agents as router
 
+    assert any(route.path.endswith("/decision-making") for route in router.router.routes)
+    assert any(route.path.endswith("/decision-making-jobs/{job_id}") for route in router.router.routes)
+    assert any(route.path.endswith("/query") for route in router.router.routes)
+    assert any(route.path.endswith("/query-jobs/{job_id}") for route in router.router.routes)
+
     async def create_job(**_kwargs):
         return 42
 
@@ -304,7 +309,7 @@ async def test_generic_query_checks_access_without_loading_character_identity(mo
     monkeypatch.setattr(router, "is_shreckllm_configured", lambda _settings: True)
     monkeypatch.setattr(router, "create_background_job", create_job)
     monkeypatch.setattr(
-        router.run_character_agent_query, "delay", lambda **_kwargs: None
+        router.run_character_agent_decision_making, "delay", lambda **_kwargs: None
     )
     service = _ReadService()
     user = SimpleNamespace(id=1, role="player")
@@ -317,6 +322,7 @@ async def test_generic_query_checks_access_without_loading_character_identity(mo
     ]
     assert response.job_id == 42
     assert response.status == "queued"
+    assert response.status_url == "/character-agents/agent-1/decision-making-jobs/42"
 
 
 @pytest.mark.asyncio

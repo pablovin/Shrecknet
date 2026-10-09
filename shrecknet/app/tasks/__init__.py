@@ -14,7 +14,7 @@ from . import (
     companion_orchestrator,
     librarian_embedding_package,
     character_embodiment,
-    character_agent_query,
+    character_agent_decision_making,
 )
 
 __all__ = [
@@ -30,5 +30,5 @@ __all__ = [
     "companion_orchestrator",
     "librarian_embedding_package",
     "character_embodiment",
-    "character_agent_query",
+    "character_agent_decision_making",
 ]

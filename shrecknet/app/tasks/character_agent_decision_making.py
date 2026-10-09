@@ -1,4 +1,4 @@
-"""Celery entry point for asynchronous CharacterAgent queries."""
+"""Celery entry point for asynchronous CharacterAgent decision making."""
 
 from __future__ import annotations
 
@@ -8,8 +8,8 @@ from app.celery_app import celery_app
 from app.core.config_store import get_settings
 from app.graph.neo4j import get_driver
 from app.integrations.llm.shreckllm_client import ShreckLLMClient
-from app.jobs.character_agent.query import (
-    CharacterAgentQueryJob,
+from app.jobs.character_agent.decision_making import (
+    CharacterAgentDecisionMakingJob,
     CharacterGenerationError,
 )
 from app.schemas.character_agent import CharacterAgentQueryRequest
@@ -38,8 +38,8 @@ def _details(
     }
 
 
-@celery_app.task(name="character_agent.query")
-def run_character_agent_query(
+@celery_app.task(name="character_agent.decision_making")
+def run_character_agent_decision_making(
     *,
     job_id: int,
     agent_id: str,
@@ -123,7 +123,7 @@ async def _run(
         poll_without_deadline=True,
     )
     try:
-        query = CharacterAgentQueryJob(
+        query = CharacterAgentDecisionMakingJob(
             llm_client=client,
             deliberation_model=settings.model_character_agent_deliberation,
             repair_model=settings.model_agents_repair_json,

@@ -17,7 +17,7 @@ Authenticated users may use these read/query routes:
 - `GET /character-agents/{character_agent_id}/perspectives`
 - `GET /character-agents/{character_agent_id}/perspectives/{perspective_id}`
 - Nested perspective emotion, belief, and impact `GET` routes
-- `POST /character-agents/{character_agent_id}/query`
+- `POST /character-agents/{character_agent_id}/decision-making`
 
 For a non-administrator, these routes expose only agents whose `visibility` is
 `public`. Direct access to a private or nonexistent agent returns `404`.
@@ -248,11 +248,11 @@ status and `in_focus` are stored on character-owned `HAS_ASPECT` and `PURSUES`
 relationships. Leaving focus does not change status; only ten active items per
 category may be focused. Legacy `CharacterImpact` records remain available.
 
-## Query
+## Decision making
 
-`POST /character-agents/{character_agent_id}/query` requires authentication and
+`POST /character-agents/{character_agent_id}/decision-making` requires authentication and
 enabled AI agents and returns `202` with a background job ID and `status_url`.
-Poll `GET /character-agents/{character_agent_id}/query-jobs/{job_id}` until its
+Poll `GET /character-agents/{character_agent_id}/decision-making-jobs/{job_id}` until its
 status is `done` or `failed`. Non-administrators may submit and read only their
 own jobs for public agents; administrators may use public or private agents.
 The agent must be active.
@@ -264,6 +264,8 @@ queried CharacterAgent; it never reads objective Scene content or another
 character's memory. Invalid final JSON may receive one repair attempt through
 `model_agents_repair_json`. Generic mode also uses one call and receives no
 CharacterAgent identity.
+The former `/query` and `/query-jobs/{job_id}` paths remain available as hidden
+compatibility aliases; new clients should use the decision-making paths.
 shreckLLM owns provider retries; Shrecknet
 polls the submitted shreckLLM job without a whole-stage deadline.
 
@@ -274,7 +276,7 @@ In structured JSON results, fields named `rationale` use a server-owned
 2,000-character maximum. Longer generated values are truncated to 2,000
 characters before validation rather than causing repair or job failure.
 
-See [CharacterAgent Query](Query/Query.md) for request and response contracts.
+See [CharacterAgent Decision Making](Query/Query.md) for request and response contracts.
 
 ## Timeline display references
 

@@ -413,7 +413,7 @@ class CharacterAgentsAPI:
     ) -> CharacterAgentQueryQueued:
         data = await self._client.raw_request(
             "POST",
-            f"/character-agents/{character_agent_id}/query",
+            f"/character-agents/{character_agent_id}/decision-making",
             json=payload.model_dump(mode="json", by_alias=True, exclude_none=True),
         )
         return CharacterAgentQueryQueued.model_validate(data)
@@ -423,7 +423,7 @@ class CharacterAgentsAPI:
     ) -> CharacterAgentQueryJobRead:
         data = await self._client.raw_request(
             "GET",
-            f"/character-agents/{character_agent_id}/query-jobs/{job_id}",
+            f"/character-agents/{character_agent_id}/decision-making-jobs/{job_id}",
         )
         return CharacterAgentQueryJobRead.model_validate(data)
 

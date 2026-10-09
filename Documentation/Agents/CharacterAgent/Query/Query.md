@@ -1,7 +1,7 @@
-# CharacterAgent Query
+# CharacterAgent Decision Making
 
-`POST /character-agents/{character_agent_id}/query` starts a durable background
-query and returns `202 Accepted`. Callers poll the returned `status_url` until
+`POST /character-agents/{character_agent_id}/decision-making` starts a durable background
+decision-making run and returns `202 Accepted`. Callers poll the returned `status_url` until
 the job status is `done` or `failed`; there is no synchronous whole-query HTTP
 deadline.
 
@@ -41,7 +41,7 @@ the default.
   "status": "queued",
   "stage": "queued",
   "progress": 0.0,
-  "status_url": "/character-agents/agent-1/query-jobs/481"
+  "status_url": "/character-agents/agent-1/decision-making-jobs/481"
 }
 ```
 
@@ -50,7 +50,7 @@ availability, shreckLLM configuration, and the request contract before
 enqueueing. The worker reloads the current identity immediately before
 generation.
 
-## Identity pipeline
+## Decision-making pipeline
 
 Identity mode makes one substantive deliberation call. The worker loads the
 active identity, at most ten in-focus active aspects and goals, and only active
@@ -73,11 +73,18 @@ embeddings fall back to owner-scoped lexical ranking; they never widen graph
 scope. These vectors are separate from the ordinary `SemanticDocument` scene
 corpus, so non-character scene search is unchanged.
 
-The deliberation payload includes the persistent `identity_description` as the
-original psychological foundation, alongside compact traits (point, status, poles, and a short
-backend-derived evidence summary), steadiness, complete
-active aspects/goals with descriptions, caller query/context/instruction, and
-the selected memories. Demonstrated development in current traits, goals,
+The deliberation payload includes the authored `background_story` and persistent
+`identity_description` (`identity_summary`, `psychological_summary`, and
+`personality_traits`) as the canonical psychological foundation, alongside
+compact traits (point, status, poles, and a short backend-derived evidence
+summary), steadiness, complete active aspects/goals with descriptions, caller
+query/context/instruction, and the selected memories. Memory ranking considers
+the query, serialized caller context, current character cues, and instruction,
+helping short choice prompts retrieve history relevant to named people, options,
+stakes, and goals. Current cues include the character's generated identity,
+authored background story, active aspects, and goals. Ranking remains deterministic and limited to the queried
+character's own perspectives. Up to five matching memories are sent; low-
+relevance memories remain excluded. Demonstrated development in current traits, goals,
 aspects, and memories takes precedence when it conflicts with the original
 description. It contains no opaque IDs, evidence IDs, raw observation
 ledger, model-selected selectors, or framing summaries. Unknown traits remain
@@ -96,7 +103,7 @@ provider retries.
 
 ## Polling
 
-`GET /character-agents/{character_agent_id}/query-jobs/{job_id}` requires the
+`GET /character-agents/{character_agent_id}/decision-making-jobs/{job_id}` requires the
 initiating user or an administrator. A job is visible only under its owning
 CharacterAgent.
 
@@ -131,3 +138,6 @@ Completed result:
 Query jobs retain only safe stage metadata and terminal output in
 `BackgroundJob.details`; full caller context and identity snapshots are not
 stored there. V1 provides no cancellation endpoint or query-specific expiry.
+The former `/query` and `/query-jobs/{job_id}` paths remain as compatibility
+aliases; new clients should use `/decision-making` and
+`/decision-making-jobs/{job_id}`.

@@ -49,7 +49,7 @@ from app.services.background_job_service import BackgroundJobService
 from app.services.character_agent_service import CharacterAgentService
 from app.services.character_embodiment_service import CharacterEmbodimentService
 from app.tasks.character_embodiment import generate_character_embodiment
-from app.tasks.character_agent_query import run_character_agent_query
+from app.tasks.character_agent_decision_making import run_character_agent_decision_making
 from app.utils.job_tracking import create_background_job
 from uuid import uuid4
 
@@ -348,7 +348,7 @@ async def list_identity_changes(
 
 
 @router.post(
-    "/{agent_id}/query",
+    "/{agent_id}/decision-making",
     response_model=CharacterAgentQueryQueued,
     status_code=202,
 )
@@ -376,7 +376,7 @@ async def query_character_agent(
             "error": None,
         },
     )
-    run_character_agent_query.delay(
+    run_character_agent_decision_making.delay(
         job_id=job_id,
         agent_id=agent_id,
         request_payload=payload.model_dump(mode="json", by_alias=True),
@@ -384,12 +384,12 @@ async def query_character_agent(
     )
     return CharacterAgentQueryQueued(
         job_id=job_id,
-        status_url=f"/character-agents/{agent_id}/query-jobs/{job_id}",
+        status_url=f"/character-agents/{agent_id}/decision-making-jobs/{job_id}",
     )
 
 
 @router.get(
-    "/{agent_id}/query-jobs/{job_id}",
+    "/{agent_id}/decision-making-jobs/{job_id}",
     response_model=CharacterAgentQueryJobRead,
 )
 async def get_character_agent_query_job(
@@ -431,6 +431,24 @@ async def get_character_agent_query_job(
         updated_at=job.updated_at,
         completed_at=job.completed_at,
     )
+
+
+# Compatibility aliases for clients using the original query paths.
+router.add_api_route(
+    "/{agent_id}/query",
+    query_character_agent,
+    methods=["POST"],
+    response_model=CharacterAgentQueryQueued,
+    status_code=202,
+    include_in_schema=False,
+)
+router.add_api_route(
+    "/{agent_id}/query-jobs/{job_id}",
+    get_character_agent_query_job,
+    methods=["GET"],
+    response_model=CharacterAgentQueryJobRead,
+    include_in_schema=False,
+)
 
 
 @router.get("/{agent_id}/perspectives", response_model=list[ScenePerspectiveRead])

@@ -25,7 +25,7 @@ class Client:
         return {
             "job_id": 12, "status": "queued", "stage": "queued",
             "progress": 0.0,
-            "status_url": "/character-agents/character-1/query-jobs/12",
+            "status_url": "/character-agents/character-1/decision-making-jobs/12",
         }
 
 
@@ -40,7 +40,7 @@ async def test_character_agent_query_sdk_contract():
         ),
     )
     assert queued.job_id == 12
-    assert client.call[0:2] == ("POST", "/character-agents/character-1/query")
+    assert client.call[0:2] == ("POST", "/character-agents/character-1/decision-making")
     assert client.call[2]["json"]["use_character_identity"] is False
     assert "max_tokens" not in client.call[2]["json"]["generation"]
     assert "mode" not in client.call[2]["json"]["generation"]
@@ -48,7 +48,7 @@ async def test_character_agent_query_sdk_contract():
     result = await CharacterAgentsAPI(client).get_query_job("character-1", 12)
     assert result.result.content == "I refuse."
     assert client.call[0:2] == (
-        "GET", "/character-agents/character-1/query-jobs/12"
+        "GET", "/character-agents/character-1/decision-making-jobs/12"
     )
 
 

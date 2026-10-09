@@ -395,16 +395,18 @@ The service also enforces these rules:
 
 ## Query projection
 
-Identity-grounded queries use two normal LLM calls: affordance-based framing and
-deliberation. The backend hydrates only selected directional traits from the
-registry with their estimates, construct, poles, and relevance. STEADINESS is
-supplied separately when directional dispositions apply. Unknown remains unknown;
-dispositions bias decisions probabilistically. Aspects, goals, and supplied
-context remain relevant. Generic mode receives no identity data.
+Identity-grounded decision making uses one normal LLM deliberation call. It
+supplies the authored background story, persistent identity description,
+current traits and steadiness, active aspects and goals, caller context, and up
+to five owner-scoped subjective memories selected against the decision, context,
+and current identity cues. Unknown remains unknown; dispositions bias decisions
+probabilistically. Generic mode receives no identity data. Submit through
+`POST /character-agents/{character_agent_id}/decision-making` and poll
+`GET /character-agents/{character_agent_id}/decision-making-jobs/{job_id}`.
 
-Queries preserve asynchronous submission/polling, response-schema validation,
+Decision requests preserve asynchronous submission/polling, response-schema validation,
 and one optional final repair. Caller `generation.temperature` remains independent
-of personality. See [CharacterAgent Query](Query/Query.md).
+of personality. See [CharacterAgent Decision Making](Query/Query.md).
 
 ## Evidence-grounded embodiment
 
@@ -548,18 +550,18 @@ workflow. Deploy matching application/task worker code. Rolling back generation
 code does not rewrite accepted records; changed fingerprints invalidate affected
 cached analyses on retry.
 
-`character_agent.query` is the Celery task for asynchronous identity-grounded or
-generic queries. It reloads the applicable graph identity, reports the
-`loading_identity`, `framing`, `deliberating`, `repairing`, and `validating`
-stages through the background job, and records either a typed result or a safe
-error. See [CharacterAgent Query](Query/Query.md) for its request, polling, and
-output contracts.
+`character_agent.decision_making` is the Celery task for asynchronous
+identity-grounded or generic decision making. It reloads the applicable graph
+identity and reports `loading_identity`, `retrieving_memories`, `deliberating`,
+`repairing`, and `validating` stages. The former `/query` and `/query-jobs/`
+routes remain compatibility aliases. See [CharacterAgent Decision Making](Query/Query.md)
+for request, polling, and output contracts.
 
 ## Related documentation
 
 - [CharacterAgent endpoints](CharacterAgent%20-%20Endpoints.md)
 - [Dispositional traits](Dispositional%20Traits.md)
-- [CharacterAgent Query](Query/Query.md)
+- [CharacterAgent Decision Making](Query/Query.md)
 
 
 ### Reliability deployment and compatibility

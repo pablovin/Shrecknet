@@ -9,6 +9,7 @@ from app.jobs.character_agent.embody_agent import (
     _bind_llm_enrichments,
 )
 from app.jobs.character_agent.profile import _apply_aspect_ops, _apply_goal_ops
+from app.jobs.character_agent.consolidation import ConsolidationEnvelope, prepare_consolidation
 from app.schemas.character_agent import (
     AspectUpdateData,
     EmbodyAgentAnalysis,
@@ -37,6 +38,18 @@ def _analysis(events):
         profile_events=events,
         llm_calls=[],
     )
+
+
+@pytest.mark.parametrize("kind", ["aspect", "goal"])
+def test_out_of_range_focus_reference_is_a_validation_error(kind):
+    focus = {"scope": "existing", "index": 1}
+    value = ConsolidationEnvelope.model_validate({"consolidation": {
+        "aspect_operations": [], "goal_operations": [], "new_aspects": [], "new_goals": [],
+        "focused_aspects": [focus] if kind == "aspect" else [],
+        "focused_goals": [focus] if kind == "goal" else [],
+    }})
+    with pytest.raises(ValueError, match=f"{kind} focus reference existing:1 is unavailable"):
+        prepare_consolidation(value, events=[], aspects=[], goals=[])
 
 
 def test_stage_two_contract_has_only_emotions_beliefs_and_profile_events():

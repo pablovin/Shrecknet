@@ -212,7 +212,14 @@ def prepare_consolidation(value: ConsolidationEnvelope, *, events: list,
                 reduce(state, [update])
                 updates.append(update)
 
-        focused_ids = [existing_ids[reference.index - 1] for reference in focus]
+        focused_ids = []
+        for reference in focus:
+            if reference.index > len(existing_ids):
+                raise ValueError(
+                    f"{kind} focus reference existing:{reference.index} is unavailable "
+                    f"(allowed 1..{len(existing_ids)})"
+                )
+            focused_ids.append(existing_ids[reference.index - 1])
         focused_ids.extend(str(item.candidate_id) for item in updates
                            if item.operation.value == "add" and item.in_focus)
         by_id = {str(item.get("id")): item for item in state}

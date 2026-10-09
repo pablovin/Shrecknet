@@ -1,10 +1,12 @@
 """Shared chronological timeline and profile lifecycle for drafts and Architect."""
 from __future__ import annotations
+import copy
 import re
 from typing import Any
 from app.schemas.character_traits import TraitProfile, TraitEvidence
 from app.schemas.character_agent import (
     CharacterIdentityRevisionProjection, CharacterSourceProjection, CharacterTimelineProjection,
+    CharacterAspectStatus, CharacterGoalStatus,
     DisplayReference, EmbodimentAspectProposal, EmbodimentGoalProposal, ProjectedCharacterImpact,
     ProjectedScenePerspective, ProjectedTraitChange, SubtitleChangeProposal,
 )
@@ -14,82 +16,88 @@ def _stable_profile_id(kind: str, value: str) -> str:
     return f"{kind}:{normalized or 'unnamed'}"
 
 
-def _apply_aspect_ops(
-    aspects: list[dict], updates: list, *,
-    focused_ids: list[str] | None = None,
-) -> None:
+def _apply_profile_ops(items: list[dict], updates: list, *, kind: str,
+                       focused_ids: list[str] | None) -> None:
+    """Apply the authoritative lifecycle on a copy; commit only a valid final state.
+
+    Aspect transitions allow active/inactive; goals allow active/completed/
+    abandoned/superseded, including explicit reactivation from any resolved state.
+    Content operations never change lifecycle. Focus is an independent selection
+    of active items and cannot implicitly change status or delete history.
+    """
+    state = copy.deepcopy(items)
+    label = "name" if kind == "aspect" else "title"
+    classification = "category" if kind == "aspect" else "goal_type"
+    default_classification = "identity" if kind == "aspect" else "desire"
+    status_type = CharacterAspectStatus if kind == "aspect" else CharacterGoalStatus
+    allowed_statuses = {status.value for status in status_type}
     for upd in updates:
         op = upd.operation.value
         target_id = upd.target_id or upd.candidate_id
-        existing = next((a for a in aspects if str(a.get("id")) == str(target_id)), None)
+        existing = next((item for item in state if str(item.get("id")) == str(target_id)), None)
+        status = getattr(upd.status, "value", upd.status)
+        if status is not None and status not in allowed_statuses:
+            raise ValueError(f"invalid {kind} lifecycle status")
+        if op in {"update", "reinforce"} and status is not None:
+            raise ValueError("update and reinforce operations cannot change lifecycle status")
+        if op == "status" and status is None:
+            raise ValueError("status operation requires a lifecycle status")
         if op == "add":
-            aspects.append(dict(
-                id=upd.candidate_id or _stable_profile_id("aspect", upd.name),
-                name=upd.name, category=upd.category or "identity",
-                description=upd.description, status=upd.status or "active",
-                in_focus=False, justification=upd.justification,
-                evidence_ids=list(upd.evidence_ids),
+            candidate_id = upd.candidate_id or _stable_profile_id(kind, getattr(upd, label))
+            if upd.target_id is not None or any(str(item.get("id")) == candidate_id for item in state):
+                raise ValueError(f"duplicate or invalid {kind} addition")
+            if status not in {None, "active"}:
+                raise ValueError("new profile items must start active")
+            description = upd.description
+            if kind == "goal" and not description:
+                description = getattr(upd, label)
+            state.append(dict(
+                id=candidate_id, **{label: getattr(upd, label),
+                    classification: getattr(getattr(upd, classification), "value", getattr(upd, classification)) or default_classification},
+                description=description, status="active", in_focus=False,
+                justification=upd.justification, evidence_ids=list(upd.evidence_ids),
             ))
-        elif existing is not None:
-            if op in ("update", "reinforce"):
-                if upd.name:
-                    existing["name"] = upd.name
+        else:
+            if existing is None or upd.candidate_id is not None:
+                raise ValueError(f"unknown or invalid {kind} target")
+            if op in {"update", "reinforce"}:
+                if getattr(upd, label):
+                    existing[label] = getattr(upd, label)
                 if upd.description is not None:
                     existing["description"] = upd.description
-                if upd.category is not None:
-                    existing["category"] = upd.category.value
-                existing["justification"] = upd.justification
-                existing["evidence_ids"] = sorted(set(existing.get("evidence_ids", [])) | set(upd.evidence_ids))
-            elif op == "status":
-                existing["justification"] = upd.justification
-                existing["evidence_ids"] = sorted(set(existing.get("evidence_ids", [])) | set(upd.evidence_ids))
-            if upd.status is not None:
-                existing["status"] = upd.status.value
+                value = getattr(upd, classification)
+                if value is not None:
+                    existing[classification] = value.value
+            existing["justification"] = upd.justification
+            existing["evidence_ids"] = sorted(set(existing.get("evidence_ids", [])) | set(upd.evidence_ids))
+            if op == "status":
+                existing["status"] = status
     if focused_ids is not None:
-        focused = set(focused_ids)
-        for item in aspects:
-            item["in_focus"] = str(item.get("id")) in focused
-    if sum(bool(a.get("in_focus")) for a in aspects if a.get("status", "active") == "active") > 10:
-        raise ValueError("focused aspect limit exceeded")
+        if len(focused_ids) > 10:
+            raise ValueError(f"focused {kind} limit exceeded")
+        if len(set(focused_ids)) != len(focused_ids):
+            raise ValueError("duplicate focus reference")
+        by_id = {str(item.get("id")): item for item in state}
+        for target_id in focused_ids:
+            if target_id not in by_id:
+                raise ValueError("focus references unknown profile ID")
+            if by_id[target_id].get("status", "active") != "active":
+                raise ValueError(f"inactive or resolved {kind} cannot be focused")
+        for item in state:
+            item["in_focus"] = str(item.get("id")) in focused_ids
+    if sum(bool(item.get("in_focus")) for item in state if item.get("status", "active") == "active") > 10:
+        raise ValueError(f"focused {kind} limit exceeded")
+    items[:] = state
 
 
-def _apply_goal_ops(
-    goals: list[dict], updates: list, *,
-    focused_ids: list[str] | None = None,
-) -> None:
-    for upd in updates:
-        op = upd.operation.value
-        target_id = upd.target_id or upd.candidate_id
-        existing = next((g for g in goals if str(g.get("id")) == str(target_id)), None)
-        if op == "add":
-            goals.append(dict(
-                id=upd.candidate_id or _stable_profile_id("goal", upd.title),
-                title=upd.title, description=upd.description or upd.title,
-                goal_type=upd.goal_type or "desire", status=upd.status or "active",
-                in_focus=False, justification=upd.justification,
-                evidence_ids=list(upd.evidence_ids),
-            ))
-        elif existing is not None:
-            if op in ("update", "reinforce"):
-                if upd.title:
-                    existing["title"] = upd.title
-                if upd.description is not None:
-                    existing["description"] = upd.description
-                if upd.goal_type is not None:
-                    existing["goal_type"] = upd.goal_type.value
-                existing["justification"] = upd.justification
-                existing["evidence_ids"] = sorted(set(existing.get("evidence_ids", [])) | set(upd.evidence_ids))
-            elif op == "status":
-                existing["justification"] = upd.justification
-                existing["evidence_ids"] = sorted(set(existing.get("evidence_ids", [])) | set(upd.evidence_ids))
-            if upd.status is not None:
-                existing["status"] = upd.status.value
-    if focused_ids is not None:
-        focused = set(focused_ids)
-        for item in goals:
-            item["in_focus"] = str(item.get("id")) in focused
-    if sum(bool(g.get("in_focus")) for g in goals if g.get("status", "active") == "active") > 10:
-        raise ValueError("focused goal limit exceeded")
+def _apply_aspect_ops(aspects: list[dict], updates: list, *,
+                      focused_ids: list[str] | None = None) -> None:
+    _apply_profile_ops(aspects, updates, kind="aspect", focused_ids=focused_ids)
+
+
+def _apply_goal_ops(goals: list[dict], updates: list, *,
+                    focused_ids: list[str] | None = None) -> None:
+    _apply_profile_ops(goals, updates, kind="goal", focused_ids=focused_ids)
 
 
 def _profile_key(value: Any) -> str:

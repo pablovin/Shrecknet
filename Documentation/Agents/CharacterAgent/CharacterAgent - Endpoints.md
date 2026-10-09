@@ -357,6 +357,12 @@ existing profile and history reads continue to apply.
    `error_message` names the provider, selected model, and safe availability
    reason, then instructs the administrator to configure an available model and
    retry. Job details additionally use `failure_category: "provider_unavailable"`.
+   Delete an owned terminal proposal with
+   `DELETE /character-agents/embodiment-drafts/{draft_id}`. It returns `204`
+   for `ready` or `failed` drafts; queued, generating, and accepted drafts
+   return `409`. A draft created by another administrator is hidden as `404`.
+   Deletion removes the review draft only; the associated background-job
+   history remains readable at `GET /jobs/{job_id}`.
 3. Review `proposal.identity_description` alongside `proposal.trait_profile`,
    aspects/goals, source evidence and timeline. The description is generated or
    reused before scene processing, refreshed once from the final state, and
@@ -419,11 +425,47 @@ Each chunk has two LLM waves and three normal calls:
 
 After all scene chunks for a source complete, the backend makes one Stage 4 consolidation call if profile events exist. Consolidation deduplicates candidates, reconciles lifecycle and descriptions against current and historical profile items, and selects at most ten focused active aspects and goals. It cites source events; the backend validates IDs, transitions, focus, and provenance. No full-history input is sent. Trait aggregation remains deterministic. The source-level revision becomes the next source's working profile.
 
-Stage 4 receives backend-assigned source-local event IDs such as `event-001` and must cite those IDs in operation `event_references`. Aspect operations may cite only aspect events, and goal operations may cite only goal events. Unknown or wrong-kind references trigger one bounded semantic correction attempt; if the corrected output remains invalid, the source fails without applying a profile update. Persisted draft operation provenance retains numeric event positions for compatibility.
+Stage 4 receives backend-assigned source-local event IDs such as `event-001` and
+must cite those IDs in operation `event_references`. Aspect operations cite only
+aspect events; goal operations cite only goal events. Model targets and focus use
+one-based local `{"scope":"existing|new","index":1}` references rather than
+canonical IDs. The backend generates candidate IDs and translates all operations
+into the unchanged public draft/timeline shape, retaining numeric event positions.
+Ordered typed add/update/reinforce/status operations preserve same-source creation
+and resolution. New items start active; content operations cannot set status.
+The shared profile reducers own lifecycle and final focus eligibility.
 
-`update` and `reinforce` operations cannot set lifecycle `status`. When the evidence supports both a content change and a status transition, Stage 4 must emit the content operation first and a separate `status` operation second. A missing status on a `status` operation is also rejected. These rules are checked before accepting consolidation output and receive the same bounded correction attempt.
+All embodiment stages share `character_agent_embodiment_validation_retries`
+(default `1`, range `0`–`3`) across JSON, schema, empty-body and semantic errors.
+An invalid replacement cannot start another independent correction budget.
+Every attempt validates exact collection sizes, uniqueness, references and
+applicable lifecycle rules before acceptance. Exhaustion fails the source with
+categorized diagnostics (`json`, `schema`, `semantic_reference` or
+`empty_response`), source/stage, attempt, and `retryable: false`; no malformed
+member is silently dropped and no invalid reference is substituted. Provider
+failures retain `provider_unavailable`, `provider_timeout` or `transport` categories
+and do not trigger content retries. Public job states, ownership and polling
+payloads remain unchanged.
 
-Each embodiment generation or JSON-repair request is capped at 10,000 completion tokens. This cap is a provider-cost safeguard; a response stopped for length is rejected as truncated and cannot become a draft result.
+`GET /config/` and `GET /config/schema` expose the canonical retry name.
+Administrator-only `PUT /config/` accepts the deprecated
+`character_agent_embodiment_semantic_correction_attempts` alias for this
+compatibility release; if both names appear in one payload, the canonical value
+wins. Invalid retry limits return `400`. Config persistence migrates an existing
+legacy limit before seeding defaults. Both names address one budget. For example:
+
+```json
+{"character_agent_embodiment_validation_retries": 1}
+```
+
+Each generation/replacement is capped at 10,000 completion tokens. A length-stopped
+response is rejected as `truncated`, including during correction. Incorporation
+may use one compact recovery unit; psychological enrichment may split into
+contiguous batches until single scenes. These recoveries have finite generation
+units and cannot persist truncated content. There is no embodiment JSON-repair
+call; CharacterAgent query's optional final repair remains unchanged. See
+[validation, recovery and deployment](CharacterAgent.md#embodiment-validation-and-recovery)
+for call bounds, migration, rollback, and source transaction boundaries.
 
 ### Frontend job-progress contract
 

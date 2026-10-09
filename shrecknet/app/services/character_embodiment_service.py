@@ -539,7 +539,7 @@ class CharacterEmbodimentService:
             llm_client=llm_client,
             character_incorporation_model=settings.model_character_agent_character_incorporation,
             scene_interpretation_model=settings.model_character_agent_scene_interpretation,
-            semantic_correction_attempts=settings.character_agent_embodiment_semantic_correction_attempts,
+            validation_retries=settings.character_agent_embodiment_validation_retries,
         )
         identity_description = existing_identity or await identity_job.generate_identity_description(
             canonical_identity=inputs["canonical_identity"], current_profile=profile,
@@ -550,7 +550,7 @@ class CharacterEmbodimentService:
             job = EmbodyAgent(llm_client=llm_client,
                 character_incorporation_model=settings.model_character_agent_character_incorporation,
                 scene_interpretation_model=settings.model_character_agent_scene_interpretation,
-                semantic_correction_attempts=settings.character_agent_embodiment_semantic_correction_attempts)
+                validation_retries=settings.character_agent_embodiment_validation_retries)
             scene_inputs = [SceneInput(**scene) for scene in chunk["scenes"]]
             perspectives = await job.generate_perspectives(
                 source_entity_id=chunk["source_id"], source_entity_alias=chunk["source_alias"],

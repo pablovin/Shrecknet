@@ -453,6 +453,11 @@ class CharacterAgentsAPI:
         )
         return EmbodimentDraftRead.model_validate(data)
 
+    async def delete_embodiment(self, draft_id: str) -> None:
+        await self._client.raw_request(
+            "DELETE", f"/character-agents/embodiment-drafts/{draft_id}"
+        )
+
     async def list_embodiments(
         self, ontology_id: int, *, limit: int = 20
     ) -> list[EmbodimentDraftSummary]:

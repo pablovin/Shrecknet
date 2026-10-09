@@ -11,7 +11,10 @@ After perspective validation, two calls run in parallel for that chunk:
     TRAIT_INTERPRETATION_PROMPT:
         canonical scenes + authoritative trait meanings -> candidates.
 After all chunks for one source, one optional consolidation call reconciles its
-profile events with current character state. Trait aggregation remains
+profile events with current character state using typed ordered operations and local
+references. Every stage shares a bounded validation retry budget; truncated
+psychological batches split until single scenes. Backend reducers validate and
+apply lifecycle/focus rules before acceptance. Trait aggregation remains
 deterministic. Prompts do not receive full scene history or produce public output.
 """
 import json
@@ -33,7 +36,7 @@ IDENTITY_TRAIT_DESCRIPTION_CONTRACT = (
         for key in DIRECTIONAL_TRAITS
     ], ensure_ascii=False)
 )
-PROMPT_VERSION = "character-embodiment-v30-scene-grounded-traits"
+PROMPT_VERSION = "character-embodiment-v31-validated-consolidation"
 
 # Execution order: Stage 0, once when description is absent and once after
 # scene processing to refresh it from the resulting current state.
@@ -137,7 +140,7 @@ This is compact structured character-state extraction, not narration, roleplay,
 a memoir, dialogue, or stream of consciousness. Do not retell the scene.
 
 For every perspective:
-- perspective: at most 120 words; explain what the experience means to this
+- perspective: nonblank, at most 120 words and 900 characters; explain what the experience means to this
   character specifically. Let established personality, values, fears, motivations,
   and beliefs shape what they notice, conclude, and feel. Distinguish what they
   know from what they suspect, and do not present mistaken beliefs as objective
@@ -186,7 +189,7 @@ scene count and every field limit are mandatory. Return JSON only."""
 
 
 # Execution order: Stage 2 branch, parallel with TRAIT_INTERPRETATION_PROMPT after Stage 1.
-# Stages 2 and 3 receive canonical scene context and the Stage 1 interpretation.
+# Stage 2 receives canonical scene context and the Stage 1 interpretation.
 # Purpose: Define psychological enrichment from canonical scenes and grounded character interpretations.
 # Used by: PSYCHOLOGICAL_ANALYSIS_PROMPT for the second scene-chunk call.
 # Expected: Ordered JSON enrichments with emotions, beliefs, and profile events.
@@ -215,7 +218,8 @@ Use [] when unsupported. Never return scene or evidence IDs; the backend binds
 each result to its input scene.
 
 Limits per scene: emotions 2, beliefs 2, profile_events 2. Text fields are at
-most 300 characters.
+most 240 characters for emotion descriptions and 300 for belief statements or
+profile-event descriptions. All text fields must be nonempty.
 
 OUTPUT: {"scene_enrichments":[{"emotions":[{"arousal":0..100,"valence":0..100 (0 negative, 50 neutral, 100 positive),"description":"..."}],"beliefs":[{"statement":"...","confidence":0..100}],"profile_events":[{"kind":"aspect|goal","description":"brief significant evidence-grounded development"}]}]}.
 
@@ -234,63 +238,9 @@ and profile_events for every perspective. Each item must cite exactly the curren
 backend assigns evidence_ids by position, so omit them from model output.
 """
 
-# Execution order: Stage 4, once after every Stage 2 chunk in a source bundle.
-# Purpose: Reconcile sparse profile events with historical character state.
-# Used by: EmbodyAgent.apply_profile_update, only when profile events exist.
-# Expected: Ordered aspect/goal operations and current focus references.
-PSYCHOLOGICAL_CONSOLIDATION_PROMPT = r"""Stage 4 — consolidate one chronological source bundle's profile events.
-You receive identity_description, source-local profile_events in scene order,
-and existing aspects/goals with stable IDs, descriptions, lifecycle status, and
-focus. The input includes historical out-of-focus items. Do not request or infer
-full scene history.
-
-Merge semantically equivalent events. Ignore trivial, temporary, redundant, or
-unsupported candidates. Reconcile meaningful events by adding a genuinely new
-item, materially updating an existing description, changing lifecycle status,
-reinforcing an existing item without duplication, or making no change. An item
-introduced and resolved in this source must have ordered add then status
-operations. Cite the supplied event IDs and give a short justification for each
-operation. Each event ID is backend assigned and identifies exactly one event;
-never infer or construct an event ID. Every cited event must match the operation
-kind: aspect operations cite only aspect events, and goal operations cite only
-goal events. References must be an existing backend ID or a source-local candidate
-ID of the form aspect:<stable-name> or goal:<stable-title>.
-
-Never resolve a goal only because it is absent or old. Never deactivate an
-enduring fact only because it is old. Active unresolved goals may leave focus
-without changing status; foundational aspects may remain focused without recent
-mention. Select at most ten currently active aspects and ten currently active
-goals. Focus selection considers enduring identity and recent developments but
-uses no importance scores. Never delete history.
-
-INPUT JSON:
-{"identity_description":{"identity_summary":"...","psychological_summary":"...","personality_traits":[]},"events":[{"id":"event-001 (backend-assigned source-local event ID)","kind":"aspect|goal","description":"...","scene_id":"backend reference"}],"aspects":[{"id":"backend ID","name":"I ...","description":"...","category":"existing category","status":"active|inactive","in_focus":true}],"goals":[{"id":"backend ID","title":"...","description":"...","goal_type":"existing type","status":"active|completed|abandoned|superseded","in_focus":true}]}
-
-OUTPUT JSON:
-{"consolidation":{"aspect_operations":[{"operation":"add|update|status|reinforce","target_id":"existing backend ID or null","candidate_id":"source-local ID or null","name":"first-person defining statement","description":"...","category":"identity|role|status|physical|capability|knowledge|preference|attitude|history","status":"active|inactive|null","justification":"...","event_references":["event-001"]}],"goal_operations":[{"operation":"add|update|status|reinforce","target_id":"existing backend ID or null","candidate_id":"source-local ID or null","title":"...","description":"...","goal_type":"desire|objective|ambition|obligation|avoidance|survival","status":"active|completed|abandoned|superseded|null","justification":"...","event_references":["event-001"]}],"focused_aspects":["existing backend ID or source-local candidate ID"],"focused_goals":["existing backend ID or source-local candidate ID"]}}
-
-`event_references` contains one or more supplied event ID strings, never numeric
-positions. Every ID must exist and its event kind must match the operation list.
-For add, target_id must be null, candidate_id must be unique, and status must
-be active. If the item is introduced and resolved in this source, add it first
-and then emit a status operation that records the later transition.
-For update/status/reinforce, target_id must identify an input item and
-candidate_id must be null. Status operations require a status. Update and
-reinforce operations must set status to null. If an item needs both a content
-change and a lifecycle change, emit the update or reinforce first, then a
-separate status operation for the same target, citing the supporting event IDs
-in each operation. Updates change
-meaning only when evidence materially evolves it. Reinforcement must not
-duplicate an item or fabricate a description change. Focus references must
-resolve after ordered operations and point only to active items. Return JSON only."""
-
-# Backend-owned references remain part of the public contract, but are never model supplied.
-PERSPECTIVE_PROMPT += "\nThe backend binds every perspective to exactly its own supplied scene and assigns evidence_ids by position; omit them from model output."
-ENRICHMENT_PROMPT += "\nEach item must cite exactly the current scene conceptually; the backend assigns evidence_ids by position, so omit them from model output."
-
 # Execution order: Stage 3 branch, parallel with PSYCHOLOGICAL_ANALYSIS_PROMPT after Stage 1.
 # Stage 3 receives canonical scene context and authoritative trait definitions;
-# identity descriptions and generated perspectives are excluded.
+# prior personality_traits and generated perspectives are excluded.
 # Purpose: Classify grounded character-specific trait signals against the directional trait registry.
 # Used by: EmbodyAgent._interpret_traits_batch after perspective validation.
 # Expected: Ordered JSON scene_trait_interpretations with supported candidates.
@@ -368,3 +318,79 @@ OUTPUT JSON SCHEMA (return exactly this object shape, with one result per input 
   }
 }
 Return JSON only.""" + IDENTITY_TRAIT_DESCRIPTION_CONTRACT + TRAIT_EVIDENCE_CONTRACT
+
+
+# Execution order: Stage 4, after all Stage 2/3 chunks for one source; skipped without events.
+# Purpose: Reconcile source-local evidence with existing and historical profile items.
+# Used by: EmbodyAgent._consolidate_profile; backend reducers validate and apply output.
+# Expected: Typed ordered aspect/goal operations and local focus references; no backend IDs.
+PSYCHOLOGICAL_CONSOLIDATION_PROMPT = r"""Stage 4 — reason about and consolidate one chronological source bundle.
+This stage produces internal decisions, not public prose. Use only supplied
+identity context, source events in scene order, and current/historical profile
+items. Do not infer full scene history. Ignore trivial, temporary, redundant,
+ambiguous or unsupported events. Merge equivalent developments rather than
+creating duplicate aspects/goals. Each operation needs a short, nonblank
+justification and one or more supplied event IDs of the same kind as its list.
+The backend validates these decisions and binds all persistence identifiers.
+
+INPUT JSON:
+{"identity_description":{"identity_summary":"...","psychological_summary":"...","personality_traits":[{"trait":"trait key","description":"..."}]},"events":[{"id":"event-001","kind":"aspect|goal","description":"source evidence"}],"aspects":[{"index":1,"name":"I ...","description":"text or null","category":"category","status":"active|inactive","in_focus":true}],"goals":[{"index":1,"title":"...","description":"text or null","goal_type":"type","status":"active|completed|abandoned|superseded","in_focus":true}]}
+identity_description may be null. Its summaries describe established narrative
+context, never evidence of a new event. Each input array may be empty. Events
+have backend-assigned source-local IDs; copy only supplied IDs. Profile index is
+a one-based integer identifying the exact item in its own input array. Historical
+inactive/resolved/out-of-focus items are included for comparison and reactivation.
+
+OUTPUT JSON — all four arrays are required and may be empty:
+{"consolidation":{"aspect_operations":[],"goal_operations":[],"focused_aspects":[],"focused_goals":[]}}
+
+Each operation must be exactly one of the following shapes. All listed keys are
+required, no extra keys are allowed. A nullable content field explicitly set to
+null on update/reinforce means preserve its current value.
+Aspect add:
+{"operation":"add","name":"I am a defining first-person statement","description":"text or null","category":"identity|role|status|physical|capability|knowledge|preference|attitude|history","justification":"...","event_references":["event-001"]}
+Aspect update:
+{"operation":"update","target":{"scope":"existing|new","index":1},"name":"I ... or null","description":"text or null","category":"identity|role|status|physical|capability|knowledge|preference|attitude|history|null","justification":"...","event_references":["event-001"]}
+Aspect reinforce:
+{"operation":"reinforce","target":{"scope":"existing|new","index":1},"name":"I ... or null","description":"text or null","category":"identity|role|status|physical|capability|knowledge|preference|attitude|history|null","justification":"...","event_references":["event-001"]}
+Aspect status:
+{"operation":"status","target":{"scope":"existing|new","index":1},"status":"active|inactive","justification":"...","event_references":["event-001"]}
+Goal add:
+{"operation":"add","title":"...","description":"text or null","goal_type":"desire|objective|ambition|obligation|avoidance|survival","justification":"...","event_references":["event-001"]}
+Goal update:
+{"operation":"update","target":{"scope":"existing|new","index":1},"title":"text or null","description":"text or null","goal_type":"desire|objective|ambition|obligation|avoidance|survival|null","justification":"...","event_references":["event-001"]}
+Goal reinforce:
+{"operation":"reinforce","target":{"scope":"existing|new","index":1},"title":"text or null","description":"text or null","goal_type":"desire|objective|ambition|obligation|avoidance|survival|null","justification":"...","event_references":["event-001"]}
+Goal status:
+{"operation":"status","target":{"scope":"existing|new","index":1},"status":"active|completed|abandoned|superseded","justification":"...","event_references":["event-001"]}
+
+Each focus element has exactly {"scope":"existing|new","index":1}.
+Scope existing addresses the input array of the matching kind. Scope new
+addresses the one-based occurrence of an add in that kind's operation list.
+For operations, a new target must have been added earlier in the same list.
+Focus may reference any addition after all operations are applied. Never return
+canonical IDs, candidate_id, target_id, scene IDs, evidence IDs, or numeric event
+references. Never invent an event or target; no forward operation references.
+
+Operations execute in list order. Additions start active without a status field.
+An item introduced and resolved in this source needs add then status operations,
+using scope new and the same new index. Update changes material content and must
+supply at least one non-null content field. Reinforce records further evidence
+without duplication; preserve content with null unless a supported refinement
+exists. Neither update nor reinforce can contain status. Status operations
+contain no content fields. An existing item's name/title is not required on
+status; the backend supplies it. Explicit reactivation to active is permitted.
+
+Never resolve a goal because it is absent or old. Never deactivate an enduring
+fact solely because it is old. Focus is independent of lifecycle and must contain
+unique references to at most ten final active aspects and ten final active goals.
+Unresolved active items may leave focus without status change. Focus does not
+delete history. Only goal events support goal operations; only aspect events
+support aspect operations. Valid references alone do not prove completion: require
+clear supporting evidence before selecting a lifecycle change.
+
+Limits: names/titles 1–255 characters, descriptions at most 1000, nonblank
+justifications 1–500. Aspect names must begin with "I ". All reference indexes
+are positive JSON integers (never strings, booleans or fractions). Event reference
+arrays are nonempty arrays of supplied ID strings. No member of any required
+array may be null. Return one complete JSON document only."""

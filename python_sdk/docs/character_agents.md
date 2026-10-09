@@ -62,6 +62,9 @@ recent = await sdk.character_agents.list_embodiments(12)
 draft = await sdk.character_agents.get_embodiment(started.draft_id)
 # Poll started.job_id until done, then copy draft.proposal into the form.
 
+# Remove a completed proposal from the review queue after it is no longer needed.
+await sdk.character_agents.delete_embodiment(draft.id)
+
 agent = await sdk.character_agents.create(
     CharacterAgentCreateRequest(
         ontology_id=12,
@@ -81,6 +84,14 @@ agent = await sdk.character_agents.create(
     )
 )
 ```
+
+Embodiment drafts can also be managed through the HTTP API:
+`GET /character-agents/embodiment-drafts?ontology_id={ontology_id}&limit=20`
+lists the current administrator's drafts, and
+`DELETE /character-agents/embodiment-drafts/{draft_id}` removes an owned draft
+with status `204`. Only `ready` and `failed` drafts can be deleted; queued,
+generating, and accepted drafts return `409`. The associated background-job
+record remains available through `GET /jobs/{job_id}`.
 
 ```python
 from shrecknet_client.models import CharacterAgentUpdate
@@ -220,3 +231,12 @@ Old z-format trait data is not accepted by the point-based runtime. Starting
 a draft for an already embodied entity replaces its existing identity. See the
 [canonical personality documentation](../../Documentation/Agents/CharacterAgent/Dispositional%20Traits.md)
 and [runnable lifecycle example](../examples/10_character_agent/01_dispositional_lifecycle.py).
+
+
+Embodiment validation uses one shared backend replacement budget configured by
+`character_agent_embodiment_validation_retries` (default 1, range 0–3). JSON,
+schema, empty-body, and semantic failures share this budget; they do not obtain
+separate repair attempts. A failed source cannot publish an invalid profile
+update. Public SDK draft models, timeline operations, and numeric event references
+are unchanged. See the [canonical validation and deployment contract](../../Documentation/Agents/CharacterAgent/CharacterAgent.md#embodiment-validation-and-recovery)
+for configuration aliases, categorized failures, and worker rollout requirements.

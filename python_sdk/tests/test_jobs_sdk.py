@@ -56,3 +56,14 @@ async def test_list_embodiment_drafts_returns_resume_summaries() -> None:
 
     assert summaries[0].id == "draft-1"
     assert summaries[0].background_job_id == 42
+
+
+@pytest.mark.asyncio
+async def test_delete_embodiment_calls_admin_draft_endpoint() -> None:
+    class C:
+        async def raw_request(self, method, path, params=None, json=None):
+            assert method == "DELETE"
+            assert path == "/character-agents/embodiment-drafts/draft-1"
+            return None
+
+    await CharacterAgentsAPI(C()).delete_embodiment("draft-1")

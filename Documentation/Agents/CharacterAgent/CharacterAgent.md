@@ -12,6 +12,13 @@ aspect, and goal; it is a node property rather than a relationship to an
 ontology node. `created_by_user_id` records the SQL user that created an agent,
 but there is no Neo4j relationship to a user.
 
+Embodiment review drafts are stored in SQL and are owned by the administrator
+who started them. Administrators may delete their `ready` or `failed` drafts;
+queued, generating, and accepted drafts cannot be deleted through the draft
+endpoint. Deleting a draft does not delete its background-job history. See the
+[CharacterAgent endpoint contract](CharacterAgent%20-%20Endpoints.md) for the
+route and response behavior.
+
 ```mermaid
 flowchart LR
     A[CharacterAgent] -->|EMBODIES| E[EntityInstance]
@@ -113,17 +120,70 @@ aggregation remains deterministic and independent. No LLM receives a cumulative
 scene history. Source bundles run sequentially, so the resulting revision becomes
 the next source bundle's starting identity. Only current focus is capped: ten
 active aspects and ten active goals. Historical records remain available.
-The backend assigns each event a source-local ID, and consolidation operations
-cite those IDs rather than list positions. The backend validates that each ID
-exists and has the same kind as the operation; a mismatch receives a bounded
-semantic correction attempt before the source fails. Updates and reinforcements
-cannot change lifecycle status; if both content and status change, consolidation
-emits an update or reinforcement followed by a separate status operation. These
-invariants are checked before accepting the model response and receive one
-bounded correction attempt. Persisted operation provenance retains original
-numeric event positions for compatibility.
+The backend assigns each event a source-local ID such as `event-001`.
+Consolidation cites these strings; aspect operations may cite only aspect events,
+and goal operations only goal events. Stored draft/timeline `event_references`
+remain numeric positions. Model-facing targets use `{"scope":"existing","index":1}`
+for the one-based position in the supplied aspect/goal table, or
+`{"scope":"new","index":1}` for the first preceding addition of that kind.
+Focus may address any addition after ordered operations. Canonical target IDs,
+new stable IDs, scene IDs, and evidence provenance are backend-owned. Renaming an
+item preserves its ID; slug collisions with existing items or other additions
+are rejected, including collisions caused by punctuation or non-ASCII labels.
 
-Every embodiment LLM request, including a JSON-repair request, has a maximum
+`consolidation.py` contains typed add/update/reinforce/status model contracts and
+reference binding into the existing `AspectUpdateData`/`GoalUpdateData` objects.
+It contains no lifecycle state engine. Validation, application, and timeline
+replay all use `_apply_aspect_ops` and `_apply_goal_ops` in `profile.py`; these
+reducers apply to copies and publish state only when the requested update is
+valid. Aspect status allows `active`/`inactive`; goal status allows
+`active`/`completed`/`abandoned`/`superseded`. Explicit status operations may move
+between these statuses, including reactivation. Additions start active. Content
+updates and reinforcements cannot set status. Add then status preserves a goal
+introduced and completed in one source. Focus selects at most ten unique final
+active items per kind and never deletes history or changes lifecycle implicitly.
+
+### Embodiment validation and recovery
+
+Every embodiment stage uses `_call()` for complete-document parsing, schema
+validation, exact scene cardinality, trait uniqueness, and applicable reference,
+conversion, and lifecycle checks before acceptance. Lists may be empty when the
+contract permits; malformed members are never silently dropped. Whitespace,
+enclosing JSON fences, and unambiguous position-bound collection wrappers are
+accepted. Incomplete outer documents, nested partial recovery, duplicate keys,
+multiple documents, trailing prose, and nonstandard numeric values are rejected.
+Reference existence and lifecycle validity do not prove that natural-language
+scene evidence supports a psychological conclusion; the prompt must still ground
+that interpretation in the supplied events.
+
+`character_agent_embodiment_validation_retries` controls one shared replacement
+budget for JSON, schema, empty response, and semantic failures per generation
+unit. Default `1` means an initial generation plus at most one replacement; `0`
+fails immediately; the accepted range is `0`–`3`. Replacement receives original
+context, rejected output, precise errors, and the same output contract. Every
+attempt receives the same empty-body/truncation/schema/domain checks. There is no
+separate embodiment LLM JSON repair. Query repair is unchanged.
+
+The deprecated `character_agent_embodiment_semantic_correction_attempts` name is
+accepted as an input alias for this compatibility release, including config seed
+files, `PUT /config/`, and direct `Settings` construction. If both names occur in
+one input, the new name wins. Existing persisted legacy values migrate to the
+canonical key before its default is seeded; migration removes the legacy key.
+Legacy updates write the canonical value, and config reads/schema advertise only
+the new name. The old prefixed environment name and `semantic_correction_attempts`
+job constructor argument remain temporary aliases; explicit canonical values win.
+The same numeric value now covers every invalid-output category. Removing these
+aliases requires a later documented compatibility change.
+
+Provider transport/unavailable/timeout failures are categorized separately and
+never trigger content regeneration. Native-format fallback requires an explicit
+structured-output incompatibility; unrelated unsupported-model or malformed-schema
+errors do not trigger fallback. Terminal validation failures retain their actual
+category, attempt and source/stage details, with `retryable: false`. Existing
+`semantic_corrections` diagnostics count semantic replacements specifically.
+Usage/debug records include replacement outputs and attempt metadata.
+
+Every embodiment generation or replacement request has a maximum
 completion budget of 10,000 tokens. This is a cost and failure safeguard, not
 an expected output size. A provider response with `finish_reason: "length"` is never parsed or
 persisted. Character Incorporation alone receives one compact replacement
@@ -135,7 +195,13 @@ The backend attaches those references after validation. If psychological output
 truncates, only that already-incorporated perspective batch is split into smaller
 contiguous batches and retried; completed incorporation and successful analysis
 work are retained for the active task attempt. A singleton truncation fails with
-the original categorized provider error.
+the original categorized provider error. Each split is a separate generation
+unit with its own validation budget. For an enrichment batch of `n` scenes,
+recursive splitting produces at most `2n - 1` units; each unit makes at most
+`1 + character_agent_embodiment_validation_retries` generations. An explicit
+native-format incompatibility can add one fallback request per generation.
+Incorporation has at most two units (normal and compact recovery); other stages
+have one. Truncated partial outputs are never used.
 
 `CharacterIdentityRevision` stores the profile snapshot and newly introduced
 trait evidence, including evidence that did not change a score.
@@ -373,3 +439,28 @@ output contracts.
 - [CharacterAgent endpoints](CharacterAgent%20-%20Endpoints.md)
 - [Dispositional traits](Dispositional%20Traits.md)
 - [CharacterAgent Query](Query/Query.md)
+
+
+### Reliability deployment and compatibility
+
+The LLM wire contract uses `character-embodiment-v31-validated-consolidation`.
+Public drafts, reviewed create/update requests, numeric event positions, stored
+stable IDs, timeline projections, and SDK models retain their existing shapes.
+No graph/database backfill is required. The configuration-key migration above is
+automatic; an existing custom retry limit is preserved.
+
+Drain active embodiment tasks and restart API/workers with matching code and
+prompts. Old intermediate LLM output must not be reused with the new contract;
+this pipeline currently keeps successful split work only in the active attempt.
+Existing completed reviewable drafts remain usable. Roll back code and prompts
+together and regenerate failed in-flight work. The legacy configuration input
+alias remains accepted by this release; when rolling back to older code, restore
+the old configuration key with the desired limit before restarting, since older
+code does not recognize the new canonical key. Do not rewrite persisted IDs.
+
+A failed source contributes no accepted profile update. Draft generation publishes
+its reviewable result after all sources succeed. Scene append commits each
+successful source run separately: failure of a later source or the final identity
+refresh does not roll back earlier valid revisions. The legacy internal
+`observations_unavailable` marker retains its no-change compatibility behavior;
+active generation never sets it to accept a malformed stage response.

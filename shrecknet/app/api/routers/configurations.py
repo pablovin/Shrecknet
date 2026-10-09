@@ -9,6 +9,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
 from fastapi.responses import FileResponse
+from pydantic import ValidationError
 
 from app.api.agent_feature_gate import require_shreckllm_operational_for_agents_enable
 from app.api.deps import get_current_active_admin_or_world_builder, get_current_admin_user
@@ -16,8 +17,10 @@ from app.celery_app import configure_celery_app
 from app.core.config_store import (
     BOOTSTRAP_ENV_FIELDS,
     LLM_TARGET_FIELDS,
+    VALIDATION_RETRIES,
     LLMModelTarget,
     Settings,
+    normalize_validation_retry_settings,
     get_settings,
     reload_settings,
     update_settings,
@@ -341,6 +344,7 @@ FIELD_UI_META: dict[str, dict[str, Any]] = {
     "model_character_agent_deliberation": {"type": "llm_target", "help": "Provider/model target for the single CharacterAgent query v3 deliberation."},
     "model_character_agent_character_incorporation": {"type": "llm_target", "help": "Provider/model target for per-scene CharacterAgent voice and reflection incorporation."},
     "model_character_agent_scene_interpretation": {"type": "llm_target", "help": "Provider/model target for per-scene psychological enrichment and trait/aspect/goal candidate extraction."},
+    "character_agent_embodiment_validation_retries": {"type": "integer", "help": "Shared invalid-output replacement budget per embodiment generation unit (0–3, default 1)."},
     "character_agent_embodiment_debug_artifacts_enabled": {"type": "boolean", "help": "Write complete local CharacterAgent embodiment request, response, correction, and final-pipeline logs under databases/local_test."},
     "librarian_debug_artifacts_enabled": {"type": "boolean", "help": "Write Librarian local-test JSON artifacts and manifests."},
     "elder_debug_artifacts_enabled": {"type": "boolean", "help": "Write Elder prompts, LLM responses, retrieval, evidence, and manifests under local_tests/elder."},
@@ -407,6 +411,7 @@ RESTART_REQUIRED_FIELDS.update(
 
 
 def _validate_updates(payload: dict[str, Any]) -> dict[str, Any]:
+    payload = normalize_validation_retry_settings(payload)
     allowed = set(Settings.model_fields)
     unknown = set(payload) - allowed
     if unknown:
@@ -416,6 +421,11 @@ def _validate_updates(payload: dict[str, Any]) -> dict[str, Any]:
         )
     merged = get_settings().model_dump()
     merged.update(payload)
+    if VALIDATION_RETRIES in payload:
+        try:
+            Settings(**merged)
+        except ValidationError as exc:
+            raise HTTPException(status_code=400, detail="Invalid embodiment validation retry limit; expected an integer from 0 through 3") from exc
     if merged["email_verification_enabled"]:
         required = ("smtp_host", "smtp_sender_email", "email_verification_frontend_url")
         missing = [field for field in required if not str(merged[field]).strip()]
@@ -578,7 +588,7 @@ def get_config_schema() -> dict[str, Any]:
         {"id": "elder", "label": "Elder Agent", "fields": ["model_elder_planner", "model_elder_synthesis", "model_elder_character_incorporation", "elder_debug_artifacts_enabled", "elder_query_embedding_timeout_s", "embedding_runtime_enabled", "embedding_runtime_queue_max_size", "embedding_runtime_batch_max_size", "embedding_runtime_batch_wait_ms", "embedding_runtime_cache_size", "embedding_runtime_request_timeout_s", "embedding_runtime_startup_timeout_s", "embedding_runtime_fail_open_health", "embedding_model_id", "embedding_dimension", "embedding_device", "semantic_embedding_strategy", "semantic_embedding_version", "semantic_embedding_long_text_threshold_tokens", "semantic_embedding_chunk_target_tokens", "semantic_embedding_chunk_overlap_tokens"]},
         {"id": "novelist", "label": "Novelist Agent", "fields": ["model_novelist_analysis", "model_novelist_writer"]},
         {"id": "librarian", "label": "Librarian Agent", "fields": ["model_librarian_planner", "model_librarian_synthesis", "model_librarian_character_incorporation", "librarian_debug_artifacts_enabled"]},
-        {"id": "character_agent", "label": "Character Agent", "fields": ["model_character_agent_framing", "model_character_agent_deliberation", "model_character_agent_character_incorporation", "model_character_agent_scene_interpretation", "character_agent_embodiment_debug_artifacts_enabled"]},
+        {"id": "character_agent", "label": "Character Agent", "fields": ["model_character_agent_framing", "model_character_agent_deliberation", "model_character_agent_character_incorporation", "model_character_agent_scene_interpretation", "character_agent_embodiment_validation_retries", "character_agent_embodiment_debug_artifacts_enabled"]},
         {"id": "security_tokens", "label": "Security Tokens", "fields": ["jwt_issuer", "jwt_audience", "jwt_kid", "jwt_access_token_expiry_minutes"]},
         {"id": "legacy_migration", "label": "Legacy Migration", "fields": ["old_database_url"]},
     ]

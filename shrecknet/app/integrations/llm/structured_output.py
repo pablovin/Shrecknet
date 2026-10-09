@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from app.integrations.llm.shreckllm_client import ShreckLLMClient
@@ -19,17 +20,22 @@ def strict_json_schema(name: str, schema: dict[str, Any]) -> dict[str, Any]:
 
 
 def structured_output_is_unsupported(exc: Exception) -> bool:
+    """Fallback only for explicit format incompatibility, never generic failures."""
+    status_code = getattr(exc, "status_code", None) or getattr(getattr(exc, "response", None), "status_code", None)
+    if status_code is not None and status_code not in {400, 422, 501}:
+        return False
+    if isinstance(exc, (TimeoutError, PermissionError)):
+        return False
     message = str(exc).casefold()
-    return any(
-        marker in message
-        for marker in (
-            "response_format",
-            "json_schema",
-            "structured output",
-            "does not support",
-            "unsupported",
-        )
-    )
+    format_name = r"(?:response_format|json_schema|structured outputs?)"
+    return bool(re.search(
+        rf"(?:does not support|doesn't support|(?:unsupported|unrecognized|unknown)(?: parameter| field| argument| format)?|unexpected keyword argument)"
+        rf"\s*:?\s*['\"`]*{format_name}", message,
+    ) or re.search(
+        rf"{format_name}['\"`]*\s*(?:is\s+)?(?:unsupported|unrecognized)", message,
+    ) or re.search(
+        rf"{format_name}[^\n.;]{{0,80}}\bnot supported\b", message,
+    ))
 
 
 async def chat_with_structured_output(

@@ -4,12 +4,15 @@ The persistent identity description is loaded or generated once before scene
 work and refreshed once after all source bundles. Three LLM calls normally run
 for each source scene chunk:
   1. Character incorporation grounded by the identity description
-  2. Psychological enrichment and trait interpretation in parallel, both
-     receiving canonical scenes and the Stage 1 source_type/perspective;
-     each also receives its stage-specific identity/profile context
+  2. Psychological enrichment from canonical scenes, Stage 1 interpretation,
+     and identity description, parallel with trait interpretation from canonical
+     scenes, identity summaries, and trait definitions (no generated perspectives)
 
-The backend then validates, grounds, and reduces extracted candidates
-deterministically. A source's chunks share one starting identity; source bundles
+After all source chunks, optional Stage 4 reconciles profile events using typed
+operations and local references. The backend binds IDs and validates through the
+shared profile reducers. Trait aggregation remains deterministic. Every stage
+uses one bounded invalid-output retry budget; truncation has explicit stage
+recovery and no partial output is accepted. A source's chunks share one starting identity; source bundles
 run sequentially and each produces one revision.
 """
 
@@ -19,19 +22,20 @@ import asyncio
 import copy
 import json
 import logging
+import re
 import time
 from typing import Any, Callable, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
-from app.integrations.llm.json_repair import repair_json_text
 from app.integrations.llm.structured_output import (
     strict_json_schema,
     structured_output_is_unsupported,
 )
 from app.integrations.llm.shreckllm_client import LLMProviderUnavailableError
 from app.jobs.character_agent.embodiment_debug_artifacts import EmbodimentDebugArtifacts
-from app.jobs.character_agent.profile import _stable_profile_id
+from app.jobs.character_agent.consolidation import ConsolidationEnvelope, prepare_consolidation
+from app.jobs.character_agent.profile import _apply_aspect_ops, _apply_goal_ops
 from app.jobs.character_agent.embody_agent_prompts import (
     IDENTITY_DESCRIPTION_PROMPT,
     PSYCHOLOGICAL_ANALYSIS_PROMPT,
@@ -40,16 +44,11 @@ from app.jobs.character_agent.embody_agent_prompts import (
     PERSPECTIVE_TRUNCATION_RECOVERY_PROMPT,
     TRAIT_INTERPRETATION_PROMPT,
 )
-from app.jobs.shrecknet.agent import parse_json_deterministically
 from app.schemas.character_agent import (
-    CharacterAspectCategory,
-    CharacterGoalType,
     EmbodyAgentAnalysis,
     EmbodimentObservationsOutput,
     EmbodyAgentResult,
     LLMCallRecord,
-    AspectUpdateData,
-    GoalUpdateData,
     SceneInput,
     SceneEnrichmentsOutput,
     ScenePerspectiveBundleOutput,
@@ -206,34 +205,6 @@ class _SceneEnrichmentLLMOutput(BaseModel):
     profile_events: list[_ProfileEventLLMOutput] = Field(max_length=2)
 
 
-class _ConsolidationOperation(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    operation: Literal["add", "update", "status", "reinforce"]
-    target_id: str | None = None
-    candidate_id: str | None = None
-    name: str | None = Field(None, max_length=255)
-    title: str | None = Field(None, max_length=255)
-    description: str | None = Field(None, max_length=1000)
-    category: CharacterAspectCategory | None = None
-    goal_type: CharacterGoalType | None = None
-    status: Literal["active", "inactive", "completed", "abandoned", "superseded"] | None = None
-    justification: str = Field(min_length=1, max_length=500)
-    event_references: list[str] = Field(min_length=1)
-
-
-class _PsychologicalConsolidationOutput(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    aspect_operations: list[_ConsolidationOperation]
-    goal_operations: list[_ConsolidationOperation]
-    focused_aspects: list[str] = Field(max_length=10)
-    focused_goals: list[str] = Field(max_length=10)
-
-
-class _ConsolidationEnvelope(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    consolidation: _PsychologicalConsolidationOutput
-
-
 class _SceneEnrichmentsLLMOutput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     scene_enrichments: list[_SceneEnrichmentLLMOutput]
@@ -243,10 +214,37 @@ class _SceneTraitInterpretationLLMOutput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     trait_candidates: list[_TraitCandidateLLMOutput] = Field(max_length=8)
 
+    @model_validator(mode="after")
+    def unique_traits(self):
+        if len({candidate.trait for candidate in self.trait_candidates}) != len(self.trait_candidates):
+            raise ValueError("duplicate trait candidate for one perspective")
+        return self
+
 
 class _SceneTraitInterpretationsLLMOutput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     scene_trait_interpretations: list[_SceneTraitInterpretationLLMOutput]
+
+
+def _parse_embodiment_json(raw: str) -> Any:
+    """Accept one complete JSON document; never recover a nested partial value."""
+    text = str(raw).strip()
+    fenced = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", text, flags=re.DOTALL | re.IGNORECASE)
+    if fenced:
+        text = fenced.group(1).strip()
+
+    def unique_keys(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError(f"duplicate JSON key: {key}")
+            result[key] = value
+        return result
+
+    def invalid_constant(value):
+        raise ValueError(f"nonstandard JSON number: {value}")
+
+    return json.loads(text, object_pairs_hook=unique_keys, parse_constant=invalid_constant)
 
 
 class UsageTracker:
@@ -262,6 +260,7 @@ class UsageTracker:
         input_chars = len(input_text)
         input_tokens_est = max(1, input_chars // 4)
 
+        self.last_response_metadata = {}
         started_at = time.monotonic()
         result = await self.llm.chat(
             usage_tag=usage_tag,
@@ -276,6 +275,8 @@ class UsageTracker:
 
         if isinstance(result, dict) and "text" in result:
             self.last_response_metadata = dict(result.get("response_metadata") or {})
+            if result.get("usage") is not None:
+                self.last_response_metadata["usage"] = result["usage"]
             result = str(result["text"])
         else:
             # Lightweight test doubles may only return text. Production callers
@@ -307,7 +308,8 @@ class EmbodyAgent:
     def __init__(
         self, *, llm_client, character_incorporation_model,
         scene_interpretation_model,
-        semantic_correction_attempts: int = 1,
+        validation_retries: int | None = None,
+        semantic_correction_attempts: int | None = None,
         debug_artifacts: EmbodimentDebugArtifacts | None = None,
         debug_source_index: int | None = None,
         debug_source_alias: str | None = None,
@@ -316,7 +318,10 @@ class EmbodyAgent:
         self.character_incorporation_model = character_incorporation_model
         self.scene_interpretation_model = scene_interpretation_model
         self._identity_description = None
-        self.semantic_correction_attempts = semantic_correction_attempts
+        self.validation_retries = validation_retries if validation_retries is not None else (
+            semantic_correction_attempts if semantic_correction_attempts is not None else 1)
+        if type(self.validation_retries) is not int or not 0 <= self.validation_retries <= 3:
+            raise ValueError("validation_retries must be an integer from 0 through 3")
         self.semantic_correction_count = 0
         self._debug_artifacts = debug_artifacts
         self._debug_source_index = debug_source_index
@@ -371,22 +376,20 @@ class EmbodyAgent:
         output_binding: dict[str, Any] | None = None,
     ) -> BaseModel:
         try:
-            parsed = parse_json_deterministically(raw)
+            parsed = _parse_embodiment_json(raw)
             parsed = _normalize_position_bound_collection(parsed, output_binding)
-            if output_binding and output_binding.get("bind_references", True):
-                _bind_model_output_references(parsed, **output_binding)
         except (TypeError, ValueError) as exc:
             raise EmbodimentGenerationError(
                 f"invalid JSON in {stage} output", category="json",
             ) from exc
         try:
-            dropped = _drop_ungrounded_output_items(parsed, schema=schema)
-            if dropped:
-                logger.warning(
-                    "embodiment_ungrounded_items_dropped stage=%s count=%d",
-                    stage, dropped,
-                )
-            return schema.model_validate(parsed)
+            result = schema.model_validate(parsed)
+            if output_binding:
+                collection = output_binding.get("collection")
+                scenes = output_binding.get("scene_ids")
+                if collection and isinstance(scenes, list) and len(getattr(result, collection)) != len(scenes):
+                    raise ValueError(f"{collection} requires exactly {len(scenes)} ordered results")
+            return result
         except (TypeError, ValueError, ValidationError) as exc:
             raise EmbodimentGenerationError(
                 f"invalid {stage} output", category="schema",
@@ -405,307 +408,92 @@ class EmbodyAgent:
             # model-validator failures. A correction request is JSON, so retain
             # the error text while removing non-serializable exception objects.
             return json.loads(json.dumps(cause.errors(include_url=False), default=str))
-        return [{"message": str(error)}]
+        return [{"message": str(error), "detail": str(cause) if cause else str(error)}]
 
     async def _call(
         self, *, prompt: str, payload: dict[str, Any], schema: type[BaseModel],
         stage: str, usage_tag: str, max_tokens: int | None, model: Any,
-        semantic_validator: Callable[[BaseModel], None] | None = None,
+        semantic_validator: Callable[[BaseModel], Any] | None = None,
         source_entity_id: str | None = None,
         source_entity_alias: str | None = None,
-        schema_correction_attempts: int = 0,
         output_binding: dict[str, Any] | None = None,
-    ) -> BaseModel:
-        try:
-            raw = await self._chat_structured(
-                schema=schema,
-                stage=stage,
-                usage_tag=usage_tag,
-                model=model,
-                messages=[
-                    {"role": "system", "content": prompt},
-                    {"role": "user", "content": self._json(payload)},
-                ],
-                max_tokens=max_tokens,
-                output_binding=output_binding,
-            )
-        except LLMProviderUnavailableError as exc:
-            self._debug_call(stage=stage, prompt=prompt, payload=payload, error=str(exc),
-                             model=model, usage_tag=usage_tag)
-            raise EmbodimentGenerationError(
-                f"{stage} provider is unavailable",
-                category="provider_unavailable",
-                stage=stage,
-                source_entity_id=source_entity_id,
-                source_entity_alias=source_entity_alias,
-                provider_id=exc.provider_id,
-                model_name=str(getattr(model, "name", model)),
-                provider_reason=exc.reason,
-            ) from exc
-        except Exception as exc:
-            self._debug_call(stage=stage, prompt=prompt, payload=payload, error=str(exc),
-                             model=model, usage_tag=usage_tag)
-            provider_reason = str(exc)
-            category = (
-                "provider_timeout"
-                if "watchdog exceeded" in provider_reason.lower()
-                else "transport"
-            )
-            raise EmbodimentGenerationError(
-                f"{stage} transport failed",
-                category=category,
-                stage=stage,
-                source_entity_id=source_entity_id,
-                source_entity_alias=source_entity_alias,
-                retryable=True,
-                model_name=str(getattr(model, "name", model)),
-                provider_reason=provider_reason,
-            ) from exc
-        if not str(raw).strip():
-            self._debug_call(
-                stage=stage, prompt=prompt, payload=payload, raw_output=raw,
-                error="provider returned an empty response body", model=model,
-                usage_tag=usage_tag,
-            )
-            raise EmbodimentGenerationError(
-                f"{stage} returned an empty response",
-                category="empty_response",
-                stage=stage,
-                source_entity_id=source_entity_id,
-                source_entity_alias=source_entity_alias,
-                retryable=True,
-            )
-        response_metadata = self._llm.last_response_metadata
-        if response_metadata.get("finish_reason") == "length":
-            scene_ids = (output_binding or {}).get("scene_ids")
-            if stage == "character incorporation":
-                logger.warning(
-                    "character_incorporation_truncated source_id=%s source_alias=%s "
-                    "scene_count=%s provider=%s requested_model=%s resolved_model=%s "
-                    "reasoning_enabled=%s requested_max_tokens=%s prompt_tokens=%s "
-                    "completion_tokens=%s finish_reason=%s response_chars=%s duration_ms=%s",
-                    source_entity_id, source_entity_alias,
-                    len(scene_ids) if isinstance(scene_ids, list) else None,
-                    getattr(model, "provider", None), getattr(model, "name", model),
-                    response_metadata.get("resolved_model"), response_metadata.get("reasoning_enabled"),
-                    max_tokens, response_metadata.get("prompt_tokens"),
-                    response_metadata.get("completion_tokens"), response_metadata.get("finish_reason"),
-                    len(str(raw)), round((self._llm.last_elapsed_seconds or 0) * 1000, 2),
-                )
-            self._debug_call(
-                stage=stage, prompt=prompt, payload=payload, raw_output=raw,
-                error=(
-                    "provider stopped the response at the configured output "
-                    f"limit of {max_tokens} tokens"
-                ),
-                model=model, usage_tag=usage_tag,
-                requested_max_tokens=max_tokens,
-                scene_count=len(scene_ids) if isinstance(scene_ids, list) else None,
-            )
-            raise EmbodimentGenerationError(
-                f"{stage} response reached its {max_tokens}-token output limit",
-                category="truncated",
-                stage=stage,
-                source_entity_id=source_entity_id,
-                source_entity_alias=source_entity_alias,
-                retryable=True,
-            )
-        try:
-            result = self._parse(schema, str(raw), stage, output_binding)
-            self._debug_call(stage=stage, prompt=prompt, payload=payload, raw_output=raw,
-                             parsed_output=result, model=model, usage_tag=usage_tag)
-        except EmbodimentGenerationError as exc:
-            self._debug_call(stage=stage, prompt=prompt, payload=payload, raw_output=raw,
-                             error=self._schema_errors(exc), model=model, usage_tag=usage_tag)
-            response_metadata = self._llm.last_response_metadata
-            logger.warning(
-                "embodiment_schema_invalid stage=%s source_id=%s source_alias=%s "
-                "requested_max_tokens=%s response_chars=%s completion_tokens=%s "
-                "finish_reason=%s validation_errors=%s",
-                stage, source_entity_id, source_entity_alias, max_tokens, len(str(raw)),
-                response_metadata.get("completion_tokens"),
-                response_metadata.get("finish_reason"), self._schema_errors(exc),
-            )
-            last_error = exc
-            repair_succeeded = False
-            if exc.category == "json":
-                try:
-                    repaired = await repair_json_text(
-                        llm_client=self._llm.llm, model=model,
-                        malformed_text=str(raw),
-                        schema_hint=json.dumps(_model_output_schema(schema, output_binding)),
-                        response_format=strict_json_schema(
-                            schema.__name__.removeprefix("_"),
-                            _model_output_schema(schema, output_binding),
-                        ),
-                        usage_tag=f"{usage_tag}.repair",
-                        max_tokens=max_tokens,
-                    )
-                    result = self._parse(schema, repaired, f"repaired {stage}", output_binding)
-                    self._debug_call(stage=stage, prompt="JSON repair", payload={
-                        "malformed_text": str(raw), "required_output_schema": _model_output_schema(schema, output_binding),
-                    }, raw_output=repaired, parsed_output=result, model=model,
-                        usage_tag=f"{usage_tag}.repair", call_kind="json_repair")
-                    repair_succeeded = True
-                except Exception as repaired_exc:
-                    self._debug_call(stage=stage, prompt="JSON repair", payload={
-                        "malformed_text": str(raw), "required_output_schema": _model_output_schema(schema, output_binding),
-                    }, error=str(repaired_exc), model=model, usage_tag=f"{usage_tag}.repair",
-                        call_kind="json_repair")
-                    if isinstance(repaired_exc, EmbodimentGenerationError):
-                        last_error = repaired_exc
-            for attempt in range(
-                1, (schema_correction_attempts if not repair_succeeded else 0) + 1,
-            ):
-                corrected_raw = None
-                correction_payload = {
-                    "original_input": payload,
-                    "rejected_output": str(raw),
-                    "validation_errors": self._schema_errors(last_error),
-                    "required_output_schema": _model_output_schema(schema, output_binding),
-                    "instruction": (
-                        "Return one complete replacement object that satisfies the "
-                        "required output schema. Do not invent evidence. Preserve "
-                        "valid items; for every required list with no qualified "
-                        "item, return an explicit empty list. Return JSON only."
-                    ),
-                }
-                try:
-                    corrected_raw = await self._chat_structured(
-                        schema=schema,
-                        stage=stage,
-                        usage_tag=f"{usage_tag}.schema_correction",
-                        model=model,
-                        messages=[
-                            {"role": "system", "content": prompt},
-                            {"role": "user", "content": self._json(correction_payload)},
-                        ],
-                        max_tokens=max_tokens,
-                        output_binding=output_binding,
-                    )
-                    result = self._parse(schema, str(corrected_raw), f"schema corrected {stage}", output_binding)
-                    self._debug_call(stage=stage, prompt=prompt, payload=correction_payload,
-                                     raw_output=corrected_raw, parsed_output=result, model=model,
-                                     usage_tag=f"{usage_tag}.schema_correction",
-                                     call_kind="schema_correction")
-                    break
-                except EmbodimentGenerationError as corrected_exc:
-                    self._debug_call(stage=stage, prompt=prompt, payload=correction_payload,
-                                     raw_output=corrected_raw,
-                                     error=self._schema_errors(corrected_exc), model=model,
-                                     usage_tag=f"{usage_tag}.schema_correction",
-                                     call_kind="schema_correction")
-                    last_error = corrected_exc
-                except Exception as corrected_exc:
-                    self._debug_call(stage=stage, prompt=prompt, payload=correction_payload,
-                                     error=str(corrected_exc), model=model,
-                                     usage_tag=f"{usage_tag}.schema_correction",
-                                     call_kind="schema_correction")
-                    logger.warning(
-                        "embodiment_schema_correction_transport_failed stage=%s attempt=%d error=%s",
-                        stage, attempt, corrected_exc,
-                    )
-            else:
-                if not repair_succeeded:
-                    raise EmbodimentGenerationError(
-                        f"{stage} schema validation failed",
-                        category="schema",
-                        stage=stage,
-                        source_entity_id=source_entity_id,
-                        source_entity_alias=source_entity_alias,
-                        retryable=True,
-                    ) from last_error
-
-        if semantic_validator is None:
-            return result
-
-        for correction_index in range(self.semantic_correction_attempts + 1):
+    ) -> Any:
+        """Generate, validate and bind with one shared invalid-output retry budget."""
+        request_payload = payload
+        tag = usage_tag
+        for attempt in range(1, self.validation_retries + 2):
+            raw = None
             try:
-                semantic_validator(result)
-                return result
-            except EmbodimentGenerationError as exc:
-                attempt = correction_index + 1
-                exc.stage = exc.stage or stage
-                exc.source_entity_id = exc.source_entity_id or source_entity_id
-                exc.source_entity_alias = exc.source_entity_alias or source_entity_alias
-                exc.attempt = attempt
-                exc.retryable = correction_index < self.semantic_correction_attempts
-                logger.warning(
-                    "embodiment_stage_validation_failed stage=%s source_id=%s "
-                    "source_alias=%s model=%s attempt=%d category=%s "
-                    "offending_ids=%s allowed_ids=%s retryable=%s",
-                    stage, source_entity_id, source_entity_alias,
-                    str(getattr(model, "name", model)), attempt, exc.category,
-                    exc.offending_ids, exc.allowed_ids, exc.retryable,
+                raw = await self._chat_structured(
+                    schema=schema, stage=stage, usage_tag=tag, model=model,
+                    messages=[{"role": "system", "content": prompt},
+                              {"role": "user", "content": self._json(request_payload)}],
+                    max_tokens=max_tokens, output_binding=output_binding,
                 )
-                self._debug_call(
-                    stage=stage, prompt=prompt, payload=payload, raw_output=raw,
-                    error=exc.details(), model=model, usage_tag=usage_tag,
-                    call_kind="semantic_validation",
+            except Exception as exc:
+                unavailable = isinstance(exc, LLMProviderUnavailableError)
+                reason = str(exc)
+                category = "provider_unavailable" if unavailable else (
+                    "provider_timeout" if "watchdog exceeded" in reason.lower() or isinstance(exc, TimeoutError)
+                    else "transport")
+                error = EmbodimentGenerationError(
+                    f"{stage} provider is unavailable" if unavailable else f"{stage} transport failed",
+                    category=category, stage=stage, source_entity_id=source_entity_id,
+                    source_entity_alias=source_entity_alias, attempt=attempt,
+                    retryable=not unavailable, provider_id=getattr(exc, "provider_id", None),
+                    model_name=str(getattr(model, "name", model)),
+                    provider_reason=getattr(exc, "reason", reason),
                 )
-                if not exc.retryable:
+                self._debug_call(stage=stage, prompt=prompt, payload=request_payload,
+                                 error=error.details(), model=model, usage_tag=tag,
+                                 attempt=attempt, requested_max_tokens=max_tokens)
+                raise error from exc
+            try:
+                if self._llm.last_response_metadata.get("finish_reason") == "length":
+                    raise EmbodimentGenerationError(
+                        f"{stage} response reached its {max_tokens}-token output limit", category="truncated")
+                if not str(raw).strip():
+                    raise EmbodimentGenerationError(f"{stage} returned an empty response", category="empty_response")
+                result = self._parse(schema, str(raw), stage, output_binding)
+                prepared = None
+                if semantic_validator:
+                    try:
+                        prepared = semantic_validator(result)
+                    except EmbodimentGenerationError:
+                        raise
+                    except ValidationError as exc:
+                        raise EmbodimentGenerationError(f"invalid {stage} update objects", category="schema") from exc
+                    except ValueError as exc:
+                        raise EmbodimentGenerationError(str(exc), category="semantic_reference") from exc
+                self._debug_call(stage=stage, prompt=prompt, payload=request_payload, raw_output=raw,
+                                 parsed_output=result, model=model, usage_tag=tag,
+                                 call_kind="generation" if attempt == 1 else "validation_retry",
+                                 attempt=attempt, requested_max_tokens=max_tokens)
+                return prepared if prepared is not None else result
+            except EmbodimentGenerationError as error:
+                error.stage = stage
+                error.source_entity_id = source_entity_id
+                error.source_entity_alias = source_entity_alias
+                error.attempt = attempt
+                # Truncation uses explicit stage recovery, never content correction.
+                can_retry = attempt <= self.validation_retries and error.category != "truncated"
+                error.retryable = can_retry
+                self._debug_call(stage=stage, prompt=prompt, payload=request_payload, raw_output=raw,
+                                 error={**error.details(), "validation_errors": self._schema_errors(error)},
+                                 model=model, usage_tag=tag, call_kind="validation_failure",
+                                 attempt=attempt, requested_max_tokens=max_tokens)
+                if not can_retry:
                     raise
-                self.semantic_correction_count += 1
-                correction_payload = {
-                    "original_input": payload,
-                    "rejected_output": result.model_dump(mode="json"),
-                    "validation_error": exc.details(),
-                    "instruction": (
-                        "Correct only the validation errors. Return the complete "
-                        "replacement object using the original output contract."
-                    ),
+                if error.category == "semantic_reference":
+                    self.semantic_correction_count += 1
+                request_payload = {
+                    "original_input": payload, "rejected_output": str(raw),
+                    "validation_errors": self._schema_errors(error),
+                    "required_output_schema": _model_output_schema(schema, output_binding),
+                    "instruction": "Return one complete replacement satisfying the original contract and validation errors. Do not invent evidence. Return JSON only.",
                 }
-                try:
-                    corrected_raw = await self._chat_structured(
-                        schema=schema,
-                        stage=stage,
-                        usage_tag=f"{usage_tag}.semantic_correction",
-                        model=model,
-                        messages=[
-                            {"role": "system", "content": prompt},
-                            {"role": "user", "content": self._json(correction_payload)},
-                        ],
-                        max_tokens=max_tokens,
-                        output_binding=output_binding,
-                    )
-                except Exception as correction_exc:
-                    self._debug_call(stage=stage, prompt=prompt, payload=correction_payload,
-                                     error=str(correction_exc), model=model,
-                                     usage_tag=f"{usage_tag}.semantic_correction",
-                                     call_kind="semantic_correction")
-                    raise EmbodimentGenerationError(
-                        f"{stage} semantic correction transport failed",
-                        category="transport",
-                        stage=stage,
-                        source_entity_id=source_entity_id,
-                        source_entity_alias=source_entity_alias,
-                        attempt=attempt + 1,
-                        retryable=True,
-                    ) from correction_exc
-                try:
-                    result = self._parse(
-                        schema, str(corrected_raw), f"corrected {stage}", output_binding
-                    )
-                    self._debug_call(stage=stage, prompt=prompt, payload=correction_payload,
-                                     raw_output=corrected_raw, parsed_output=result, model=model,
-                                     usage_tag=f"{usage_tag}.semantic_correction",
-                                     call_kind="semantic_correction")
-                except EmbodimentGenerationError as corrected_exc:
-                    self._debug_call(stage=stage, prompt=prompt, payload=correction_payload,
-                                     raw_output=corrected_raw, error=self._schema_errors(corrected_exc),
-                                     model=model, usage_tag=f"{usage_tag}.semantic_correction",
-                                     call_kind="semantic_correction")
-                    raise EmbodimentGenerationError(
-                        f"{stage} correction schema validation failed",
-                        category="schema",
-                        stage=stage,
-                        source_entity_id=source_entity_id,
-                        source_entity_alias=source_entity_alias,
-                        attempt=attempt + 1,
-                        retryable=False,
-                    ) from corrected_exc
-
-        raise AssertionError("semantic validation loop did not return or raise")
+                tag = f"{usage_tag}.validation_retry"
+        raise AssertionError("validation loop did not return or raise")
 
     async def generate_identity_description(
         self, *, canonical_identity: dict[str, Any], current_profile: TraitProfile,
@@ -790,7 +578,6 @@ class EmbodyAgent:
             "model": self.character_incorporation_model,
             "source_entity_id": source_entity_id,
             "source_entity_alias": source_entity_alias,
-            "schema_correction_attempts": 1,
             "output_binding": output_binding,
         }
         try:
@@ -882,7 +669,7 @@ class EmbodyAgent:
                 schema=_SceneEnrichmentsLLMOutput, stage="scene trait extraction",
                 usage_tag=usage_tag, max_tokens=EMBODIMENT_LLM_MAX_TOKENS,
                 model=self.scene_interpretation_model, source_entity_id=source_entity_id,
-                source_entity_alias=source_entity_alias, schema_correction_attempts=1,
+                source_entity_alias=source_entity_alias,
                 output_binding={
                     "collection": "scene_enrichments", "scene_ids": expected_ids,
                     "bind_references": False,
@@ -937,7 +724,6 @@ class EmbodyAgent:
             usage_tag="character_agent.embodiment.trait_interpretation",
             max_tokens=EMBODIMENT_LLM_MAX_TOKENS, model=self.scene_interpretation_model,
             source_entity_id=source_entity_id, source_entity_alias=source_entity_alias,
-            schema_correction_attempts=1,
             output_binding={"collection": "scene_trait_interpretations", "scene_ids": expected_ids,
                             "bind_references": False},
         )
@@ -952,14 +738,7 @@ class EmbodyAgent:
             expected_ids, perspectives, result.scene_trait_interpretations, strict=True,
         ):
             scene_candidates: list[dict[str, Any]] = []
-            selected_candidates: dict[str, _TraitCandidateLLMOutput] = {}
             for candidate in interpretation.trait_candidates:
-                if candidate.trait in selected_candidates:
-                    raise EmbodimentGenerationError(
-                        "duplicate trait candidate for one perspective", category="schema",
-                    )
-                selected_candidates[candidate.trait] = candidate
-            for candidate in selected_candidates.values():
                 value = candidate.model_dump(mode="json")
                 value.update(evidence_kind="behavior", perspective_id=perspective.id,
                              evidence_ids=[f"scene:{scene_id}"])
@@ -1127,6 +906,7 @@ class EmbodyAgent:
     ) -> EmbodyAgentResult:
         """Apply one analyzed source to the latest chronological profile."""
 
+        prior_call_count = len(self.llm_calls)
         if analysis.observations_unavailable:
             # The source remains represented by perspectives and a no-change
             # revision, but malformed observations can never create evidence or
@@ -1143,7 +923,7 @@ class EmbodyAgent:
                 focused_aspects=[str(x["id"]) for x in current_aspects if x.get("in_focus")][:10],
                 focused_goals=[str(x["id"]) for x in current_goals if x.get("in_focus")][:10],
                 subtitle_change=SubtitleChangeProposal(),
-                llm_calls=list(self.llm_calls),
+                llm_calls=list(analysis.llm_calls),
             )
 
         if on_stage:
@@ -1181,7 +961,7 @@ class EmbodyAgent:
             focused_aspects=profile_result["focused_aspects"],
             focused_goals=profile_result["focused_goals"],
             subtitle_change=analysis.subtitle_change,
-            llm_calls=[*analysis.llm_calls, *self.llm_calls],
+            llm_calls=[*analysis.llm_calls, *self.llm_calls[prior_call_count:]],
         )
 
     async def _consolidate_profile(
@@ -1189,155 +969,49 @@ class EmbodyAgent:
         current_aspects: list[dict[str, Any]], current_goals: list[dict[str, Any]],
         on_stage: Any = None,
     ) -> dict[str, Any]:
-        events = list(analysis.profile_events)
+        events = copy.deepcopy(analysis.profile_events)
         if not events:
-            return {"aspect_updates": [], "goal_updates": [],
-                    "focused_aspects": [str(x["id"]) for x in current_aspects if x.get("in_focus")][:10],
-                    "focused_goals": [str(x["id"]) for x in current_goals if x.get("in_focus")][:10]}
+            result = {"aspect_updates": [], "goal_updates": []}
+            for items, key, reduce in (
+                (current_aspects, "focused_aspects", _apply_aspect_ops),
+                (current_goals, "focused_goals", _apply_goal_ops),
+            ):
+                focused = [str(item["id"]) for item in items if item.get("in_focus")]
+                reduce(copy.deepcopy(items), [], focused_ids=focused)
+                result[key] = focused
+            return result
         if on_stage:
             await on_stage("source:{0} - Stage 4: psychological consolidation".format(
                 analysis.source_entity_alias), [4])
-        event_by_id = {
-            f"event-{i:03d}": (i, event)
-            for i, event in enumerate(events, 1)
-        }
+        # Events are backend-bound inputs; invalid provenance is an internal
+        # boundary error, not something a model correction may repair.
+        if any(not event.scene_id or (event.evidence_ids and set(event.evidence_ids) != {f"scene:{event.scene_id}"}) for event in events):
+            raise ValueError("source profile events require canonical scene provenance")
+        aspects_snapshot = copy.deepcopy(current_aspects)
+        goals_snapshot = copy.deepcopy(current_goals)
         payload = {
             "identity_description": analysis.identity_description.model_dump(mode="json")
                 if analysis.identity_description else None,
-            "events": [{"id": event_id, "kind": event.kind.value if hasattr(event.kind, "value") else event.kind,
-                        "description": event.description, "scene_id": event.scene_id}
-                       for event_id, (_, event) in event_by_id.items()],
-            "aspects": [{key: item.get(key) for key in
-                         ("id", "name", "description", "category", "status", "in_focus")}
-                        for item in current_aspects],
-            "goals": [{key: item.get(key) for key in
-                       ("id", "title", "description", "goal_type", "status", "in_focus")}
-                       for item in current_goals],
+            "events": [{"id": f"event-{i:03d}", "kind": event.kind,
+                        "description": event.description}
+                       for i, event in enumerate(events, 1)],
+            "aspects": [{"index": i, **{key: item.get(key) for key in
+                         ("name", "description", "category", "status", "in_focus")}}
+                        for i, item in enumerate(aspects_snapshot, 1)],
+            "goals": [{"index": i, **{key: item.get(key) for key in
+                       ("title", "description", "goal_type", "status", "in_focus")}}
+                       for i, item in enumerate(goals_snapshot, 1)],
         }
-
-        def validate_event_references(value: BaseModel) -> None:
-            consolidation_value = value.consolidation
-            for operations, expected_kind in (
-                (consolidation_value.aspect_operations, "aspect"),
-                (consolidation_value.goal_operations, "goal"),
-            ):
-                for operation in operations:
-                    if operation.operation == "status" and operation.status is None:
-                        raise EmbodimentGenerationError(
-                            "status operation requires a lifecycle status",
-                            category="schema",
-                        )
-                    if operation.operation in {"update", "reinforce"} and operation.status is not None:
-                        raise EmbodimentGenerationError(
-                            "update and reinforce operations cannot change lifecycle status; split the change into an update or reinforce followed by a status operation",
-                            category="schema",
-                        )
-                    for event_id in operation.event_references:
-                        event_entry = event_by_id.get(event_id)
-                        if event_entry is None:
-                            raise EmbodimentGenerationError(
-                                f"consolidation cited unknown event {event_id}",
-                                category="semantic_reference",
-                                offending_ids={event_id},
-                                allowed_ids=set(event_by_id),
-                            )
-                        event = event_entry[1]
-                        actual_kind = event.kind.value if hasattr(event.kind, "value") else event.kind
-                        if actual_kind != expected_kind:
-                            raise EmbodimentGenerationError(
-                                f"consolidation {expected_kind} operation cited {actual_kind} event {event_id}",
-                                category="semantic_reference",
-                                offending_ids={event_id},
-                                allowed_ids={
-                                    candidate_id for candidate_id, (_, candidate) in event_by_id.items()
-                                    if (candidate.kind.value if hasattr(candidate.kind, "value") else candidate.kind) == expected_kind
-                                },
-                            )
-
-        output = await self._call(
+        return await self._call(
             prompt=PSYCHOLOGICAL_CONSOLIDATION_PROMPT, payload=payload,
-            schema=_ConsolidationEnvelope, stage="psychological consolidation",
+            schema=ConsolidationEnvelope, stage="psychological consolidation",
             usage_tag="character_agent.embodiment.psychological_consolidation",
-            max_tokens=EMBODIMENT_LLM_MAX_TOKENS,
-            model=self.scene_interpretation_model,
-            semantic_validator=validate_event_references,
+            max_tokens=EMBODIMENT_LLM_MAX_TOKENS, model=self.scene_interpretation_model,
+            semantic_validator=lambda value: prepare_consolidation(
+                value, events=events, aspects=aspects_snapshot, goals=goals_snapshot),
             source_entity_id=analysis.source_entity_id,
             source_entity_alias=analysis.source_entity_alias,
-            schema_correction_attempts=1,
         )
-        consolidation = output.consolidation
-        aspect_ids = {str(item.get("id")) for item in current_aspects}
-        goal_ids = {str(item.get("id")) for item in current_goals}
-        candidate_ids: set[str] = set()
-
-        def convert(items, *, kind: str):
-            result = []
-            known = aspect_ids if kind == "aspect" else goal_ids
-            for op in items:
-                if (kind == "aspect" and op.goal_type is not None) or (kind == "goal" and op.category is not None):
-                    raise EmbodimentGenerationError("consolidation supplied a category for the wrong profile type", category="schema")
-                if op.operation == "add":
-                    if op.target_id is not None:
-                        raise EmbodimentGenerationError("consolidation add cannot target an existing ID", category="semantic_reference")
-                    label = op.name if kind == "aspect" else op.title
-                    if not op.candidate_id or not label:
-                        raise EmbodimentGenerationError("consolidation add needs candidate_id and name", category="schema")
-                    if kind == "aspect" and not label.strip().casefold().startswith("i "):
-                        raise EmbodimentGenerationError("aspect name must be a first-person defining statement", category="schema")
-                    stable = _stable_profile_id(kind, label)
-                    if op.candidate_id != stable or stable in candidate_ids:
-                        raise EmbodimentGenerationError("invalid or duplicate source candidate ID", category="semantic_reference")
-                    candidate_ids.add(stable)
-                elif op.target_id not in known and op.target_id not in candidate_ids:
-                    raise EmbodimentGenerationError("consolidation referenced unknown profile ID", category="semantic_reference")
-                elif op.candidate_id is not None:
-                    raise EmbodimentGenerationError("existing-item operation cannot use candidate_id", category="semantic_reference")
-                referenced = [event_by_id[event_id] for event_id in op.event_references]
-                citations = sorted({f"scene:{event.scene_id}" for _, event in referenced if event.scene_id})
-                common = {"operation": op.operation, "target_id": op.target_id,
-                          "candidate_id": op.candidate_id, "justification": op.justification,
-                          "evidence_ids": citations,
-                          "event_references": [position for position, _ in referenced]}
-                if kind == "aspect":
-                    label = op.name or next((x["name"] for x in current_aspects if str(x.get("id")) == op.target_id), "")
-                    result.append(AspectUpdateData.model_validate({**common, "name": label,
-                        "category": op.category, "description": op.description, "status": op.status}))
-                else:
-                    label = op.title or next((x["title"] for x in current_goals if str(x.get("id")) == op.target_id), "")
-                    result.append(GoalUpdateData.model_validate({**common, "title": label,
-                        "goal_type": op.goal_type, "description": op.description, "status": op.status}))
-            return result
-
-        aspects = convert(consolidation.aspect_operations, kind="aspect")
-        goals = convert(consolidation.goal_operations, kind="goal")
-        all_ids = aspect_ids | goal_ids | candidate_ids
-        focus_aspects, focus_goals = consolidation.focused_aspects, consolidation.focused_goals
-        if len(set(focus_aspects)) != len(focus_aspects) or len(set(focus_goals)) != len(focus_goals):
-            raise EmbodimentGenerationError("duplicate focus reference", category="semantic_reference")
-        aspect_candidate_ids = {op.candidate_id for op in aspects if op.candidate_id}
-        goal_candidate_ids = {op.candidate_id for op in goals if op.candidate_id}
-        if not set(focus_aspects) <= aspect_ids | aspect_candidate_ids:
-            raise EmbodimentGenerationError("aspect focus references a non-aspect", category="semantic_reference")
-        if not set(focus_goals) <= goal_ids | goal_candidate_ids:
-            raise EmbodimentGenerationError("goal focus references a non-goal", category="semantic_reference")
-        if not set(focus_aspects + focus_goals) <= all_ids:
-            raise EmbodimentGenerationError("focus references unknown profile ID", category="semantic_reference")
-        aspect_state = {str(x.get("id")): getattr(x.get("status", "active"), "value", x.get("status", "active")) for x in current_aspects}
-        goal_state = {str(x.get("id")): getattr(x.get("status", "active"), "value", x.get("status", "active")) for x in current_goals}
-        for op in aspects:
-            key = op.candidate_id if op.operation.value == "add" else op.target_id
-            if key and (op.operation.value in {"add", "status"}):
-                aspect_state[str(key)] = op.status.value if op.status else "active"
-        for op in goals:
-            key = op.candidate_id if op.operation.value == "add" else op.target_id
-            if key and (op.operation.value in {"add", "status"}):
-                goal_state[str(key)] = op.status.value if op.status else "active"
-        if any(aspect_state.get(item) != "active" for item in focus_aspects):
-            raise EmbodimentGenerationError("inactive aspect cannot be focused", category="semantic_reference")
-        if any(goal_state.get(item) != "active" for item in focus_goals):
-            raise EmbodimentGenerationError("resolved goal cannot be focused", category="semantic_reference")
-        return {"aspect_updates": aspects, "goal_updates": goals,
-                "focused_aspects": focus_aspects, "focused_goals": focus_goals}
 
     async def run(
         self,
@@ -1450,8 +1124,6 @@ def _bind_llm_enrichments(
             category="schema", expected_sequence=scene_ids,
             actual_sequence=[str(index + 1) for index in range(len(value.scene_enrichments))],
         )
-    if len(value.scene_enrichments) != len(scene_ids):
-        raise EmbodimentGenerationError("psychological analysis scene count mismatch", category="schema")
     records = []
     for scene_id, enrichment in zip(scene_ids, value.scene_enrichments, strict=True):
         evidence_id = f"scene:{scene_id}"
@@ -1521,55 +1193,6 @@ def _collect_evidence_ids(data: Any) -> set[str]:
         for item in data:
             ids.update(_collect_evidence_ids(item))
     return ids
-
-
-_OBSERVATION_EVIDENCE_LISTS = {
-    "recurring_behaviours", "motivations", "values", "fears", "conflicts",
-    "relationships", "contradictions", "evidence_gaps",
-}
-
-
-def _drop_ungrounded_output_items(
-    parsed: Any, *, schema: type[BaseModel],
-) -> int:
-    """Drop only output-list entries that cannot cite any evidence.
-
-    Unknown non-empty references remain present and are rejected by semantic
-    validation. This normalization handles no-op placeholders such as
-    ``{"text": "No contradictions", "evidence_ids": []}``.
-    """
-    if not isinstance(parsed, dict):
-        return 0
-    fields: set[str]
-    if schema is EmbodimentObservationsOutput:
-        fields = _OBSERVATION_EVIDENCE_LISTS
-    else:
-        return 0
-
-    dropped = 0
-    for field in fields:
-        items = parsed.get(field)
-        if not isinstance(items, list):
-            continue
-        grounded: list[Any] = []
-        for item in items:
-            evidence_ids = item.get("evidence_ids") if isinstance(item, dict) else None
-            if not isinstance(evidence_ids, list) or not evidence_ids:
-                dropped += 1
-                continue
-            grounded.append(item)
-        parsed[field] = grounded
-
-    if schema is EmbodimentObservationsOutput:
-        subtitle = parsed.get("subtitle_change")
-        if (
-            isinstance(subtitle, dict)
-            and subtitle.get("operation") in {"set", "clear"}
-            and not subtitle.get("evidence_ids")
-        ):
-            parsed.pop("subtitle_change", None)
-            dropped += 1
-    return dropped
 
 
 def _canonical_evidence_id(value: str) -> str:

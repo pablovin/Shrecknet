@@ -89,14 +89,14 @@ async def test_empty_event_source_skips_consolidation_call_and_keeps_focus():
 @pytest.mark.asyncio
 async def test_consolidation_adds_candidate_and_rejects_unknown_focus_ids():
     answer = {"consolidation": {
-        "aspect_operations": [{
-            "operation": "add", "target_id": None, "candidate_id": "aspect:i-am-a-vessel",
-            "name": "I am a vessel", "description": "Artificially created.",
-            "category": "identity", "status": "active", "justification": "The revelation changes self-understanding.",
-            "event_references": ["event-001"],
-        }],
+        "aspect_operations": [{'operation': 'add',
+                               'name': 'I am a vessel',
+                               'description': 'Artificially created.',
+                               'category': 'identity',
+                               'justification': 'The revelation changes self-understanding.',
+                               'event_references': ['event-001']}],
         "goal_operations": [],
-        "focused_aspects": ["aspect:i-am-a-vessel"], "focused_goals": [],
+        "focused_aspects": [{'scope': 'new', 'index': 1}], "focused_goals": [],
     }}
     llm = _LLM(json.dumps(answer))
     agent = EmbodyAgent(
@@ -113,12 +113,12 @@ async def test_consolidation_adds_candidate_and_rejects_unknown_focus_ids():
     assert result["aspect_updates"][0].candidate_id == "aspect:i-am-a-vessel"
     assert result["aspect_updates"][0].evidence_ids == ["scene:scene-9"]
 
-    answer["consolidation"]["focused_aspects"] = ["aspect:unknown"]
+    answer["consolidation"]["focused_aspects"] = [{"scope": "new", "index": 99}]
     agent = EmbodyAgent(
         llm_client=_LLM(json.dumps(answer)), character_incorporation_model="model",
         scene_interpretation_model="model",
     )
-    with pytest.raises(EmbodimentGenerationError, match="focus references"):
+    with pytest.raises(EmbodimentGenerationError, match="reference new:99"):
         await agent._consolidate_profile(
             analysis=_analysis([ProfileEventOutput(
                 kind="aspect", description="A revelation.", scene_id="scene-9",
@@ -132,18 +132,17 @@ async def test_goal_can_be_introduced_and_completed_in_one_source_bundle():
     answer = {"consolidation": {
         "aspect_operations": [],
         "goal_operations": [
-            {
-                "operation": "add", "target_id": None, "candidate_id": "goal:find-my-maker",
-                "title": "Find my maker", "description": "Discover who created me.",
-                "goal_type": "objective", "status": "active",
-                "justification": "The character makes a clear commitment.", "event_references": ["event-001"],
-            },
-            {
-                "operation": "status", "target_id": "goal:find-my-maker", "candidate_id": None,
-                "title": "Find my maker", "description": None, "goal_type": None,
-                "status": "completed", "justification": "The character learns the creator's identity.",
-                "event_references": ["event-002"],
-            },
+            {'operation': 'add',
+             'title': 'Find my maker',
+             'description': 'Discover who created me.',
+             'goal_type': 'objective',
+             'justification': 'The character makes a clear commitment.',
+             'event_references': ['event-001']},
+            {'operation': 'status',
+             'status': 'completed',
+             'justification': "The character learns the creator's identity.",
+             'event_references': ['event-002'],
+             'target': {'scope': 'new', 'index': 1}},
         ],
         "focused_aspects": [], "focused_goals": [],
     }}
@@ -168,13 +167,13 @@ async def test_goal_can_be_introduced_and_completed_in_one_source_bundle():
 @pytest.mark.asyncio
 async def test_cross_kind_event_reference_is_corrected_and_uses_backend_event_ids():
     invalid = {"consolidation": {
-        "aspect_operations": [{
-            "operation": "add", "target_id": None, "candidate_id": "aspect:i-am-a-keeper",
-            "name": "I am a keeper", "description": "Protects the archive.",
-            "category": "role", "status": "active", "justification": "A lasting role.",
-            "event_references": ["event-002"],
-        }],
-        "goal_operations": [], "focused_aspects": ["aspect:i-am-a-keeper"], "focused_goals": [],
+        "aspect_operations": [{'operation': 'add',
+                               'name': 'I am a keeper',
+                               'description': 'Protects the archive.',
+                               'category': 'role',
+                               'justification': 'A lasting role.',
+                               'event_references': ['event-002']}],
+        "goal_operations": [], "focused_aspects": [{'scope': 'new', 'index': 1}], "focused_goals": [],
     }}
     corrected = json.loads(json.dumps(invalid))
     corrected["consolidation"]["aspect_operations"][0]["event_references"] = ["event-001"]
@@ -210,32 +209,31 @@ async def test_cross_kind_event_reference_is_corrected_and_uses_backend_event_id
 async def test_lifecycle_change_is_corrected_into_separate_ordered_operations():
     invalid = {"consolidation": {
         "aspect_operations": [],
-        "goal_operations": [{
-            "operation": "update", "target_id": "goal-1", "candidate_id": None,
-            "title": "Find my maker", "description": "The search is complete.",
-            "goal_type": "objective", "status": "completed",
-            "justification": "The character discovers their creator.",
-            "event_references": ["event-001"],
-        }],
+        "goal_operations": [{'operation': 'update',
+                             'title': 'Find my maker',
+                             'description': 'The search is complete.',
+                             'goal_type': 'objective',
+                             'status': 'completed',
+                             'justification': 'The character discovers their creator.',
+                             'event_references': ['event-001'],
+                             'target': {'scope': 'existing', 'index': 1}}],
         "focused_aspects": [], "focused_goals": [],
     }}
     corrected = {"consolidation": {
         "aspect_operations": [],
         "goal_operations": [
-            {
-                "operation": "update", "target_id": "goal-1", "candidate_id": None,
-                "title": "Find my maker", "description": "The search is complete.",
-                "goal_type": "objective", "status": None,
-                "justification": "The character's understanding changed.",
-                "event_references": ["event-001"],
-            },
-            {
-                "operation": "status", "target_id": "goal-1", "candidate_id": None,
-                "title": "Find my maker", "description": None,
-                "goal_type": None, "status": "completed",
-                "justification": "The character discovers their creator.",
-                "event_references": ["event-001"],
-            },
+            {'operation': 'update',
+             'title': 'Find my maker',
+             'description': 'The search is complete.',
+             'goal_type': 'objective',
+             'justification': "The character's understanding changed.",
+             'event_references': ['event-001'],
+             'target': {'scope': 'existing', 'index': 1}},
+            {'operation': 'status',
+             'status': 'completed',
+             'justification': 'The character discovers their creator.',
+             'event_references': ['event-001'],
+             'target': {'scope': 'existing', 'index': 1}},
         ],
         "focused_aspects": [], "focused_goals": [],
     }}
@@ -269,7 +267,7 @@ async def test_lifecycle_change_is_corrected_into_separate_ordered_operations():
         llm_client=_LLM(json.dumps(invalid)), character_incorporation_model="model",
         scene_interpretation_model="model",
     )
-    with pytest.raises(EmbodimentGenerationError, match="cannot change lifecycle status"):
+    with pytest.raises(EmbodimentGenerationError, match="invalid psychological consolidation output"):
         await agent._consolidate_profile(
             analysis=_analysis(events), current_aspects=[], current_goals=[{
                 "id": "goal-1", "title": "Find my maker", "status": "active",

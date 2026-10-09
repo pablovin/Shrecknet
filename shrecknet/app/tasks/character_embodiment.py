@@ -417,8 +417,8 @@ async def _generate(*, draft_id: str, revision: int, job_id: int) -> dict:
                     llm_client=client,
                     character_incorporation_model=settings.model_character_agent_character_incorporation,
                     scene_interpretation_model=settings.model_character_agent_scene_interpretation,
-                    semantic_correction_attempts=(
-                        settings.character_agent_embodiment_semantic_correction_attempts
+                    validation_retries=(
+                        settings.character_agent_embodiment_validation_retries
                     ),
                     debug_artifacts=debug_artifacts,
                     debug_source_index=source_index,

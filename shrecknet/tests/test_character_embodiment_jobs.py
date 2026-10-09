@@ -110,6 +110,22 @@ class _UpdateSql:
         self.committed = True
 
 
+class _DraftSql:
+    def __init__(self, draft):
+        self.draft = draft
+        self.deleted = False
+        self.committed = False
+
+    async def get(self, _model, _draft_id):
+        return self.draft
+
+    async def delete(self, _draft):
+        self.deleted = True
+
+    async def commit(self):
+        self.committed = True
+
+
 def _active_draft(target_agent_id="agent-1"):
     return SimpleNamespace(
         id="draft-1",
@@ -236,6 +252,55 @@ async def test_list_embodiment_drafts_returns_resume_metadata_for_current_admin(
     assert summaries[0].id == "draft-1"
     assert summaries[0].background_job_id == 19
     assert summaries[0].target_character_agent_id == "agent-1"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [CharacterEmbodimentDraftStatus.READY, CharacterEmbodimentDraftStatus.FAILED])
+async def test_admin_can_delete_owned_terminal_embodiment_draft(status):
+    draft = _active_draft()
+    draft.status = status
+    sql = _DraftSql(draft)
+
+    response = await character_agents.delete_embodiment_draft(
+        "draft-1", SimpleNamespace(id=11), sql,
+    )
+
+    assert response.status_code == 204
+    assert sql.deleted
+    assert sql.committed
+
+
+@pytest.mark.asyncio
+async def test_embodiment_draft_delete_hides_drafts_owned_by_another_admin():
+    sql = _DraftSql(_active_draft())
+
+    with pytest.raises(HTTPException) as raised:
+        await character_agents.delete_embodiment_draft(
+            "draft-1", SimpleNamespace(id=12), sql,
+        )
+
+    assert raised.value.status_code == 404
+    assert not sql.deleted
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [
+    CharacterEmbodimentDraftStatus.QUEUED,
+    CharacterEmbodimentDraftStatus.GENERATING,
+    CharacterEmbodimentDraftStatus.ACCEPTED,
+])
+async def test_embodiment_draft_delete_rejects_non_deletable_statuses(status):
+    draft = _active_draft()
+    draft.status = status
+    sql = _DraftSql(draft)
+
+    with pytest.raises(HTTPException) as raised:
+        await character_agents.delete_embodiment_draft(
+            "draft-1", SimpleNamespace(id=11), sql,
+        )
+
+    assert raised.value.status_code == 409
+    assert not sql.deleted
 
 
 @pytest.mark.asyncio

@@ -87,10 +87,10 @@ stable IDs, descriptions, status/focus, plus historical out-of-focus items.
 It does not receive full scene history.
 
 The model returns ordered `aspect_operations` and `goal_operations`, plus
-`focused_aspects` and `focused_goals`. Each operation references an existing
-backend ID or a source-local candidate, gives a short justification, and cites
-supporting event references. The backend resolves candidate IDs, validates
-allowed operations and transitions, enforces focus limits, and persists the
+`focused_aspects` and `focused_goals`. Each operation uses a request-local existing/new reference, gives a short
+justification, and cites supporting event references. The backend generates
+candidate IDs, resolves references, and uses the shared profile reducers to
+validate operations, lifecycle transitions, and focus limits. It persists the
 result through the existing identity-revision/change-provenance infrastructure.
 
 The operation vocabulary must cover add, material description update,

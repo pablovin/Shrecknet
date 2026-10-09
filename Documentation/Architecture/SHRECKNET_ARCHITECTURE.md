@@ -68,20 +68,32 @@ persistence migration or service restart.
 `app/schemas/character_traits.py` owns trait definitions, diagnostic affordances,
 point scale and perspective-boundary contracts. `app/services/character_trait_service.py`
 owns deduplication, recency-weighted point aggregation, manual overrides and
-within-context STEADINESS. `app/jobs/character_agent/profile.py` supplies shared
-profile/timeline lifecycle operations to draft generation and Architect append.
+within-context STEADINESS. `app/jobs/character_agent/profile.py` supplies the sole
+profile lifecycle, focus rules and timeline reducers for draft generation,
+consolidation validation, and Architect append/replay.
+`app/jobs/character_agent/consolidation.py` owns typed LLM operations and local
+reference/ID binding into existing update objects; it does not implement state
+transitions independently. `EmbodyAgent._call()` owns complete response validation
+and one shared invalid-output replacement budget.
+
 Existing CharacterAgent services retain Neo4j transaction ownership; Celery entry
-points retain job lifecycle. Each source is one atomic identity-update
-bundle and produces exactly one revision containing every scene used. Its
-scene-local work is partitioned into chunks of at most five scenes; up to three
-chunks run concurrently. Each embodiment job loads or generates one persistent
-narrative `identity_description`; each chunk incorporates scenes, then runs
-psychological analysis and trait interpretation in parallel from its
-perspectives and that description. Source reduction is backend-owned and
-deterministic. The normal scene call budget is `3n` for `n` chunks, plus one
-identity refresh and, when the field is absent, one initial generation, along
-with any repair/correction calls. A
-truncated psychological response is discarded and only its completed perspective
-batch is retried in smaller contiguous sub-batches; no incomplete JSON is used.
-No LLM receives an accumulated evidence ledger. Revision JSON contains source-local evidence, including no-change observations. See
-[Dispositional traits](../Agents/CharacterAgent/Dispositional%20Traits.md).
+points retain job lifecycle. Each source is one atomic identity-update bundle and
+produces exactly one revision containing every scene used. Scene-local work is
+partitioned into chunks of at most five scenes; chunks can run concurrently under
+shreckLLM provider capacity. Each job loads or generates a narrative
+`identity_description`. After incorporation, psychological enrichment receives
+canonical scenes, generated perspectives and identity description; the parallel
+trait branch receives canonical scenes, narrative identity summaries and trait
+definitions, excluding generated perspectives and prior personality traits.
+
+The normal scene call budget is `3n` for `n` chunks, plus one consolidation call
+per source with profile events, one final identity refresh, and one initial
+identity generation when absent. Trait aggregation is deterministic. All stages
+share `character_agent_embodiment_validation_retries` per generation unit; there
+is no separate embodiment LLM JSON repair. Truncated psychological output is
+rejected and its completed perspective batch splits into contiguous sub-batches;
+incorporation permits one compact recovery unit. No incomplete JSON is used.
+No LLM receives an accumulated evidence ledger. Revision JSON contains source-local
+evidence, including no-change observations. See
+[CharacterAgent validation and recovery](../Agents/CharacterAgent/CharacterAgent.md#embodiment-validation-and-recovery)
+and [Dispositional traits](../Agents/CharacterAgent/Dispositional%20Traits.md).

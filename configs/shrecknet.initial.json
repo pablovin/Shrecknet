@@ -146,5 +146,6 @@
   "jwt_issuer": "shrecknet",
   "jwt_audience": "shreckrpg",
   "jwt_kid": "shrecknet-dev-rsa-1",
-  "jwt_access_token_expiry_minutes": 525600
+  "jwt_access_token_expiry_minutes": 525600,
+  "character_agent_embodiment_validation_retries": 1
 }

@@ -10,7 +10,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 DEFAULT_DATABASE_FILENAME = "shrecknet.db"
@@ -138,8 +138,36 @@ def _sqlite_url(filename: str) -> str:
     return f"sqlite:///./{path.as_posix()}"
 
 
+LEGACY_VALIDATION_RETRIES = "character_agent_embodiment_semantic_correction_attempts"
+VALIDATION_RETRIES = "character_agent_embodiment_validation_retries"
+
+
+def normalize_validation_retry_settings(values: dict[str, Any]) -> dict[str, Any]:
+    """Accept the deprecated input name, with the canonical name taking precedence."""
+    values = dict(values)
+    if LEGACY_VALIDATION_RETRIES in values:
+        values.setdefault(VALIDATION_RETRIES, values.pop(LEGACY_VALIDATION_RETRIES))
+    return values
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="SHRECKNET_", extra="ignore")
+
+    @model_validator(mode="before")
+    @classmethod
+    def legacy_validation_retries(cls, values):
+        if not isinstance(values, dict):
+            return values
+        values = dict(values)
+        legacy_env = os.getenv(f"SHRECKNET_{LEGACY_VALIDATION_RETRIES.upper()}")
+        if legacy_env is not None and VALIDATION_RETRIES not in values and LEGACY_VALIDATION_RETRIES not in values:
+            values[LEGACY_VALIDATION_RETRIES] = legacy_env
+        return normalize_validation_retry_settings(values)
+
+    @property
+    def character_agent_embodiment_semantic_correction_attempts(self) -> int:
+        """Deprecated compatibility accessor; config serialization uses the new name."""
+        return self.character_agent_embodiment_validation_retries
 
     app_name: str = "shrecknet"
     debug: bool = False
@@ -250,7 +278,7 @@ class Settings(BaseSettings):
     model_character_agent_scene_interpretation: LLMModelTarget = Field(
         default_factory=lambda: LLMModelTarget(provider="", name="")
     )
-    character_agent_embodiment_semantic_correction_attempts: int = Field(
+    character_agent_embodiment_validation_retries: int = Field(
         1, ge=0, le=3
     )
     character_agent_embodiment_debug_artifacts_enabled: bool = True
@@ -372,6 +400,7 @@ def _load_initial_settings_file() -> dict[str, Any]:
             raise ValueError(f"Invalid Shrecknet config seed file '{path}': {exc}") from exc
         if not isinstance(payload, dict):
             raise ValueError(f"Invalid Shrecknet config seed file '{path}': expected JSON object")
+        payload = normalize_validation_retry_settings(payload)
         allowed = set(Settings.model_fields)
         unknown = sorted(set(payload) - allowed)
         if unknown:
@@ -385,7 +414,7 @@ def _load_initial_settings_file() -> dict[str, Any]:
 
 def _default_settings_dict() -> dict[str, Any]:
     defaults = Settings().model_dump()
-    defaults.update(_load_initial_settings_file())
+    defaults.update(normalize_validation_retry_settings(_load_initial_settings_file()))
     return Settings(**defaults).model_dump()
 
 
@@ -407,6 +436,18 @@ def _load_settings_from_db(conn: sqlite3.Connection) -> dict[str, Any]:
 def _seed_defaults_if_needed(conn: sqlite3.Connection) -> dict[str, Any]:
     defaults = _default_settings_dict()
     existing = _load_settings_from_db(conn)
+    if LEGACY_VALIDATION_RETRIES in existing:
+        normalized = normalize_validation_retry_settings(existing)
+        # Validate before persisting and before seeding the canonical default.
+        limit = Settings(**normalized).character_agent_embodiment_validation_retries
+        conn.execute(
+            f"INSERT INTO {CONFIG_TABLE} (key, value, updated_at) VALUES (?, ?, ?) "
+            "ON CONFLICT(key) DO NOTHING",
+            (VALIDATION_RETRIES, _serialize_value(limit), _current_timestamp()),
+        )
+        conn.execute(f"DELETE FROM {CONFIG_TABLE} WHERE key = ?", (LEGACY_VALIDATION_RETRIES,))
+        conn.commit()
+        existing = normalized
     # Env-only bootstrap fields are sourced from environment and must not be seeded into DB.
     missing = {
         key: value
@@ -605,7 +646,7 @@ def update_settings(updates: dict[str, Any]) -> Settings:
     with _settings_lock:
         current = _settings_cache or load_settings()
         settings_dict = current.model_dump()
-        settings_dict.update(updates)
+        settings_dict.update(normalize_validation_retry_settings(updates))
         for field_name in LLM_TARGET_FIELDS:
             if field_name not in settings_dict:
                 continue

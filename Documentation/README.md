@@ -12,6 +12,7 @@ Welcome to the Shrecknet documentation! This directory contains all organized do
 - [Point based traits implementation record](./Agents/CharacterAgent/Point-Based%20Traits%20Redesign%20Plan.md) — equations, graph contract, flow, cutover, and verification decisions
 - [Psychological enrichment and consolidation implementation record](./Agents/CharacterAgent/Psychological%20Enrichment%20and%20Consolidation%20Redesign%20Plan.md) — scene enrichment, source-level profile reconciliation, relationship-owned focus, and verification record
 - [Embodiment structured output reliability implementation record](./Agents/CharacterAgent/Embodiment%20Structured%20Output%20Reliability%20Plan.md) — typed consolidation contracts, shared lifecycle rules, bounded recovery, configuration migration, compatibility, and verification
+- [Embodiment model contract audit plan](./Agents/CharacterAgent/Embodiment%20Model%20Contract%20Audit%20Plan.md) — five-stage model/schema audit, typed trait context, provider parity, and per-chunk checkpoint recovery proposal
 
 ## Elder
 

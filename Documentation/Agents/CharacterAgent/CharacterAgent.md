@@ -134,7 +134,11 @@ removes new-item indexes from the focus decision while preserving ordered
 add-then-status transitions. Canonical target IDs, new stable IDs, scene IDs, and
 evidence provenance are backend-owned. Renaming an item preserves its ID; slug
 collisions with existing items or other additions are rejected, including
-collisions caused by punctuation or non-ASCII labels.
+collisions caused by punctuation or non-ASCII labels. The prepared operation
+collection is typed (`AspectUpdateData` and `GoalUpdateData`) throughout; reducers
+consume those models directly while mutating only profile-state dictionaries.
+Programming errors in reference binding or reduction remain backend failures and
+do not enter the invalid-model replacement loop.
 
 `consolidation.py` contains typed add/update/reinforce/status model contracts and
 reference binding into the existing `AspectUpdateData`/`GoalUpdateData` objects.

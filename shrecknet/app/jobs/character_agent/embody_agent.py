@@ -465,6 +465,10 @@ class EmbodyAgent:
                         raise EmbodimentGenerationError(f"invalid {stage} update objects", category="schema") from exc
                     except ValueError as exc:
                         raise EmbodimentGenerationError(str(exc), category="semantic_reference") from exc
+                    except Exception:
+                        # Only recognized model-validation failures participate
+                        # in correction. Defects in the adapter/backend are bugs.
+                        raise
                 self._debug_call(stage=stage, prompt=prompt, payload=request_payload, raw_output=raw,
                                  parsed_output=result, model=model, usage_tag=tag,
                                  call_kind="generation" if attempt == 1 else "validation_retry",

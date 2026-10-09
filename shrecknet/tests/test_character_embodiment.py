@@ -12,6 +12,7 @@ from app.jobs.character_agent.embody_agent import (
     _bind_llm_enrichments,
 )
 from app.jobs.character_agent.profile import _apply_aspect_ops, _apply_goal_ops
+from app.jobs.character_agent.consolidation import ConsolidationEnvelope, prepare_consolidation
 from app.jobs.character_agent.embody_agent_prompts import (
     PSYCHOLOGICAL_ANALYSIS_PROMPT,
     PSYCHOLOGICAL_CONSOLIDATION_PROMPT,
@@ -171,6 +172,65 @@ async def test_consolidation_adds_revelation_with_source_provenance():
     assert op.evidence_ids == ["scene:s1"]
     assert result["focused_aspects"] == [op.candidate_id]
     assert len(llm.calls) == 1
+
+
+def test_prepare_consolidation_binds_typed_updates_and_reduces_lifecycle_in_order():
+    events = [
+        ProfileEventOutput(kind="goal", description="Mara finds her maker.", scene_id="s1", evidence_ids=["scene:s1"]),
+        ProfileEventOutput(kind="goal", description="Mara abandons her search.", scene_id="s2", evidence_ids=["scene:s2"]),
+        ProfileEventOutput(kind="aspect", description="Mara learns she guards the archive.", scene_id="s3", evidence_ids=["scene:s3"]),
+    ]
+    envelope = ConsolidationEnvelope.model_validate({"consolidation": {
+        "aspect_operations": [
+            {"operation": "add", "name": "I guard the archive", "description": "A new role.",
+             "category": "role", "in_focus": True, "justification": "She accepts the role.",
+             "event_references": ["event-003"]},
+        ],
+        "goal_operations": [
+            {"operation": "add", "title": "Find my maker", "description": None,
+             "goal_type": "objective", "in_focus": True,
+             "justification": "She begins searching.", "event_references": ["event-001"]},
+            {"operation": "status", "target": {"scope": "new", "index": 1}, "status": "abandoned",
+             "justification": "She gives up the search.", "event_references": ["event-002"]},
+        ],
+        "focused_aspects": [], "focused_goals": [],
+    }})
+    result = prepare_consolidation(envelope, events=events, aspects=[], goals=[])
+    assert isinstance(result["aspect_updates"][0], AspectUpdateData)
+    assert isinstance(result["goal_updates"][0], GoalUpdateData)
+    assert result["focused_aspects"] == ["aspect:i-guard-the-archive"]
+    # Initial add focus is suppressed because the later same-source status
+    # transition resolved this newly added goal.
+    assert result["focused_goals"] == []
+    assert result["goal_updates"][1].target_id == "goal:find-my-maker"
+    state = []
+    _apply_goal_ops(state, result["goal_updates"], focused_ids=result["focused_goals"])
+    assert state[0]["status"] == "abandoned"
+    assert state[0]["in_focus"] is False
+
+
+def test_prepare_consolidation_rejects_duplicate_and_invalid_focus_references():
+    base = {"consolidation": {"aspect_operations": [], "goal_operations": [],
+                              "focused_aspects": [], "focused_goals": []}}
+    duplicate_focus = ConsolidationEnvelope.model_validate({"consolidation": {
+        **base["consolidation"],
+        "focused_aspects": [{"scope": "existing", "index": 1}, {"scope": "existing", "index": 1}],
+    }})
+    with pytest.raises(ValueError, match="duplicate focus"):
+        prepare_consolidation(duplicate_focus, events=[], aspects=[{"id": "a1", "name": "I guard the gate", "status": "active"}], goals=[])
+
+    duplicate_ops = ConsolidationEnvelope.model_validate({"consolidation": {
+        "aspect_operations": [
+            {"operation": "add", "name": "I guard the archive", "description": None, "category": "role", "in_focus": False,
+             "justification": "First event.", "event_references": ["event-001"]},
+            {"operation": "add", "name": "I guard the archive", "description": None, "category": "role", "in_focus": False,
+             "justification": "Second event.", "event_references": ["event-002"]},
+        ], "goal_operations": [], "focused_aspects": [], "focused_goals": [],
+    }})
+    events = [ProfileEventOutput(kind="aspect", description="One.", scene_id="s1", evidence_ids=["scene:s1"]),
+              ProfileEventOutput(kind="aspect", description="Two.", scene_id="s2", evidence_ids=["scene:s2"])]
+    with pytest.raises(ValueError, match="duplicate or invalid aspect addition"):
+        prepare_consolidation(duplicate_ops, events=events, aspects=[], goals=[])
 
 
 def test_focus_rotation_keeps_old_history_without_status_mutation():

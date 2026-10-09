@@ -129,6 +129,9 @@ class _DraftSql:
 def _active_draft(target_agent_id="agent-1"):
     return SimpleNamespace(
         id="draft-1",
+        source_entity_id="entity-1",
+        ontology_id=7,
+        generation_revision=1,
         created_by_user_id=11,
         status=CharacterEmbodimentDraftStatus.GENERATING,
         active_entity_key="entity-1",

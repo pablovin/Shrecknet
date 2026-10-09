@@ -93,6 +93,18 @@ async def test_json_then_semantic_error_exhausts_one_shared_budget():
 
 
 @pytest.mark.asyncio
+async def test_semantic_validator_programming_error_never_triggers_model_retry():
+    provider = Responses(VALID)
+
+    def broken_adapter(_):
+        raise TypeError("adapter bug")
+
+    with pytest.raises(TypeError, match="adapter bug"):
+        await generate(agent(provider), semantic_validator=broken_adapter)
+    assert len(provider.calls) == 1
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("retries", [0, 1, 3])
 async def test_configured_budget_is_exact(retries):
     provider = Responses("{}")
@@ -240,12 +252,12 @@ def test_non_ascii_slug_collision_is_rejected_without_inventing_suffixes():
 
 
 @pytest.mark.asyncio
-async def test_consolidation_exposes_only_local_references_and_corrects_invalid_focus():
+async def test_consolidation_exposes_only_local_references_and_ignores_focus_for_resolved_item():
     from test_character_embodiment import _analysis
     status = {"operation": "status", "target": {"scope": "existing", "index": 1},
               "status": "completed", "justification": "The maker was found.", "event_references": ["event-001"]}
-    invalid = response([status], [{"scope": "existing", "index": 1}])
-    provider = Responses(json.dumps(invalid), json.dumps(response([status])))
+    accepted = response([status], [{"scope": "existing", "index": 1}])
+    provider = Responses(json.dumps(accepted))
     current = [{"id": "private-canonical-goal-id", "title": "Find my maker", "status": "active", "in_focus": True}]
     result = await agent(provider)._consolidate_profile(analysis=_analysis(EVENTS), current_aspects=[], current_goals=current)
     initial_payload = provider.calls[0]["messages"][1]["content"]
@@ -254,7 +266,7 @@ async def test_consolidation_exposes_only_local_references_and_corrects_invalid_
     assert result["goal_updates"][0].target_id == "private-canonical-goal-id"
     assert result["focused_goals"] == []
     assert current[0]["status"] == "active" and current[0]["in_focus"]
-    assert len(provider.calls) == 2
+    assert len(provider.calls) == 1
 
 
 def test_new_goal_rename_resolution_and_reactivation_use_same_reducers():

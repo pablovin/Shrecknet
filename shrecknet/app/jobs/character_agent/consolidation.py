@@ -173,15 +173,15 @@ def prepare_consolidation(value: ConsolidationEnvelope, *, events: list,
             updates.append(update)
         focused_ids = [resolve(reference) for reference in focus]
         focused_ids.extend(
-            str(item["candidate_id"])
-            for operation, item in zip(operations, updates)
-            if operation.operation == "add" and item.in_focus
+            str(item.candidate_id)
+            for item in updates
+            if item.operation.value == "add" and item.in_focus
         )
         # Additions can be resolved later in this source. Their initial focus
         # preference applies only if their final lifecycle state remains active.
         by_id = {str(item.get("id")): item for item in state}
         focused_ids = [item_id for item_id in focused_ids
-                       if by_id.get(item_id, {}).get("status", "active") == "active"]
+                       if item_id in by_id and by_id[item_id].get("status", "active") == "active"]
         reduce(state, [], focused_ids=focused_ids)
         result[f"{kind}_updates"] = updates
         result[f"focused_{'aspects' if kind == 'aspect' else 'goals'}"] = focused_ids

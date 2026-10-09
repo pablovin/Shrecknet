@@ -208,12 +208,15 @@ Related pages: [CharacterAgent runtime contract](CharacterAgent.md),
 
 ## Execution record
 
-The audit and first implementation pass are complete. Stage 3 now emits a
-trait-discriminated candidate shape with typed diagnostic values, relationship,
-stakes, and explicit all-null unspecified context. The provider schema is
-generated from `TRAIT_BY_KEY`, uses provider-compatible `anyOf` branches, and
-does not rely on Pydantic-only trait/diagnostic matching. The backend maps the
-validated shape to the existing `TraitObservation.situation_type` contract.
+The audit and first implementation pass are complete. The current Stage 3
+contract uses a single flat six-field candidate object. Trait-specific diagnostic
+membership is validated in Python against `TRAIT_BY_KEY`; context must be all
+populated or all null. The provider schema retains field requirements, finite
+trait/context enums and text limits, without trait-discriminated object unions
+or manually inserted context branches. The backend maps validated candidates to
+the existing `TraitObservation.situation_type` contract. See the
+[CharacterAgent runtime contract](CharacterAgent.md) for selective emotion/belief
+extraction, independent goal consolidation, and checkpoint compatibility.
 
 Draft checkpoints now retain independently fingerprinted Stage 1 perspectives
 and Stage 2/3 analyses per scene chunk, plus the merged source analysis used by

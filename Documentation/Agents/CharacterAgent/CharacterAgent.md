@@ -440,9 +440,32 @@ scene order. A mismatch or corrupt record is ignored. Profile operations and the
 timeline revision are produced in source order, so a failed chunk or
 consolidation does not publish a partial source revision.
 
-Stage 2 returns scene-owned emotions and beliefs plus sparse profile events,
-with at most one aspect event and one goal event per scene. Malformed profile
-event candidates and duplicate same-kind candidates are dropped individually;
+Stage 2 returns scene-owned emotions and beliefs plus evidence-grounded profile
+events, with at most one aspect event and one goal event per scene. It selects
+one primary emotion and belief when supported, adding a second only for a
+distinct, significant reaction or conclusion. Empty lists are valid; two is a
+maximum, never a target. Arousal, valence, and belief confidence remain integers
+in `0..100` (valence: `0` negative, `50` neutral, `100` positive).
+
+An aspect represents a durable truth, identity, conviction, relationship, or
+significant personal circumstance. A goal is an intended outcome, whether
+short-term or enduring. Stage 2 emits meaningful new objectives and supported
+developments/resolutions; Stage 4 compares intended outcomes and completion
+conditions before merging. Shared motivation alone does not make goals
+equivalent: entering the Shadow City and discovering who made Ernst may remain
+independently actionable goals. Paraphrases such as identifying one's maker and
+discovering who created oneself reinforce or update the same goal. Temporary
+feelings alone do not establish aspects. There are no minimum profile counts.
+
+Stage 3 uses one flat candidate object with six required keys: `trait`,
+`diagnostic_situation`, `relationship`, `stakes`, `polarity`, and `justification`.
+The provider schema constrains trait/polarity/context enums, text length, and
+extra keys without trait-discriminated object unions or context-object branches.
+Python validates diagnostic membership against `TRAIT_BY_KEY` and requires the
+three context values to be either all populated or all null. Nullable field
+schemas remain ordinary string-or-null alternatives.
+
+Malformed profile event candidates and duplicate same-kind candidates are dropped individually;
 other valid scene enrichments remain usable. Stage 3 accepts up to three
 well-formed trait candidates per scene and drops malformed or duplicate trait
 candidates individually. A scene with no valid candidates yields an empty list.
@@ -454,6 +477,16 @@ ten active goals; focus changes do not alter lifecycle status. See the
 [redesign implementation record](Psychological%20Enrichment%20and%20Consolidation%20Redesign%20Plan.md)
 for the migration and verification details.
 
+
+Prompt version `character-embodiment-v35-flat-selective-candidates` participates
+in source and chunk checkpoint fingerprints, so retries do not reuse outputs
+from older prompt versions. These generation rules do not change public API/SDK
+payloads or persisted node shapes and require no database migration. Previously
+stored perspectives and profiles remain unchanged; reviewing updated extraction
+for existing characters requires regeneration through the existing embodiment
+workflow. Deploy matching application/task worker code. Rolling back generation
+code does not rewrite accepted records; changed fingerprints invalidate affected
+cached analyses on retry.
 
 `character_agent.query` is the Celery task for asynchronous identity-grounded or
 generic queries. It reloads the applicable graph identity, reports the

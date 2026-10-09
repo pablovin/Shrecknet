@@ -159,7 +159,7 @@ async def test_consolidation_adds_revelation_with_source_provenance():
                                'justification': 'A defining revelation.',
                                'event_references': ['event-001'], 'changes': []}],
         "goal_operations": [],
-        "new_aspects": [], "new_goals": [], "focused_aspects": [], "focused_goals": [],
+        "new_goals": [], "focused_aspects": [], "focused_goals": [],
     }}
     llm = FakeLLM(json.dumps(response))
     event = ProfileEventOutput(
@@ -274,7 +274,16 @@ def test_prompt_contracts_describe_the_new_execution_order():
     assert '"personality_traits"' not in TRAIT_INTERPRETATION_PROMPT
     assert "Established personality dimensions and meanings" in TRAIT_INTERPRETATION_PROMPT
     assert "generated perspectives" in TRAIT_INTERPRETATION_PROMPT
-    assert PROMPT_VERSION
+    assert "Select one primary emotion and one primary belief when supported" in PSYCHOLOGICAL_ANALYSIS_PROMPT
+    assert "Do not fill available slots" in PSYCHOLOGICAL_ANALYSIS_PROMPT
+    for prompt in (PSYCHOLOGICAL_ANALYSIS_PROMPT, PSYCHOLOGICAL_CONSOLIDATION_PROMPT):
+        assert "short-term or enduring" in prompt
+        assert "completion conditions" in prompt
+        assert "Shadow City" in prompt
+        assert "durable truth, identity, conviction, relationship" in prompt
+        assert "no minimum" in prompt
+    assert "same outcome" in PSYCHOLOGICAL_CONSOLIDATION_PROMPT
+    assert PROMPT_VERSION != "character-embodiment-v34-bounded-candidates"
 
 
 @pytest.mark.asyncio

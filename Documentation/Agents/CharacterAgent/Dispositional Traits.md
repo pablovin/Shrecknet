@@ -94,11 +94,14 @@ the authoritative trait meanings. It receives no prior `personality_traits` or
 generated perspective; summaries cannot establish trait evidence.
 Each internal model-facing candidate has `trait`, `diagnostic_situation`,
 `relationship`, `stakes`, `polarity`, and a brief grounded `justification`.
-Its schema specializes `diagnostic_situation` to the values registered for that
-trait. `relationship` is `friend|enemy|other`; `stakes` is
-`ordinary|high_stakes`. All three context fields are null together for
-unspecified context. The backend constructs the existing persisted
-`situation_type` (`diagnostic:relationship:stakes` or `unspecified`) after
+The provider receives one flat object schema with all six keys required,
+additional keys forbidden, and nullable context values. Trait and polarity
+remain finite enums; `relationship` is `friend|enemy|other` and `stakes` is
+`ordinary|high_stakes`. Python validates `diagnostic_situation` against
+`TRAIT_BY_KEY[trait].diagnostic_situations` and requires `diagnostic_situation`,
+`relationship`, and `stakes` to be all non-null or all null. No trait-specific
+object union or context-only object branch is sent to the provider. The backend
+constructs the persisted `situation_type` (`diagnostic:relationship:stakes` or `unspecified`) after
 validating the model contract, then adds `perspective_id`, evidence ID, source
 and revision ownership, chronological position, and policy version. The LLM
 never supplies a point, intensity, numeric confidence, diagnosticity, or four

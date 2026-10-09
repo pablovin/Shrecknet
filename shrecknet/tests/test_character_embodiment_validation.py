@@ -16,6 +16,7 @@ from app.jobs.character_agent.embody_agent import (
 from app.jobs.character_agent.consolidation import ConsolidationEnvelope, prepare_consolidation
 from app.jobs.character_agent.embodiment_debug_artifacts import EmbodimentDebugArtifacts
 from app.jobs.character_agent.profile import _apply_goal_ops
+from app.schemas.character_traits import DIRECTIONAL_TRAITS
 from app.schemas.character_agent import ProfileEventOutput, ScenePerspectiveOutput, GoalUpdateData
 from app.integrations.llm.shreckllm_client import LLMProviderUnavailableError
 from app.integrations.llm.structured_output import structured_output_is_unsupported
@@ -184,7 +185,10 @@ async def test_invalid_duplicate_and_excess_trait_candidates_are_dropped():
                 "stakes": None, "polarity": "high", "justification": "A voluntary choice."}
     raw = {"scene_trait_interpretations": [{"trait_candidates": [
         {"diagnostic_situation": None, "relationship": None, "stakes": None,
-         "polarity": "high", "justification": "Missing the trait discriminator."},
+         "polarity": "high", "justification": "Missing the trait field."},
+        {"diagnostic_situation": "uncertain_threat", "relationship": "other", "stakes": "ordinary"},
+        {**candidate("caution"), "diagnostic_situation": "exploitation", "relationship": "other", "stakes": "ordinary"},
+        {**candidate("caution"), "relationship": "other"},
         candidate("integrity"), candidate("integrity"), candidate("caution"),
         candidate("presence"), candidate("curiosity"),
     ]}]}
@@ -338,34 +342,66 @@ def test_provider_schema_matches_runtime_typed_contract():
         ConsolidationEnvelope.model_validate(invalid)
 
 
-def test_trait_provider_schema_encodes_trait_specific_context_and_unspecified_shape():
-    from app.jobs.character_agent.embody_agent import _SceneTraitInterpretationsLLMOutput
-
+def test_trait_provider_schema_requires_one_complete_flat_candidate():
     schema = _model_output_schema(_SceneTraitInterpretationsLLMOutput, {"scene_ids": ["s1"]})
     Draft202012Validator.check_schema(schema)
     trait_items = schema["$defs"]["_SceneTraitInterpretationLLMOutput"]["properties"]["trait_candidates"]
     assert trait_items["maxItems"] == 3
+    candidate_schema = schema["$defs"]["_TraitCandidateLLMOutput"]
+    assert trait_items["items"] == {"$ref": "#/$defs/_TraitCandidateLLMOutput"}
+    assert set(candidate_schema["required"]) == {
+        "trait", "diagnostic_situation", "relationship", "stakes", "polarity", "justification",
+    }
+    assert candidate_schema["additionalProperties"] is False
+    assert not {"oneOf", "anyOf", "discriminator"} & candidate_schema.keys()
+    assert candidate_schema["properties"]["trait"]["enum"] == list(DIRECTIONAL_TRAITS)
     validator = Draft202012Validator(schema)
-    valid = {"scene_trait_interpretations": [{"trait_candidates": [{
+    candidate = {
         "trait": "caution", "diagnostic_situation": "uncertain_threat",
         "relationship": "other", "stakes": "high_stakes", "polarity": "high",
         "justification": "Mara seeks cover before approaching the known danger.",
-    }]}]}
-    validator.validate(valid)
-    assert list(validator.iter_errors({"scene_trait_interpretations": [{"trait_candidates": [{
-        **valid["scene_trait_interpretations"][0]["trait_candidates"][0],
-        "diagnostic_situation": "exploitation",
-    }]}]}))
-    invalid = {"scene_trait_interpretations": [{"trait_candidates": [{
-        **valid["scene_trait_interpretations"][0]["trait_candidates"][0],
-        "relationship": None,
-    }]}]}
-    assert list(validator.iter_errors(invalid))
-    unspecified = {"scene_trait_interpretations": [{"trait_candidates": [{
-        "trait": "integrity", "diagnostic_situation": None, "relationship": None,
-        "stakes": None, "polarity": "high", "justification": "She refuses a free unfair gain.",
-    }]}]}
-    validator.validate(unspecified)
+    }
+
+    def envelope(item):
+        return {"scene_trait_interpretations": [{"trait_candidates": [item]}]}
+
+    validator.validate(envelope(candidate))
+    for field in candidate:
+        assert list(validator.iter_errors(envelope({k: v for k, v in candidate.items() if k != field})))
+    fragment = {k: candidate[k] for k in ("diagnostic_situation", "relationship", "stakes")}
+    assert list(validator.iter_errors(envelope(fragment)))
+    for invalid in ({"unexpected": True}, {"trait": "steadiness"}, {"polarity": "middle"},
+                    {"relationship": "stranger"}, {"stakes": "low"}, {"justification": ""},
+                    {"justification": "x" * 361}):
+        assert list(validator.iter_errors(envelope({**candidate, **invalid})))
+    assert list(validator.iter_errors({"scene_trait_interpretations": []}))
+    unspecified = {**candidate, "diagnostic_situation": None, "relationship": None, "stakes": None}
+    validator.validate(envelope(unspecified))
+    _SceneTraitInterpretationsLLMOutput.model_validate(envelope(unspecified))
+    # Structural generation stays simple; the authoritative registry and context
+    # completeness checks are enforced by Python after generation.
+    for invalid in ({"diagnostic_situation": "exploitation"}, {"relationship": None}):
+        value = envelope({**candidate, **invalid})
+        validator.validate(value)
+        with pytest.raises(ValidationError):
+            _SceneTraitInterpretationsLLMOutput.model_validate(value)
+
+
+@pytest.mark.parametrize("trait", DIRECTIONAL_TRAITS)
+def test_flat_trait_candidate_validates_registry_diagnostics(trait):
+    from app.jobs.character_agent.embody_agent import _TraitCandidateLLMOutput
+    from app.schemas.character_traits import TRAIT_BY_KEY
+
+    for diagnostic in TRAIT_BY_KEY[trait].diagnostic_situations:
+        _TraitCandidateLLMOutput.model_validate({
+            "trait": trait, "diagnostic_situation": diagnostic, "relationship": "other",
+            "stakes": "ordinary", "polarity": "low", "justification": "A supported choice.",
+        })
+    with pytest.raises(ValidationError):
+        _TraitCandidateLLMOutput.model_validate({
+            "trait": trait, "diagnostic_situation": "unknown_diagnostic", "relationship": "other",
+            "stakes": "ordinary", "polarity": "low", "justification": "A supported choice.",
+        })
 
 
 @pytest.mark.parametrize("operation", ["update", "reinforce", "status"])
@@ -437,8 +473,9 @@ async def test_append_failure_never_writes_failed_source_and_preserves_prior_com
                 self.calls.append(kwargs)
                 self.consolidations += 1
                 if prior_source and self.consolidations == 1:
-                    return json.dumps(response([ADD]))
-                return json.dumps(response([{**ADD, "event_references": ["event-999"]}]))
+                    return json.dumps({"consolidation": {**response()["consolidation"], "new_goals": [ADD]}})
+                return json.dumps({"consolidation": {**response()["consolidation"],
+                    "new_goals": [{**ADD, "event_references": ["event-999"]}]}})
             if tag.endswith("scene_interpretation"):
                 self.calls.append(kwargs)
                 return json.dumps({"scene_enrichments": [{"emotions": [], "beliefs": [], "profile_events": [{"kind": "goal", "description": "Vows to find their maker."}]}]})

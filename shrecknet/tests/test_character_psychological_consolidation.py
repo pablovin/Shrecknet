@@ -369,3 +369,51 @@ def test_focus_caps_are_enforced_without_capping_historical_records():
     assert sum(item["in_focus"] for item in aspects) == 10
     with pytest.raises(ValueError, match="focused aspect limit"):
         _apply_aspect_ops(aspects, [], focused_ids=[f"a{i}" for i in range(11)])
+
+
+@pytest.mark.parametrize("count", [0, 1, 2, 3])
+def test_selective_emotions_and_beliefs_keep_optional_two_entry_limit(count):
+    value = {"scene_enrichments": [{
+        "emotions": [{"arousal": 62, "valence": 20, "description": "Watchful tension."}] * count,
+        "beliefs": [{"statement": "Caution matters.", "confidence": 85}] * count,
+        "profile_events": [],
+    }]}
+    if count > 2:
+        with pytest.raises(ValueError):
+            _SceneEnrichmentsLLMOutput.model_validate(value)
+    else:
+        bound = _bind_llm_enrichments(_SceneEnrichmentsLLMOutput.model_validate(value), ["s1"], {})
+        assert len(bound.scene_enrichments[0].emotions) == count
+        assert len(bound.scene_enrichments[0].beliefs) == count
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("distinct", [True, False])
+async def test_consolidation_preserves_independent_goal_or_reinforces_equivalent_goal(distinct):
+    # Stubbed decisions verify binding/reducers, not the model's semantic judgment.
+    existing_title = "Discover who made Ernst"
+    event_description = "Ernst commits to entering the Shadow City." if distinct else "Ernst renews his search for his maker."
+    evidence = {"justification": "A separate completion condition." if distinct else "The same intended outcome.",
+                "event_references": ["event-001"]}
+    decision = {"aspect_operations": [], "goal_operations": [], "new_aspects": [],
+                "new_goals": [], "focused_aspects": [],
+                "focused_goals": [{"scope": "existing", "index": 1}]}
+    if distinct:
+        decision["new_goals"] = [{"title": "Enter the Shadow City", "description": event_description,
+                                  "goal_type": "objective", "in_focus": True, "changes": [], **evidence}]
+    else:
+        decision["goal_operations"] = [{"operation": "reinforce", "target": {"scope": "existing", "index": 1},
+                                        "title": None, "description": None, "goal_type": None, **evidence}]
+    llm = _LLM(json.dumps({"consolidation": decision}))
+    job = EmbodyAgent(llm_client=llm, character_incorporation_model="model", scene_interpretation_model="model")
+    goals = [{"id": "maker", "title": existing_title, "description": "Understand my origins.",
+              "goal_type": "objective", "status": "active", "in_focus": True}]
+    result = await job._consolidate_profile(
+        analysis=_analysis([ProfileEventOutput(kind="goal", description=event_description,
+                                              scene_id="s1", evidence_ids=["scene:s1"])]),
+        current_aspects=[], current_goals=goals,
+    )
+    assert result["goal_updates"][0].evidence_ids == ["scene:s1"]
+    _apply_goal_ops(goals, result["goal_updates"], focused_ids=result["focused_goals"])
+    assert [goal["title"] for goal in goals] == ([existing_title, "Enter the Shadow City"] if distinct else [existing_title])
+    assert all(goal["status"] == "active" for goal in goals)

@@ -7,12 +7,13 @@ For each source scene chunk, PERSPECTIVE_PROMPT runs first:
     A truncated response retries with PERSPECTIVE_TRUNCATION_RECOVERY_PROMPT.
 After perspective validation, two calls run in parallel for that chunk:
     PSYCHOLOGICAL_ANALYSIS_PROMPT (built from ENRICHMENT_PROMPT):
-        canonical scenes + source_type/perspectives + identity_description -> emotions, beliefs, at most one aspect and one goal event per scene.
+        canonical scenes + source_type/perspectives + identity_description -> selective emotions/beliefs, at most one durable aspect and one actionable goal event per scene.
     TRAIT_INTERPRETATION_PROMPT:
-        canonical scenes + authoritative trait meanings -> up to three candidates per scene.
+        canonical scenes + authoritative trait meanings -> up to three complete six-field candidates per scene; backend validates trait-specific context.
 After all chunks for one source, one optional consolidation call reconciles its
 profile events with current character state using typed ordered operations and local
-references. Malformed/duplicate scene candidates are dropped individually;
+references, preserving independently actionable goals even when motivations overlap.
+Malformed/duplicate scene candidates are dropped individually;
 invalid output envelopes use the bounded validation retry budget. Validated chunk
 outputs are checkpointed and reused only when input fingerprints match; truncated
 psychological batches split until single scenes. Backend reducers validate and
@@ -38,7 +39,7 @@ IDENTITY_TRAIT_DESCRIPTION_CONTRACT = (
         for key in DIRECTIONAL_TRAITS
     ], ensure_ascii=False)
 )
-PROMPT_VERSION = "character-embodiment-v34-bounded-candidates"
+PROMPT_VERSION = "character-embodiment-v35-flat-selective-candidates"
 
 # Execution order: Stage 0, once when description is absent and once after
 # scene processing to refresh it from the resulting current state.
@@ -194,7 +195,7 @@ scene count and every field limit are mandatory. Return JSON only."""
 # Stage 2 receives canonical scene context and the Stage 1 interpretation.
 # Purpose: Define psychological enrichment from canonical scenes and grounded character interpretations.
 # Used by: PSYCHOLOGICAL_ANALYSIS_PROMPT for the second scene-chunk call.
-# Expected: Ordered JSON enrichments with emotions, beliefs, and profile events.
+# Expected: Ordered JSON enrichments with selective emotions/beliefs and grounded aspect/goal events.
 ENRICHMENT_PROMPT = r"""Stage 2 — enrich grounded character perspectives. For every ordered
 scene item, use its canonical scene name and description together with the
 agent_scene_interpretation source_type and perspective from Stage 1. Use
@@ -219,6 +220,11 @@ Every enrichment MUST contain all three arrays: emotions, beliefs, profile_event
 Use [] when unsupported. Never return scene or evidence IDs; the backend binds
 each result to its input scene.
 
+Select one primary emotion and one primary belief when supported. Include a
+second emotion or belief only when it is distinct and significant: a separate
+reaction or conclusion, not a paraphrase or minor variation of the first.
+Do not fill available slots. Unsupported emotions or beliefs must remain [].
+
 Limits per scene: emotions 2, beliefs 2, and at most one profile event of each
 kind (one aspect and one goal). Text fields are at
 most 240 characters for emotion descriptions and 300 for belief statements or
@@ -226,9 +232,17 @@ profile-event descriptions. All text fields must be nonempty.
 
 OUTPUT: {"scene_enrichments":[{"emotions":[{"arousal":0..100,"valence":0..100 (0 negative, 50 neutral, 100 positive),"description":"..."}],"beliefs":[{"statement":"...","confidence":0..100}],"profile_events":[{"kind":"aspect|goal","description":"brief significant evidence-grounded development"}]}]}.
 
-Most scenes should produce no profile_events. Include only significant identity
-revelations, lasting circumstances, genuine personal commitments, or meaningful
-resolutions. Events are candidates, not final aspects/goals or status changes.
+An aspect represents a durable truth, identity, conviction, relationship, or
+significant personal circumstance. Temporary feelings alone are not aspects.
+A goal represents an outcome the character wants to accomplish, whether
+short-term or enduring. Emit a goal event for a meaningful new objective or
+supported development/resolution of an existing objective. A short duration does
+not make an independently actionable objective trivial. Shared motivation does
+not make objectives equivalent: entering the Shadow City and discovering who
+made Ernst can have different completion conditions and remain separate goals.
+Emit profile_events only for supported significant developments; use [] when
+none exist. There is no minimum number of aspects or goals. Events are
+candidates, not final aspects/goals or status changes.
 Do not duplicate the subjective perspective or add numerical ratings. Return JSON only."""
 
 # Execution order: Stage 2 call, after perspective validation, parallel with Stage 3.
@@ -304,7 +318,7 @@ fields are null. Never return a compound situation string. Return JSON only.""" 
 
 
 # Execution order: Stage 4, after all Stage 2/3 chunks for one source; skipped without events.
-# Purpose: Reconcile source-local evidence with existing and historical profile items.
+# Purpose: Reconcile source-local evidence, merging equivalent outcomes while preserving independent goals.
 # Used by: EmbodyAgent._consolidate_profile; backend reducers validate and apply output.
 # Expected: Existing-item operations plus self-contained additions with nested chronological changes.
 PSYCHOLOGICAL_CONSOLIDATION_PROMPT = r"""Stage 4 — reason about and consolidate one chronological source bundle.
@@ -315,6 +329,20 @@ ambiguous or unsupported events. Merge equivalent developments rather than
 creating duplicate aspects/goals. Each operation needs a short, nonblank
 justification and one or more supplied event IDs of the same kind as its list.
 The backend validates these decisions and binds all persistence identifiers.
+
+An aspect represents a durable truth, identity, conviction, relationship, or
+significant personal circumstance. A goal represents an outcome the character
+wants to accomplish, whether short-term or enduring. Temporary feelings alone
+are not aspects; short-term objectives can still be meaningful goals.
+Shared motivation is not an equivalent objective. Compare intended outcomes
+and completion conditions before merging goals. Preserve an independently
+actionable new objective even when it contributes to an existing motivation.
+For example, "Enter the Shadow City" and "Discover who made Ernst" may share a
+motivation but have different completion conditions and remain separate goals
+when both are supported. "Identify my maker" and "Discover who made me" describe
+the same outcome and should reinforce or update one goal rather than duplicate
+it. Do not split mere paraphrases into separate goals. Evidence determines the
+number of aspects/goals; there are no minimum counts, and empty arrays are valid.
 
 INPUT JSON:
 {"identity_description":{"identity_summary":"...","psychological_summary":"...","personality_traits":[{"trait":"trait key","description":"..."}]},"events":[{"id":"event-001","kind":"aspect|goal","description":"source evidence"}],"aspects":[{"index":1,"name":"I ...","description":"text or null","category":"category","status":"active|inactive","in_focus":true}],"goals":[{"index":1,"title":"...","description":"text or null","goal_type":"type","status":"active|completed|abandoned|superseded","in_focus":true}]}

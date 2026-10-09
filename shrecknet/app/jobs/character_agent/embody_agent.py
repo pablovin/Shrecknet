@@ -25,9 +25,9 @@ import json
 import logging
 import re
 import time
-from typing import Annotated, Any, Callable, Literal, Union
+from typing import Any, Callable, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, create_model, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from app.integrations.llm.structured_output import (
     strict_json_schema,
@@ -175,10 +175,11 @@ class _ProfileEventLLMOutput(BaseModel):
     description: str = Field(min_length=1, max_length=300)
 
 
-class _TraitCandidateFields(BaseModel):
-    """Shared typed model fields; allowed diagnostics are specialized per trait."""
+class _TraitCandidateLLMOutput(BaseModel):
+    """Flat provider contract; trait-specific context is validated by the backend."""
 
     model_config = ConfigDict(extra="forbid")
+    trait: Literal[DIRECTIONAL_TRAITS]
     diagnostic_situation: str | None
     relationship: Literal["friend", "enemy", "other"] | None
     stakes: Literal["ordinary", "high_stakes"] | None
@@ -190,26 +191,15 @@ class _TraitCandidateFields(BaseModel):
         values = (self.diagnostic_situation, self.relationship, self.stakes)
         if any(value is None for value in values) and any(value is not None for value in values):
             raise ValueError("trait situation fields must all be set or all be null")
+        if (
+            self.diagnostic_situation is not None
+            and self.diagnostic_situation not in TRAIT_BY_KEY[self.trait].diagnostic_situations
+        ):
+            raise ValueError("diagnostic situation is not allowed for the selected trait")
         return self
 
 
-_TraitCandidateVariants = tuple(
-    create_model(
-        f"_{key.title()}TraitCandidateLLMOutput",
-        __base__=_TraitCandidateFields,
-        trait=(Literal[key], ...),
-        diagnostic_situation=(Literal[tuple(definition.diagnostic_situations)] | None, ...),
-    )
-    for key, definition in TRAIT_BY_KEY.items()
-    if key in DIRECTIONAL_TRAITS
-)
-_TraitCandidateLLMOutput = Annotated[
-    Union[_TraitCandidateVariants], Field(discriminator="trait")
-]
-_TRAIT_CANDIDATE_ADAPTER = TypeAdapter(_TraitCandidateLLMOutput)
-
-
-def _trait_situation_type(candidate: _TraitCandidateFields) -> str:
+def _trait_situation_type(candidate: _TraitCandidateLLMOutput) -> str:
     if candidate.diagnostic_situation is None:
         return "unspecified"
     return ":".join((candidate.diagnostic_situation, candidate.relationship, candidate.stakes))
@@ -1113,28 +1103,6 @@ def _model_output_schema(
         if isinstance(scene_ids, list) and isinstance(interpretations, dict):
             interpretations["minItems"] = len(scene_ids)
             interpretations["maxItems"] = len(scene_ids)
-        definitions = result.get("$defs", {})
-        for key, definition in TRAIT_BY_KEY.items():
-            if key not in DIRECTIONAL_TRAITS:
-                continue
-            name = f"_{key.title()}TraitCandidateLLMOutput"
-            variant = definitions.get(name)
-            if not isinstance(variant, dict):
-                continue
-            properties = variant.get("properties", {})
-            diagnostics = list(definition.diagnostic_situations)
-            variant["anyOf"] = [
-                {"type": "object", "properties": {field: {"type": "null"} for field in ("diagnostic_situation", "relationship", "stakes")}},
-                {"type": "object", "properties": {
-                    "diagnostic_situation": {"enum": diagnostics, "type": "string"},
-                    "relationship": {"enum": ["friend", "enemy", "other"], "type": "string"},
-                    "stakes": {"enum": ["ordinary", "high_stakes"], "type": "string"},
-                }},
-            ]
-        candidate_union = definitions.get("_SceneTraitInterpretationLLMOutput", {}).get("properties", {}).get("trait_candidates", {}).get("items", {})
-        if isinstance(candidate_union, dict) and "oneOf" in candidate_union:
-            candidate_union["anyOf"] = candidate_union.pop("oneOf")
-            candidate_union.pop("discriminator", None)
         return result
 
     if schema is not _SceneEnrichmentsLLMOutput:
@@ -1212,7 +1180,7 @@ def _drop_invalid_scene_candidates(
         stage, per_scene_limit = "psychological_enrichment", 2
     elif schema is _SceneTraitInterpretationsLLMOutput:
         collection, field = "scene_trait_interpretations", "trait_candidates"
-        validator = _TRAIT_CANDIDATE_ADAPTER.validate_python
+        validator = _TraitCandidateLLMOutput.model_validate
         stage, per_scene_limit = "trait_interpretation", 3
     else:
         return parsed

@@ -53,6 +53,15 @@ are rejected by the new runtime schema.
 
 ## Extraction and evidence
 
+Traits answer **How does this character tend to behave?** Admit evidence of a
+behavioral tendency through the existing construct definitions. A temporary
+reaction or isolated outcome is insufficient by itself; a diagnostic voluntary
+choice can supply evidence without establishing a settled trait. Identity facts
+and established capabilities alone do not establish trait observations. This
+admission wording does not change the constructs, scales, or reducers. For the
+boundaries with aspects and goals, see the [CharacterAgent profile admission
+contract](CharacterAgent.md#evidence-grounded-embodiment).
+
 ```mermaid
 flowchart TD
     A[Persistent identity_description] --> B[Stage 0: load or generate narrative grounding]

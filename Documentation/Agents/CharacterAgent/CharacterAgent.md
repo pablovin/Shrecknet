@@ -447,15 +447,75 @@ distinct, significant reaction or conclusion. Empty lists are valid; two is a
 maximum, never a target. Arousal, valence, and belief confidence remain integers
 in `0..100` (valence: `0` negative, `50` neutral, `100` positive).
 
-An aspect represents a durable truth, identity, conviction, relationship, or
-significant personal circumstance. A goal is an intended outcome, whether
-short-term or enduring. Stage 2 emits meaningful new objectives and supported
-developments/resolutions; Stage 4 compares intended outcomes and completion
-conditions before merging. Shared motivation alone does not make goals
-equivalent: entering the Shadow City and discovering who made Ernst may remain
-independently actionable goals. Paraphrases such as identifying one's maker and
-discovering who created oneself reinforce or update the same goal. Temporary
-feelings alone do not establish aspects. There are no minimum profile counts.
+The persistent profile uses these admission boundaries:
+
+| Component | Question it answers | Admission rule |
+| --- | --- | --- |
+| Traits | How does this character tend to behave? | Evidence of a behavioral tendency interpreted through the existing trait definitions; a temporary reaction or isolated outcome is insufficient by itself. One diagnostic voluntary choice may supply evidence without establishing a settled trait. |
+| Aspects | Who or what is this character? | A supported, relatively persistent, character-defining property: appearance, identity, enduring fear, commitment, relationship, significant circumstance, or established capability. |
+| Goals | What does this character want to achieve? | A supported, personally meaningful outcome with a recognizable completion condition; ordinary actions and instrumental steps do not qualify by themselves. |
+
+Persistence does not mean permanence. One explicit revelation can establish an
+aspect without repeated scenes. Short-term goals can qualify when accomplishing
+them matters independently beyond advancing another objective. Different
+completion conditions alone do not establish that significance. There are no
+minimum profile counts. The existing trait definitions, scoring, and aggregation
+remain authoritative; see [Dispositional traits](Dispositional%20Traits.md).
+
+`PROFILE_ADMISSION_CONTRACT` supplies the same aspect/goal rules to Stage 2 and
+Stage 4. Stage 2 emits qualifying candidates and supported significant progress
+or resolution of existing goals. Event descriptions preserve explicit completion,
+failure, or abandonment when supported. Stage 4 independently checks admission
+before comparison and operations, and may omit weak Stage 2 proposals entirely.
+Rejected candidates are not reclassified. Admission decisions do not rewrite
+scene perspectives, emotions, or beliefs; their generation contracts are unchanged.
+
+Stage 4 compares intended outcomes and completion conditions before merging
+qualifying goals. Shared motivation alone does not make them equivalent:
+entering the Shadow City and discovering who made Ernst may remain separate
+goals when each is independently significant. Entering the city merely to reach
+the next clue is instead an instrumental step. Paraphrases such as identifying
+one's maker and discovering who created oneself reinforce or update the same
+goal. Do not invent a broader objective to absorb scene actions.
+
+Boundary examples for extraction review:
+
+| Evidence | Expected admission decision |
+| --- | --- |
+| Explicit golden hair, enduring fear of deep water, or manufactured origins | Qualifying aspect; no repeated-scene requirement. |
+| Accepting the dollmaker's confession or learning a ritual clue | No aspect from that information alone. |
+| One deception or one successful negotiation | Insufficient to establish an enduring conviction or capability. |
+| An established refusal to be controlled or established ritual expertise | Qualifying aspect when defining and supported. |
+| Generic curiosity | No aspect merely duplicating the curiosity trait. A distinctive enduring fixation may qualify. |
+| Examining photographs or following a clue | Usually no new goal; may evidence progress toward an existing goal. |
+| Entering the Shadow City as a significant undertaking in its own right | May qualify as a separate goal, even if related to another motivation. |
+| A significant goal explicitly introduced and achieved in one source | Retain its supported completed history; do not leave it active. |
+| An old or unmentioned active goal | No inferred completion; focus may change independently. |
+
+Stage 2 checks aspects independently of emotions, beliefs, and goals. Canonical
+scene evidence may establish or reinforce an enduring fact even when it already
+appears in `identity_description`; the identity description alone cannot justify
+an event. Aspect events retain concrete defining facts rather than only a generic
+reaction to them.
+
+Stage 4 merges aspects only when they assert the same specific proposition,
+comparing the existing name and description. A shared theme or category does not
+make aspects equivalent. For example, being a manufactured doll with implanted
+memories is an origin fact, while refusing to be a pawn is a conviction. Both can
+coexist as `identity` aspects. Repeated doll/vessel revelations consolidate into
+one origin aspect that retains the concrete origin and memory facts. Established
+ritual expertise is also distinct from a conviction about agency; merely learning
+a ritual's consequences does not establish that expertise. The `knowledge`
+category remains compatible, but its label does not bypass aspect admission.
+A reinforcement with null content is appropriate only when the existing text
+already represents the fact; evidence links and justifications do not substitute
+for keeping it in the aspect text. A refinement may update the same proposition;
+an independent qualifying fact requires a separate aspect. Updates must not append
+independent facts to an existing description simply to avoid new aspects. New
+additions have no existing-item index; repeated evidence for a new aspect belongs
+in its `event_references`. This semantic decision belongs
+to the consolidation prompt; backend validators check references, provenance,
+shape, and lifecycle, but cannot prove natural-language equivalence.
 
 Stage 3 uses one flat candidate object with six required keys: `trait`,
 `diagnostic_situation`, `relationship`, `stakes`, `polarity`, and `justification`.
@@ -478,7 +538,7 @@ ten active goals; focus changes do not alter lifecycle status. See the
 for the migration and verification details.
 
 
-Prompt version `character-embodiment-v35-flat-selective-candidates` participates
+Prompt version `character-embodiment-v37-profile-admission` participates
 in source and chunk checkpoint fingerprints, so retries do not reuse outputs
 from older prompt versions. These generation rules do not change public API/SDK
 payloads or persisted node shapes and require no database migration. Previously

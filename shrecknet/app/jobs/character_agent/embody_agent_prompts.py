@@ -7,12 +7,15 @@ For each source scene chunk, PERSPECTIVE_PROMPT runs first:
     A truncated response retries with PERSPECTIVE_TRUNCATION_RECOVERY_PROMPT.
 After perspective validation, two calls run in parallel for that chunk:
     PSYCHOLOGICAL_ANALYSIS_PROMPT (built from ENRICHMENT_PROMPT):
-        canonical scenes + source_type/perspectives + identity_description -> selective emotions/beliefs, at most one durable aspect and one actionable goal event per scene.
+        canonical scenes + source_type/perspectives + identity_description -> selective emotions/beliefs, at most one character-defining aspect and one independently meaningful goal event per scene.
     TRAIT_INTERPRETATION_PROMPT:
         canonical scenes + authoritative trait meanings -> up to three complete six-field candidates per scene; backend validates trait-specific context.
 After all chunks for one source, one optional consolidation call reconciles its
 profile events with current character state using typed ordered operations and local
-references, preserving independently actionable goals even when motivations overlap.
+references, checking admission before preserving distinct qualifying properties
+and independently meaningful goals. Stage 2 and Stage 4 share
+PROFILE_ADMISSION_CONTRACT; rejected candidates are omitted without reclassifying
+or rewriting scene perspectives, emotions, or beliefs.
 Malformed/duplicate scene candidates are dropped individually;
 invalid output envelopes use the bounded validation retry budget. Validated chunk
 outputs are checkpointed and reused only when input fingerprints match; truncated
@@ -39,7 +42,7 @@ IDENTITY_TRAIT_DESCRIPTION_CONTRACT = (
         for key in DIRECTIONAL_TRAITS
     ], ensure_ascii=False)
 )
-PROMPT_VERSION = "character-embodiment-v35-flat-selective-candidates"
+PROMPT_VERSION = "character-embodiment-v37-profile-admission"
 
 # Execution order: Stage 0, once when description is absent and once after
 # scene processing to refresh it from the resulting current state.
@@ -191,6 +194,43 @@ the same required perspectives much more compactly. The exact one-perspective-pe
 scene count and every field limit are mandatory. Return JSON only."""
 
 
+# Purpose: Define one admission boundary for persistent aspect and goal candidates.
+# Used by: ENRICHMENT_PROMPT/PSYCHOLOGICAL_ANALYSIS_PROMPT (Stage 2) and
+# PSYCHOLOGICAL_CONSOLIDATION_PROMPT (Stage 4), before comparing qualified items.
+# Expected: Only character-defining properties and independently meaningful outcomes qualify.
+PROFILE_ADMISSION_CONTRACT = r"""
+Aspects answer: Who or what is this character?
+An aspect is a supported, relatively persistent, character-defining property:
+appearance, identity, enduring fear, commitment, relationship, significant
+personal circumstance, or established capability. Persistence does not mean
+permanence. One explicit revelation can establish a defining fact; repeated
+scenes are not required. "I have golden hair", "I fear deep water", and "I am a
+manufactured vessel" qualify when established by the source. A temporary
+reaction, accepting a confession, or learning a plot clue does not qualify.
+One deception does not establish an enduring willingness to lie; one successful
+negotiation does not establish a lasting capability. Require evidence of the
+defining property itself. "I refuse to be controlled" can express an enduring
+conviction. Enduring expertise can qualify as knowledge; knowing the latest
+ritual clue alone cannot. A generic "I am very curious" must not duplicate the
+existing curiosity trait; a distinctive enduring fixation can qualify.
+
+Goals answer: What does this character want to achieve?
+A goal is a supported, personally meaningful outcome with a recognizable
+completion condition, whether short-term or enduring. Require independent
+significance: would accomplishing it matter to the character beyond merely
+advancing another objective? Ordinary actions, tactics, errands, and instrumental
+steps do not qualify by themselves. Examining photographs or following a clue
+usually advances an investigation rather than establishing another goal.
+Different completion conditions alone do not establish independent significance.
+Entering the Shadow City can qualify as a separate goal when the source makes
+it a significant undertaking in its own right; when it is merely the next route
+to a clue, it does not. Do not invent an overarching goal to absorb scene actions.
+
+Apply these admission rules only to profile events and aspect/goal decisions.
+Omit rejected candidates; do not reclassify them or rewrite scene perspectives,
+emotions, or beliefs. There are no minimum profile counts.
+"""
+
 # Execution order: Stage 2 branch, parallel with TRAIT_INTERPRETATION_PROMPT after Stage 1.
 # Stage 2 receives canonical scene context and the Stage 1 interpretation.
 # Purpose: Define psychological enrichment from canonical scenes and grounded character interpretations.
@@ -232,14 +272,23 @@ profile-event descriptions. All text fields must be nonempty.
 
 OUTPUT: {"scene_enrichments":[{"emotions":[{"arousal":0..100,"valence":0..100 (0 negative, 50 neutral, 100 positive),"description":"..."}],"beliefs":[{"statement":"...","confidence":0..100}],"profile_events":[{"kind":"aspect|goal","description":"brief significant evidence-grounded development"}]}]}.
 
-An aspect represents a durable truth, identity, conviction, relationship, or
-significant personal circumstance. Temporary feelings alone are not aspects.
-A goal represents an outcome the character wants to accomplish, whether
-short-term or enduring. Emit a goal event for a meaningful new objective or
-supported development/resolution of an existing objective. A short duration does
-not make an independently actionable objective trivial. Shared motivation does
-not make objectives equivalent: entering the Shadow City and discovering who
-made Ernst can have different completion conditions and remain separate goals.
+""" + PROFILE_ADMISSION_CONTRACT + r"""
+Check aspects independently from goals and emotions for every scene. Emit an
+aspect event when canonical scene evidence establishes, reveals, or meaningfully
+reinforces a defining fact, including an enduring fact already mentioned in the
+identity description. A fact need not first become true in this scene to be
+supported by it. Identity description alone is not evidence. Preserve the
+concrete fact in the event description, rather than replacing it with a generic
+reaction, resolve, or theme. For example, evidence that Ernst is a manufactured
+doll with implanted memories supports an identity aspect even if he already
+suspects his origin or also resolves to find his maker. A goal or belief about
+the revelation does not replace the aspect event. Do not turn every scene detail
+into an aspect; require defining, enduring personal significance.
+Emit a goal event for a qualifying new objective or supported significant
+development/resolution of an existing objective. A step can supply evidence of
+progress toward an existing goal without becoming another goal. Preserve explicit
+completion, failure, or abandonment in the event description when supported;
+do not infer resolution from silence or age.
 Emit profile_events only for supported significant developments; use [] when
 none exist. There is no minimum number of aspects or goals. Events are
 candidates, not final aspects/goals or status changes.
@@ -271,6 +320,13 @@ was demonstrated. The target never includes prior `personality_traits`.
 
 Identify personality trait observations for this character
 across the supplied chronological scenes.
+
+Traits answer: How does this character tend to behave?
+Admit evidence of a behavioral tendency interpreted through the existing trait
+definitions. A temporary reaction or isolated outcome is insufficient by itself;
+one diagnostic voluntary choice may supply evidence without establishing a
+settled trait. Identity facts and established capabilities are not trait signals
+by themselves. Use the authoritative meanings below; do not introduce new traits.
 
 Use identity_summary and psychological_summary only as background
 for understanding the character. Use canonical scene facts to
@@ -318,7 +374,7 @@ fields are null. Never return a compound situation string. Return JSON only.""" 
 
 
 # Execution order: Stage 4, after all Stage 2/3 chunks for one source; skipped without events.
-# Purpose: Reconcile source-local evidence, merging equivalent outcomes while preserving independent goals.
+# Purpose: Reconcile evidence, preserving independent aspect facts and goal outcomes.
 # Used by: EmbodyAgent._consolidate_profile; backend reducers validate and apply output.
 # Expected: Existing-item operations plus self-contained additions with nested chronological changes.
 PSYCHOLOGICAL_CONSOLIDATION_PROMPT = r"""Stage 4 — reason about and consolidate one chronological source bundle.
@@ -330,16 +386,63 @@ creating duplicate aspects/goals. Each operation needs a short, nonblank
 justification and one or more supplied event IDs of the same kind as its list.
 The backend validates these decisions and binds all persistence identifiers.
 
-An aspect represents a durable truth, identity, conviction, relationship, or
-significant personal circumstance. A goal represents an outcome the character
-wants to accomplish, whether short-term or enduring. Temporary feelings alone
-are not aspects; short-term objectives can still be meaningful goals.
+""" + PROFILE_ADMISSION_CONTRACT + r"""
+First qualify each event using the admission rules, then compare qualified
+properties/outcomes with existing items, and only then add, update, reinforce,
+or change status. Stage 2 events are proposals, not proof of qualification.
+Reject weak candidates even if Stage 2 proposed them. An event may be omitted
+without an operation. Preserve supported significant progress or resolution of
+an existing goal without promoting the instrumental step into a separate goal.
+Consolidate aspects by the specific proposition they assert, not a shared theme,
+category, motivation, or emotional reaction. For every supported aspect event,
+compare its concrete fact with the existing aspect's name AND description.
+Reinforce only when that same fact is already represented. Use update for a
+refinement of the same proposition, preserving its established meaning. Add a
+new aspect for an independently meaningful fact not represented by existing
+text; do not replace or broaden one aspect into a catch-all character summary.
+An update must refine the SAME proposition, not append an independent fact to
+the old description. If the existing statement can remain true while the new
+fact is false (or vice versa), they are independent and need separate aspects
+when both are supported. Do not combine them using "and" merely to avoid an
+addition. For example, established expertise in ritual magic and an enduring
+refusal to be a pawn are distinct qualifying properties; retain the conviction
+and add the expertise with category="knowledge" when supported. Merely learning
+a ritual's consequences is not enough to establish that expertise. There is no
+one-aspect-per-character, per-source, or per-category limit.
+Different aspects can share category="identity" and still be independent.
+For example, "I am a manufactured doll with implanted memories" states an
+origin fact; "I refuse to be a pawn in someone else's design" states a conviction.
+One does not imply the other. If both are evidenced, preserve both. Repeated
+revelations that Ernst is a doll or a manufactured vessel with implanted memories
+can consolidate into ONE origin aspect whose text retains those concrete facts.
+Similarly, belonging to a circle and established ritual expertise are different
+properties even if both inform the same investigation.
+An existing aspect "I refuse to be a mere wake in someone else's ledger", with
+a description about being more than traces in another's design, does not already
+state either "I am a manufactured doll" or "I am an expert in ritual magic".
+Do not attribute these facts to that existing text.
+Before reinforce, check whether a reader could recover the event's defining
+fact from the target name/description WITHOUT the new event, identity_description,
+justification, or assumed subtext. If not, a null-content reinforcement loses
+information: add the independent fact instead. A related revelation does not by
+itself prove an existing conviction was reaffirmed; require direct evidence for
+any parallel reinforcement. Apply this check to each proposed aspect operation
+before returning the final JSON.
+Do not consume a new fact through a reinforce operation with null content unless
+the target already states it. Justification and evidence links do not substitute
+for preserving the fact in the aspect's name or description. Do not omit a
+supported defining fact solely because identity_description already mentions it
+or because the event also supports a goal or belief. Ignore unsupported or
+temporary material and merge true paraphrases; do not aim for any aspect count.
+
 Shared motivation is not an equivalent objective. Compare intended outcomes
-and completion conditions before merging goals. Preserve an independently
-actionable new objective even when it contributes to an existing motivation.
+and completion conditions before merging qualifying goals. Preserve an
+independently meaningful new objective even when it contributes to an existing
+motivation.
 For example, "Enter the Shadow City" and "Discover who made Ernst" may share a
-motivation but have different completion conditions and remain separate goals
-when both are supported. "Identify my maker" and "Discover who made me" describe
+motivation and remain separate goals when the source establishes independent
+significance for both, rather than only different completion conditions.
+"Identify my maker" and "Discover who made me" describe
 the same outcome and should reinforce or update one goal rather than duplicate
 it. Do not split mere paraphrases into separate goals. Evidence determines the
 number of aspects/goals; there are no minimum counts, and empty arrays are valid.
@@ -366,7 +469,12 @@ Goal content keys are title, description, goal_type; statuses are
 active/completed/abandoned/superseded. Status cannot be combined with content.
 
 New items are self-contained objects in new_aspects/new_goals and have no target
-reference. Example new goal with chronological history:
+reference. An item added in this response has no existing-item index: "existing"
+always refers to the original input array, never the first new addition. Combine
+repeated evidence for a new aspect in that addition's event_references rather
+than reinforcing an unrelated existing item. Example new aspect retaining a defining fact:
+{"name":"I am a manufactured doll","description":"My memories were implanted during molding.","category":"identity","in_focus":true,"justification":"The supplied aspect events reveal this origin.","event_references":["event-001"],"changes":[]}
+Example new goal with chronological history:
 {"title":"Discover the conspiracy","description":"text or null","goal_type":"objective","in_focus":false,"justification":"...","event_references":["event-001"],"changes":[{"operation":"status","status":"completed","justification":"...","event_references":["event-005"]}]}
 New aspect base fields are name (must start with "I "), description, category,
 in_focus, justification, event_references, and changes. New goal base fields are

@@ -17,6 +17,7 @@ from app.jobs.character_agent.embody_agent_prompts import (
     PSYCHOLOGICAL_ANALYSIS_PROMPT,
     PSYCHOLOGICAL_CONSOLIDATION_PROMPT,
     PERSPECTIVE_PROMPT,
+    PROFILE_ADMISSION_CONTRACT,
     PROMPT_VERSION,
     TRAIT_INTERPRETATION_PROMPT,
 )
@@ -280,10 +281,26 @@ def test_prompt_contracts_describe_the_new_execution_order():
         assert "short-term or enduring" in prompt
         assert "completion conditions" in prompt
         assert "Shadow City" in prompt
-        assert "durable truth, identity, conviction, relationship" in prompt
+        assert PROFILE_ADMISSION_CONTRACT in prompt
+        assert "Aspects answer: Who or what is this character?" in prompt
+        assert "Goals answer: What does this character want to achieve?" in prompt
         assert "no minimum" in prompt
     assert "same outcome" in PSYCHOLOGICAL_CONSOLIDATION_PROMPT
-    assert PROMPT_VERSION != "character-embodiment-v34-bounded-candidates"
+    assert "Check aspects independently from goals and emotions" in PSYCHOLOGICAL_ANALYSIS_PROMPT
+    assert "Identity description alone is not evidence" in PSYCHOLOGICAL_ANALYSIS_PROMPT
+    assert "specific proposition" in PSYCHOLOGICAL_CONSOLIDATION_PROMPT
+    assert "name AND description" in PSYCHOLOGICAL_CONSOLIDATION_PROMPT
+    assert "One does not imply the other" in PSYCHOLOGICAL_CONSOLIDATION_PROMPT
+    assert "Justification and evidence links do not substitute" in PSYCHOLOGICAL_CONSOLIDATION_PROMPT
+    assert '"name":"I am a manufactured doll"' in PSYCHOLOGICAL_CONSOLIDATION_PROMPT
+    assert PROMPT_VERSION != "character-embodiment-v35-flat-selective-candidates"
+    assert PROMPT_VERSION != "character-embodiment-v36-distinct-aspect-facts"
+    assert "independently actionable" not in PSYCHOLOGICAL_ANALYSIS_PROMPT
+    assert "independently actionable" not in PSYCHOLOGICAL_CONSOLIDATION_PROMPT
+    assert "Traits answer: How does this character tend to behave?" in TRAIT_INTERPRETATION_PROMPT
+    assert "one diagnostic voluntary choice may supply evidence" in TRAIT_INTERPRETATION_PROMPT
+    assert "First qualify each event" in PSYCHOLOGICAL_CONSOLIDATION_PROMPT
+    assert "Reject weak candidates even if Stage 2 proposed them" in PSYCHOLOGICAL_CONSOLIDATION_PROMPT
 
 
 @pytest.mark.asyncio

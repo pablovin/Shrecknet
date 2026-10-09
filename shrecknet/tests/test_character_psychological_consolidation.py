@@ -16,6 +16,7 @@ from app.schemas.character_agent import (
     EmbodimentObservationsOutput,
     GoalUpdateData,
     ProfileEventOutput,
+    ScenePerspectiveBundleOutput,
 )
 
 
@@ -392,8 +393,8 @@ def test_selective_emotions_and_beliefs_keep_optional_two_entry_limit(count):
 async def test_consolidation_preserves_independent_goal_or_reinforces_equivalent_goal(distinct):
     # Stubbed decisions verify binding/reducers, not the model's semantic judgment.
     existing_title = "Discover who made Ernst"
-    event_description = "Ernst commits to entering the Shadow City." if distinct else "Ernst renews his search for his maker."
-    evidence = {"justification": "A separate completion condition." if distinct else "The same intended outcome.",
+    event_description = "Ernst commits to freeing his companions in the Shadow City, independently of finding his maker." if distinct else "Ernst renews his search for his maker."
+    evidence = {"justification": "An independently meaningful undertaking to free his companions." if distinct else "The same intended outcome.",
                 "event_references": ["event-001"]}
     decision = {"aspect_operations": [], "goal_operations": [], "new_aspects": [],
                 "new_goals": [], "focused_aspects": [],
@@ -417,3 +418,94 @@ async def test_consolidation_preserves_independent_goal_or_reinforces_equivalent
     _apply_goal_ops(goals, result["goal_updates"], focused_ids=result["focused_goals"])
     assert [goal["title"] for goal in goals] == ([existing_title, "Enter the Shadow City"] if distinct else [existing_title])
     assert all(goal["status"] == "active" for goal in goals)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind,description", [
+    ("aspect", "Angelique accepts the dollmaker's confession as a map of the ritual network."),
+    ("aspect", "Angelique successfully negotiates with the police once."),
+    ("goal", "Angelique examines photographs as the next step of her investigation."),
+    ("goal", "Angelique follows a clue into the Shadow City to advance her investigation."),
+])
+async def test_rejected_candidates_preserve_profile_and_scene_data(kind, description):
+    """A stubbed rejection exercises omission, not the model's admission judgment."""
+    llm = _LLM(json.dumps({"consolidation": {
+        "aspect_operations": [], "goal_operations": [], "new_aspects": [], "new_goals": [],
+        "focused_aspects": [{"scope": "existing", "index": 1}],
+        "focused_goals": [{"scope": "existing", "index": 1}],
+    }}))
+    job = EmbodyAgent(llm_client=llm, character_incorporation_model="model", scene_interpretation_model="model")
+    aspects = [{"id": "origin", "name": "I am a manufactured vessel", "category": "identity",
+                "status": "active", "in_focus": True, "evidence_ids": ["scene:earlier"]}]
+    goals = [{"id": "investigation", "title": "Expose the occult conspiracy", "goal_type": "objective",
+              "status": "active", "in_focus": True, "evidence_ids": ["scene:earlier"]}]
+    event = ProfileEventOutput(kind=kind, description=description, scene_id="s1", evidence_ids=["scene:s1"])
+    analysis = _analysis([event])
+    analysis.perspectives = [ScenePerspectiveBundleOutput(
+        id="perspective-1", scene_id="s1", evidence_ids=["scene:s1"], source_type="participated",
+        perspective="I must investigate this evidence carefully.",
+        emotions=[{"arousal": 70, "valence": 30, "description": "Uneasy about the evidence."}],
+        beliefs=[{"statement": "The confession may reveal part of the network.", "confidence": 65}],
+        profile_events=[event],
+    )]
+    before = analysis.model_dump(mode="json")
+    profile_before = json.loads(json.dumps({"aspects": aspects, "goals": goals}))
+    result = await job._consolidate_profile(analysis=analysis, current_aspects=aspects, current_goals=goals)
+    assert result["aspect_updates"] == []
+    assert result["goal_updates"] == []
+    _apply_aspect_ops(aspects, result["aspect_updates"], focused_ids=result["focused_aspects"])
+    _apply_goal_ops(goals, result["goal_updates"], focused_ids=result["focused_goals"])
+    assert {"aspects": aspects, "goals": goals} == profile_before
+    assert analysis.model_dump(mode="json") == before
+
+
+@pytest.mark.asyncio
+async def test_doll_origin_and_agency_conviction_survive_consolidation_and_repeated_revelation():
+    """Exercise the saved Ernst failure shape through binding and reducers.
+
+    The provider is stubbed here; live replay separately checks model decisions.
+    Both aspects are identity-category facts, and repeated origin evidence should
+    reinforce the origin rather than the thematically related conviction.
+    """
+    conviction = {"id": "conviction", "name": "I refuse to be a pawn in someone else's design",
+                  "description": "I insist on acting with agency.", "category": "identity",
+                  "status": "active", "in_focus": True}
+    origin_name = "I am a manufactured doll"
+    origin_description = "Belshazar created me with memories implanted during molding."
+    first = {"consolidation": {
+        "aspect_operations": [], "goal_operations": [], "new_goals": [],
+        "new_aspects": [{"name": origin_name, "description": origin_description,
+                         "category": "identity", "in_focus": True,
+                         "justification": "Origin is distinct from the conviction to act freely.",
+                         "event_references": ["event-001", "event-002"], "changes": []}],
+        "focused_aspects": [{"scope": "existing", "index": 1}], "focused_goals": [],
+    }}
+    repeated = {"consolidation": {
+        "aspect_operations": [{"operation": "reinforce", "target": {"scope": "existing", "index": 2},
+                               "name": None, "description": None, "category": None,
+                               "justification": "This repeats the same origin fact.",
+                               "event_references": ["event-001"]}],
+        "goal_operations": [], "new_goals": [], "new_aspects": [],
+        "focused_aspects": [{"scope": "existing", "index": 1}, {"scope": "existing", "index": 2}],
+        "focused_goals": [],
+    }}
+    llm = _LLM([json.dumps(first), json.dumps(repeated)])
+    job = EmbodyAgent(llm_client=llm, character_incorporation_model="model", scene_interpretation_model="model")
+    aspects = [dict(conviction)]
+    descriptions = ["Ernst learns that he is a manufactured vessel of Belshazar.",
+                    "Ernst accepts that he is a doll whose memories were threaded during molding."]
+    events = [ProfileEventOutput(kind="aspect", description=text, scene_id=f"s{i}",
+                                 evidence_ids=[f"scene:s{i}"]) for i, text in enumerate(descriptions, 1)]
+    for batch in (events, [events[1].model_copy(update={"scene_id": "s3", "evidence_ids": ["scene:s3"]})]):
+        result = await job._consolidate_profile(analysis=_analysis(batch), current_aspects=aspects, current_goals=[])
+        _apply_aspect_ops(aspects, result["aspect_updates"], focused_ids=result["focused_aspects"])
+    assert len(aspects) == 2
+    assert aspects[0]["name"] == conviction["name"]
+    assert aspects[0]["description"] == conviction["description"]
+    assert aspects[1]["name"] == origin_name
+    assert aspects[1]["description"] == origin_description
+    assert aspects[1]["evidence_ids"] == ["scene:s1", "scene:s2", "scene:s3"]
+    assert all(item["status"] == "active" and item["in_focus"] for item in aspects)
+    second_input = json.loads(llm.calls[1]["messages"][1]["content"])
+    assert len(second_input["aspects"]) == 2
+    assert all(item["category"] == "identity" for item in second_input["aspects"])

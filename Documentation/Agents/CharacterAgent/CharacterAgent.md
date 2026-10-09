@@ -440,7 +440,12 @@ scene order. A mismatch or corrupt record is ignored. Profile operations and the
 timeline revision are produced in source order, so a failed chunk or
 consolidation does not publish a partial source revision.
 
-Stage 2 returns scene-owned emotions and beliefs plus sparse profile events.
+Stage 2 returns scene-owned emotions and beliefs plus sparse profile events,
+with at most one aspect event and one goal event per scene. Malformed profile
+event candidates and duplicate same-kind candidates are dropped individually;
+other valid scene enrichments remain usable. Stage 3 accepts up to three
+well-formed trait candidates per scene and drops malformed or duplicate trait
+candidates individually. A scene with no valid candidates yields an empty list.
 It does not produce final aspects/goals or lifecycle statuses. Stage 4 may add,
 materially update, reinforce, deactivate/reactivate aspects, resolve/reactivate
 goals, and refresh focus. It preserves history and never resolves an item only

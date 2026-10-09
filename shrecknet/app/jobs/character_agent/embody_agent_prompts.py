@@ -7,13 +7,14 @@ For each source scene chunk, PERSPECTIVE_PROMPT runs first:
     A truncated response retries with PERSPECTIVE_TRUNCATION_RECOVERY_PROMPT.
 After perspective validation, two calls run in parallel for that chunk:
     PSYCHOLOGICAL_ANALYSIS_PROMPT (built from ENRICHMENT_PROMPT):
-        canonical scenes + source_type/perspectives + identity_description -> emotions, beliefs, profile_events.
+        canonical scenes + source_type/perspectives + identity_description -> emotions, beliefs, at most one aspect and one goal event per scene.
     TRAIT_INTERPRETATION_PROMPT:
-        canonical scenes + authoritative trait meanings -> candidates.
+        canonical scenes + authoritative trait meanings -> up to three candidates per scene.
 After all chunks for one source, one optional consolidation call reconciles its
 profile events with current character state using typed ordered operations and local
-references. Validated chunk outputs are checkpointed and reused only when input
-fingerprints match. Every stage shares a bounded validation retry budget; truncated
+references. Malformed/duplicate scene candidates are dropped individually;
+invalid output envelopes use the bounded validation retry budget. Validated chunk
+outputs are checkpointed and reused only when input fingerprints match; truncated
 psychological batches split until single scenes. Backend reducers validate and
 apply lifecycle/focus rules before acceptance. Trait aggregation remains
 deterministic. Prompts do not receive full scene history or produce public output.
@@ -37,7 +38,7 @@ IDENTITY_TRAIT_DESCRIPTION_CONTRACT = (
         for key in DIRECTIONAL_TRAITS
     ], ensure_ascii=False)
 )
-PROMPT_VERSION = "character-embodiment-v33-self-contained-consolidation"
+PROMPT_VERSION = "character-embodiment-v34-bounded-candidates"
 
 # Execution order: Stage 0, once when description is absent and once after
 # scene processing to refresh it from the resulting current state.
@@ -218,7 +219,8 @@ Every enrichment MUST contain all three arrays: emotions, beliefs, profile_event
 Use [] when unsupported. Never return scene or evidence IDs; the backend binds
 each result to its input scene.
 
-Limits per scene: emotions 2, beliefs 2, profile_events 2. Text fields are at
+Limits per scene: emotions 2, beliefs 2, and at most one profile event of each
+kind (one aspect and one goal). Text fields are at
 most 240 characters for emotion descriptions and 300 for belief statements or
 profile-event descriptions. All text fields must be nonempty.
 
@@ -279,7 +281,8 @@ Rules:
   scene. Do not infer unstated motivations or alternatives.
 - Consider only this character's own behavior and values.
 - Omit compelled, ambiguous, or non-diagnostic evidence.
-- Return at most one observation per trait per scene.
+- Return at most one observation per trait per scene, and no more than three
+  trait candidates total per scene. Select only the strongest supported signals.
 - Return empty arrays when no meaningful evidence exists.
 - Never generate numerical trait values or STEADINESS.
 - Preserve scene ordering.
@@ -289,7 +292,7 @@ OUTPUT (return exactly one result per input scene in the same order):
 {"scene_trait_interpretations":[{"trait_candidates":[{"trait":"one of the eight directional trait keys","diagnostic_situation":"a diagnostic value allowed for that trait, or null","relationship":"friend|enemy|other, or null","stakes":"ordinary|high_stakes, or null","polarity":"low|high","justification":"..."}]}]}
 
 All candidate keys are required and additional keys are forbidden. Each scene may
-contain at most eight candidates, with at most one candidate for each trait.
+contain at most three candidates, with at most one candidate for each trait.
 `justification` is a nonempty string of at most 360 characters. For a specified
 context, diagnostic_situation, relationship, and stakes must all be non-null. For
 unspecified context, all three must be null. Allowed diagnostic_situation values

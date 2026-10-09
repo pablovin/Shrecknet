@@ -10,10 +10,11 @@ for each source scene chunk:
 
 After all source chunks, optional Stage 4 reconciles profile events using typed
 operations and local references. The backend binds IDs and validates through the
-shared profile reducers. Trait aggregation remains deterministic. Every stage
-uses one bounded invalid-output retry budget; truncation has explicit stage
-recovery and no partial output is accepted. A source's chunks share one starting identity; source bundles
-run sequentially and each produces one revision.
+shared profile reducers. Per-scene outputs allow one aspect event, one goal event,
+and three trait candidates; malformed and duplicate candidates are dropped
+individually. Envelope/schema failures use the bounded retry budget, and
+truncation has explicit stage recovery. A source's chunks share one starting
+identity; source bundles run sequentially and each produces one revision.
 """
 
 from __future__ import annotations
@@ -26,7 +27,7 @@ import re
 import time
 from typing import Annotated, Any, Callable, Literal, Union
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, create_model, model_validator
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, create_model, model_validator
 
 from app.integrations.llm.structured_output import (
     strict_json_schema,
@@ -205,6 +206,7 @@ _TraitCandidateVariants = tuple(
 _TraitCandidateLLMOutput = Annotated[
     Union[_TraitCandidateVariants], Field(discriminator="trait")
 ]
+_TRAIT_CANDIDATE_ADAPTER = TypeAdapter(_TraitCandidateLLMOutput)
 
 
 def _trait_situation_type(candidate: _TraitCandidateFields) -> str:
@@ -221,6 +223,13 @@ class _SceneEnrichmentLLMOutput(BaseModel):
     beliefs: list[_BeliefLLMOutput] = Field(max_length=2)
     profile_events: list[_ProfileEventLLMOutput] = Field(max_length=2)
 
+    @model_validator(mode="after")
+    def one_event_per_kind(self):
+        kinds = [event.kind for event in self.profile_events]
+        if len(kinds) != len(set(kinds)):
+            raise ValueError("at most one profile event per kind is allowed for a scene")
+        return self
+
 
 class _SceneEnrichmentsLLMOutput(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -229,7 +238,7 @@ class _SceneEnrichmentsLLMOutput(BaseModel):
 
 class _SceneTraitInterpretationLLMOutput(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    trait_candidates: list[_TraitCandidateLLMOutput] = Field(max_length=8)
+    trait_candidates: list[_TraitCandidateLLMOutput] = Field(max_length=3)
 
     @model_validator(mode="after")
     def unique_traits(self):
@@ -395,6 +404,7 @@ class EmbodyAgent:
         try:
             parsed = _parse_embodiment_json(raw)
             parsed = _normalize_position_bound_collection(parsed, output_binding)
+            parsed = _drop_invalid_scene_candidates(parsed, schema, output_binding)
         except (TypeError, ValueError) as exc:
             raise EmbodimentGenerationError(
                 f"invalid JSON in {stage} output", category="json",
@@ -1188,6 +1198,57 @@ def _bind_llm_enrichments(
             "trait_candidates": [],
         })
     return SceneEnrichmentsOutput.model_validate({"scene_enrichments": records})
+
+
+def _drop_invalid_scene_candidates(
+    parsed: Any, schema: type[BaseModel], output_binding: dict[str, Any] | None,
+) -> Any:
+    """Drop malformed per-scene events/traits before validating the outer contract."""
+    if not isinstance(parsed, dict):
+        return parsed
+    if schema is _SceneEnrichmentsLLMOutput:
+        collection, field = "scene_enrichments", "profile_events"
+        validator = _ProfileEventLLMOutput.model_validate
+        stage, per_scene_limit = "psychological_enrichment", 2
+    elif schema is _SceneTraitInterpretationsLLMOutput:
+        collection, field = "scene_trait_interpretations", "trait_candidates"
+        validator = _TRAIT_CANDIDATE_ADAPTER.validate_python
+        stage, per_scene_limit = "trait_interpretation", 3
+    else:
+        return parsed
+    scenes = parsed.get(collection)
+    if not isinstance(scenes, list):
+        return parsed
+    scene_ids = (output_binding or {}).get("scene_ids") or []
+    for position, scene in enumerate(scenes):
+        if not isinstance(scene, dict) or not isinstance(scene.get(field), list):
+            continue
+        scene_id = scene_ids[position] if position < len(scene_ids) else f"position-{position + 1}"
+        accepted, seen = [], set()
+        for candidate_index, raw_candidate in enumerate(scene[field], 1):
+            try:
+                candidate = validator(raw_candidate)
+            except (TypeError, ValueError, ValidationError):
+                logger.warning(
+                    "embodiment_candidate_dropped stage=%s scene_id=%s candidate_index=%d reason=%s",
+                    stage, scene_id, candidate_index, "invalid_candidate_shape",
+                )
+                continue
+            key = candidate.kind if field == "profile_events" else candidate.trait
+            if key in seen:
+                reason = "duplicate_kind" if field == "profile_events" else "duplicate_trait"
+            elif len(accepted) >= per_scene_limit:
+                reason = "per_scene_limit"
+            else:
+                seen.add(key)
+                accepted.append(raw_candidate)
+                continue
+            logger.warning(
+                "embodiment_candidate_dropped stage=%s scene_id=%s candidate_index=%d reason=%s",
+                stage, scene_id, candidate_index, reason,
+            )
+        scene[field] = accepted
+    return parsed
 
 
 def _normalize_position_bound_collection(

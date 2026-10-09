@@ -10,7 +10,8 @@ from pydantic import TypeAdapter, ValidationError
 
 from app.jobs.character_agent.embody_agent import (
     EmbodyAgent, EmbodimentGenerationError, _PerspectivesLLMContainer,
-    _SceneTraitInterpretationsLLMOutput, _parse_embodiment_json, _model_output_schema,
+    _SceneEnrichmentsLLMOutput, _SceneTraitInterpretationsLLMOutput,
+    _parse_embodiment_json, _model_output_schema,
 )
 from app.jobs.character_agent.consolidation import ConsolidationEnvelope, prepare_consolidation
 from app.jobs.character_agent.embodiment_debug_artifacts import EmbodimentDebugArtifacts
@@ -177,17 +178,44 @@ def test_explicit_format_incompatibility_triggers_fallback(message):
 
 
 @pytest.mark.asyncio
-async def test_duplicate_traits_are_corrected_inside_validation():
-    candidate = {"trait": "integrity", "diagnostic_situation": None, "relationship": None,
-                 "stakes": None, "polarity": "high", "justification": "A voluntary fair choice."}
-    invalid = {"scene_trait_interpretations": [{"trait_candidates": [candidate, candidate]}]}
-    valid = {"scene_trait_interpretations": [{"trait_candidates": [candidate]}]}
-    provider = Responses(json.dumps(invalid), json.dumps(valid))
+async def test_invalid_duplicate_and_excess_trait_candidates_are_dropped():
+    def candidate(trait):
+        return {"trait": trait, "diagnostic_situation": None, "relationship": None,
+                "stakes": None, "polarity": "high", "justification": "A voluntary choice."}
+    raw = {"scene_trait_interpretations": [{"trait_candidates": [
+        {"diagnostic_situation": None, "relationship": None, "stakes": None,
+         "polarity": "high", "justification": "Missing the trait discriminator."},
+        candidate("integrity"), candidate("integrity"), candidate("caution"),
+        candidate("presence"), candidate("curiosity"),
+    ]}]}
+    provider = Responses(json.dumps(raw))
     result = await agent(provider)._call(prompt="contract", payload={}, schema=_SceneTraitInterpretationsLLMOutput,
         stage="traits", usage_tag="traits", max_tokens=10000, model="m",
         output_binding={"collection": "scene_trait_interpretations", "scene_ids": ["s1"]})
-    assert len(result.scene_trait_interpretations[0].trait_candidates) == 1
-    assert len(provider.calls) == 2
+    assert [candidate.trait for candidate in result.scene_trait_interpretations[0].trait_candidates] == [
+        "integrity", "caution", "presence",
+    ]
+    assert len(provider.calls) == 1
+    empty = await agent(Responses(json.dumps({"scene_trait_interpretations": [
+        {"trait_candidates": [{"polarity": "high"}]},
+    ]})))._call(prompt="contract", payload={}, schema=_SceneTraitInterpretationsLLMOutput,
+        stage="traits", usage_tag="traits", max_tokens=10000, model="m",
+        output_binding={"collection": "scene_trait_interpretations", "scene_ids": ["s1"]})
+    assert empty.scene_trait_interpretations[0].trait_candidates == []
+
+
+def test_invalid_and_duplicate_profile_events_are_dropped_per_kind():
+    from app.jobs.character_agent.embody_agent import EmbodyAgent
+
+    raw = {"scene_enrichments": [{"emotions": [], "beliefs": [], "profile_events": [
+        {"kind": "aspect", "description": "A lasting aspect."},
+        {"kind": "aspect", "description": "Duplicate aspect signal."},
+        {"kind": "goal", "description": "A new commitment."},
+        {"kind": "goal"},
+    ]}]}
+    result = EmbodyAgent._parse(_SceneEnrichmentsLLMOutput, json.dumps(raw), "enrichment",
+        {"collection": "scene_enrichments", "scene_ids": ["s1"]})
+    assert [event.kind for event in result.scene_enrichments[0].profile_events] == ["aspect", "goal"]
 
 
 def test_trait_contract_types_diagnostics_by_trait_and_maps_persisted_context():
@@ -315,6 +343,8 @@ def test_trait_provider_schema_encodes_trait_specific_context_and_unspecified_sh
 
     schema = _model_output_schema(_SceneTraitInterpretationsLLMOutput, {"scene_ids": ["s1"]})
     Draft202012Validator.check_schema(schema)
+    trait_items = schema["$defs"]["_SceneTraitInterpretationLLMOutput"]["properties"]["trait_candidates"]
+    assert trait_items["maxItems"] == 3
     validator = Draft202012Validator(schema)
     valid = {"scene_trait_interpretations": [{"trait_candidates": [{
         "trait": "caution", "diagnostic_situation": "uncertain_threat",

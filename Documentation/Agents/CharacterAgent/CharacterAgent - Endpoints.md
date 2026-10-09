@@ -430,7 +430,9 @@ Scenes retain `DERIVED_FROM` source grouping and deterministic time order. A sou
 Each chunk has two LLM waves and three normal calls:
 
 1. **Character incorporation** uses `PERSPECTIVE_PROMPT` with the chunk's canonical scenes and identity description. It returns one psychologically distinctive subjective `perspective` and `source_type` per scene. The perspective reflects established personality, values, fears, motivations, and beliefs, and captures supported internal change.
-2. **Psychological enrichment** uses `PSYCHOLOGICAL_ANALYSIS_PROMPT` with canonical scene context, the preceding perspective, and identity description. It returns scene-owned emotions, beliefs, and sparse profile events. In parallel, **Trait interpretation** returns directional trait candidates.
+2. **Psychological enrichment** uses `PSYCHOLOGICAL_ANALYSIS_PROMPT` with canonical scene context, the preceding perspective, and identity description. It returns scene-owned emotions, beliefs, and at most one aspect event and one goal event per scene. In parallel, **Trait interpretation** returns up to three directional trait candidates per scene.
+
+Malformed profile-event and trait candidates are discarded individually, and duplicate profile-event kinds or trait keys are discarded after the first valid candidate. Other valid candidates and scene outputs continue. An invalid scene wrapper or incorrect number of scene results still fails validation.
 
 After all scene chunks for a source complete, the backend makes one Stage 4 consolidation call if profile events exist. Consolidation deduplicates candidates, reconciles lifecycle and descriptions against current and historical profile items, and selects at most ten focused active aspects and goals. It cites source events; the backend validates IDs, transitions, focus, and provenance. No full-history input is sent. Trait aggregation remains deterministic. The source-level revision becomes the next source's working profile.
 

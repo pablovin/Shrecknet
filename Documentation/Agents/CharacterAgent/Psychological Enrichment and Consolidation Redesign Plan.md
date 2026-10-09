@@ -69,11 +69,16 @@ position-bound enrichment for each input scene, containing:
 - `beliefs`: zero or more `{statement, confidence}` records, limited to newly
   expressed or meaningfully changed beliefs.
 - `profile_events`: usually empty; significant, concise, evidence-grounded
-  `{kind: aspect|goal, description}` candidates only.
+  `{kind: aspect|goal, description}` candidates only, with at most one of each
+  kind per scene. Malformed candidates and duplicate kinds are discarded
+  individually so valid events from the scene are retained.
 
 Stage 2 does not write final aspects or goals, infer their statuses, attach
 graph IDs, duplicate the subjective perspective, or score profile events.
 Backend schemas enforce the shape, bounds, list limits, order, and scene binding.
+Trait interpretation is capped at three valid candidates per scene; malformed
+and duplicate trait candidates are discarded individually. An empty candidate
+list is valid. Scene wrapper errors and incorrect scene counts remain fatal.
 The backend binds perspectives, scenes, and evidence references by position.
 Remove the `impacts`, `aspect_signals`, and `goal_signals` generation fields.
 

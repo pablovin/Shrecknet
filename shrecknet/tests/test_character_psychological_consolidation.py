@@ -89,15 +89,15 @@ async def test_empty_event_source_skips_consolidation_call_and_keeps_focus():
 @pytest.mark.asyncio
 async def test_consolidation_adds_candidate_and_rejects_unknown_focus_ids():
     answer = {"consolidation": {
-        "aspect_operations": [{'operation': 'add',
-                               'name': 'I am a vessel',
+        "aspect_operations": [],
+        "new_aspects": [{'name': 'I am a vessel',
                                'description': 'Artificially created.',
                                'category': 'identity',
                                'in_focus': True,
                                'justification': 'The revelation changes self-understanding.',
-                               'event_references': ['event-001']}],
+                               'event_references': ['event-001'], 'changes': []}],
         "goal_operations": [],
-        "focused_aspects": [], "focused_goals": [],
+        "new_goals": [], "focused_aspects": [], "focused_goals": [],
     }}
     llm = _LLM(json.dumps(answer))
     agent = EmbodyAgent(
@@ -132,21 +132,16 @@ async def test_consolidation_adds_candidate_and_rejects_unknown_focus_ids():
 @pytest.mark.asyncio
 async def test_goal_can_be_introduced_and_completed_in_one_source_bundle():
     answer = {"consolidation": {
-        "aspect_operations": [],
-        "goal_operations": [
-            {'operation': 'add',
-             'title': 'Find my maker',
+        "aspect_operations": [], "new_aspects": [],
+        "goal_operations": [], "new_goals": [{'title': 'Find my maker',
              'description': 'Discover who created me.',
              'goal_type': 'objective',
              'in_focus': True,
              'justification': 'The character makes a clear commitment.',
-             'event_references': ['event-001']},
-            {'operation': 'status',
-             'status': 'completed',
-             'justification': "The character learns the creator's identity.",
-             'event_references': ['event-002'],
-             'target': {'scope': 'new', 'index': 1}},
-        ],
+             'event_references': ['event-001'],
+             'changes': [{'operation': 'status', 'status': 'completed',
+                          'justification': "The character learns the creator's identity.",
+                          'event_references': ['event-002']}]}],
         "focused_aspects": [], "focused_goals": [],
     }}
     llm = _LLM(json.dumps(answer))
@@ -169,19 +164,76 @@ async def test_goal_can_be_introduced_and_completed_in_one_source_bundle():
 
 
 @pytest.mark.asyncio
+async def test_new_goal_nested_update_then_abandon_preserves_each_transition():
+    answer = {"consolidation": {
+        "aspect_operations": [], "goal_operations": [], "new_aspects": [],
+        "new_goals": [{"title": "Find the witness", "description": "Locate a witness.",
+            "goal_type": "objective", "in_focus": True,
+            "justification": "She commits to the search.", "event_references": ["event-001"],
+            "changes": [
+                {"operation": "update", "title": "Find the missing witness",
+                 "description": None, "goal_type": None,
+                 "justification": "She learns who the witness is.", "event_references": ["event-002"]},
+                {"operation": "status", "status": "abandoned",
+                 "justification": "She chooses to stop searching.", "event_references": ["event-003"]},
+            ]}], "focused_aspects": [], "focused_goals": [],
+    }}
+    events = [ProfileEventOutput(kind="goal", description="Starts search.", scene_id="s1"),
+              ProfileEventOutput(kind="goal", description="Learns identity.", scene_id="s2"),
+              ProfileEventOutput(kind="goal", description="Stops search.", scene_id="s3")]
+    result = await EmbodyAgent(llm_client=_LLM(json.dumps(answer)),
+        character_incorporation_model="model", scene_interpretation_model="model")._consolidate_profile(
+            analysis=_analysis(events), current_aspects=[], current_goals=[])
+    goals = []
+    _apply_goal_ops(goals, result["goal_updates"], focused_ids=result["focused_goals"])
+    assert [item.operation.value for item in result["goal_updates"]] == ["add", "update", "status"]
+    assert goals[0]["title"] == "Find the missing witness"
+    assert goals[0]["status"] == "abandoned"
+    assert goals[0]["evidence_ids"] == ["scene:s1", "scene:s2", "scene:s3"]
+    assert goals[0]["in_focus"] is False
+
+
+@pytest.mark.asyncio
+async def test_new_aspect_nested_lifecycle_and_existing_update_are_materialized():
+    answer = {"consolidation": {
+        "aspect_operations": [{"operation": "update", "target": {"scope": "existing", "index": 1},
+            "name": None, "description": "She now leads the archive.", "category": None,
+            "justification": "The leadership role grows.", "event_references": ["event-001"]}],
+        "goal_operations": [], "new_aspects": [{"name": "I guard the archive",
+            "description": "She protects its records.", "category": "role", "in_focus": False,
+            "justification": "She accepts the duty.", "event_references": ["event-002"],
+            "changes": [{"operation": "status", "status": "inactive",
+                "justification": "She relinquishes the role.", "event_references": ["event-003"]}]}],
+        "new_goals": [], "focused_aspects": [], "focused_goals": [],
+    }}
+    events = [ProfileEventOutput(kind="aspect", description="Leads archive.", scene_id="s1"),
+              ProfileEventOutput(kind="aspect", description="Accepts duty.", scene_id="s2"),
+              ProfileEventOutput(kind="aspect", description="Leaves duty.", scene_id="s3")]
+    result = await EmbodyAgent(llm_client=_LLM(json.dumps(answer)),
+        character_incorporation_model="model", scene_interpretation_model="model")._consolidate_profile(
+            analysis=_analysis(events),
+            current_aspects=[{"id": "a1", "name": "I lead the archive", "status": "active", "in_focus": False}],
+            current_goals=[])
+    aspects = [{"id": "a1", "name": "I lead the archive", "status": "active", "in_focus": False}]
+    _apply_aspect_ops(aspects, result["aspect_updates"], focused_ids=result["focused_aspects"])
+    assert aspects[0]["description"] == "She now leads the archive."
+    assert aspects[1]["status"] == "inactive"
+    assert [item.operation.value for item in result["aspect_updates"]] == ["update", "add", "status"]
+
+
+@pytest.mark.asyncio
 async def test_cross_kind_event_reference_is_corrected_and_uses_backend_event_ids():
     invalid = {"consolidation": {
-        "aspect_operations": [{'operation': 'add',
-                               'name': 'I am a keeper',
+        "aspect_operations": [], "new_aspects": [{'name': 'I am a keeper',
                                'description': 'Protects the archive.',
                                'category': 'role',
                                'in_focus': True,
                                'justification': 'A lasting role.',
-                               'event_references': ['event-002']}],
-        "goal_operations": [], "focused_aspects": [], "focused_goals": [],
+                               'event_references': ['event-002'], 'changes': []}],
+        "goal_operations": [], "new_goals": [], "focused_aspects": [], "focused_goals": [],
     }}
     corrected = json.loads(json.dumps(invalid))
-    corrected["consolidation"]["aspect_operations"][0]["event_references"] = ["event-001"]
+    corrected["consolidation"]["new_aspects"][0]["event_references"] = ["event-001"]
     llm = _LLM([json.dumps(invalid), json.dumps(corrected)])
     agent = EmbodyAgent(
         llm_client=llm, character_incorporation_model="model", scene_interpretation_model="model",
@@ -222,7 +274,7 @@ async def test_lifecycle_change_is_corrected_into_separate_ordered_operations():
                              'justification': 'The character discovers their creator.',
                              'event_references': ['event-001'],
                              'target': {'scope': 'existing', 'index': 1}}],
-        "focused_aspects": [], "focused_goals": [],
+        "new_aspects": [], "new_goals": [], "focused_aspects": [], "focused_goals": [],
     }}
     corrected = {"consolidation": {
         "aspect_operations": [],
@@ -240,7 +292,7 @@ async def test_lifecycle_change_is_corrected_into_separate_ordered_operations():
              'event_references': ['event-001'],
              'target': {'scope': 'existing', 'index': 1}},
         ],
-        "focused_aspects": [], "focused_goals": [],
+        "new_aspects": [], "new_goals": [], "focused_aspects": [], "focused_goals": [],
     }}
     llm = _LLM([json.dumps(invalid), json.dumps(corrected)])
     agent = EmbodyAgent(

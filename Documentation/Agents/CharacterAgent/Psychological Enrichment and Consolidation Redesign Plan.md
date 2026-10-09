@@ -86,24 +86,14 @@ events with backend references, and the current profile needed for comparison:
 stable IDs, descriptions, status/focus, plus historical out-of-focus items.
 It does not receive full scene history.
 
-The model returns ordered `aspect_operations` and `goal_operations`, plus
-`focused_aspects` and `focused_goals`. Add operations declare an `in_focus`
-preference; focus arrays reference only pre-existing items. Operation targets
-use a request-local existing/new reference. Each operation gives a short
-justification and cites supporting event references. The backend generates
-candidate IDs, resolves references, and uses the shared profile reducers to
-validate operations, lifecycle transitions, and focus limits. It persists the
-result through the existing identity-revision/change-provenance infrastructure.
-
-The operation vocabulary must cover add, material description update,
-reinforcement without duplication, and lifecycle transitions. Aspect lifecycle
-supports active/inactive. Goal lifecycle supports active/completed/abandoned/
-superseded. Reactivation is an explicit transition. A source may introduce and
-resolve an item in the same ordered operation list. Preserve each transition in
-chronological history even when the final state is resolved. Silence alone
-cannot resolve a goal or deactivate an enduring aspect. The backend derives
-final focus from existing-item selections, each addition's `in_focus` preference,
-and the final lifecycle state; inactive/resolved items cannot remain focused.
+The model returns ordered `aspect_operations` and `goal_operations` for existing
+items, self-contained `new_aspects` and `new_goals`, and existing-item focus
+selections. New items own their evidence-backed chronological `changes` sequence;
+the model never references a new item by a generated index. The backend assigns
+IDs, resolves event evidence, materializes add plus nested changes as ordered
+existing update objects, simulates transitions through shared reducers, validates
+focus limits, and persists through identity-revision/change-provenance
+infrastructure. Traits remain independently aggregated.
 
 ## Intended execution flow
 

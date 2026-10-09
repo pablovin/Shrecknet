@@ -37,7 +37,7 @@ IDENTITY_TRAIT_DESCRIPTION_CONTRACT = (
         for key in DIRECTIONAL_TRAITS
     ], ensure_ascii=False)
 )
-PROMPT_VERSION = "character-embodiment-v32-typed-trait-context"
+PROMPT_VERSION = "character-embodiment-v33-self-contained-consolidation"
 
 # Execution order: Stage 0, once when description is absent and once after
 # scene processing to refresh it from the resulting current state.
@@ -303,7 +303,7 @@ fields are null. Never return a compound situation string. Return JSON only.""" 
 # Execution order: Stage 4, after all Stage 2/3 chunks for one source; skipped without events.
 # Purpose: Reconcile source-local evidence with existing and historical profile items.
 # Used by: EmbodyAgent._consolidate_profile; backend reducers validate and apply output.
-# Expected: Typed ordered aspect/goal operations and local focus references; no backend IDs.
+# Expected: Existing-item operations plus self-contained additions with nested chronological changes.
 PSYCHOLOGICAL_CONSOLIDATION_PROMPT = r"""Stage 4 — reason about and consolidate one chronological source bundle.
 This stage produces internal decisions, not public prose. Use only supplied
 identity context, source events in scene order, and current/historical profile
@@ -321,51 +321,40 @@ have backend-assigned source-local IDs; copy only supplied IDs. Profile index is
 a one-based integer identifying the exact item in its own input array. Historical
 inactive/resolved/out-of-focus items are included for comparison and reactivation.
 
-OUTPUT JSON — all four arrays are required and may be empty:
-{"consolidation":{"aspect_operations":[],"goal_operations":[],"focused_aspects":[],"focused_goals":[]}}
+OUTPUT JSON — all six arrays are required and may be empty:
+{"consolidation":{"aspect_operations":[],"goal_operations":[],"new_aspects":[],"new_goals":[],"focused_aspects":[],"focused_goals":[]}}
 
-Each operation must be exactly one of the following shapes. All listed keys are
-required, no extra keys are allowed. A nullable content field explicitly set to
-null on update/reinforce means preserve its current value.
-Aspect add:
-{"operation":"add","name":"I am a defining first-person statement","description":"text or null","category":"identity|role|status|physical|capability|knowledge|preference|attitude|history","in_focus":true,"justification":"...","event_references":["event-001"]}
-Aspect update:
-{"operation":"update","target":{"scope":"existing|new","index":1},"name":"I ... or null","description":"text or null","category":"identity|role|status|physical|capability|knowledge|preference|attitude|history|null","justification":"...","event_references":["event-001"]}
-Aspect reinforce:
-{"operation":"reinforce","target":{"scope":"existing|new","index":1},"name":"I ... or null","description":"text or null","category":"identity|role|status|physical|capability|knowledge|preference|attitude|history|null","justification":"...","event_references":["event-001"]}
-Aspect status:
-{"operation":"status","target":{"scope":"existing|new","index":1},"status":"active|inactive","justification":"...","event_references":["event-001"]}
-Goal add:
-{"operation":"add","title":"...","description":"text or null","goal_type":"desire|objective|ambition|obligation|avoidance|survival","in_focus":true,"justification":"...","event_references":["event-001"]}
-Goal update:
-{"operation":"update","target":{"scope":"existing|new","index":1},"title":"text or null","description":"text or null","goal_type":"desire|objective|ambition|obligation|avoidance|survival|null","justification":"...","event_references":["event-001"]}
-Goal reinforce:
-{"operation":"reinforce","target":{"scope":"existing|new","index":1},"title":"text or null","description":"text or null","goal_type":"desire|objective|ambition|obligation|avoidance|survival|null","justification":"...","event_references":["event-001"]}
-Goal status:
-{"operation":"status","target":{"scope":"existing|new","index":1},"status":"active|completed|abandoned|superseded","justification":"...","event_references":["event-001"]}
+Existing items use ordered aspect_operations and goal_operations. Every target
+has exactly {"scope":"existing","index":1}, a one-based index into the matching
+input array. Existing operations are update, reinforce, or status. Update and
+reinforce carry target, content fields (null preserves current content),
+justification, and nonempty event_references. Update must change at least one
+content field. Status carries target, status, justification, and event_references.
+Aspect content keys are name, description, category; statuses are active/inactive.
+Goal content keys are title, description, goal_type; statuses are
+active/completed/abandoned/superseded. Status cannot be combined with content.
 
-Each focus element has exactly {"scope":"existing","index":1} and addresses
-the matching kind's input array. Focus arrays select only pre-existing items;
-never list newly added items there. Every add operation has a required boolean
-in_focus field that declares the item's initial focus preference. This preference
-applies only if the item is still active after all ordered operations. The
-backend derives final focus from these add preferences, the existing-item focus
-arrays, and lifecycle operations. Never return
+New items are self-contained objects in new_aspects/new_goals and have no target
+reference. Example new goal with chronological history:
+{"title":"Discover the conspiracy","description":"text or null","goal_type":"objective","in_focus":false,"justification":"...","event_references":["event-001"],"changes":[{"operation":"status","status":"completed","justification":"...","event_references":["event-005"]}]}
+New aspect base fields are name (must start with "I "), description, category,
+in_focus, justification, event_references, and changes. New goal base fields are
+title, description, goal_type, in_focus, justification, event_references, and
+changes. Each change is an ordered update/reinforce with content fields, or a
+status transition, each with justification and nonempty event_references. Changes
+apply only to their enclosing new item. Additions start active; the backend
+materializes one add followed by each listed change in order. The item's in_focus
+is its final focus preference and applies only if its final status is active.
+
+Focus arrays select only pre-existing items and each element has exactly
+{"scope":"existing","index":1}. Update changes material content; reinforce
+records evidence without duplication and may preserve content with null. Explicit
+reactivation is allowed. Every field shown in these shapes is required, nullable
+fields may be null as described, and no extra keys are allowed. Never return
 canonical IDs, candidate_id, target_id, scene IDs, evidence IDs, or numeric event
-references. Never invent an event or target; no forward operation references.
-
-Operations execute in list order. Additions start active without a status field.
-An addition with in_focus true is initially selected for focus; if a later
-status operation completes, abandons, supersedes, or deactivates it, it cannot
-remain focused unless a later status operation in the same sequence explicitly
-reactivates it. The backend evaluates focus after the complete ordered sequence.
-An item introduced and resolved in this source needs add then status operations,
-using scope new and the same new index. Update changes material content and must
-supply at least one non-null content field. Reinforce records further evidence
-without duplication; preserve content with null unless a supported refinement
-exists. Neither update nor reinforce can contain status. Status operations
-contain no content fields. An existing item's name/title is not required on
-status; the backend supplies it. Explicit reactivation to active is permitted.
+references. Never invent events or existing targets. Event references must be
+supplied IDs of the matching kind. Operations execute in list order. The backend
+validates transitions and final focus after materializing the complete sequence.
 
 Never resolve a goal because it is absent or old. Never deactivate an enduring
 fact solely because it is old. Focus is independent of lifecycle and must contain

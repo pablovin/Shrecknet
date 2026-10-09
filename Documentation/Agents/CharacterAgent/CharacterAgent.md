@@ -123,16 +123,16 @@ active aspects and ten active goals. Historical records remain available.
 The backend assigns each event a source-local ID such as `event-001`.
 Consolidation cites these strings; aspect operations may cite only aspect events,
 and goal operations only goal events. Stored draft/timeline `event_references`
-remain numeric positions. Operation targets use `{"scope":"existing","index":1}`
-for a one-based position in the supplied profile table, or
-`{"scope":"new","index":1}` for an earlier addition in that kind's ordered
-operation list. Focus arrays may reference only pre-existing profile items.
-Each add operation declares its initial focus preference with `in_focus`; the
-backend combines those preferences with existing-item focus selections after all
-operations and excludes items whose final status is resolved or inactive. This
-removes new-item indexes from the focus decision while preserving ordered
-add-then-status transitions. Canonical target IDs, new stable IDs, scene IDs, and
-evidence provenance are backend-owned. Renaming an item preserves its ID; slug
+remain numeric positions. Existing operation targets use only
+`{"scope":"existing","index":1}` for a one-based position in the supplied
+profile table. New aspects and goals are self-contained objects in `new_aspects`
+and `new_goals`; chronological `changes` are nested inside each item, so no
+synthetic reference is needed. Focus arrays may reference only pre-existing
+profile items. Each new item's `in_focus` field is its final focus preference;
+the backend excludes it if its final status is resolved or inactive. The backend
+materializes an add followed by each nested transition in order, preserving each
+step in history. Canonical target IDs, new stable IDs, scene IDs, and evidence
+provenance are backend-owned. Renaming an item preserves its ID; slug
 collisions with existing items or other additions are rejected, including
 collisions caused by punctuation or non-ASCII labels. The prepared operation
 collection is typed (`AspectUpdateData` and `GoalUpdateData`) throughout; reducers
@@ -140,8 +140,8 @@ consume those models directly while mutating only profile-state dictionaries.
 Programming errors in reference binding or reduction remain backend failures and
 do not enter the invalid-model replacement loop.
 
-`consolidation.py` contains typed add/update/reinforce/status model contracts and
-reference binding into the existing `AspectUpdateData`/`GoalUpdateData` objects.
+`consolidation.py` contains typed existing-item operations and self-contained
+new-item contracts with nested lifecycle changes, then binds them into the existing `AspectUpdateData`/`GoalUpdateData` objects.
 It contains no lifecycle state engine. Validation, application, and timeline
 replay all use `_apply_aspect_ops` and `_apply_goal_ops` in `profile.py`; these
 reducers apply to copies and publish state only when the requested update is

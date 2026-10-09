@@ -93,25 +93,26 @@ Contract requirements:
 - Do not impose new lifecycle prohibitions implicitly. Document the existing
   reactivation contract and transition rules from their authoritative lifecycle
   implementation; do not create a validator-owned transition matrix.
-- Existing targets use one-based indexes into the supplied ordered aspect or
-  goal table. New targets use one-based indexes into preceding additions of the
-  same kind. Represent the distinction explicitly, for example
-  `{"scope":"existing","index":1}` versus `{"scope":"new","index":1}`.
-  Scope is an enum; indexes are strict positive integers, excluding booleans and
-  coerced strings. Additions receive their new index by occurrence, not model ID.
-- Focus lists use the same typed references, may address any addition in the
-  source, and are checked against the final reducer-produced state. Preserve model
-  selection order and the cap of ten per kind. Never truncate invalid focus lists.
+- Existing targets use one-based indexes into the supplied ordered aspect or goal
+  table, with the explicit scope `{"scope":"existing","index":1}`. Newly
+  generated aspects and goals are self-contained in `new_aspects` and `new_goals`;
+  their ordered changes are nested within each item and require no generated index.
+  Indexes are strict positive integers, excluding booleans and coerced strings.
+- Focus lists reference only existing items and are checked against the final
+  reducer-produced state. Preserve model selection order and the cap of ten per
+  kind. Never truncate invalid focus lists. A new item's `in_focus` is its final
+  focus preference, subject to its final lifecycle status.
 - Events retain supplied source-local IDs such as `event-001`. The backend owns
   their ordered table, canonical scene IDs, and persisted numeric positions.
 - Every reference is resolved against the immutable request snapshot. No
   clamping, replacement, sorting of operations, or inference of unknown targets.
 
-For example, the first goal addition can be completed later using
-`{"scope":"new","index":1}`. The backend derives its stable ID once and uses
-that same ID for both persisted operations. Renaming an existing item preserves
-its ID. An add colliding with an existing item or another addition is rejected
-with a precise error; the model may regenerate an update/reinforce where justified.
+A new goal may contain an ordered `changes` array with updates and lifecycle
+transitions. The backend materializes the new item and its nested changes in
+sequence, preserving the stable ID and every history entry. Renaming an existing
+item preserves its ID. An add colliding with an existing item or another addition
+is rejected with a precise error; the model may regenerate an update/reinforce
+where justified.
 
 ### Validate and materialize before acceptance
 
@@ -123,15 +124,15 @@ objects. It must:
 
 1. Validate local event existence, kind, nonempty citations, and canonical
    source-scene provenance.
-2. Resolve existing/new targets separately for aspects and goals; reject forward
-   references, wrong-kind targets, and ID collisions.
+2. Resolve existing targets for aspects and goals; validate each self-contained
+   addition and its nested changes, and reject wrong-kind events or ID collisions.
 3. Check operation-specific LLM content, including nonblank first-person aspect
    statements and meaningful content updates.
 4. Construct and validate all `AspectUpdateData` and `GoalUpdateData` values,
-   including names/titles for newly added targets referenced later in the source.
+   including names/titles while materializing each nested new-item change.
 5. Pass those objects in their supplied order to the existing lifecycle rules and
    profile reducers on copies of the starting state. Preserve valid sequences
-   such as update then status, add then completion, and explicit reactivation.
+   such as update then status, nested add then completion, and explicit reactivation.
    Lifecycle acceptance and state changes must come from the same implementation
    used when applying/replaying the operations.
 6. Check focus reference uniqueness, kind, bounds, and existence at the boundary;
@@ -244,7 +245,7 @@ Extend existing tests rather than creating a parallel test harness:
 
 - `test_character_psychological_consolidation.py`: every operation variant,
   entity-specific enums, empty/unknown/wrong-kind event references, invalid target
-  indexes/scopes, forward new-item references, collisions, same-source goal
+  existing indexes, nested lifecycle changes, collisions, same-source goal
   completion, reactivation, ordered updates, and final focus validity.
   Verify validation and application/replay agree through the same reducers and
   lifecycle rules, with no mutation of the starting state during acceptance.

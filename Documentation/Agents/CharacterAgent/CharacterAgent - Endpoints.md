@@ -436,12 +436,13 @@ After all scene chunks for a source complete, the backend makes one Stage 4 cons
 
 Stage 4 receives backend-assigned source-local event IDs such as `event-001` and
 must cite those IDs in operation `event_references`. Aspect operations cite only
-aspect events; goal operations cite only goal events. Model targets and focus use
-one-based local `{"scope":"existing|new","index":1}` references rather than
-canonical IDs. The backend generates candidate IDs and translates all operations
-into the unchanged public draft/timeline shape, retaining numeric event positions.
-Ordered typed add/update/reinforce/status operations preserve same-source creation
-and resolution. New items start active; content operations cannot set status.
+aspect events; goal operations cite only goal events. Existing targets and focus
+use one-based `{"scope":"existing","index":1}` references rather than
+canonical IDs. New aspects and goals are self-contained; evidence-backed ordered
+changes are nested within each new item, so no generated new-item index is
+needed. The backend generates candidate IDs and translates all operations into
+the unchanged public draft/timeline shape, retaining numeric event positions.
+New items start active; content changes cannot set status.
 The shared profile reducers own lifecycle and final focus eligibility.
 
 All embodiment stages share `character_agent_embodiment_validation_retries`

@@ -151,15 +151,15 @@ async def test_empty_profile_events_skip_consolidation():
 @pytest.mark.asyncio
 async def test_consolidation_adds_revelation_with_source_provenance():
     response = {"consolidation": {
-        "aspect_operations": [{'operation': 'add',
-                               'name': 'I am an artificial vessel',
+        "aspect_operations": [],
+        "new_aspects": [{'name': 'I am an artificial vessel',
                                'description': 'Created by another person.',
                                'category': 'identity',
                                'in_focus': True,
                                'justification': 'A defining revelation.',
-                               'event_references': ['event-001']}],
+                               'event_references': ['event-001'], 'changes': []}],
         "goal_operations": [],
-        "focused_aspects": [], "focused_goals": [],
+        "new_aspects": [], "new_goals": [], "focused_aspects": [], "focused_goals": [],
     }}
     llm = FakeLLM(json.dumps(response))
     event = ProfileEventOutput(
@@ -182,19 +182,16 @@ def test_prepare_consolidation_binds_typed_updates_and_reduces_lifecycle_in_orde
         ProfileEventOutput(kind="aspect", description="Mara learns she guards the archive.", scene_id="s3", evidence_ids=["scene:s3"]),
     ]
     envelope = ConsolidationEnvelope.model_validate({"consolidation": {
-        "aspect_operations": [
-            {"operation": "add", "name": "I guard the archive", "description": "A new role.",
+        "aspect_operations": [], "new_aspects": [{"name": "I guard the archive", "description": "A new role.",
              "category": "role", "in_focus": True, "justification": "She accepts the role.",
-             "event_references": ["event-003"]},
-        ],
-        "goal_operations": [
-            {"operation": "add", "title": "Find my maker", "description": None,
+             "event_references": ["event-003"], "changes": []}],
+        "goal_operations": [], "new_goals": [
+            {"title": "Find my maker", "description": None,
              "goal_type": "objective", "in_focus": True,
-             "justification": "She begins searching.", "event_references": ["event-001"]},
-            {"operation": "status", "target": {"scope": "new", "index": 1}, "status": "abandoned",
-             "justification": "She gives up the search.", "event_references": ["event-002"]},
-        ],
-        "focused_aspects": [], "focused_goals": [],
+             "justification": "She begins searching.", "event_references": ["event-001"],
+             "changes": [{"operation": "status", "status": "abandoned",
+                          "justification": "She gives up the search.", "event_references": ["event-002"]}]},
+        ], "focused_aspects": [], "focused_goals": [],
     }})
     result = prepare_consolidation(envelope, events=events, aspects=[], goals=[])
     assert isinstance(result["aspect_updates"][0], AspectUpdateData)
@@ -212,7 +209,7 @@ def test_prepare_consolidation_binds_typed_updates_and_reduces_lifecycle_in_orde
 
 def test_prepare_consolidation_rejects_duplicate_and_invalid_focus_references():
     base = {"consolidation": {"aspect_operations": [], "goal_operations": [],
-                              "focused_aspects": [], "focused_goals": []}}
+                              "new_aspects": [], "new_goals": [], "focused_aspects": [], "focused_goals": []}}
     duplicate_focus = ConsolidationEnvelope.model_validate({"consolidation": {
         **base["consolidation"],
         "focused_aspects": [{"scope": "existing", "index": 1}, {"scope": "existing", "index": 1}],
@@ -221,12 +218,12 @@ def test_prepare_consolidation_rejects_duplicate_and_invalid_focus_references():
         prepare_consolidation(duplicate_focus, events=[], aspects=[{"id": "a1", "name": "I guard the gate", "status": "active"}], goals=[])
 
     duplicate_ops = ConsolidationEnvelope.model_validate({"consolidation": {
-        "aspect_operations": [
-            {"operation": "add", "name": "I guard the archive", "description": None, "category": "role", "in_focus": False,
-             "justification": "First event.", "event_references": ["event-001"]},
-            {"operation": "add", "name": "I guard the archive", "description": None, "category": "role", "in_focus": False,
-             "justification": "Second event.", "event_references": ["event-002"]},
-        ], "goal_operations": [], "focused_aspects": [], "focused_goals": [],
+        "aspect_operations": [], "new_aspects": [
+            {"name": "I guard the archive", "description": None, "category": "role", "in_focus": False,
+             "justification": "First event.", "event_references": ["event-001"], "changes": []},
+            {"name": "I guard the archive", "description": None, "category": "role", "in_focus": False,
+             "justification": "Second event.", "event_references": ["event-002"], "changes": []},
+        ], "goal_operations": [], "new_goals": [], "focused_aspects": [], "focused_goals": [],
     }})
     events = [ProfileEventOutput(kind="aspect", description="One.", scene_id="s1", evidence_ids=["scene:s1"]),
               ProfileEventOutput(kind="aspect", description="Two.", scene_id="s2", evidence_ids=["scene:s2"])]

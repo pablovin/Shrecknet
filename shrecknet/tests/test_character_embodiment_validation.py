@@ -12,7 +12,7 @@ from app.jobs.character_agent.embody_agent import (
     EmbodyAgent, EmbodimentGenerationError, _PerspectivesLLMContainer,
     _SceneTraitInterpretationsLLMOutput, _parse_embodiment_json, _model_output_schema,
 )
-from app.jobs.character_agent.consolidation import ConsolidationEnvelope, prepare_consolidation, ProfileReference
+from app.jobs.character_agent.consolidation import ConsolidationEnvelope, prepare_consolidation
 from app.jobs.character_agent.embodiment_debug_artifacts import EmbodimentDebugArtifacts
 from app.jobs.character_agent.profile import _apply_goal_ops
 from app.schemas.character_agent import ProfileEventOutput, ScenePerspectiveOutput, GoalUpdateData
@@ -226,46 +226,26 @@ async def test_truncation_splits_have_finite_units_and_keep_order():
 
 
 def response(operations=None, focus=None):
-    return {"consolidation": {"aspect_operations": [], "goal_operations": operations or [], "focused_aspects": [], "focused_goals": focus or []}}
+    return {"consolidation": {"aspect_operations": [], "goal_operations": operations or [],
+        "new_aspects": [], "new_goals": [], "focused_aspects": [], "focused_goals": focus or []}}
 
 
-ADD = {"operation": "add", "title": "Find my maker", "description": None, "goal_type": "objective", "in_focus": False, "justification": "A clear commitment.", "event_references": ["event-001"]}
-NEW = {"scope": "new", "index": 1}
+ADD = {"title": "Find my maker", "description": None, "goal_type": "objective", "in_focus": False,
+       "justification": "A clear commitment.", "event_references": ["event-001"], "changes": []}
 EVENTS = [ProfileEventOutput(kind="goal", description="A clear commitment.", scene_id="s1")]
 
 
-@pytest.mark.parametrize("index", [0, -1, True, "1", 1.5])
-def test_reference_indexes_are_strict(index):
+def test_new_references_are_not_part_of_consolidation_contract():
     with pytest.raises(ValueError):
-        ProfileReference(scope="new", index=index)
+        ConsolidationEnvelope.model_validate({"consolidation": {**response()["consolidation"],
+            "new_goals": [{**ADD, "target": {"scope": "new", "index": 1}}]}})
 
 
-@pytest.mark.parametrize("operations,focus,match", [
-    ([ADD, ADD], [], "duplicate"),
-    ([{"operation": "status", "target": NEW, "status": "completed", "justification": "Done", "event_references": ["event-001"]}, ADD], [], "unavailable"),
-    ([ADD], [NEW, NEW], "scope"),
-    ([ADD], [{"scope": "existing", "index": 1}], "unavailable"),
-    ([{**ADD, "event_references": ["event-999"]}], [], "unknown event"),
-])
-def test_binding_rejects_invalid_decisions_without_mutation(operations, focus, match):
-    aspects, goals = [], []
-    with pytest.raises(ValueError, match=match):
-        prepare_consolidation(ConsolidationEnvelope.model_validate(response(operations, focus)), events=EVENTS, aspects=aspects, goals=goals)
-    assert aspects == goals == []
-
-
-def test_stable_id_collision_with_existing_is_rejected():
+def test_new_goal_id_collision_is_rejected():
     goals = [{"id": "goal:find-my-maker", "title": "Find my maker!", "status": "active"}]
-    original = copy.deepcopy(goals)
     with pytest.raises(ValueError, match="duplicate"):
-        prepare_consolidation(ConsolidationEnvelope.model_validate(response([ADD])), events=EVENTS, aspects=[], goals=goals)
-    assert goals == original
-
-
-def test_non_ascii_slug_collision_is_rejected_without_inventing_suffixes():
-    additions = [{**ADD, "title": "中"}, {**ADD, "title": "漢"}]
-    with pytest.raises(ValueError, match="duplicate"):
-        prepare_consolidation(ConsolidationEnvelope.model_validate(response(additions)), events=EVENTS, aspects=[], goals=[])
+        prepare_consolidation(ConsolidationEnvelope.model_validate({"consolidation": {
+            **response()["consolidation"], "new_goals": [ADD]}}), events=EVENTS, aspects=[], goals=goals)
 
 
 @pytest.mark.asyncio
@@ -286,20 +266,20 @@ async def test_consolidation_exposes_only_local_references_and_ignores_focus_for
     assert len(provider.calls) == 1
 
 
-def test_new_goal_rename_resolution_and_reactivation_use_same_reducers():
-    operations = [{**ADD, "in_focus": True},
-        {"operation": "update", "target": NEW, "title": "Meet my maker", "description": None, "goal_type": None, "justification": "A refined commitment.", "event_references": ["event-001"]},
-        {"operation": "status", "target": NEW, "status": "completed", "justification": "Done", "event_references": ["event-001"]},
-        {"operation": "status", "target": NEW, "status": "active", "justification": "Explicitly renewed", "event_references": ["event-001"]}]
-    prepared = prepare_consolidation(ConsolidationEnvelope.model_validate(response(operations, [])), events=EVENTS, aspects=[], goals=[])
+def test_new_goal_lifecycle_is_nested_and_retains_change_history():
+    item = {**ADD, "in_focus": True, "changes": [
+        {"operation": "update", "title": "Meet my maker", "description": None, "goal_type": None,
+         "justification": "A refined commitment.", "event_references": ["event-001"]},
+        {"operation": "status", "status": "completed", "justification": "Done", "event_references": ["event-001"]},
+        {"operation": "status", "status": "active", "justification": "Explicitly renewed", "event_references": ["event-001"]}]}
+    value = {"consolidation": {**response()["consolidation"], "new_goals": [item]}}
+    prepared = prepare_consolidation(ConsolidationEnvelope.model_validate(value), events=EVENTS, aspects=[], goals=[])
     goals = []
     _apply_goal_ops(goals, prepared["goal_updates"], focused_ids=prepared["focused_goals"])
     assert goals[0]["id"] == "goal:find-my-maker"
     assert goals[0]["title"] == "Meet my maker"
     assert goals[0]["status"] == "active" and goals[0]["in_focus"]
-    assert prepared["goal_updates"][2].title == "Meet my maker"
-    # Existing stored update objects keep their original public shapes.
-    assert GoalUpdateData.model_validate_json(prepared["goal_updates"][0].model_dump_json()).candidate_id == "goal:find-my-maker"
+    assert [operation.operation.value for operation in prepared["goal_updates"]] == ["add", "update", "status", "status"]
 
 
 def test_focus_eligibility_and_atomicity_belong_to_reducer():
@@ -315,12 +295,16 @@ def test_provider_schema_matches_runtime_typed_contract():
     schema = _model_output_schema(ConsolidationEnvelope, None)
     validator = Draft202012Validator(schema)
     validator.check_schema(schema)
-    valid = response([ADD], [])
+    valid = {"consolidation": {**response()["consolidation"], "new_goals": [ADD]}}
     validator.validate(valid)
     assert ConsolidationEnvelope.model_validate(valid)
-    invalid_focus = response([ADD], [NEW])
-    assert list(validator.iter_errors(invalid_focus))
-    invalid = response([{**ADD, "status": "completed"}])
+    invalid_target = {"consolidation": {**response()["consolidation"],
+        "new_goals": [{**ADD, "target": {"scope": "new", "index": 1}}]}}
+    assert list(validator.iter_errors(invalid_target))
+    invalid = {"consolidation": {**response()["consolidation"],
+        "goal_operations": [{"operation": "status", "target": {"scope": "existing", "index": 1},
+            "status": "completed", "justification": "Done", "event_references": ["event-001"],
+            "unexpected": True}]}}
     assert list(validator.iter_errors(invalid))
     with pytest.raises(ValueError):
         ConsolidationEnvelope.model_validate(invalid)

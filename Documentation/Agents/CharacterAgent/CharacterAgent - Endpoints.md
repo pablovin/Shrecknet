@@ -451,6 +451,11 @@ needed. The backend generates candidate IDs and translates all operations into
 the unchanged public draft/timeline shape, retaining numeric event positions.
 New items start active; content changes cannot set status.
 The shared profile reducers own lifecycle and final focus eligibility.
+If the selected existing items and newly focused additions exceed ten in either
+category, the backend first keeps additions supported by the latest source
+events, then fills remaining slots with selected existing items. An item that
+loses focus retains its active status and history. This focus rotation occurs
+within the draft revision and needs no migration or operator action.
 
 All embodiment stages share `character_agent_embodiment_validation_retries`
 (default `1`, range `0`–`3`) across JSON, schema, empty-body and semantic errors.

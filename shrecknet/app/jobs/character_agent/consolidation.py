@@ -181,7 +181,9 @@ def prepare_consolidation(value: ConsolidationEnvelope, *, events: list,
                 raise ValueError("aspect name must be a first-person defining statement" if kind == "aspect" else "goal title must not be blank")
             data["candidate_id"] = _stable_profile_id(kind, label)
             update = update_type.model_validate(data)
-            reduce(state, [update])
+            # Focus is selected after all additions and transitions. Applying a
+            # new preference now could temporarily exceed the ten-item limit.
+            reduce(state, [update.model_copy(update={"in_focus": False})])
             updates.append(update)
             return update
 
@@ -212,19 +214,29 @@ def prepare_consolidation(value: ConsolidationEnvelope, *, events: list,
                 reduce(state, [update])
                 updates.append(update)
 
-        focused_ids = []
+        existing_focus_ids = []
         for reference in focus:
             if reference.index > len(existing_ids):
                 raise ValueError(
                     f"{kind} focus reference existing:{reference.index} is unavailable "
                     f"(allowed 1..{len(existing_ids)})"
                 )
-            focused_ids.append(existing_ids[reference.index - 1])
-        focused_ids.extend(str(item.candidate_id) for item in updates
-                           if item.operation.value == "add" and item.in_focus)
+            existing_focus_ids.append(existing_ids[reference.index - 1])
+        if len(set(existing_focus_ids)) != len(existing_focus_ids):
+            raise ValueError("duplicate focus reference")
+        # Give additions backed by later source events the available slots
+        # before retaining the model's existing-item choices. Response order
+        # breaks ties for additions citing the same latest event.
+        new_focus_updates = [item for item in updates
+                             if item.operation.value == "add" and item.in_focus]
+        new_focus_ids = [str(item.candidate_id) for _, item in sorted(
+            enumerate(new_focus_updates),
+            key=lambda indexed: (max(indexed[1].event_references), indexed[0]),
+            reverse=True,
+        )]
         by_id = {str(item.get("id")): item for item in state}
-        focused_ids = [item_id for item_id in focused_ids
-                       if item_id in by_id and by_id[item_id].get("status", "active") == "active"]
+        focused_ids = [item_id for item_id in [*new_focus_ids, *existing_focus_ids]
+                       if item_id in by_id and by_id[item_id].get("status", "active") == "active"][:10]
         reduce(state, [], focused_ids=focused_ids)
         result[f"{kind}_updates"] = updates
         result[f"focused_{'aspects' if kind == 'aspect' else 'goals'}"] = focused_ids

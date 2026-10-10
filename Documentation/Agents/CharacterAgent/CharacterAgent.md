@@ -135,6 +135,12 @@ and `new_goals`; chronological `changes` are nested inside each item, so no
 synthetic reference is needed. Focus arrays may reference only pre-existing
 profile items. Each new item's `in_focus` field is its final focus preference;
 the backend excludes it if its final status is resolved or inactive. The backend
+selects at most ten per category after all additions and lifecycle changes.
+When preferences exceed capacity, newly added items with the latest source
+events take priority; the later addition wins a tie. Remaining slots retain
+selected existing items in the model's order. Items displaced from focus stay
+active with their evidence and history intact. This applies independently to
+aspects and goals, including profiles with many earlier scenes. The backend
 materializes an add followed by each nested transition in order, preserving each
 step in history. Canonical target IDs, new stable IDs, scene IDs, and evidence
 provenance are backend-owned. Renaming an item preserves its ID; slug
@@ -545,7 +551,7 @@ ten active goals; focus changes do not alter lifecycle status. See the
 for the migration and verification details.
 
 
-Prompt version `character-embodiment-v37-profile-admission` participates
+Prompt version `character-embodiment-v39-recent-profile-focus` participates
 in source and chunk checkpoint fingerprints, so retries do not reuse outputs
 from older prompt versions. These generation rules do not change public API/SDK
 payloads or persisted node shapes and require no database migration. Previously

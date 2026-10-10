@@ -53,6 +53,63 @@ def test_out_of_range_focus_reference_is_a_validation_error(kind):
         prepare_consolidation(value, events=[], aspects=[], goals=[])
 
 
+@pytest.mark.parametrize("kind", ["aspect", "goal"])
+@pytest.mark.parametrize("new_count", [1, 12])
+def test_newer_profile_items_rotate_focus_without_resolving_older_items(kind, new_count):
+    label = "name" if kind == "aspect" else "title"
+    current = [
+        {"id": f"old-{i}", label: f"I am old {i}" if kind == "aspect" else f"Old goal {i}",
+         "status": "active", "in_focus": True}
+        for i in range(10)
+    ]
+    additions = [
+        {label: f"I am new {i}" if kind == "aspect" else f"New goal {i}",
+         "description": None, "in_focus": True, "justification": "New evidence.",
+         "event_references": ["event-001"], "changes": [],
+         **({"category": "identity"} if kind == "aspect" else {"goal_type": "objective"})}
+        for i in range(new_count)
+    ]
+    payload = {"aspect_operations": [], "goal_operations": [],
+               "new_aspects": additions if kind == "aspect" else [],
+               "new_goals": additions if kind == "goal" else [],
+               "focused_aspects": [], "focused_goals": []}
+    payload[f"focused_{kind}s"] = [{"scope": "existing", "index": i} for i in range(1, 11)]
+    event = ProfileEventOutput(kind=kind, description="New evidence.", scene_id="s1")
+    prepared = prepare_consolidation(
+        ConsolidationEnvelope.model_validate({"consolidation": payload}),
+        events=[event], aspects=current if kind == "aspect" else [],
+        goals=current if kind == "goal" else [],
+    )
+    focused = prepared[f"focused_{kind}s"]
+    assert focused == (
+        [f"{kind}:" + (f"i-am-new-{i}" if kind == "aspect" else f"new-goal-{i}")
+         for i in range(new_count - 1, max(-1, new_count - 11), -1)]
+        + [f"old-{i}" for i in range(max(0, 10 - new_count))]
+    )
+    reduce = _apply_aspect_ops if kind == "aspect" else _apply_goal_ops
+    reduce(current, prepared[f"{kind}_updates"], focused_ids=focused)
+    assert len(current) == 10 + new_count
+    assert sum(item["in_focus"] for item in current) == 10
+    assert all(item["status"] == "active" for item in current)
+
+
+def test_focus_prefers_later_source_event_over_addition_order():
+    events = [ProfileEventOutput(kind="goal", description=f"Event {i}", scene_id=f"s{i}")
+              for i in range(2)]
+    additions = [
+        {"title": "Latest goal" if i == 1 else "Earlier goal", "description": None,
+         "goal_type": "objective", "in_focus": True, "justification": "Grounded goal.",
+         "event_references": [f"event-{i + 1:03d}"], "changes": []}
+        for i in (0, 1)
+    ]
+    value = ConsolidationEnvelope.model_validate({"consolidation": {
+        "aspect_operations": [], "goal_operations": [], "new_aspects": [],
+        "new_goals": additions, "focused_aspects": [], "focused_goals": [],
+    }})
+    result = prepare_consolidation(value, events=events, aspects=[], goals=[])
+    assert result["focused_goals"] == ["goal:latest-goal", "goal:earlier-goal"]
+
+
 def test_stage_two_contract_has_only_emotions_beliefs_and_profile_events():
     value = _SceneEnrichmentsLLMOutput.model_validate({
         "scene_enrichments": [{

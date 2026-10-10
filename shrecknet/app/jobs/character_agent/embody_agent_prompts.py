@@ -44,7 +44,7 @@ IDENTITY_TRAIT_DESCRIPTION_CONTRACT = (
         for key in DIRECTIONAL_TRAITS
     ], ensure_ascii=False)
 )
-PROMPT_VERSION = "character-embodiment-v38-perspective-grounded-traits"
+PROMPT_VERSION = "character-embodiment-v39-recent-profile-focus"
 
 # Execution order: Stage 0, once when description is absent and once after
 # scene processing to refresh it from the resulting current state.
@@ -510,6 +510,10 @@ status transition, each with justification and nonempty event_references. Change
 apply only to their enclosing new item. Additions start active; the backend
 materializes one add followed by each listed change in order. The item's in_focus
 is its final focus preference and applies only if its final status is active.
+When more than ten final active items are requested in one category, the backend
+keeps the latest new additions first, then as many selected existing items as
+fit. Earlier items leave focus but retain their status and history. Order
+new_aspects and new_goals by their source-event chronology.
 
 Focus arrays select only pre-existing items and each element has exactly
 {"scope":"existing","index":1}. Update changes material content; reinforce

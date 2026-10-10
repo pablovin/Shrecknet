@@ -1,4 +1,4 @@
-"""Celery entry point for the single Novelist v3 pipeline."""
+"""Celery entry point for the single Novelist v4 pipeline."""
 
 from __future__ import annotations
 
@@ -45,15 +45,22 @@ async def _resolve_previous_session_text(session_id: str | None) -> tuple[str, s
     return "", "no_text_found"
 
 
-async def _previous_ledger(repo: NovelistRepository, run_id: str | None) -> dict[str, Any] | None:
+async def _previous_run_context(
+    repo: NovelistRepository, run_id: str | None
+) -> dict[str, Any] | None:
+    """Read continuity from V4 plans or historical V3 ledgers."""
     if not _clean(run_id):
         return None
     run = await repo.get_run(str(run_id))
     if not run or run.status != NovelistRunStatus.COMPLETED:
         return None
     artifacts = run.artifacts if isinstance(run.artifacts, dict) else {}
-    ledger = artifacts.get("evidence_ledger")
-    return ledger if isinstance(ledger, dict) and artifacts.get("pipeline_version") == "v3" else None
+    version = artifacts.get("pipeline_version")
+    if version == "v4" and isinstance(artifacts.get("story_plan"), dict):
+        return {"pipeline_version": "v4", "story_plan": artifacts["story_plan"]}
+    if version == "v3" and isinstance(artifacts.get("evidence_ledger"), dict):
+        return {"pipeline_version": "v3", "evidence_ledger": artifacts["evidence_ledger"]}
+    return None
 
 
 def _json_safe(value: Any) -> Any:
@@ -88,15 +95,18 @@ async def _execute_run(*, run_id: str, request_payload: dict[str, Any], job_id: 
             if prior_text:
                 enriched["previous_session_text"] = prior_text
             payload = NovelistRunCreate.model_validate(enriched)
-            object.__setattr__(payload, "previous_ledger", await _previous_ledger(repo, payload.previous_novelist_run_id))
+            object.__setattr__(
+                payload,
+                "previous_run_context",
+                await _previous_run_context(repo, payload.previous_novelist_run_id),
+            )
             await repo.update_status(run_id, status=NovelistRunStatus.RUNNING, stage=NovelistStage.INGEST)
             await session.commit()
             await update_job_progress(job_id, 0.08, {"status": "interpreting source"})
             stages = {
-                NovelistStage.INTERPRETATION: (0.22, "building evidence ledger"), NovelistStage.CONTINUITY: (0.32, "loading continuity"),
+                NovelistStage.INTERPRETATION: (0.22, "building narrative plan"), NovelistStage.CONTINUITY: (0.32, "loading continuity"),
                 NovelistStage.BLOCK_PLANNING: (0.40, "planning writing blocks"), NovelistStage.WRITING: (0.65, "writing chapter blocks"),
                 NovelistStage.QUALITY_GATE: (0.76, "checking prose structure"), NovelistStage.MERGING: (0.82, "merging chapter"),
-                NovelistStage.FIDELITY: (0.90, "verifying fidelity"), NovelistStage.CORRECTION: (0.95, "correcting affected blocks"),
             }
             async def callback(stage: NovelistStage, data: dict[str, Any]) -> None:
                 await repo.update_status(run_id, stage=stage, artifacts=_json_safe(data.get("artifacts", {})), draft_text=data.get("draft_text"))
@@ -109,8 +119,8 @@ async def _execute_run(*, run_id: str, request_payload: dict[str, Any], job_id: 
             artifacts["llm_usage_summary"] = client.get_usage_summary()
             await repo.update_status(run_id, status=NovelistRunStatus.COMPLETED, stage=NovelistStage.DONE, artifacts=_json_safe(artifacts), draft_text=result["final_text_html"], critic_notes=None)
             await session.commit()
-            await update_job_progress(job_id, 1.0, {"status": "completed", "pipeline_version": "v3"})
-            await mark_job_done(job_id, {"run_id": run_id, "status": "completed", "pipeline_version": "v3"})
+            await update_job_progress(job_id, 1.0, {"status": "completed", "pipeline_version": "v4"})
+            await mark_job_done(job_id, {"run_id": run_id, "status": "completed", "pipeline_version": "v4"})
             return result
         except Exception as exc:
             await session.rollback()
@@ -129,7 +139,7 @@ def generate_draft(run_id: str, request_payload: dict[str, Any], *, author_type:
             job_type=JobType.NOVELIST_DRAFT,
             author_type=AuthorType(author_type),
             author_id=author_id or "system",
-            description=f"Novelist v3 draft generation for run {run_id}",
+            description=f"Novelist v4 draft generation for run {run_id}",
         )
         async with AsyncSessionMaker() as session:
             await NovelistRepository(session).attach_background_job(run_id, job_id)

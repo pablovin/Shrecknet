@@ -1,4 +1,4 @@
-"""Backward-compatible import location for Novelist v3.
+"""Backward-compatible import location for Novelist v4.
 
 The former scene/critic/revision implementation was removed. New code should
 import :class:`NovelistOrchestrator` from ``orchestrator`` directly.

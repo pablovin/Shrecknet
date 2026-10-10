@@ -1,80 +1,103 @@
 # Novelist Agent
 
-Novelist v3 turns narrative-adjacent source material into a chapter with a
-creative surface and a factual core. Its implementation is owned by
-`shrecknet/app/jobs/novelist/` and its async entry point is
-`shrecknet/app/tasks/novelist.py`.
+Novelist V4 turns transcripts, notes, recaps, Adventure output, event logs, and
+existing prose into a continuous literary chapter. Its implementation is owned by
+`shrecknet/app/jobs/novelist/`; `shrecknet/app/tasks/novelist.py` is the async
+entry point.
 
 ## Runtime contract
 
-The only runtime path is:
+The only active execution path is:
 
 ```text
-source → evidence ledger → continuity → deterministic writing blocks
-       → quality gate → merge → fidelity verification → targeted correction
+source → compact story plan → continuity → deterministic writing blocks
+       → sequential plain prose → local completion checks → safe HTML rendering
 ```
 
-The analysis model interprets source material and verifies the final chapter.
-The writer model writes or corrects bounded prose blocks. Configure only
+The analysis model acts as an editor. It extracts a title, explicit cast mappings,
+ordered narrative beats, coarse source references, and optional continuity notes.
+It does not build an evidence ledger or classify individual claims. The writer
+model acts as a novelist and writes the planned material as prose.
+
+The two model roles remain independently configurable through
 `model_novelist_analysis` and `model_novelist_writer`.
 
-Analysis responses are locally parsed and checked against their requested JSON
-Schema. If a provider accepts native structured output but returns malformed
-content, Novelist makes one source-preserving retry without the provider-native
-format flag. The retry includes the rejected output, parser or schema error,
-and the required schema, including the rule that a nested mapping cannot be
-returned as the root object. If both responses are recognizably just a
-string-valued nested mapping (for example `player_character_mapping`), Novelist
-makes one targeted repair request that retains that mapping and requires the
-complete root ledger with source-backed scenes. Other second malformed or
-schema-invalid responses fail the run; they are never used as evidence.
+## Structured analysis contract
 
-Every analysis, verification, writing, and correction request carries its
-source-bearing task prompt as a `user` message. Novelist must not submit a
-system-only conversation: provider routing may accept such a request while
-returning an empty visible completion.
+Analysis and long-input reconciliation use the same strict JSON Schema. Every
+object sets `additionalProperties: false`, and every property is required. Nullable
+fields are still required and use `null` when absent:
 
-The current source ledger is authoritative. Authority then descends through a
-prior session, graph/world context, CharacterAgent guidance, and writing style.
-Continuity can affect presentation but cannot add facts. Every ledger claim has
-source-segment provenance; absent information must remain absent.
+```json
+{
+  "title": "The Road Through Winter",
+  "cast": [
+    {"player": "Pietro", "character": "Tamura"}
+  ],
+  "beats": [
+    {
+      "beat_id": "beat-001",
+      "summary": "Tamura reaches the isolated village.",
+      "importance": "major",
+      "source_ids": ["source-0001"]
+    }
+  ],
+  "continuity_notes": null
+}
+```
 
-## Writing and verification
+`importance` is `major`, `supporting`, or `transition`. `beats` and each
+`source_ids` array must be non-empty. Beat IDs must be unique, and source IDs must
+identify source segments supplied to the analysis call. `cast` is an array rather
+than an arbitrary-key object so provider-native strict schemas can enumerate and
+require every nested field.
 
-Adjacent scenes are grouped deterministically into 1,200–1,800-word blocks and
-written sequentially. Each receives the accepted tail of the previous block.
-Only `<p>` and optional `<blockquote>` prose is accepted. Code rejects lists,
-repeated paragraphs, tiny-paragraph cascades, malformed structure, and density
-collapse; one retry is allowed per block.
+Only analysis-model calls receive this JSON schema, on both the initial request and
+the bounded repair request. V4 does not use a schema-less provider fallback: a
+provider that rejects structured output fails the run clearly. Writer-model calls
+explicitly receive no response schema because they return plain prose. Analysis is
+parsed as one complete JSON document, checked against the schema, and retried once
+when it is malformed, incomplete, schema-invalid, or reports token-limit truncation.
 
-The merged chapter is verified once against its ledger. If issues identify block
-IDs, only those blocks are rewritten, followed by one final verification. A
-remaining fidelity issue fails the run rather than returning known-unfaithful
-prose. Novelist does not call Architect or Elder, run a literary critic, or make
-a mandatory full-chapter rewrite.
+For oversized input, source text is bounded into segments. Each segment produces a
+compact partial plan, and one analysis reconciliation call produces the final plan.
+The same schema and validation rules apply to partial and reconciled plans.
+
+## Writing and completion checks
+
+Adjacent beats are grouped deterministically into sections targeting 800–1,200
+words. Each writer call receives the complete story plan, its assigned beats,
+relevant verbatim source segments, lower-authority continuity, user instructions,
+and the tail of the preceding accepted section. The final block is explicitly told
+to produce a complete literary conclusion.
+
+The writer returns plain text. Local checks reject only unusable output: empty or
+token-truncated responses, unexpectedly short responses, list-shaped output,
+Markdown headings or fences, and model-produced HTML. One complete-section retry
+is permitted. Minor stylistic imperfections and legitimate short dramatic
+paragraphs do not trigger rewriting.
+
+The backend escapes the title and prose, wraps prose paragraphs in `<p>` elements,
+and inserts the `<h1>`. There is no mandatory LLM fidelity verification,
+correction, or re-verification stage.
 
 ## Persistence and compatibility
 
-Run artifacts have `pipeline_version: "v3"` and contain `evidence_ledger`,
-`continuity`, `block_plan`, `blocks`, `quality_gate`, `fidelity`, timing, and LLM
-usage data. `draft_text` remains final display-ready chapter HTML. The V2
-`critic_notes`, scene results, Elder Q&A, and numbered step outputs are
-deprecated compatibility fields and are not populated by V3.
+V4 artifacts use `pipeline_version: "v4"` and contain `story_plan`,
+`source_segments`, `continuity`, `block_plan`, accepted plain-prose `blocks`, local
+quality results, timings, and LLM-call metadata. `draft_text` remains display-ready
+chapter HTML.
 
-Each queued run is linked to its background-job record when the Celery worker
-starts. That record provides the queued/running/completed/failed state and
-progress updates; failure to create or link the tracking record prevents the
-pipeline from starting.
+The request routes and payload remain backward compatible. Historical V1–V3 run
+artifacts are not rewritten. `previous_novelist_run_id` accepts a completed V4 run
+or a historical V3 run: V4 reuses its story plan as lower-authority continuity,
+while V3 reuses its evidence ledger. `previous_session_id` remains a graph-backed,
+lower-authority text lookup.
 
-Use `previous_novelist_run_id` to reuse a completed V3 ledger. The older
-`previous_session_id` remains a lower-authority graph text lookup.
-
-The last `language` and `instructions` submitted for each Novelist agent are
-remembered on that agent. Frontends can retrieve them from `GET /agents/` or
-`GET /agents/{agent_id}` in `AgentRead` and prefill the next run form. Omitted
-values reuse the saved preference; explicitly empty strings clear it. The resolved
-values are attached to the accepted run, so its recorded request remains the
-source of truth for the pipeline execution.
+For response compatibility, `fidelity_status` is `not_run` and
+`correction_count` is `0` on V4 runs. Historical stage enum values and nullable V2
+diagnostic fields remain readable, but V4 does not emit fidelity or correction
+stages.
 
 See [the endpoint contract](Endpoints/Novelist%20-%20Endpoints.md) and
-[pipeline details](Generate_Draft/Generate_Draft.md).
+[the generation flow](Generate_Draft/Generate_Draft.md).

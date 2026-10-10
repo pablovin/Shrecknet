@@ -1,31 +1,61 @@
-"""Deterministic adjacent-scene grouping for bounded Novelist v3 writer calls."""
+"""Deterministic adjacent-beat grouping for bounded Novelist v4 writer calls."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
-from app.jobs.novelist.evidence_ledger import LedgerScene
+from app.jobs.novelist.story_plan import StoryBeat
 
 
 @dataclass(frozen=True)
 class WritingBlock:
     block_id: str
-    scene_ids: list[str]
+    beat_ids: list[str]
+    source_ids: list[str]
     target_words: int
+    is_final: bool = False
+
+    def as_prompt_dict(self) -> dict[str, Any]:
+        return {
+            "block_id": self.block_id,
+            "beat_ids": self.beat_ids,
+            "target_words": self.target_words,
+            "is_final": self.is_final,
+        }
 
 
-def plan_blocks(scenes: list[LedgerScene], *, target_words: int = 1500) -> list[WritingBlock]:
-    ordered = sorted(scenes, key=lambda scene: (scene.chronology, scene.scene_id))
-    blocks: list[WritingBlock] = []
-    current: list[LedgerScene] = []
-    current_words = 0
-    for scene in ordered:
-        estimate = max(300, min(900, scene.narrative_weight * 350))
-        if current and current_words + estimate > 1800:
-            blocks.append(WritingBlock(f"block-{len(blocks) + 1:03d}", [row.scene_id for row in current], max(1200, min(1800, current_words))))
-            current, current_words = [], 0
-        current.append(scene)
-        current_words += estimate
+_WORD_ESTIMATES = {"major": 500, "supporting": 300, "transition": 150}
+
+
+def plan_blocks(beats: list[StoryBeat]) -> list[WritingBlock]:
+    """Group ordered beats into sections targeting 800–1,200 prose words."""
+
+    grouped: list[tuple[list[StoryBeat], int]] = []
+    current: list[StoryBeat] = []
+    estimated_words = 0
+    for beat in beats:
+        estimate = _WORD_ESTIMATES[beat.importance]
+        if current and estimated_words + estimate > 1200:
+            grouped.append((current, estimated_words))
+            current, estimated_words = [], 0
+        current.append(beat)
+        estimated_words += estimate
     if current:
-        blocks.append(WritingBlock(f"block-{len(blocks) + 1:03d}", [row.scene_id for row in current], max(1200, min(1800, current_words or target_words))))
+        grouped.append((current, estimated_words))
+
+    blocks: list[WritingBlock] = []
+    for index, (rows, estimate) in enumerate(grouped, start=1):
+        source_ids = list(
+            dict.fromkeys(source_id for row in rows for source_id in row.source_ids)
+        )
+        blocks.append(
+            WritingBlock(
+                block_id=f"block-{index:03d}",
+                beat_ids=[row.beat_id for row in rows],
+                source_ids=source_ids,
+                target_words=max(800, min(1200, estimate)),
+                is_final=index == len(grouped),
+            )
+        )
     return blocks

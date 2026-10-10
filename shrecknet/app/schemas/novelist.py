@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class NovelistRunCreate(BaseModel):
-    """Payload for the provenance-led Novelist v3 chapter job."""
+    """Payload for the compact-plan Novelist v4 chapter job."""
 
     unstructured_text: str = Field(
         ...,
@@ -46,7 +46,7 @@ class NovelistRunCreate(BaseModel):
     )
     previous_novelist_run_id: Optional[str] = Field(
         None,
-        description="Completed Novelist v3 run whose evidence ledger may be reused for continuity.",
+        description="Completed Novelist V3 or V4 run whose plan may be reused for continuity.",
     )
 
 

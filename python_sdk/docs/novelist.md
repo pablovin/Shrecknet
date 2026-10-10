@@ -1,19 +1,19 @@
-# Novelist v3
+# Novelist V4
 
 Use `sdk.novelist.start_run(agent_id, NovelistRunCreate(...))` for pasted
 transcripts, recaps, notes, Adventure output, event-log JSON, or existing prose.
-Set `source_type` only as a hint; Novelist interprets the source semantically.
+Set `source_type` only as a hint; Novelist creates a compact story plan and writes
+sequential prose sections from it and the relevant original source.
 
-`draft_text` is final chapter HTML. A completed V3 run also exposes
+`draft_text` is final, backend-escaped chapter HTML. A completed V4 run exposes
 `pipeline_version`, `block_count`, `fidelity_status`, and `correction_count`.
-To reuse factual continuity, pass the completed prior run ID as
-`previous_novelist_run_id`. `previous_session_id` remains graph-backed,
-non-authoritative continuity text.
+Because V4 has no mandatory fidelity-model pass, the last two values are
+`"not_run"` and `0`.
 
+Pass a completed V3 or V4 ID as `previous_novelist_run_id` for lower-authority
+continuity. `previous_session_id` remains graph-backed continuity text.
 `start_run_from_upload` accepts PDF, text, Markdown, and JSON paths.
 
-To prefill a Novelist form, use `sdk.agents.get(agent_id)` or
-`sdk.agents.list(job="novelist")`. The returned `AgentRead` contains nullable
-`novelist_last_language` and `novelist_last_instructions`. Omitting either field
-(or sending `None`) on the next run reuses its saved value; send an empty string
-to clear it.
+To prefill a form, use `sdk.agents.get(agent_id)` or
+`sdk.agents.list(job="novelist")`. Omitting `language` or `instructions` (or
+sending `None`) reuses the saved value; send an empty string to clear it.

@@ -1,52 +1,50 @@
-"""Deterministic structural checks for Novelist v3 prose blocks."""
+"""Local completion checks and safe HTML rendering for Novelist v4 prose."""
 
 from __future__ import annotations
 
+import html
 import re
-from html.parser import HTMLParser
 
 
-class _Tags(HTMLParser):
-    def __init__(self) -> None:
-        super().__init__()
-        self.tags: list[str] = []
-        self.errors: list[str] = []
-
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        self.tags.append(tag)
+_LIST_LINE = re.compile(r"^\s*(?:[-*•]\s+|\d+[.)]\s+)", re.MULTILINE)
+_HEADING_OR_FENCE = re.compile(r"^\s*(?:#{1,6}\s+|```)", re.MULTILINE)
+_HTML_TAG = re.compile(r"<\/?[A-Za-z][^>]*>")
 
 
-_PARAGRAPH = re.compile(r"<p(?:\s[^>]*)?>(.*?)</p>", re.I | re.S)
-_TAG = re.compile(r"<[^>]+>")
-_LIST = re.compile(r"(^|\n)\s*(?:[-*•]\s+|\d+[.)]\s+)", re.M)
+def validate_prose_text(
+    text: str, *, target_words: int, finish_reason: str | None
+) -> list[str]:
+    """Return only failures severe enough to justify one generation retry."""
 
-
-def validate_prose_html(html: str) -> list[str]:
-    """Return concrete structural violations; deliberately do not score style."""
     errors: list[str] = []
-    parser = _Tags()
-    try:
-        parser.feed(html)
-        parser.close()
-    except Exception:
-        errors.append("malformed HTML")
-    forbidden = {"ul", "ol", "li", "h1", "h2", "h3"} & set(parser.tags)
-    if forbidden:
-        errors.append("forbidden HTML tags: " + ", ".join(sorted(forbidden)))
-    if _LIST.search(_TAG.sub("", html)):
-        errors.append("markdown-style list")
-    paragraphs = [re.sub(r"\s+", " ", _TAG.sub("", item)).strip() for item in _PARAGRAPH.findall(html)]
-    if not paragraphs:
-        errors.append("no complete <p> paragraphs")
-        return errors
-    if len(paragraphs) != len(set(paragraphs)):
-        errors.append("repeated paragraphs")
-    words = [len(paragraph.split()) for paragraph in paragraphs]
-    if len(words) >= 3 and any(all(size < 18 for size in words[i : i + 3]) for i in range(len(words) - 2)):
-        errors.append("three consecutive very short paragraphs")
-    if len(words) >= 4:
-        tail = words[max(0, int(len(words) * 0.7)) :]
-        head = words[: max(1, int(len(words) * 0.7))]
-        if tail and sum(tail) / len(tail) < (sum(head) / len(head)) * 0.45:
-            errors.append("paragraph-density collapse near block ending")
+    stripped = text.strip()
+    if not stripped:
+        return ["empty response"]
+    normalized_finish = str(finish_reason or "").casefold()
+    if normalized_finish in {"length", "max_tokens", "max_output_tokens"}:
+        errors.append("generation was truncated at the output-token limit")
+    word_count = len(stripped.split())
+    minimum_words = max(180, int(target_words * 0.35))
+    if word_count < minimum_words:
+        errors.append(
+            f"response is unexpectedly short ({word_count} words; minimum {minimum_words})"
+        )
+    if len(_LIST_LINE.findall(stripped)) >= 2:
+        errors.append("response is formatted as a list")
+    if _HEADING_OR_FENCE.search(stripped):
+        errors.append("response contains a heading or Markdown fence")
+    if _HTML_TAG.search(stripped):
+        errors.append("response contains HTML instead of plain prose")
     return errors
+
+
+def prose_to_html(text: str) -> str:
+    """Escape accepted plain prose and wrap each paragraph in backend-owned HTML."""
+
+    paragraphs = [
+        part.strip() for part in re.split(r"\n\s*\n", text.strip()) if part.strip()
+    ]
+    normalized = [re.sub(r"\s*\n\s*", " ", paragraph) for paragraph in paragraphs]
+    return "\n".join(
+        f"<p>{html.escape(paragraph, quote=False)}</p>" for paragraph in normalized
+    )

@@ -1,13 +1,14 @@
-"""Novelist v3 orchestration.
+"""Novelist v4 orchestration.
 
-Execution order: interpret source -> enrich continuity -> deterministically plan
-blocks -> write and structurally validate each block -> merge -> verify factual
-fidelity -> correct only named blocks once.  The analysis role frames and
-verifies; the writer role only renders ledger-backed prose.
+Execution order: understand source -> load continuity -> plan adjacent writing
+blocks -> write and locally check plain-prose sections -> render safe chapter HTML.
+The analysis model receives the strict story-plan JSON Schema. The writer model
+never receives a JSON schema because its contract is plain literary prose.
 """
 
 from __future__ import annotations
 
+import html
 import json
 import logging
 import time
@@ -17,12 +18,20 @@ from jsonschema import validate as validate_json_schema
 
 from app.integrations.llm.model_policy import LLMTask, ModelPolicy
 from app.integrations.llm.shreckllm_client import ShreckLLMClient
-from app.integrations.llm.structured_output import chat_with_structured_output, strict_json_schema
-from app.jobs.shrecknet.agent import parse_json_deterministically
+from app.integrations.llm.structured_output import strict_json_schema
 from app.jobs.novelist.block_planner import WritingBlock, plan_blocks
-from app.jobs.novelist.evidence_ledger import LedgerScene, NarrativeEvidenceLedger
-from app.jobs.novelist.prose_quality import validate_prose_html
+from app.jobs.novelist.prompts import (
+    build_analysis_retry_prompt,
+    build_writer_prompt,
+    build_writer_retry_prompt,
+)
+from app.jobs.novelist.prose_quality import prose_to_html, validate_prose_text
 from app.jobs.novelist.source_interpreter import interpret_source
+from app.jobs.novelist.story_plan import (
+    STORY_PLAN_JSON_SCHEMA,
+    NarrativeStoryPlan,
+    SourceSegment,
+)
 from app.models.agent import Agent
 from app.models.novelist import NovelistStage
 from app.schemas.novelist import NovelistRunCreate
@@ -31,195 +40,307 @@ StageCallback = Callable[[NovelistStage, dict[str, Any]], Awaitable[None]]
 
 logger = logging.getLogger(__name__)
 
-_VERIFY_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["issues"], "properties": {"issues": {"type": "array", "items": {"type": "object", "additionalProperties": False, "required": ["block_id", "kind", "detail"], "properties": {"block_id": {"type": "string"}, "kind": {"type": "string"}, "detail": {"type": "string"}}}}}}
+ANALYSIS_MAX_TOKENS = 3000
+WRITER_MAX_TOKENS = 5000
 
 
 class NovelistOrchestrator:
-    """Single authoritative implementation of the Novelist v3 pipeline."""
+    """Single authoritative implementation of the Novelist v4 pipeline."""
 
-    def __init__(self, *, llm_client: ShreckLLMClient, model_policy: ModelPolicy) -> None:
+    def __init__(
+        self, *, llm_client: ShreckLLMClient, model_policy: ModelPolicy
+    ) -> None:
         self.llm_client = llm_client
-        self.analysis_model = getattr(model_policy, "model_novelist_analysis", None) or model_policy.get_model(LLMTask.SYNTHESIS)
-        self.writer_model = getattr(model_policy, "model_novelist_writer", None) or model_policy.get_model(LLMTask.SYNTHESIS)
+        self.analysis_model = getattr(
+            model_policy, "model_novelist_analysis", None
+        ) or model_policy.get_model(LLMTask.SYNTHESIS)
+        self.writer_model = getattr(
+            model_policy, "model_novelist_writer", None
+        ) or model_policy.get_model(LLMTask.SYNTHESIS)
         self.calls: list[dict[str, Any]] = []
 
-    async def _json(self, prompt: str, schema: dict[str, Any], usage_tag: str) -> dict[str, Any]:
-        response_format = strict_json_schema("novelist_v3", schema)
-        last: Exception | None = None
-        rejected_output = ""
-        unwrapped_mapping: tuple[str, dict[str, str]] | None = None
-        for attempt in range(3):
-            parsed: Any = None
+    @staticmethod
+    def _model_name(model: Any) -> Any:
+        return model.model_dump() if hasattr(model, "model_dump") else str(model)
+
+    async def _json(
+        self, prompt: str, schema: dict[str, Any], usage_tag: str
+    ) -> dict[str, Any]:
+        """Call the analysis role with its schema and one bounded repair attempt."""
+
+        if schema != STORY_PLAN_JSON_SCHEMA:
+            raise ValueError("Novelist analysis calls must use STORY_PLAN_JSON_SCHEMA")
+        response_format = strict_json_schema("novelist_v4_story_plan", schema)
+        rejected = ""
+        last_error: Exception | None = None
+        for attempt in range(2):
+            attempt_tag = usage_tag if attempt == 0 else f"{usage_tag}.repair"
+            attempt_prompt = prompt
+            if attempt:
+                attempt_prompt = build_analysis_retry_prompt(
+                    original_prompt=prompt,
+                    rejected=rejected,
+                    error=last_error,
+                    schema=schema,
+                )
+            result = await self.llm_client.chat(
+                model=self.analysis_model,
+                messages=[{"role": "user", "content": attempt_prompt}],
+                response_format=response_format,
+                temperature=0.0,
+                return_metadata=True,
+                usage_tag=attempt_tag,
+                max_tokens=ANALYSIS_MAX_TOKENS,
+            )
+            text = result.get("text") if isinstance(result, dict) else result
+            metadata = (
+                result.get("response_metadata", {}) if isinstance(result, dict) else {}
+            )
+            rejected = str(text or "")
+            self.calls.append(
+                {
+                    "tag": attempt_tag,
+                    "role": "analysis",
+                    "model": self._model_name(self.analysis_model),
+                    "response_metadata": metadata,
+                }
+            )
             try:
-                if attempt == 0:
-                    result = await chat_with_structured_output(
-                        llm_client=self.llm_client,
-                        model=self.analysis_model,
-                        messages=[{"role": "user", "content": prompt}],
-                        response_format=response_format,
-                        temperature=0.0,
-                        return_metadata=True,
-                        usage_tag=usage_tag,
-                        max_tokens=6000,
+                finish_reason = str(metadata.get("finish_reason") or "").casefold()
+                if finish_reason in {"length", "max_tokens", "max_output_tokens"}:
+                    raise ValueError(
+                        "analysis response was truncated at the output-token limit"
                     )
-                elif attempt == 1:
-                    # Some OpenAI-compatible providers acknowledge json_schema
-                    # but return a short non-JSON response.  Retrying the same
-                    # native request repeats that provider failure, so make the
-                    # compatibility path explicit while retaining the complete
-                    # source-bearing prompt and validating locally.
-                    fallback_prompt = (
-                        f"{prompt}\n\nNative structured output was not valid. "
-                        "Repair the rejected response below. Return one RFC8259 JSON object only: "
-                        "no Markdown, explanation, or omitted required fields. The root object "
-                        "must contain exactly the keys required by the schema; never return the "
-                        "value of a nested field, such as player_character_mapping, by itself. "
-                        f"Rejected response: {rejected_output[:16_000]}\n"
-                        f"Validation error: {last}\n"
-                        f"Required JSON Schema: {json.dumps(schema, ensure_ascii=False)}"
-                    )
-                    result = await self.llm_client.chat(
-                        model=self.analysis_model,
-                        messages=[{"role": "user", "content": fallback_prompt}],
-                        temperature=0.0,
-                        return_metadata=True,
-                        usage_tag=f"{usage_tag}.malformed_structured_fallback",
-                        max_tokens=6000,
-                    )
-                else:
-                    if unwrapped_mapping is None:
-                        raise last or ValueError("structured response could not be repaired")
-                    field, mapping = unwrapped_mapping
-                    repair_prompt = (
-                        f"{prompt}\n\nThe previous response was only the value of `{field}`, "
-                        "not the required root JSON object. Preserve that mapping as the value "
-                        f"of the `{field}` key, then complete every other required root key from "
-                        "the source. In particular, include at least one source-backed scene. "
-                        "Return one RFC8259 JSON object only—no Markdown or explanation. "
-                        f"The unwrapped mapping was: {json.dumps(mapping, ensure_ascii=False)}\n"
-                        f"Required JSON Schema: {json.dumps(schema, ensure_ascii=False)}"
-                    )
-                    result = await self.llm_client.chat(
-                        model=self.analysis_model,
-                        messages=[{"role": "user", "content": repair_prompt}],
-                        temperature=0.0,
-                        return_metadata=True,
-                        usage_tag=f"{usage_tag}.unwrapped_mapping_repair",
-                        max_tokens=6000,
-                    )
-                text = result.get("text") if isinstance(result, dict) else result
-                rejected_output = str(text)
-                parsed = parse_json_deterministically(str(text))
+                parsed = json.loads(rejected)
                 if not isinstance(parsed, dict):
                     raise ValueError("structured response must be a JSON object")
                 validate_json_schema(parsed, schema)
-                self.calls.append({"tag": usage_tag, "model": self.analysis_model.model_dump() if hasattr(self.analysis_model, "model_dump") else str(self.analysis_model)})
                 return parsed
             except Exception as exc:
-                last = exc
-                if isinstance(parsed, dict):
-                    unwrapped_mapping = self._unwrapped_string_mapping(parsed, schema)
+                last_error = exc
                 logger.warning(
-                    "novelist_analysis_structured_output_invalid tag=%s attempt=%s error=%s",
+                    "novelist_story_plan_invalid tag=%s attempt=%s error=%s",
                     usage_tag,
                     attempt + 1,
                     exc,
                 )
-        raise RuntimeError(f"Novelist analysis structured output failed after retries: {last}") from last
+        raise RuntimeError(
+            f"Novelist story-plan output failed after one retry: {last_error}"
+        ) from last_error
 
-    @staticmethod
-    def _unwrapped_string_mapping(value: dict[str, Any], schema: dict[str, Any]) -> tuple[str, dict[str, str]] | None:
-        """Recognize a provider returning a string-valued nested map as its root."""
-        properties = schema.get("properties")
-        if not isinstance(properties, dict) or not value or set(value) & set(properties):
-            return None
-        if not all(isinstance(key, str) and isinstance(item, str) for key, item in value.items()):
-            return None
-        for field, field_schema in properties.items():
-            if not isinstance(field_schema, dict) or field_schema.get("type") != "object":
-                continue
-            additional = field_schema.get("additionalProperties")
-            if isinstance(additional, dict) and additional.get("type") == "string":
-                return field, value
-        return None
-
-    async def _write(self, prompt: str, *, usage_tag: str) -> str:
-        result = await self.llm_client.chat(model=self.writer_model, messages=[{"role": "user", "content": prompt}], temperature=0.7, return_metadata=True, use_conversation_memory=False, usage_tag=usage_tag, max_tokens=3000)
+    async def _write(
+        self, prompt: str, *, usage_tag: str
+    ) -> tuple[str, dict[str, Any]]:
+        result = await self.llm_client.chat(
+            model=self.writer_model,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.7,
+            return_metadata=True,
+            use_conversation_memory=False,
+            usage_tag=usage_tag,
+            max_tokens=WRITER_MAX_TOKENS,
+        )
         text = result.get("text") if isinstance(result, dict) else result
-        self.calls.append({"tag": usage_tag, "model": self.writer_model.model_dump() if hasattr(self.writer_model, "model_dump") else str(self.writer_model)})
-        return str(text or "").strip()
+        metadata = (
+            result.get("response_metadata", {}) if isinstance(result, dict) else {}
+        )
+        self.calls.append(
+            {
+                "tag": usage_tag,
+                "role": "writer",
+                "model": self._model_name(self.writer_model),
+                "response_metadata": metadata,
+            }
+        )
+        return str(text or "").strip(), metadata
 
     @staticmethod
-    def _scenes_for(block: WritingBlock, ledger: NarrativeEvidenceLedger) -> list[LedgerScene]:
-        wanted = set(block.scene_ids)
-        return [scene for scene in sorted(ledger.scenes, key=lambda item: (item.chronology, item.scene_id)) if scene.scene_id in wanted]
+    def _source_for(
+        block: WritingBlock, segments: list[SourceSegment]
+    ) -> list[SourceSegment]:
+        wanted = set(block.source_ids)
+        return [segment for segment in segments if segment.id in wanted]
 
-    async def _write_block(self, *, block: WritingBlock, ledger: NarrativeEvidenceLedger, continuity: dict[str, Any], payload: NovelistRunCreate, previous_tail: str, correction: list[dict[str, str]] | None = None) -> tuple[str, int]:
-        scenes = [scene.model_dump() for scene in self._scenes_for(block, ledger)]
-        prompt = f"""Stage 4 — Progressive Narrative Writing. Write only HTML <p> and optional <blockquote> elements for {block.block_id}. The ledger defines WHAT happened; you define only HOW it is narrated.
-
-Never add events, clues, characters, injuries, relationships, destinations, motives, factual knowledge, changed outcomes, or chronology. Reconstructed dialogue is allowed only when its meaning is ledger-supported. Do not write lists, headings, pseudo-lists, or a rushed ending. Produce continuous literary prose in {payload.language or 'the source language'}, about {block.target_words} words.
-
-user_instructions={payload.instructions or 'none'}
-complete_cast_mapping={json.dumps(ledger.player_character_mapping, ensure_ascii=False)}
-chapter_outline={json.dumps([{ 'scene_id': s.scene_id, 'title': s.title, 'chronology': s.chronology } for s in ledger.scenes], ensure_ascii=False)}
-continuity_package={json.dumps(continuity, ensure_ascii=False)}
-current_block_evidence={json.dumps(scenes, ensure_ascii=False)}
-previous_accepted_tail={previous_tail}
-correction_issues={json.dumps(correction or [], ensure_ascii=False)}"""
+    async def _write_block(
+        self,
+        *,
+        block: WritingBlock,
+        plan: NarrativeStoryPlan,
+        segments: list[SourceSegment],
+        continuity: dict[str, Any],
+        payload: NovelistRunCreate,
+        previous_tail: str,
+    ) -> tuple[str, int]:
+        prompt = build_writer_prompt(
+            plan=plan,
+            block=block.as_prompt_dict(),
+            source_segments=self._source_for(block, segments),
+            language=payload.language or "",
+            instructions=payload.instructions or "",
+            continuity=continuity,
+            previous_tail=previous_tail,
+        )
+        failures: list[str] = []
+        prose = ""
         for attempt in range(2):
-            html = await self._write(prompt + ("" if attempt == 0 else "\nRepair these deterministic structural violations exactly; preserve the same evidence."), usage_tag="novelist.writer.block" if not correction else "novelist.writer.correction")
-            violations = validate_prose_html(html)
-            if not violations:
-                return html, attempt + 1
-            prompt += "\nStructural violations from the previous attempt: " + "; ".join(violations)
-        raise RuntimeError(f"Block {block.block_id} failed prose quality gate: {violations}")
+            request = (
+                prompt
+                if attempt == 0
+                else build_writer_retry_prompt(
+                    original_prompt=prompt, rejected=prose, errors=failures,
+                )
+            )
+            prose, metadata = await self._write(
+                request,
+                usage_tag="novelist.writer.section"
+                if attempt == 0
+                else "novelist.writer.section_retry",
+            )
+            failures = validate_prose_text(
+                prose,
+                target_words=block.target_words,
+                finish_reason=metadata.get("finish_reason"),
+            )
+            if not failures:
+                return prose, attempt + 1
+        raise RuntimeError(
+            f"Section {block.block_id} remained unusable after one retry: {'; '.join(failures)}"
+        )
 
-    async def _verify(self, *, html: str, ledger: NarrativeEvidenceLedger, blocks: list[WritingBlock]) -> list[dict[str, str]]:
-        prompt = f"""Stage 5 — Fidelity Verification. Compare final chapter HTML with the Narrative Evidence Ledger. Detect unsupported events/dialogue/motives, wrong actor or speaker, chronology errors, OOC leakage, continuity conflicts, and missing major events. Return JSON exactly {{"issues":[{{"block_id":"block-001", "kind":"...", "detail":"..."}}]}}. Only name block IDs from {json.dumps([block.block_id for block in blocks])}. Do not criticize literary quality.\nledger={ledger.model_dump_json()}\nchapter_html={html}"""
-        parsed = await self._json(prompt, _VERIFY_SCHEMA, "novelist.analysis.fidelity")
-        return [issue for issue in parsed.get("issues", []) if isinstance(issue, dict)]
-
-    async def execute(self, *, agent: Agent, payload: NovelistRunCreate, conversation_id: str | None = None, stage_callback: StageCallback | None = None) -> dict[str, Any]:
+    async def execute(
+        self,
+        *,
+        agent: Agent,
+        payload: NovelistRunCreate,
+        conversation_id: str | None = None,
+        stage_callback: StageCallback | None = None,
+    ) -> dict[str, Any]:
         del agent, conversation_id
         started = time.monotonic()
-        artifacts: dict[str, Any] = {"pipeline_version": "v3", "inputs": payload.model_dump(exclude={"previous_session_text", "previous_session_summary"}), "timings_ms": {}}
-        if stage_callback: await stage_callback(NovelistStage.INGEST, {"artifacts": artifacts})
-        t0 = time.monotonic()
-        if stage_callback: await stage_callback(NovelistStage.INTERPRETATION, {"artifacts": artifacts})
-        ledger, segments = await interpret_source(text=payload.unstructured_text.strip(), source_type=payload.source_type, language=payload.language or "", instructions=payload.instructions or "", call_json=self._json)
-        artifacts["evidence_ledger"] = ledger.model_dump(); artifacts["source_segments"] = [segment.model_dump() for segment in segments]; artifacts["timings_ms"]["interpretation"] = round((time.monotonic()-t0)*1000, 2)
-        if stage_callback: await stage_callback(NovelistStage.CONTINUITY, {"artifacts": artifacts})
-        continuity = {"previous_session": payload.previous_session_summary or payload.previous_session_text or "", "prior_ledger": getattr(payload, "previous_ledger", None), "graph_context": [], "character_guidance": [], "authority_order": ["current_evidence_ledger", "previous_session", "graph_world", "character_agent", "writing_style"]}
+        artifacts: dict[str, Any] = {
+            "pipeline_version": "v4",
+            "inputs": payload.model_dump(
+                exclude={"previous_session_text", "previous_session_summary"}
+            ),
+            "timings_ms": {},
+        }
+        if stage_callback:
+            await stage_callback(NovelistStage.INGEST, {"artifacts": artifacts})
+
+        interpretation_started = time.monotonic()
+        if stage_callback:
+            await stage_callback(NovelistStage.INTERPRETATION, {"artifacts": artifacts})
+        plan, segments = await interpret_source(
+            text=payload.unstructured_text.strip(),
+            source_type=payload.source_type,
+            language=payload.language or "",
+            instructions=payload.instructions or "",
+            call_json=self._json,
+        )
+        artifacts["story_plan"] = plan.model_dump()
+        artifacts["source_segments"] = [segment.model_dump() for segment in segments]
+        artifacts["timings_ms"]["interpretation"] = round(
+            (time.monotonic() - interpretation_started) * 1000, 2
+        )
+
+        if stage_callback:
+            await stage_callback(NovelistStage.CONTINUITY, {"artifacts": artifacts})
+        continuity = {
+            "previous_session": payload.previous_session_summary
+            or payload.previous_session_text
+            or "",
+            "previous_run_context": getattr(payload, "previous_run_context", None),
+            "authority_order": [
+                "current_story_plan_and_source",
+                "previous_session",
+                "previous_run_context",
+                "writing_style",
+            ],
+        }
         artifacts["continuity"] = continuity
-        blocks = plan_blocks(ledger.scenes)
-        artifacts["block_plan"] = [{"block_id": block.block_id, "scene_ids": block.scene_ids, "target_words": block.target_words} for block in blocks]
-        if stage_callback: await stage_callback(NovelistStage.BLOCK_PLANNING, {"artifacts": artifacts, "block_count": len(blocks)})
-        accepted: dict[str, str] = {}; attempts: dict[str, int] = {}; previous_tail = ""
+
+        blocks = plan_blocks(plan.beats)
+        artifacts["block_plan"] = [
+            block.as_prompt_dict() | {"source_ids": block.source_ids}
+            for block in blocks
+        ]
+        if stage_callback:
+            await stage_callback(
+                NovelistStage.BLOCK_PLANNING,
+                {"artifacts": artifacts, "block_count": len(blocks)},
+            )
+
+        accepted: dict[str, str] = {}
+        attempts: dict[str, int] = {}
+        previous_tail = ""
         for index, block in enumerate(blocks, start=1):
-            if stage_callback: await stage_callback(NovelistStage.WRITING, {"artifacts": artifacts, "block_count": len(blocks), "completed_blocks": index - 1})
-            html, used = await self._write_block(block=block, ledger=ledger, continuity=continuity, payload=payload, previous_tail=previous_tail)
-            accepted[block.block_id], attempts[block.block_id] = html, used
-            previous_tail = html[-1800:]
-        if stage_callback: await stage_callback(NovelistStage.QUALITY_GATE, {"artifacts": artifacts, "block_count": len(blocks), "completed_blocks": len(blocks)})
-        title = ledger.chapter_title.strip() if ledger.chapter_title else "Chapter"
-        final_html = f"<h1>{title}</h1>\n" + "\n".join(accepted[block.block_id] for block in blocks)
-        if stage_callback: await stage_callback(NovelistStage.MERGING, {"artifacts": artifacts, "draft_text": final_html})
-        if stage_callback: await stage_callback(NovelistStage.FIDELITY, {"artifacts": artifacts})
-        issues = await self._verify(html=final_html, ledger=ledger, blocks=blocks)
-        corrections = 0
-        if issues:
-            corrections = 1
-            if stage_callback: await stage_callback(NovelistStage.CORRECTION, {"artifacts": artifacts, "affected_blocks": sorted({row['block_id'] for row in issues})})
-            for block in blocks:
-                block_issues = [row for row in issues if row.get("block_id") == block.block_id]
-                if block_issues:
-                    accepted[block.block_id], attempts[block.block_id] = await self._write_block(block=block, ledger=ledger, continuity=continuity, payload=payload, previous_tail="", correction=block_issues)
-            final_html = f"<h1>{title}</h1>\n" + "\n".join(accepted[block.block_id] for block in blocks)
-            remaining = await self._verify(html=final_html, ledger=ledger, blocks=blocks)
-            if remaining:
-                raise RuntimeError("Novelist fidelity verification failed after targeted correction")
-        artifacts["blocks"] = [{"block_id": block.block_id, "scene_ids": block.scene_ids, "html": accepted[block.block_id], "attempts": attempts[block.block_id]} for block in blocks]
-        artifacts["quality_gate"] = {"all_blocks_accepted": True}; artifacts["fidelity"] = {"status": "passed", "initial_issues": issues}; artifacts["timings_ms"]["total"] = round((time.monotonic()-started)*1000, 2); artifacts["llm_calls"] = self.calls
-        artifacts["output_summary"] = {"block_count": len(blocks), "fidelity_status": "passed", "correction_count": corrections}
-        return {"final_text_html": final_html, "artifacts": artifacts, "fidelity_status": "passed", "correction_count": corrections}
+            if stage_callback:
+                await stage_callback(
+                    NovelistStage.WRITING,
+                    {
+                        "artifacts": artifacts,
+                        "block_count": len(blocks),
+                        "completed_blocks": index - 1,
+                    },
+                )
+            prose, used = await self._write_block(
+                block=block,
+                plan=plan,
+                segments=segments,
+                continuity=continuity,
+                payload=payload,
+                previous_tail=previous_tail,
+            )
+            accepted[block.block_id] = prose
+            attempts[block.block_id] = used
+            previous_tail = prose[-1800:]
+
+        if stage_callback:
+            await stage_callback(
+                NovelistStage.QUALITY_GATE,
+                {
+                    "artifacts": artifacts,
+                    "block_count": len(blocks),
+                    "completed_blocks": len(blocks),
+                },
+            )
+        title = (plan.title or "Chapter").strip() or "Chapter"
+        rendered_sections = [
+            prose_to_html(accepted[block.block_id]) for block in blocks
+        ]
+        final_html = f"<h1>{html.escape(title, quote=False)}</h1>\n" + "\n".join(
+            rendered_sections
+        )
+        if stage_callback:
+            await stage_callback(
+                NovelistStage.MERGING,
+                {"artifacts": artifacts, "draft_text": final_html},
+            )
+
+        artifacts["blocks"] = [
+            {
+                "block_id": block.block_id,
+                "beat_ids": block.beat_ids,
+                "source_ids": block.source_ids,
+                "prose": accepted[block.block_id],
+                "attempts": attempts[block.block_id],
+            }
+            for block in blocks
+        ]
+        artifacts["quality_gate"] = {
+            "all_blocks_accepted": True,
+            "total_retries": sum(value - 1 for value in attempts.values()),
+        }
+        artifacts["timings_ms"]["total"] = round((time.monotonic() - started) * 1000, 2)
+        artifacts["llm_calls"] = self.calls
+        artifacts["output_summary"] = {
+            "block_count": len(blocks),
+            "fidelity_status": "not_run",
+            "correction_count": 0,
+        }
+        return {
+            "final_text_html": final_html,
+            "artifacts": artifacts,
+            "fidelity_status": "not_run",
+            "correction_count": 0,
+        }

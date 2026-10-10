@@ -17,8 +17,7 @@ from app.jobs.character_agent.memory import select_relevant_memories
 from app.jobs.character_agent.prompts import DECISION_MAKING_PROMPT, GENERIC_DECISION_MAKING_PROMPT
 from app.jobs.character_agent.schemas import CharacterDeliberation
 from app.jobs.shrecknet.agent import parse_json_deterministically, repair_invalid_json
-from app.schemas.character_agent import CharacterAgentQueryRequest, CharacterAgentQueryResult
-from app.schemas.character_traits import TraitProfile, TRAIT_BY_KEY
+from app.schemas.character_agent import CharacterAgentQueryRequest, CharacterAgentQueryResult, IdentityDescription
 
 StageReporter = Callable[[str, float], Awaitable[None]]
 RATIONALE_MAX_CHARACTERS = 2_000
@@ -26,6 +25,10 @@ RATIONALE_MAX_CHARACTERS = 2_000
 
 class CharacterGenerationError(RuntimeError):
     """A generation stage could not satisfy its deterministic contract."""
+
+
+class CharacterIdentityUnavailableError(RuntimeError):
+    """Identity-mode deliberation requires a persisted identity description."""
 
 
 class CharacterAgentDecisionMakingJob:
@@ -128,55 +131,6 @@ class CharacterAgentDecisionMakingJob:
             },
         })
 
-    @staticmethod
-    def _compact_character(snapshot: dict[str, Any]) -> dict[str, Any]:
-        character = snapshot["character_agent"]
-        profile = TraitProfile.model_validate(character["trait_profile"])
-        traits = {
-            key: {
-                "point": profile.estimate(key).point,
-                "status": profile.estimate(key).status,
-                "summary": (
-                    "No grounded disposition is known."
-                    if profile.estimate(key).status == "unknown"
-                    else "Administrator-selected point; scene evidence remains recorded separately."
-                    if profile.estimate(key).status == "manual"
-                    else "Provisional authored disposition; no scene behavior has been observed."
-                    if profile.estimate(key).observation_count == 0
-                    else "Mixed or context-dependent polarity across perspectives."
-                    if profile.estimate(key).point == 5
-                    else f"Derived from {profile.estimate(key).observation_count} grounded perspective observations."
-                ),
-                "left": definition.left_pole,
-                "right": definition.right_pole,
-            }
-            for key, definition in TRAIT_BY_KEY.items()
-        }
-        return {
-            "name": character["name"],
-            "subtitle": character.get("subtitle"),
-            "background_story": character.get("background_story") or None,
-            "identity_description": character.get("identity_description"),
-            "traits": traits,
-            "steadiness": {"point": profile.steadiness.point, "status": profile.steadiness.status,
-                           "summary": "Comparable perspective evidence is insufficient."
-                           if profile.steadiness.point is None else
-                           f"Computed from {profile.steadiness.observation_count} comparable perspectives."},
-            "aspects": [
-                {key: item.get(key) for key in ("name", "category", "description", "status", "in_focus")}
-                for item in snapshot["aspects"]
-            ],
-            "goals": [
-                {
-                    "title": item.get("title") or item.get("name"),
-                    "description": item.get("description"),
-                    "status": item.get("status"),
-                    "in_focus": item.get("in_focus"),
-                }
-                for item in snapshot["goals"]
-            ],
-        }
-
     async def _parse_or_repair(self, request: CharacterAgentQueryRequest, raw: str) -> CharacterDeliberation:
         await self._report("validating", .85)
         try:
@@ -197,16 +151,16 @@ class CharacterAgentDecisionMakingJob:
         if request.use_character_identity:
             if snapshot is None:
                 raise CharacterGenerationError("character identity snapshot is required for identity-grounded queries")
+            identity = snapshot["character_agent"].get("identity_description")
+            if identity is None:
+                raise CharacterIdentityUnavailableError("CharacterAgent identity_description is unavailable")
+            identity = IdentityDescription.model_validate(identity).model_dump(mode="json")
             await self._report("retrieving_memories", .2)
             payload = {
-                "character": self._compact_character(snapshot),
+                "identity_description": identity,
                 "memories": await select_relevant_memories(
                     query=request.query,
                     context=request.context,
-                    identity={
-                        "character": self._compact_character(snapshot),
-                        "instruction": request.system_instruction,
-                    },
                     memories=snapshot.get("memories", []),
                 ),
                 "query": request.query,

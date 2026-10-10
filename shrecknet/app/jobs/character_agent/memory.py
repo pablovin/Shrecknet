@@ -57,31 +57,15 @@ def _cosine(left: list[float], right: list[float]) -> float | None:
 
 async def select_relevant_memories(
     *, query: str, memories: list[dict[str, Any]], context: dict[str, Any] | None = None,
-    identity: dict[str, Any] | None = None, limit: int = 5,
+    limit: int = 5,
 ) -> list[dict[str, Any]]:
-    """Return a stable top-N subset, falling back to lexical ranking safely."""
+    """Rank owned memories against the caller's decision and situation only."""
     if not memories:
         return []
-    # Recall should reflect the whole decision situation, not just a short verb
-    # like "choose". Include provided options/context and current identity cues
-    # so memory matches can be about people, stakes, and goals in the decision.
-    identity_cues = identity or {}
-    if identity:
-        # The generated identity and current goals/aspects are directly useful
-        # for matching subjective history. Avoid broad vocabulary from every
-        # trait label; keep only compact identity fields to reduce recall noise.
-        character = identity.get("character") or {}
-        identity_cues = {
-            "name": character.get("name"),
-            "background_story": character.get("background_story"),
-            "identity_description": character.get("identity_description"),
-            "aspects": character.get("aspects"),
-            "goals": character.get("goals"),
-        }
+    # Options, stakes, and named people in context are part of the decision.
     retrieval_query = "\n".join(part for part in (
         query,
         json.dumps(context, ensure_ascii=False, sort_keys=True) if context else "",
-        json.dumps(identity_cues, ensure_ascii=False, sort_keys=True) if identity_cues else "",
     ) if part)
     query_vector: list[float] | None = None
     if any(isinstance(item.get("memory_embedding"), list) for item in memories):

@@ -3,9 +3,12 @@ import json
 import pytest
 
 from app.core.config_store import LLMModelTarget
-from app.jobs.character_agent.decision_making import CharacterAgentDecisionMakingJob
+from app.jobs.character_agent.decision_making import (
+    CharacterAgentDecisionMakingJob,
+    CharacterIdentityUnavailableError,
+)
+from app.jobs.character_agent.memory import select_relevant_memories
 from app.schemas.character_agent import CharacterAgentQueryRequest
-from app.schemas.character_traits import TraitProfile
 
 
 class FakeLLM:
@@ -20,7 +23,7 @@ class FakeLLM:
 TARGET = LLMModelTarget(provider="test", name="model")
 RESULT = json.dumps({"content": "Gawaine was brave, but rash.", "decision_basis": "Her remembered experience matters."})
 SNAPSHOT = {
-    "character_agent": {"name": "Cwenhild", "subtitle": "Commander", "background_story": "A northern commander sworn to guard the crown.", "identity_description": {"identity_summary": "A steadfast commander shaped by siege and duty.", "psychological_summary": "She fears needless loss and values loyalty.", "personality_traits": []}, "trait_profile": TraitProfile().model_dump(mode="json")},
+    "character_agent": {"name": "Cwenhild", "subtitle": "Commander", "background_story": "A northern commander sworn to guard the crown.", "identity_description": {"identity_summary": "A steadfast commander shaped by siege and duty.", "psychological_summary": "She fears needless loss and values loyalty.", "personality_traits": []}, "trait_profile": {"excluded": "numeric traits"}},
     "aspects": [{"id": "aspect-1", "name": "Battlefield Commander", "category": "role", "importance": 5, "description": "Commands soldiers."}],
     "goals": [{"id": "goal-1", "title": "Protect Arthur's reign", "priority": 98, "commitment": 95, "description": "Protect the crown."}],
     "memories": [{
@@ -34,20 +37,6 @@ SNAPSHOT = {
 }
 
 
-def test_query_trait_summary_distinguishes_unknown_from_mixed_point_five():
-    profile = TraitProfile()
-    profile.dispositional_traits['curiosity'].point = 5
-    profile.dispositional_traits['curiosity'].status = 'supported'
-    profile.dispositional_traits['curiosity'].observation_ids = ['perspective-1', 'perspective-2']
-    profile.dispositional_traits['curiosity'].observation_count = 2
-    snapshot = {**SNAPSHOT, 'character_agent': {
-        **SNAPSHOT['character_agent'], 'trait_profile': profile.model_dump(mode='json')}}
-    compact = CharacterAgentDecisionMakingJob._compact_character(snapshot)
-    assert 'Mixed or context-dependent' in compact['traits']['curiosity']['summary']
-    assert compact['traits']['integrity']['point'] is None
-    assert 'No grounded disposition' in compact['traits']['integrity']['summary']
-
-
 @pytest.mark.asyncio
 async def test_identity_query_is_one_deliberation_call_with_owner_memory():
     llm = FakeLLM([RESULT])
@@ -58,9 +47,11 @@ async def test_identity_query_is_one_deliberation_call_with_owner_memory():
     assert len(llm.calls) == 1
     assert llm.calls[0]["usage_tag"] == "character_agent.decision_making"
     payload = json.loads(llm.calls[0]["messages"][1]["content"])
-    assert payload["character"]["goals"][0]["title"] == "Protect Arthur's reign"
-    assert payload["character"]["background_story"].startswith("A northern commander")
-    assert payload["character"]["identity_description"]["identity_summary"].startswith("A steadfast")
+    assert payload["identity_description"]["identity_summary"].startswith("A steadfast")
+    assert set(payload) == {"identity_description", "memories", "query", "context", "instruction", "response_format"}
+    assert "background_story" not in json.dumps(payload)
+    assert "trait_profile" not in json.dumps(payload)
+    assert "Battlefield Commander" not in json.dumps(payload)
     assert payload["memories"][0]["beliefs"][0]["statement"] == "Gawaine seeks glory."
     assert "memory-1" not in json.dumps(payload)
     assert "qualifying_count" not in json.dumps(payload)
@@ -87,7 +78,7 @@ async def test_generic_query_is_also_one_call():
 
 
 @pytest.mark.asyncio
-async def test_memory_retrieval_uses_query_context_and_current_identity():
+async def test_memory_retrieval_uses_query_and_context():
     llm = FakeLLM([RESULT])
     job = CharacterAgentDecisionMakingJob(llm_client=llm, deliberation_model=TARGET, repair_model=TARGET)
     request = CharacterAgentQueryRequest(
@@ -97,3 +88,26 @@ async def test_memory_retrieval_uses_query_context_and_current_identity():
     await job.run(request, SNAPSHOT)
     payload = json.loads(llm.calls[0]["messages"][1]["content"])
     assert payload["memories"][0]["perspective"].startswith("I stood beside")
+
+
+@pytest.mark.asyncio
+async def test_retrieval_ignores_identity_only_terms():
+    memories = [
+        {"id": "identity", "perspective": "The siege shaped my loyalty."},
+        {"id": "situation", "perspective": "Gawaine threatened the northern gate."},
+    ]
+    selected = await select_relevant_memories(
+        query="Choose an option.", context={"stakes": "Gawaine at northern gate"},
+        memories=memories,
+    )
+    assert selected == [{"perspective": "Gawaine threatened the northern gate."}]
+
+
+@pytest.mark.asyncio
+async def test_identity_mode_requires_persisted_identity_description():
+    llm = FakeLLM([RESULT])
+    job = CharacterAgentDecisionMakingJob(llm_client=llm, deliberation_model=TARGET, repair_model=TARGET)
+    snapshot = {**SNAPSHOT, "character_agent": {"identity_description": None}}
+    with pytest.raises(CharacterIdentityUnavailableError, match="identity_description"):
+        await job.run(CharacterAgentQueryRequest(query="Choose."), snapshot)
+    assert llm.calls == []

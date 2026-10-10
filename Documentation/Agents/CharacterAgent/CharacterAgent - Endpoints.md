@@ -261,7 +261,10 @@ The agent must be active.
 identity deliberation/rendering call. Before it, the worker deterministically
 retrieves up to five relevant active `ScenePerspective` records owned by the
 queried CharacterAgent; it never reads objective Scene content or another
-character's memory. Invalid final JSON may receive one repair attempt through
+character's memory. Retrieval ranks the caller's `query` and `context` only.
+The call uses persisted `identity_description` as its sole personality input;
+missing identity fails the job with `error.code="identity_unavailable"`.
+Invalid final JSON may receive one repair attempt through
 `model_agents_repair_json`. Generic mode also uses one call and receives no
 CharacterAgent identity.
 The former `/query` and `/query-jobs/{job_id}` paths remain available as hidden

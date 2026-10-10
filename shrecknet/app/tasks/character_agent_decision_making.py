@@ -11,6 +11,7 @@ from app.integrations.llm.shreckllm_client import ShreckLLMClient
 from app.jobs.character_agent.decision_making import (
     CharacterAgentDecisionMakingJob,
     CharacterGenerationError,
+    CharacterIdentityUnavailableError,
 )
 from app.schemas.character_agent import CharacterAgentQueryRequest
 from app.services.character_agent_service import CharacterAgentService
@@ -63,12 +64,14 @@ def run_character_agent_decision_making(
         return details
     except Exception as exc:
         current_stage = getattr(exc, "character_query_stage", "failed")
+        if isinstance(exc, CharacterIdentityUnavailableError):
+            error_code = "identity_unavailable"
+        elif isinstance(exc, (ValueError, CharacterGenerationError)):
+            error_code = "invalid_agent_output"
+        else:
+            error_code = "agent_service_unavailable"
         error = {
-            "code": (
-                "invalid_agent_output"
-                if isinstance(exc, (ValueError, CharacterGenerationError))
-                else "agent_service_unavailable"
-            ),
+            "code": error_code,
             "message": str(exc) or type(exc).__name__,
         }
         details = _details(

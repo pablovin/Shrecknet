@@ -85,6 +85,15 @@ def _perspective_props(record: Any, key: str = "node") -> dict[str, Any]:
     return {name: value for name, value in data.items() if name in ScenePerspectiveRead.model_fields}
 
 
+def _read_identity_description(value: Any) -> IdentityDescription | None:
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except ValueError:
+            return None
+    return IdentityDescription.model_validate(value) if value else None
+
+
 def _agent_data(data: dict[str, Any], *, allow_legacy_profile: bool = False) -> dict[str, Any]:
     """Project a graph node onto the current public CharacterAgent contract.
 
@@ -108,15 +117,7 @@ def _agent_data(data: dict[str, Any], *, allow_legacy_profile: bool = False) -> 
         # rewriting their obsolete trait format.
         projected["trait_profile"] = TraitProfile()
         projected["trait_profile_requires_regeneration"] = True
-    identity_description = data.get("identity_description")
-    if isinstance(identity_description, str):
-        try:
-            identity_description = json.loads(identity_description)
-        except ValueError:
-            identity_description = None
-    projected["identity_description"] = (
-        IdentityDescription.model_validate(identity_description) if identity_description else None
-    )
+    projected["identity_description"] = _read_identity_description(data.get("identity_description"))
     projected.setdefault("visibility", "private")
     return projected
 
@@ -553,40 +554,11 @@ class CharacterAgentService:
         return CharacterAgentRead.model_validate(_agent_data(_props(row), allow_legacy_profile=True))
 
     async def load_query_snapshot(self, node_id: str, public_only: bool = False) -> dict[str, Any]:
-        """Load the complete active character identity in one graph operation."""
+        """Load the active agent's identity description and owned memories."""
         row = await self._one(
             """
-            MATCH (agent:CharacterAgent {id: $node_id})-[:EMBODIES]->(entity:EntityInstance)
+            MATCH (agent:CharacterAgent {id: $node_id})-[:EMBODIES]->(:EntityInstance)
             WHERE NOT $public_only OR coalesce(agent.visibility, 'private') = 'public'
-            CALL {
-              WITH agent
-              OPTIONAL MATCH (agent)-[assignment:HAS_ASPECT]->(aspect:CharacterAspect)
-              WHERE coalesce(assignment.status, aspect.status, 'active') = 'active'
-                AND coalesce(assignment.in_focus, true) = true
-              WITH aspect, assignment
-              ORDER BY assignment.updated_at DESC, assignment.created_at DESC, aspect.id ASC
-              RETURN collect(CASE WHEN aspect IS NULL THEN null ELSE {
-                id: aspect.id, name: coalesce(assignment.name, aspect.name),
-                category: coalesce(assignment.category, aspect.category),
-                description: coalesce(assignment.description, aspect.description),
-                status: coalesce(assignment.status, aspect.status, 'active'), in_focus: true
-              } END) AS aspects
-            }
-            CALL {
-              WITH agent
-              OPTIONAL MATCH (agent)-[pursuit:PURSUES]->(goal:CharacterGoal)
-              WHERE coalesce(pursuit.status, goal.status, 'active') = 'active'
-                AND coalesce(pursuit.in_focus, true) = true
-              WITH goal, pursuit
-              ORDER BY pursuit.updated_at DESC, pursuit.created_at DESC, goal.id ASC
-              RETURN collect(CASE WHEN goal IS NULL THEN null ELSE {
-                id: goal.id, title: coalesce(pursuit.title, goal.title),
-                description: coalesce(pursuit.description, goal.description),
-                goal_type: coalesce(pursuit.goal_type, goal.goal_type),
-                status: coalesce(pursuit.status, goal.status, 'active'),
-                in_focus: true
-              } END) AS goals
-            }
             CALL {
               WITH agent
               OPTIONAL MATCH (agent)-[:HAS_PERSPECTIVE]->(perspective:ScenePerspective)
@@ -612,9 +584,7 @@ class CharacterAgentService:
                    description: impact.description, target_name: coalesce(target.title, target.name)}]
               } END) AS memories
             }
-            RETURN agent, entity, [item IN aspects WHERE item IS NOT NULL] AS aspects,
-                   [item IN goals WHERE item IS NOT NULL] AS goals,
-                   [item IN memories WHERE item IS NOT NULL] AS memories
+            RETURN agent, [item IN memories WHERE item IS NOT NULL] AS memories
             """,
             node_id=node_id, public_only=public_only,
         )
@@ -623,18 +593,11 @@ class CharacterAgentService:
         agent = dict(row["agent"])
         if agent.get("status") != "active":
             raise HTTPException(status_code=409, detail="CharacterAgent is not active")
-        profile = _read_profile(agent.get("trait_profile"))
+        identity = _read_identity_description(agent.get("identity_description"))
         return {
             "character_agent": {
-                "name": str(agent.get("name") or row["entity"].get("alias") or "Character"),
-                "subtitle": agent.get("subtitle"),
-                "background_story": str(agent.get("background_story") or ""),
-                "identity_description": _agent_data(agent).get("identity_description").model_dump(mode="json")
-                if _agent_data(agent).get("identity_description") else None,
-                "trait_profile": profile.model_dump(mode="json"),
+                "identity_description": identity.model_dump(mode="json") if identity else None,
             },
-            "aspects": [dict(item) for item in row["aspects"]],
-            "goals": [dict(item) for item in row["goals"]],
             "memories": [dict(item) for item in row["memories"]],
         }
 

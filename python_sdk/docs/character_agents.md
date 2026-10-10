@@ -20,12 +20,15 @@ async with Shrecknet(token="...") as sdk:
     print(job.result.decision_basis)
 ```
 
-By default, the query uses the CharacterAgent's identity, traits, aspects, and
-goals. Identity queries also include the persistent narrative `identity_description`;
-demonstrated development in current state takes precedence if it conflicts with
-that foundation. Queries use one deliberation call with deterministic retrieval of
-the queried character's own scene perspectives; no other character or canonical
-scene memory is supplied. Set `use_character_identity=False` to use neutral
+By default, the query uses the CharacterAgent's persisted `identity_description`
+(`identity_summary`, `psychological_summary`, and qualitative
+`personality_traits`) as its sole personality input. Its authored background,
+numerical traits, STEADINESS, aspects, and goals are not sent. Queries use one
+deliberation call with deterministic retrieval of the queried character's own
+scene perspectives, ranked from `query` and `context` alone; no other character
+or canonical scene memory is supplied. If the identity description is absent,
+the job fails with `error.code="identity_unavailable"`. Set
+`use_character_identity=False` to use neutral
 single-call deliberation without
 sending CharacterAgent profile data:
 

@@ -70,7 +70,7 @@ Label: `CharacterAgent`
 | `image_url` | string or null | no | Maximum 2,048 characters. An omitted value is derived from the entity avatar or the first configured image property when available. |
 | `status` | string enum | yes | `active` or `archived`; defaults to `active`. Only active agents may be queried. |
 | `visibility` | string enum | yes for new nodes | `private` or `public`; defaults to `private`. Missing legacy values are read and authorized as `private`. |
-| `trait_profile` | JSON string | yes | Eight directional estimates, separate STEADINESS, evidence metadata, and audited manual overrides. Returned as a typed object; see [Dispositional traits](Dispositional%20Traits.md), including extraction and query pipelines. |
+| `trait_profile` | JSON string | yes | Eight directional estimates, separate STEADINESS, evidence metadata, and audited manual overrides. Returned as a typed object; see [Dispositional traits](Dispositional%20Traits.md) for extraction and audit. It is not sent to decision making. |
 | `created_by_user_id` | integer | yes | SQL user ID of the administrator that created the node. |
 | `created_at` | datetime string | yes | UTC ISO-8601 creation timestamp. |
 | `updated_at` | datetime string | yes | UTC ISO-8601 timestamp changed by agent updates. |
@@ -396,11 +396,11 @@ The service also enforces these rules:
 ## Query projection
 
 Identity-grounded decision making uses one normal LLM deliberation call. It
-supplies the authored background story, persistent identity description,
-current traits and steadiness, active aspects and goals, caller context, and up
-to five owner-scoped subjective memories selected against the decision, context,
-and current identity cues. Unknown remains unknown; dispositions bias decisions
-probabilistically. Generic mode receives no identity data. Submit through
+supplies the persistent `identity_description` as its sole personality source,
+the caller's decision situation, and up to five owner-scoped subjective memories
+selected against the query and context alone. It does not send authored background,
+numerical traits, STEADINESS, active aspects, or goals. Generic mode receives no
+identity data. Submit through
 `POST /character-agents/{character_agent_id}/decision-making` and poll
 `GET /character-agents/{character_agent_id}/decision-making-jobs/{job_id}`.
 

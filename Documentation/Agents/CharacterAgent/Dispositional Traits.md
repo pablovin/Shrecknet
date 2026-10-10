@@ -73,7 +73,7 @@ flowchart TD
     F --> H[Backend validates, binds and deduplicates trait evidence]
     H --> I
     I --> J[Directional and STEADINESS reducers]
-    J --> K[Point profile, changes, query context]
+    J --> K[Point profile and audited changes]
 ```
 
 `identity_description` contains narrative summaries and trait descriptions,
@@ -191,9 +191,10 @@ STEADINESS never controls sampling temperature.
 
 ## Use, operations, and cutover
 
-The query hydrator receives effective points, statuses, and trusted pole
-metadata. Traits bias behavior and do not mandate choices. Unknown values remain
-unknown; mixed point-5 evidence is not presented as proof of an average nature.
+Decision making uses the persisted `identity_description` as its personality
+source; it does not hydrate numerical trait points, statuses, poles, or
+STEADINESS into the deliberation prompt. Trait estimates remain available for
+profile display and evidence audit.
 The administrator evidence endpoint is
 `GET /character-agents/{agent_id}/trait-evidence`; its records have
 `perspective_id`, `polarity`, `situation_type`, `justification`, and backend

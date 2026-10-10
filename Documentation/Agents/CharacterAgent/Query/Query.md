@@ -53,7 +53,7 @@ generation.
 ## Decision-making pipeline
 
 Identity mode makes one substantive deliberation call. The worker loads the
-active identity, at most ten in-focus active aspects and goals, and only active
+persisted `identity_description` and only
 `(:CharacterAgent)-[:HAS_PERSPECTIVE]->(:ScenePerspective)` records owned by
 the queried agent. It deterministically ranks the character's own subjective
 memories and supplies at most five relevant memories to the model. Perspective
@@ -73,23 +73,26 @@ embeddings fall back to owner-scoped lexical ranking; they never widen graph
 scope. These vectors are separate from the ordinary `SemanticDocument` scene
 corpus, so non-character scene search is unchanged.
 
-The deliberation payload includes the authored `background_story` and persistent
-`identity_description` (`identity_summary`, `psychological_summary`, and
-`personality_traits`) as the canonical psychological foundation, alongside
-compact traits (point, status, poles, and a short backend-derived evidence
-summary), steadiness, complete active aspects/goals with descriptions, caller
-query/context/instruction, and the selected memories. Memory ranking considers
-the query, serialized caller context, current character cues, and instruction,
-helping short choice prompts retrieve history relevant to named people, options,
-stakes, and goals. Current cues include the character's generated identity,
-authored background story, active aspects, and goals. Ranking remains deterministic and limited to the queried
-character's own perspectives. Up to five matching memories are sent; low-
-relevance memories remain excluded. Demonstrated development in current traits, goals,
-aspects, and memories takes precedence when it conflicts with the original
-description. It contains no opaque IDs, evidence IDs, raw observation
-ledger, model-selected selectors, or framing summaries. Unknown traits remain
-unknown; point 5 can reflect mixed evidence. Traits bias behaviour while goals,
-aspects, memories, and current context may outweigh them.
+The deliberation payload contains `identity_description` (`identity_summary`,
+`psychological_summary`, and qualitative `personality_traits`), caller
+query/context/instruction, response format, and selected memories. This persisted
+description is the authoritative personality input. The job does not load or
+send the authored `background_story`, numerical trait profile, poles,
+STEADINESS, or active aspects and goals. Memory ranking uses only the query and
+serialized caller context, including any people, options, and stakes supplied
+there. Identity and `system_instruction` do not add search terms. Ranking remains
+deterministic and limited to the queried character's own perspectives. Up to five
+matching memories are sent; low-relevance memories remain excluded. The prompt
+asks for the choice this character would make, including personal fears and
+contradictions, rather than a generic optimal choice. It contains no opaque IDs,
+evidence IDs, raw observation ledger, model-selected selectors, or framing
+summaries.
+
+If `identity_description` is absent, identity mode fails the background job with
+`error.code=identity_unavailable`; it does not substitute another personality
+source. Generic mode remains available for an active, visible agent. Existing
+agents need a persisted identity description before identity-mode decisions; no
+graph migration or memory re-embedding is required.
 
 The main call requests native strict JSON for the response envelope. Its output
 is parsed and validated locally against the caller contract. Malformed output
@@ -126,7 +129,7 @@ Completed result:
   "result": {
     "type": "json",
     "content": {"choice_id": "find-key"},
-    "decision_basis": "The selected traits and objectives favor an authorized route."
+    "decision_basis": "Past losses make the character cautious around a forced entry."
   },
   "error": null,
   "created_at": "2026-07-27T13:20:00Z",

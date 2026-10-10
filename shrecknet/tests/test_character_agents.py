@@ -30,7 +30,37 @@ from app.schemas.character_agent import (
     CharacterGoalRead,
     CharacterAgentQueryRequest,
 )
-from app.services.character_agent_service import _agent_data
+from app.services.character_agent_service import CharacterAgentService, _agent_data
+
+
+@pytest.mark.asyncio
+async def test_decision_snapshot_loads_identity_and_owned_memories_only(monkeypatch):
+    service = CharacterAgentService(None, None)
+
+    async def one(query, **params):
+        assert params == {"node_id": "agent-1", "public_only": True}
+        assert "HAS_PERSPECTIVE" in query
+        assert "HAS_ASPECT" not in query
+        assert "PURSUES" not in query
+        assert "trait_profile" not in query
+        return {
+            "agent": {
+                "status": "active", "trait_profile": "obsolete profile",
+                "identity_description": '{"identity_summary":"A guard","psychological_summary":"Fears betrayal","personality_traits":[]}',
+            },
+            "memories": [{"id": "owned", "perspective": "I saw the gate open."}],
+        }
+
+    monkeypatch.setattr(service, "_one", one)
+    snapshot = await service.load_query_snapshot("agent-1", public_only=True)
+    assert snapshot == {
+        "character_agent": {"identity_description": {
+            "identity_summary": "A guard",
+            "psychological_summary": "Fears betrayal",
+            "personality_traits": [],
+        }},
+        "memories": [{"id": "owned", "perspective": "I saw the gate open."}],
+    }
 
 
 def test_character_payload_defaults_and_ranges():

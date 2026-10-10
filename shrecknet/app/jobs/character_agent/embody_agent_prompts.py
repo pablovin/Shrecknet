@@ -9,7 +9,9 @@ After perspective validation, two calls run in parallel for that chunk:
     PSYCHOLOGICAL_ANALYSIS_PROMPT (built from ENRICHMENT_PROMPT):
         canonical scenes + source_type/perspectives + identity_description -> selective emotions/beliefs, at most one character-defining aspect and one independently meaningful goal event per scene.
     TRAIT_INTERPRETATION_PROMPT:
-        canonical scenes + authoritative trait meanings -> up to three complete six-field candidates per scene; backend validates trait-specific context.
+        canonical scenes + validated source_type/perspectives + identity summaries
+        + authoritative trait meanings -> up to three complete six-field candidates
+        per scene; backend validates trait-specific context.
 After all chunks for one source, one optional consolidation call reconciles its
 profile events with current character state using typed ordered operations and local
 references, checking admission before preserving distinct qualifying properties
@@ -42,7 +44,7 @@ IDENTITY_TRAIT_DESCRIPTION_CONTRACT = (
         for key in DIRECTIONAL_TRAITS
     ], ensure_ascii=False)
 )
-PROMPT_VERSION = "character-embodiment-v37-profile-admission"
+PROMPT_VERSION = "character-embodiment-v38-perspective-grounded-traits"
 
 # Execution order: Stage 0, once when description is absent and once after
 # scene processing to refresh it from the resulting current state.
@@ -305,18 +307,42 @@ backend assigns evidence_ids by position, so omit them from model output.
 """
 
 # Execution order: Stage 3 branch, parallel with PSYCHOLOGICAL_ANALYSIS_PROMPT after Stage 1.
-# Stage 3 receives canonical scene context and authoritative trait definitions;
-# prior personality_traits and generated perspectives are excluded.
-# Purpose: Classify grounded character-specific trait signals against the directional trait registry.
+# Stage 3 receives canonical scenes, validated Stage 1 interpretations, identity
+# summaries, and authoritative trait definitions; prior personality_traits are excluded.
+# Purpose: Classify character-specific trait signals grounded in canonical behavior.
 # Used by: EmbodyAgent._interpret_traits_batch after perspective validation.
 # Expected: Ordered JSON scene_trait_interpretations with supported candidates.
-TRAIT_INTERPRETATION_PROMPT = r"""Stage 3 — interpret canonical scenes to identify supported trait observations.
+TRAIT_INTERPRETATION_PROMPT = r"""Stage 3 — reason about scene-grounded trait observations for this character.
 INPUT JSON:
-{"target":{"alias":"character alias","identity_summary":"narrative background summary","psychological_summary":"motivations, values, fears and outlook summary"},"scenes":[{"position":1,"scene":{"name":"canonical scene name","description":"canonical objective scene description"}}]}
+{"target":{"alias":"character alias","identity_summary":"narrative background summary or null","psychological_summary":"motivations, values, fears and outlook summary or null"},"scenes":[{"position":1,"scene":{"name":"canonical scene name","description":"canonical objective scene description"},"agent_scene_interpretation":{"source_type":"participated|witnessed|heard_about|read_about|inferred|unknown","perspective":"the character's grounded subjective interpretation of this scene"}}]}
 
-`identity_summary` and `psychological_summary` provide concise context for
-interpreting the character's choices. They are not evidence that a disposition
-was demonstrated. The target never includes prior `personality_traits`.
+`target.alias` identifies the character whose traits you assess. Its two summaries
+provide background context for understanding their choices; they are not evidence
+that a disposition was demonstrated. The target never includes prior
+`personality_traits`. Each `scenes` item has a one-based `position`, and its
+canonical `scene` and `agent_scene_interpretation` refer to that same event.
+The scenes are ordered chronologically. Do not move evidence between positions.
+
+Use the two kinds of scene information differently:
+- `scene.name` and `scene.description` are the objective source of what happened,
+  what this character actually did or explicitly said, the circumstances, and
+  any available alternatives. Ground every trait candidate in these canonical
+  facts. If the canonical scene does not establish a diagnostic choice, expressed
+  value, or dispositional response by this character, return no candidate.
+- `agent_scene_interpretation.source_type` describes how this character encountered
+  the event: participated, witnessed, heard_about, read_about, inferred, or
+  unknown. Witnessing or learning about someone else's behavior is not evidence
+  of this character performing it.
+- `agent_scene_interpretation.perspective` is the Stage 1 subjective account of
+  what the character noticed, knew, suspected, valued, and took the event to mean.
+  Use it to interpret the character's own scene-supported behavior in light of
+  their knowledge, motives, and perceived options. It may contain uncertainty,
+  mistaken beliefs, or an inference; do not promote those to objective facts.
+  A feeling, imagined action, or behavior mentioned only in this account does
+  not by itself establish a trait observation. If it conflicts with the canonical
+  scene, use the canonical facts for what happened and the perspective only for
+  the character's subjective understanding. When grounding is insufficient or
+  the two accounts cannot be reconciled, omit the candidate.
 
 Identify personality trait observations for this character
 across the supplied chronological scenes.
@@ -328,11 +354,11 @@ one diagnostic voluntary choice may supply evidence without establishing a
 settled trait. Identity facts and established capabilities are not trait signals
 by themselves. Use the authoritative meanings below; do not introduce new traits.
 
-Use identity_summary and psychological_summary only as background
-for understanding the character. Use canonical scene facts to
-identify choices, actions, and explicitly expressed values. The
-summaries are not evidence that a trait was demonstrated. Do not
-use generated perspectives or prior personality_traits.
+Use the perspective to assess why a scene-supported choice may be diagnostic
+for this particular character, without treating it as independent evidence of
+the choice. Do not infer a trait from the identity summaries or a prior trait
+description. The candidate justification should identify the canonical behavior
+and explain any relevant character-specific interpretation.
 
 For each scene, identify supported observations using
 the eight established personality dimensions.

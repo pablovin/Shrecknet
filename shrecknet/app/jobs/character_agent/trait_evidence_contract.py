@@ -1,8 +1,9 @@
 """Shared compact trait contract for canonical scene-based trait interpretation.
 
-Stage 3 interprets canonical scene facts without identity descriptions or
-generated perspectives. The backend binds observations to validated scene
-perspectives and computes points, while Stage 2 enriches psychological state in
+Stage 3 interprets canonical scene facts through validated character perspectives,
+with identity summaries as context but no prior personality traits. The backend
+binds observations to validated scene perspectives and computes points, while
+Stage 2 enriches psychological state in
 parallel. No prompt produces a point or public trait profile.
 """
 
@@ -16,7 +17,7 @@ For each supported trait, return exactly:
  "relationship":"friend|enemy|other, or null",
  "stakes":"ordinary|high_stakes, or null",
  "polarity":"low|high",
- "justification":"one brief reason grounded in the canonical scene and character interpretation"}.
+ "justification":"one brief reason naming canonical behavior and any relevant character interpretation"}.
 The diagnostic_situation must be in the allowed list for the selected trait.
 For a specified context, all three context fields must be non-null. Use null for
 all three when context is insufficient for comparison. The backend constructs

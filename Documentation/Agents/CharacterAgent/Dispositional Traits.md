@@ -65,11 +65,12 @@ contract](CharacterAgent.md#evidence-grounded-embodiment).
 ```mermaid
 flowchart TD
     A[Persistent identity_description] --> B[Stage 0: load or generate narrative grounding]
-    C[Canonical scene] --> D[Stage 1: grounded perspective and quoted behavior]
+    C[Canonical scene] --> D[Stage 1: grounded subjective perspective]
     C --> F[Stage 3: categorical trait interpretation]
-    D --> E[Backend quote validation and perspective ID]
+    D --> E[Backend scene binding and perspective ID]
     T[Authoritative trait meanings] --> F
     E --> G[Stage 2: psychological enrichment]
+    E --> F
     F --> H[Backend validates, binds and deduplicates trait evidence]
     H --> I
     I --> J[Directional and STEADINESS reducers]
@@ -87,8 +88,8 @@ scenes are processed, the identity description is refreshed once from the final
 current state. It never contributes authored trait evidence to the numerical
 profile.
 
-Stage 1 binds one perspective to each canonical scene. It records factual
-behavior with a source quote. The backend checks that quote against the scene.
+Stage 1 binds one subjective perspective to each canonical scene. The backend
+validates scene order and evidence references, then assigns the perspective ID.
 Stage 2 handles emotions, beliefs, aspects, and goals in parallel with Stage 3.
 Each source is one revision boundary. Its scenes are analyzed in chunks of at
 most five, using one shared source-start identity. All perspective chunks finish
@@ -98,9 +99,17 @@ deterministic source update. A source with `n` chunks normally makes `3n` LLM
 calls. Identity-description generation adds a call if the field is absent and
 one refresh call per embodiment job; repairs and provider retries
 may add calls.
-Stage 3 sees canonical scene facts, the two narrative summaries as context, and
-the authoritative trait meanings. It receives no prior `personality_traits` or
-generated perspective; summaries cannot establish trait evidence.
+Stage 3 sees each canonical scene and its validated Stage 1 `source_type` and
+`perspective`, plus the two narrative summaries as context and the authoritative
+trait meanings. The canonical scene establishes what happened, the character's
+actions and words, circumstances, and available alternatives. The perspective
+helps interpret the character's knowledge, motives, beliefs, and perceived options;
+its subjective claims do not establish canonical behavior. A candidate needs
+scene-supported behavior or an explicitly expressed value from this character.
+If perspective and scene conflict, canonical facts govern what happened; omit
+the candidate if the trait signal cannot be grounded. Mere witnessing or hearing
+about another person's behavior does not make it the character's behavior. Stage 3
+receives no prior `personality_traits`, and summaries cannot establish trait evidence.
 Each internal model-facing candidate has `trait`, `diagnostic_situation`,
 `relationship`, `stakes`, `polarity`, and a brief grounded `justification`.
 The provider receives one flat object schema with all six keys required,

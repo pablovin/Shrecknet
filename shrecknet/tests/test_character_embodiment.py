@@ -274,7 +274,11 @@ def test_prompt_contracts_describe_the_new_execution_order():
     assert "clearly demonstrated dispositional responses" in TRAIT_INTERPRETATION_PROMPT
     assert '"personality_traits"' not in TRAIT_INTERPRETATION_PROMPT
     assert "Established personality dimensions and meanings" in TRAIT_INTERPRETATION_PROMPT
-    assert "generated perspectives" in TRAIT_INTERPRETATION_PROMPT
+    assert "agent_scene_interpretation" in TRAIT_INTERPRETATION_PROMPT
+    assert "objective source of what happened" in TRAIT_INTERPRETATION_PROMPT
+    assert "subjective account" in TRAIT_INTERPRETATION_PROMPT
+    assert "If it conflicts with the canonical" in TRAIT_INTERPRETATION_PROMPT
+    assert "behavior mentioned only in this account" in TRAIT_INTERPRETATION_PROMPT
     assert "Select one primary emotion and one primary belief when supported" in PSYCHOLOGICAL_ANALYSIS_PROMPT
     assert "Do not fill available slots" in PSYCHOLOGICAL_ANALYSIS_PROMPT
     for prompt in (PSYCHOLOGICAL_ANALYSIS_PROMPT, PSYCHOLOGICAL_CONSOLIDATION_PROMPT):
@@ -304,8 +308,10 @@ def test_prompt_contracts_describe_the_new_execution_order():
 
 
 @pytest.mark.asyncio
-async def test_trait_interpretation_payload_uses_scenes_without_personality_or_perspective():
-    llm = FakeLLM(json.dumps({"scene_trait_interpretations": [{"trait_candidates": []}]}))
+async def test_trait_interpretation_payload_pairs_scenes_with_perspectives_without_prior_traits():
+    llm = FakeLLM(json.dumps({"scene_trait_interpretations": [
+        {"trait_candidates": []}, {"trait_candidates": []},
+    ]}))
     agent = _agent(llm)
     await agent._interpret_traits_batch(
         source_entity_id="source", source_entity_alias="Source",
@@ -315,11 +321,20 @@ async def test_trait_interpretation_payload_uses_scenes_without_personality_or_p
             "personality_traits": [
                 {"trait": "integrity", "description": "biased old wording"}],
         }},
-        perspectives=[ScenePerspectiveOutput(
-            scene_id="scene-1", evidence_ids=["scene:scene-1"], source_type="participated",
-            perspective="Mara refuses to exploit an unobserved opportunity.",
-        )],
-        scene_contexts=[{"scene": {"name": "Choice", "description": "Mara chooses."}, "position": 1}],
+        perspectives=[
+            ScenePerspectiveOutput(
+                scene_id="scene-1", evidence_ids=["scene:scene-1"], source_type="participated",
+                perspective="Mara refuses to exploit an unobserved opportunity.",
+            ),
+            ScenePerspectiveOutput(
+                scene_id="scene-2", evidence_ids=["scene:scene-2"], source_type="heard_about",
+                perspective="Mara doubts the reported account.",
+            ),
+        ],
+        scene_contexts=[
+            {"scene": {"name": "Choice", "description": "Mara chooses."}, "position": 1},
+            {"scene": {"name": "Report", "description": "Mara hears a report."}, "position": 2},
+        ],
     )
     payload = json.loads(llm.calls[0]["messages"][1]["content"])
     assert payload == {
@@ -328,5 +343,16 @@ async def test_trait_interpretation_payload_uses_scenes_without_personality_or_p
             "identity_summary": "A person with a secret past.",
             "psychological_summary": "Values loyalty and fears betrayal.",
         },
-        "scenes": [{"scene": {"name": "Choice", "description": "Mara chooses."}, "position": 1}],
+        "scenes": [
+            {"scene": {"name": "Choice", "description": "Mara chooses."}, "position": 1,
+             "agent_scene_interpretation": {
+                 "source_type": "participated",
+                 "perspective": "Mara refuses to exploit an unobserved opportunity.",
+             }},
+            {"scene": {"name": "Report", "description": "Mara hears a report."}, "position": 2,
+             "agent_scene_interpretation": {
+                 "source_type": "heard_about",
+                 "perspective": "Mara doubts the reported account.",
+             }},
+        ],
     }

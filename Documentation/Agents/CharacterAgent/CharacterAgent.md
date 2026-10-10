@@ -101,17 +101,22 @@ state. The output has `identity_summary`, `psychological_summary`, and
 `personality_traits` entries with established trait keys and narrative descriptions.
 Trait interpretation receives `identity_summary` and `psychological_summary`
 from the persisted `identity_description` as context, but excludes its
-`personality_traits`. Trait evidence must come from canonical scenes; generated
-perspectives are not sent to trait interpretation. The prompt includes the
-authoritative trait descriptions from `IDENTITY_TRAIT_DESCRIPTION_CONTRACT`.
+`personality_traits`. Trait evidence must come from canonical scenes. Stage 3
+also receives each validated `source_type` and `perspective` from Stage 1 to
+understand what the character knew, suspected, valued, and perceived as options.
+The interpretation cannot establish behavior absent from, or contradicted by,
+the canonical scene; insufficient grounding produces no candidate. The prompt
+includes the authoritative trait descriptions from
+`IDENTITY_TRAIT_DESCRIPTION_CONTRACT`.
 All scenes from a `DERIVED_FROM` source form one chronological
 source bundle and yield one source-level revision. The worker partitions each
 source's ordered scenes into chunks of at most five. All Perspective calls finish
 before Psychological analysis and Trait interpretation run in parallel for each
 chunk. Psychological analysis receives each canonical scene's name and
 description together with the preceding interpretation's `source_type` and
-`perspective`. Trait interpretation receives each canonical scene, the character
-alias, and the two narrative summaries; the backend binds its ordered outputs to
+`perspective`. Trait interpretation receives each canonical scene, the matching
+`source_type` and `perspective`, the character alias, and the two narrative summaries;
+the backend binds its ordered outputs to
 the validated perspective IDs after generation.
 ShreckLLM owns provider concurrency. The backend merges chunk results
 and collects enrichment events. One optional Stage 4 consolidation call then

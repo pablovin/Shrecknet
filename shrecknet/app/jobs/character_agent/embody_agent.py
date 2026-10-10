@@ -6,7 +6,7 @@ for each source scene chunk:
   1. Character incorporation grounded by the identity description
   2. Psychological enrichment from canonical scenes, Stage 1 interpretation,
      and identity description, parallel with trait interpretation from canonical
-     scenes, identity summaries, and trait definitions (no generated perspectives)
+     scenes, validated character perspectives, identity summaries, and trait definitions
 
 After all source chunks, optional Stage 4 reconciles profile events using typed
 operations and local references. The backend binds IDs and validates through the
@@ -728,7 +728,7 @@ class EmbodyAgent:
         identity: dict[str, Any], perspectives: list[ScenePerspectiveOutput],
         scene_contexts: list[dict[str, Any]],
     ) -> list[list[dict[str, Any]]]:
-        """Interpret trait signals from canonical scenes without prior personality context."""
+        """Interpret scene-grounded traits through validated character perspectives."""
         expected_ids = [item.scene_id for item in perspectives]
         identity_description = identity.get("identity_description") or {}
         payload = {
@@ -737,7 +737,16 @@ class EmbodyAgent:
                 "identity_summary": identity_description.get("identity_summary"),
                 "psychological_summary": identity_description.get("psychological_summary"),
             },
-            "scenes": scene_contexts,
+            "scenes": [
+                {
+                    **scene_contexts[index],
+                    "agent_scene_interpretation": {
+                        "source_type": perspective.source_type.value,
+                        "perspective": perspective.perspective,
+                    },
+                }
+                for index, perspective in enumerate(perspectives)
+            ],
         }
         result = await self._call(
             prompt=TRAIT_INTERPRETATION_PROMPT, payload=payload,
@@ -848,8 +857,8 @@ class EmbodyAgent:
                 "perspective output scene_ids must match input scene order and be unique"
             )
         _semantic(lambda: _validate_and_normalize_scene_grounding(perspectives, expected_ids))
-        # Stage 2 receives the grounded interpretation; Stage 3 receives canonical
-        # scenes and trait definitions only to prevent personality feedback.
+        # Both branches receive the grounded interpretation. Stage 3 also receives
+        # canonical scenes and trait definitions, but no prior personality traits.
         if on_stage:
             await on_stage(
                 "source:{0} - Steps 2-3: Psychological analysis and trait interpretation".format(source_entity_alias), [2, 3]

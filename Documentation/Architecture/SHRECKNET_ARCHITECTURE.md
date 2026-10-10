@@ -83,8 +83,10 @@ partitioned into chunks of at most five scenes; chunks can run concurrently unde
 shreckLLM provider capacity. Each job loads or generates a narrative
 `identity_description`. After incorporation, psychological enrichment receives
 canonical scenes, generated perspectives and identity description; the parallel
-trait branch receives canonical scenes, narrative identity summaries and trait
-definitions, excluding generated perspectives and prior personality traits.
+trait branch receives canonical scenes, matching validated `source_type` and
+`perspective` values, narrative identity summaries, and trait definitions. It
+uses canonical facts to establish behavior and the perspective to interpret the
+character's understanding; prior personality traits are excluded.
 
 The normal scene call budget is `3n` for `n` chunks, plus one consolidation call
 per source with profile events, one final identity refresh, and one initial

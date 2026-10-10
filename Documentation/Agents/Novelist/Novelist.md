@@ -69,5 +69,12 @@ pipeline from starting.
 Use `previous_novelist_run_id` to reuse a completed V3 ledger. The older
 `previous_session_id` remains a lower-authority graph text lookup.
 
+The last `language` and `instructions` submitted for each Novelist agent are
+remembered on that agent. Frontends can retrieve them from `GET /agents/` or
+`GET /agents/{agent_id}` in `AgentRead` and prefill the next run form. Omitted
+values reuse the saved preference; explicitly empty strings clear it. The resolved
+values are attached to the accepted run, so its recorded request remains the
+source of truth for the pipeline execution.
+
 See [the endpoint contract](Endpoints/Novelist%20-%20Endpoints.md) and
 [pipeline details](Generate_Draft/Generate_Draft.md).

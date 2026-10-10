@@ -8,6 +8,7 @@ from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.novelist import NovelistRun, NovelistRunStatus, NovelistStage
+from app.repositories.agent_repository import AgentRepository
 from app.repositories.novelist_repository import NovelistRepository
 
 
@@ -17,6 +18,39 @@ class NovelistService:
     def __init__(self, session: AsyncSession):
         self.session = session
         self.repo = NovelistRepository(session)
+        self.agent_repo = AgentRepository(session)
+
+    async def resolve_and_save_preferences(
+        self, *, agent_id: str, language: str | None, instructions: str | None
+    ) -> tuple[str | None, str | None]:
+        """Resolve omitted preferences from the agent and save values for this run.
+
+        Empty strings explicitly clear a saved value. Null values reuse the
+        previous preference; a first run with no preference resolves to null.
+        """
+        agent = await self.agent_repo.get_by_id(agent_id)
+        if not agent or agent.job != "novelist":
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Novelist agent not found",
+            )
+
+        resolved_language = (
+            agent.novelist_last_language
+            if language is None
+            else language.strip() or None
+        )
+        resolved_instructions = (
+            agent.novelist_last_instructions
+            if instructions is None
+            else instructions.strip() or None
+        )
+        await self.agent_repo.update_novelist_preferences(
+            agent,
+            language=resolved_language,
+            instructions=resolved_instructions,
+        )
+        return resolved_language, resolved_instructions
 
     async def create_run(
         self,

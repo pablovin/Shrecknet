@@ -531,6 +531,8 @@ class AgentRead(AgentBase):
     created_at: datetime
     updated_at: datetime
     ontology_ids: list[int] = Field(default_factory=list)
+    novelist_last_language: str | None = None
+    novelist_last_instructions: str | None = None
 
 
 class PersonalCompanionAgentBase(BaseModel):
@@ -903,6 +905,7 @@ class ArchitectPreflightReport(BaseModel):
 
 class NovelistRunCreate(BaseModel):
     unstructured_text: str
+    # None reuses the agent's saved value; an empty string clears it.
     language: str | None = None
     instructions: str | None = None
     previous_session_id: str | None = None

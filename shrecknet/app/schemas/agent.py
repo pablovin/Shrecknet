@@ -47,5 +47,11 @@ class AgentRead(AgentBase):
     ontology_ids: list[int] = Field(
         default_factory=list, description="Linked ontology IDs"
     )
+    novelist_last_language: Optional[str] = Field(
+        None, description="Last language used for a Novelist run"
+    )
+    novelist_last_instructions: Optional[str] = Field(
+        None, description="Last instructions used for a Novelist run"
+    )
 
     model_config = ConfigDict(from_attributes=True)

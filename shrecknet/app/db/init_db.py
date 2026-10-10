@@ -6,6 +6,7 @@ from app import models as _models  # noqa: F401
 from app.db.base import Base
 from app.db.migrations import (
     migrate_agents_table,
+    migrate_novelist_agent_preferences,
     migrate_remove_legacy_character_agents,
     migrate_scene_perspective_audit_types,
     migrate_deprecate_sql_ontology_instances,
@@ -24,6 +25,7 @@ def init_db() -> None:
     Base.metadata.create_all(bind=engine)
     with engine.begin() as conn:
         migrate_agents_table(conn)
+        migrate_novelist_agent_preferences(conn)
         migrate_deprecate_sql_ontology_instances(conn)
         migrate_personal_companion_agents_table(conn)
         migrate_remove_legacy_character_agents(conn)

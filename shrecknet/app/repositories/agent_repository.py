@@ -54,6 +54,17 @@ class AgentRepository:
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
 
+    async def update_novelist_preferences(
+        self, agent: Agent, *, language: str | None, instructions: str | None
+    ) -> Agent:
+        """Persist the last values used by a Novelist run."""
+        if agent.job != "novelist":
+            raise ValueError("Novelist preferences require a novelist agent")
+        agent.novelist_last_language = language
+        agent.novelist_last_instructions = instructions
+        await self.session.flush()
+        return agent
+
     async def list(
         self,
         job: Optional[str] = None,

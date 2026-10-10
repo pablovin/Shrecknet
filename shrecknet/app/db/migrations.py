@@ -32,7 +32,13 @@ def migrate_agents_table(sync_conn) -> None:
         "updated_at",
     }
 
-    needs_rebuild = "kind" in columns or columns != expected_columns
+    preference_columns = {
+        "novelist_last_language",
+        "novelist_last_instructions",
+    }
+    needs_rebuild = "kind" in columns or (
+        columns - preference_columns
+    ) != expected_columns
     if not needs_rebuild:
         sync_conn.execute(
             text("CREATE INDEX IF NOT EXISTS ix_agents_job ON agents (job)")
@@ -44,19 +50,16 @@ def migrate_agents_table(sync_conn) -> None:
 
     logger.info("Rebuilding agents table to match current schema")
 
+    available_preferences = sorted(preference_columns & columns)
+    optional_select = (
+        ", " + ", ".join(available_preferences) if available_preferences else ""
+    )
     rows = sync_conn.execute(
         text(
-            """
-            SELECT
-                id,
-                name,
-                avatar_url,
-                description,
-                writing_style,
-                COALESCE(job, kind, 'elder') AS job,
-                active,
-                created_at,
-                updated_at
+            f"""
+            SELECT id, name, avatar_url, description, writing_style,
+                   COALESCE(job, kind, 'elder') AS job, active, created_at,
+                   updated_at{optional_select}
             FROM agents
             """
         )
@@ -76,6 +79,8 @@ def migrate_agents_table(sync_conn) -> None:
                 "active": row["active"],
                 "created_at": row["created_at"],
                 "updated_at": row["updated_at"],
+                "novelist_last_language": row.get("novelist_last_language"),
+                "novelist_last_instructions": row.get("novelist_last_instructions"),
             }
         )
 
@@ -95,6 +100,8 @@ def migrate_agents_table(sync_conn) -> None:
                     active BOOLEAN NOT NULL,
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
                     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+                    novelist_last_language VARCHAR(100),
+                    novelist_last_instructions TEXT,
                     PRIMARY KEY (id),
                     UNIQUE (name)
                 )
@@ -114,7 +121,9 @@ def migrate_agents_table(sync_conn) -> None:
                         job,
                         active,
                         created_at,
-                        updated_at
+                        updated_at,
+                        novelist_last_language,
+                        novelist_last_instructions
                     ) VALUES (
                         :id,
                         :name,
@@ -124,7 +133,9 @@ def migrate_agents_table(sync_conn) -> None:
                         :job,
                         :active,
                         :created_at,
-                        :updated_at
+                        :updated_at,
+                        :novelist_last_language,
+                        :novelist_last_instructions
                     )
                     """
                 ),
@@ -140,6 +151,22 @@ def migrate_agents_table(sync_conn) -> None:
         )
     finally:
         sync_conn.execute(text("PRAGMA foreign_keys=ON"))
+
+
+def migrate_novelist_agent_preferences(sync_conn) -> None:
+    """Add remembered Novelist language and instructions to existing agents."""
+    inspector = inspect(sync_conn)
+    if "agents" not in inspector.get_table_names():
+        return
+    columns = {column["name"] for column in inspector.get_columns("agents")}
+    if "novelist_last_language" not in columns:
+        sync_conn.execute(
+            text("ALTER TABLE agents ADD COLUMN novelist_last_language VARCHAR(100)")
+        )
+    if "novelist_last_instructions" not in columns:
+        sync_conn.execute(
+            text("ALTER TABLE agents ADD COLUMN novelist_last_instructions TEXT")
+        )
 
 
 def migrate_deprecate_sql_ontology_instances(sync_conn) -> None:

@@ -119,6 +119,14 @@ async def _create_and_queue_run(
     session: AsyncSession,
     service: NovelistService,
 ) -> NovelistRunRead:
+    language, instructions = await service.resolve_and_save_preferences(
+        agent_id=agent_id,
+        language=payload.language,
+        instructions=payload.instructions,
+    )
+    payload = payload.model_copy(
+        update={"language": language, "instructions": instructions}
+    )
     run = await service.create_run(
         agent_id=agent_id,
         ontology_id=None,
@@ -182,8 +190,8 @@ async def start_novelist_run(
 async def start_novelist_run_from_upload(
     agent_id: str,
     file: UploadFile = File(...),
-    language: str | None = Form(None),
-    instructions: str | None = Form(None),
+    language: str | None = Form(None, max_length=100),
+    instructions: str | None = Form(None, max_length=20000),
     previous_session_id: str | None = Form(None),
     previous_novelist_run_id: str | None = Form(None),
     source_type: str = Form("auto"),

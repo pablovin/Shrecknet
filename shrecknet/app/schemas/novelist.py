@@ -16,9 +16,13 @@ class NovelistRunCreate(BaseModel):
         min_length=1,
         description="Raw unstructured text to be expanded into a chapter",
     )
-    language: Optional[str] = Field(None, description="Target language")
+    language: Optional[str] = Field(
+        None, max_length=100, description="Target language"
+    )
     instructions: Optional[str] = Field(
-        None, description="Extra parsing/writing instructions for the novelist"
+        None,
+        max_length=20000,
+        description="Extra parsing/writing instructions for the novelist",
     )
     source_type: Literal[
         "auto", "transcript", "recap", "notes", "adventure", "event_log", "narrative"

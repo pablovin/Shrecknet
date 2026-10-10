@@ -63,6 +63,12 @@ class Agent(Base):
     avatar_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     writing_style: Mapped[str | None] = mapped_column(Text, nullable=True)
+    novelist_last_language: Mapped[str | None] = mapped_column(
+        String(100), nullable=True
+    )
+    novelist_last_instructions: Mapped[str | None] = mapped_column(
+        Text, nullable=True
+    )
     job: Mapped[str] = mapped_column(
         String(50), nullable=False, default="elder", index=True
     )

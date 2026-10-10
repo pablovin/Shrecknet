@@ -11,3 +11,9 @@ To reuse factual continuity, pass the completed prior run ID as
 non-authoritative continuity text.
 
 `start_run_from_upload` accepts PDF, text, Markdown, and JSON paths.
+
+To prefill a Novelist form, use `sdk.agents.get(agent_id)` or
+`sdk.agents.list(job="novelist")`. The returned `AgentRead` contains nullable
+`novelist_last_language` and `novelist_last_instructions`. Omitting either field
+(or sending `None`) on the next run reuses its saved value; send an empty string
+to clear it.

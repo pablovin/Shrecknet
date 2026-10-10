@@ -1,0 +1,326 @@
+{
+  "version": "trait-discrimination-v1",
+  "description": "Synthetic reference cases authored for regression review; not measured evidence for real characters. Human review of model justifications is required.",
+  "cases": [
+    {
+      "case_id": "integrity-high",
+      "scene_id": "integrity-high",
+      "target": "Mira",
+      "scene": "Mira refuses an untraceable chance to steal a rival's purse, though she could safely keep it.",
+      "perspective": "Mira refuses an untraceable chance to steal a rival's purse, though she could safely keep it.",
+      "expected": [
+        [
+          "integrity",
+          "high"
+        ]
+      ],
+      "review_note": "Synthetic diagnostic choice. Check canonical attribution, authoritative pole, and unsupported extra traits."
+    },
+    {
+      "case_id": "integrity-low",
+      "scene_id": "integrity-low",
+      "target": "Mira",
+      "scene": "Mira takes a rival's purse after confirming nobody can trace the theft to her.",
+      "perspective": "Mira takes a rival's purse after confirming nobody can trace the theft to her.",
+      "expected": [
+        [
+          "integrity",
+          "low"
+        ]
+      ],
+      "review_note": "Synthetic diagnostic choice. Check canonical attribution, authoritative pole, and unsupported extra traits."
+    },
+    {
+      "case_id": "caution-high",
+      "scene_id": "caution-high",
+      "target": "Mira",
+      "scene": "Mira worries about an uncertain threat and refuses exposure until allies provide protective wards and support.",
+      "perspective": "Mira worries about an uncertain threat and refuses exposure until allies provide protective wards and support.",
+      "expected": [
+        [
+          "caution",
+          "high"
+        ]
+      ],
+      "review_note": "Synthetic diagnostic choice. Check canonical attribution, authoritative pole, and unsupported extra traits."
+    },
+    {
+      "case_id": "caution-low",
+      "scene_id": "caution-low",
+      "target": "Mira",
+      "scene": "Mira feels no worry about an uncertain physical threat and voluntarily enters alone, declining offered protection and reassurance.",
+      "perspective": "Mira feels no worry about an uncertain physical threat and voluntarily enters alone, declining offered protection and reassurance.",
+      "expected": [
+        [
+          "caution",
+          "low"
+        ]
+      ],
+      "review_note": "Synthetic diagnostic choice. Check canonical attribution, authoritative pole, and unsupported extra traits."
+    },
+    {
+      "case_id": "presence-high",
+      "scene_id": "presence-high",
+      "target": "Mira",
+      "scene": "At an optional gathering Mira eagerly approaches strangers and takes the floor without prompting, enjoying their attention.",
+      "perspective": "At an optional gathering Mira eagerly approaches strangers and takes the floor without prompting, enjoying their attention.",
+      "expected": [
+        [
+          "presence",
+          "high"
+        ]
+      ],
+      "review_note": "Synthetic diagnostic choice. Check canonical attribution, authoritative pole, and unsupported extra traits."
+    },
+    {
+      "case_id": "presence-low",
+      "scene_id": "presence-low",
+      "target": "Mira",
+      "scene": "At an optional gathering Mira declines an invitation to take the floor, explaining that she dislikes attention and finds company draining.",
+      "perspective": "At an optional gathering Mira declines an invitation to take the floor, explaining that she dislikes attention and finds company draining.",
+      "expected": [
+        [
+          "presence",
+          "low"
+        ]
+      ],
+      "review_note": "Synthetic diagnostic choice. Check canonical attribution, authoritative pole, and unsupported extra traits."
+    },
+    {
+      "case_id": "forbearance-high",
+      "scene_id": "forbearance-high",
+      "target": "Mira",
+      "scene": "After a deliberate insult Mira declines an available chance to retaliate and explicitly forgives the offender.",
+      "perspective": "After a deliberate insult Mira declines an available chance to retaliate and explicitly forgives the offender.",
+      "expected": [
+        [
+          "forbearance",
+          "high"
+        ]
+      ],
+      "review_note": "Synthetic diagnostic choice. Check canonical attribution, authoritative pole, and unsupported extra traits."
+    },
+    {
+      "case_id": "forbearance-low",
+      "scene_id": "forbearance-low",
+      "target": "Mira",
+      "scene": "After a deliberate insult Mira pursues an available opportunity to retaliate, insisting she will hold this grudge.",
+      "perspective": "After a deliberate insult Mira pursues an available opportunity to retaliate, insisting she will hold this grudge.",
+      "expected": [
+        [
+          "forbearance",
+          "low"
+        ]
+      ],
+      "review_note": "Synthetic diagnostic choice. Check canonical attribution, authoritative pole, and unsupported extra traits."
+    },
+    {
+      "case_id": "diligence-high",
+      "scene_id": "diligence-high",
+      "target": "Mira",
+      "scene": "Alone and unsupervised, Mira rejects an offered shortcut and checks every translation until the work is complete despite the delay.",
+      "perspective": "Alone and unsupervised, Mira rejects an offered shortcut and checks every translation until the work is complete despite the delay.",
+      "expected": [
+        [
+          "diligence",
+          "high"
+        ]
+      ],
+      "review_note": "Synthetic diagnostic choice. Check canonical attribution, authoritative pole, and unsupported extra traits."
+    },
+    {
+      "case_id": "diligence-low",
+      "scene_id": "diligence-low",
+      "target": "Mira",
+      "scene": "Alone and unsupervised, Mira skips required checks despite having time to complete them, choosing a shortcut to finish immediately.",
+      "perspective": "Alone and unsupervised, Mira skips required checks despite having time to complete them, choosing a shortcut to finish immediately.",
+      "expected": [
+        [
+          "diligence",
+          "low"
+        ]
+      ],
+      "review_note": "Synthetic diagnostic choice. Check canonical attribution, authoritative pole, and unsupported extra traits."
+    },
+    {
+      "case_id": "curiosity-high",
+      "scene_id": "curiosity-high",
+      "target": "Mira",
+      "scene": "With no obligation or known danger, Mira chooses an unfamiliar puzzle over the familiar route because she wants to understand the strange mechanism.",
+      "perspective": "With no obligation or known danger, Mira chooses an unfamiliar puzzle over the familiar route because she wants to understand the strange mechanism.",
+      "expected": [
+        [
+          "curiosity",
+          "high"
+        ]
+      ],
+      "review_note": "Synthetic diagnostic choice. Check canonical attribution, authoritative pole, and unsupported extra traits."
+    },
+    {
+      "case_id": "curiosity-low",
+      "scene_id": "curiosity-low",
+      "target": "Mira",
+      "scene": "With no obligation or danger, Mira rejects an offered unfamiliar puzzle, explicitly preferring familiar ideas and finding unconventional phenomena off-putting.",
+      "perspective": "With no obligation or danger, Mira rejects an offered unfamiliar puzzle, explicitly preferring familiar ideas and finding unconventional phenomena off-putting.",
+      "expected": [
+        [
+          "curiosity",
+          "low"
+        ]
+      ],
+      "review_note": "Synthetic diagnostic choice. Check canonical attribution, authoritative pole, and unsupported extra traits."
+    },
+    {
+      "case_id": "sharing-high",
+      "scene_id": "sharing-high",
+      "target": "Mira",
+      "scene": "While freely dividing jointly controlled rewards, Mira chooses an equal division rather than an available larger share for herself.",
+      "perspective": "While freely dividing jointly controlled rewards, Mira chooses an equal division rather than an available larger share for herself.",
+      "expected": [
+        [
+          "sharing",
+          "high"
+        ]
+      ],
+      "review_note": "Synthetic diagnostic choice. Check canonical attribution, authoritative pole, and unsupported extra traits."
+    },
+    {
+      "case_id": "sharing-low",
+      "scene_id": "sharing-low",
+      "target": "Mira",
+      "scene": "While freely dividing jointly controlled rewards, Mira chooses the largest available share for herself, valuing her own allocation above an equal split.",
+      "perspective": "While freely dividing jointly controlled rewards, Mira chooses the largest available share for herself, valuing her own allocation above an equal split.",
+      "expected": [
+        [
+          "sharing",
+          "low"
+        ]
+      ],
+      "review_note": "Synthetic diagnostic choice. Check canonical attribution, authoritative pole, and unsupported extra traits."
+    },
+    {
+      "case_id": "restlessness-high",
+      "scene_id": "restlessness-high",
+      "target": "Mira",
+      "scene": "Offered equally viable stable and unconventional ways of living, Mira explicitly chooses change and self-direction because she values autonomy over tradition.",
+      "perspective": "Offered equally viable stable and unconventional ways of living, Mira explicitly chooses change and self-direction because she values autonomy over tradition.",
+      "expected": [
+        [
+          "restlessness",
+          "high"
+        ]
+      ],
+      "review_note": "Synthetic diagnostic choice. Check canonical attribution, authoritative pole, and unsupported extra traits."
+    },
+    {
+      "case_id": "restlessness-low",
+      "scene_id": "restlessness-low",
+      "target": "Mira",
+      "scene": "Offered equally viable stable and unconventional ways of living, Mira explicitly chooses tradition and order because she values security over novelty.",
+      "perspective": "Offered equally viable stable and unconventional ways of living, Mira explicitly chooses tradition and order because she values security over novelty.",
+      "expected": [
+        [
+          "restlessness",
+          "low"
+        ]
+      ],
+      "review_note": "Synthetic diagnostic choice. Check canonical attribution, authoritative pole, and unsupported extra traits."
+    },
+    {
+      "case_id": "shared-ernst",
+      "scene_id": "shared-artifact",
+      "target": "Ernst",
+      "scene": "Ernst, Johnny and Johan are assigned to investigate a dangerous unfamiliar artifact. Ernst insists on personally testing it despite warnings and offered protection, seeking to understand the strange mechanism. Johnny expresses fear and refuses to proceed without protective measures and support from allies. Johan voluntarily rejects an offered translation shortcut, meticulously verifying each line despite the delay; the scene does not establish his threat sensitivity.",
+      "perspective": "Ernst considers only his own stated response in this scene.",
+      "expected": [
+        [
+          "caution",
+          "low"
+        ],
+        [
+          "curiosity",
+          "high"
+        ]
+      ],
+      "review_note": "Illustrative characters, not actual recorded behavior. Participation supplies no automatic curiosity; do not transfer another character's action."
+    },
+    {
+      "case_id": "shared-johnny",
+      "scene_id": "shared-artifact",
+      "target": "Johnny",
+      "scene": "Ernst, Johnny and Johan are assigned to investigate a dangerous unfamiliar artifact. Ernst insists on personally testing it despite warnings and offered protection, seeking to understand the strange mechanism. Johnny expresses fear and refuses to proceed without protective measures and support from allies. Johan voluntarily rejects an offered translation shortcut, meticulously verifying each line despite the delay; the scene does not establish his threat sensitivity.",
+      "perspective": "Johnny considers only his own stated response in this scene.",
+      "expected": [
+        [
+          "caution",
+          "high"
+        ]
+      ],
+      "review_note": "Illustrative characters, not actual recorded behavior. Participation supplies no automatic curiosity; do not transfer another character's action."
+    },
+    {
+      "case_id": "shared-johan",
+      "scene_id": "shared-artifact",
+      "target": "Johan",
+      "scene": "Ernst, Johnny and Johan are assigned to investigate a dangerous unfamiliar artifact. Ernst insists on personally testing it despite warnings and offered protection, seeking to understand the strange mechanism. Johnny expresses fear and refuses to proceed without protective measures and support from allies. Johan voluntarily rejects an offered translation shortcut, meticulously verifying each line despite the delay; the scene does not establish his threat sensitivity.",
+      "perspective": "Johan considers only his own stated response in this scene.",
+      "expected": [
+        [
+          "diligence",
+          "high"
+        ]
+      ],
+      "review_note": "Illustrative characters, not actual recorded behavior. Participation supplies no automatic curiosity; do not transfer another character's action."
+    },
+    {
+      "case_id": "routine",
+      "scene_id": "routine",
+      "target": "Mira",
+      "scene": "Mira completes the assigned investigation and coordinates the mandatory preparation meeting. No personal preferences, voluntary alternatives, or dispositional responses are recorded.",
+      "perspective": "The canonical scene supplies no diagnostic voluntary response attributable to me.",
+      "source_type": "participated",
+      "expected": [],
+      "review_note": "Omit ambiguous, compelled, non-diagnostic, or other-character behavior; do not invent alternatives."
+    },
+    {
+      "case_id": "witnessed",
+      "scene_id": "witnessed",
+      "target": "Mira",
+      "scene": "Mira watches Leon voluntarily take the floor and eagerly greet strangers. Mira's own response is unrecorded.",
+      "perspective": "The canonical scene supplies no diagnostic voluntary response attributable to me.",
+      "source_type": "witnessed",
+      "expected": [],
+      "review_note": "Omit ambiguous, compelled, non-diagnostic, or other-character behavior; do not invent alternatives."
+    },
+    {
+      "case_id": "compelled",
+      "scene_id": "compelled",
+      "target": "Mira",
+      "scene": "Mira is magically compelled to give away her share. No voluntary allocation or expressed value is recorded.",
+      "perspective": "The canonical scene supplies no diagnostic voluntary response attributable to me.",
+      "source_type": "participated",
+      "expected": [],
+      "review_note": "Omit ambiguous, compelled, non-diagnostic, or other-character behavior; do not invent alternatives."
+    },
+    {
+      "case_id": "ambiguous",
+      "scene_id": "ambiguous",
+      "target": "Mira",
+      "scene": "Someone in the group verifies the translations. The account does not identify who did it.",
+      "perspective": "The canonical scene supplies no diagnostic voluntary response attributable to me.",
+      "source_type": "unknown",
+      "expected": [],
+      "review_note": "Omit ambiguous, compelled, non-diagnostic, or other-character behavior; do not invent alternatives."
+    },
+    {
+      "case_id": "fatal-danger",
+      "scene_id": "fatal-danger",
+      "target": "Mira",
+      "scene": "Mira declines to touch an artifact that is known to kill anyone who touches it. No preference about novelty or general disposition is expressed.",
+      "perspective": "The canonical scene supplies no diagnostic voluntary response attributable to me.",
+      "source_type": "participated",
+      "expected": [],
+      "review_note": "Omit ambiguous, compelled, non-diagnostic, or other-character behavior; do not invent alternatives."
+    }
+  ]
+}

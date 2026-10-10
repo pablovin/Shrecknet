@@ -11,7 +11,7 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from app.models.character_embodiment import CharacterEmbodimentDraftStatus
 from app.schemas.character_traits import (
-    SlotKey, TraitKey, TraitEdit, TraitProfile, TraitObservation, TraitEvidence, TraitChange,
+    SlotKey, TraitKey, TraitEdit, TraitProfile, TraitObservation, TraitEvidence, TraitChange, TraitHistoryEstimate,
 )
 
 
@@ -860,6 +860,7 @@ class CharacterIdentityRevisionRead(_StrictModel):
     name: str
     subtitle: str | None = None
     trait_profile: TraitProfile
+    trait_history: dict[TraitKey, TraitHistoryEstimate] = Field(default_factory=dict)
     batch_id: str | None = None
     scene_ids: list[str] = Field(default_factory=list)
     active_aspect_ids: list[str] = Field(default_factory=list)

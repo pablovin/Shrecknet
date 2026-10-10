@@ -27,6 +27,10 @@ import re
 import time
 from typing import Any, Callable, Literal
 
+from app.services.character_trait_analysis import (
+    synthesis_traits, synthesis_perspectives, bounded_previous_identity, SYNTHESIS_VERSION,
+)
+
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from app.integrations.llm.structured_output import (
@@ -519,6 +523,8 @@ class EmbodyAgent:
     async def generate_identity_description(
         self, *, canonical_identity: dict[str, Any], current_profile: TraitProfile,
         current_aspects: list[dict[str, Any]], current_goals: list[dict[str, Any]],
+        current_trait_evidence: list[TraitEvidence] | None = None,
+        current_perspectives: list[ScenePerspectiveOutput] | None = None,
     ) -> IdentityDescription:
         """Synthesize the persistent narrative identity once per embodiment phase."""
         payload = {
@@ -537,8 +543,13 @@ class EmbodyAgent:
             "aspects": [{"name": item.get("name"), "type": item.get("category"),
                          "descriptor": item.get("description")}
                         for item in current_aspects],
-            "traits": [{"name": key, "value": current_profile.estimate(key).point}
-                       for key in DIRECTIONAL_TRAITS],
+            "traits": synthesis_traits(current_profile, current_trait_evidence or []),
+            "grounded_perspectives": synthesis_perspectives(current_perspectives or []),
+            "previous_identity_description": {
+                "role": "continuity_only_not_evidence",
+                "description": bounded_previous_identity(canonical_identity.get("identity_description")),
+            },
+            "synthesis_version": SYNTHESIS_VERSION,
         }
         output = await self._call(
             prompt=IDENTITY_DESCRIPTION_PROMPT, payload=payload,

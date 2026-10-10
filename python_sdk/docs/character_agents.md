@@ -250,3 +250,11 @@ separate repair attempts. A failed source cannot publish an invalid profile
 update. Public SDK draft models, timeline operations, and numeric event references
 are unchanged. See the [canonical validation and deployment contract](../../Documentation/Agents/CharacterAgent/CharacterAgent.md#embodiment-validation-and-recovery)
 for configuration aliases, categorized failures, and worker rollout requirements.
+
+
+Revision models include optional `trait_history` aggregate inference details for
+the eight directional traits: the unrounded estimate, unweighted high/low/count
+fields, availability/reason, and calculation version. Older responses default to
+an empty map. These read-only values do not alter effective profile integers or
+manual overrides. Unknown estimates are null; unavailable evidence must not become
+a midpoint. See [continuous history and diagnostics](../../Documentation/Agents/CharacterAgent/Dispositional%20Traits.md#continuous-revision-history).

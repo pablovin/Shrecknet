@@ -6,7 +6,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 
-from .character_traits import TraitEdit, TraitEstimate, TraitProfile, TraitEvidence, SlotKey
+from .character_traits import TraitEdit, TraitEstimate, TraitProfile, TraitEvidence, SlotKey, TraitKey, TraitHistoryEstimate
 
 
 class Token(BaseModel):
@@ -281,6 +281,7 @@ class CharacterIdentityRevisionRead(BaseModel):
     name: str
     subtitle: str | None = None
     trait_profile: TraitProfile
+    trait_history: dict[TraitKey, TraitHistoryEstimate] = Field(default_factory=dict)
     batch_id: str | None = None
     scene_ids: list[str] = Field(default_factory=list)
     active_aspect_ids: list[str] = Field(default_factory=list)

@@ -38,6 +38,7 @@ data/
 .data/
 databases/
 *.json
+!shrecknet/tests/fixtures/trait_discrimination.json
 !configs/*.json
 !shreckCompanion/configs/
 !shreckCompanion/configs/*.json

@@ -507,6 +507,7 @@ async def _generate(*, draft_id: str, revision: int, job_id: int) -> dict:
             identity_description = existing_identity or await initializer.generate_identity_description(
                 canonical_identity=inputs["canonical_identity"], current_profile=current_profile,
                 current_aspects=inputs["current_aspects"], current_goals=inputs["current_goals"],
+                current_trait_evidence=current_evidence,
             )
             total_llm_calls += len(initializer.llm_calls)
             total_tokens_est += sum(item.total_tokens_est for item in initializer.llm_calls)
@@ -760,6 +761,7 @@ async def _generate(*, draft_id: str, revision: int, job_id: int) -> dict:
             identity_description = await initializer.generate_identity_description(
                 canonical_identity=inputs["canonical_identity"], current_profile=current_profile,
                 current_aspects=current_aspects, current_goals=current_goals,
+                current_trait_evidence=current_evidence, current_perspectives=all_perspectives,
             )
             refresh_calls = initializer.llm_calls[prior_identity_calls:]
             total_llm_calls += len(refresh_calls)

@@ -37,8 +37,8 @@ from app.schemas.character_agent import (
 )
 
 
-from app.schemas.character_traits import TraitProfile, TraitEvidence, DIRECTIONAL_TRAITS
-from app.services.character_trait_service import apply_manual_edits, POLICY_VERSION
+from app.schemas.character_traits import TraitProfile, TraitEvidence, DIRECTIONAL_TRAITS, TraitHistoryEstimate
+from app.services.character_trait_service import apply_manual_edits, POLICY_VERSION, trait_history_details, merge_evidence
 from app.graphrag.embedding_service import EmbeddingService
 from app.jobs.character_agent.memory import render_memory_document
 from app.core.config_store import get_settings
@@ -1394,6 +1394,31 @@ class CharacterAgentService:
             agent_id=agent_id, public_only=public_only,
         ):
             raise HTTPException(status_code=404, detail="CharacterAgent not found")
+        if values:
+            evidence_rows = await self.graph.run(
+                "MATCH (agent:CharacterAgent {id:$agent_id})-[:HAS_REVISION]->(r:CharacterIdentityRevision) "
+                "WHERE (NOT $public_only OR coalesce(agent.visibility,'private')='public') "
+                "AND r.revision_number <= $revision "
+                "RETURN r.revision_number AS revision_number, r.trait_evidence AS evidence "
+                "ORDER BY r.revision_number ASC",
+                agent_id=agent_id, public_only=public_only,
+                revision=max(value.revision_number for value in values),
+            )
+            batches = [(row['revision_number'], row['evidence']) async for row in evidence_rows]
+            ledger, cursor, invalid = [], 0, False
+            for value in values:
+                while cursor < len(batches) and batches[cursor][0] <= value.revision_number:
+                    try:
+                        incoming = [TraitEvidence.model_validate(item)
+                                    for item in json.loads(batches[cursor][1] or '[]')]
+                        ledger = merge_evidence(ledger, incoming)
+                    except (ValueError, TypeError):
+                        invalid = True
+                    cursor += 1
+                value.trait_history = ({key: TraitHistoryEstimate(
+                    reason='Revision evidence is invalid; regeneration is required.')
+                    for key in DIRECTIONAL_TRAITS} if invalid else
+                    trait_history_details(value.trait_profile, ledger))
         return values
 
     async def list_identity_changes(

@@ -339,6 +339,23 @@ batch IDs and scene IDs. `GET /character-agents/{agent_id}/identity-changes` acc
 estimate objects, justification, canonical evidence IDs, observation IDs, policy
 version, and actor ID for manual changes.
 
+Revision responses also include an additive `trait_history` map for the eight
+directional traits. Example entry:
+
+```json
+{"diligence":{"inferred_continuous_value":8.333333333333334,"high_count":20,
+"low_count":0,"observation_count":20,"availability":"available","reason":null,
+"calculation_version":"recency-points-v1"}}
+```
+
+The field is derived from contributing evidence through that revision, including
+prior pages, and is never persisted into `trait_profile`. Effective manual integers
+remain in the profile; the decimal is inferred separately. Unknown has a null
+estimate with zero counts; missing/inconsistent evidence has `availability:
+"unavailable"`, a reason, and null numeric details. Steadiness is not included.
+Existing visibility, pagination, and raw-evidence permissions are unchanged.
+Older clients may ignore this field. See [Dispositional Traits](Dispositional%20Traits.md#continuous-revision-history).
+
 `GET /character-agents/{agent_id}/trait-evidence` is administrator-only. Filters:
 `trait` (directional key), `revision` (inclusive cutoff), `skip` (default 0), and
 `limit` (default 100, maximum 500). It returns structured observations with

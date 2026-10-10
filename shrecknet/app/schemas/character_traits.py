@@ -127,6 +127,17 @@ class TraitEdit(StrictModel):
     reason: str = Field(min_length=1, max_length=2000)
 
 
+class TraitHistoryEstimate(StrictModel):
+    """Read-only inference details; never stored in the authoritative profile."""
+    inferred_continuous_value: float | None = Field(default=None, ge=1, le=9)
+    high_count: int | None = Field(default=None, ge=0)
+    low_count: int | None = Field(default=None, ge=0)
+    observation_count: int | None = Field(default=None, ge=0)
+    availability: Literal['available', 'unavailable'] = 'unavailable'
+    reason: str | None = None
+    calculation_version: str = 'recency-points-v1'
+
+
 class TraitProfile(StrictModel):
     version: str = SPEC_VERSION
     dispositional_traits: dict[TraitKey, TraitEstimate] = Field(default_factory=lambda: {key: TraitEstimate() for key in DIRECTIONAL_TRAITS})

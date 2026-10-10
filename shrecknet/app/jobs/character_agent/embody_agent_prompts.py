@@ -1,7 +1,9 @@
 """Prompt contracts in CharacterAgent embodiment execution order.
 
 IDENTITY_DESCRIPTION_PROMPT resolves narrative grounding when absent and
-refreshes it after embodiment; it never supplies numerical trait evidence.
+refreshes it after embodiment using scores, contributing evidence, bounded grounded
+perspectives, accepted psychology, and continuity-only prior text; it never supplies
+new numerical trait evidence.
 For each source scene chunk, PERSPECTIVE_PROMPT runs first:
     objective scenes -> psychologically distinctive subjective perspectives.
     A truncated response retries with PERSPECTIVE_TRUNCATION_RECOVERY_PROMPT.
@@ -44,7 +46,7 @@ IDENTITY_TRAIT_DESCRIPTION_CONTRACT = (
         for key in DIRECTIONAL_TRAITS
     ], ensure_ascii=False)
 )
-PROMPT_VERSION = "character-embodiment-v39-recent-profile-focus"
+PROMPT_VERSION = "character-embodiment-v40-diagnostic-evidence-synthesis"
 
 # Execution order: Stage 0, once when description is absent and once after
 # scene processing to refresh it from the resulting current state.
@@ -68,7 +70,19 @@ INPUT JSON:
   "properties": [{"name": "property name", "value": "property value"}],
   "goals": [{"name": "goal name", "description": "goal description or null"}],
   "aspects": [{"name": "aspect name", "type": "aspect type", "descriptor": "aspect description or null"}],
-  "traits": [{"name": "forbearance", "value": 3}, {"name": "presence", "value": null}]
+  "traits": [{"name": "forbearance", "value": 5, "status": "supported",
+    "inferred_continuous_value": 5.12, "availability": "available", "reason": null,
+    "calculation_version": "recency-points-v1", "observation_count": 12,
+    "high_count": 6, "low_count": 6,
+    "evidence_examples": [{"id": "trait:example", "perspective_id": "perspective:example",
+      "evidence_ids": ["scene:example"], "polarity": "low",
+      "situation_type": "retaliation:enemy:ordinary", "justification": "Recorded action and diagnostic significance"}]}],
+  "grounded_perspectives": [{"scene_id": "example", "perspective_id": "perspective:example",
+    "source_type": "participated", "perspective": "Validated subjective interpretation"}],
+  "previous_identity_description": {"role": "continuity_only_not_evidence",
+    "description": {"identity_summary": "Earlier summary", "psychological_summary": "Earlier psychology",
+      "personality_traits": [{"trait": "forbearance", "description": "Earlier wording"}]}},
+  "synthesis_version": "evidence-synthesis-v1"
 }
 
 Interpret each input field as follows:
@@ -79,6 +93,35 @@ Interpret each input field as follows:
 - traits contains one of the eight established trait keys and its current
   integer point value from 1 through 9; null means unknown. The appended trait
   contract explains each dimension and its low/high meanings.
+- status is unknown, provisional, supported, or manual. Unknown value is null;
+  never invent a disposition for it. Provisional evidence is tentative.
+- observation_count, high_count, and low_count describe the unweighted contributing
+  behavioral ledger, not confidence. inferred_continuous_value preserves the same
+  recency-weighted calculation before rounding. availability is available or
+  unavailable; unavailable details/counts are null and reason explains the gap.
+  A manual value is authoritative even if inferred evidence points elsewhere;
+  do not rewrite that evidence to claim agreement or invent its manifestation.
+- evidence_examples contains at most four actual behavioral justifications per
+  trait, with provenance and contrasting poles where available. These are a
+  bounded sample, not the full history. Text may be shortened; infer no missing facts.
+- grounded_perspectives contains at most six recent validated subjective accounts.
+  Use these to understand established motivations and accepted development alongside
+  current aspects/goals; subjective accounts do not establish new objective actions.
+- previous_identity_description.description is an earlier portrait or null.
+  Preserve supported psychological continuity but correct unsupported prior claims.
+  It is continuity context only, never new evidence or a reason to repeat a trait.
+- calculation_version and synthesis_version are provenance, not psychological facts.
+
+Score direction: 1–2 strong low-pole tendency; 3–4 moderate/slight low-pole
+tendency; 5 centered or mixed; 6–7 slight/moderate high-pole tendency; 8–9 strong
+high-pole tendency. These bands do not measure confidence. A five with sparse
+evidence differs from a five with substantial conflicting evidence. Describe
+supported conditions of restraint versus retaliation rather than turning a mixed
+forbearance score into consistent forgiveness. Unknown means omit the disposition.
+The effective numerical value determines direction and strength; supported
+psychology and scene evidence determine how it manifests in this character.
+Two diligent characters may share a score but differ in supported motivations;
+never invent control, anxiety, or other motives merely to differentiate them.
 
 OUTPUT JSON SCHEMA (return exactly this object shape):
 {
@@ -364,6 +407,36 @@ For each scene, identify supported observations using
 the eight established personality dimensions.
 
 Rules:
+- Apply three gates to EVERY candidate before emitting it:
+  1. Whose behavior? Identify this character's own canonical action or explicit
+     expression of a disposition. Other participants' actions do not transfer.
+  2. What does it reveal? Identify the diagnostic voluntary choice or response,
+     beyond participation, competence, routine preparation, or task compliance.
+     Use only established circumstances and alternatives; invent none.
+  3. Which direction? Compare the behavior with BOTH authoritative poles and
+     boundaries. High and low evidence are equally admissible, never moral labels.
+- In the existing justification field, state the character's own action AND why
+  it discriminates the chosen pole in this circumstance. Background summaries
+  and subjective interpretation alone cannot supply the action or alternative.
+- Shared investigation is not shared high curiosity. For example, if one participant
+  voluntarily tests an unfamiliar artifact despite warnings to understand it,
+  low caution and high curiosity may each be independently supported. If another
+  participant
+  refuses exposure until allies and protection are secured, high caution may be
+  supported; participation alone supplies no curiosity observation. If a third participant
+  voluntarily verifies every translation despite an offered shortcut, high
+  diligence may be supported; do not add caution without established threat
+  sensitivity. These are conditional examples, never facts about the target.
+- Routine preparation does not automatically mean high diligence; coordinating
+  a required task does not automatically mean high presence. Quietly doing one's
+  assigned work alone establishes neither low presence nor high diligence.
+- Attend equally to diagnostic low-pole behavior: voluntarily cutting corners
+  (diligence), avoiding available social attention (presence), retaliating after
+  provocation (forbearance), or explicitly valuing security over offered novelty
+  (restlessness). Avoiding known fatal danger alone does not prove low curiosity.
+- Do not force pole balance or differences between characters. Return no
+  observations when the scene is ambiguous or lacks a diagnostic choice,
+  explicit disposition, or clearly demonstrated response.
 - Focus on meaningful voluntary choices, expressed values,
   and clearly demonstrated dispositional responses.
 - Interpret behavior within circumstances, knowledge, and

@@ -7,7 +7,7 @@ Welcome to the Shrecknet documentation! This directory contains all organized do
 - [CharacterAgent](./Agents/CharacterAgent/CharacterAgent.md)
 - [CharacterAgent Decision Making](./Agents/CharacterAgent/Query/Query.md)
 - [CharacterAgent endpoints](./Agents/CharacterAgent/CharacterAgent%20-%20Endpoints.md)
-- [Dispositional traits](./Agents/CharacterAgent/Dispositional%20Traits.md) — constructs, evidence, extraction/query pipelines, source bundles, revisions, and deployment
+- [Dispositional traits](./Agents/CharacterAgent/Dispositional%20Traits.md) — constructs, diagnostic extraction, continuous revision inference, evidence-grounded synthesis, offline evaluation, and deployment
 - [Historical dispositional-traits design record](./Agents/CharacterAgent/Dispositional%20Traits%20Plan.md) — superseded embodiment design notes; use the current contract above
 - [Point based traits implementation record](./Agents/CharacterAgent/Point-Based%20Traits%20Redesign%20Plan.md) — equations, graph contract, flow, cutover, and verification decisions
 - [Psychological enrichment and consolidation implementation record](./Agents/CharacterAgent/Psychological%20Enrichment%20and%20Consolidation%20Redesign%20Plan.md) — scene enrichment, source-level profile reconciliation, relationship-owned focus, and verification record

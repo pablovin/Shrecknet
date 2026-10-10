@@ -230,3 +230,119 @@ z history. Restore the backup for rollback.
 The [redesign plan](Point-Based%20Traits%20Redesign%20Plan.md) records acceptance
 criteria and the full verification matrix; the [endpoint page](CharacterAgent%20-%20Endpoints.md)
 records HTTP details.
+
+
+## Diagnostic extraction and narrative synthesis
+
+Scene extraction applies three gates to each candidate: whose behavior, what makes
+it diagnostic beyond competence or task participation, and which authoritative
+pole it supports. The existing justification identifies the character's canonical
+action and its diagnostic significance. Investigation, preparation, and coordination
+do not automatically produce curiosity, diligence, or presence. Both poles are
+admissible; no balance quota or artificial character differences are imposed.
+Ambiguous, compelled, or non-diagnostic behavior yields no observation. The existing
+schema, three-candidate scene cap, grounding validators, and call structure remain.
+
+Final identity synthesis uses actual contributing behavioral examples, scores,
+statuses, high/low distributions, accepted current psychology, and bounded recent
+perspectives. Previous identity text provides continuity only. See
+[CharacterAgent](CharacterAgent.md#chronological-identity-revisions) for the input
+budget, score interpretation, and authority rules.
+
+## Continuous revision history
+
+Revision reads add `trait_history`, a read-only map for the eight directional
+traits. Each entry contains `inferred_continuous_value`, `high_count`, `low_count`,
+`observation_count`, `availability`, `reason`, and
+`calculation_version: "recency-points-v1"`. The calculation shares the existing
+recency-weighted mean and `n / (n + 4)` smoothing with integer consolidation;
+no formula, status, rounding, or persisted profile changes occur. Counts are
+unweighted and are not confidence intervals. Unknown with complete empty evidence
+has a null estimate and zero counts. Missing or inconsistent contributing evidence
+has `availability: "unavailable"` and null numerical details.
+
+Each revision uses only ledger records introduced through that revision and only
+its recorded contributing perspective IDs. Earlier pages of the ledger are included
+when revision pagination starts partway through history. Evidence added later is
+excluded. Manual overrides keep the effective integer in `trait_profile` while
+`trait_history` describes underlying inference. Steadiness remains a separate
+integer calculation and is absent from this map. Public revision reads expose
+these aggregate details under existing visibility rules; raw evidence remains
+administrator-only. The numerical character sheet and downstream integer analyses
+retain their existing behavior.
+
+## Offline diagnostics and rollout
+
+Run from `shrecknet/`:
+
+```sh
+python -m app.services.character_trait_analysis ledger.json report.json
+```
+
+Input is `{"characters":[{"character_id":"stable-id","name":"optional",
+"extraction_version":"optional prompt version","processed_scene_ids":["scene-id"],
+"evidence":[/* exported TraitEvidence objects */]}]}`. Export private ledgers only
+through existing administrator-authorized reads. `processed_scene_ids` is optional
+and must come from processing records, not inferred absence in the evidence ledger.
+The report contains per-character and aggregate high/low counts by trait, total
+behavioral observations, separate authored evidence counts, duplicate counts,
+scene coverage, and shared-scene justification comparisons. Identical duplicate
+records are counted once; conflicting or duplicate perspective evidence is rejected.
+Missing processing information is unknown, distinct from a processed scene with
+zero observations. Counts expose patterns; a high/low imbalance alone does not
+establish a bias.
+
+The prompt version is `character-embodiment-v40-diagnostic-evidence-synthesis`;
+synthesis context identifies `evidence-synthesis-v1`. Definition and evidence-policy
+versions remain unchanged. Existing checkpoints include the prompt version in their
+fingerprint and cannot reuse outputs from the old prompt. Deploy API and workers
+together, then SDK/frontend consumers. No database migration is required. Decimal
+history is available from existing ledgers without inference calls. Existing
+observations and narratives are not rewritten on deployment: review a draft for a selected character before acceptance. Existing-agent drafts
+retain processed scene evidence and append newly eligible scenes; they do not
+retroactively re-extract old observations merely because the prompt changed.
+Use offline replay to inspect revised extraction on exported canonical scenes
+before planning a full rebuild. Preserve a backup/export of the original ledger
+and revisions for any full regeneration; no automatic rebuild or deletion occurs
+on deployment. Frozen adventure analysis results remain unchanged. Re-extraction
+requires LLM stages; reporting and decimal history do not. Rollback restores earlier prompts/UI while
+retaining compatible integer profiles and ledgers.
+
+
+### Frozen extraction evaluation
+
+`shrecknet/tests/fixtures/trait_discrimination.json` contains 24 synthetic cases:
+both poles of all eight traits, three character-specific views of a shared artifact
+scene, and five non-diagnostic/attribution cases. These are authored reference
+expectations requiring review, not actual evidence for Ernst, Johnny, or Johan.
+The replay command uses the configured extraction model and existing validator;
+it supplies frozen subjective perspectives and never writes profiles or scenes.
+
+```sh
+python -m app.services.character_trait_evaluation \
+  tests/fixtures/trait_discrimination.json current-report.json --live
+python -m app.services.character_trait_evaluation \
+  tests/fixtures/trait_discrimination.json baseline-report.json --live \
+  --prompt-file /path/to/previous-complete-extraction-prompt.txt
+```
+
+The baseline prompt file must include its full authoritative trait contract.
+Use identical fixture bytes and configured model/settings for each comparison;
+LLM variability means one run is a review aid, not a statistically established
+quality claim. Reports record fixture/prompt hashes, model settings, LLM calls,
+estimated tokens, unsupported/missed candidates, and actual justifications.
+Inspect action attribution, diagnostic significance, low/high direction, and
+unsupported motivations manually. Do not require equal pole distributions or
+artificial differences between characters.
+
+For existing captured outputs, score without network or LLM calls:
+
+```sh
+python -m app.services.character_trait_evaluation \
+  tests/fixtures/trait_discrimination.json scored-report.json --outputs outputs.json
+```
+
+`outputs.json` is an array with exactly one `{ "case_id": "...", "observations":
+[{"trait":"...","polarity":"high|low","justification":"..."}] }` per fixture
+case. Empty observations are valid. Model replay requires a reachable shreckLLM
+service; failed inference does not publish a successful report.

@@ -25,6 +25,7 @@ from app.schemas.character_agent import (
 
 
 from app.schemas.character_traits import TraitProfile, TraitEvidence
+from app.services.character_trait_analysis import PERSPECTIVE_LIMIT
 
 
 def _json(value: str | None, default: Any) -> Any:
@@ -544,8 +545,10 @@ class CharacterEmbodimentService:
         identity_description = existing_identity or await identity_job.generate_identity_description(
             canonical_identity=inputs["canonical_identity"], current_profile=profile,
             current_aspects=aspects, current_goals=goals,
+            current_trait_evidence=evidence,
         )
         inputs["canonical_identity"]["identity_description"] = identity_description.model_dump(mode="json")
+        recent_perspectives = []
         for chunk in chunk_source_scenes(groups):
             job = EmbodyAgent(llm_client=llm_client,
                 character_incorporation_model=settings.model_character_agent_character_incorporation,
@@ -564,6 +567,7 @@ class CharacterEmbodimentService:
                 analysis=analysis, current_trait_profile=profile,
                 current_trait_evidence=evidence, current_aspects=aspects,
                 current_goals=goals, batch_id=chunk["batch_id"])
+            recent_perspectives = (recent_perspectives + result.perspectives)[-PERSPECTIVE_LIMIT:]
             timeline = CharacterTimelineProjection.model_validate_json(_build_timeline(
                 source_entity_id=entity_id, source_entity_alias=inputs["source_entity_alias"],
                 canonical_identity=inputs["canonical_identity"], current_trait_profile=profile,
@@ -588,6 +592,7 @@ class CharacterEmbodimentService:
         refreshed_identity = await identity_job.generate_identity_description(
             canonical_identity=inputs["canonical_identity"], current_profile=profile,
             current_aspects=aspects, current_goals=goals,
+            current_trait_evidence=evidence, current_perspectives=recent_perspectives,
         )
         async def persist_identity(tx):
             await tx.run(

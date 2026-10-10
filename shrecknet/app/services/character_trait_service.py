@@ -9,7 +9,7 @@ from typing import Iterable
 
 from app.schemas.character_traits import (
     DIRECTIONAL_TRAITS, EVIDENCE_POLICY_VERSION, TraitChange, TraitEdit, TraitEstimate,
-    TraitEvidence, TraitObservation, TraitProfile,
+    TraitEvidence, TraitObservation, TraitProfile, TraitHistoryEstimate,
 )
 
 POLICY_VERSION = EVIDENCE_POLICY_VERSION
@@ -105,23 +105,65 @@ def _rounded(value: float) -> int:
     return max(1, min(9, 5 + (magnitude if displacement >= 0 else -magnitude)))
 
 
-def _directional(key: str, evidence: list[TraitEvidence]) -> TraitEstimate:
+def directional_items(key: str, evidence: list[TraitEvidence]) -> list[TraitEvidence]:
     items = [item for item in evidence if item.trait == key and item.evidence_kind == 'behavior']
     items.sort(key=lambda item: (item.chronological_position, item.id))
+    if len({item.perspective_id for item in items}) != len(items):
+        raise ValueError('duplicate perspective evidence for a trait')
+    return items
+
+
+def directional_details(key: str, evidence: list[TraitEvidence]) -> TraitHistoryEstimate:
+    """The shared continuous calculation used by consolidation and read models."""
+    items = directional_items(key, evidence)
     if not items:
-        return TraitEstimate()
+        return TraitHistoryEstimate(availability='available', high_count=0,
+                                   low_count=0, observation_count=0)
     n = len(items)
     weights = [RECENCY ** (n - index - 1) for index in range(n)]
     weighted = sum(weight * (1 if item.polarity == 'high' else -1)
                    for weight, item in zip(weights, items, strict=True))
     total = sum(weights)
     mean = weighted / total
-    ids = [item.perspective_id for item in items]
-    if len(set(ids)) != n:
-        raise ValueError('duplicate perspective evidence for a trait')
-    return TraitEstimate(point=_rounded(5 + 4 * mean * n / (n + SMOOTHING)),
+    high = sum(item.polarity == 'high' for item in items)
+    return TraitHistoryEstimate(inferred_continuous_value=5 + 4 * mean * n / (n + SMOOTHING),
+        availability='available', high_count=high, low_count=n - high, observation_count=n)
+
+
+def _directional(key: str, evidence: list[TraitEvidence]) -> TraitEstimate:
+    details = directional_details(key, evidence)
+    if details.inferred_continuous_value is None:
+        return TraitEstimate()
+    ids = [item.perspective_id for item in directional_items(key, evidence)]
+    n = details.observation_count
+    return TraitEstimate(point=_rounded(details.inferred_continuous_value),
         status='supported' if n >= 2 else 'provisional',
         observation_count=n, observation_ids=ids)
+
+
+def trait_history_details(profile: TraitProfile, evidence: list[TraitEvidence]) -> dict[str, TraitHistoryEstimate]:
+    """Resolve only each snapshot's contributing evidence, including under overrides."""
+    result = {}
+    for key in DIRECTIONAL_TRAITS:
+        effective = profile.estimate(key)
+        expected = set(effective.observation_ids)
+        items = [item for item in evidence if item.trait == key
+                 and item.evidence_kind == 'behavior' and item.perspective_id in expected]
+        if {item.perspective_id for item in items} != expected:
+            result[key] = TraitHistoryEstimate(reason='Contributing evidence is missing.')
+            continue
+        try:
+            details = directional_details(key, items)
+        except ValueError:
+            result[key] = TraitHistoryEstimate(reason='Contributing evidence is ambiguous.')
+            continue
+        inferred = profile.inferred_traits.get(key) if effective.status == 'manual' else effective
+        raw = details.inferred_continuous_value
+        if inferred is not None and inferred.point != (_rounded(raw) if raw is not None else None):
+            result[key] = TraitHistoryEstimate(reason='Evidence does not reproduce the recorded estimate.')
+        else:
+            result[key] = details
+    return result
 
 
 def _steadiness(evidence: list[TraitEvidence]) -> TraitEstimate:

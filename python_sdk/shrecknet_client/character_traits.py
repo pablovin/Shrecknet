@@ -12,6 +12,15 @@ class TraitEdit(StrictModel):
     point: int | None = Field(ge=1, le=9, strict=True)
     reason: str = Field(min_length=1, max_length=2000)
 
+class TraitHistoryEstimate(StrictModel):
+    inferred_continuous_value: float | None = Field(default=None, ge=1, le=9)
+    high_count: int | None = Field(default=None, ge=0)
+    low_count: int | None = Field(default=None, ge=0)
+    observation_count: int | None = Field(default=None, ge=0)
+    availability: Literal['available', 'unavailable'] = 'unavailable'
+    reason: str | None = None
+    calculation_version: str = 'recency-points-v1'
+
 class TraitEstimate(StrictModel):
     point: int | None = Field(ge=1, le=9, strict=True)
     status: Literal['unknown', 'provisional', 'supported', 'manual']

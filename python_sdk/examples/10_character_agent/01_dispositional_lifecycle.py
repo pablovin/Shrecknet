@@ -40,7 +40,10 @@ async def main(args):
             aspects=[CharacterAgentEmbeddedAspect.model_validate(item) for item in proposal['aspects']],
             goals=[CharacterAgentEmbeddedGoal.model_validate(item) for item in proposal['goals']]))
         print('Steadiness (baseline is a neutral prior):', agent.trait_profile.steadiness.model_dump())
-        print('Inferred integrity:', agent.trait_profile.dispositional_traits['integrity'].model_dump())
+        integrity = agent.trait_profile.dispositional_traits['integrity']
+        print('Effective integrity:', integrity.model_dump())
+        if integrity.status == 'baseline':
+            print('Integrity 5 is a neutral prior; no directional behavior has contributed yet.')
         print('Evidence:', [item.model_dump() for item in await sdk.character_agents.list_trait_evidence(agent.id)])
         await sdk.character_agents.update(agent.id, CharacterAgentUpdate(trait_edits={
             'integrity': TraitEdit(point=7, reason='Example authored sheet override.')}))

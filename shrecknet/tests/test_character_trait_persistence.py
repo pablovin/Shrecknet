@@ -75,7 +75,7 @@ def test_sdk_reads_backend_profile_without_contract_drift(monkeypatch):
     backend=CharacterAgentRead.model_validate({**graph.agent,'entity_instance_id':'e',
         'trait_profile':TraitProfile.model_validate_json(graph.agent['trait_profile'])})
     sdk=SDKRead.model_validate(backend.model_dump(mode='json'))
-    assert sdk.trait_profile.dispositional_traits['integrity'].point is None
+    assert sdk.trait_profile.dispositional_traits['integrity'].point == 5
     edit=SDKUpdate(trait_edits={'integrity':{'point':None,'reason':'Resume inference.'}})
     assert CharacterAgentUpdate.model_validate(edit.model_dump(exclude_unset=True)).trait_edits['integrity'].point is None
 

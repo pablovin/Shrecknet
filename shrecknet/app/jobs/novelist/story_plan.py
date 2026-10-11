@@ -2,9 +2,18 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+
+MAX_SUMMARY_CHARS = 1000
+MAX_CAST_MEMBERS = 10
+MAX_NAME_CHARS = 60
+MAX_TITLE_CHARS = 120
+MAX_CONTINUITY_CHARS = 2000
+MAX_SOURCE_IDS = 8
+MAX_ID_CHARS = 32
 
 
 class SourceSegment(BaseModel):
@@ -21,10 +30,12 @@ class StoryBeat(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    beat_id: str = Field(min_length=1)
-    summary: str = Field(min_length=1)
+    beat_id: str = Field(min_length=1, max_length=MAX_ID_CHARS)
+    summary: str = Field(min_length=1, max_length=MAX_SUMMARY_CHARS)
     importance: Literal["major", "supporting", "transition"]
-    source_ids: list[str] = Field(min_length=1)
+    source_ids: list[Annotated[str, Field(min_length=1, max_length=MAX_ID_CHARS)]] = Field(
+        min_length=1, max_length=MAX_SOURCE_IDS
+    )
 
 
 class CastMember(BaseModel):
@@ -32,8 +43,8 @@ class CastMember(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    player: str = Field(min_length=1)
-    character: str = Field(min_length=1)
+    player: str = Field(min_length=1, max_length=MAX_NAME_CHARS)
+    character: str = Field(min_length=1, max_length=MAX_NAME_CHARS)
 
 
 class NarrativeStoryPlan(BaseModel):
@@ -41,10 +52,10 @@ class NarrativeStoryPlan(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    title: str | None
-    cast: list[CastMember]
+    title: str | None = Field(max_length=MAX_TITLE_CHARS)
+    cast: list[CastMember] = Field(max_length=MAX_CAST_MEMBERS)
     beats: list[StoryBeat] = Field(min_length=1)
-    continuity_notes: str | None
+    continuity_notes: str | None = Field(max_length=MAX_CONTINUITY_CHARS)
 
     @model_validator(mode="after")
     def validate_unique_beat_ids(self) -> "NarrativeStoryPlan":
@@ -62,16 +73,25 @@ STORY_PLAN_JSON_SCHEMA: dict[str, Any] = {
     "additionalProperties": False,
     "required": ["title", "cast", "beats", "continuity_notes"],
     "properties": {
-        "title": {"type": ["string", "null"]},
+        "title": {"type": ["string", "null"], "maxLength": MAX_TITLE_CHARS},
         "cast": {
             "type": "array",
+            "maxItems": MAX_CAST_MEMBERS,
             "items": {
                 "type": "object",
                 "additionalProperties": False,
                 "required": ["player", "character"],
                 "properties": {
-                    "player": {"type": "string", "minLength": 1},
-                    "character": {"type": "string", "minLength": 1},
+                    "player": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": MAX_NAME_CHARS,
+                    },
+                    "character": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": MAX_NAME_CHARS,
+                    },
                 },
             },
         },
@@ -83,8 +103,16 @@ STORY_PLAN_JSON_SCHEMA: dict[str, Any] = {
                 "additionalProperties": False,
                 "required": ["beat_id", "summary", "importance", "source_ids"],
                 "properties": {
-                    "beat_id": {"type": "string", "minLength": 1},
-                    "summary": {"type": "string", "minLength": 1},
+                    "beat_id": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": MAX_ID_CHARS,
+                    },
+                    "summary": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": MAX_SUMMARY_CHARS,
+                    },
                     "importance": {
                         "type": "string",
                         "enum": ["major", "supporting", "transition"],
@@ -92,12 +120,20 @@ STORY_PLAN_JSON_SCHEMA: dict[str, Any] = {
                     "source_ids": {
                         "type": "array",
                         "minItems": 1,
-                        "items": {"type": "string", "minLength": 1},
+                        "maxItems": MAX_SOURCE_IDS,
+                        "items": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": MAX_ID_CHARS,
+                        },
                     },
                 },
             },
         },
-        "continuity_notes": {"type": ["string", "null"]},
+        "continuity_notes": {
+            "type": ["string", "null"],
+            "maxLength": MAX_CONTINUITY_CHARS,
+        },
     },
 }
 

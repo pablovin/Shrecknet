@@ -3,11 +3,18 @@ from __future__ import annotations
 import json
 
 import pytest
+from jsonschema import ValidationError as JSONSchemaValidationError
 from jsonschema import validate as validate_json_schema
+from pydantic import ValidationError
 
 from app.integrations.llm.model_policy import ModelPolicy
 from app.jobs.novelist.block_planner import plan_blocks
 from app.jobs.novelist.orchestrator import NovelistOrchestrator
+from app.jobs.novelist.prompts import (
+    build_analysis_retry_prompt,
+    build_reconciliation_prompt,
+    build_story_plan_prompt,
+)
 from app.jobs.novelist.prose_quality import prose_to_html, validate_prose_text
 from app.jobs.novelist.source_interpreter import interpret_source, segment_source
 from app.jobs.novelist.story_plan import (
@@ -54,6 +61,91 @@ def test_story_plan_rejects_unknown_source_reference() -> None:
         validate_source_references(
             plan, [SourceSegment(id="source-9999", text="Other source")]
         )
+
+
+def _boundary_plan_payload() -> dict:
+    return {
+        "title": "t" * 120,
+        "cast": [{"player": "p" * 60, "character": "c" * 60} for _ in range(10)],
+        "beats": [
+            {
+                "beat_id": str(index).zfill(32),
+                "summary": "s" * 1000,
+                "importance": "major",
+                "source_ids": [str(i).zfill(32) for i in range(8)],
+            }
+            for index in range(10)
+        ],
+        "continuity_notes": "n" * 2000,
+    }
+
+
+def test_story_plan_accepts_all_sizing_boundaries() -> None:
+    payload = _boundary_plan_payload()
+    validate_json_schema(payload, STORY_PLAN_JSON_SCHEMA)
+    assert NarrativeStoryPlan.model_validate(payload).model_dump() == payload
+
+
+def test_story_plan_has_no_maximum_beat_count() -> None:
+    payload = _plan_payload()
+    payload["beats"] = [
+        dict(payload["beats"][0], beat_id=f"beat-{index:03d}")
+        for index in range(1, 51)
+    ]
+    assert "maxItems" not in STORY_PLAN_JSON_SCHEMA["properties"]["beats"]
+    validate_json_schema(payload, STORY_PLAN_JSON_SCHEMA)
+    plan = NarrativeStoryPlan.model_validate(payload)
+    assert len(plan.beats) == 50
+    assert sum(len(block.beat_ids) for block in plan_blocks(plan.beats)) == 50
+
+
+@pytest.mark.parametrize(
+    ("path", "value"),
+    [
+        (("title",), "t" * 121),
+        (("cast",), [{"player": "p", "character": "c"}] * 11),
+        (("cast", 0, "player"), "p" * 61),
+        (("cast", 0, "character"), "c" * 61),
+        (("beats", 0, "summary"), "s" * 1001),
+        (("beats", 0, "beat_id"), "b" * 33),
+        (("beats", 0, "source_ids"), ["source-0001"] * 9),
+        (("beats", 0, "source_ids", 0), "s" * 33),
+        (("continuity_notes",), "n" * 2001),
+    ],
+)
+def test_story_plan_rejects_oversized_fields_in_schema_and_model(path, value) -> None:
+    payload = _plan_payload()
+    target = payload
+    for key in path[:-1]:
+        target = target[key]
+    target[path[-1]] = value
+    with pytest.raises(JSONSchemaValidationError):
+        validate_json_schema(payload, STORY_PLAN_JSON_SCHEMA)
+    with pytest.raises(ValidationError):
+        NarrativeStoryPlan.model_validate(payload)
+
+
+def test_all_analysis_prompts_include_the_compact_contract() -> None:
+    segments = [SourceSegment(id="source-0001", text="Tamura arrives.")]
+    prompts = [
+        build_story_plan_prompt(
+            source_type="notes", language="en", instructions="", segments=segments
+        ),
+        build_reconciliation_prompt(segments=segments, partial_plans=[_plan_payload()]),
+    ]
+    for prompt in prompts:
+        repair = build_analysis_retry_prompt(
+            original_prompt=prompt,
+            rejected="{}",
+            error=None,
+            schema=STORY_PLAN_JSON_SCHEMA,
+        )
+        for request in (prompt, repair):
+            assert "no maximum beat count" in request
+            assert "1–1000 characters" in request
+            assert "title: null or at most 120 characters" in request
+            assert "continuity_notes: null or at most 2000 characters" in request
+            assert "3,000-token" in request
 
 
 def test_source_segmentation_bounds_a_single_oversized_paragraph() -> None:
@@ -135,7 +227,7 @@ async def test_analysis_sends_complete_schema_to_analysis_model_on_both_attempts
         assert call["model"] == orchestrator.analysis_model
         assert call["messages"][0]["role"] == "user"
     assert client.calls[1]["usage_tag"].endswith(".repair")
-    assert [call["max_tokens"] for call in client.calls] == [6000, 6000]
+    assert [call["max_tokens"] for call in client.calls] == [3000, 3000]
 
 
 @pytest.mark.asyncio
@@ -169,12 +261,12 @@ async def test_truncated_analysis_is_retried_even_when_json_is_valid(
         == _plan_payload()
     )
     assert len(client.calls) == 2
-    assert [call["max_tokens"] for call in client.calls] == [6000, 12000]
+    assert [call["max_tokens"] for call in client.calls] == [3000, 3000]
     assert client.calls[1]["usage_tag"] == f"{tag}.repair"
 
 
 @pytest.mark.asyncio
-async def test_analysis_still_fails_after_truncating_the_larger_retry() -> None:
+async def test_analysis_still_fails_after_truncating_the_bounded_retry() -> None:
     client = _StructuredClient(
         [
             {
@@ -188,7 +280,39 @@ async def test_analysis_still_fails_after_truncating_the_larger_retry() -> None:
     with pytest.raises(RuntimeError, match="failed after one retry.*truncated"):
         await orchestrator._json("prompt", STORY_PLAN_JSON_SCHEMA, "tag")
     assert len(client.calls) == 2
-    assert [call["max_tokens"] for call in client.calls] == [6000, 12000]
+    assert [call["max_tokens"] for call in client.calls] == [3000, 3000]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("repair_valid", [True, False])
+async def test_analysis_repairs_provider_output_that_ignores_sizing_limits(
+    repair_valid: bool,
+) -> None:
+    oversized = _plan_payload()
+    oversized["beats"][0]["summary"] = "s" * 1001
+    client = _StructuredClient(
+        [
+            {
+                "text": json.dumps(payload),
+                "response_metadata": {"finish_reason": "stop"},
+            }
+            for payload in (oversized, _plan_payload() if repair_valid else oversized)
+        ]
+    )
+    orchestrator = NovelistOrchestrator(llm_client=client, model_policy=ModelPolicy())
+    if repair_valid:
+        assert (
+            await orchestrator._json("prompt", STORY_PLAN_JSON_SCHEMA, "tag")
+            == _plan_payload()
+        )
+    else:
+        with pytest.raises(RuntimeError, match="failed after one retry"):
+            await orchestrator._json("prompt", STORY_PLAN_JSON_SCHEMA, "tag")
+    assert [call["max_tokens"] for call in client.calls] == [3000, 3000]
+    assert all(
+        call["response_format"]["json_schema"]["schema"] == STORY_PLAN_JSON_SCHEMA
+        for call in client.calls
+    )
 
 
 @pytest.mark.asyncio

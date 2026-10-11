@@ -2,7 +2,8 @@
 
 Execution order:
 1. ``build_story_plan_prompt`` frames source segments as a compact editorial
-   plan. Its JSON output becomes the planning and writing input.
+   plan with bounded fields. Its JSON output becomes the planning and writing
+   input.
 2. ``build_analysis_retry_prompt`` repairs one malformed or truncated structured
    result from either analysis stage while retaining the complete source prompt.
 3. ``build_reconciliation_prompt`` is used only for oversized sources. It
@@ -21,7 +22,40 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from app.jobs.novelist.story_plan import NarrativeStoryPlan, SourceSegment
+from app.jobs.novelist.story_plan import (
+    MAX_CAST_MEMBERS,
+    MAX_CONTINUITY_CHARS,
+    MAX_ID_CHARS,
+    MAX_NAME_CHARS,
+    MAX_SOURCE_IDS,
+    MAX_SUMMARY_CHARS,
+    MAX_TITLE_CHARS,
+    NarrativeStoryPlan,
+    SourceSegment,
+)
+
+
+# Purpose: keep every structured analysis response compact within 3,000 tokens.
+# Used by: build_story_plan_prompt and build_reconciliation_prompt, and their
+# build_analysis_retry_prompt variants through the complete original prompt.
+# Expected output: the same bounded story-plan object, without slicing content.
+_COMPACT_PLAN_CONTRACT = f"""Output sizing contract (limits are characters, not words):
+- title: null or at most {MAX_TITLE_CHARS} characters.
+- cast: 0–{MAX_CAST_MEMBERS} mappings; player and character are non-empty strings
+  of at most {MAX_NAME_CHARS} characters each. Include explicit mappings only.
+- beats: one or more ordered beats, with no maximum beat count. Each summary
+  is 1–{MAX_SUMMARY_CHARS} characters. Preserve key discoveries, decisions, and
+  outcomes in concise beats. Group related adjacent events where useful; do not
+  enumerate every utterance or minor action.
+- beat_id: unique, non-empty, at most {MAX_ID_CHARS} characters, in narrative order.
+- source_ids: 1–{MAX_SOURCE_IDS} relevant supplied IDs per beat; each ID is
+  non-empty and at most {MAX_ID_CHARS} characters. Never invent or shorten IDs.
+- importance: exactly major, supporting, or transition.
+- continuity_notes: null or at most {MAX_CONTINUITY_CHARS} characters.
+Every root, cast, and beat field is required; no additional keys are allowed.
+Return compact JSON with no indentation. Stay comfortably within the 3,000-token
+output budget; these are maxima, not targets. Preserve facts through concise
+planning rather than cutting off JSON or dropping required fields."""
 
 
 # Purpose: frame raw source as an ordered story plan.
@@ -66,6 +100,8 @@ Every source ID must come from source_segments. Use an empty array for `cast`
 when no player-to-character mapping exists. Do not return scenes, evidence
 claims, prose, Markdown, or any key not shown in the contract.
 
+{_COMPACT_PLAN_CONTRACT}
+
 source_type={source_type}
 language={language or 'source language'}
 instructions={instructions or 'none'}
@@ -86,7 +122,9 @@ def build_analysis_retry_prompt(
 
 The previous structured response was unusable. Return the complete root object
 again, with every required field. Do not return a nested field by itself or omit
-nullable fields. Return JSON only.
+nullable fields. Regenerate a more compact plan within the original sizing
+contract and 3,000-token budget. Group related events and shorten summaries
+without inventing facts. Return a complete JSON object, never a sliced response.
 rejected_response={rejected[:12000]}
 validation_error={error}
 required_json_schema={json.dumps(schema, ensure_ascii=False)}"""
@@ -109,7 +147,12 @@ Return exactly one JSON object with all required fields:
 [{{"beat_id":"beat-001", "summary":"...", "importance":"major|supporting|transition",
 "source_ids":["source-0001"]}}], "continuity_notes": string|null}}
 
-Every displayed root and beat field is required. No additional keys are allowed.
+Input contract:
+- source_segments: ordered objects with immutable id and verbatim text.
+- partial_plans: ordered story-plan objects from stage 1, each with title, cast,
+  beats, and continuity_notes; their facts are grounded in source_segments.
+The reconciled output becomes the chapter-wide planning and writing input.
+{_COMPACT_PLAN_CONTRACT}
 source_segments={json.dumps([segment.model_dump() for segment in segments], ensure_ascii=False)}
 partial_plans={json.dumps(partial_plans, ensure_ascii=False)}"""
 

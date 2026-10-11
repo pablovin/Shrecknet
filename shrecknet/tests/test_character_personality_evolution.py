@@ -12,6 +12,7 @@ from app.services.character_trait_analysis import (
     bounded_previous_identity, diagnostic_report, representative_evidence, synthesis_traits, synthesis_steadiness, SYNTHESIS_VERSION,
 )
 from test_character_traits import evidence
+from test_character_embodiment import complete_portrait
 
 
 @pytest.mark.parametrize('n', [1, 7, 10, 20, 27, 28])
@@ -20,7 +21,7 @@ def test_continuous_precision_preserves_integer_and_pole_symmetry(n):
     raw = directional_details('integrity', high)
     opposite = directional_details('integrity', low)
     profile, _ = update_profile(TraitProfile(), high)
-    assert raw.inferred_continuous_value == pytest.approx(5 + 4 * (2*n) / (2*n + 4))
+    assert raw.inferred_continuous_value == pytest.approx(5 + 4 * (2*n) / (2*n + 6))
     assert raw.inferred_continuous_value + opposite.inferred_continuous_value == pytest.approx(10)
     assert profile.estimate('integrity').point == _rounded(raw.inferred_continuous_value)
     assert raw.high_count == n and raw.low_count == 0
@@ -35,7 +36,7 @@ def test_plateaus_unknowns_rounding_and_overrides_remain_distinct():
     assert first.estimate('integrity').point == later.estimate('integrity').point == 8
     assert directional_details('integrity', seven).inferred_continuous_value < directional_details('integrity', twentyseven).inferred_continuous_value
     assert _rounded(8.5) == 9 and _rounded(1.5) == 1
-    assert directional_details('curiosity', []).inferred_continuous_value is None
+    assert directional_details('curiosity', []).inferred_continuous_value == 5
     manual = apply_manual_edits(later, {'integrity': TraitEdit(point=2, reason='Author decision')})
     details = trait_history_details(manual, twentyseven)['integrity']
     assert manual.estimate('integrity').point == 2
@@ -137,7 +138,7 @@ async def test_identity_generation_uses_one_existing_call_with_evidence_and_cont
     profile, _ = update_profile(TraitProfile(), items)
     old = {'identity_summary': 'Old identity', 'psychological_summary': 'Old psychology',
            'personality_traits': []}
-    llm = FakeLLM(json.dumps(old))
+    llm = FakeLLM(json.dumps(complete_portrait()))
     perspectives = [ScenePerspectiveOutput(scene_id=f's{i}', evidence_ids=[f'scene:s{i}'],
                     source_type='participated', perspective='Grounded subjective context') for i in range(10)]
     await _agent(llm).generate_identity_description(
@@ -270,11 +271,11 @@ async def test_model_replay_reuses_extractor_without_profile_writes(monkeypatch)
 @pytest.mark.asyncio
 async def test_identity_initialization_accepts_empty_evidence_without_invented_counts():
     from test_character_embodiment import FakeLLM, _agent, _canonical
-    llm = FakeLLM(json.dumps({'identity_summary': 'Identity', 'psychological_summary': 'Psychology', 'personality_traits': []}))
+    llm = FakeLLM(json.dumps(complete_portrait()))
     await _agent(llm).generate_identity_description(canonical_identity=_canonical(),
         current_profile=TraitProfile(), current_aspects=[], current_goals=[])
     payload = json.loads(llm.calls[0]['messages'][1]['content'])
-    assert all(trait['value'] is None and trait['evidence_examples'] == []
+    assert all(trait['value'] == 5 and trait['status'] == 'baseline' and trait['evidence_examples'] == []
                and trait['observation_count'] == 0 for trait in payload['traits'])
     assert payload['previous_identity_description']['description'] is None
     assert payload['steadiness']['value'] == 5
@@ -286,7 +287,7 @@ async def test_identity_initialization_accepts_empty_evidence_without_invented_c
 async def test_identity_validation_retry_preserves_separate_consistency_context():
     from test_character_embodiment import _agent, _canonical
     from test_character_agent_decision_making import FakeLLM
-    portrait = {'identity_summary': 'Identity', 'psychological_summary': 'Psychology', 'personality_traits': []}
+    portrait = complete_portrait()
     llm = FakeLLM(['{}', json.dumps(portrait)])
     items = evidence((1,) * 3)
     profile, _ = update_profile(TraitProfile(), items)
@@ -314,7 +315,7 @@ async def test_invalid_legacy_ledger_keeps_snapshots_readable_with_unavailable_i
                     yield {'revision_number': 1, 'evidence': 'invalid json'}
             return rows()
     row = (await CharacterAgentService(None, Graph()).list_identity_revisions('a', 0, 100))[0]
-    assert row.trait_profile.estimate('integrity').point is None
+    assert row.trait_profile.estimate('integrity').point == 5
     assert all(detail.availability == 'unavailable' for detail in row.trait_history.values())
 
 

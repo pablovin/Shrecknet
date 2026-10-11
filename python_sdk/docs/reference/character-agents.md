@@ -170,12 +170,15 @@ No description.
 
 ## Weighted profile compatibility
 
-The SDK reads both `dispositions-v3-points-perspectives` and
-`dispositions-v4-weighted-scenes`. New profile grouping fields are
+The SDK reads `dispositions-v3-points-perspectives`,
+`dispositions-v4-weighted-scenes`, and `dispositions-v5-neutral-prior`. New profile grouping fields are
 `observation_groups` and `unresolved_observation_ids`. Evidence adds `source`,
 `observation_group_id`, and `independence_status`; old evidence defaults to canonical.
-Only Steadiness permits `baseline`: point 5, zero observations, and no inferred
-consistency claim. Upgrade strict clients before deploying new responses.
+New v5 profiles permit `baseline` for all nine estimates: point 5 with zero
+observations and empty observation IDs. Historical v3/v4 permit it only for
+Steadiness. Directional smoothing is 6 in v5; historical calculations and separate
+Steadiness smoothing 4 are preserved. A baseline does not claim observed direction,
+balance, equal action probabilities, or consistency. Upgrade strict clients before deploying new responses.
 See [the canonical trait contract](../../../Documentation/Agents/CharacterAgent/Dispositional%20Traits.md).
 
 `observation_group_positions` snapshots the earliest recorded event-group position

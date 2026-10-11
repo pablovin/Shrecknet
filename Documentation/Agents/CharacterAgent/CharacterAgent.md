@@ -48,8 +48,8 @@ Administrators retain access to both visibility levels. Private agents return
 ### Legacy graph nodes
 
 Nodes may retain unrelated retired personality properties; public projection
-omits them. A missing `trait_profile` projects to eight unknown directional estimates
-and baseline Steadiness 5. An old z-formatted `trait_profile` is invalid and requires regeneration
+omits them. A missing `trait_profile` projects to all nine effective estimates at
+5/`baseline`, with zero contributing observations. An old z-formatted `trait_profile` is invalid and requires regeneration
 from source material before the agent can be read or queried under the new
 contract. Missing `visibility` remains private. Creation and updates accept only
 the current fields.
@@ -98,7 +98,8 @@ changes, then regenerates all three identity fields from the resulting state.
 Every chunk in the next source uses this refreshed description; chunks within
 one source share its starting state. An accepted draft carries this refreshed value to
 the CharacterAgent. Narrative descriptions do not initialize numerical trait
-points; new characters remain unknown until scene behavior supplies evidence.
+points; new characters start at neutral computational priors until scene behavior
+supplies evidence.
 The identity synthesis input includes canonical name/type/text/properties, current
 accepted goals and aspects, and all eight effective trait scores and statuses.
 Each trait also supplies its inferred continuous value, unweighted high/low counts,
@@ -115,7 +116,12 @@ summary (plus up to eight prior trait descriptions of 600 characters).
 The prompt explains the 1–9 direction: 1–2 strong low, 3–4 slight/moderate low,
 5 centered or mixed, 6–7 slight/moderate high, and 8–9 strong high. Counts do not
 measure confidence. Mixed scores require attention to contrasting circumstances;
-unknown traits must not acquire an invented disposition. Effective manual scores
+baseline and historical unknown traits must not acquire an invented disposition.
+Baseline 5 means no established direction, not observed balance or equal probabilities.
+New generation returns all eight trait descriptions, grounded in each character's
+established identity/psychology/goals even at 5, without forcing unique wording.
+Observed opposing tendencies at 5 require real evidence. Older sparse portraits
+remain readable; Steadiness stays separate and may qualify psychological_summary. Effective manual scores
 control narrative direction without rewriting contradictory inferred evidence.
 Supported psychology determines how a tendency manifests in this character.
 Initialization accepts empty evidence; both draft generation and append workflows
@@ -238,7 +244,7 @@ provider JSON Schema (`maxLength: 1500`), and Pydantic validator share
 `MAX_EMBODIMENT_JUSTIFICATION_LENGTH`. Draft aspect/goal proposals accept the
 same maximum so generation results survive timeline projection. Overlong output
 is rejected through the shared validation retry budget, never silently truncated.
-Prompt version `character-embodiment-v46-source-evolution` invalidates
+Prompt version `character-embodiment-v47-neutral-prior` invalidates
 older intermediate checkpoints; accepted drafts and revisions need no backfill.
 It contains no lifecycle state engine. Validation, application, and timeline
 replay all use `_apply_aspect_ops` and `_apply_goal_ops` in `profile.py`; these
@@ -657,8 +663,9 @@ or Steadiness are supplied to the extraction model. Malformed individual candida
 become null; missing slots/envelope errors retain bounded correction. Backend
 binding, event deduplication, evidence weighting, and both reducers follow the
 [trait contract](Dispositional%20Traits.md#extraction-and-evidence). New profiles use
-`dispositions-v4-weighted-scenes`, with baseline/evolving cross-scene Steadiness
-and revision-owned event grouping; historical v3 revisions retain old calculations.
+`dispositions-v5-neutral-prior`, with all nine estimates initially 5/baseline,
+directional smoothing 6, separate cross-scene Steadiness (smoothing 4), and
+revision-owned event grouping. Historical v3/v4 retain their original calculations.
 It does not produce final aspects/goals or lifecycle statuses. Stage 4 may add,
 materially update, reinforce, deactivate/reactivate aspects, resolve/reactivate
 goals, and refresh focus. It preserves history and never resolves an item only
@@ -668,7 +675,7 @@ ten active goals; focus changes do not alter lifecycle status. See the
 for the migration and verification details.
 
 
-Prompt version `character-embodiment-v46-source-evolution` participates
+Prompt version `character-embodiment-v47-neutral-prior` participates
 in source and chunk checkpoint fingerprints, so retries do not reuse outputs
 from older prompt versions. Generation output and persisted profile shapes remain
 unchanged; revision reads add derived `trait_history` details without a database
@@ -695,10 +702,9 @@ for request, polling, and output contracts.
 
 ### Reliability deployment and compatibility
 
-The LLM wire contract uses `character-embodiment-v46-source-evolution`.
+The LLM wire contract uses `character-embodiment-v47-neutral-prior`.
 Stage 3 uses the compact source/reason contract. v4 profiles add revision-owned
-event grouping and baseline Steadiness; API/worker/SDK readers must support these
-additions while retaining v3 history. Numeric event positions and stored stable IDs
+event grouping and baseline traits; API/worker/SDK readers must support v5 while retaining v3/v4 history. Numeric event positions and stored stable IDs
 remain unchanged.
 No graph/database backfill is required. The configuration-key migration above is
 automatic; an existing custom retry limit is preserved. Completed source
@@ -716,7 +722,7 @@ alias remains accepted by this release; when rolling back to older code, restore
 the old configuration key with the desired limit before restarting, since older
 code does not recognize the new canonical key. Do not rewrite persisted IDs.
 
-Checkpoint version 3 also retains the generated initial description and each
+Checkpoint version 4 also retains the generated initial description and each
 completed source transition with its full refreshed identity. Exact upstream
 canonical identity, profile/evidence, lifecycle state, perspectives, source inputs,
 models, synthesis/prompt versions, and chunk policy determine reuse. Compatible
@@ -740,3 +746,9 @@ No database schema migration or automatic regeneration of existing agents is
 required. The legacy internal
 `observations_unavailable` marker retains its no-change compatibility behavior;
 active generation never sets it to accept a malformed stage response.
+
+The [neutral-prior scoring contract](Dispositional%20Traits.md#directional-calculation)
+defines v5 arithmetic, historical replay, baseline representation, and client
+compatibility. New evidence may upgrade a current profile; reads do not rewrite
+historical states or existing portraits. Roll back using compatible profile readers
+or a pre-upgrade backup, never by changing version labels.

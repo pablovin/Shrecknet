@@ -316,9 +316,22 @@ an empty map. These read-only values do not alter effective profile integers or
 manual overrides. Unknown estimates are null; unavailable evidence must not become
 a midpoint. See [continuous history and diagnostics](../../Documentation/Agents/CharacterAgent/Dispositional%20Traits.md#continuous-revision-history).
 
-### Weighted evidence and baseline Steadiness
+### Neutral priors and weighted evidence
 
-New profiles use `dispositions-v4-weighted-scenes`; v3 profiles remain readable.
+New profiles use `dispositions-v5-neutral-prior`; v3/v4 profiles remain readable
+with their original calculations. All nine effective estimates start at 5/baseline
+with count 0 and empty observation IDs. The eight directional traits use smoothing
+6; Steadiness retains its separate consistency calculation and smoothing 4.
+Directional baseline is permitted in v5 only, including inferred states under
+manual overrides. An observed 5 retains provisional/supported status. No synthetic
+evidence is inserted. New evidence upgrades the current profile from its real
+ledger, while stored history is unchanged on read. Older SDK releases may reject
+v5 profiles; deploy compatible clients with the backend.
+
+Newly generated identity descriptions cover all eight directional keys. A baseline
+5 receives character-specific neutral wording grounded in established identity,
+psychology, and goals without inventing a preference or equal action probabilities.
+The public reader retains older sparse portraits. Steadiness stays separate.
 Canonical evidence has weight 2, scene-anchored perspective evidence weight 1,
 with one strongest observation per event and trait. New Steadiness measures
 observed cross-scene dispositional consistency and starts at point 5 with status

@@ -144,7 +144,17 @@ class _IdentityDescriptionOutput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     identity_summary: str = Field(min_length=1)
     psychological_summary: str = Field(min_length=1)
-    personality_traits: list[IdentityPersonalityTrait]
+    personality_traits: list[IdentityPersonalityTrait] = Field(min_length=8, max_length=8)
+
+    @model_validator(mode="after")
+    def complete_traits(self):
+        if not self.identity_summary.strip() or not self.psychological_summary.strip() or any(
+            not item.description.strip() for item in self.personality_traits
+        ):
+            raise ValueError("identity generation requires nonblank summaries and trait descriptions")
+        if {item.trait for item in self.personality_traits} != set(DIRECTIONAL_TRAITS):
+            raise ValueError("identity generation requires each of the eight directional traits exactly once")
+        return self
 
 
 class ScenePerspectiveLLMOutput(BaseModel):

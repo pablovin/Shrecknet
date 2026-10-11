@@ -8,6 +8,7 @@ Welcome to the Shrecknet documentation! This directory contains all organized do
 - [Experiential trait evidence plan](./Agents/CharacterAgent/Experiential%20Trait%20Evidence%20Plan.md) — proposed Stage 3 experiment with separate provisional psychological support, unchanged scoring, and evaluation gates
 
 - [CharacterAgent](./Agents/CharacterAgent/CharacterAgent.md)
+- [Neutral trait prior and conservative scoring plan](./Agents/CharacterAgent/Neutral%20Trait%20Prior%20and%20Conservative%20Scoring%20Plan.md) — implementation record for baseline 5, directional smoothing 6, character-grounded neutral synthesis, and historical compatibility
 - [Source bundle evolution plan](./Agents/CharacterAgent/Source%20Bundle%20Evolution%20Plan.md) — implementation record for per-source identity refresh, cumulative state propagation, atomic append persistence, and retry contract
 - [CharacterAgent Decision Making](./Agents/CharacterAgent/Query/Query.md)
 - [CharacterAgent endpoints](./Agents/CharacterAgent/CharacterAgent%20-%20Endpoints.md)

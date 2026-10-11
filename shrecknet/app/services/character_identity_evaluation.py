@@ -106,6 +106,10 @@ async def replay(cases: list[dict], *, mode: str, prompt: str | None = None,
         async def _call(self, **kwargs):
             if prompt is not None:
                 kwargs['prompt'] = prompt
+                # Explicit offline prompt overrides retain the historical wire
+                # contract, which permits sparse portraits. Production synthesis
+                # always uses its complete eight-trait generation schema.
+                kwargs['schema'] = IdentityDescription
             return await super()._call(**kwargs)
 
     if comparison not in {'portraits', 'prompt', 'context', 'reasoning'}:

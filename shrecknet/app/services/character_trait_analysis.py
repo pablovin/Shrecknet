@@ -11,13 +11,13 @@ from collections import defaultdict
 from pathlib import Path
 
 from app.schemas.character_traits import (
-    DIRECTIONAL_TRAITS, SPEC_VERSION, LEGACY_SPEC_VERSION, TraitEvidence, TraitProfile, DecisionPersonalityContext,
+    DIRECTIONAL_TRAITS, LEGACY_SPEC_VERSION, TraitEvidence, TraitProfile, DecisionPersonalityContext,
 )
 from app.services.character_trait_service import (
     directional_items, legacy_directional_items, observation_group, snapshot_evidence, merge_evidence, steadiness_estimate, trait_history_details,
 )
 
-SYNTHESIS_VERSION = 'evidence-synthesis-v3-weighted-scenes'
+SYNTHESIS_VERSION = 'evidence-synthesis-v4-neutral-prior'
 EXTRACTION_VERSION = 'diagnostic-observations-v1'
 EXAMPLE_LIMIT = 4
 EXAMPLE_CHARS = 600
@@ -142,7 +142,7 @@ def synthesis_steadiness(profile: TraitProfile, evidence: list[TraitEvidence]) -
     if {item.perspective_id for item in items} != expected:
         result['reason'] = 'Contributing evidence is missing.'
         return result
-    if profile.version == SPEC_VERSION:
+    if profile.version != LEGACY_SPEC_VERSION:
         groups = {observation_group(item) for item in items}
         items = [item for item in evidence if item.evidence_kind == 'behavior' and observation_group(item) in groups]
     try:

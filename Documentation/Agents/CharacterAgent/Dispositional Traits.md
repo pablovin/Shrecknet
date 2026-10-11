@@ -25,14 +25,18 @@ engineering estimates, not calibrated psychological measurements.
 
 ## Profile and graph representation
 
-New profiles use `dispositions-v4-weighted-scenes`; existing
-`dispositions-v3-points-perspectives` snapshots remain readable. Every profile
+New profiles use `dispositions-v5-neutral-prior`; existing
+`dispositions-v3-points-perspectives` and `dispositions-v4-weighted-scenes`
+snapshots remain readable with their original calculations and defaults. Every profile
 contains eight `dispositional_traits`, separate `steadiness`, `inferred_traits`,
 and audited `overrides`. Estimates contain `point` (integer 1–9 or null), `status`,
 `observation_count`, and `observation_ids`. Directional statuses are
-`unknown|provisional|supported|manual`; unknown requires null. Steadiness also
-supports `baseline`, requiring point 5 and zero observations. Baseline is a
-computational prior, distinct from an inferred 5 with mixed observations.
+`unknown|baseline|provisional|supported|manual`; historical unknown requires null.
+All nine new effective estimates start at 5/`baseline`, requiring zero observations
+and empty observation IDs. This computational prior is distinct from an observed
+5 with provisional/supported status. Directional baseline is valid in v5 profiles
+and inferred states; v3/v4 retain their original restrictions. No artificial
+observations are inserted. Authored text and summaries do not seed points.
 
 Observation IDs remain owned `ScenePerspective.id` references. After event grouping,
 one representative perspective identifies each contributing independent opportunity;
@@ -147,19 +151,38 @@ For deduplicated chronological observations of one trait, let `s_i` be +1/high o
 ```text
 mean = sum(r_i * q_i * s_i) / sum(r_i * q_i)
 mass = sum(q_i)
-continuous_value = 5 + 4 * mean * mass / (mass + 4)
+continuous_value = 5 + 4 * mean * mass / (mass + 6)
 ```
 
-Round away from 5 at ties and bound integers to 1–9. Empty evidence yields unknown.
-Counts remain independent opportunities, never mass. One canonical high yields
-6.333333… before rounding; one perspective high yields 5.8. Both are provisional
+Round away from 5 at ties and bound integers to 1–9. Empty contributing evidence
+returns 5/`baseline` before division. Excluded ledger rows remain preserved but
+supply no support. Mass is the un-decayed sum of source weights; recency adjusts
+direction. Counts remain independent opportunities, never mass. One canonical
+high yields 6.0; one perspective high yields 5.571429. Both are provisional
 with count 1. Supported requires two independent observations with some canonical
 evidence, or three independent perspective-only observations. Opposing evidence
 may support a mixed estimate near 5. Thresholds are engineering choices.
 
+| Canonical observations, oldest first | Continuous value | Rounded point |
+| --- | ---: | ---: |
+| None | 5.000000 | 5, baseline |
+| 1 High | 6.000000 | 6 |
+| 2 High | 6.600000 | 7 |
+| 3 High | 7.000000 | 7 |
+| 3 High, then 1 Low | 5.956424 | 6 |
+| 2 Low, then 1 High | 4.476015 | 4 |
+| 10 High | 8.076923 | 8 |
+
+Recalculate from real contributing evidence and the neutral prior whenever the
+ledger changes; never add a delta to the prior rounded score. Smoothing controls
+displacement, not support status or calibrated action probabilities. Manual
+values remain effective; clearing an override restores inference or baseline.
+The extraction stages and per-source refresh order are unchanged.
+
 ## STEADINESS calculation
 
-New-policy Steadiness means observed cross-scene dispositional consistency.
+Steadiness retains smoothing 4 and its separate calculation in both v4 and v5.
+Its baseline remains 5 without observed consistency. New-policy Steadiness means observed cross-scene dispositional consistency.
 It cannot distinguish unstable dispositions from stable context-sensitive behavior;
 it is not equivalent to the legacy comparable-circumstances construct.
 
@@ -196,8 +219,12 @@ Manual overrides preserve inference; clearing them restores inference or baselin
 `trait_history` is a read-only map for the eight directional traits. It contains
 `inferred_continuous_value`, unweighted `high_count`/`low_count`/`observation_count`,
 `availability`, `reason`, and `calculation_version`. New snapshots use
-`recency-weighted-scenes-v2`; v3 snapshots retain `recency-points-v1`, uniform
+`recency-weighted-scenes-v3-neutral-prior` for v5, using smoothing 6; v4 retains
+`recency-weighted-scenes-v2` and smoothing 4. v3 retains `recency-points-v1`, uniform
 weights and `n/(n+4)` smoothing, original statuses, and old Steadiness verification.
+New directional baseline details have continuous value 5, available computational
+inference, zero counts, and a reason identifying the prior. This does not mean
+behavior was observed. Historical unknown details remain null.
 History dispatches by the snapshot profile version, uses only its contributing
 IDs and revision-owned grouping, includes earlier ledger pages, and excludes future
 revisions. Missing or non-reproducing evidence yields unavailable/null details.
@@ -207,13 +234,28 @@ Effective manual integers remain distinct from underlying continuous inference.
 
 Synthesis receives bounded source-labeled evidence examples and effective scores.
 Perspective-derived evidence remains tentative interpretation. Source diversity
-replaces artificial context diversity. Public `personality_traits` retains its
-existing score/status admission rules. Prior portraits remain continuity-only.
+replaces artificial context diversity. New synthesis must return exactly one
+nonblank description for every directional trait, including baseline and historical
+unknown entries. Duplicate or missing keys fail generation validation and use the
+existing retry budget. Older sparse portraits remain readable through the public
+`IdentityDescription` contract. Prior portraits remain continuity-only.
+
+A score of 5 does not require a generic description. Personalize it through the
+character's established identity, psychology, goals, relationships, and stakes.
+For baseline Integrity: “Johnny's search for his maker has not yet revealed whether
+he would accept an unfair advantage.” With actual opposing evidence, an observed
+5 could instead describe rejection of exploitation among companions but acceptance
+of advantages while pursuing his maker. Never infer the latter from baseline.
+Equal scores can have different character-grounded meanings; do not invent motives,
+moderation, equal probabilities, or observed mixed behavior to make prose unique.
+Sparse context may legitimately produce similar neutral descriptions.
+Steadiness can qualify `psychological_summary`, including its lack of observed
+consistency at baseline, but never becomes a ninth directional description.
 Steadiness is separate and never a ninth narrative trait or model-temperature input.
 Its synthesis/decision `calculation_version` identifies `cross-scene-steadiness-v2`
 or legacy `comparable-steadiness-v1`, so the model can distinguish the constructs.
 
-Baseline projects value 5, status baseline, unavailable inference, null
+Steadiness baseline projects value 5, status baseline, unavailable inference, null
 `inferred_value`, and an explanatory reason. It permits no observed-consistency
 claim. Provisional/supported consistency is available only when the versioned
 reducer reproduces the snapshot. Missing/corrupt inference is unavailable, not
@@ -223,8 +265,8 @@ from inferred 5 and preserve the same single deliberation call.
 
 ## Use, operations, and cutover
 
-The prompt version is `character-embodiment-v46-source-evolution`; synthesis uses
-`evidence-synthesis-v3-weighted-scenes`. Prompt fingerprints invalidate old
+The prompt version is `character-embodiment-v47-neutral-prior`; synthesis uses
+`evidence-synthesis-v4-neutral-prior`. Prompt fingerprints invalidate old
 checkpoints. New snapshots store grouping; prior snapshot/ledger bytes are not
 rewritten. Optional scene provenance is additive and needs no SQL schema migration
 or new graph node type. Scene provenance edits on processed data require explicit
@@ -423,3 +465,31 @@ embodiment refresh; review a draft before replacing a pilot portrait and preserv
 an export. Prompt versions invalidate incompatible checkpoints. Rollback restores
 future generation behavior but does not restore accepted portraits automatically;
 restore saved portraits through an authorized maintenance path if needed.
+
+## Neutral-prior rollout and compatibility
+
+New agents and explicit profile recalculation use v5. Existing profiles, revisions,
+and portraits are unchanged on read. Processing new evidence upgrades the current
+profile using its full retained ledger, potentially changing several points at
+once; historical revisions retain their recorded policy. Explicit regeneration
+can refresh an existing character under the new policy. Evidence admission and
+`point-evidence-v2-weighted-scenes` are unchanged. No schema migration or automatic
+backfill is required.
+
+Deploy matching backend/workers and SDK readers. Older SDKs may reject v5 or
+baseline directional estimates. Drain active jobs before rollout; checkpoint
+version 4 and updated synthesis/prompt versions reject incompatible intermediate
+work. Accepted historical drafts remain readable. Rollback requires a reader
+compatible with persisted v5 profiles or an appropriate pre-upgrade backup;
+relabeling v5 JSON as an old version is invalid.
+
+See the [neutral-prior implementation record](Neutral%20Trait%20Prior%20and%20Conservative%20Scoring%20Plan.md)
+for verification and policy decisions. Frozen offline prompt overrides retain the
+historical sparse output schema; production synthesis enforces all eight entries.
+
+For live or captured-output review of equal-baseline characters, use
+`shrecknet/tests/fixtures/neutral_prior_identity_synthesis.json` with the existing
+`app.services.character_identity_evaluation` CLI. Johnny and Cwenhild share the
+same neutral profile but have different established goals and situations. Review
+for character-grounded relevance and restraint about unobserved tendencies;
+uniqueness and psychological fidelity are human judgments, not keyword scores.

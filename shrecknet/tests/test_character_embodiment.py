@@ -34,6 +34,13 @@ from app.schemas.character_traits import DIRECTIONAL_TRAITS, TraitProfile
 from app.tasks.character_embodiment import _public_error_message
 
 
+def complete_portrait(identity_summary="Identity", psychological_summary="Psychology"):
+    """Valid new-generation portrait; archived read fixtures may remain sparse."""
+    return {"identity_summary": identity_summary, "psychological_summary": psychological_summary,
+            "personality_traits": [{"trait": key, "description": f"No established {key} tendency."}
+                                   for key in DIRECTIONAL_TRAITS]}
+
+
 class FakeLLM:
     def __init__(self, response="{}"):
         self.response = response

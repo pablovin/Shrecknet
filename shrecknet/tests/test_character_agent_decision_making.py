@@ -137,7 +137,7 @@ async def test_compact_personality_context_preserves_manual_direction_and_reason
     call = llm.calls[0]
     payload = json.loads(call['messages'][1]['content'])
     assert payload['personality_context']['dispositions']['forbearance'] == {'value': 2, 'status': 'manual'}
-    assert payload['personality_context']['dispositions']['caution'] == {'value': None, 'status': 'unknown'}
+    assert payload['personality_context']['dispositions']['caution'] == {'value': 5, 'status': 'baseline'}
     assert payload['personality_context']['steadiness']['availability'] == 'unavailable'
     assert payload['personality_context']['steadiness']['value'] == 9
     assert payload['identity_description'] == stale
@@ -198,7 +198,7 @@ def test_compact_context_rejects_invalid_boundary_values(mutation):
     elif mutation == 'out_of_range':
         value['dispositions']['integrity'] = {'value': 10, 'status': 'manual'}
     elif mutation == 'unknown_value':
-        value['dispositions']['integrity']['value'] = 5
+        value['dispositions']['integrity'] = {'value': 5, 'status': 'unknown'}
     elif mutation == 'missing_trait':
         del value['dispositions']['curiosity']
     elif mutation == 'unverified_spread':

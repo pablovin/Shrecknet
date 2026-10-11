@@ -42,7 +42,7 @@ class TraitEstimate(StrictModel):
         return self
 
 class TraitProfile(StrictModel):
-    version: Literal['dispositions-v3-points-perspectives', 'dispositions-v4-weighted-scenes']
+    version: Literal['dispositions-v3-points-perspectives', 'dispositions-v4-weighted-scenes', 'dispositions-v5-neutral-prior']
     dispositional_traits: dict[TraitKey, TraitEstimate]
     steadiness: TraitEstimate
     observation_groups: dict[str, str] = Field(default_factory=dict)
@@ -58,9 +58,9 @@ class TraitProfile(StrictModel):
             'diligence', 'curiosity', 'sharing', 'restlessness',
         }:
             raise ValueError('profile requires all eight directional traits')
-        if any(item.status == 'baseline' for item in self.dispositional_traits.values()):
+        if self.version != 'dispositions-v5-neutral-prior' and any(item.status == 'baseline' for item in self.dispositional_traits.values()):
             raise ValueError('baseline is only valid for Steadiness')
-        if any(item.status == 'baseline' for key, item in self.inferred_traits.items() if key != 'steadiness'):
+        if self.version != 'dispositions-v5-neutral-prior' and any(item.status == 'baseline' for key, item in self.inferred_traits.items() if key != 'steadiness'):
             raise ValueError('baseline is only valid for Steadiness')
         return self
 

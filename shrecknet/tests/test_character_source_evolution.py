@@ -10,7 +10,7 @@ import pytest
 from app.core.config_store import Settings
 from app.jobs.character_agent.embody_agent import EmbodimentGenerationError
 from app.schemas.character_agent import IdentityDescription
-from app.schemas.character_traits import TraitProfile
+from app.schemas.character_traits import DIRECTIONAL_TRAITS, TraitProfile
 from app.services.character_embodiment_service import CharacterEmbodimentService
 from app.services.character_agent_service import CharacterAgentService
 from app.tasks import character_embodiment as task
@@ -19,7 +19,7 @@ from test_character_embodiment import BatchLLM, _canonical, scenes
 
 def identity(number):
     return dict(identity_summary=f"Identity {number}", psychological_summary=f"Psychology {number}",
-                personality_traits=[dict(trait="integrity", description=f"Integrity {number}")])
+                personality_traits=[dict(trait=key, description=f"{key} {number}") for key in DIRECTIONAL_TRAITS])
 
 
 class EvolutionLLM(BatchLLM):

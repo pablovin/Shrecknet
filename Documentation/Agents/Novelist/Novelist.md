@@ -58,11 +58,33 @@ provider that rejects structured output fails the run clearly. Writer-model call
 explicitly receive no response schema because they return plain prose. Analysis is
 parsed as one complete JSON document, checked against the schema, and retried once
 when it is malformed, incomplete, schema-invalid, or reports token-limit truncation.
-The initial analysis output budget is 6,000 tokens. A token-truncated response
-gets a 12,000-token budget on its single repair attempt; other validation failures
-retain the initial budget. These limits apply to direct planning, partial plans,
-and reconciliation. A repair that still fails validation or is truncated fails
-the run without publishing partial output.
+Both initial and repair analysis calls have a fixed 3,000-token output budget.
+These limits apply to direct planning, partial plans, and reconciliation. A repair
+that still fails validation or is truncated fails the run without publishing
+partial output. Providers may differ in enforcement; local JSON Schema and
+Pydantic validation reject oversized plans rather than slicing generated content.
+
+The schema, Pydantic models, and analysis prompts share these sizing limits:
+
+| Field | Limit |
+| --- | --- |
+| `beats` | One or more ordered beats; no maximum count |
+| `beats[].summary` | 1–1,000 characters |
+| `cast` | 0–10 explicit player/character mappings |
+| `cast[].player`, `cast[].character` | 1–60 characters each |
+| `title` | `null` or at most 120 characters |
+| `continuity_notes` | `null` or at most 2,000 characters |
+| `beats[].beat_id` | 1–32 characters, unique |
+| `beats[].source_ids` | 1–8 supplied references per beat |
+| `beats[].source_ids[]` | 1–32 characters |
+
+Prompts request compact JSON and group related adjacent events into concise beats,
+including during reconciliation and repair. Maxima are ceilings, not targets.
+These are per-field bounds, with no schema limit on total plan length or beat
+count. Writers still receive verbatim source for the selected references. The
+3,000-token generation limit remains a cap on each complete analysis response; a
+long plan can exceed it even when every field meets its character limit. Truncated
+responses are still rejected.
 
 For oversized input, source text is bounded into segments. Each segment produces a
 compact partial plan, and one analysis reconciliation call produces the final plan.

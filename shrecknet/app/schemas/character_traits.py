@@ -14,7 +14,9 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 TraitKey = Literal['integrity', 'caution', 'presence', 'forbearance', 'diligence', 'curiosity', 'sharing', 'restlessness']
 SlotKey = Literal['integrity', 'caution', 'presence', 'forbearance', 'diligence', 'curiosity', 'sharing', 'restlessness', 'steadiness']
 LEGACY_SPEC_VERSION = 'dispositions-v3-points-perspectives'
-SPEC_VERSION = 'dispositions-v4-weighted-scenes'
+WEIGHTED_SPEC_VERSION = 'dispositions-v4-weighted-scenes'
+SPEC_VERSION = 'dispositions-v5-neutral-prior'
+PROFILE_VERSIONS = (LEGACY_SPEC_VERSION, WEIGHTED_SPEC_VERSION, SPEC_VERSION)
 EVIDENCE_POLICY_VERSION = 'point-evidence-v2-weighted-scenes'
 
 @dataclass(frozen=True)
@@ -107,7 +109,7 @@ TRAIT_BY_KEY = {d.key: d for d in TRAIT_DEFINITIONS}
 def trait_metadata() -> dict[str, Any]:
     return {'version': SPEC_VERSION, 'traits': [asdict(d) for d in TRAIT_DEFINITIONS],
             'point_range': {'minimum': 1, 'maximum': 9},
-            'point_reference': '1 low pole, 5 mixed/centre, 9 high pole',
+            'point_reference': '1 low pole, 5 baseline or observed mixed/centre (see status), 9 high pole',
             'situation_context': {
                 'format': '<diagnostic>:<relationship>:<stakes> or unspecified',
                 'relationships': ['friend', 'enemy', 'other'],
@@ -159,7 +161,7 @@ class TraitHistoryEstimate(StrictModel):
 
 class TraitProfile(StrictModel):
     version: str = SPEC_VERSION
-    dispositional_traits: dict[TraitKey, TraitEstimate] = Field(default_factory=lambda: {key: TraitEstimate() for key in DIRECTIONAL_TRAITS})
+    dispositional_traits: dict[TraitKey, TraitEstimate] = Field(default_factory=lambda: {key: TraitEstimate(point=5, status='baseline') for key in DIRECTIONAL_TRAITS})
     steadiness: TraitEstimate = Field(default_factory=lambda: TraitEstimate(point=5, status='baseline'))
     observation_groups: dict[str, str] = Field(default_factory=dict)
     observation_group_positions: dict[str, int] = Field(default_factory=dict)
@@ -170,17 +172,20 @@ class TraitProfile(StrictModel):
     @model_validator(mode='before')
     @classmethod
     def legacy_defaults(cls, value):
-        if isinstance(value, dict) and value.get('version') == LEGACY_SPEC_VERSION and 'steadiness' not in value:
-            value = {**value, 'steadiness': TraitEstimate().model_dump()}
+        if isinstance(value, dict) and value.get('version') in {LEGACY_SPEC_VERSION, WEIGHTED_SPEC_VERSION}:
+            value = dict(value)
+            value.setdefault('dispositional_traits', {key: TraitEstimate().model_dump() for key in DIRECTIONAL_TRAITS})
+            if value['version'] == LEGACY_SPEC_VERSION:
+                value.setdefault('steadiness', TraitEstimate().model_dump())
         return value
 
     @model_validator(mode='after')
     def complete(self):
-        if self.version not in {SPEC_VERSION, LEGACY_SPEC_VERSION} or set(self.dispositional_traits) != set(DIRECTIONAL_TRAITS):
+        if self.version not in PROFILE_VERSIONS or set(self.dispositional_traits) != set(DIRECTIONAL_TRAITS):
             raise ValueError('profile must contain the current eight directional dispositions')
-        if any(value.status == 'baseline' for value in self.dispositional_traits.values()):
+        if self.version != SPEC_VERSION and any(value.status == 'baseline' for value in self.dispositional_traits.values()):
             raise ValueError('baseline is only valid for Steadiness')
-        if any(value.status == 'baseline' for key, value in self.inferred_traits.items() if key != 'steadiness'):
+        if self.version != SPEC_VERSION and any(value.status == 'baseline' for key, value in self.inferred_traits.items() if key != 'steadiness'):
             raise ValueError('baseline is only valid for Steadiness')
         return self
 
@@ -250,12 +255,14 @@ class DecisionDisposition(StrictModel):
     """Effective ordinal direction without provenance or confidence proxies."""
 
     value: int | None = Field(ge=1, le=9, strict=True)
-    status: Literal["unknown", "provisional", "supported", "manual"]
+    status: Literal["unknown", "baseline", "provisional", "supported", "manual"]
 
     @model_validator(mode="after")
     def known_value(self):
         if (self.status == "unknown") != (self.value is None):
             raise ValueError("unknown dispositions require null values")
+        if self.status == "baseline" and self.value != 5:
+            raise ValueError("baseline dispositions require value 5")
         return self
 
 

@@ -40,8 +40,7 @@ StageCallback = Callable[[NovelistStage, dict[str, Any]], Awaitable[None]]
 
 logger = logging.getLogger(__name__)
 
-ANALYSIS_MAX_TOKENS = 6000
-ANALYSIS_RETRY_MAX_TOKENS = 12000
+ANALYSIS_MAX_TOKENS = 3000
 WRITER_MAX_TOKENS = 5000
 
 
@@ -74,7 +73,6 @@ class NovelistOrchestrator:
         response_format = strict_json_schema("novelist_v4_story_plan", schema)
         rejected = ""
         last_error: Exception | None = None
-        max_tokens = ANALYSIS_MAX_TOKENS
         for attempt in range(2):
             attempt_tag = usage_tag if attempt == 0 else f"{usage_tag}.repair"
             attempt_prompt = prompt
@@ -92,7 +90,7 @@ class NovelistOrchestrator:
                 temperature=0.0,
                 return_metadata=True,
                 usage_tag=attempt_tag,
-                max_tokens=max_tokens,
+                max_tokens=ANALYSIS_MAX_TOKENS,
             )
             text = result.get("text") if isinstance(result, dict) else result
             metadata = (
@@ -107,7 +105,6 @@ class NovelistOrchestrator:
                     "response_metadata": metadata,
                 }
             )
-            finish_reason = ""
             try:
                 finish_reason = str(metadata.get("finish_reason") or "").casefold()
                 if finish_reason in {"length", "max_tokens", "max_output_tokens"}:
@@ -125,12 +122,9 @@ class NovelistOrchestrator:
                     "novelist_story_plan_invalid tag=%s attempt=%s max_tokens=%s error=%s",
                     usage_tag,
                     attempt + 1,
-                    max_tokens,
+                    ANALYSIS_MAX_TOKENS,
                     exc,
                 )
-                if finish_reason in {"length", "max_tokens", "max_output_tokens"}:
-                    # Repeating the same output limit cannot recover a full plan.
-                    max_tokens = ANALYSIS_RETRY_MAX_TOKENS
         raise RuntimeError(
             f"Novelist story-plan output failed after one retry: {last_error}"
         ) from last_error

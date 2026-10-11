@@ -62,7 +62,7 @@ STEP_NAME: dict[int, str] = {
     5: "Identity synthesis",
 }
 
-CHECKPOINT_VERSION = 3
+CHECKPOINT_VERSION = 4
 
 
 def _checkpoint_digest(value: Any) -> str:

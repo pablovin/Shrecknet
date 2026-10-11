@@ -113,7 +113,7 @@ in-flight job keeps its selected targets. Config edits do not require service
 restarts after all processes run compatible code. Startup prewarming and readiness
 include all four roles. Source/chunk checkpoint fingerprints include incorporation,
 scene, and psychological targets with their reasoning flags, and prompt version
-`character-embodiment-v46-source-evolution` prevents old routing outputs being reused.
+`character-embodiment-v47-neutral-prior` prevents old routing outputs being reused.
 
 ## Automatic migration and rollback
 

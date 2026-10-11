@@ -449,7 +449,8 @@ async def test_append_failure_never_writes_failed_source_and_preserves_prior_com
             tag = kwargs["usage_tag"]
             if tag.endswith("identity_description"):
                 self.calls.append(kwargs)
-                return json.dumps(identity)
+                from test_character_embodiment import complete_portrait
+                return json.dumps(complete_portrait())
             if "psychological_consolidation" in tag:
                 self.calls.append(kwargs)
                 self.consolidations += 1

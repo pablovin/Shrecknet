@@ -147,7 +147,8 @@ def test_authored_description_does_not_seed_points_and_manual_override():
     prior = ground_observations([baseline], scene_ids=[], source_group_id='e',
         authored_evidence_ids={'identity:e'})
     state, _ = update_profile(TraitProfile(), prior)
-    assert state.estimate('integrity').point is None
+    assert state.estimate('integrity').point == 5
+    assert state.estimate('integrity').status == 'baseline'
     assert state.estimate('integrity').observation_count == 0
     state = apply_manual_edits(state, {'integrity': TraitEdit(point=2, reason='Author choice')})
     items = evidence((1,) * 10)
@@ -182,14 +183,14 @@ def test_weighted_sources_and_weak_only_support():
     from app.services.character_trait_service import directional_details
     strong = evidence((1,))
     weak = [item.model_copy(update={'source': 'perspective'}) for item in evidence((1, 1, 1))]
-    assert directional_details('integrity', strong).inferred_continuous_value == pytest.approx(5 + 4*2/6)
-    assert directional_details('integrity', weak[:1]).inferred_continuous_value == pytest.approx(5.8)
+    assert directional_details('integrity', strong).inferred_continuous_value == pytest.approx(6.0)
+    assert directional_details('integrity', weak[:1]).inferred_continuous_value == pytest.approx(5 + 4/7)
     assert point(strong).observation_count == 1 and point(strong).status == 'provisional'
     assert point(weak[:2]).status == 'provisional'
     assert point(weak).status == 'supported'
     mixed = [weak[0], weak[1].model_copy(update={'source': 'canonical', 'polarity': 'low'})]
     expected_mean = (0.9 - 2)/(0.9 + 2)
-    assert directional_details('integrity', mixed).inferred_continuous_value == pytest.approx(5 + 4*expected_mean*3/7)
+    assert directional_details('integrity', mixed).inferred_continuous_value == pytest.approx(5 + 4*expected_mean*3/9)
     assert point(mixed).status == 'supported' and point(mixed).observation_count == 2
 
 
@@ -270,14 +271,16 @@ def test_legacy_revision_math_and_steadiness_are_versioned():
     updated, _ = update_profile(legacy, items)
     assert legacy.version == LEGACY_SPEC_VERSION and updated.version == SPEC_VERSION
     assert updated.estimate('integrity').point == 8
-    assert directional_details('integrity', items).calculation_version == 'recency-weighted-scenes-v2'
+    assert directional_details('integrity', items).calculation_version == 'recency-weighted-scenes-v3-neutral-prior'
     assert TraitProfile.model_validate({'version': LEGACY_SPEC_VERSION}).steadiness.status == 'unknown'
 
 
-def test_baseline_is_restricted_to_steadiness():
+def test_directional_baseline_is_versioned():
     with pytest.raises(ValidationError):
         TraitEstimate(point=4, status='baseline')
-    profile = TraitProfile().model_dump()
+    from app.schemas.character_traits import WEIGHTED_SPEC_VERSION
+    assert TraitProfile().estimate('integrity').status == 'baseline'
+    profile = TraitProfile(version=WEIGHTED_SPEC_VERSION).model_dump()
     profile['dispositional_traits']['integrity'] = {'point': 5, 'status': 'baseline'}
     with pytest.raises(ValidationError):
         TraitProfile.model_validate(profile)

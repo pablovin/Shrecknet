@@ -24,8 +24,8 @@ An explicit empty string clears it. Preferences are updated when a run is accept
 Unknown, incomplete, or unsupported historical runs contribute no previous-run
 context and do not override current source material.
 
-Story-plan analysis has one bounded retry. Token-truncated output receives a
-larger budget on that retry, as described in the
+Story-plan analysis has one bounded retry, with a fixed 3,000-token output budget
+on both attempts and schema-enforced content limits, as described in the
 [generation flow](../Generate_Draft/Generate_Draft.md). If it still fails, the run
 has `status: "failed"` and an `error_message`, without a partial chapter. Submit
 a new run after resolving the cause; failed runs do not resume automatically.

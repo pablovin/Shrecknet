@@ -69,16 +69,16 @@ Example response:
     "status": "active",
     "visibility": "public",
     "trait_profile": {
-      "version": "dispositions-v4-weighted-scenes",
+      "version": "dispositions-v5-neutral-prior",
       "dispositional_traits": {
-        "integrity": {"point": null, "status": "unknown", "observation_count": 0, "observation_ids": []},
-        "caution": {"point": null, "status": "unknown", "observation_count": 0, "observation_ids": []},
-        "presence": {"point": null, "status": "unknown", "observation_count": 0, "observation_ids": []},
-        "forbearance": {"point": null, "status": "unknown", "observation_count": 0, "observation_ids": []},
-        "diligence": {"point": null, "status": "unknown", "observation_count": 0, "observation_ids": []},
-        "curiosity": {"point": null, "status": "unknown", "observation_count": 0, "observation_ids": []},
-        "sharing": {"point": null, "status": "unknown", "observation_count": 0, "observation_ids": []},
-        "restlessness": {"point": null, "status": "unknown", "observation_count": 0, "observation_ids": []}
+        "integrity": {"point": 5, "status": "baseline", "observation_count": 0, "observation_ids": []},
+        "caution": {"point": 5, "status": "baseline", "observation_count": 0, "observation_ids": []},
+        "presence": {"point": 5, "status": "baseline", "observation_count": 0, "observation_ids": []},
+        "forbearance": {"point": 5, "status": "baseline", "observation_count": 0, "observation_ids": []},
+        "diligence": {"point": 5, "status": "baseline", "observation_count": 0, "observation_ids": []},
+        "curiosity": {"point": 5, "status": "baseline", "observation_count": 0, "observation_ids": []},
+        "sharing": {"point": 5, "status": "baseline", "observation_count": 0, "observation_ids": []},
+        "restlessness": {"point": 5, "status": "baseline", "observation_count": 0, "observation_ids": []}
       },
       "steadiness": {"point": 5, "status": "baseline", "observation_count": 0, "observation_ids": []},
       "overrides": {}, "inferred_traits": {},
@@ -371,7 +371,8 @@ remain in the profile; the decimal is inferred separately. Unknown has a null
 estimate with zero counts; missing/inconsistent evidence has `availability:
 "unavailable"`, a reason, and null numeric details. Steadiness is not included.
 Existing visibility, pagination, and raw-evidence permissions are unchanged.
-New v4 snapshots use `recency-weighted-scenes-v2`; v3 retains the example's
+New v5 snapshots use `recency-weighted-scenes-v3-neutral-prior`; v4 retains
+`recency-weighted-scenes-v2`; v3 retains the example's
 `recency-points-v1`. Counts are unweighted independent opportunities. New profiles
 add `observation_groups` and `unresolved_observation_ids` for revision-stable grouping.
 Steadiness additionally admits `baseline` (point 5/count 0); inference remains
@@ -649,3 +650,12 @@ schema, and status; updates using those retired names return `400`. See the
 [model configuration and migration contract](Model%20Configuration.md) for the
 complete frontend payload, precedence, operational steps, and rollback.
 Unrelated belief, emotion, aspect and goal scales retain their existing meanings.
+
+New effective profiles use `dispositions-v5-neutral-prior`: all nine estimates
+start at point 5/status baseline/count 0, with no fabricated observation IDs.
+Directional baseline is distinct from provisional/supported balanced 5. Newly
+generated `proposal.identity_description.personality_traits` contains exactly
+one description per directional key; legacy sparse descriptions remain accepted
+by readers. Read operations retain stored v3/v4 histories. New evidence or explicit
+regeneration recalculates the current profile using v5. Upgrade SDK clients that
+reject the new profile version. See [trait compatibility](Dispositional%20Traits.md#neutral-prior-rollout-and-compatibility).

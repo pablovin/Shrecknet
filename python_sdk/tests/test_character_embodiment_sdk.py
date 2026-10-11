@@ -121,3 +121,23 @@ def test_sdk_reads_weighted_and_legacy_profiles_with_baseline():
     missing_source = item.model_dump(exclude={'source'})
     with pytest.raises(ValidationError, match='explicit source'):
         TraitEvidence.model_validate(missing_source)
+
+
+def test_neutral_prior_profile_and_legacy_directional_baseline_rejection():
+    from pydantic import ValidationError
+    from shrecknet_client.character_traits import TraitProfile
+    keys = ('integrity', 'caution', 'presence', 'forbearance', 'diligence', 'curiosity', 'sharing', 'restlessness')
+    baseline = dict(point=5, status='baseline', observation_count=0, observation_ids=[])
+    value = dict(version='dispositions-v5-neutral-prior',
+        dispositional_traits={key: dict(baseline) for key in keys}, steadiness=dict(baseline),
+        inferred_traits={'integrity': dict(baseline)})
+    parsed = TraitProfile.model_validate(value)
+    assert TraitProfile.model_validate_json(parsed.model_dump_json()) == parsed
+    for version in ('dispositions-v3-points-perspectives', 'dispositions-v4-weighted-scenes'):
+        with pytest.raises(ValidationError, match='only valid for Steadiness'):
+            TraitProfile.model_validate({**value, 'version': version})
+    for change in ({'point': 4}, {'observation_count': 1, 'observation_ids': ['p']}):
+        invalid = {**value, 'dispositional_traits': {**value['dispositional_traits'],
+            'integrity': {**baseline, **change}}}
+        with pytest.raises(ValidationError):
+            TraitProfile.model_validate(invalid)

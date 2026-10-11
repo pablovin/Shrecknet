@@ -94,7 +94,7 @@ summaries.
 
 ### Personality and situational deliberation
 
-`DECISION_MAKING_PROMPT` (`character-decision-v3-required-personality`)
+`DECISION_MAKING_PROMPT` (`character-decision-v4-neutral-prior`)
 asks the model to appraise the psychological demands and constraints, consider
 only relevant tendencies and supported motives, then select a plausible action
 inside the same call. These conceptual operations add no job stages or framing
@@ -219,7 +219,10 @@ aliases; new clients should use `/decision-making` and
 
 ### Weighted evidence and baseline Steadiness
 
-New profiles use `dispositions-v4-weighted-scenes`; v3 profiles remain readable.
+New profiles use `dispositions-v5-neutral-prior`; v3/v4 profiles remain readable.
+All nine estimates start at 5/baseline. Directional baseline is no established
+tendency, not observed balance or equal action probabilities. Identity, psychology,
+goals, and situation guide decisions when traits are baseline.
 Canonical evidence has weight 2, scene-anchored perspective evidence weight 1,
 with one strongest observation per event and trait. New Steadiness measures
 observed cross-scene dispositional consistency and starts at point 5 with status

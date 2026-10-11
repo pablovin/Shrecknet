@@ -185,7 +185,8 @@ async def test_embodiment_routes_every_stage_to_its_distinct_target(reasoning):
             tag = kwargs['usage_tag']
             if tag.endswith('identity_description'):
                 self.calls.append(kwargs)
-                return json.dumps({'identity_summary': 'Identity', 'psychological_summary': 'Psychology', 'personality_traits': []})
+                from test_character_embodiment import complete_portrait
+                return json.dumps(complete_portrait())
             if tag.endswith('psychological_consolidation'):
                 self.calls.append(kwargs)
                 return json.dumps({'consolidation': {'aspect_operations': [], 'new_aspects': [],

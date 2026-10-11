@@ -8,13 +8,14 @@ from decimal import Decimal, ROUND_HALF_UP
 from typing import Iterable
 
 from app.schemas.character_traits import (
-    DIRECTIONAL_TRAITS, EVIDENCE_POLICY_VERSION, SPEC_VERSION, LEGACY_SPEC_VERSION, TraitChange, TraitEdit, TraitEstimate,
+    DIRECTIONAL_TRAITS, EVIDENCE_POLICY_VERSION, SPEC_VERSION, LEGACY_SPEC_VERSION, WEIGHTED_SPEC_VERSION, PROFILE_VERSIONS, TraitChange, TraitEdit, TraitEstimate,
     TraitEvidence, TraitObservation, TraitProfile, TraitHistoryEstimate,
 )
 
 POLICY_VERSION = EVIDENCE_POLICY_VERSION
 RECENCY = 0.9
-SMOOTHING = 4
+SMOOTHING = 4  # Frozen v3/v4 directional and all Steadiness calculations.
+DIRECTIONAL_SMOOTHING = 6
 STEADINESS_WINDOW = 12
 MIN_COMPARABLE = 3  # Historical v3 policy only.
 STEADINESS_REPEAT_CAP = 4
@@ -172,30 +173,43 @@ def directional_items(key: str, evidence: list[TraitEvidence]) -> list[TraitEvid
     return sorted(result, key=lambda item: (item.chronological_position, item.id))
 
 
+def directional_calculation_version(version: str) -> str:
+    """Name the exact recorded scoring contract, rejecting unknown versions."""
+    versions = {
+        LEGACY_SPEC_VERSION: 'recency-points-v1',
+        WEIGHTED_SPEC_VERSION: 'recency-weighted-scenes-v2',
+        SPEC_VERSION: 'recency-weighted-scenes-v3-neutral-prior',
+    }
+    return versions[version]
+
+
 def directional_details(key: str, evidence: list[TraitEvidence], *, version: str = SPEC_VERSION) -> TraitHistoryEstimate:
     if version == LEGACY_SPEC_VERSION:
         return legacy_directional_details(key, evidence)
     items = directional_items(key, evidence)
-    calculation = 'recency-weighted-scenes-v2'
+    calculation = directional_calculation_version(version)
+    smoothing = DIRECTIONAL_SMOOTHING if version == SPEC_VERSION else SMOOTHING
     if not items:
-        return TraitHistoryEstimate(availability='available', high_count=0,
-            low_count=0, observation_count=0, calculation_version=calculation)
+        return TraitHistoryEstimate(inferred_continuous_value=5.0 if version == SPEC_VERSION else None,
+            availability='available', high_count=0, low_count=0, observation_count=0,
+            reason='Neutral computational prior; no contributing observations.' if version == SPEC_VERSION else None,
+            calculation_version=calculation)
     n = len(items)
     weights = [RECENCY ** (n - i - 1) * evidence_weight(item) for i, item in enumerate(items)]
     mean = sum(weight * (1 if item.polarity == 'high' else -1)
                for weight, item in zip(weights, items, strict=True)) / sum(weights)
     mass = sum(evidence_weight(item) for item in items)
     high = sum(item.polarity == 'high' for item in items)
-    return TraitHistoryEstimate(inferred_continuous_value=5 + 4 * mean * mass / (mass + SMOOTHING),
+    return TraitHistoryEstimate(inferred_continuous_value=5 + 4 * mean * mass / (mass + smoothing),
         availability='available', high_count=high, low_count=n-high, observation_count=n,
         calculation_version=calculation)
 
 
 def _directional(key: str, evidence: list[TraitEvidence]) -> TraitEstimate:
     details = directional_details(key, evidence)
-    if details.inferred_continuous_value is None:
-        return TraitEstimate()
     items = directional_items(key, evidence)
+    if not items:
+        return TraitEstimate(point=5, status='baseline')
     ids = [item.perspective_id for item in items]
     n = len(items)
     supported = n >= 2 and (any(item.source == 'canonical' for item in items) or n >= 3)
@@ -231,7 +245,7 @@ def scene_observation_group(scene: dict) -> str:
 def trait_history_details(profile: TraitProfile, evidence: list[TraitEvidence]) -> dict[str, TraitHistoryEstimate]:
     """Resolve only each snapshot's contributing evidence, including under overrides."""
     evidence = snapshot_evidence(profile, evidence)
-    calculation = 'recency-points-v1' if profile.version == LEGACY_SPEC_VERSION else 'recency-weighted-scenes-v2'
+    calculation = directional_calculation_version(profile.version)
     result = {}
     for key in DIRECTIONAL_TRAITS:
         effective = profile.estimate(key)
@@ -241,7 +255,7 @@ def trait_history_details(profile: TraitProfile, evidence: list[TraitEvidence]) 
         if {item.perspective_id for item in items} != expected:
             result[key] = TraitHistoryEstimate(calculation_version=calculation, reason='Contributing evidence is missing.')
             continue
-        if profile.version == SPEC_VERSION:
+        if profile.version != LEGACY_SPEC_VERSION:
             groups = {observation_group(item) for item in items}
             items = [item for item in evidence if item.trait == key and item.evidence_kind == 'behavior'
                      and observation_group(item) in groups]
@@ -294,6 +308,8 @@ def legacy_steadiness_estimate(evidence: list[TraitEvidence]) -> TraitEstimate:
 
 def steadiness_estimate(evidence: list[TraitEvidence], *, version: str = SPEC_VERSION) -> TraitEstimate:
     """Capped, evidence-weighted within-trait consistency across independent events."""
+    if version not in PROFILE_VERSIONS:
+        raise ValueError('unsupported trait profile version')
     if version == LEGACY_SPEC_VERSION:
         return legacy_steadiness_estimate(evidence)
     series = [directional_items(key, evidence)[-STEADINESS_WINDOW:] for key in DIRECTIONAL_TRAITS]

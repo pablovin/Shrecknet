@@ -146,7 +146,7 @@ def test_obsolete_trait_profile_stays_readable_for_inspection_and_deletion():
     read = CharacterAgentRead.model_validate(_agent_data(legacy, allow_legacy_profile=True))
     assert read.id == "legacy-agent"
     assert read.trait_profile_requires_regeneration is True
-    assert all(slot.point is None for slot in read.trait_profile.dispositional_traits.values())
+    assert all(slot.point == 5 and slot.status == 'baseline' for slot in read.trait_profile.dispositional_traits.values())
 
 
 @pytest.mark.asyncio
@@ -457,7 +457,7 @@ async def test_decision_snapshot_context_handles_missing_and_obsolete_profiles(m
     snapshot = await service.load_query_snapshot('agent-1', public_only=True)
     context = snapshot['personality_context']
     assert set(context['dispositions']) == set(DIRECTIONAL_TRAITS)
-    assert all(item == {'value': None, 'status': 'unknown'} for item in context['dispositions'].values())
+    assert all(item == {'value': 5, 'status': 'baseline'} for item in context['dispositions'].values())
     assert context['steadiness']['availability'] == 'unavailable'
     assert snapshot['character_agent']['identity_description']['identity_summary'] == 'Guard'
 

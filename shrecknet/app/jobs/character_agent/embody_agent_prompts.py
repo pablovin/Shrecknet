@@ -3,7 +3,9 @@
 IDENTITY_DESCRIPTION_PROMPT resolves narrative grounding when absent and
 refreshes all three fields after each source bundle using scores, contributing
 evidence, bounded grounded perspectives, accepted psychology, separate versioned cross-scene Steadiness, and
-continuity-only prior text -> conditional psychological portrait. It never supplies
+continuity-only prior text -> conditional psychological portrait with all eight
+directional descriptions, including character-grounded neutral baseline wording.
+Steadiness remains separate psychological context. It never supplies
 new numerical trait evidence. Stage 0 uses character incorporation; Stage 1 and
 Stage 4 use scene interpretation; Stage 2 and Stage 3 use psychological
 interpretation, with independent target reasoning flags. This Stage 0 frames scene
@@ -54,7 +56,7 @@ IDENTITY_TRAIT_DESCRIPTION_CONTRACT = (
         for key in DIRECTIONAL_TRAITS
     ], ensure_ascii=False)
 )
-PROMPT_VERSION = "character-embodiment-v46-source-evolution"
+PROMPT_VERSION = "character-embodiment-v47-neutral-prior"
 
 # Purpose: Define consistency separately from the eight directional dimensions.
 # Used by: IDENTITY_DESCRIPTION_PROMPT, alongside IDENTITY_TRAIT_DESCRIPTION_CONTRACT.
@@ -74,7 +76,8 @@ IDENTITY_STEADINESS_CONTRACT = (
 # deterministic reducers for every source, before the next source starts.
 # Purpose: Frame/render evidence-grounded conditional psychology without scoring traits.
 # Used by: EmbodyAgent.generate_identity_description.
-# Expected: identity_summary, psychological_summary, personality_traits.
+# Expected: identity_summary, psychological_summary, and exactly eight unique
+# directional personality_traits descriptions, including neutral baseline entries.
 IDENTITY_DESCRIPTION_PROMPT = r"""You are constructing the psychological identity of a fictional character.
 PIPELINE POSITION: Stage 0 frames scene interpretation when identity is missing,
 then renders the persistent identity after each completed source bundle, before
@@ -112,7 +115,7 @@ INPUT JSON:
   "previous_identity_description": {"role": "continuity_only_not_evidence",
     "description": {"identity_summary": "Earlier summary", "psychological_summary": "Earlier psychology",
       "personality_traits": [{"trait": "forbearance", "description": "Earlier wording"}]}},
-  "synthesis_version": "evidence-synthesis-v3-weighted-scenes"
+  "synthesis_version": "evidence-synthesis-v4-neutral-prior"
 }
 
 Interpret each input field as follows:
@@ -123,7 +126,7 @@ Interpret each input field as follows:
 - traits contains one of the eight established trait keys and its current
   integer point value from 1 through 9; null means unknown. The appended trait
   contract explains each dimension and its low/high meanings.
-- status is unknown, provisional, supported, or manual. Unknown value is null;
+- status is unknown, baseline, provisional, supported, or manual. Unknown value is null;
   never invent a disposition for it. Provisional evidence is tentative.
 - observation_count, high_count, and low_count describe the unweighted contributing
   behavioral ledger, not confidence. inferred_continuous_value preserves the same
@@ -168,11 +171,25 @@ tendency; 5 centered or mixed; 6–7 slight/moderate high-pole tendency; 8–9 s
 high-pole tendency. These bands do not measure confidence. A five with sparse
 evidence differs from a five with substantial conflicting evidence. Describe
 supported conditions of restraint versus retaliation rather than turning a mixed
-forbearance score into consistent forgiveness. Unknown means omit the disposition.
+forbearance score into consistent forgiveness. Baseline 5 is a computational prior:
+no established tendency toward either pole, not a known balanced personality,
+moderation, indecision, or equal action probabilities. Include a neutral description
+for each baseline trait with no invented behavioral examples. Unknown/null is a
+retained historical state: describe its lack of established direction without
+inventing a tendency. A provisional/supported 5 may express observed opposing
+choices only when the supplied evidence supports those distinctions.
 The effective numerical value determines direction and strength; supported
 psychology and scene evidence determine how it manifests in this character.
 Two diligent characters may share a score but differ in supported motivations;
 never invent control, anxiety, or other motives merely to differentiate them.
+This applies equally at value 5: personalize the meaning using established identity,
+psychology, active goals, relationships, and circumstances, not cosmetic synonyms.
+Baseline example: "Johnny's search for his maker has not yet revealed whether he
+would accept an unfair advantage." Supported mixed example, only with that evidence:
+"Johnny rejects exploitation among companions but has accepted unfair advantages
+while pursuing his maker." A different character at 5 may have different established
+stakes. Contextual relevance does not establish a directional tendency. If context
+is sparse, similar neutral descriptions are valid; do not manufacture uniqueness.
 
 Synthesize psychologically predictive, conditional tendencies:
 - Where supported, connect relevant circumstances, the character's interpretation
@@ -203,7 +220,7 @@ OUTPUT JSON SCHEMA (return exactly this object shape):
     "identity_summary": {"type": "string", "minLength": 1},
     "psychological_summary": {"type": "string", "minLength": 1},
     "personality_traits": {
-      "type": "array",
+      "type": "array", "minItems": 8, "maxItems": 8,
       "items": {"type": "object", "additionalProperties": false,
         "required": ["trait", "description"],
         "properties": {
@@ -222,7 +239,11 @@ Produce three components:
    motivations, desires, fears, and values shape interpretations and responses.
    Include supported internal conflicts and how circumstances affect competing
    motives; allow unresolved tensions. Qualify aggregate consistency only when known.
-3. personality_traits: only the character's meaningfully supported dispositions.
+3. personality_traits: exactly eight entries, one per directional trait:
+   integrity, caution, presence, forbearance, diligence, curiosity, sharing,
+   restlessness. No duplicate or omitted keys; Steadiness is never an entry.
+   Baseline and historical unknown traits receive context-grounded neutral wording;
+   observed traits receive evidence-grounded descriptions, including scores of 5.
    Each description should be brief, specific to this character, and explain how
    that disposition appears in their attitudes or choices in supported circumstances.
    Include supported interactions or exceptions where useful, without requiring a
@@ -231,7 +252,10 @@ Produce three components:
 Write psychologically insightful, natural prose. Prefer distinctive details over
 exhaustive coverage. Reflect supported development in the supplied current
 state. Do not confuse temporary emotions with enduring dispositions. Avoid
-repetition between components. Omit unsupported traits; an empty array is valid.
+repetition between components. Complete all eight entries; an empty array is invalid.
+Convey Steadiness separately in psychological_summary: baseline means no established
+cross-scene consistency, never observed average consistency. Preserve established
+psychology rather than letting a neutral prior erase supported character details.
 Return JSON only.""" + IDENTITY_TRAIT_DESCRIPTION_CONTRACT + IDENTITY_STEADINESS_CONTRACT
 
 # Execution order: Stage 1, after Stage 0; run for each chunk before Stage 2/3.

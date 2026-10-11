@@ -12,7 +12,7 @@ import json
 
 from app.schemas.character_traits import TRAIT_DEFINITIONS
 
-DECISION_PROMPT_VERSION = "character-decision-v3-required-personality"
+DECISION_PROMPT_VERSION = "character-decision-v4-neutral-prior"
 
 # Purpose: Define trait meanings once from the authoritative registry, including spread.
 # Used by: DECISION_MAKING_PROMPT before situation appraisal and deliberation.
@@ -62,7 +62,7 @@ may be empty arrays. Memory fields may be omitted when absent. The caller's
 context may contain people, stakes, and options; it is not an identity source.
 The instruction controls task presentation and the requested format only.
 
-An personality_context object has exactly this structure (the example
+A personality_context object has exactly this structure (the example
 shows the required keys, not actual scores):
 {"version":"decision-personality-v1","dispositions":{
 "integrity":{"value":null,"status":"unknown"},
@@ -77,7 +77,7 @@ shows the required keys, not actual scores):
 "availability":"unavailable","reason":"No inferred consistency estimate from independent repeat evidence.",
 "inferred_value":null}}
 All eight disposition entries are required in identity mode. Each value
-is an integer 1–9 or null; each status is unknown|provisional|supported|manual.
+is an integer 1–9 or null; each status is unknown|baseline|provisional|supported|manual.
 Unknown requires null, never a default 5. Other statuses require a value.
 1–2 indicates strong low-pole direction, 3–4 slight/moderate low, 5 centered or
 mixed, 6–7 slight/moderate high, and 8–9 strong high. These are ordinal engineering
@@ -85,6 +85,11 @@ estimates, not calibrated choice probabilities, percentiles, or confidence.
 Provisional means tentative inference; supported means recurring observations;
 manual means effective authored direction. Unknown scores leave supported prose
 usable. Do not invent values for unknown scores.
+A baseline disposition is value 5 with no established directional tendency. It is
+not evidence of moderation, mixed behavior, or equal action probabilities. Let
+established identity, psychology, active goals, knowledge, and circumstances guide
+action where dispositions are baseline. Different characters at 5 can respond
+differently for those supported reasons; do not invent a trait preference.
 
 Steadiness additionally permits status baseline: value 5 with zero observations
 and unavailable inference, a neutral computational prior, not measured consistency.

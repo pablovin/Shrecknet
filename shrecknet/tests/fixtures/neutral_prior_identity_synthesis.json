@@ -1,0 +1,197 @@
+{
+  "version": "neutral-prior-identity-v1",
+  "cases": [
+    {
+      "case_id": "baseline-johnny",
+      "review_note": "All scores are baseline 5: personalize uncertainty using established identity/goals, without inventing a preference, mixed behavior, equal probabilities, or observed consistency. Compare with the other equal-baseline character for meaningful contextual differences, not synonyms.",
+      "input": {
+        "canonical_identity": {
+          "alias": "Johnny",
+          "entity_type": "Character",
+          "authored_text": "Johnny seeks the person who created him and has no established directional behavioral evidence.",
+          "properties": {}
+        },
+        "current_profile": {
+          "version": "dispositions-v5-neutral-prior",
+          "dispositional_traits": {
+            "integrity": {
+              "point": 5,
+              "status": "baseline",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "caution": {
+              "point": 5,
+              "status": "baseline",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "presence": {
+              "point": 5,
+              "status": "baseline",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "forbearance": {
+              "point": 5,
+              "status": "baseline",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "diligence": {
+              "point": 5,
+              "status": "baseline",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "curiosity": {
+              "point": 5,
+              "status": "baseline",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "sharing": {
+              "point": 5,
+              "status": "baseline",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "restlessness": {
+              "point": 5,
+              "status": "baseline",
+              "observation_count": 0,
+              "observation_ids": []
+            }
+          },
+          "steadiness": {
+            "point": 5,
+            "status": "baseline",
+            "observation_count": 0,
+            "observation_ids": []
+          }
+        },
+        "current_trait_evidence": [],
+        "current_aspects": [],
+        "current_goals": [
+          {
+            "id": "goal:johnny",
+            "title": "Find my maker",
+            "description": "Find my maker",
+            "status": "active",
+            "in_focus": true
+          }
+        ]
+      },
+      "decision": {
+        "query": "Choose a plausible next step toward the established goal.",
+        "context": {
+          "situation": "Records in the archive or clues in the workshop may help locate your maker. You may consult the archivist, search the workshop, or wait.",
+          "knowledge": "Only the stated information is known.",
+          "capability": "All listed options are feasible.",
+          "opportunity": "All listed options are currently available."
+        },
+        "options": [
+          "consult_archivist",
+          "search_workshop",
+          "wait"
+        ]
+      }
+    },
+    {
+      "case_id": "baseline-cwenhild",
+      "review_note": "All scores are baseline 5: personalize uncertainty using established identity/goals, without inventing a preference, mixed behavior, equal probabilities, or observed consistency. Compare with the other equal-baseline character for meaningful contextual differences, not synonyms.",
+      "input": {
+        "canonical_identity": {
+          "alias": "Cwenhild",
+          "entity_type": "Character",
+          "authored_text": "Cwenhild commands the northern guard and is responsible for protecting the city; no directional behavior has yet been observed.",
+          "properties": {}
+        },
+        "current_profile": {
+          "version": "dispositions-v5-neutral-prior",
+          "dispositional_traits": {
+            "integrity": {
+              "point": 5,
+              "status": "baseline",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "caution": {
+              "point": 5,
+              "status": "baseline",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "presence": {
+              "point": 5,
+              "status": "baseline",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "forbearance": {
+              "point": 5,
+              "status": "baseline",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "diligence": {
+              "point": 5,
+              "status": "baseline",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "curiosity": {
+              "point": 5,
+              "status": "baseline",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "sharing": {
+              "point": 5,
+              "status": "baseline",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "restlessness": {
+              "point": 5,
+              "status": "baseline",
+              "observation_count": 0,
+              "observation_ids": []
+            }
+          },
+          "steadiness": {
+            "point": 5,
+            "status": "baseline",
+            "observation_count": 0,
+            "observation_ids": []
+          }
+        },
+        "current_trait_evidence": [],
+        "current_aspects": [],
+        "current_goals": [
+          {
+            "id": "goal:cwenhild",
+            "title": "Protect the city",
+            "description": "Protect the city",
+            "status": "active",
+            "in_focus": true
+          }
+        ]
+      },
+      "decision": {
+        "query": "Choose a plausible next step toward the established goal.",
+        "context": {
+          "situation": "You must prepare the city for a possible threat. You may ask scouts for a report, inspect defenses, or request reinforcements.",
+          "knowledge": "Only the stated information is known.",
+          "capability": "All listed options are feasible.",
+          "opportunity": "All listed options are currently available."
+        },
+        "options": [
+          "ask_scouts",
+          "inspect_defenses",
+          "request_reinforcements"
+        ]
+      }
+    }
+  ]
+}

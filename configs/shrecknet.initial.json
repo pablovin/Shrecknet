@@ -88,21 +88,25 @@
     "provider": "",
     "name": ""
   },
-  "model_character_agent_framing": {
+  "model_character_agent_psychological_interpretation": {
     "provider": "",
-    "name": ""
+    "name": "",
+    "reasoning": false
   },
-  "model_character_agent_deliberation": {
+  "model_character_agent_decision_making": {
     "provider": "",
-    "name": ""
+    "name": "",
+    "reasoning": false
   },
   "model_character_agent_character_incorporation": {
     "provider": "",
-    "name": ""
+    "name": "",
+    "reasoning": false
   },
   "model_character_agent_scene_interpretation": {
     "provider": "",
-    "name": ""
+    "name": "",
+    "reasoning": false
   },
   "librarian_debug_artifacts_enabled": true,
   "elder_debug_artifacts_enabled": true,

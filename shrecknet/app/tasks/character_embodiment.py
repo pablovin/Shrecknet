@@ -486,6 +486,7 @@ async def _generate(*, draft_id: str, revision: int, job_id: int) -> dict:
                     llm_client=client,
                     character_incorporation_model=settings.model_character_agent_character_incorporation,
                     scene_interpretation_model=settings.model_character_agent_scene_interpretation,
+                    psychological_interpretation_model=settings.model_character_agent_psychological_interpretation,
                     validation_retries=(
                         settings.character_agent_embodiment_validation_retries
                     ),
@@ -539,6 +540,7 @@ async def _generate(*, draft_id: str, revision: int, job_id: int) -> dict:
                     "models": {
                         "identity": settings.model_character_agent_character_incorporation.model_dump(mode="json"),
                         "scene": settings.model_character_agent_scene_interpretation.model_dump(mode="json"),
+                        "psychological": settings.model_character_agent_psychological_interpretation.model_dump(mode="json"),
                     },
                 }
                 checkpoint_key = _checkpoint_digest(checkpoint_material)

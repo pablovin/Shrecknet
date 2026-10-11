@@ -54,7 +54,7 @@ def _analysis(events):
 def _agent(llm):
     return EmbodyAgent(
         llm_client=llm, character_incorporation_model="model",
-        scene_interpretation_model="model",
+        scene_interpretation_model="model", psychological_interpretation_model="model",
     )
 
 

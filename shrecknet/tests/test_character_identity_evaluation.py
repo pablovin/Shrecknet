@@ -24,7 +24,8 @@ def test_frozen_cases_cover_poles_interactions_motives_state_and_consistency():
     fixture = cases()
     assert {f'{trait}-{pole}' for trait in DIRECTIONAL_TRAITS for pole in ('low', 'high')} <= {
         case['case_id'] for case in fixture}
-    assert {'competing-goals', 'non-diagnostic', 'supported-interaction', 'unsupported-interaction'} <= {
+    assert {'competing-goals', 'non-diagnostic', 'supported-interaction', 'unsupported-interaction',
+            'constrained-forbearance-low', 'constrained-forbearance-high', 'manual-stale-portrait'} <= {
         case['case_id'] for case in fixture}
     contexts = {}
     for case in fixture:
@@ -150,10 +151,87 @@ def test_captured_cli_stays_offline_and_does_not_publish_invalid_report(tmp_path
     monkeypatch.setattr('sys.argv', ['evaluation', 'synthesis', str(FIXTURE), str(target), '--outputs', str(captured)])
     main()
     report = json.loads(target.read_text())
-    assert len(report['outputs']) == 29
+    assert len(report['outputs']) == 32
     assert report['provenance']['mode'] == 'captured-outputs'
     target.unlink()
     captured.write_text('[]')
     with pytest.raises(ValueError):
         main()
     assert not target.exists()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('comparison', ['prompt', 'context', 'reasoning'])
+async def test_decision_experiments_isolate_prompt_context_and_reasoning(monkeypatch, comparison):
+    from app.integrations.llm import shreckllm_client
+    from app.jobs.character_agent import prompts
+    from app.core.config_store import LLMModelTarget
+    from test_character_agent_decision_making import FakeLLM
+
+    class Client(FakeLLM):
+        async def aclose(self):
+            self.closed = True
+
+    result = json.dumps({'content': {'action': 'refuse'}, 'decision_basis': 'Public explanation'})
+    client = Client([result] * 3)
+    monkeypatch.setattr(shreckllm_client, 'ShreckLLMClient', lambda **kwargs: client)
+    fixture = cases()[:1]
+    key = fixture[0]['case_id']
+    target = LLMModelTarget(provider='test', name='frozen', reasoning=False)
+    baseline_prompt = (FIXTURE.parent / 'decision_making_baseline.txt').read_text()
+    original = prompts.DECISION_MAKING_PROMPT
+    outputs, provenance = await replay(fixture, mode='decisions', comparison=comparison,
+        decision_baseline_prompt=baseline_prompt if comparison == 'prompt' else None,
+        deliberation_target=target,
+        portraits={'baseline': {key: {**PORTRAIT, 'identity_summary': 'Unused old portrait'}},
+                   'candidate': {key: PORTRAIT}})
+    payloads = [json.loads(call['messages'][1]['content']) for call in client.calls]
+    assert payloads[0]['identity_description'] == payloads[1]['identity_description'] == PORTRAIT
+    if comparison == 'context':
+        assert 'personality_context' not in payloads[0]
+        assert 'personality_context' in payloads[1]
+        assert {k: v for k, v in payloads[1].items() if k != 'personality_context'} == payloads[0]
+    else:
+        assert payloads[0] == payloads[1]
+    assert client.calls[0]['messages'][0]['content'] == (baseline_prompt if comparison == 'prompt' else original)
+    assert client.calls[1]['messages'][0]['content'] == original
+    assert client.calls[0]['model'].reasoning is False
+    assert client.calls[1]['model'].reasoning is (comparison == 'reasoning')
+    assert set(payloads[2]) == {'query', 'context', 'instruction', 'response_format'}
+    assert all(row['llm_calls'] == 1 and row['latency_s'] >= 0 and row['request_sha256'] for row in outputs)
+    assert provenance['comparison'] == comparison and provenance['input_tokens_est'] > 0
+    assert prompts.DECISION_MAKING_PROMPT == original and target.reasoning is False
+    assert client.closed
+    assert decision_report(fixture, outputs, 1)['failed_trials'] == 0
+
+
+@pytest.mark.asyncio
+async def test_decision_replay_retains_failed_trials_without_retrying_or_mutating_globals(monkeypatch):
+    from app.integrations.llm import shreckllm_client
+    class BrokenClient:
+        async def chat(self, **kwargs):
+            raise RuntimeError('Unavailable evaluation provider')
+        async def aclose(self):
+            self.closed = True
+    client = BrokenClient()
+    monkeypatch.setattr(shreckllm_client, 'ShreckLLMClient', lambda **kwargs: client)
+    fixture = cases()[:1]
+    key = fixture[0]['case_id']
+    outputs, provenance = await replay(fixture, mode='decisions',
+        portraits={arm: {key: PORTRAIT} for arm in ('baseline', 'candidate')})
+    assert provenance['llm_calls'] == 3
+    report = decision_report(fixture, outputs, 1)
+    assert report['failed_trials'] == 3 and report['action_counts'][key]['candidate'] == {}
+    assert all(row['error']['type'] == 'RuntimeError' and 'result' not in row for row in outputs)
+    assert client.closed
+
+
+def test_all_frozen_profiles_produce_typed_compact_context_without_evidence_ids():
+    from app.services.character_trait_analysis import decision_personality_context
+    for case in cases():
+        value = case['input']
+        context = decision_personality_context(TraitProfile.model_validate(value['current_profile']),
+            [TraitEvidence.model_validate(item) for item in value['current_trait_evidence']])
+        assert set(context.dispositions) == set(DIRECTIONAL_TRAITS)
+        encoded = context.model_dump_json()
+        assert 'observation_ids' not in encoded and 'evidence_ids' not in encoded

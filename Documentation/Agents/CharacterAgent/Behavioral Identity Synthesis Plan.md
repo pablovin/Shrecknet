@@ -13,6 +13,11 @@ Implementation uses `character-embodiment-v42-behavioral-identity` and
 `evidence-synthesis-v2-behavioral-context`. See the
 [evaluation commands and report contracts](Dispositional%20Traits.md#behavioral-identity-evaluation).
 
+The follow-on [personality-conditioned decision-making implementation record](Personality-Conditioned%20Decision%20Making%20Plan.md)
+adds situational deliberation, optional compact scores/Steadiness, and isolated
+prompt/context/reasoning comparison arms. The baseline below describes the state
+before that change; synthesis's pending live review remains pending.
+
 ## Implementation verification
 
 From `shrecknet/`, with `SHRECKNET_MEDIA_ROOT=/tmp/shrecknet-identity-test-media`

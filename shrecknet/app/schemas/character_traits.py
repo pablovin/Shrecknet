@@ -199,3 +199,48 @@ class TraitChange(StrictModel):
     justification: str
     observation_ids: list[str] = Field(default_factory=list)
     evidence_ids: list[str] = Field(default_factory=list)
+
+
+class DecisionDisposition(StrictModel):
+    """Effective ordinal direction without provenance or confidence proxies."""
+
+    value: int | None = Field(ge=1, le=9, strict=True)
+    status: Literal["unknown", "provisional", "supported", "manual"]
+
+    @model_validator(mode="after")
+    def known_value(self):
+        if (self.status == "unknown") != (self.value is None):
+            raise ValueError("unknown dispositions require null values")
+        return self
+
+
+class DecisionSteadiness(DecisionDisposition):
+    """Aggregate spread kept distinct from the eight directional constructs."""
+
+    observation_count: int = Field(ge=0, strict=True)
+    availability: Literal["available", "unavailable"]
+    reason: str | None
+    inferred_value: int | None = Field(ge=1, le=9, strict=True)
+
+    @model_validator(mode="after")
+    def verified_inference(self):
+        if self.availability == "available":
+            if self.inferred_value is None or self.value is None or self.observation_count < 2:
+                raise ValueError("available consistency requires contributing inference")
+        elif self.inferred_value is not None:
+            raise ValueError("unavailable consistency cannot claim inferred variation")
+        return self
+
+
+class DecisionPersonalityContext(StrictModel):
+    """Compact service-to-job boundary; never a public decision request field."""
+
+    version: Literal["decision-personality-v1"] = "decision-personality-v1"
+    dispositions: dict[TraitKey, DecisionDisposition]
+    steadiness: DecisionSteadiness
+
+    @model_validator(mode="after")
+    def complete(self):
+        if set(self.dispositions) != set(DIRECTIONAL_TRAITS):
+            raise ValueError("decision context requires all eight dispositions")
+        return self

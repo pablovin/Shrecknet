@@ -16,6 +16,7 @@ from app.integrations.llm.structured_output import strict_json_schema
 from app.jobs.character_agent.memory import select_relevant_memories
 from app.jobs.character_agent.prompts import DECISION_MAKING_PROMPT, GENERIC_DECISION_MAKING_PROMPT
 from app.jobs.character_agent.schemas import CharacterDeliberation
+from app.schemas.character_traits import DecisionPersonalityContext
 from app.jobs.shrecknet.agent import parse_json_deterministically, repair_invalid_json
 from app.schemas.character_agent import CharacterAgentQueryRequest, CharacterAgentQueryResult, IdentityDescription
 
@@ -33,14 +34,13 @@ class CharacterIdentityUnavailableError(RuntimeError):
 
 class CharacterAgentDecisionMakingJob:
     def __init__(
-        self, *, llm_client: ShreckLLMClient, deliberation_model: LLMModelTarget,
-        repair_model: LLMModelTarget, framing_model: LLMModelTarget | None = None,
+        self, *, llm_client: ShreckLLMClient, decision_making_model: LLMModelTarget,
+        repair_model: LLMModelTarget,
         report_stage: StageReporter | None = None,
     ) -> None:
         self.llm = llm_client
-        self.deliberation_model = deliberation_model
+        self.decision_making_model = decision_making_model
         self.repair_model = repair_model
-        self.framing_model = framing_model  # Legacy constructor compatibility; never used.
         self.report_stage = report_stage
 
     async def _report(self, stage: str, progress: float) -> None:
@@ -168,6 +168,11 @@ class CharacterAgentDecisionMakingJob:
                 "instruction": request.system_instruction,
                 "response_format": self._response_format_payload(request),
             }
+            if snapshot.get("personality_context") is None:
+                raise CharacterGenerationError("character personality context is required for identity-grounded queries")
+            payload["personality_context"] = DecisionPersonalityContext.model_validate(
+                snapshot["personality_context"],
+            ).model_dump(mode="json")
             prompt, usage_tag = DECISION_MAKING_PROMPT, "character_agent.decision_making"
         else:
             payload = {
@@ -181,7 +186,7 @@ class CharacterAgentDecisionMakingJob:
         # Do not fall back to an unstructured second deliberation call. A
         # malformed result gets the one bounded JSON-repair pass below.
         raw = await self.llm.chat(
-            model=self.deliberation_model,
+            model=self.decision_making_model,
             messages=[{"role": "system", "content": prompt}, {"role": "user", "content": self._json(payload)}],
             temperature=request.generation.temperature, usage_tag=usage_tag,
             response_format=self._envelope_response_format(request),

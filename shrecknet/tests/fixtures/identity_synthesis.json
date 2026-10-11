@@ -1,5 +1,5 @@
 {
-  "version": "behavioral-identity-v1",
+  "version": "behavioral-identity-v2-decision-situations",
   "cases": [
     {
       "case_id": "integrity-low",
@@ -4066,6 +4066,462 @@
         "options": [
           "east",
           "west"
+        ]
+      }
+    },
+    {
+      "case_id": "constrained-forbearance-low",
+      "review_note": "External restraint prevents immediate retaliation. Different trait poles may converge without personality being erased. Do not invent successful violence or compulsory forgiveness.",
+      "input": {
+        "canonical_identity": {
+          "alias": "Traveler",
+          "entity_type": "Character",
+          "authored_text": "A fictional traveler. No further motives are established.",
+          "properties": {}
+        },
+        "current_profile": {
+          "version": "dispositions-v3-points-perspectives",
+          "dispositional_traits": {
+            "integrity": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "caution": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "presence": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "forbearance": {
+              "point": 3,
+              "status": "supported",
+              "observation_count": 3,
+              "observation_ids": [
+                "perspective:s0",
+                "perspective:s1",
+                "perspective:s2"
+              ]
+            },
+            "diligence": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "curiosity": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "sharing": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "restlessness": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            }
+          },
+          "steadiness": {
+            "point": 7,
+            "status": "provisional",
+            "observation_count": 3,
+            "observation_ids": [
+              "perspective:s0",
+              "perspective:s1",
+              "perspective:s2"
+            ]
+          },
+          "inferred_traits": {},
+          "overrides": {}
+        },
+        "current_trait_evidence": [
+          {
+            "trait": "forbearance",
+            "evidence_kind": "behavior",
+            "polarity": "low",
+            "situation_type": "provocation:other:ordinary",
+            "justification": "Retaliates after a freely avoidable insult.",
+            "perspective_id": "perspective:s0",
+            "evidence_ids": [
+              "scene:s0"
+            ],
+            "id": "trait:ae41305de6b8cdcabbb7babc",
+            "source_group_id": "forbearance-low",
+            "chronological_position": 0,
+            "policy_version": "point-evidence-v1",
+            "revision_id": null
+          },
+          {
+            "trait": "forbearance",
+            "evidence_kind": "behavior",
+            "polarity": "low",
+            "situation_type": "provocation:other:ordinary",
+            "justification": "Retaliates after a freely avoidable insult.",
+            "perspective_id": "perspective:s1",
+            "evidence_ids": [
+              "scene:s1"
+            ],
+            "id": "trait:11de78498555e6a250195057",
+            "source_group_id": "forbearance-low",
+            "chronological_position": 1,
+            "policy_version": "point-evidence-v1",
+            "revision_id": null
+          },
+          {
+            "trait": "forbearance",
+            "evidence_kind": "behavior",
+            "polarity": "low",
+            "situation_type": "provocation:other:ordinary",
+            "justification": "Retaliates after a freely avoidable insult.",
+            "perspective_id": "perspective:s2",
+            "evidence_ids": [
+              "scene:s2"
+            ],
+            "id": "trait:9d1d1dd082fe15745c90b5d5",
+            "source_group_id": "forbearance-low",
+            "chronological_position": 2,
+            "policy_version": "point-evidence-v1",
+            "revision_id": null
+          }
+        ],
+        "current_goals": [],
+        "current_aspects": []
+      },
+      "decision": {
+        "query": "Choose one feasible immediate response.",
+        "context": {
+          "situation": "A guard insults you while you are physically restrained behind a secure barrier. You cannot reach or harm the guard.",
+          "knowledge": "The barrier cannot be crossed. Silence and a verbal objection are both permitted.",
+          "capability": "You can remain silent or object verbally. Physical retaliation is impossible.",
+          "opportunity": "Only the listed immediate responses are available.",
+          "options": [
+            "remain_silent",
+            "object_verbally"
+          ]
+        },
+        "options": [
+          "remain_silent",
+          "object_verbally"
+        ]
+      }
+    },
+    {
+      "case_id": "constrained-forbearance-high",
+      "review_note": "External restraint prevents immediate retaliation. Different trait poles may converge without personality being erased. Do not invent successful violence or compulsory forgiveness.",
+      "input": {
+        "canonical_identity": {
+          "alias": "Traveler",
+          "entity_type": "Character",
+          "authored_text": "A fictional traveler. No further motives are established.",
+          "properties": {}
+        },
+        "current_profile": {
+          "version": "dispositions-v3-points-perspectives",
+          "dispositional_traits": {
+            "integrity": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "caution": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "presence": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "forbearance": {
+              "point": 7,
+              "status": "supported",
+              "observation_count": 3,
+              "observation_ids": [
+                "perspective:s0",
+                "perspective:s1",
+                "perspective:s2"
+              ]
+            },
+            "diligence": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "curiosity": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "sharing": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "restlessness": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            }
+          },
+          "steadiness": {
+            "point": 7,
+            "status": "provisional",
+            "observation_count": 3,
+            "observation_ids": [
+              "perspective:s0",
+              "perspective:s1",
+              "perspective:s2"
+            ]
+          },
+          "inferred_traits": {},
+          "overrides": {}
+        },
+        "current_trait_evidence": [
+          {
+            "trait": "forbearance",
+            "evidence_kind": "behavior",
+            "polarity": "high",
+            "situation_type": "provocation:other:ordinary",
+            "justification": "Lets a freely avoidable insult pass without retaliation.",
+            "perspective_id": "perspective:s0",
+            "evidence_ids": [
+              "scene:s0"
+            ],
+            "id": "trait:4cdc8adeadf7ca1acd628db0",
+            "source_group_id": "forbearance-high",
+            "chronological_position": 0,
+            "policy_version": "point-evidence-v1",
+            "revision_id": null
+          },
+          {
+            "trait": "forbearance",
+            "evidence_kind": "behavior",
+            "polarity": "high",
+            "situation_type": "provocation:other:ordinary",
+            "justification": "Lets a freely avoidable insult pass without retaliation.",
+            "perspective_id": "perspective:s1",
+            "evidence_ids": [
+              "scene:s1"
+            ],
+            "id": "trait:660af73d267f87af3230d706",
+            "source_group_id": "forbearance-high",
+            "chronological_position": 1,
+            "policy_version": "point-evidence-v1",
+            "revision_id": null
+          },
+          {
+            "trait": "forbearance",
+            "evidence_kind": "behavior",
+            "polarity": "high",
+            "situation_type": "provocation:other:ordinary",
+            "justification": "Lets a freely avoidable insult pass without retaliation.",
+            "perspective_id": "perspective:s2",
+            "evidence_ids": [
+              "scene:s2"
+            ],
+            "id": "trait:273464ad5a0e8aa261e3b8be",
+            "source_group_id": "forbearance-high",
+            "chronological_position": 2,
+            "policy_version": "point-evidence-v1",
+            "revision_id": null
+          }
+        ],
+        "current_goals": [],
+        "current_aspects": []
+      },
+      "decision": {
+        "query": "Choose one feasible immediate response.",
+        "context": {
+          "situation": "A guard insults you while you are physically restrained behind a secure barrier. You cannot reach or harm the guard.",
+          "knowledge": "The barrier cannot be crossed. Silence and a verbal objection are both permitted.",
+          "capability": "You can remain silent or object verbally. Physical retaliation is impossible.",
+          "opportunity": "Only the listed immediate responses are available.",
+          "options": [
+            "remain_silent",
+            "object_verbally"
+          ]
+        },
+        "options": [
+          "remain_silent",
+          "object_verbally"
+        ]
+      }
+    },
+    {
+      "case_id": "manual-stale-portrait",
+      "review_note": "Effective authored retaliation direction overrides the old forgiving trait description without inventing why it changed. Preserve memories and supported motives.",
+      "input": {
+        "canonical_identity": {
+          "alias": "Traveler",
+          "entity_type": "Character",
+          "authored_text": "A fictional traveler. No further motives are established.",
+          "properties": {},
+          "identity_description": {
+            "identity_summary": "A traveler.",
+            "psychological_summary": "Values an established relationship.",
+            "personality_traits": [
+              {
+                "trait": "forbearance",
+                "description": "Usually lets public insults pass without retaliating."
+              }
+            ]
+          }
+        },
+        "current_profile": {
+          "version": "dispositions-v3-points-perspectives",
+          "dispositional_traits": {
+            "integrity": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "caution": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "presence": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "forbearance": {
+              "point": 2,
+              "status": "manual",
+              "observation_count": 3,
+              "observation_ids": [
+                "perspective:s0",
+                "perspective:s1",
+                "perspective:s2"
+              ]
+            },
+            "diligence": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "curiosity": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "sharing": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "restlessness": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            }
+          },
+          "steadiness": {
+            "point": 7,
+            "status": "provisional",
+            "observation_count": 3,
+            "observation_ids": [
+              "perspective:s0",
+              "perspective:s1",
+              "perspective:s2"
+            ]
+          },
+          "inferred_traits": {},
+          "overrides": {}
+        },
+        "current_trait_evidence": [
+          {
+            "trait": "forbearance",
+            "evidence_kind": "behavior",
+            "polarity": "low",
+            "situation_type": "provocation:other:ordinary",
+            "justification": "Retaliates after a freely avoidable insult.",
+            "perspective_id": "perspective:s0",
+            "evidence_ids": [
+              "scene:s0"
+            ],
+            "id": "trait:ae41305de6b8cdcabbb7babc",
+            "source_group_id": "forbearance-low",
+            "chronological_position": 0,
+            "policy_version": "point-evidence-v1",
+            "revision_id": null
+          },
+          {
+            "trait": "forbearance",
+            "evidence_kind": "behavior",
+            "polarity": "low",
+            "situation_type": "provocation:other:ordinary",
+            "justification": "Retaliates after a freely avoidable insult.",
+            "perspective_id": "perspective:s1",
+            "evidence_ids": [
+              "scene:s1"
+            ],
+            "id": "trait:11de78498555e6a250195057",
+            "source_group_id": "forbearance-low",
+            "chronological_position": 1,
+            "policy_version": "point-evidence-v1",
+            "revision_id": null
+          },
+          {
+            "trait": "forbearance",
+            "evidence_kind": "behavior",
+            "polarity": "low",
+            "situation_type": "provocation:other:ordinary",
+            "justification": "Retaliates after a freely avoidable insult.",
+            "perspective_id": "perspective:s2",
+            "evidence_ids": [
+              "scene:s2"
+            ],
+            "id": "trait:9d1d1dd082fe15745c90b5d5",
+            "source_group_id": "forbearance-low",
+            "chronological_position": 2,
+            "policy_version": "point-evidence-v1",
+            "revision_id": null
+          }
+        ],
+        "current_goals": [],
+        "current_aspects": []
+      },
+      "decision": {
+        "query": "Choose one available action.",
+        "context": {
+          "situation": "Someone insults you without consequences. You can let it pass or retaliate.",
+          "knowledge": "The stated facts are known; no hidden consequences.",
+          "capability": "Both options are feasible.",
+          "opportunity": "Both options are available now."
+        },
+        "options": [
+          "let_pass",
+          "retaliate"
         ]
       }
     }

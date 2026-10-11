@@ -313,7 +313,7 @@ class UsageTracker:
 class EmbodyAgent:
     def __init__(
         self, *, llm_client, character_incorporation_model,
-        scene_interpretation_model,
+        scene_interpretation_model, psychological_interpretation_model,
         validation_retries: int | None = None,
         semantic_correction_attempts: int | None = None,
         debug_artifacts: EmbodimentDebugArtifacts | None = None,
@@ -323,6 +323,7 @@ class EmbodyAgent:
         self._llm = UsageTracker(llm_client)
         self.character_incorporation_model = character_incorporation_model
         self.scene_interpretation_model = scene_interpretation_model
+        self.psychological_interpretation_model = psychological_interpretation_model
         self._identity_description = None
         self.validation_retries = validation_retries if validation_retries is not None else (
             semantic_correction_attempts if semantic_correction_attempts is not None else 1)
@@ -543,7 +544,7 @@ class EmbodyAgent:
             schema=_IdentityDescriptionOutput, stage="identity description",
             usage_tag="character_agent.embodiment.identity_description",
             max_tokens=EMBODIMENT_LLM_MAX_TOKENS,
-            model=self.scene_interpretation_model,
+            model=self.character_incorporation_model,
         )
         return IdentityDescription.model_validate(output.model_dump(mode="json"))
 
@@ -594,7 +595,7 @@ class EmbodyAgent:
             "schema": _PerspectivesLLMContainer,
             "stage": "character incorporation",
             "max_tokens": EMBODIMENT_LLM_MAX_TOKENS,
-            "model": self.character_incorporation_model,
+            "model": self.scene_interpretation_model,
             "source_entity_id": source_entity_id,
             "source_entity_alias": source_entity_alias,
             "output_binding": output_binding,
@@ -643,8 +644,8 @@ class EmbodyAgent:
             "prompt_tokens=%s completion_tokens=%s finish_reason=%s response_chars=%s "
             "duration_ms=%s perspective_chars=%s",
             source_entity_id, source_entity_alias, len(perspectives), len(perspectives),
-            getattr(self.character_incorporation_model, "provider", None),
-            getattr(self.character_incorporation_model, "name", self.character_incorporation_model),
+            getattr(self.scene_interpretation_model, "provider", None),
+            getattr(self.scene_interpretation_model, "name", self.scene_interpretation_model),
             metadata.get("resolved_model"), metadata.get("reasoning_enabled"),
             EMBODIMENT_LLM_MAX_TOKENS, metadata.get("prompt_tokens"),
             metadata.get("completion_tokens"), metadata.get("finish_reason"),
@@ -687,7 +688,7 @@ class EmbodyAgent:
                 prompt=PSYCHOLOGICAL_ANALYSIS_PROMPT, payload=payload,
                 schema=_SceneEnrichmentsLLMOutput, stage="scene trait extraction",
                 usage_tag=usage_tag, max_tokens=EMBODIMENT_LLM_MAX_TOKENS,
-                model=self.scene_interpretation_model, source_entity_id=source_entity_id,
+                model=self.psychological_interpretation_model, source_entity_id=source_entity_id,
                 source_entity_alias=source_entity_alias,
                 output_binding={
                     "collection": "scene_enrichments", "scene_ids": expected_ids,
@@ -750,7 +751,7 @@ class EmbodyAgent:
             prompt=TRAIT_INTERPRETATION_PROMPT, payload=payload,
             schema=_SceneTraitInterpretationsLLMOutput, stage="trait interpretation",
             usage_tag="character_agent.embodiment.trait_interpretation",
-            max_tokens=EMBODIMENT_LLM_MAX_TOKENS, model=self.scene_interpretation_model,
+            max_tokens=EMBODIMENT_LLM_MAX_TOKENS, model=self.psychological_interpretation_model,
             source_entity_id=source_entity_id, source_entity_alias=source_entity_alias,
             output_binding={"collection": "scene_trait_interpretations", "scene_ids": expected_ids,
                             "bind_references": False},

@@ -147,7 +147,7 @@ async def test_empty_event_source_skips_consolidation_call_and_keeps_focus():
     llm = _LLM("{}")
     agent = EmbodyAgent(
         llm_client=llm, character_incorporation_model="model",
-        scene_interpretation_model="model",
+        scene_interpretation_model="model", psychological_interpretation_model="model",
     )
     aspects = [{"id": "a1", "name": "I am a keeper", "status": "active", "in_focus": True}]
     result = await agent._consolidate_profile(
@@ -173,7 +173,7 @@ async def test_consolidation_adds_candidate_and_rejects_unknown_focus_ids():
     llm = _LLM(json.dumps(answer))
     agent = EmbodyAgent(
         llm_client=llm, character_incorporation_model="model",
-        scene_interpretation_model="model",
+        scene_interpretation_model="model", psychological_interpretation_model="model",
     )
     result = await agent._consolidate_profile(
         analysis=_analysis([ProfileEventOutput(
@@ -189,7 +189,7 @@ async def test_consolidation_adds_candidate_and_rejects_unknown_focus_ids():
     answer["consolidation"]["focused_aspects"] = [{"scope": "existing", "index": 99}]
     agent = EmbodyAgent(
         llm_client=_LLM(json.dumps(answer)), character_incorporation_model="model",
-        scene_interpretation_model="model",
+        scene_interpretation_model="model", psychological_interpretation_model="model",
     )
     with pytest.raises(EmbodimentGenerationError):
         await agent._consolidate_profile(
@@ -223,7 +223,7 @@ async def test_goal_can_be_introduced_and_completed_in_one_source_bundle():
                            scene_id="scene-2", evidence_ids=["scene:scene-2"]),
     ]
     result = await EmbodyAgent(
-        llm_client=llm, character_incorporation_model="model", scene_interpretation_model="model",
+        llm_client=llm, character_incorporation_model="model", scene_interpretation_model="model", psychological_interpretation_model="model",
     )._consolidate_profile(analysis=_analysis(events), current_aspects=[], current_goals=[])
     goals = []
     _apply_goal_ops(goals, result["goal_updates"], focused_ids=result["focused_goals"])
@@ -253,7 +253,7 @@ async def test_new_goal_nested_update_then_abandon_preserves_each_transition():
               ProfileEventOutput(kind="goal", description="Learns identity.", scene_id="s2"),
               ProfileEventOutput(kind="goal", description="Stops search.", scene_id="s3")]
     result = await EmbodyAgent(llm_client=_LLM(json.dumps(answer)),
-        character_incorporation_model="model", scene_interpretation_model="model")._consolidate_profile(
+        character_incorporation_model="model", scene_interpretation_model="model", psychological_interpretation_model="model")._consolidate_profile(
             analysis=_analysis(events), current_aspects=[], current_goals=[])
     goals = []
     _apply_goal_ops(goals, result["goal_updates"], focused_ids=result["focused_goals"])
@@ -281,7 +281,7 @@ async def test_new_aspect_nested_lifecycle_and_existing_update_are_materialized(
               ProfileEventOutput(kind="aspect", description="Accepts duty.", scene_id="s2"),
               ProfileEventOutput(kind="aspect", description="Leaves duty.", scene_id="s3")]
     result = await EmbodyAgent(llm_client=_LLM(json.dumps(answer)),
-        character_incorporation_model="model", scene_interpretation_model="model")._consolidate_profile(
+        character_incorporation_model="model", scene_interpretation_model="model", psychological_interpretation_model="model")._consolidate_profile(
             analysis=_analysis(events),
             current_aspects=[{"id": "a1", "name": "I lead the archive", "status": "active", "in_focus": False}],
             current_goals=[])
@@ -307,7 +307,7 @@ async def test_cross_kind_event_reference_is_corrected_and_uses_backend_event_id
     corrected["consolidation"]["new_aspects"][0]["event_references"] = ["event-001"]
     llm = _LLM([json.dumps(invalid), json.dumps(corrected)])
     agent = EmbodyAgent(
-        llm_client=llm, character_incorporation_model="model", scene_interpretation_model="model",
+        llm_client=llm, character_incorporation_model="model", scene_interpretation_model="model", psychological_interpretation_model="model",
     )
     events = [
         ProfileEventOutput(kind="aspect", description="Protects the archive.", scene_id="scene-a"),
@@ -325,7 +325,7 @@ async def test_cross_kind_event_reference_is_corrected_and_uses_backend_event_id
 
     agent = EmbodyAgent(
         llm_client=_LLM(json.dumps(invalid)), character_incorporation_model="model",
-        scene_interpretation_model="model",
+        scene_interpretation_model="model", psychological_interpretation_model="model",
     )
     with pytest.raises(EmbodimentGenerationError, match="cited goal event"):
         await agent._consolidate_profile(
@@ -367,7 +367,7 @@ async def test_lifecycle_change_is_corrected_into_separate_ordered_operations():
     }}
     llm = _LLM([json.dumps(invalid), json.dumps(corrected)])
     agent = EmbodyAgent(
-        llm_client=llm, character_incorporation_model="model", scene_interpretation_model="model",
+        llm_client=llm, character_incorporation_model="model", scene_interpretation_model="model", psychological_interpretation_model="model",
     )
     events = [ProfileEventOutput(
         kind="goal", description="Discovers who created him.", scene_id="scene-1",
@@ -393,7 +393,7 @@ async def test_lifecycle_change_is_corrected_into_separate_ordered_operations():
 
     agent = EmbodyAgent(
         llm_client=_LLM(json.dumps(invalid)), character_incorporation_model="model",
-        scene_interpretation_model="model",
+        scene_interpretation_model="model", psychological_interpretation_model="model",
     )
     with pytest.raises(EmbodimentGenerationError, match="invalid psychological consolidation output"):
         await agent._consolidate_profile(
@@ -463,7 +463,7 @@ async def test_consolidation_preserves_independent_goal_or_reinforces_equivalent
         decision["goal_operations"] = [{"operation": "reinforce", "target": {"scope": "existing", "index": 1},
                                         "title": None, "description": None, "goal_type": None, **evidence}]
     llm = _LLM(json.dumps({"consolidation": decision}))
-    job = EmbodyAgent(llm_client=llm, character_incorporation_model="model", scene_interpretation_model="model")
+    job = EmbodyAgent(llm_client=llm, character_incorporation_model="model", scene_interpretation_model="model", psychological_interpretation_model="model")
     goals = [{"id": "maker", "title": existing_title, "description": "Understand my origins.",
               "goal_type": "objective", "status": "active", "in_focus": True}]
     result = await job._consolidate_profile(
@@ -491,7 +491,7 @@ async def test_rejected_candidates_preserve_profile_and_scene_data(kind, descrip
         "focused_aspects": [{"scope": "existing", "index": 1}],
         "focused_goals": [{"scope": "existing", "index": 1}],
     }}))
-    job = EmbodyAgent(llm_client=llm, character_incorporation_model="model", scene_interpretation_model="model")
+    job = EmbodyAgent(llm_client=llm, character_incorporation_model="model", scene_interpretation_model="model", psychological_interpretation_model="model")
     aspects = [{"id": "origin", "name": "I am a manufactured vessel", "category": "identity",
                 "status": "active", "in_focus": True, "evidence_ids": ["scene:earlier"]}]
     goals = [{"id": "investigation", "title": "Expose the occult conspiracy", "goal_type": "objective",
@@ -547,7 +547,7 @@ async def test_doll_origin_and_agency_conviction_survive_consolidation_and_repea
         "focused_goals": [],
     }}
     llm = _LLM([json.dumps(first), json.dumps(repeated)])
-    job = EmbodyAgent(llm_client=llm, character_incorporation_model="model", scene_interpretation_model="model")
+    job = EmbodyAgent(llm_client=llm, character_incorporation_model="model", scene_interpretation_model="model", psychological_interpretation_model="model")
     aspects = [dict(conviction)]
     descriptions = ["Ernst learns that he is a manufactured vessel of Belshazar.",
                     "Ernst accepts that he is a doll whose memories were threaded during molding."]

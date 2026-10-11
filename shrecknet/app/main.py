@@ -43,7 +43,7 @@ from app.api.routers import (
 )
 from app.services.pdf_embedding_service import PdfEmbeddingService
 from app.core.config_store import get_settings, update_settings
-from app.core.config_store import LLMModelTarget
+from app.core.config_store import CHARACTER_AGENT_MODEL_FIELDS, LLMModelTarget
 from app.celery_queue_reaper import reset_jobs_and_queues_on_startup
 from app.db.init_db import init_db_async
 from app.db.init_jobs_db import init_jobs_db
@@ -245,10 +245,7 @@ async def _run_llm_prewarm() -> None:
         settings.model_librarian_planner,
         settings.model_librarian_synthesis,
         getattr(settings, "model_librarian_character_incorporation", settings.model_librarian_synthesis),
-        getattr(settings, "model_character_agent_framing", settings.model_elder_planner),
-        getattr(settings, "model_character_agent_deliberation", settings.model_elder_planner),
-        getattr(settings, "model_character_agent_character_incorporation", settings.model_elder_planner),
-        getattr(settings, "model_character_agent_scene_interpretation", settings.model_elder_planner),
+        *[getattr(settings, field, settings.model_elder_planner) for field in CHARACTER_AGENT_MODEL_FIELDS],
         settings.model_agents_repair_json,
         settings.model_architect_scene_chunking,
         settings.model_architect_entity_proposal,

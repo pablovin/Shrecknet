@@ -70,7 +70,7 @@ Label: `CharacterAgent`
 | `image_url` | string or null | no | Maximum 2,048 characters. An omitted value is derived from the entity avatar or the first configured image property when available. |
 | `status` | string enum | yes | `active` or `archived`; defaults to `active`. Only active agents may be queried. |
 | `visibility` | string enum | yes for new nodes | `private` or `public`; defaults to `private`. Missing legacy values are read and authorized as `private`. |
-| `trait_profile` | JSON string | yes | Eight directional estimates, separate STEADINESS, evidence metadata, and audited manual overrides. Returned as a typed object; see [Dispositional traits](Dispositional%20Traits.md) for extraction and audit. It is not sent to decision making. |
+| `trait_profile` | JSON string | yes | Eight directional estimates, separate STEADINESS, evidence metadata, and audited manual overrides. Returned as a typed object; see [Dispositional traits](Dispositional%20Traits.md) for extraction and audit. The raw profile is not sent to decision making; compact projection is documented below. |
 | `created_by_user_id` | integer | yes | SQL user ID of the administrator that created the node. |
 | `created_at` | datetime string | yes | UTC ISO-8601 creation timestamp. |
 | `updated_at` | datetime string | yes | UTC ISO-8601 timestamp changed by agent updates. |
@@ -79,6 +79,11 @@ An agent cannot change `ontology_id`, its embodied entity, `id`,
 `created_by_user_id`, or `created_at` through the update contract.
 
 ## Chronological identity revisions
+
+Stage-specific provider/model targets and independent reasoning flags are defined
+in [CharacterAgent model configuration](Model%20Configuration.md). That contract
+also covers administrator frontend controls, automatic config migration, and
+checkpoint invalidation when a target or reasoning flag changes.
 
 Embodiment loads the persisted `identity_description`, generating one from the
 entity name/type/descriptor/text/properties and current goals, aspects, and trait
@@ -458,10 +463,17 @@ The service also enforces these rules:
 ## Query projection
 
 Identity-grounded decision making uses one normal LLM deliberation call. It
-supplies the persistent `identity_description` as its sole personality source,
-the caller's decision situation, and up to five owner-scoped subjective memories
-selected against the query and context alone. It does not send authored background,
-numerical traits, STEADINESS, active aspects, or goals. Generic mode receives no
+supplies the persistent `identity_description` for supported motives and individual
+meaning, the caller's decision situation, and up to five owner-scoped subjective
+memories selected against query/context alone. The prompt appraises relevant
+psychological demands and constraints before choosing a plausible response;
+dispositions are tendencies rather than fixed rules. When `use_character_identity`
+is `true` (the default), the service always supplies effective numerical directions/statuses and separate
+evidence-checked Steadiness through a typed compact projection. Effective scores
+control direction when an older portrait disagrees; they do not invent motives or
+choice probabilities. The raw profile, authored background, full aspects/goals,
+and evidence ledger remain excluded. Missing/obsolete profiles keep usable
+portrait-only decisions with unknown numerical context. Generic mode receives no
 identity data. Submit through
 `POST /character-agents/{character_agent_id}/decision-making` and poll
 `GET /character-agents/{character_agent_id}/decision-making-jobs/{job_id}`.
@@ -609,7 +621,7 @@ ten active goals; focus changes do not alter lifecycle status. See the
 for the migration and verification details.
 
 
-Prompt version `character-embodiment-v42-behavioral-identity` participates
+Prompt version `character-embodiment-v43-four-model-roles` participates
 in source and chunk checkpoint fingerprints, so retries do not reuse outputs
 from older prompt versions. Generation output and persisted profile shapes remain
 unchanged; revision reads add derived `trait_history` details without a database

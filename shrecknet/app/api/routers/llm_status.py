@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, status
 
 from app.api.deps import get_current_user
-from app.core.config_store import get_settings
+from app.core.config_store import CHARACTER_AGENT_MODEL_FIELDS, get_settings
 from app.services.shreckllm_status_service import (
     get_all_provider_validations,
     get_provider_model_catalog,
@@ -58,6 +58,7 @@ async def get_service_status(
         return {
             "provider": provider_id,
             "model": model_name,
+            "reasoning": getattr(target, "reasoning", False),
             "provider_active": provider_active,
             "model_available": model_available,
             "active": provider_active and (model_available is not False),
@@ -88,9 +89,6 @@ async def get_service_status(
             "model_librarian_planner": _target_status(settings.model_librarian_planner),
             "model_librarian_synthesis": _target_status(settings.model_librarian_synthesis),
             "model_librarian_character_incorporation": _target_status(getattr(settings, "model_librarian_character_incorporation", settings.model_librarian_synthesis)),
-            "model_character_agent_framing": _target_status(getattr(settings, "model_character_agent_framing", settings.model_elder_planner)),
-            "model_character_agent_deliberation": _target_status(getattr(settings, "model_character_agent_deliberation", settings.model_elder_planner)),
-            "model_character_agent_character_incorporation": _target_status(getattr(settings, "model_character_agent_character_incorporation", settings.model_elder_planner)),
-            "model_character_agent_scene_interpretation": _target_status(getattr(settings, "model_character_agent_scene_interpretation", settings.model_elder_planner)),
+            **{field: _target_status(getattr(settings, field)) for field in CHARACTER_AGENT_MODEL_FIELDS},
         },
     }

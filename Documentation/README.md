@@ -7,6 +7,7 @@ Welcome to the Shrecknet documentation! This directory contains all organized do
 - [CharacterAgent](./Agents/CharacterAgent/CharacterAgent.md)
 - [CharacterAgent Decision Making](./Agents/CharacterAgent/Query/Query.md)
 - [CharacterAgent endpoints](./Agents/CharacterAgent/CharacterAgent%20-%20Endpoints.md)
+- [CharacterAgent model configuration](./Agents/CharacterAgent/Model%20Configuration.md) — four stage-specific targets, frontend reasoning controls, automatic migration, and rollback
 - [Dispositional traits](./Agents/CharacterAgent/Dispositional%20Traits.md) — constructs, diagnostic extraction, continuous revision inference, evidence-grounded synthesis, offline evaluation, and deployment
 - [Historical dispositional-traits design record](./Agents/CharacterAgent/Dispositional%20Traits%20Plan.md) — superseded embodiment design notes; use the current contract above
 - [Point based traits implementation record](./Agents/CharacterAgent/Point-Based%20Traits%20Redesign%20Plan.md) — equations, graph contract, flow, cutover, and verification decisions
@@ -14,6 +15,7 @@ Welcome to the Shrecknet documentation! This directory contains all organized do
 - [Embodiment structured output reliability implementation record](./Agents/CharacterAgent/Embodiment%20Structured%20Output%20Reliability%20Plan.md) — typed consolidation contracts, shared lifecycle rules, bounded recovery, configuration migration, compatibility, and verification
 - [Embodiment model contract audit plan](./Agents/CharacterAgent/Embodiment%20Model%20Contract%20Audit%20Plan.md) — five-stage model/schema audit, typed trait context, provider parity, and per-chunk checkpoint recovery proposal
 - [Behavioral identity synthesis plan](./Agents/CharacterAgent/Behavioral%20Identity%20Synthesis%20Plan.md) — synthesis and evaluation implementation record; live comparison and pilot protocol remain pending
+- [Personality-conditioned decision-making plan](./Agents/CharacterAgent/Personality-Conditioned%20Decision%20Making%20Plan.md) — numerical context and situational deliberation implementation record; isolated comparison tooling is implemented, live evaluation and pilot remain pending
 
 ## Elder
 

@@ -71,6 +71,12 @@ def main() -> None:
     resources_mod = ast.parse(_get_source(ROOT / "shrecknet_client" / "resources.py"))
 
     pages = {
+        "character-agents.md": _class_page(
+            "CharacterAgentsAPI",
+            _find_class(resources_mod, "CharacterAgentsAPI"),
+            [node.name for node in _find_class(resources_mod, "CharacterAgentsAPI").body
+             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and not node.name.startswith("_")],
+        ),
         "async-client.md": _class_page(
             "AsyncShrecknetClient",
             _find_class(client_mod, "AsyncShrecknetClient"),
@@ -102,7 +108,7 @@ def main() -> None:
         (OUT_DIR / name).write_text(content, encoding="utf-8")
 
     (OUT_DIR / "index.md").write_text(
-        """# API Reference (Generated)\n\nGenerated from SDK source docstrings and method signatures.\n\n- [AsyncShrecknetClient](./async-client.md)\n- [Shrecknet](./shrecknet.md)\n- [WorldsAPI](./worlds.md)\n- [OntologiesAPI](./ontologies.md)\n- [OntologyInstancesAPI](./ontology-instances.md)\n""",
+        """# API Reference (Generated)\n\nGenerated from SDK source docstrings and method signatures.\n\n- [AsyncShrecknetClient](./async-client.md)\n- [Shrecknet](./shrecknet.md)\n- [CharacterAgentsAPI](./character-agents.md)\n- [WorldsAPI](./worlds.md)\n- [OntologiesAPI](./ontologies.md)\n- [OntologyInstancesAPI](./ontology-instances.md)\n""",
         encoding="utf-8",
     )
 

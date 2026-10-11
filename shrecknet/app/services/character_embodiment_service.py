@@ -540,6 +540,7 @@ class CharacterEmbodimentService:
             llm_client=llm_client,
             character_incorporation_model=settings.model_character_agent_character_incorporation,
             scene_interpretation_model=settings.model_character_agent_scene_interpretation,
+            psychological_interpretation_model=settings.model_character_agent_psychological_interpretation,
             validation_retries=settings.character_agent_embodiment_validation_retries,
         )
         identity_description = existing_identity or await identity_job.generate_identity_description(
@@ -553,6 +554,7 @@ class CharacterEmbodimentService:
             job = EmbodyAgent(llm_client=llm_client,
                 character_incorporation_model=settings.model_character_agent_character_incorporation,
                 scene_interpretation_model=settings.model_character_agent_scene_interpretation,
+                psychological_interpretation_model=settings.model_character_agent_psychological_interpretation,
                 validation_retries=settings.character_agent_embodiment_validation_retries)
             scene_inputs = [SceneInput(**scene) for scene in chunk["scenes"]]
             perspectives = await job.generate_perspectives(

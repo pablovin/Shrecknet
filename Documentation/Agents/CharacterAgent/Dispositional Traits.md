@@ -234,10 +234,17 @@ STEADINESS never controls sampling temperature.
 
 ## Use, operations, and cutover
 
-Decision making uses the persisted `identity_description` as its personality
-source; it does not hydrate numerical trait points, statuses, poles, or
-STEADINESS into the deliberation prompt. Trait estimates remain available for
-profile display and evidence audit.
+Decision making uses the persisted `identity_description` for supported motives
+and character-specific meaning. With `use_character_identity=true` (the default),
+it always adds compact effective values/statuses for all eight directions and separate
+Steadiness verified by `synthesis_steadiness()`. Registry definitions and both
+poles remain authoritative. Directional scores are ordinal tendencies, not
+calibrated probabilities or percentiles. Manual values control direction when
+an older portrait disagrees, without establishing new motives. Steadiness guides
+comparable-context variability without controlling temperature or randomly
+overriding choices. Missing/obsolete profiles keep portrait-only behavior with
+unknown values. See [decision input, fallback, and rollout rules](Query/Query.md#personality-and-situational-deliberation).
+Trait estimates remain available for profile display and evidence audit.
 The administrator evidence endpoint is
 `GET /character-agents/{agent_id}/trait-evidence`; its records have
 `perspective_id`, `polarity`, `situation_type`, `justification`, and backend
@@ -334,7 +341,7 @@ Missing processing information is unknown, distinct from a processed scene with
 zero observations. Counts expose patterns; a high/low imbalance alone does not
 establish a bias.
 
-The prompt version is `character-embodiment-v42-behavioral-identity`;
+The prompt version is `character-embodiment-v43-four-model-roles`;
 synthesis context identifies `evidence-synthesis-v2-behavioral-context`. Definition and evidence-policy
 versions remain unchanged. Existing checkpoints include the prompt version in their
 fingerprint and cannot reuse outputs from the old prompt. Deploy API and workers
@@ -397,14 +404,19 @@ service; failed inference does not publish a successful report.
 
 ## Behavioral identity evaluation
 
-`tests/fixtures/identity_synthesis.json` contains 29 synthetic frozen synthesis
+`tests/fixtures/identity_synthesis.json` contains 32 synthetic frozen synthesis
 inputs: both poles of all eight directional traits, unknown/sparse/mixed evidence,
 comparable-context consistency, equal diligence with different authored motives,
 supported and unsupported interactions, temporary state, manual/inferred conflict,
-a missing ledger, competing goals, and a non-diagnostic factual question.
+a missing ledger, competing goals, a non-diagnostic factual question, constrained
+responses at both Forbearance poles, and an older forgiving portrait with an
+effective manual retaliation score.
 They are authored review cases, not evidence about real
 characters. `identity_synthesis_baseline.txt` preserves the complete v41 synthesis
-prompt and registry contract for comparison.
+prompt and registry contract for comparison. `decision_making_baseline.txt` preserves
+the complete previous portrait-only decision prompt. Fixture version is
+`behavioral-identity-v2-decision-situations`; earlier portrait reports must be
+regenerated against the identical expanded fixture bytes before comparison.
 
 Run from `shrecknet/` with a reachable configured shreckLLM service:
 
@@ -428,17 +440,66 @@ capability, and opportunity. Identity arms have identical empty memory lists;
 all situational knowledge is in the shared context. This isolates the portrait
 without changing normal gameplay's subjective memory retrieval. Trial order
 alternates. Neutral mode receives no identity or memories. No graph operations,
-profile writes, or production retrieval changes occur. At 29 cases and 20 trials,
-decision replay requests 1,740 deliberations before any repair calls; use an
+profile writes, or production retrieval changes occur. At 32 cases and 20 trials,
+each decision comparison requests 1,920 deliberations before any repair calls; use an
 explicit smaller `--trials` value for a smoke check.
 
 Reports retain validated outputs, fixture/prompt hashes, configured model settings,
 temperatures, request counts including replacements/repair, synthesis token
-estimates, and portrait-report hashes for decisions. Seeds are not supplied by
-this runner and are recorded as null. Decision token totals are not estimated.
-Transport or validation failures raise and do not publish a successful report;
-there is no resumable partial replay. Existing report files are not removed on
-failure. Baseline and candidate reports must match the identical fixture hash.
+estimates, and portrait-report hashes for decisions. Decision report version 2
+also records per-trial model/reasoning settings, context inclusion, latency,
+request-message hashes, input-token estimates (characters divided by four, not
+provider billing), and failures. Output/hidden-reasoning token totals are not
+available in this runner. Seeds are not supplied and are recorded as null.
+Decision inference/validation failures remain explicit `error` trial records and
+contribute to `failed_trials`, rather than disappearing from action counts.
+Successful trials carry `result`; failed trials carry `error` with `type` and
+`message` and no result. Synthesis failures still abort. Interrupted runs are not
+resumable, and existing report files are not removed on an aborted run. Baseline
+and candidate portrait reports must match the identical fixture hash.
+
+### Isolated decision comparisons
+
+`--comparison portraits` is the default and changes only the portrait. Other
+comparisons hold the candidate portrait fixed for both identity arms:
+
+| Comparison | Baseline arm | Candidate arm |
+| --- | --- | --- |
+| `prompt` | Supplied previous complete decision prompt; no numeric context | Current decision prompt; no numeric context |
+| `context` | Current prompt; portrait only | Same prompt/portrait plus compact scores and Steadiness |
+| `reasoning` | Same current prompt, portrait, numeric context and model; reasoning off | Identical inputs/model; reasoning on |
+
+Each comparison retains the generic neutral arm without character context and
+alternates trial order. `--deliberation-target /path/to/target.json` accepts an
+explicit `LLMModelTarget` object (`provider`, `name`, `reasoning`) for this run;
+it never updates production settings. Use a provider/model supporting reasoning
+for that comparison. Prompt overrides are local to the evaluation client and
+never alter production prompt globals or JSON-repair instructions.
+
+```sh
+python -m app.services.character_identity_evaluation decisions \
+  tests/fixtures/identity_synthesis.json prompt-comparison.json --live \
+  --baseline baseline-identity.json --candidate candidate-identity.json \
+  --comparison prompt --decision-baseline-prompt tests/fixtures/decision_making_baseline.txt \
+  --trials 20
+python -m app.services.character_identity_evaluation decisions \
+  tests/fixtures/identity_synthesis.json context-comparison.json --live \
+  --baseline baseline-identity.json --candidate candidate-identity.json \
+  --comparison context --trials 20
+python -m app.services.character_identity_evaluation decisions \
+  tests/fixtures/identity_synthesis.json reasoning-comparison.json --live \
+  --baseline baseline-identity.json --candidate candidate-identity.json \
+  --comparison reasoning --deliberation-target /path/to/target.json --trials 20
+```
+
+Captured-output review accepts the same `--comparison` label with `--outputs`;
+it records that declared comparison and the captured-input hash, without
+inventing model or prompt provenance. Failed-trial records may be included.
+Predeclare quality, failure-rate, latency, and cost criteria before reviewing
+outputs. The portrait-only context ablation is available only within the evaluation
+client; production identity mode always supplies numerical context. Use these
+comparisons to assess its effect and evaluate reasoning independently. Current tests establish transport and boundary
+behavior; live comparisons and a reviewed production pilot remain pending.
 
 Captured-output review is offline and makes no inference calls:
 

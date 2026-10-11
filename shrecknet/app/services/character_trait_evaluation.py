@@ -69,6 +69,7 @@ async def replay_cases(cases: list[dict], prompt_file: Path | None = None) -> tu
             job = EmbodyAgent(llm_client=client,
                 character_incorporation_model=settings.model_character_agent_character_incorporation,
                 scene_interpretation_model=settings.model_character_agent_scene_interpretation,
+                psychological_interpretation_model=settings.model_character_agent_psychological_interpretation,
                 validation_retries=settings.character_agent_embodiment_validation_retries)
             perspective = ScenePerspectiveOutput(
                 scene_id=case['scene_id'], evidence_ids=[f"scene:{case['scene_id']}"],
@@ -90,7 +91,7 @@ async def replay_cases(cases: list[dict], prompt_file: Path | None = None) -> tu
         await client.aclose()
     return output, {'prompt_version': PROMPT_VERSION if not prompt_file else 'custom-baseline',
                     'prompt_sha256': hashlib.sha256(prompt.encode()).hexdigest(),
-                    'model': settings.model_character_agent_scene_interpretation.model_dump(mode='json'),
+                    'model': settings.model_character_agent_psychological_interpretation.model_dump(mode='json'),
                     'llm_calls': calls, 'total_tokens_est': tokens}
 
 

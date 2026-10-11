@@ -4,8 +4,11 @@ IDENTITY_DESCRIPTION_PROMPT resolves narrative grounding when absent and
 refreshes it after embodiment using scores, contributing evidence, bounded grounded
 perspectives, accepted psychology, separate comparable-context Steadiness, and
 continuity-only prior text -> conditional psychological portrait. It never supplies
-new numerical trait evidence. This Stage 0 frames scene interpretation when missing
-and renders the final persisted portrait after processing; it adds no model stage.
+new numerical trait evidence. Stage 0 uses character incorporation; Stage 1 and
+Stage 4 use scene interpretation; Stage 2 and Stage 3 use psychological
+interpretation, with independent target reasoning flags. This Stage 0 frames scene
+interpretation when missing and renders the final persisted portrait after
+processing; it adds no model stage.
 For each source scene chunk, PERSPECTIVE_PROMPT runs first:
     objective scenes -> psychologically distinctive subjective perspectives.
     A truncated response retries with PERSPECTIVE_TRUNCATION_RECOVERY_PROMPT.
@@ -48,7 +51,7 @@ IDENTITY_TRAIT_DESCRIPTION_CONTRACT = (
         for key in DIRECTIONAL_TRAITS
     ], ensure_ascii=False)
 )
-PROMPT_VERSION = "character-embodiment-v42-behavioral-identity"
+PROMPT_VERSION = "character-embodiment-v43-four-model-roles"
 
 # Purpose: Define consistency separately from the eight directional dimensions.
 # Used by: IDENTITY_DESCRIPTION_PROMPT, alongside IDENTITY_TRAIT_DESCRIPTION_CONTRACT.

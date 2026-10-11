@@ -262,8 +262,16 @@ identity deliberation/rendering call. Before it, the worker deterministically
 retrieves up to five relevant active `ScenePerspective` records owned by the
 queried CharacterAgent; it never reads objective Scene content or another
 character's memory. Retrieval ranks the caller's `query` and `context` only.
-The call uses persisted `identity_description` as its sole personality input;
-missing identity fails the job with `error.code="identity_unavailable"`.
+The call uses persisted `identity_description` for character psychology and
+always supplies compact effective numerical dispositions and separate
+evidence-checked Steadiness when `use_character_identity=true`. This existing
+request flag is the only switch for personality; `false` excludes all character
+personality and memory inputs. Traits influence plausible responses only
+when relevant to the situation; they are not guaranteed choices. Public payloads
+and results remain unchanged. Missing identity fails the job with
+`error.code="identity_unavailable"`; missing or obsolete numerical profiles do not
+remove portrait-only decisions. See [input authority, fallback, configuration,
+and rollback](Query/Query.md#personality-and-situational-deliberation).
 Invalid final JSON may receive one repair attempt through
 `model_agents_repair_json`. Generic mode also uses one call and receives no
 CharacterAgent identity.
@@ -585,11 +593,14 @@ and regenerate. There is no conversion or compatibility alias. See
 
 ### Configuration
 
-- `model_character_agent_character_incorporation`: batch scene perspectives.
-- `model_character_agent_scene_interpretation`: narrative identity description
-  generation/refresh, per-scene psychological enrichment, and trait interpretation.
-- `model_character_agent_deliberation`: v3 query deliberation. `model_character_agent_framing`
-  is retained as an unused compatibility setting and should not be configured for new deployments.
+- `model_character_agent_character_incorporation`: Stage 0 identity description
+  generation and refresh.
+- `model_character_agent_scene_interpretation`: Stage 1 scene perspectives and
+  Stage 4 aspect/goal consolidation.
+- `model_character_agent_psychological_interpretation`: Stage 2 psychological
+  enrichment and Stage 3 directional trait interpretation.
+- `model_character_agent_decision_making`: single-call decision deliberation in
+  character and neutral modes; its `reasoning` flag remains independently configurable.
 - `model_agents_repair_json`: query final repair target.
 - Aspect and goal focus are capped at ten each. Historical records and active
   out-of-focus records have no capacity limit; the former capacity settings were
@@ -600,4 +611,12 @@ and regenerate. There is no conversion or compatibility alias. See
   [debug artifact details](Dispositional%20Traits.md#local-embodiment-debug-artifacts).
 
 Model targets default to empty provider/name until configured or reconciled.
+All four roles have an independent `reasoning` boolean exposed by the administrator
+`GET /config/`, `GET /config/schema`, and `PUT /config/` contracts. Authenticated
+`GET /llm_status/` includes the targets and flags. Existing deliberation settings
+migrate to decision making; the new psychological target starts from the saved
+scene target when absent. Framing and deliberation are removed from config reads,
+schema, and status; updates using those retired names return `400`. See the
+[model configuration and migration contract](Model%20Configuration.md) for the
+complete frontend payload, precedence, operational steps, and rollback.
 Unrelated belief, emotion, aspect and goal scales retain their existing meanings.

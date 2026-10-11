@@ -39,6 +39,7 @@ from app.schemas.character_agent import (
 
 from app.schemas.character_traits import TraitProfile, TraitEvidence, DIRECTIONAL_TRAITS, TraitHistoryEstimate
 from app.services.character_trait_service import apply_manual_edits, POLICY_VERSION, trait_history_details, merge_evidence
+from app.services.character_trait_analysis import decision_personality_context
 from app.graphrag.embedding_service import EmbeddingService
 from app.jobs.character_agent.memory import render_memory_document
 from app.core.config_store import get_settings
@@ -554,7 +555,7 @@ class CharacterAgentService:
         return CharacterAgentRead.model_validate(_agent_data(_props(row), allow_legacy_profile=True))
 
     async def load_query_snapshot(self, node_id: str, public_only: bool = False) -> dict[str, Any]:
-        """Load the active agent's identity description and owned memories."""
+        """Load identity, owned memories, and validated personality context."""
         row = await self._one(
             """
             MATCH (agent:CharacterAgent {id: $node_id})-[:EMBODIES]->(:EntityInstance)
@@ -594,12 +595,42 @@ class CharacterAgentService:
         if agent.get("status") != "active":
             raise HTTPException(status_code=409, detail="CharacterAgent is not active")
         identity = _read_identity_description(agent.get("identity_description"))
-        return {
+        snapshot = {
             "character_agent": {
                 "identity_description": identity.model_dump(mode="json") if identity else None,
             },
             "memories": [dict(item) for item in row["memories"]],
         }
+        if identity:
+            try:
+                profile = _read_profile(agent.get("trait_profile"))
+            except HTTPException as exc:
+                if exc.status_code != 409:
+                    raise
+                logger.warning("Decision personality profile requires regeneration for agent %s", node_id)
+                profile = TraitProfile()
+            ledger, invalid = [], False
+            # Only consistency verification needs the ledger. Unknown or authored-only
+            # consistency has no contributing inference and needs no extra graph read.
+            if profile.steadiness.observation_ids:
+                rows = await self.graph.run(
+                    "MATCH (agent:CharacterAgent {id:$agent_id})-[:HAS_REVISION]->(r:CharacterIdentityRevision) "
+                    "WHERE NOT $public_only OR coalesce(agent.visibility,'private')='public' "
+                    "RETURN r.trait_evidence AS evidence ORDER BY r.revision_number ASC",
+                    agent_id=node_id, public_only=public_only,
+                )
+                try:
+                    async for evidence_row in rows:
+                        incoming = [TraitEvidence.model_validate(item)
+                                    for item in json.loads(evidence_row["evidence"] or "[]")]
+                        ledger = merge_evidence(ledger, incoming)
+                except (ValueError, TypeError):
+                    invalid = True
+                    logger.warning("Decision consistency evidence is invalid for agent %s", node_id)
+            snapshot["personality_context"] = decision_personality_context(
+                profile, ledger, evidence_invalid=invalid,
+            ).model_dump(mode="json")
+        return snapshot
 
     async def ensure_queryable(self, node_id: str, public_only: bool = False) -> None:
         """Enforce query visibility and active status without loading identity data."""

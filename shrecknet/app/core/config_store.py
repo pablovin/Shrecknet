@@ -44,6 +44,12 @@ _settings_lock = threading.Lock()
 _data_dir_cache: Path | None = None
 logger = logging.getLogger(__name__)
 
+CHARACTER_AGENT_MODEL_FIELDS = (
+    "model_character_agent_character_incorporation",
+    "model_character_agent_scene_interpretation",
+    "model_character_agent_psychological_interpretation",
+    "model_character_agent_decision_making",
+)
 LLM_TARGET_FIELDS = (
     "model_architect_scene_chunking",
     "model_architect_entity_proposal",
@@ -58,10 +64,7 @@ LLM_TARGET_FIELDS = (
     "model_librarian_planner",
     "model_librarian_synthesis",
     "model_librarian_character_incorporation",
-    "model_character_agent_framing",
-    "model_character_agent_deliberation",
-    "model_character_agent_character_incorporation",
-    "model_character_agent_scene_interpretation",
+    *CHARACTER_AGENT_MODEL_FIELDS,
     "model_orchestrator_routing",
     "model_orchestrator_synthesis",
 )
@@ -140,6 +143,24 @@ def _sqlite_url(filename: str) -> str:
 
 LEGACY_VALIDATION_RETRIES = "character_agent_embodiment_semantic_correction_attempts"
 VALIDATION_RETRIES = "character_agent_embodiment_validation_retries"
+CHARACTER_AGENT_MODEL_SOURCES = {
+    "model_character_agent_psychological_interpretation": "model_character_agent_scene_interpretation",
+    "model_character_agent_decision_making": "model_character_agent_deliberation",
+}
+RETIRED_CHARACTER_AGENT_MODELS = (
+    "model_character_agent_framing", "model_character_agent_deliberation",
+)
+
+
+def migrate_character_agent_model_values(values: dict[str, Any]) -> dict[str, Any]:
+    """Upgrade stored/seed targets, preserving explicit canonical values and flags."""
+    values = dict(values)
+    for target, source in CHARACTER_AGENT_MODEL_SOURCES.items():
+        if target not in values and source in values:
+            values[target] = values[source]
+    for key in RETIRED_CHARACTER_AGENT_MODELS:
+        values.pop(key, None)
+    return values
 
 
 def normalize_validation_retry_settings(values: dict[str, Any]) -> dict[str, Any]:
@@ -266,16 +287,16 @@ class Settings(BaseSettings):
     model_librarian_character_incorporation: LLMModelTarget = Field(
         default_factory=lambda: LLMModelTarget(provider="", name="")
     )
-    model_character_agent_framing: LLMModelTarget = Field(
-        default_factory=lambda: LLMModelTarget(provider="", name="")
-    )
-    model_character_agent_deliberation: LLMModelTarget = Field(
-        default_factory=lambda: LLMModelTarget(provider="", name="")
-    )
     model_character_agent_character_incorporation: LLMModelTarget = Field(
         default_factory=lambda: LLMModelTarget(provider="", name="")
     )
     model_character_agent_scene_interpretation: LLMModelTarget = Field(
+        default_factory=lambda: LLMModelTarget(provider="", name="")
+    )
+    model_character_agent_psychological_interpretation: LLMModelTarget = Field(
+        default_factory=lambda: LLMModelTarget(provider="", name="")
+    )
+    model_character_agent_decision_making: LLMModelTarget = Field(
         default_factory=lambda: LLMModelTarget(provider="", name="")
     )
     character_agent_embodiment_validation_retries: int = Field(
@@ -400,7 +421,7 @@ def _load_initial_settings_file() -> dict[str, Any]:
             raise ValueError(f"Invalid Shrecknet config seed file '{path}': {exc}") from exc
         if not isinstance(payload, dict):
             raise ValueError(f"Invalid Shrecknet config seed file '{path}': expected JSON object")
-        payload = normalize_validation_retry_settings(payload)
+        payload = migrate_character_agent_model_values(normalize_validation_retry_settings(payload))
         allowed = set(Settings.model_fields)
         unknown = sorted(set(payload) - allowed)
         if unknown:
@@ -611,11 +632,37 @@ def _migrate_novelist_v3_targets(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def _migrate_character_agent_targets(conn: sqlite3.Connection) -> None:
+    """Atomically split model roles before normalization and default seeding.
+
+    Insert only missing targets; never overwrite a user's new configuration.
+    Validate all copied targets before any write or retired-key deletion.
+    """
+    current = _load_settings_from_db(conn)
+    migrated = migrate_character_agent_model_values(current)
+    additions = {}
+    for key in CHARACTER_AGENT_MODEL_SOURCES:
+        if key not in current and key in migrated:
+            raw = migrated[key]
+            target = LLMModelTarget.from_legacy(raw) if isinstance(raw, str) else LLMModelTarget.model_validate(raw)
+            additions[key] = target.model_dump()
+    timestamp = _current_timestamp()
+    with conn:
+        conn.executemany(
+            f"INSERT INTO {CONFIG_TABLE} (key, value, updated_at) VALUES (?, ?, ?) "
+            "ON CONFLICT(key) DO NOTHING",
+            [(key, _serialize_value(value), timestamp) for key, value in additions.items()],
+        )
+        conn.executemany(f"DELETE FROM {CONFIG_TABLE} WHERE key = ?",
+                         [(key,) for key in RETIRED_CHARACTER_AGENT_MODELS])
+
+
 def load_settings() -> Settings:
     conn = _connect()
     try:
         _ensure_schema(conn)
         _normalize_legacy_database_urls(conn)
+        _migrate_character_agent_targets(conn)
         _normalize_legacy_llm_targets(conn)
         _migrate_novelist_v3_targets(conn)
         _migrate_embedding_model(conn)
@@ -644,6 +691,9 @@ def reload_settings() -> Settings:
 def update_settings(updates: dict[str, Any]) -> Settings:
     global _settings_cache
     with _settings_lock:
+        retired = set(updates) & set(RETIRED_CHARACTER_AGENT_MODELS)
+        if retired:
+            raise ValueError(f"Retired CharacterAgent model settings: {', '.join(sorted(retired))}")
         current = _settings_cache or load_settings()
         settings_dict = current.model_dump()
         settings_dict.update(normalize_validation_retry_settings(updates))
@@ -661,7 +711,9 @@ def update_settings(updates: dict[str, Any]) -> Settings:
                 # A blank target is the intentional pre-provider startup state.
                 # It is filled when Agents is enabled and shreckLLM has a usable model.
                 if not provider and not name:
-                    settings_dict[field_name] = LLMModelTarget(provider="", name="").model_dump()
+                    settings_dict[field_name] = LLMModelTarget(
+                        provider="", name="", reasoning=raw_value.get("reasoning", False),
+                    ).model_dump()
                     continue
                 if (provider or "openai") == "openai" and (name or "gpt-5-nano") not in ALLOWED_OPENAI_MODELS:
                     name = "gpt-5-nano"

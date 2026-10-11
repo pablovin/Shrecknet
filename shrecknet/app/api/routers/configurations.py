@@ -16,6 +16,7 @@ from app.api.deps import get_current_active_admin_or_world_builder, get_current_
 from app.celery_app import configure_celery_app
 from app.core.config_store import (
     BOOTSTRAP_ENV_FIELDS,
+    CHARACTER_AGENT_MODEL_FIELDS,
     LLM_TARGET_FIELDS,
     VALIDATION_RETRIES,
     LLMModelTarget,
@@ -214,10 +215,7 @@ SETTINGS_GROUPS: list[dict[str, Any]] = [
             "model_librarian_planner",
             "model_librarian_synthesis",
             "model_librarian_character_incorporation",
-            "model_character_agent_framing",
-            "model_character_agent_deliberation",
-            "model_character_agent_character_incorporation",
-            "model_character_agent_scene_interpretation",
+            *CHARACTER_AGENT_MODEL_FIELDS,
             "character_agent_embodiment_debug_artifacts_enabled",
             "model_orchestrator_routing",
             "model_orchestrator_synthesis",
@@ -340,10 +338,10 @@ FIELD_UI_META: dict[str, dict[str, Any]] = {
     "model_librarian_planner": {"type": "llm_target", "help": "Provider/model target for Librarian information-needs planning."},
     "model_librarian_synthesis": {"type": "llm_target", "help": "Provider/model target for Librarian cited answer synthesis."},
     "model_librarian_character_incorporation": {"type": "llm_target", "help": "Provider/model target for Librarian language and character rendering."},
-    "model_character_agent_framing": {"type": "llm_target", "help": "Deprecated compatibility setting; CharacterAgent query v3 does not invoke framing."},
-    "model_character_agent_deliberation": {"type": "llm_target", "help": "Provider/model target for the single CharacterAgent query v3 deliberation."},
-    "model_character_agent_character_incorporation": {"type": "llm_target", "help": "Provider/model target for per-scene CharacterAgent voice and reflection incorporation."},
-    "model_character_agent_scene_interpretation": {"type": "llm_target", "help": "Provider/model target for per-scene psychological enrichment and trait/aspect/goal candidate extraction."},
+    "model_character_agent_psychological_interpretation": {"type": "llm_target", "help": "Stages 2 and 3: psychological enrichment and directional trait interpretation."},
+    "model_character_agent_decision_making": {"type": "llm_target", "help": "Single-call CharacterAgent decision making in character and neutral modes."},
+    "model_character_agent_character_incorporation": {"type": "llm_target", "help": "Stage 0: generate and refresh the CharacterAgent identity summaries."},
+    "model_character_agent_scene_interpretation": {"type": "llm_target", "help": "Stage 1: scene perspectives; Stage 4: aspect and goal consolidation."},
     "character_agent_embodiment_validation_retries": {"type": "integer", "help": "Shared invalid-output replacement budget per embodiment generation unit (0–3, default 1)."},
     "character_agent_embodiment_debug_artifacts_enabled": {"type": "boolean", "help": "Write complete local CharacterAgent embodiment request, response, correction, and final-pipeline logs under databases/local_test."},
     "librarian_debug_artifacts_enabled": {"type": "boolean", "help": "Write Librarian local-test JSON artifacts and manifests."},
@@ -419,6 +417,13 @@ def _validate_updates(payload: dict[str, Any]) -> dict[str, Any]:
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Unknown config keys: {', '.join(sorted(unknown))}",
         )
+    for field in set(payload) & set(LLM_TARGET_FIELDS):
+        if not isinstance(payload[field], dict):
+            raise HTTPException(status_code=400, detail=f"{field} must be an object with provider/name/reasoning")
+        try:
+            LLMModelTarget.model_validate(payload[field])
+        except ValidationError as exc:
+            raise HTTPException(status_code=400, detail=f"Invalid model target: {field}") from exc
     merged = get_settings().model_dump()
     merged.update(payload)
     if VALIDATION_RETRIES in payload:
@@ -588,7 +593,7 @@ def get_config_schema() -> dict[str, Any]:
         {"id": "elder", "label": "Elder Agent", "fields": ["model_elder_planner", "model_elder_synthesis", "model_elder_character_incorporation", "elder_debug_artifacts_enabled", "elder_query_embedding_timeout_s", "embedding_runtime_enabled", "embedding_runtime_queue_max_size", "embedding_runtime_batch_max_size", "embedding_runtime_batch_wait_ms", "embedding_runtime_cache_size", "embedding_runtime_request_timeout_s", "embedding_runtime_startup_timeout_s", "embedding_runtime_fail_open_health", "embedding_model_id", "embedding_dimension", "embedding_device", "semantic_embedding_strategy", "semantic_embedding_version", "semantic_embedding_long_text_threshold_tokens", "semantic_embedding_chunk_target_tokens", "semantic_embedding_chunk_overlap_tokens"]},
         {"id": "novelist", "label": "Novelist Agent", "fields": ["model_novelist_analysis", "model_novelist_writer"]},
         {"id": "librarian", "label": "Librarian Agent", "fields": ["model_librarian_planner", "model_librarian_synthesis", "model_librarian_character_incorporation", "librarian_debug_artifacts_enabled"]},
-        {"id": "character_agent", "label": "Character Agent", "fields": ["model_character_agent_framing", "model_character_agent_deliberation", "model_character_agent_character_incorporation", "model_character_agent_scene_interpretation", "character_agent_embodiment_validation_retries", "character_agent_embodiment_debug_artifacts_enabled"]},
+        {"id": "character_agent", "label": "Character Agent", "fields": [*CHARACTER_AGENT_MODEL_FIELDS, "character_agent_embodiment_validation_retries", "character_agent_embodiment_debug_artifacts_enabled"]},
         {"id": "security_tokens", "label": "Security Tokens", "fields": ["jwt_issuer", "jwt_audience", "jwt_kid", "jwt_access_token_expiry_minutes"]},
         {"id": "legacy_migration", "label": "Legacy Migration", "fields": ["old_database_url"]},
     ]

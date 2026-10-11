@@ -1,4 +1,4 @@
-"""Evidence-grounded identity context and offline extraction diagnostics.
+"""Evidence-grounded identity/decision context and offline extraction diagnostics.
 
 The diagnostic CLI reads an administrator-exported JSON ledger without network
 access: python -m app.services.character_trait_analysis INPUT.json OUTPUT.json.
@@ -10,7 +10,9 @@ import json
 from collections import defaultdict
 from pathlib import Path
 
-from app.schemas.character_traits import DIRECTIONAL_TRAITS, TraitEvidence, TraitProfile
+from app.schemas.character_traits import (
+    DIRECTIONAL_TRAITS, TraitEvidence, TraitProfile, DecisionPersonalityContext,
+)
 from app.services.character_trait_service import (
     directional_items, merge_evidence, steadiness_estimate, trait_history_details,
 )
@@ -20,6 +22,22 @@ EXTRACTION_VERSION = 'diagnostic-observations-v1'
 EXAMPLE_LIMIT = 4
 EXAMPLE_CHARS = 600
 PERSPECTIVE_LIMIT = 6
+
+
+def decision_personality_context(
+    profile: TraitProfile, evidence: list[TraitEvidence], *, evidence_invalid: bool = False,
+) -> DecisionPersonalityContext:
+    """Project effective direction and verified consistency without leaking evidence."""
+    steadiness = synthesis_steadiness(profile, evidence)
+    if evidence_invalid:
+        steadiness.update(availability='unavailable', inferred_value=None,
+                         reason='Revision evidence is invalid; regeneration is required.')
+    return DecisionPersonalityContext(
+        dispositions={key: {'value': profile.estimate(key).point,
+                            'status': profile.estimate(key).status}
+                      for key in DIRECTIONAL_TRAITS},
+        steadiness=steadiness,
+    )
 
 
 def bounded_previous_identity(value) -> dict | None:

@@ -102,6 +102,25 @@ async def test_llm_prewarm_includes_architect_and_novelist_targets(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_llm_prewarm_includes_four_active_character_roles_only(monkeypatch):
+    from app.core.config_store import CHARACTER_AGENT_MODEL_FIELDS
+
+    settings = _settings()
+    for index, field in enumerate(CHARACTER_AGENT_MODEL_FIELDS):
+        setattr(settings, field, LLMModelTarget(provider='ollama', name=field, reasoning=bool(index % 2)))
+    settings.model_character_agent_framing = LLMModelTarget(provider='ollama', name='retired-framing')
+    settings.model_character_agent_deliberation = LLMModelTarget(provider='ollama', name='retired-deliberation')
+    client = _FakeClient()
+    monkeypatch.setattr(main, 'get_settings', lambda: settings)
+    monkeypatch.setattr(main, 'ShreckLLMClient', lambda **kwargs: client)
+    monkeypatch.setattr(main, 'get_all_provider_validations', _runtime)
+    await main._run_llm_prewarm()
+    for field in CHARACTER_AGENT_MODEL_FIELDS:
+        assert str(getattr(settings, field)) in client.calls
+    assert not any('retired-' in call for call in client.calls)
+
+
+@pytest.mark.asyncio
 async def test_llm_prewarm_failure_isolated_per_model(monkeypatch):
     fake_settings = _settings("elder-model", "librarian-model")
     fake_client = _FakeClient()

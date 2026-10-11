@@ -31,6 +31,31 @@ class World(BaseModel):
     ontology_ids: list[int] = Field(default_factory=list)
 
 
+class LLMModelTarget(BaseModel):
+    """Provider target with an independent provider-native reasoning flag."""
+    model_config = {"extra": "forbid"}
+    provider: str
+    name: str
+    reasoning: bool = False
+
+
+class CharacterAgentModelConfig(BaseModel):
+    """Four targets projected from the administrator Shrecknet config response."""
+    model_character_agent_character_incorporation: LLMModelTarget
+    model_character_agent_scene_interpretation: LLMModelTarget
+    model_character_agent_psychological_interpretation: LLMModelTarget
+    model_character_agent_decision_making: LLMModelTarget
+
+
+class CharacterAgentModelConfigUpdate(BaseModel):
+    """Partial model update; omitted/None targets are left unchanged."""
+    model_config = {"extra": "forbid"}
+    model_character_agent_character_incorporation: LLMModelTarget | None = None
+    model_character_agent_scene_interpretation: LLMModelTarget | None = None
+    model_character_agent_psychological_interpretation: LLMModelTarget | None = None
+    model_character_agent_decision_making: LLMModelTarget | None = None
+
+
 class CharacterQueryResponseFormat(BaseModel):
     type: str = "text"
     schema_: dict[str, Any] | None = Field(None, alias="schema")

@@ -73,7 +73,7 @@ def test_legacy_seed_preserves_custom_limit(isolated_config, monkeypatch):
 
 
 def test_constructor_compatibility():
-    args = dict(llm_client=None, character_incorporation_model="m", scene_interpretation_model="m")
+    args = dict(llm_client=None, character_incorporation_model="m", scene_interpretation_model="m", psychological_interpretation_model="m")
     assert EmbodyAgent(**args, semantic_correction_attempts=2).validation_retries == 2
     assert EmbodyAgent(**args, validation_retries=0, semantic_correction_attempts=2).validation_retries == 0
     with pytest.raises(ValueError):
@@ -94,3 +94,13 @@ def test_invalid_retry_limit_is_a_config_client_error(isolated_config, monkeypat
     with pytest.raises(HTTPException) as raised:
         configurations._validate_updates({config.VALIDATION_RETRIES: 4})
     assert raised.value.status_code == 400
+
+
+def test_decision_personality_has_no_separate_server_toggle(isolated_config):
+    key = 'character_agent_decision_personality_context_enabled'
+    assert key not in config.Settings.model_fields
+    assert key not in str(configurations.get_config_schema())
+    from fastapi import HTTPException
+    with pytest.raises(HTTPException) as error:
+        configurations._validate_updates({key: False})
+    assert error.value.status_code == 400

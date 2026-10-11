@@ -53,7 +53,10 @@ async def test_decision_snapshot_loads_identity_and_owned_memories_only(monkeypa
 
     monkeypatch.setattr(service, "_one", one)
     snapshot = await service.load_query_snapshot("agent-1", public_only=True)
+    from app.schemas.character_traits import TraitProfile
+    from app.services.character_trait_analysis import decision_personality_context
     assert snapshot == {
+        "personality_context": decision_personality_context(TraitProfile(), []).model_dump(mode="json"),
         "character_agent": {"identity_description": {
             "identity_summary": "A guard",
             "psychological_summary": "Fears betrayal",
@@ -436,3 +439,84 @@ async def test_query_job_polling_accepts_parsed_details_dict(monkeypatch):
     )
     assert result.status == "done"
     assert result.result.content == {"choice_id": "trace-the-handwriting"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('raw_profile', [None, 'obsolete profile'])
+async def test_decision_snapshot_context_handles_missing_and_obsolete_profiles(monkeypatch, raw_profile):
+    from app.schemas.character_traits import DIRECTIONAL_TRAITS
+    service = CharacterAgentService(None, None)
+
+    async def one(query, **params):
+        return {'agent': {'status': 'active', 'trait_profile': raw_profile,
+                         'identity_description': {'identity_summary': 'Guard',
+                                                  'psychological_summary': 'Fears betrayal',
+                                                  'personality_traits': []}}, 'memories': []}
+
+    monkeypatch.setattr(service, '_one', one)
+    snapshot = await service.load_query_snapshot('agent-1', public_only=True)
+    context = snapshot['personality_context']
+    assert set(context['dispositions']) == set(DIRECTIONAL_TRAITS)
+    assert all(item == {'value': None, 'status': 'unknown'} for item in context['dispositions'].values())
+    assert context['steadiness']['availability'] == 'unavailable'
+    assert snapshot['character_agent']['identity_description']['identity_summary'] == 'Guard'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('corruption', ['none', 'missing', 'invalid', 'conflict'])
+async def test_decision_snapshot_verifies_only_owned_revision_evidence(monkeypatch, corruption):
+    import json
+    from app.schemas.character_traits import TraitProfile
+    from app.services.character_trait_service import update_profile
+    from test_character_traits import evidence
+
+    ledger = evidence((1,) * 6)
+    profile, _ = update_profile(TraitProfile(), ledger)
+    assert profile.steadiness.point is not None
+    batch = json.dumps([item.model_dump(mode='json') for item in ledger])
+    batches = [batch]
+    if corruption == 'missing':
+        batches = []
+    elif corruption == 'invalid':
+        batches = [batch, 'not json']
+    elif corruption == 'conflict':
+        changed = ledger[0].model_copy(update={'polarity': 'low'})
+        batches.append(json.dumps([changed.model_dump(mode='json')]))
+
+    class Graph:
+        async def run(self, query, **params):
+            assert 'HAS_REVISION' in query and 'HAS_PERSPECTIVE' not in query
+            assert params == {'agent_id': 'agent-1', 'public_only': True}
+            assert "coalesce(agent.visibility,'private')='public'" in query
+            async def rows():
+                for value in batches:
+                    yield {'evidence': value}
+            return rows()
+
+    service = CharacterAgentService(None, Graph())
+    async def one(query, **params):
+        return {'agent': {'status': 'active', 'trait_profile': profile.storage_json(),
+                         'identity_description': {'identity_summary': 'Guard',
+                                                  'psychological_summary': 'Fears betrayal',
+                                                  'personality_traits': []}}, 'memories': []}
+    monkeypatch.setattr(service, '_one', one)
+    snapshot = await service.load_query_snapshot('agent-1', public_only=True)
+    context = snapshot['personality_context']
+    assert context['dispositions']['integrity']['value'] == profile.estimate('integrity').point
+    assert context['steadiness']['availability'] == ('available' if corruption == 'none' else 'unavailable')
+    assert 'perspective:s0' not in json.dumps(context)
+    assert 'source_group_id' not in json.dumps(context)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('row,status', [(None, 404), ({'agent': {'status': 'archived'}, 'memories': []}, 409)])
+async def test_decision_snapshot_rejects_inaccessible_or_archived_before_projection(monkeypatch, row, status):
+    from fastapi import HTTPException
+    service = CharacterAgentService(None, None)
+    async def one(query, **params):
+        assert params['public_only'] is True
+        return row
+    monkeypatch.setattr(service, '_one', one)
+    with pytest.raises(HTTPException) as error:
+        await service.load_query_snapshot('agent-1', public_only=True)
+    assert error.value.status_code == status

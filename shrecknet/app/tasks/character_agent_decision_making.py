@@ -128,7 +128,7 @@ async def _run(
     try:
         query = CharacterAgentDecisionMakingJob(
             llm_client=client,
-            deliberation_model=settings.model_character_agent_deliberation,
+            decision_making_model=settings.model_character_agent_decision_making,
             repair_model=settings.model_agents_repair_json,
             report_stage=report,
         )

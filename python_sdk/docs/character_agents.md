@@ -22,8 +22,14 @@ async with Shrecknet(token="...") as sdk:
 
 By default, the query uses the CharacterAgent's persisted `identity_description`
 (`identity_summary`, `psychological_summary`, and qualitative
-`personality_traits`) as its sole personality input. Its authored background,
-numerical traits, STEADINESS, aspects, and goals are not sent. Queries use one
+`personality_traits`) for supported psychology, plus compact numerical
+dispositions and separate evidence-checked Steadiness.
+`use_character_identity=True` always includes all personality inputs; `False`
+excludes them and character memories. There is no separate server toggle. Effective
+scores guide dispositional direction; relevant situations and supported motives
+shape plausible responses rather than deterministic trait rules. No SDK request
+or response fields change. Raw profiles, authored background, full aspects/goals,
+and evidence ledgers are not sent. Queries use one
 deliberation call with deterministic retrieval of the queried character's own
 scene perspectives, ranked from `query` and `context` alone; no other character
 or canonical scene memory is supplied. If the identity description is absent,
@@ -53,6 +59,32 @@ and [offline comparison workflow](../../Documentation/Agents/CharacterAgent/Disp
 The referenced CharacterAgent must still be visible to the caller and active.
 The public `generation` object contains only `temperature`. CharacterAgent query
 calls do not send an explicit output token cap to shreckLLM.
+
+## Administrator model configuration
+
+CharacterAgent exposes four model roles with separate reasoning flags. Stage 0
+uses character incorporation; Stages 1 and 4 use scene interpretation; Stages 2
+and 3 use psychological interpretation; decisions use decision making.
+
+```python
+from shrecknet_client.models import CharacterAgentModelConfigUpdate, LLMModelTarget
+
+current = await sdk.character_agents.get_model_config()
+updated = await sdk.character_agents.update_model_config(
+    CharacterAgentModelConfigUpdate(
+        model_character_agent_psychological_interpretation=LLMModelTarget(
+            provider="openrouter", name="your-configured-model", reasoning=True
+        )
+    )
+)
+```
+
+These administrator methods call Shrecknet's `/config/` endpoint, not shreckLLM's
+provider configuration. Other roles remain unchanged. Each supplied role replaces
+its complete target object. `model_character_agent_deliberation` migrates to
+`model_character_agent_decision_making`; unused framing is removed. Old names
+are rejected on updates. See the [frontend and migration contract](../../Documentation/Agents/CharacterAgent/Model%20Configuration.md)
+and runnable `examples/10_character_agent/02_model_configuration.py`.
 
 ## Administrator embodiment workflow
 

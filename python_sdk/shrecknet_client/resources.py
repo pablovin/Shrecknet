@@ -59,6 +59,8 @@ from .models import (
     ProviderValidation,
     World,
     CharacterAgentQueryRequest,
+    CharacterAgentModelConfig,
+    CharacterAgentModelConfigUpdate,
     CharacterAgentQueryJobRead,
     CharacterAgentQueryQueued,
     CharacterAgentRead,
@@ -312,6 +314,16 @@ class CharacterAgentsAPI:
 
     def __init__(self, client: AsyncShrecknetClient):
         self._client = client
+
+    async def get_model_config(self) -> CharacterAgentModelConfig:
+        """Read the four model roles from Shrecknet config (administrator only)."""
+        data = await self._client.raw_request("GET", "/config/")
+        return CharacterAgentModelConfig.model_validate(data)
+
+    async def update_model_config(self, payload: CharacterAgentModelConfigUpdate) -> CharacterAgentModelConfig:
+        """Update selected role targets; each supplied target replaces its object."""
+        data = await self._client.raw_request("PUT", "/config/", json=payload.model_dump(mode="json", exclude_none=True))
+        return CharacterAgentModelConfig.model_validate(data)
 
     async def trait_definitions(self) -> dict[str, Any]:
         return await self._client.raw_request("GET", "/character-agents/trait-definitions")

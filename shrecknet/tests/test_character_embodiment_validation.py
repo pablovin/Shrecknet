@@ -37,7 +37,7 @@ class Responses:
 
 def agent(provider, **kwargs):
     return EmbodyAgent(llm_client=provider, character_incorporation_model="m",
-                      scene_interpretation_model="m", **kwargs)
+                      scene_interpretation_model="m", psychological_interpretation_model="m", **kwargs)
 
 
 VALID = json.dumps({"perspectives": [{"source_type": "participated", "perspective": "I chose to help."}]})

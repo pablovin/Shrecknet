@@ -39,7 +39,9 @@ from app.integrations.llm.structured_output import (
 )
 from app.integrations.llm.shreckllm_client import LLMProviderUnavailableError
 from app.jobs.character_agent.embodiment_debug_artifacts import EmbodimentDebugArtifacts
-from app.jobs.character_agent.consolidation import ConsolidationEnvelope, prepare_consolidation
+from app.jobs.character_agent.consolidation import (
+    ConsolidationEnvelope, consolidation_output_schema, prepare_consolidation,
+)
 from app.jobs.character_agent.profile import _apply_aspect_ops, _apply_goal_ops
 from app.jobs.character_agent.embody_agent_prompts import (
     IDENTITY_DESCRIPTION_PROMPT,
@@ -1044,6 +1046,7 @@ class EmbodyAgent:
             max_tokens=EMBODIMENT_LLM_MAX_TOKENS, model=self.scene_interpretation_model,
             semantic_validator=lambda value: prepare_consolidation(
                 value, events=events, aspects=aspects_snapshot, goals=goals_snapshot),
+            output_binding={"aspect_count": len(aspects_snapshot), "goal_count": len(goals_snapshot)},
             source_entity_id=analysis.source_entity_id,
             source_entity_alias=analysis.source_entity_alias,
         )
@@ -1096,7 +1099,12 @@ class EmbodyAgent:
 def _model_output_schema(
     schema: type[BaseModel], output_binding: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    """Return the model-owned schema with exact position-bound list length."""
+    """Bind model-owned schemas to the supplied scene/profile snapshot."""
+    if schema is ConsolidationEnvelope and output_binding is not None:
+        return consolidation_output_schema(
+            aspect_count=output_binding["aspect_count"],
+            goal_count=output_binding["goal_count"],
+        )
     result = copy.deepcopy(schema.model_json_schema())
     if schema is _PerspectivesLLMContainer:
         scene_ids = (output_binding or {}).get("scene_ids")

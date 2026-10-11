@@ -33,6 +33,7 @@ apply lifecycle/focus rules before acceptance. Trait aggregation remains
 deterministic. Prompts do not receive full scene history or produce public output.
 """
 import json
+from app.schemas.character_agent import MAX_EMBODIMENT_JUSTIFICATION_LENGTH
 from app.jobs.character_agent.trait_evidence_contract import TRAIT_DEFINITION_CONTRACT, TRAIT_EVIDENCE_CONTRACT
 from app.schemas.character_traits import DIRECTIONAL_TRAITS, TRAIT_BY_KEY
 
@@ -51,7 +52,7 @@ IDENTITY_TRAIT_DESCRIPTION_CONTRACT = (
         for key in DIRECTIONAL_TRAITS
     ], ensure_ascii=False)
 )
-PROMPT_VERSION = "character-embodiment-v44-weighted-scenes"
+PROMPT_VERSION = "character-embodiment-v45-consolidation-justifications"
 
 # Purpose: Define consistency separately from the eight directional dimensions.
 # Used by: IDENTITY_DESCRIPTION_PROMPT, alongside IDENTITY_TRAIT_DESCRIPTION_CONTRACT.
@@ -586,7 +587,10 @@ support aspect operations. Valid references alone do not prove completion: requi
 clear supporting evidence before selecting a lifecycle change.
 
 Limits: names/titles 1–255 characters, descriptions at most 1000, nonblank
-justifications 1–500. Aspect names must begin with "I ". All reference indexes
+justifications 1–""" + str(MAX_EMBODIMENT_JUSTIFICATION_LENGTH) + r""" characters.
+This justification limit is mandatory for every existing operation, new item,
+and nested change. Before returning JSON, shorten any justification exceeding
+the limit; never return an overlong justification. Aspect names must begin with "I ". All reference indexes
 are positive JSON integers (never strings, booleans or fractions). Event reference
 arrays are nonempty arrays of supplied ID strings. No member of any required
 array may be null. Return one complete JSON document only."""

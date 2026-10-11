@@ -1,6 +1,10 @@
 import json
 
 import pytest
+from jsonschema import Draft202012Validator
+from pydantic import ValidationError
+from app.jobs.character_agent import consolidation
+from app.jobs.character_agent.embody_agent_prompts import PSYCHOLOGICAL_CONSOLIDATION_PROMPT
 
 from app.jobs.character_agent.embody_agent import (
     EmbodyAgent,
@@ -9,7 +13,9 @@ from app.jobs.character_agent.embody_agent import (
     _bind_llm_enrichments,
 )
 from app.jobs.character_agent.profile import _apply_aspect_ops, _apply_goal_ops
-from app.jobs.character_agent.consolidation import ConsolidationEnvelope, prepare_consolidation
+from app.jobs.character_agent.consolidation import (
+    ConsolidationEnvelope, consolidation_output_schema, prepare_consolidation,
+)
 from app.schemas.character_agent import (
     AspectUpdateData,
     EmbodyAgentAnalysis,
@@ -17,6 +23,8 @@ from app.schemas.character_agent import (
     GoalUpdateData,
     ProfileEventOutput,
     ScenePerspectiveBundleOutput,
+    EmbodimentAspectProposal,
+    EmbodimentGoalProposal,
 )
 
 
@@ -39,6 +47,141 @@ def _analysis(events):
         profile_events=events,
         llm_calls=[],
     )
+
+
+@pytest.mark.parametrize("model_name", [
+    "AspectChange", "GoalChange", "AspectTransition", "GoalTransition",
+    "NewAspect", "NewGoal", "AspectUpdate", "GoalUpdate",
+    "ExistingAspectTransition", "ExistingGoalTransition",
+])
+@pytest.mark.parametrize("length", [501, 770, 1009, 1500, 1501])
+def test_all_consolidation_justifications_enforce_1500_in_validator_and_schema(model_name, length):
+    model = getattr(consolidation, model_name)
+    data = {"justification": "x" * length, "event_references": ["event-001"]}
+    aspect = "Aspect" in model_name
+    if "Transition" in model_name:
+        data.update(operation="status", status="active")
+    else:
+        data.update({key: None for key in (
+            ("name", "description", "category") if aspect
+            else ("title", "description", "goal_type"))})
+        if model_name.startswith("New"):
+            data.update(in_focus=True, changes=[])
+            data.update({"name": "I am a keeper", "category": "role"} if aspect
+                        else {"title": "Find the archive", "goal_type": "objective"})
+        else:
+            data["operation"] = "reinforce"
+    if model_name in ("AspectUpdate", "GoalUpdate") or model_name.startswith("Existing"):
+        data["target"] = {"scope": "existing", "index": 1}
+    schema = consolidation_output_schema(aspect_count=1, goal_count=1)
+    item_schema = {"$ref": f"#/$defs/{model_name}", "$defs": schema["$defs"]}
+    assert schema["$defs"][model_name]["properties"]["justification"]["maxLength"] == 1500
+    validator = Draft202012Validator(item_schema)
+    if length <= 1500:
+        value = model.model_validate(data)
+        validator.validate(data)
+        assert len(value.justification) == length
+    else:
+        with pytest.raises(ValidationError):
+            model.model_validate(data)
+        assert not validator.is_valid(data)
+
+
+@pytest.mark.parametrize("kind", ["aspect", "goal"])
+def test_draft_proposals_preserve_1500_character_justifications(kind):
+    data = {"suggestion_id": "item-1", "justification": "x" * 1500}
+    model = EmbodimentAspectProposal if kind == "aspect" else EmbodimentGoalProposal
+    data.update({"name": "I am a keeper", "category": "role"} if kind == "aspect"
+                else {"title": "Find the archive", "description": "Find it.", "goal_type": "objective"})
+    assert len(model.model_validate(data).justification) == 1500
+    assert model.model_json_schema()["properties"]["justification"]["maxLength"] == 1500
+    with pytest.raises(ValidationError):
+        model.model_validate({**data, "justification": "x" * 1501})
+
+
+def test_consolidation_prompt_states_the_hard_justification_limit():
+    assert "justifications 1–1500 characters" in PSYCHOLOGICAL_CONSOLIDATION_PROMPT
+    assert "mandatory for every existing operation, new item," in PSYCHOLOGICAL_CONSOLIDATION_PROMPT
+
+
+@pytest.mark.parametrize("kind", ["aspect", "goal"])
+@pytest.mark.parametrize("count", [0, 1, 3])
+@pytest.mark.parametrize("operation", ["focus", "reinforce", "status"])
+def test_consolidation_schema_bounds_each_kind_to_its_input(kind, count, operation):
+    schema = consolidation_output_schema(
+        aspect_count=count if kind == "aspect" else 5,
+        goal_count=count if kind == "goal" else 5,
+    )
+    Draft202012Validator.check_schema(schema)
+    validator = Draft202012Validator(schema)
+    payload = {"consolidation": {
+        "aspect_operations": [], "goal_operations": [], "new_aspects": [], "new_goals": [],
+        "focused_aspects": [], "focused_goals": [],
+    }}
+    validator.validate(payload)
+    reference = {"scope": "existing", "index": count + 1}
+    if operation == "focus":
+        payload["consolidation"][f"focused_{kind}s"] = [reference]
+    else:
+        entry = {"operation": operation, "target": reference,
+                 "justification": "Source evidence.", "event_references": ["event-001"]}
+        if operation == "status":
+            entry["status"] = "active"
+        else:
+            entry.update({key: None for key in (
+                ("name", "description", "category") if kind == "aspect"
+                else ("title", "description", "goal_type"))})
+        payload["consolidation"][f"{kind}_operations"] = [entry]
+    assert not validator.is_valid(payload)
+    if count:
+        reference["index"] = count
+        validator.validate(payload)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fallback", [False, True])
+async def test_new_aspect_focus_uses_addition_flag_and_bounded_retry_schema(fallback):
+    invalid = {"consolidation": {
+        "aspect_operations": [], "goal_operations": [], "new_goals": [],
+        "new_aspects": [{"name": "I refuse to be a pawn", "description": None,
+                         "category": "identity", "in_focus": True,
+                         "justification": "An enduring conviction.",
+                         "event_references": ["event-001"], "changes": []}],
+        "focused_aspects": [{"scope": "existing", "index": 1},
+                            {"scope": "existing", "index": 2}],
+        "focused_goals": [],
+    }}
+    corrected = json.loads(json.dumps(invalid))
+    corrected["consolidation"]["focused_aspects"].pop()
+
+    class Provider(_LLM):
+        async def chat(self, **kwargs):
+            if fallback and "response_format" in kwargs:
+                self.calls.append(kwargs)
+                raise RuntimeError("provider does not support response_format")
+            self.calls.append(kwargs)
+            return json.dumps(invalid if len(self.calls) == (2 if fallback else 1) else corrected)
+
+    llm = Provider([])
+    current = [{"id": "a1", "name": "I process trauma through clinical clarity",
+                "status": "active", "in_focus": True}]
+    result = await EmbodyAgent(
+        llm_client=llm, character_incorporation_model="model",
+        scene_interpretation_model="model", psychological_interpretation_model="model",
+    )._consolidate_profile(
+        analysis=_analysis([ProfileEventOutput(kind="aspect", description="An enduring conviction.",
+                                               scene_id="s1")]),
+        current_aspects=current, current_goals=[],
+    )
+    schema = llm.calls[0]["response_format"]["json_schema"]["schema"]
+    assert not Draft202012Validator(schema).is_valid(invalid)
+    Draft202012Validator(schema).validate(corrected)
+    correction = json.loads(llm.calls[-1]["messages"][1]["content"])
+    assert correction["required_output_schema"] == schema
+    assert "existing:2 is unavailable" in correction["validation_errors"][0]["message"]
+    assert len(llm.calls) == (4 if fallback else 2)
+    assert result["focused_aspects"] == ["aspect:i-refuse-to-be-a-pawn", "a1"]
+    assert len(current) == 1
 
 
 @pytest.mark.parametrize("kind", ["aspect", "goal"])

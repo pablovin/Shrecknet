@@ -39,8 +39,8 @@ async def test_manual_edit_creates_typed_snapshot_and_actor_audit():
     result=await CharacterAgentService(None,graph).update_agent('a',CharacterAgentUpdate(
         trait_edits={'integrity':TraitEdit(point=7,reason='Authored by administrator.')}),user_id=12)
     assert result.trait_profile.dispositional_traits['integrity'].point==7
-    snapshots=[p['props'] for q,p in graph.calls if 'CREATE (revision:CharacterIdentityRevision)' in q]
-    changes=[p['props'] for q,p in graph.calls if 'CREATE (change:CharacterIdentityChange)' in q]
+    snapshots=[row['props'] for q,p in graph.calls if 'CREATE (revision:CharacterIdentityRevision)' in q for row in p['rows']]
+    changes=[row['props'] for q,p in graph.calls if 'CREATE (change:CharacterIdentityChange)' in q for row in p['rows']]
     assert snapshots[0]['revision_number']==5
     assert json.loads(snapshots[0]['active_aspect_ids'])==['aspect-1']
     assert json.loads(snapshots[0]['active_goal_ids'])==['goal-1']

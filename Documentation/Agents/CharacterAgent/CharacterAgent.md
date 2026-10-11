@@ -210,6 +210,23 @@ do not enter the invalid-model replacement loop.
 
 `consolidation.py` contains typed existing-item operations and self-contained
 new-item contracts with nested lifecycle changes, then binds them into the existing `AspectUpdateData`/`GoalUpdateData` objects.
+Stage 4's provider JSON Schema bounds existing target and focus indices separately
+to the aspect and goal counts in the input snapshot. When a category has no
+existing items, its operations and existing-focus arrays must be empty; new
+additions remain allowed and select focus through their own `in_focus` flag.
+An addition never extends the existing-index range within that response. The
+same bounded schema accompanies validation replacements. Providers that fall
+back to plain JSON still undergo backend reference validation and the shared
+bounded correction flow. Public API and stored profile shapes are unchanged;
+deploy matching API/worker code, with no migration or backfill required.
+Every Stage 4 `justification` is nonblank and contains at most 1,500 characters,
+including existing-item operations, new items, and nested changes. The prompt,
+provider JSON Schema (`maxLength: 1500`), and Pydantic validator share
+`MAX_EMBODIMENT_JUSTIFICATION_LENGTH`. Draft aspect/goal proposals accept the
+same maximum so generation results survive timeline projection. Overlong output
+is rejected through the shared validation retry budget, never silently truncated.
+Prompt version `character-embodiment-v45-consolidation-justifications` invalidates
+older intermediate checkpoints; accepted drafts and revisions need no backfill.
 It contains no lifecycle state engine. Validation, application, and timeline
 replay all use `_apply_aspect_ops` and `_apply_goal_ops` in `profile.py`; these
 reducers apply to copies and publish state only when the requested update is
@@ -489,6 +506,33 @@ See [Dispositional traits](Dispositional%20Traits.md) for the trait contract.
 This page documents psychological enrichment, source-level consolidation,
 relationship-owned aspect/goal state, and historical scene memories.
 
+### Saving a reviewed draft
+
+Acceptance through `POST /character-agents` or `PATCH /character-agents/{agent_id}`
+keeps the generated timeline in one graph transaction. Revision snapshots,
+identity changes, perspectives, emotions, beliefs, and legacy impacts use
+`UNWIND` batches of up to 128 rows per record type. Batch boundaries do not
+commit partial history. Scene scope and append revision conflicts are checked
+before timeline writes; legacy impact targets must belong to the same agent.
+Revision numbers, evidence provenance, and `GENERATED_WITH` links are preserved.
+Aspect/goal definition resolution retains ontology-scoped reuse rules.
+
+After the graph commit, acceptance encodes only the new timeline's persisted
+`memory_document` values using `EmbeddingService.embed_texts` in batches of up to
+128, then writes vectors in owner-scoped batches. Existing historical memories
+are not re-encoded during append. Writes also check that the document has not
+changed since encoding. Encoding remains synchronous with the save response;
+large drafts and initial model loading can still take time. Encoder failure logs
+`character_timeline_embedding_deferred` and leaves lexical recall available
+without rolling back the identity. Manual perspective edits continue refreshing
+the affected aggregate individually.
+
+Legacy impact reads allow `caused_by_milestone_id` to be null when no `CAUSED_BY`
+relationship exists, without requiring an artificial relationship to initialize
+the database. No schema migration, new configuration, or SDK payload changes are
+required. Deploy by rebuilding/restarting the API and workers; rollback uses the
+same graph records and contracts.
+
 ### Background jobs
 
 `character_agent.generate_embodiment` generates a reviewable embodiment draft.
@@ -611,7 +655,7 @@ ten active goals; focus changes do not alter lifecycle status. See the
 for the migration and verification details.
 
 
-Prompt version `character-embodiment-v44-weighted-scenes` participates
+Prompt version `character-embodiment-v45-consolidation-justifications` participates
 in source and chunk checkpoint fingerprints, so retries do not reuse outputs
 from older prompt versions. Generation output and persisted profile shapes remain
 unchanged; revision reads add derived `trait_history` details without a database
@@ -638,7 +682,7 @@ for request, polling, and output contracts.
 
 ### Reliability deployment and compatibility
 
-The LLM wire contract uses `character-embodiment-v44-weighted-scenes`.
+The LLM wire contract uses `character-embodiment-v45-consolidation-justifications`.
 Stage 3 uses the compact source/reason contract. v4 profiles add revision-owned
 event grouping and baseline Steadiness; API/worker/SDK readers must support these
 additions while retaining v3 history. Numeric event positions and stored stable IDs

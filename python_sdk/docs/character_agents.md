@@ -1,5 +1,10 @@
 # CharacterAgent queries
 
+Embodiment draft aspect/goal proposal `justification` strings accept up to 1,500
+characters. Stage 4 generation enforces the same maximum for operations,
+additions, and nested changes. SDK field shapes are unchanged. See the
+[embodiment contract](../../Documentation/Agents/CharacterAgent/CharacterAgent.md).
+
 ```python
 from shrecknet_client import Shrecknet
 from shrecknet_client.models import CharacterAgentQueryRequest

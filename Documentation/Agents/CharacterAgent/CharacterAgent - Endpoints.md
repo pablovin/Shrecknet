@@ -431,6 +431,13 @@ existing profile and history reads continue to apply.
    the generated timeline. Updating an existing agent appends its generated
    source revisions and commits the reviewed profile and assignments atomically.
 
+Saving batches timeline records and new memory vectors while preserving atomic
+graph acceptance. Vector encoding remains synchronous; encoder failure preserves
+lexical recall and does not undo acceptance. Appends encode only the new timeline,
+not the agent's entire history. See [saving a reviewed draft](CharacterAgent.md#saving-a-reviewed-draft)
+for batching, failure behavior, and deployment details. Request/response payloads
+and status codes are unchanged.
+
 ```json
 {
   "ontology_id": 12,
@@ -490,6 +497,17 @@ changes are nested within each new item, so no generated new-item index is
 needed. The backend generates candidate IDs and translates all operations into
 the unchanged public draft/timeline shape, retaining numeric event positions.
 New items start active; content changes cannot set status.
+The provider output schema limits existing indices to each category's input
+count, including on validation retries. Empty categories require empty existing
+operations and focus arrays. New items select focus with `in_focus: true` and
+cannot be referenced as additional existing indices. Backend validation enforces
+these rules even when native structured output is unavailable. This does not
+change public payloads or stored revisions and requires no migration.
+Stage 4 operation, addition, and nested-change `justification` values must be
+nonblank and at most 1,500 characters. This hard maximum appears in the prompt
+and provider JSON Schema and is enforced by backend validation. Draft aspect
+and goal proposal justifications accept up to 1,500 characters as well. Invalid
+generation output uses the existing shared retry budget; it is not truncated.
 The shared profile reducers own lifecycle and final focus eligibility.
 If the selected existing items and newly focused additions exceed ten in either
 category, the backend first keeps additions supported by the latest source

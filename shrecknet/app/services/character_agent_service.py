@@ -156,6 +156,45 @@ class CharacterAgentService:
                 agent_id, perspective_id, exc_info=True,
             )
 
+    async def refresh_timeline_memory(
+        self, agent_id: str, timeline: CharacterTimelineProjection,
+    ) -> None:
+        """Encode only this timeline's persisted documents in bounded batches."""
+        ids = [item.id for source in timeline.source_projections for item in source.perspectives]
+        if not ids:
+            return
+        try:
+            encoder = EmbeddingService()
+            for offset in range(0, len(ids), 128):
+                result = await self.graph.run(
+                    "MATCH (:CharacterAgent {id:$agent_id})-[:HAS_PERSPECTIVE]->"
+                    "(p:ScenePerspective) WHERE p.id IN $ids "
+                    "RETURN p.id AS id, p.memory_document AS document",
+                    agent_id=agent_id, ids=ids[offset:offset + 128],
+                )
+                documents = [dict(row) async for row in result]
+                if not documents:
+                    continue
+                vectors = await asyncio.to_thread(
+                    encoder.embed_texts, [row["document"] for row in documents],
+                )
+                if len(vectors) != len(documents):
+                    raise ValueError("Perspective embedding count does not match document count")
+                await self.graph.run(
+                    "UNWIND $rows AS row "
+                    "MATCH (:CharacterAgent {id:$agent_id})-[:HAS_PERSPECTIVE]->"
+                    "(p:ScenePerspective {id:row.id}) "
+                    "WHERE p.memory_document=row.document "
+                    "SET p.memory_embedding=row.vector, p.memory_embedding_model=$model, "
+                    "p.memory_embedding_version=$version, p.memory_embedded_at=$timestamp",
+                    agent_id=agent_id,
+                    rows=[{**row, "vector": vector} for row, vector in zip(documents, vectors)],
+                    model=encoder.model_id, version=get_settings().semantic_embedding_version,
+                    timestamp=_now(),
+                )
+        except Exception:
+            logger.warning("character_timeline_embedding_deferred agent_id=%s", agent_id, exc_info=True)
+
     async def _require_ontology(self, ontology_id: int) -> None:
         result = await self.sql.execute(select(Ontology.id).where(Ontology.id == ontology_id))
         if result.scalar_one_or_none() is None:
@@ -513,8 +552,7 @@ class CharacterAgentService:
         # roll back an accepted identity; lexical memory documents are already
         # present as a safe fallback.
         if timeline:
-            for perspective in await self.list_perspectives(result["id"], 0, 10_000):
-                await self.refresh_perspective_memory(result["id"], perspective.id)
+            await self.refresh_timeline_memory(result["id"], timeline)
         agent = CharacterAgentRead.model_validate(_agent_data(result))
         if draft:
             draft.status = CharacterEmbodimentDraftStatus.ACCEPTED
@@ -887,8 +925,7 @@ class CharacterAgentService:
         draft.status = CharacterEmbodimentDraftStatus.ACCEPTED
         draft.active_entity_key = None
         await self.sql.commit()
-        for perspective in await self.list_perspectives(node_id, 0, 10_000):
-            await self.refresh_perspective_memory(node_id, perspective.id)
+        await self.refresh_timeline_memory(node_id, timeline)
         return CharacterAgentRead.model_validate(_agent_data(updated))
 
     async def _record_manual_traits_tx(self, tx, agent_id, revision_id, number, timestamp,
@@ -908,6 +945,7 @@ class CharacterAgentService:
         model: str | None = None, prompt_version: str | None = None,
         trait_evidence: list[TraitEvidence] | None = None,
         batch_id: str | None = None, scene_ids: list[str] | None = None,
+        rows: list[dict[str, Any]] | None = None,
     ) -> None:
         profile = _read_profile(agent.get("trait_profile"))
         props = {
@@ -927,18 +965,27 @@ class CharacterAgentService:
             "provenance_type": provenance_type, "provider": provider, "model": model,
             "prompt_version": prompt_version, "created_at": timestamp,
         }
-        await tx.run(
-            """
-            MATCH (agent:CharacterAgent {id:$agent_id})
-            CREATE (revision:CharacterIdentityRevision) SET revision=$props
-            CREATE (agent)-[:HAS_REVISION]->(revision)
-            WITH revision
-            OPTIONAL MATCH (source:EntityInstance {entity_instance_id:$source_group_id})
-            FOREACH (_ IN CASE WHEN source IS NULL THEN [] ELSE [1] END |
-              CREATE (revision)-[:CONSOLIDATED_FROM]->(source))
-            """,
-            agent_id=agent["id"], source_group_id=source_group_id, props=props,
-        )
+        row = {"agent_id": agent["id"], "source_group_id": source_group_id, "props": props}
+        if rows is not None:
+            rows.append(row)
+        else:
+            await self._write_revision_rows_tx(tx, [row])
+
+    @staticmethod
+    async def _write_revision_rows_tx(tx, rows: list[dict[str, Any]]) -> None:
+        for offset in range(0, len(rows), 128):
+            await tx.run(
+                """
+                UNWIND $rows AS row
+                MATCH (agent:CharacterAgent {id:row.agent_id})
+                CREATE (revision:CharacterIdentityRevision) SET revision=row.props
+                CREATE (agent)-[:HAS_REVISION]->(revision)
+                WITH revision, row
+                OPTIONAL MATCH (source:EntityInstance {entity_instance_id:row.source_group_id})
+                FOREACH (_ IN CASE WHEN source IS NULL THEN [] ELSE [1] END |
+                  CREATE (revision)-[:CONSOLIDATED_FROM]->(source))
+                """, rows=rows[offset:offset + 128],
+            )
 
     async def _create_change_tx(
         self, tx, agent_id: str, revision_id: str, revision_number: int,
@@ -947,6 +994,7 @@ class CharacterAgentService:
         confidence: float | None = None, justification: str | None = None,
         evidence_ids: list[str] | None = None,
         observation_ids: list[str] | None = None, actor_user_id: int | None = None,
+        rows: list[dict[str, Any]] | None = None,
     ) -> None:
         props = {
             "id": str(uuid4()), "character_agent_id": agent_id,
@@ -959,14 +1007,23 @@ class CharacterAgentService:
             "actor_user_id": actor_user_id, "policy_version": POLICY_VERSION,
             "provenance_type": provenance_type, "created_at": timestamp,
         }
-        await tx.run(
-            """
-            MATCH (revision:CharacterIdentityRevision {id:$revision_id})
-            CREATE (change:CharacterIdentityChange) SET change=$props
-            CREATE (revision)-[:HAS_CHANGE]->(change)
-            """,
-            revision_id=revision_id, props=props,
-        )
+        row = {"revision_id": revision_id, "props": props}
+        if rows is not None:
+            rows.append(row)
+        else:
+            await self._write_change_rows_tx(tx, [row])
+
+    @staticmethod
+    async def _write_change_rows_tx(tx, rows: list[dict[str, Any]]) -> None:
+        for offset in range(0, len(rows), 128):
+            await tx.run(
+                """
+                UNWIND $rows AS row
+                MATCH (revision:CharacterIdentityRevision {id:row.revision_id})
+                CREATE (change:CharacterIdentityChange) SET change=row.props
+                CREATE (revision)-[:HAS_CHANGE]->(change)
+                """, rows=rows[offset:offset + 128],
+            )
 
     async def _persist_timeline_tx(
         self, tx, agent: dict[str, Any], timeline: CharacterTimelineProjection,
@@ -1095,6 +1152,8 @@ class CharacterAgentService:
                     in_focus=item.in_focus,
                 )
                 profile_target_ids[generated_id] = goal_id
+        revision_rows: list[dict[str, Any]] = []
+        change_rows: list[dict[str, Any]] = []
         revision_ids: dict[int, str] = {}
         previous = None
         projections = {
@@ -1129,7 +1188,7 @@ class CharacterAgentService:
                 if item.status.value == "active" and item.in_focus
             ]
             await self._create_revision_tx(
-                tx, snapshot, revision_id, revision.revision_number, timestamp,
+                tx, snapshot, revision_id, revision.revision_number, timestamp, rows=revision_rows,
                 provenance_type="initial" if revision.revision_number == 0 else "generated",
                 source_group_id=revision.source_group_id,
                 last_processed_scene_id=revision.last_processed_scene_id,
@@ -1141,7 +1200,7 @@ class CharacterAgentService:
             if previous and projection:
                 for change in projection.trait_changes:
                     await self._create_change_tx(tx, agent["id"], revision_id, revision.revision_number,
-                        timestamp, change_type="steadiness" if change.trait == "steadiness" else "trait",
+                        timestamp, rows=change_rows, change_type="steadiness" if change.trait == "steadiness" else "trait",
                         field_name=change.trait, previous=change.previous.model_dump(mode="json"),
                         new=change.current.model_dump(mode="json"), provenance_type="generated",
                         source_group_id=revision.source_group_id, justification=change.justification,
@@ -1150,7 +1209,7 @@ class CharacterAgentService:
                 if subtitle_change.operation != "retain":
                     await self._create_change_tx(
                         tx, agent["id"], revision_id, revision.revision_number,
-                        timestamp, change_type="subtitle", field_name="subtitle",
+                        timestamp, rows=change_rows, change_type="subtitle", field_name="subtitle",
                         previous=previous.subtitle, new=revision.subtitle,
                         provenance_type="generated",
                         source_group_id=revision.source_group_id,
@@ -1173,7 +1232,7 @@ class CharacterAgentService:
                                               (item.name if kind == "aspect" else item.title)) in {key, resolved_id}), None)
                         await self._create_change_tx(
                             tx, agent["id"], revision_id, revision.revision_number,
-                            timestamp, change_type=kind, field_name=resolved_id,
+                            timestamp, rows=change_rows, change_type=kind, field_name=resolved_id,
                             previous=before.model_dump(mode="json") if before else None,
                             new=operation.model_dump(mode="json"),
                             provenance_type="generated",
@@ -1206,7 +1265,7 @@ class CharacterAgentService:
                                                                str(entry.suggestion_id or getattr(entry, name_field))) == item_id), None)
                         await self._create_change_tx(
                             tx, agent["id"], revision_id, revision.revision_number,
-                            timestamp, change_type=kind, field_name=item_id,
+                            timestamp, rows=change_rows, change_type=kind, field_name=item_id,
                             previous={"in_focus": item_id in previous_focus},
                             new={"in_focus": item_id in current_focus},
                             provenance_type="generated", source_group_id=revision.source_group_id,
@@ -1214,6 +1273,9 @@ class CharacterAgentService:
                             evidence_ids=[f"scene:{scene_id}" for scene_id in revision.scene_ids],
                         )
             previous = revision
+
+        await self._write_revision_rows_tx(tx, revision_rows)
+        await self._write_change_rows_tx(tx, change_rows)
 
         final_revision = timeline.revisions[-1]
         await tx.run("MATCH (agent:CharacterAgent {id:$id}) SET agent.trait_profile=$profile, agent.subtitle=$subtitle, agent.updated_at=$timestamp",
@@ -1275,6 +1337,10 @@ class CharacterAgentService:
             timestamp=timestamp,
         )
 
+        perspective_rows = []
+        emotion_rows = []
+        belief_rows = []
+        impact_rows = {"CharacterGoal": [], "CharacterAspect": []}
         for projection in timeline.source_projections:
             starting_revision_id = revision_ids[projection.starting_revision_number]
             for item in projection.perspectives:
@@ -1302,19 +1368,8 @@ class CharacterAgentService:
                     # provides safe lexical retrieval until then.
                     "memory_document": memory_document,
                 }
-                await tx.run(
-                    """
-                    MATCH (agent:CharacterAgent {id:$agent_id}),
-                          (scene:Scene {id:$scene_id}),
-                          (revision:CharacterIdentityRevision {id:$revision_id})
-                    CREATE (perspective:ScenePerspective) SET perspective=$props
-                    CREATE (agent)-[:HAS_PERSPECTIVE]->(perspective)
-                    CREATE (perspective)-[:PROJECTS_ON]->(scene)
-                    CREATE (perspective)-[:GENERATED_WITH]->(revision)
-                    """,
-                    agent_id=agent["id"], scene_id=item.scene_id,
-                    revision_id=starting_revision_id, props=props,
-                )
+                perspective_rows.append({"scene_id": item.scene_id,
+                    "revision_id": starting_revision_id, "props": props})
                 for emotion in item.emotions:
                     child_props = {
                         "id": str(uuid4()),
@@ -1323,15 +1378,7 @@ class CharacterAgentService:
                         "created_at": timestamp,
                         "updated_at": timestamp,
                     }
-                    await tx.run(
-                        """
-                        MATCH (perspective:ScenePerspective {id:$perspective_id})
-                        CREATE (node:EmotionalInterpretation) SET node=$props
-                        CREATE (perspective)-[:EVOKES]->(node)
-                        """,
-                        perspective_id=perspective_id,
-                        props=child_props,
-                    )
+                    emotion_rows.append({"perspective_id": perspective_id, "props": child_props})
                 for belief in item.beliefs:
                     child_props = {
                         "id": str(uuid4()),
@@ -1340,15 +1387,7 @@ class CharacterAgentService:
                         "created_at": timestamp,
                         "updated_at": timestamp,
                     }
-                    await tx.run(
-                        """
-                        MATCH (perspective:ScenePerspective {id:$perspective_id})
-                        CREATE (node:CharacterBelief) SET node=$props
-                        CREATE (perspective)-[:FORMS_BELIEF]->(node)
-                        """,
-                        perspective_id=perspective_id,
-                        props=child_props,
-                    )
+                    belief_rows.append({"perspective_id": perspective_id, "props": child_props})
                 for impact in item.impacts:
                     impact_data = impact.model_dump(mode="json")
                     generated_target_id = impact_data.pop("target_id")
@@ -1364,9 +1403,6 @@ class CharacterAgentService:
                         if impact.impact_type.value == "goal_change"
                         else "CharacterAspect"
                     )
-                    assignment = (
-                        "PURSUES" if target_label == "CharacterGoal" else "HAS_ASPECT"
-                    )
                     child_props = {
                         "id": str(uuid4()),
                         "ontology_id": agent["ontology_id"],
@@ -1374,25 +1410,54 @@ class CharacterAgentService:
                         "created_at": timestamp,
                         "updated_at": timestamp,
                     }
-                    result = await tx.run(
-                        f"""
-                        MATCH (agent:CharacterAgent {{id:$agent_id}})-[:{assignment}]->
-                              (target:{target_label} {{id:$target_id}}),
-                              (perspective:ScenePerspective {{id:$perspective_id}})
-                        CREATE (node:CharacterImpact) SET node=$props
-                        CREATE (perspective)-[:HAS_IMPACT]->(node)
-                        CREATE (node)-[:AFFECTS]->(target)
-                        RETURN target.id AS target_id
-                        """,
-                        agent_id=agent["id"],
-                        target_id=target_id,
-                        perspective_id=perspective_id,
-                        props=child_props,
-                    )
-                    if await result.single() is None:
-                        raise ValueError(
-                            "perspective impact target is not active on the CharacterAgent"
-                        )
+                    impact_rows[target_label].append({"target_id": target_id,
+                        "perspective_id": perspective_id, "props": child_props})
+
+        for offset in range(0, len(perspective_rows), 128):
+            await tx.run(
+                """
+                UNWIND $rows AS row
+                MATCH (agent:CharacterAgent {id:$agent_id}),
+                      (scene:Scene {id:row.scene_id}),
+                      (revision:CharacterIdentityRevision {id:row.revision_id})
+                CREATE (perspective:ScenePerspective) SET perspective=row.props
+                CREATE (agent)-[:HAS_PERSPECTIVE]->(perspective)
+                CREATE (perspective)-[:PROJECTS_ON]->(scene)
+                CREATE (perspective)-[:GENERATED_WITH]->(revision)
+                """, agent_id=agent["id"], rows=perspective_rows[offset:offset + 128],
+            )
+        for label, relationship, rows in (
+            ("EmotionalInterpretation", "EVOKES", emotion_rows),
+            ("CharacterBelief", "FORMS_BELIEF", belief_rows),
+        ):
+            for offset in range(0, len(rows), 128):
+                await tx.run(
+                    f"""
+                    UNWIND $rows AS row
+                    MATCH (perspective:ScenePerspective {{id:row.perspective_id}})
+                    CREATE (node:{label}) SET node=row.props
+                    CREATE (perspective)-[:{relationship}]->(node)
+                    """, rows=rows[offset:offset + 128],
+                )
+        for label, rows in impact_rows.items():
+            assignment = "PURSUES" if label == "CharacterGoal" else "HAS_ASPECT"
+            for offset in range(0, len(rows), 128):
+                batch = rows[offset:offset + 128]
+                result = await tx.run(
+                    f"""
+                    UNWIND $rows AS row
+                    MATCH (agent:CharacterAgent {{id:$agent_id}})-[:{assignment}]->
+                          (target:{label} {{id:row.target_id}}),
+                          (perspective:ScenePerspective {{id:row.perspective_id}})
+                    CREATE (node:CharacterImpact) SET node=row.props
+                    CREATE (perspective)-[:HAS_IMPACT]->(node)
+                    CREATE (node)-[:AFFECTS]->(target)
+                    RETURN count(node) AS created
+                    """, agent_id=agent["id"], rows=batch,
+                )
+                row = await result.single()
+                if not row or row["created"] != len(batch):
+                    raise ValueError("perspective impact target is not active on the CharacterAgent")
 
     async def list_trait_evidence(self, agent_id: str, *, trait: str | None = None,
                                   revision: int | None = None, skip: int = 0, limit: int = 100):
@@ -2092,7 +2157,7 @@ class CharacterAgentService:
         await self._require_perspective_owner(agent_id, perspective_id, public_only)
         impact_matches = (
             "OPTIONAL MATCH (node)-[:AFFECTS]->(target) "
-            "OPTIONAL MATCH (node)-[:CAUSED_BY]->(milestone:Milestone) "
+            "OPTIONAL MATCH (node)-[cause]->(milestone:Milestone) WHERE type(cause)=$cause_type "
             "RETURN node, target.id AS target_id, "
             "CASE WHEN target:CharacterGoal THEN 'goal' ELSE 'aspect' END AS target_type, "
             "milestone.id AS caused_by_milestone_id "
@@ -2106,7 +2171,7 @@ class CharacterAgentService:
             {impact_matches}
             ORDER BY node.created_at ASC, node.id ASC
             """,
-            perspective_id=perspective_id,
+            perspective_id=perspective_id, cause_type="CAUSED_BY",
         )
         return [
             model.model_validate(self._child_data(row, kind))
@@ -2121,7 +2186,7 @@ class CharacterAgentService:
         await self._require_perspective_owner(agent_id, perspective_id, public_only)
         impact_matches = (
             "OPTIONAL MATCH (node)-[:AFFECTS]->(target) "
-            "OPTIONAL MATCH (node)-[:CAUSED_BY]->(milestone:Milestone) "
+            "OPTIONAL MATCH (node)-[cause]->(milestone:Milestone) WHERE type(cause)=$cause_type "
             "RETURN node, target.id AS target_id, "
             "CASE WHEN target:CharacterGoal THEN 'goal' ELSE 'aspect' END AS target_type, "
             "milestone.id AS caused_by_milestone_id"
@@ -2135,7 +2200,7 @@ class CharacterAgentService:
                   (node:{label} {{id:$child_id}})
             {impact_matches}
             """,
-            perspective_id=perspective_id,
+            perspective_id=perspective_id, cause_type="CAUSED_BY",
             child_id=child_id,
         )
         if not row:

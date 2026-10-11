@@ -15,6 +15,9 @@ from app.schemas.character_traits import (
 )
 
 
+MAX_EMBODIMENT_JUSTIFICATION_LENGTH = 1500
+
+
 class CharacterAgentStatus(str, Enum):
     ACTIVE = "active"
     ARCHIVED = "archived"
@@ -232,7 +235,7 @@ class EmbodimentAspectProposal(_StrictModel):
     description: str | None = None
     status: CharacterAspectStatus = CharacterAspectStatus.ACTIVE
     in_focus: bool = True
-    justification: str = Field(default="", max_length=500)
+    justification: str = Field(default="", max_length=MAX_EMBODIMENT_JUSTIFICATION_LENGTH)
     evidence_ids: list[str] = Field(default_factory=list)
 
 
@@ -243,7 +246,7 @@ class EmbodimentGoalProposal(_StrictModel):
     goal_type: CharacterGoalType
     status: CharacterGoalStatus = CharacterGoalStatus.ACTIVE
     in_focus: bool = True
-    justification: str = Field(default="", max_length=500)
+    justification: str = Field(default="", max_length=MAX_EMBODIMENT_JUSTIFICATION_LENGTH)
     evidence_ids: list[str] = Field(default_factory=list)
 
 

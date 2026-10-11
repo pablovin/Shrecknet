@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from app.jobs.character_agent.profile import _apply_aspect_ops, _apply_goal_ops, _stable_profile_id
 from app.schemas.character_agent import (
+    MAX_EMBODIMENT_JUSTIFICATION_LENGTH,
     AspectUpdateData, GoalUpdateData, CharacterAspectCategory, CharacterGoalType,
     CharacterAspectStatus, CharacterGoalStatus,
 )
@@ -31,7 +32,7 @@ ProfileReference = ExistingProfileReference
 
 class _Evidence(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    justification: str = Field(min_length=1, max_length=500)
+    justification: str = Field(min_length=1, max_length=MAX_EMBODIMENT_JUSTIFICATION_LENGTH)
     event_references: list[str] = Field(min_length=1)
 
     @field_validator("justification")
@@ -147,6 +148,31 @@ class PsychologicalConsolidationOutput(BaseModel):
 class ConsolidationEnvelope(BaseModel):
     model_config = ConfigDict(extra="forbid")
     consolidation: PsychologicalConsolidationOutput
+
+
+def consolidation_output_schema(*, aspect_count: int, goal_count: int) -> dict:
+    """Constrain existing targets and focus to this request's profile snapshot."""
+    result = ConsolidationEnvelope.model_json_schema()
+    definitions = result["$defs"]
+    properties = definitions["PsychologicalConsolidationOutput"]["properties"]
+    for kind, count, operation_types in (
+        ("aspect", aspect_count, ("AspectUpdate", "ExistingAspectTransition")),
+        ("goal", goal_count, ("GoalUpdate", "ExistingGoalTransition")),
+    ):
+        reference_name = f"Existing{kind.title()}Reference"
+        reference = copy.deepcopy(definitions["ExistingProfileReference"])
+        # With no existing items both referencing arrays must be empty. Keep
+        # their unreachable item schema valid for providers compiling all $defs.
+        reference["properties"]["index"]["maximum"] = max(1, count)
+        definitions[reference_name] = reference
+        bound_reference = {"$ref": f"#/$defs/{reference_name}"}
+        for operation_type in operation_types:
+            definitions[operation_type]["properties"]["target"] = dict(bound_reference)
+        properties[f"focused_{kind}s"]["items"] = dict(bound_reference)
+        if count == 0:
+            properties[f"{kind}_operations"]["maxItems"] = 0
+            properties[f"focused_{kind}s"]["maxItems"] = 0
+    return result
 
 
 def prepare_consolidation(value: ConsolidationEnvelope, *, events: list,

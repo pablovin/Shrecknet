@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from app.schemas.character_traits import TraitEdit, TraitHistoryEstimate, TraitProfile
+from app.schemas.character_traits import DIRECTIONAL_TRAITS, TraitEdit, TraitHistoryEstimate, TraitProfile
 from app.services.character_trait_service import (
     _rounded, apply_manual_edits, directional_details, trait_history_details, update_profile,
 )
@@ -157,8 +157,8 @@ async def test_paginated_revision_read_uses_prior_ledger_without_future_leakage(
 def test_prompt_contracts_explain_gates_poles_and_continuity():
     from app.jobs.character_agent.embody_agent_prompts import IDENTITY_DESCRIPTION_PROMPT, TRAIT_INTERPRETATION_PROMPT
     assert all(gate in TRAIT_INTERPRETATION_PROMPT for gate in ('Whose behavior?', 'What does it reveal?', 'Which direction?'))
-    assert 'Shared investigation is not shared high curiosity' in TRAIT_INTERPRETATION_PROMPT
-    assert 'High and low evidence are equally admissible' in TRAIT_INTERPRETATION_PROMPT
+    assert 'Participation alone does' in TRAIT_INTERPRETATION_PROMPT
+    assert 'Both poles are equally admissible' in TRAIT_INTERPRETATION_PROMPT
     assert '1–2 strong low-pole' in IDENTITY_DESCRIPTION_PROMPT
     assert '8–9 strong' in IDENTITY_DESCRIPTION_PROMPT
     assert 'continuity context only, never new evidence' in IDENTITY_DESCRIPTION_PROMPT
@@ -174,11 +174,18 @@ def test_frozen_evaluation_covers_both_poles_and_scores_misattribution_and_omiss
     outputs = [{'case_id': case['case_id'], 'observations': [
         {'trait': trait, 'polarity': pole, 'justification': 'Fixture-only test output'}
         for trait, pole in case['expected']]} for case in cases]
-    assert score_cases(cases, outputs)['passed_cases'] == len(cases)
+    scored = score_cases(cases, outputs)
+    assert scored['passed_cases'] == len(cases)
+    assert scored['counts_by_pole']['low']['matched_required'] > 0
+    assert scored['counts_by_pole']['low']['missed_required'] == 0
+    assert scored['counts_by_pole']['high']['unsupported_candidates'] == 0
+    assert any(len(case['expected']) == 8 for case in cases)
     outputs[-1]['observations'] = [{'trait': 'curiosity', 'polarity': 'low', 'justification': 'Unsupported'}]
     outputs[0]['observations'] = []
     report = score_cases(cases, outputs)
     assert report['unsupported_candidates'] == 1 and report['missed_required'] == 1
+    assert report['counts_by_pole']['low']['unsupported_candidates'] == 1
+    assert report['counts_by_pole']['high']['missed_required'] == 1
     assert report['passed_cases'] == len(cases) - 2
     with pytest.raises(ValueError, match='exactly one'):
         score_cases(cases, outputs[:-1])
@@ -194,7 +201,7 @@ async def test_model_replay_reuses_extractor_without_profile_writes(monkeypatch)
     class ReplayLLM(FakeLLM):
         async def aclose(self):
             self.closed = True
-    client = ReplayLLM(json.dumps({'scene_trait_interpretations': [{'trait_candidates': []}]}))
+    client = ReplayLLM(json.dumps({'scene_trait_interpretations': [dict.fromkeys(DIRECTIONAL_TRAITS)]}))
     monkeypatch.setattr(shreckllm_client, 'ShreckLLMClient', lambda **kwargs: client)
     original = runtime.TRAIT_INTERPRETATION_PROMPT
     output, provenance = await replay_cases([fixture['cases'][-1]])

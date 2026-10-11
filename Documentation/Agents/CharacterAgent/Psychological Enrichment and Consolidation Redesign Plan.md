@@ -76,9 +76,11 @@ position-bound enrichment for each input scene, containing:
 Stage 2 does not write final aspects or goals, infer their statuses, attach
 graph IDs, duplicate the subjective perspective, or score profile events.
 Backend schemas enforce the shape, bounds, list limits, order, and scene binding.
-Trait interpretation is capped at three valid candidates per scene; malformed
-and duplicate trait candidates are discarded individually. An empty candidate
-list is valid. Scene wrapper errors and incorrect scene counts remain fatal.
+Stage 3 now uses the [eight-slot trait contract](Dispositional%20Traits.md#extraction-and-evidence),
+which supersedes this redesign's original three-candidate list. All eight slots
+are required; each is null or a polarity/context/justification observation.
+Malformed observations become null individually; missing slots and incorrect
+scene counts use bounded correction.
 The backend binds perspectives, scenes, and evidence references by position.
 Remove the `impacts`, `aspect_signals`, and `goal_signals` generation fields.
 

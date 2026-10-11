@@ -11,7 +11,7 @@ for each source scene chunk:
 After all source chunks, optional Stage 4 reconciles profile events using typed
 operations and local references. The backend binds IDs and validates through the
 shared profile reducers. Per-scene outputs allow one aspect event, one goal event,
-and three trait candidates; malformed and duplicate candidates are dropped
+and eight nullable trait slots; malformed candidates are dropped
 individually. Envelope/schema failures use the bounded retry budget, and
 truncation has explicit stage recovery. A source's chunks share one starting
 identity; source bundles run sequentially and each produces one revision.
@@ -31,7 +31,7 @@ from app.services.character_trait_analysis import (
     synthesis_traits, synthesis_perspectives, bounded_previous_identity, SYNTHESIS_VERSION,
 )
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, create_model, model_validator
 
 from app.integrations.llm.structured_output import (
     strict_json_schema,
@@ -66,7 +66,7 @@ from app.schemas.character_agent import (
 
 
 from app.schemas.character_traits import TraitProfile, TraitEvidence, DIRECTIONAL_TRAITS
-from app.schemas.character_traits import TRAIT_BY_KEY
+from app.jobs.character_agent.trait_evidence_contract import trait_context_values
 from app.services.character_trait_service import (
     ground_observations, merge_evidence, update_profile, validate_scene_grounding, scene_digest,
 )
@@ -180,33 +180,22 @@ class _ProfileEventLLMOutput(BaseModel):
 
 
 class _TraitCandidateLLMOutput(BaseModel):
-    """Flat provider contract; trait-specific context is validated by the backend."""
+    """Only model-owned evidence fields; each trait specializes the context enum."""
 
     model_config = ConfigDict(extra="forbid")
-    trait: Literal[DIRECTIONAL_TRAITS]
-    diagnostic_situation: str | None
-    relationship: Literal["friend", "enemy", "other"] | None
-    stakes: Literal["ordinary", "high_stakes"] | None
     polarity: Literal["low", "high"]
-    justification: str = Field(min_length=1, max_length=360)
-
-    @model_validator(mode="after")
-    def context_is_complete_or_unspecified(self):
-        values = (self.diagnostic_situation, self.relationship, self.stakes)
-        if any(value is None for value in values) and any(value is not None for value in values):
-            raise ValueError("trait situation fields must all be set or all be null")
-        if (
-            self.diagnostic_situation is not None
-            and self.diagnostic_situation not in TRAIT_BY_KEY[self.trait].diagnostic_situations
-        ):
-            raise ValueError("diagnostic situation is not allowed for the selected trait")
-        return self
+    context: str
+    justification: str = Field(min_length=1, max_length=360, pattern=r"\S")
 
 
-def _trait_situation_type(candidate: _TraitCandidateLLMOutput) -> str:
-    if candidate.diagnostic_situation is None:
-        return "unspecified"
-    return ":".join((candidate.diagnostic_situation, candidate.relationship, candidate.stakes))
+_TRAIT_SLOT_MODELS = {
+    key: create_model(
+        f"_{key.title()}ObservationLLMOutput",
+        __base__=_TraitCandidateLLMOutput,
+        context=(Literal[trait_context_values(key)], ...),
+    )
+    for key in DIRECTIONAL_TRAITS
+}
 
 
 class _SceneEnrichmentLLMOutput(BaseModel):
@@ -230,15 +219,12 @@ class _SceneEnrichmentsLLMOutput(BaseModel):
     scene_enrichments: list[_SceneEnrichmentLLMOutput]
 
 
-class _SceneTraitInterpretationLLMOutput(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    trait_candidates: list[_TraitCandidateLLMOutput] = Field(max_length=3)
-
-    @model_validator(mode="after")
-    def unique_traits(self):
-        if len({candidate.trait for candidate in self.trait_candidates}) != len(self.trait_candidates):
-            raise ValueError("duplicate trait candidate for one perspective")
-        return self
+# Required nullable fields record a result for every dimension without requiring evidence.
+_SceneTraitInterpretationLLMOutput = create_model(
+    "_SceneTraitInterpretationLLMOutput",
+    __config__=ConfigDict(extra="forbid"),
+    **{key: (model | None, ...) for key, model in _TRAIT_SLOT_MODELS.items()},
+)
 
 
 class _SceneTraitInterpretationsLLMOutput(BaseModel):
@@ -779,11 +765,14 @@ class EmbodyAgent:
             expected_ids, perspectives, result.scene_trait_interpretations, strict=True,
         ):
             scene_candidates: list[dict[str, Any]] = []
-            for candidate in interpretation.trait_candidates:
+            for trait in DIRECTIONAL_TRAITS:
+                candidate = getattr(interpretation, trait)
+                if candidate is None:
+                    continue
                 value = {
-                    "trait": candidate.trait,
+                    "trait": trait,
                     "polarity": candidate.polarity,
-                    "situation_type": _trait_situation_type(candidate),
+                    "situation_type": candidate.context,
                     "justification": candidate.justification,
                 }
                 value.update(evidence_kind="behavior", perspective_id=perspective.id,
@@ -1199,9 +1188,27 @@ def _drop_invalid_scene_candidates(
         validator = _ProfileEventLLMOutput.model_validate
         stage, per_scene_limit = "psychological_enrichment", 2
     elif schema is _SceneTraitInterpretationsLLMOutput:
-        collection, field = "scene_trait_interpretations", "trait_candidates"
-        validator = _TraitCandidateLLMOutput.model_validate
-        stage, per_scene_limit = "trait_interpretation", 3
+        scenes = parsed.get("scene_trait_interpretations")
+        if not isinstance(scenes, list):
+            return parsed
+        scene_ids = (output_binding or {}).get("scene_ids") or []
+        for position, scene in enumerate(scenes):
+            if not isinstance(scene, dict):
+                continue
+            for trait, model in _TRAIT_SLOT_MODELS.items():
+                # Missing slots and extra keys are envelope errors, never implicit nulls.
+                if trait not in scene or scene[trait] is None:
+                    continue
+                try:
+                    model.model_validate(scene[trait])
+                except (TypeError, ValueError, ValidationError):
+                    scene[trait] = None
+                    scene_id = scene_ids[position] if position < len(scene_ids) else f"position-{position + 1}"
+                    logger.warning(
+                        "embodiment_candidate_dropped stage=trait_interpretation scene_id=%s trait=%s reason=invalid_candidate_shape",
+                        scene_id, trait,
+                    )
+        return parsed
     else:
         return parsed
     scenes = parsed.get(collection)
@@ -1222,9 +1229,9 @@ def _drop_invalid_scene_candidates(
                     stage, scene_id, candidate_index, "invalid_candidate_shape",
                 )
                 continue
-            key = candidate.kind if field == "profile_events" else candidate.trait
+            key = candidate.kind
             if key in seen:
-                reason = "duplicate_kind" if field == "profile_events" else "duplicate_trait"
+                reason = "duplicate_kind"
             elif len(accepted) >= per_scene_limit:
                 reason = "per_scene_limit"
             else:

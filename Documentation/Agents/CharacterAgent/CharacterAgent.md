@@ -547,18 +547,25 @@ in its `event_references`. This semantic decision belongs
 to the consolidation prompt; backend validators check references, provenance,
 shape, and lifecycle, but cannot prove natural-language equivalence.
 
-Stage 3 uses one flat candidate object with six required keys: `trait`,
-`diagnostic_situation`, `relationship`, `stakes`, `polarity`, and `justification`.
-The provider schema constrains trait/polarity/context enums, text length, and
-extra keys without trait-discriminated object unions or context-object branches.
-Python validates diagnostic membership against `TRAIT_BY_KEY` and requires the
-three context values to be either all populated or all null. Nullable field
-schemas remain ordinary string-or-null alternatives.
+Stage 3 returns all eight required directional trait slots per scene, each null
+or an observation with exactly `polarity`, `context`, and `justification`.
+`context` is a complete trait-specific enum generated from the registry, or
+`unspecified`. The provider schema and Python enforce identical context values;
+no separately nullable relationship/stakes fields or three-trait cap remain.
+Definitions, both poles, construct boundaries, paired examples, and confounds guide
+selection. A single diagnostic voluntary action can supply an observation without
+an explicitly narrated alternative or proof of an enduring disposition. Neither
+subjective-only behavior nor group participation supplies canonical evidence.
 
-Malformed profile event candidates and duplicate same-kind candidates are dropped individually;
-other valid scene enrichments remain usable. Stage 3 accepts up to three
-well-formed trait candidates per scene and drops malformed or duplicate trait
-candidates individually. A scene with no valid candidates yields an empty list.
+Malformed profile event candidates and duplicate same-kind candidates are dropped
+individually; other valid scene enrichments remain usable. Malformed non-null
+trait observations become null individually and are logged by scene and trait.
+Missing trait slots and invalid envelopes require bounded correction; they are
+never silently treated as unsupported traits. An all-null result is valid.
+The backend maps context to existing `situation_type` and binds all provenance.
+`unspecified` retains directional evidence; specified contexts continue to support
+STEADINESS with the existing exact-context reducer. See the
+[trait contract](Dispositional%20Traits.md#extraction-and-evidence) for the full wire.
 It does not produce final aspects/goals or lifecycle statuses. Stage 4 may add,
 materially update, reinforce, deactivate/reactivate aspects, resolve/reactivate
 goals, and refresh focus. It preserves history and never resolves an item only
@@ -568,7 +575,7 @@ ten active goals; focus changes do not alter lifecycle status. See the
 for the migration and verification details.
 
 
-Prompt version `character-embodiment-v40-diagnostic-evidence-synthesis` participates
+Prompt version `character-embodiment-v41-eight-slot-trait-context` participates
 in source and chunk checkpoint fingerprints, so retries do not reuse outputs
 from older prompt versions. Generation output and persisted profile shapes remain
 unchanged; revision reads add derived `trait_history` details without a database

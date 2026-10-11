@@ -10,12 +10,16 @@ import hashlib
 import json
 from pathlib import Path
 
+from app.schemas.character_traits import DIRECTIONAL_TRAITS
+
 
 def score_cases(cases: list[dict], outputs: list[dict]) -> dict:
     indexed = {row['case_id']: row for row in outputs}
     if len(indexed) != len(outputs) or set(indexed) != {case['case_id'] for case in cases}:
         raise ValueError('Captured outputs must contain exactly one record per fixture case.')
     results, tp, fp, fn = [], 0, 0, 0
+    by_pole = {pole: {'matched_required': 0, 'unsupported_candidates': 0, 'missed_required': 0}
+               for pole in ('low', 'high')}
     for case in cases:
         observations = indexed[case['case_id']]['observations']
         expected = {tuple(pair) for pair in case['expected']}
@@ -23,9 +27,13 @@ def score_cases(cases: list[dict], outputs: list[dict]) -> dict:
         actual = {(item['trait'], item['polarity']) for item in observations}
         matched, unsupported, missed = actual & expected, actual - allowed, expected - actual
         tp, fp, fn = tp + len(matched), fp + len(unsupported), fn + len(missed)
+        for pole, counts in by_pole.items():
+            for name, pairs in (('matched_required', matched), ('unsupported_candidates', unsupported),
+                                ('missed_required', missed)):
+                counts[name] += sum(direction == pole for _, direction in pairs)
         results.append({
             'case_id': case['case_id'], 'target': case['target'],
-            'passed': not unsupported and not missed and len(observations) <= 3
+            'passed': not unsupported and not missed and len(observations) <= len(DIRECTIONAL_TRAITS)
                 and len({item['trait'] for item in observations}) == len(observations),
             'unsupported': sorted(unsupported), 'missed': sorted(missed),
             'observations': observations, 'review_note': case['review_note'],
@@ -33,6 +41,8 @@ def score_cases(cases: list[dict], outputs: list[dict]) -> dict:
     return {'report_version': 1, 'case_count': len(cases),
             'passed_cases': sum(row['passed'] for row in results),
             'matched_required': tp, 'unsupported_candidates': fp, 'missed_required': fn,
+            'counts_by_pole': by_pole,
+            'scenes_without_observations': sum(not row['observations'] for row in results),
             'cases': results,
             'limitation': 'Synthetic fixtures evaluate candidate attribution/polarity; justifications and psychological claims require human review.'}
 

@@ -30,7 +30,7 @@ from app.schemas.character_agent import (
     ScenePerspectiveOutput,
     SceneInput,
 )
-from app.schemas.character_traits import TraitProfile
+from app.schemas.character_traits import DIRECTIONAL_TRAITS, TraitProfile
 from app.tasks.character_embodiment import _public_error_message
 
 
@@ -95,12 +95,10 @@ class BatchLLM:
             } for _ in payload["scenes"]]})
         if tag.endswith("trait_interpretation"):
             return json.dumps({"scene_trait_interpretations": [
-                {"trait_candidates": [{
-                    "trait": "integrity", "polarity": "high",
-                    "diagnostic_situation": "exploitation", "relationship": "other",
-                    "stakes": "ordinary",
-                    "justification": "The perspective describes a voluntary choice shaped by fairness.",
-                }]} for _ in payload["scenes"]
+                {**dict.fromkeys(DIRECTIONAL_TRAITS), "integrity": {
+                    "polarity": "high", "context": "exploitation:other:ordinary",
+                    "justification": "Refuses a safe unfair advantage.",
+                }} for _ in payload["scenes"]
             ]})
         raise AssertionError(f"Unexpected LLM call: {tag}")
 
@@ -269,9 +267,10 @@ def test_prompt_contracts_describe_the_new_execution_order():
     assert "impacts" not in PSYCHOLOGICAL_ANALYSIS_PROMPT
     assert "perspective" in PERSPECTIVE_PROMPT
     assert "trait" in TRAIT_INTERPRETATION_PROMPT.lower()
-    assert "diagnostic_situation" in TRAIT_INTERPRETATION_PROMPT
+    assert '"context"' in TRAIT_INTERPRETATION_PROMPT
+    assert "boundary_notes" in TRAIT_INTERPRETATION_PROMPT
     assert '"situation_type"' not in TRAIT_INTERPRETATION_PROMPT
-    assert "clearly demonstrated dispositional responses" in TRAIT_INTERPRETATION_PROMPT
+    assert "diagnostic voluntary action" in TRAIT_INTERPRETATION_PROMPT
     assert '"personality_traits"' not in TRAIT_INTERPRETATION_PROMPT
     assert "Established personality dimensions and meanings" in TRAIT_INTERPRETATION_PROMPT
     assert "agent_scene_interpretation" in TRAIT_INTERPRETATION_PROMPT
@@ -302,7 +301,9 @@ def test_prompt_contracts_describe_the_new_execution_order():
     assert "independently actionable" not in PSYCHOLOGICAL_ANALYSIS_PROMPT
     assert "independently actionable" not in PSYCHOLOGICAL_CONSOLIDATION_PROMPT
     assert "Traits answer: How does this character tend to behave?" in TRAIT_INTERPRETATION_PROMPT
-    assert "one diagnostic voluntary choice may supply evidence" in TRAIT_INTERPRETATION_PROMPT
+    assert "One diagnostic voluntary action" in TRAIT_INTERPRETATION_PROMPT
+    assert "explicitly narrated alternative" in TRAIT_INTERPRETATION_PROMPT
+    assert "no three-trait cap" in TRAIT_INTERPRETATION_PROMPT
     assert "First qualify each event" in PSYCHOLOGICAL_CONSOLIDATION_PROMPT
     assert "Reject weak candidates even if Stage 2 proposed them" in PSYCHOLOGICAL_CONSOLIDATION_PROMPT
 
@@ -310,7 +311,7 @@ def test_prompt_contracts_describe_the_new_execution_order():
 @pytest.mark.asyncio
 async def test_trait_interpretation_payload_pairs_scenes_with_perspectives_without_prior_traits():
     llm = FakeLLM(json.dumps({"scene_trait_interpretations": [
-        {"trait_candidates": []}, {"trait_candidates": []},
+        dict.fromkeys(DIRECTIONAL_TRAITS), dict.fromkeys(DIRECTIONAL_TRAITS),
     ]}))
     agent = _agent(llm)
     await agent._interpret_traits_batch(
@@ -356,3 +357,55 @@ async def test_trait_interpretation_payload_pairs_scenes_with_perspectives_witho
              }},
         ],
     }
+
+
+@pytest.mark.asyncio
+async def test_all_eight_trait_slots_bind_and_reduce_without_a_scene_cap():
+    from app.jobs.character_agent.trait_evidence_contract import trait_context_values
+    from app.schemas.character_traits import TraitObservation
+    from app.services.character_trait_service import ground_observations, update_profile
+
+    slots = {
+        key: {"polarity": "low" if index % 2 else "high",
+              "context": "unspecified" if key == "sharing" else trait_context_values(key)[1],
+              "justification": "The character's recorded voluntary action supports this pole."}
+        for index, key in enumerate(DIRECTIONAL_TRAITS)
+    }
+    perspectives = [ScenePerspectiveOutput(
+        id=f"perspective-{index}", scene_id=f"scene-{index}",
+        evidence_ids=[f"scene:scene-{index}"], source_type="participated",
+        perspective="A grounded subjective interpretation.",
+    ) for index in range(3)]
+    job = _agent(FakeLLM(json.dumps({"scene_trait_interpretations": [slots] * 3})))
+    observations = await job._interpret_traits_batch(
+        source_entity_id="source", source_entity_alias="Source",
+        identity={"alias": "Mara"}, perspectives=perspectives,
+        scene_contexts=[{"position": index + 1, "scene": {
+            "name": f"Scene {index}", "description": "Recorded character-specific voluntary actions.",
+        }} for index in range(3)],
+    )
+    assert all(len(scene) == 8 for scene in observations)
+    for index, scene in enumerate(observations):
+        assert [item["trait"] for item in scene] == list(DIRECTIONAL_TRAITS)
+        assert all(item["perspective_id"] == perspectives[index].id for item in scene)
+        assert all(item["evidence_ids"] == [f"scene:scene-{index}"] for item in scene)
+    evidence = ground_observations(
+        [TraitObservation.model_validate(item) for scene in observations for item in scene],
+        scene_ids=[item.scene_id for item in perspectives],
+        perspective_ids=[item.id for item in perspectives], source_group_id="source",
+    )
+    profile, changes = update_profile(TraitProfile(), evidence)
+    assert len(evidence) == 24
+    for index, key in enumerate(DIRECTIONAL_TRAITS):
+        assert profile.estimate(key).point == (3 if index % 2 else 7)
+        assert profile.estimate(key).observation_count == 3
+        assert profile.estimate(key).status == "supported"
+    assert profile.steadiness.point == 7
+    assert profile.steadiness.observation_count == 3
+    assert {change.trait for change in changes} == {*DIRECTIONAL_TRAITS, "steadiness"}
+
+
+def test_extraction_prompt_includes_all_authoritative_construct_boundaries():
+    from app.schemas.character_traits import TRAIT_BY_KEY
+    for key in DIRECTIONAL_TRAITS:
+        assert json.dumps(TRAIT_BY_KEY[key].boundary_notes, ensure_ascii=False) in TRAIT_INTERPRETATION_PROMPT

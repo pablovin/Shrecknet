@@ -12,8 +12,8 @@ After perspective validation, two calls run in parallel for that chunk:
         canonical scenes + source_type/perspectives + identity_description -> selective emotions/beliefs, at most one character-defining aspect and one independently meaningful goal event per scene.
     TRAIT_INTERPRETATION_PROMPT:
         canonical scenes + validated source_type/perspectives + identity summaries
-        + authoritative trait meanings -> up to three complete six-field candidates
-        per scene; backend validates trait-specific context.
+        + authoritative trait meanings and boundaries -> eight required nullable slots
+        per scene; each observation has polarity, controlled context, and justification.
 After all chunks for one source, one optional consolidation call reconciles its
 profile events with current character state using typed ordered operations and local
 references, checking admission before preserving distinct qualifying properties
@@ -28,7 +28,7 @@ apply lifecycle/focus rules before acceptance. Trait aggregation remains
 deterministic. Prompts do not receive full scene history or produce public output.
 """
 import json
-from app.jobs.character_agent.trait_evidence_contract import TRAIT_EVIDENCE_CONTRACT
+from app.jobs.character_agent.trait_evidence_contract import TRAIT_DEFINITION_CONTRACT, TRAIT_EVIDENCE_CONTRACT
 from app.schemas.character_traits import DIRECTIONAL_TRAITS, TRAIT_BY_KEY
 
 # Purpose: Supply only the eight narrative trait meanings and pole descriptions.
@@ -46,7 +46,7 @@ IDENTITY_TRAIT_DESCRIPTION_CONTRACT = (
         for key in DIRECTIONAL_TRAITS
     ], ensure_ascii=False)
 )
-PROMPT_VERSION = "character-embodiment-v40-diagnostic-evidence-synthesis"
+PROMPT_VERSION = "character-embodiment-v41-eight-slot-trait-context"
 
 # Execution order: Stage 0, once when description is absent and once after
 # scene processing to refresh it from the resulting current state.
@@ -391,11 +391,10 @@ Identify personality trait observations for this character
 across the supplied chronological scenes.
 
 Traits answer: How does this character tend to behave?
-Admit evidence of a behavioral tendency interpreted through the existing trait
-definitions. A temporary reaction or isolated outcome is insufficient by itself;
-one diagnostic voluntary choice may supply evidence without establishing a
-settled trait. Identity facts and established capabilities are not trait signals
-by themselves. Use the authoritative meanings below; do not introduce new traits.
+Admit observations interpreted through the existing trait definitions. A temporary
+feeling or isolated outcome is insufficient by itself; one diagnostic voluntary
+choice may supply evidence without establishing a settled trait. Identity facts
+and established capabilities are not trait signals by themselves. Use the authoritative meanings below; do not introduce new traits.
 
 Use the perspective to assess why a scene-supported choice may be diagnostic
 for this particular character, without treating it as independent evidence of
@@ -407,69 +406,78 @@ For each scene, identify supported observations using
 the eight established personality dimensions.
 
 Rules:
-- Apply three gates to EVERY candidate before emitting it:
+- Evaluate ALL eight dimensions for each scene. For EACH dimension compare BOTH
+  authoritative poles and boundary_notes before selecting low, high, or null.
+  Comprehensive consideration does not require an observation. Both poles are
+  equally admissible and describe behavior, not moral goodness or failure.
+- Apply three gates to EVERY non-null slot:
   1. Whose behavior? Identify this character's own canonical action or explicit
-     expression of a disposition. Other participants' actions do not transfer.
-  2. What does it reveal? Identify the diagnostic voluntary choice or response,
-     beyond participation, competence, routine preparation, or task compliance.
-     Use only established circumstances and alternatives; invent none.
-  3. Which direction? Compare the behavior with BOTH authoritative poles and
-     boundaries. High and low evidence are equally admissible, never moral labels.
-- In the existing justification field, state the character's own action AND why
-  it discriminates the chosen pole in this circumstance. Background summaries
-  and subjective interpretation alone cannot supply the action or alternative.
-- Shared investigation is not shared high curiosity. For example, if one participant
-  voluntarily tests an unfamiliar artifact despite warnings to understand it,
-  low caution and high curiosity may each be independently supported. If another
-  participant
-  refuses exposure until allies and protection are secured, high caution may be
-  supported; participation alone supplies no curiosity observation. If a third participant
-  voluntarily verifies every translation despite an offered shortcut, high
-  diligence may be supported; do not add caution without established threat
-  sensitivity. These are conditional examples, never facts about the target.
-- Routine preparation does not automatically mean high diligence; coordinating
-  a required task does not automatically mean high presence. Quietly doing one's
-  assigned work alone establishes neither low presence nor high diligence.
-- Attend equally to diagnostic low-pole behavior: voluntarily cutting corners
-  (diligence), avoiding available social attention (presence), retaliating after
-  provocation (forbearance), or explicitly valuing security over offered novelty
-  (restlessness). Avoiding known fatal danger alone does not prove low curiosity.
-- Do not force pole balance or differences between characters. Return no
-  observations when the scene is ambiguous or lacks a diagnostic choice,
-  explicit disposition, or clearly demonstrated response.
-- Focus on meaningful voluntary choices, expressed values,
-  and clearly demonstrated dispositional responses.
-- Interpret behavior within circumstances, knowledge, and
-  available alternatives explicitly established by the scene.
-- Do not mistake temporary emotions, intentions, or
-  experiences for enduring personality dispositions.
-- Do not infer traits from identity, role, species, or
-  previous personality descriptions.
-- Preserve evidence that differs from patterns visible across the supplied scenes.
-- Ground every observation and justification in the canonical
-  scene. Do not infer unstated motivations or alternatives.
-- Consider only this character's own behavior and values.
-- Omit compelled, ambiguous, or non-diagnostic evidence.
-- Return at most one observation per trait per scene, and no more than three
-  trait candidates total per scene. Select only the strongest supported signals.
-- Return empty arrays when no meaningful evidence exists.
-- Never generate numerical trait values or STEADINESS.
-- Preserve scene ordering.
+     value statement. Other participants' actions and group-only decisions do
+     not transfer to this character.
+  2. What does it reveal? Identify why the voluntary action, explicit value, or
+     clearly demonstrated response discriminates this construct beyond competence,
+     routine preparation, or task participation. One diagnostic voluntary action
+     is enough for an observation; independent accumulated observations establish
+     the trait estimate, not the extraction model.
+  3. Which direction? Compare BOTH poles and exclusions, then select the supported
+     pole. Absence of high-pole behavior is not evidence of the low pole.
+- A clearly voluntary action can be diagnostic without an explicitly narrated
+  alternative. Do not invent alternatives, motives, or freedom from constraints.
+  Missing documentation of an alternative alone is not a reason to omit.
+- Judge known constraints: abandoning an impossible obligation is not automatically
+  low diligence; defending against an immediate threat is not automatically low
+  forbearance; obeying an order is not automatically a voluntary disposition.
+- The justification names the canonical action or explicit words AND explains
+  their diagnostic significance. Background summaries and subjective interpretation
+  alone cannot establish that an action, preference, or alternative occurred.
+- A temporary feeling or outcome alone is insufficient. A diagnostic voluntary
+  response in a single scene can support an observation without proving an enduring
+  personality tendency. Strong fear alone is not a caution observation unless the
+  canonical scene establishes a diagnostic response or explicit disposition.
+- Do not infer traits from identity, role, species, capabilities, previous portraits,
+  or another character's behavior. Preserve supported evidence opposing other scenes.
+- Evaluate each construct independently; one action may support several traits
+  only when each has its own grounded diagnostic significance.
 
+Paired examples and confounds (conditional examples, never facts about the target):
+- Integrity: high refuses an unfair advantage or safe, untraceable exploitation;
+  low willingly exploits another or deceives for self-serving advantage.
+  Generosity, friendliness, and forgiveness alone establish neither pole.
+- Caution: high seeks protection, reassurance, or guarantees in response to uncertain
+  danger or dependence; low voluntarily declines protection while explicitly
+  dismissing concern about the danger or need for reassurance. Exposure alone,
+  silence about fear, and compelled bravery do not establish low caution.
+- Presence: high voluntarily approaches strangers or seeks social visibility;
+  low voluntarily avoids available social attention because it is unwanted.
+  Leadership, cooperation, listening, being unmentioned, or forbidden speech alone
+  establish neither pole.
+- Forbearance: high forgives or lets a provocation pass; low openly retaliates for
+  an insult or expresses a continuing grudge. Self-defense against an immediate
+  threat and general compassion do not automatically establish either pole.
+- Diligence: high persists or checks work thoroughly without supervision; low
+  voluntarily cuts corners or abandons an unfinished obligation. Failed careful
+  work may support high; inability, an impossible task, and routine compliance
+  do not automatically support either pole.
+- Curiosity: high voluntarily pursues unfamiliar knowledge; low rejects unfamiliar
+  ideas because familiar ideas are preferred. Intelligence, assigned investigation,
+  and avoidance of known fatal danger do not automatically support either pole.
+- Sharing: high freely divides jointly controlled resources fairly or in another's
+  favor; low freely keeps a disproportionate share or prioritizes own allocation.
+  Coerced giving and simply refusing exploitation do not establish sharing.
+- Restlessness: high explicitly values autonomy and change over settled convention;
+  low explicitly prefers tradition, established order, or stability over novelty.
+  Low restlessness is not a failure or moral defect. Mere exploration is not a
+  value orientation, and obeying an order alone is not a preference for conformity.
 
-OUTPUT (return exactly one result per input scene in the same order):
-{"scene_trait_interpretations":[{"trait_candidates":[{"trait":"one of the eight directional trait keys","diagnostic_situation":"a diagnostic value allowed for that trait, or null","relationship":"friend|enemy|other, or null","stakes":"ordinary|high_stakes, or null","polarity":"low|high","justification":"..."}]}]}
-
-All candidate keys are required and additional keys are forbidden. Each scene may
-contain at most three candidates, with at most one candidate for each trait.
-`justification` is a nonempty string of at most 360 characters. For a specified
-context, diagnostic_situation, relationship, and stakes must all be non-null. For
-unspecified context, all three must be null. Allowed diagnostic_situation values
-are trait-specific:
-""" + json.dumps({key: list(TRAIT_BY_KEY[key].diagnostic_situations) for key in DIRECTIONAL_TRAITS}, ensure_ascii=False) + r"""
-The backend constructs the persisted situation_type as
-`diagnostic_situation:relationship:stakes`, or `unspecified` when all three
-fields are null. Never return a compound situation string. Return JSON only.""" + IDENTITY_TRAIT_DESCRIPTION_CONTRACT + TRAIT_EVIDENCE_CONTRACT
+For a shared investigation, independently assess each character's recorded actions:
+voluntarily testing an unfamiliar artifact to understand it may support curiosity;
+refusing exposure until protection is secured may support caution; voluntarily
+checking translations thoroughly may support diligence. Participation alone does
+not support these traits, and another participant's action is never transferred.
+Return null where behavior is compelled, ambiguous, or non-diagnostic. Do not
+force pole balance, differences between characters, or use of available slots.
+Never generate numerical trait values or STEADINESS. Preserve scene ordering.
+""" + TRAIT_DEFINITION_CONTRACT + TRAIT_EVIDENCE_CONTRACT
 
 
 # Execution order: Stage 4, after all Stage 2/3 chunks for one source; skipped without events.

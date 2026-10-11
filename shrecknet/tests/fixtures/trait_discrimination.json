@@ -1,5 +1,5 @@
 {
-  "version": "trait-discrimination-v1",
+  "version": "trait-discrimination-v2-eight-slots",
   "description": "Synthetic reference cases authored for regression review; not measured evidence for real characters. Human review of model justifications is required.",
   "cases": [
     {
@@ -311,6 +311,154 @@
       "source_type": "unknown",
       "expected": [],
       "review_note": "Omit ambiguous, compelled, non-diagnostic, or other-character behavior; do not invent alternatives."
+    },
+    {
+      "case_id": "unfinished-obligation",
+      "scene_id": "unfinished-obligation",
+      "target": "Mira",
+      "scene": "Mira voluntarily abandons her unfinished obligation, saying she cannot be bothered to finish.",
+      "perspective": "Mira voluntarily abandons her unfinished obligation, saying she cannot be bothered to finish.",
+      "expected": [
+        [
+          "diligence",
+          "low"
+        ]
+      ],
+      "review_note": "Review attribution, voluntary diagnostic significance, construct boundaries, and polarity. Alternatives need not be explicitly enumerated. Do not invent actions or motives."
+    },
+    {
+      "case_id": "retaliation-single-action",
+      "scene_id": "retaliation-single-action",
+      "target": "Mira",
+      "scene": "Mira deliberately retaliates for an insult after the confrontation has ended.",
+      "perspective": "Mira deliberately retaliates for an insult after the confrontation has ended.",
+      "expected": [
+        [
+          "forbearance",
+          "low"
+        ]
+      ],
+      "review_note": "Review attribution, voluntary diagnostic significance, construct boundaries, and polarity. Alternatives need not be explicitly enumerated. Do not invent actions or motives."
+    },
+    {
+      "case_id": "declines-protection",
+      "scene_id": "declines-protection",
+      "target": "Mira",
+      "scene": "Mira eagerly rejects offered protection, explicitly saying the uncertain danger causes her no worry and she needs no reassurance.",
+      "perspective": "Mira eagerly rejects offered protection, explicitly saying the uncertain danger causes her no worry and she needs no reassurance.",
+      "expected": [
+        [
+          "caution",
+          "low"
+        ]
+      ],
+      "review_note": "Review attribution, voluntary diagnostic significance, construct boundaries, and polarity. Alternatives need not be explicitly enumerated. Do not invent actions or motives."
+    },
+    {
+      "case_id": "values-tradition",
+      "scene_id": "values-tradition",
+      "target": "Mira",
+      "scene": "Mira explicitly says she prefers established traditions and stability to unfamiliar alternatives because she values continuity.",
+      "perspective": "Mira explicitly says she prefers established traditions and stability to unfamiliar alternatives because she values continuity.",
+      "expected": [
+        [
+          "restlessness",
+          "low"
+        ]
+      ],
+      "review_note": "Review attribution, voluntary diagnostic significance, construct boundaries, and polarity. Alternatives need not be explicitly enumerated. Do not invent actions or motives."
+    },
+    {
+      "case_id": "refuses-exploitation",
+      "scene_id": "refuses-exploitation",
+      "target": "Mira",
+      "scene": "Mira refuses an opportunity to exploit Leon for an unfair gain despite knowing it would have no consequences for her.",
+      "perspective": "Mira refuses an opportunity to exploit Leon for an unfair gain despite knowing it would have no consequences for her.",
+      "expected": [
+        [
+          "integrity",
+          "high"
+        ]
+      ],
+      "review_note": "Review attribution, voluntary diagnostic significance, construct boundaries, and polarity. Alternatives need not be explicitly enumerated. Do not invent actions or motives."
+    },
+    {
+      "case_id": "impossible-obligation",
+      "scene_id": "impossible-obligation",
+      "target": "Mira",
+      "scene": "Mira stops attempting an obligation after the only tool needed to complete it is destroyed. No voluntary neglect or value preference is recorded.",
+      "perspective": "Mira stops attempting an obligation after the only tool needed to complete it is destroyed. No voluntary neglect or value preference is recorded.",
+      "expected": [],
+      "review_note": "Review attribution, voluntary diagnostic significance, construct boundaries, and polarity. Alternatives need not be explicitly enumerated. Do not invent actions or motives."
+    },
+    {
+      "case_id": "immediate-self-defense",
+      "scene_id": "immediate-self-defense",
+      "target": "Mira",
+      "scene": "Mira blocks an attacker and strikes back only to stop an ongoing lethal assault. No grudge or retaliation after safety is established is recorded.",
+      "perspective": "Mira blocks an attacker and strikes back only to stop an ongoing lethal assault. No grudge or retaliation after safety is established is recorded.",
+      "expected": [],
+      "review_note": "Review attribution, voluntary diagnostic significance, construct boundaries, and polarity. Alternatives need not be explicitly enumerated. Do not invent actions or motives."
+    },
+    {
+      "case_id": "ordered-tradition",
+      "scene_id": "ordered-tradition",
+      "target": "Mira",
+      "scene": "Mira follows the traditional ceremony because a captor orders her to do so under threat. Her own value preference is not recorded.",
+      "perspective": "Mira follows the traditional ceremony because a captor orders her to do so under threat. Her own value preference is not recorded.",
+      "expected": [],
+      "review_note": "Review attribution, voluntary diagnostic significance, construct boundaries, and polarity. Alternatives need not be explicitly enumerated. Do not invent actions or motives."
+    },
+    {
+      "case_id": "eight-independent-signals",
+      "scene_id": "eight-independent-signals",
+      "target": "Mira",
+      "scene": "At an optional gathering Mira eagerly approaches strangers because she enjoys attention. She refuses a safe untraceable opportunity to exploit Leon for unfair gain. Concerning an uncertain danger, she declines offered protection, saying she feels no worry and needs no reassurance. Later she deliberately retaliates for an insult after the threat has passed. Alone, she voluntarily abandons an unfinished obligation, saying she cannot be bothered. In her free time she pursues an unfamiliar puzzle because she wants to understand it. While freely dividing jointly controlled rewards, she takes a disproportionate share because she prioritizes her own allocation. She explicitly favors established tradition and stability over novelty because she values continuity.",
+      "perspective": "At an optional gathering Mira eagerly approaches strangers because she enjoys attention. She refuses a safe untraceable opportunity to exploit Leon for unfair gain. Concerning an uncertain danger, she declines offered protection, saying she feels no worry and needs no reassurance. Later she deliberately retaliates for an insult after the threat has passed. Alone, she voluntarily abandons an unfinished obligation, saying she cannot be bothered. In her free time she pursues an unfamiliar puzzle because she wants to understand it. While freely dividing jointly controlled rewards, she takes a disproportionate share because she prioritizes her own allocation. She explicitly favors established tradition and stability over novelty because she values continuity.",
+      "expected": [
+        [
+          "integrity",
+          "high"
+        ],
+        [
+          "caution",
+          "low"
+        ],
+        [
+          "presence",
+          "high"
+        ],
+        [
+          "forbearance",
+          "low"
+        ],
+        [
+          "diligence",
+          "low"
+        ],
+        [
+          "curiosity",
+          "high"
+        ],
+        [
+          "sharing",
+          "low"
+        ],
+        [
+          "restlessness",
+          "low"
+        ]
+      ],
+      "review_note": "Review attribution, voluntary diagnostic significance, construct boundaries, and polarity. Alternatives need not be explicitly enumerated. Do not invent actions or motives."
+    },
+    {
+      "case_id": "perspective-only-retaliation",
+      "scene_id": "perspective-only-retaliation",
+      "target": "Mira",
+      "scene": "Mira hears Leon insult another guest. The canonical account records no response by Mira.",
+      "perspective": "I retaliated against Leon to make him pay for the insult.",
+      "expected": [],
+      "review_note": "Review attribution, voluntary diagnostic significance, construct boundaries, and polarity. Alternatives need not be explicitly enumerated. Do not invent actions or motives."
     },
     {
       "case_id": "fatal-danger",

@@ -179,33 +179,30 @@ def test_explicit_format_incompatibility_triggers_fallback(message):
 
 
 @pytest.mark.asyncio
-async def test_invalid_duplicate_and_excess_trait_candidates_are_dropped():
-    def candidate(trait):
-        return {"trait": trait, "diagnostic_situation": None, "relationship": None,
-                "stakes": None, "polarity": "high", "justification": "A voluntary choice."}
-    raw = {"scene_trait_interpretations": [{"trait_candidates": [
-        {"diagnostic_situation": None, "relationship": None, "stakes": None,
-         "polarity": "high", "justification": "Missing the trait field."},
-        {"diagnostic_situation": "uncertain_threat", "relationship": "other", "stakes": "ordinary"},
-        {**candidate("caution"), "diagnostic_situation": "exploitation", "relationship": "other", "stakes": "ordinary"},
-        {**candidate("caution"), "relationship": "other"},
-        candidate("integrity"), candidate("integrity"), candidate("caution"),
-        candidate("presence"), candidate("curiosity"),
-    ]}]}
+async def test_invalid_trait_slots_are_dropped_without_losing_valid_observations(caplog):
+    raw = {"scene_trait_interpretations": [{
+        key: {"polarity": "low", "context": "unspecified", "justification": "A voluntary choice."}
+        for key in DIRECTIONAL_TRAITS
+    }]}
+    raw["scene_trait_interpretations"][0]["caution"]["context"] = "uncertain_threat"
     provider = Responses(json.dumps(raw))
     result = await agent(provider)._call(prompt="contract", payload={}, schema=_SceneTraitInterpretationsLLMOutput,
         stage="traits", usage_tag="traits", max_tokens=10000, model="m",
         output_binding={"collection": "scene_trait_interpretations", "scene_ids": ["s1"]})
-    assert [candidate.trait for candidate in result.scene_trait_interpretations[0].trait_candidates] == [
-        "integrity", "caution", "presence",
-    ]
+    slots = result.scene_trait_interpretations[0]
+    assert slots.caution is None
+    assert sum(getattr(slots, key) is not None for key in DIRECTIONAL_TRAITS) == 7
+    assert "trait=caution" in caplog.text and "scene_id=s1" in caplog.text
     assert len(provider.calls) == 1
-    empty = await agent(Responses(json.dumps({"scene_trait_interpretations": [
-        {"trait_candidates": [{"polarity": "high"}]},
-    ]})))._call(prompt="contract", payload={}, schema=_SceneTraitInterpretationsLLMOutput,
-        stage="traits", usage_tag="traits", max_tokens=10000, model="m",
-        output_binding={"collection": "scene_trait_interpretations", "scene_ids": ["s1"]})
-    assert empty.scene_trait_interpretations[0].trait_candidates == []
+
+
+def test_missing_trait_slot_is_an_envelope_error():
+    from app.jobs.character_agent.embody_agent import EmbodimentGenerationError
+    slots = dict.fromkeys(DIRECTIONAL_TRAITS)
+    slots.pop("sharing")
+    with pytest.raises(EmbodimentGenerationError, match="invalid traits output"):
+        agent(Responses())._parse(_SceneTraitInterpretationsLLMOutput,
+            json.dumps({"scene_trait_interpretations": [slots]}), "traits")
 
 
 def test_invalid_and_duplicate_profile_events_are_dropped_per_kind():
@@ -222,19 +219,15 @@ def test_invalid_and_duplicate_profile_events_are_dropped_per_kind():
     assert [event.kind for event in result.scene_enrichments[0].profile_events] == ["aspect", "goal"]
 
 
-def test_trait_contract_types_diagnostics_by_trait_and_maps_persisted_context():
-    from app.jobs.character_agent.embody_agent import _TraitCandidateLLMOutput, _trait_situation_type
-
-    valid = {"trait": "caution", "diagnostic_situation": "uncertain_threat",
-             "relationship": "other", "stakes": "high_stakes", "polarity": "high",
-             "justification": "Mara seeks cover before entering known danger."}
-    adapter = TypeAdapter(_TraitCandidateLLMOutput)
-    candidate = adapter.validate_python(valid)
-    assert _trait_situation_type(candidate) == "uncertain_threat:other:high_stakes"
-    with pytest.raises(ValidationError):
-        adapter.validate_python({**valid, "diagnostic_situation": "exploitation"})
-    with pytest.raises(ValidationError):
-        adapter.validate_python({**valid, "relationship": None})
+def test_trait_contract_context_is_a_complete_trait_specific_enum():
+    from app.jobs.character_agent.embody_agent import _TRAIT_SLOT_MODELS
+    valid = {"context": "uncertain_threat:other:high_stakes", "polarity": "high",
+             "justification": "Mara seeks protection before exposure."}
+    adapter = TypeAdapter(_TRAIT_SLOT_MODELS["caution"])
+    assert adapter.validate_python(valid).context == "uncertain_threat:other:high_stakes"
+    for context in ("exploitation:other:high_stakes", "uncertain_threat", None):
+        with pytest.raises(ValidationError):
+            adapter.validate_python({**valid, "context": context})
 
 
 @pytest.mark.asyncio
@@ -342,66 +335,52 @@ def test_provider_schema_matches_runtime_typed_contract():
         ConsolidationEnvelope.model_validate(invalid)
 
 
-def test_trait_provider_schema_requires_one_complete_flat_candidate():
+def test_trait_provider_schema_requires_all_slots_and_enforces_complete_context():
     schema = _model_output_schema(_SceneTraitInterpretationsLLMOutput, {"scene_ids": ["s1"]})
     Draft202012Validator.check_schema(schema)
-    trait_items = schema["$defs"]["_SceneTraitInterpretationLLMOutput"]["properties"]["trait_candidates"]
-    assert trait_items["maxItems"] == 3
-    candidate_schema = schema["$defs"]["_TraitCandidateLLMOutput"]
-    assert trait_items["items"] == {"$ref": "#/$defs/_TraitCandidateLLMOutput"}
-    assert set(candidate_schema["required"]) == {
-        "trait", "diagnostic_situation", "relationship", "stakes", "polarity", "justification",
-    }
-    assert candidate_schema["additionalProperties"] is False
-    assert not {"oneOf", "anyOf", "discriminator"} & candidate_schema.keys()
-    assert candidate_schema["properties"]["trait"]["enum"] == list(DIRECTIONAL_TRAITS)
+    slot_schema = schema["$defs"]["_SceneTraitInterpretationLLMOutput"]
+    assert set(slot_schema["required"]) == set(DIRECTIONAL_TRAITS)
+    assert slot_schema["additionalProperties"] is False
     validator = Draft202012Validator(schema)
-    candidate = {
-        "trait": "caution", "diagnostic_situation": "uncertain_threat",
-        "relationship": "other", "stakes": "high_stakes", "polarity": "high",
-        "justification": "Mara seeks cover before approaching the known danger.",
-    }
+    empty = dict.fromkeys(DIRECTIONAL_TRAITS)
+    candidate = {"polarity": "high", "context": "uncertain_threat:other:high_stakes",
+                 "justification": "Mara seeks protection before exposure."}
 
-    def envelope(item):
-        return {"scene_trait_interpretations": [{"trait_candidates": [item]}]}
+    def envelope(slots):
+        return {"scene_trait_interpretations": [slots]}
 
-    validator.validate(envelope(candidate))
+    validator.validate(envelope(empty))
+    _SceneTraitInterpretationsLLMOutput.model_validate(envelope(empty))
+    for key in DIRECTIONAL_TRAITS:
+        with pytest.raises(ValidationError):
+            _SceneTraitInterpretationsLLMOutput.model_validate(envelope({k: v for k, v in empty.items() if k != key}))
+        assert list(validator.iter_errors(envelope({k: v for k, v in empty.items() if k != key})))
+    validator.validate(envelope({**empty, "caution": candidate}))
     for field in candidate:
-        assert list(validator.iter_errors(envelope({k: v for k, v in candidate.items() if k != field})))
-    fragment = {k: candidate[k] for k in ("diagnostic_situation", "relationship", "stakes")}
-    assert list(validator.iter_errors(envelope(fragment)))
-    for invalid in ({"unexpected": True}, {"trait": "steadiness"}, {"polarity": "middle"},
-                    {"relationship": "stranger"}, {"stakes": "low"}, {"justification": ""},
-                    {"justification": "x" * 361}):
-        assert list(validator.iter_errors(envelope({**candidate, **invalid})))
-    assert list(validator.iter_errors({"scene_trait_interpretations": []}))
-    unspecified = {**candidate, "diagnostic_situation": None, "relationship": None, "stakes": None}
-    validator.validate(envelope(unspecified))
-    _SceneTraitInterpretationsLLMOutput.model_validate(envelope(unspecified))
-    # Structural generation stays simple; the authoritative registry and context
-    # completeness checks are enforced by Python after generation.
-    for invalid in ({"diagnostic_situation": "exploitation"}, {"relationship": None}):
-        value = envelope({**candidate, **invalid})
-        validator.validate(value)
+        assert list(validator.iter_errors(envelope({**empty, "caution": {k: v for k, v in candidate.items() if k != field}})))
+    for invalid in ({"extra": True}, {"polarity": "middle"}, {"context": None},
+                    {"context": "uncertain_threat"}, {"context": "exploitation:other:ordinary"},
+                    {"justification": ""}, {"justification": "   "}, {"justification": "x" * 361}):
+        value = envelope({**empty, "caution": {**candidate, **invalid}})
+        assert list(validator.iter_errors(value))
         with pytest.raises(ValidationError):
             _SceneTraitInterpretationsLLMOutput.model_validate(value)
+    assert list(validator.iter_errors(envelope({**empty, "steadiness": None})))
+    assert list(validator.iter_errors({"scene_trait_interpretations": []}))
 
 
 @pytest.mark.parametrize("trait", DIRECTIONAL_TRAITS)
-def test_flat_trait_candidate_validates_registry_diagnostics(trait):
-    from app.jobs.character_agent.embody_agent import _TraitCandidateLLMOutput
-    from app.schemas.character_traits import TRAIT_BY_KEY
-
-    for diagnostic in TRAIT_BY_KEY[trait].diagnostic_situations:
-        _TraitCandidateLLMOutput.model_validate({
-            "trait": trait, "diagnostic_situation": diagnostic, "relationship": "other",
-            "stakes": "ordinary", "polarity": "low", "justification": "A supported choice.",
-        })
+def test_trait_context_enum_covers_registry_and_matches_provider_validation(trait):
+    from app.jobs.character_agent.embody_agent import _TRAIT_SLOT_MODELS
+    from app.jobs.character_agent.trait_evidence_contract import trait_context_values
+    model = _TRAIT_SLOT_MODELS[trait]
+    validator = Draft202012Validator(model.model_json_schema())
+    for context in trait_context_values(trait):
+        candidate = {"context": context, "polarity": "low", "justification": "A supported choice."}
+        validator.validate(candidate)
+        assert model.model_validate(candidate).context == context
     with pytest.raises(ValidationError):
-        _TraitCandidateLLMOutput.model_validate({
-            "trait": trait, "diagnostic_situation": "unknown_diagnostic", "relationship": "other",
-            "stakes": "ordinary", "polarity": "low", "justification": "A supported choice.",
-        })
+        model.model_validate({"context": "unknown_context", "polarity": "low", "justification": "A choice."})
 
 
 @pytest.mark.parametrize("operation", ["update", "reinforce", "status"])
@@ -563,3 +542,20 @@ def test_chunk_checkpoint_reuses_only_complete_matching_outputs():
     ]
     assert old_keys[0] != new_keys[0]
     assert old_keys[1] == new_keys[1]
+
+
+@pytest.mark.asyncio
+async def test_missing_trait_slot_uses_bounded_correction_instead_of_silent_omission():
+    complete = dict.fromkeys(DIRECTIONAL_TRAITS)
+    missing = {key: value for key, value in complete.items() if key != "sharing"}
+    provider = Responses(
+        json.dumps({"scene_trait_interpretations": [missing]}),
+        json.dumps({"scene_trait_interpretations": [complete]}),
+    )
+    result = await agent(provider)._call(
+        prompt="contract", payload={}, schema=_SceneTraitInterpretationsLLMOutput,
+        stage="traits", usage_tag="traits", max_tokens=10000, model="m",
+        output_binding={"collection": "scene_trait_interpretations", "scene_ids": ["s1"]},
+    )
+    assert len(provider.calls) == 2
+    assert result.scene_trait_interpretations[0].model_dump() == complete

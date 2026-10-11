@@ -40,7 +40,7 @@ still needs backend validation.
 | 0 Identity description | `identity_summary`, `psychological_summary`, `personality_traits[]: trait, description` | Required object keys, nonempty strings, trait enum, closed nested objects | Trait entries may repeat; no explicit registry coverage or duplicate policy. Input context has nullability and source-boundary assumptions. | Decide explicitly whether repeated trait entries are invalid, mergeable, or allowed; prefer one registry-shaped representation if exactly one entry per trait is required. Keep narrative synthesis interpretive. |
 | 1 Perspective | Per position: `source_type`, `perspective` | Source-type enum and perspective length; exact outer count is injected from chunk size | Output item is associated with a scene by list position, and perspective validity depends on scene knowledge, chronology, and subjective-vs-objective distinction. These are semantic prompt rules, not machine proofs. | Keep positional binding backend-owned. Consider making only genuinely categorical decisions structured; avoid generating IDs or evidence. Retain explicit validation of count and duplicate/order invariants. |
 | 2 Psychological enrichment | Per scene: emotion `arousal`, `valence`, `description`; belief `statement`, `confidence`; profile event `kind`, `description` | Numeric bounds, text bounds, event-kind enum, at most two events per scene, injected exact outer count | Whether a reaction/event is supported, lasting, identity-significant, or a real goal/aspect event depends on scene and perspective. At most one event of each kind is accepted; malformed and duplicate-kind candidates are dropped individually. | Keep emotion/belief interpretation. Retain `kind` as an explicit decision, cap each scene at one aspect and one goal event, and preserve valid candidates when another candidate is malformed. |
-| 3 Trait interpretation | Per scene: `trait_candidates[]: trait, diagnostic_situation, relationship, stakes, polarity, justification` | Trait-specific diagnostic enums, context enums, polarity enum, nonempty bounded justification; max three candidates | Context must be fully specified or fully null. Malformed candidates and repeated trait keys are dropped individually; scene count/order remain strict. | Keep the typed dimensions and backend binding step. Generate provider JSON Schema from the canonical registry. Never infer a bad diagnostic from justification; select only the three strongest supported candidates. |
+| 3 Trait interpretation | Per scene: eight required nullable trait slots; non-null: `polarity, context, justification` | Registry-generated trait-specific complete context enums, polarity enum, bounded nonblank justification; closed objects | Zero to eight observations; malformed slots become null individually; missing slots and scene count/order remain strict | Native schema and Python share the same context values. Backend binds trait/provenance and maps context to existing `situation_type`. |
 | 4 Consolidation | Ordered aspect/goal operation unions, local event references, existing/new indexes, focus references | Operation literals, entity-specific status enums, required/nullable operation fields, strict positive indexes, focus limited to ten, closed objects | Index availability depends on prior operations and the request snapshot. Event IDs depend on event kind. Candidate ID collisions depend on labels and current profile. Final focus eligibility depends on the reducer's final active state. These are correctly resolved through request context and shared reducers after Pydantic validation. | Retain typed operation variants, backend ID binding, strict ordered reference resolution, and shared reducers. Keep semantic reference failures within bounded correction; never make IDs or final state model-owned. Keep backend bugs outside correction. |
 
 ### Trait-context example
@@ -208,15 +208,16 @@ Related pages: [CharacterAgent runtime contract](CharacterAgent.md),
 
 ## Execution record
 
-The audit and first implementation pass are complete. The current Stage 3
-contract uses a single flat six-field candidate object. Trait-specific diagnostic
-membership is validated in Python against `TRAIT_BY_KEY`; context must be all
-populated or all null. The provider schema retains field requirements, finite
-trait/context enums and text limits, without trait-discriminated object unions
-or manually inserted context branches. The backend maps validated candidates to
-the existing `TraitObservation.situation_type` contract. See the
-[CharacterAgent runtime contract](CharacterAgent.md) for selective emotion/belief
-extraction, independent goal consolidation, and checkpoint compatibility.
+The audit and first implementation pass are complete. Its original six-field
+Stage 3 wire has been superseded by `character-embodiment-v41-eight-slot-trait-context`.
+Stage 3 now has eight required nullable trait slots; non-null observations contain
+only `polarity`, `context`, and `justification`. Registry-generated context enums
+encode complete diagnostic/relationship/stakes combinations or `unspecified` in
+both provider schema and Python. There is no cross-field completeness rule or
+three-candidate cap. The backend preserves `TraitObservation.situation_type` and
+provenance contracts. Earlier design phases below/above record the initial audit;
+the current runtime contract is authoritative. See
+[trait extraction](Dispositional%20Traits.md#extraction-and-evidence).
 
 Draft checkpoints now retain independently fingerprinted Stage 1 perspectives
 and Stage 2/3 analyses per scene chunk, plus the merged source analysis used by

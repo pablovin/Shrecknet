@@ -51,6 +51,7 @@ def test_generate_draft_uses_background_job_id_returned_by_tracker(monkeypatch) 
     ("artifacts", "expected_key"),
     [
         ({"pipeline_version": "v4", "story_plan": {"beats": []}}, "story_plan"),
+        ({"pipeline_version": "v5", "story_plan": {"beats": []}}, "story_plan"),
         (
             {"pipeline_version": "v3", "evidence_ledger": {"scenes": []}},
             "evidence_ledger",

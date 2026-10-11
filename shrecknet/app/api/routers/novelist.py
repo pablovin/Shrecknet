@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 from typing import Any
-from io import BytesIO
-import re
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,19 +11,19 @@ from app.api.deps import get_current_user, get_db_session
 from app.api.agent_feature_gate import require_ai_agents_enabled
 from app.core.config_store import get_settings, is_shreckllm_configured
 from app.graph.neo4j import get_driver
+from app.integrations.novelist_source import extract_source, normalize_pdf_text
 from app.models.agent import Agent
 from app.models.user import User
 from app.repositories.agent_repository import AgentRepository
 from app.schemas.novelist import (
     NovelistRunCreate,
     NovelistRunRead,
+    SourcePage,
 )
 from app.services.novelist_service import NovelistService
 from app.tasks.novelist import generate_draft
 
 router = APIRouter(prefix="/jobs/novelist", tags=["novelist"])
-_BULLET_OR_NUMBERED_START = re.compile(r"^\s*(?:[●•\-\*]\s+|\d+[.)]\s+)")
-_TIMESTAMP_MARKER = re.compile(r"\(\d{1,2}:\d{2}:\d{2}\)")
 
 
 async def _get_novelist_agent_or_404(
@@ -55,60 +53,21 @@ async def get_novelist_service(
     return NovelistService(session)
 
 
+def _extract_source_from_upload(file: UploadFile) -> tuple[str, list[SourcePage]]:
+    try:
+        return extract_source(file.filename or "", file.file.read())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
 def _extract_text_from_upload(file: UploadFile) -> str:
-    filename = (file.filename or "").lower()
-    suffix = filename.rsplit(".", 1)[-1] if "." in filename else ""
-    raw = file.file.read()
-    if not raw:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Uploaded file is empty",
-        )
-    if suffix in {"txt", "md", "json"}:
-        return raw.decode("utf-8", errors="ignore").strip()
-    if suffix == "pdf":
-        try:
-            from PyPDF2 import PdfReader
-        except ImportError as exc:  # pragma: no cover - dependency guard
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="PyPDF2 is required to process PDF files",
-            ) from exc
-        reader = PdfReader(BytesIO(raw))
-        pages: list[str] = []
-        for page in reader.pages:
-            try:
-                pages.append(_normalize_pdf_extracted_text(page.extract_text() or ""))
-            except Exception:
-                continue
-        return "\n\n".join(page for page in pages if page).strip()
-    raise HTTPException(
-        status_code=status.HTTP_400_BAD_REQUEST,
-        detail="Unsupported file type. Use .txt, .md, .json, or .pdf",
-    )
+    """Compatibility wrapper for existing extraction callers."""
+    return _extract_source_from_upload(file)[0]
 
 
-def _normalize_pdf_extracted_text(text: str) -> str:
-    lines = [line.strip() for line in text.splitlines() if line and line.strip()]
-    if not lines:
-        return ""
-
-    blocks: list[list[str]] = []
-    current: list[str] = []
-    for line in lines:
-        starts_block = bool(_BULLET_OR_NUMBERED_START.match(line)) or bool(
-            _TIMESTAMP_MARKER.search(line)
-        )
-        if starts_block and current:
-            blocks.append(current)
-            current = [line]
-            continue
-        current.append(line)
-
-    if current:
-        blocks.append(current)
-
-    return "\n\n".join(" ".join(block) for block in blocks if block).strip()
+_normalize_pdf_extracted_text = normalize_pdf_text
 
 
 async def _create_and_queue_run(
@@ -118,6 +77,7 @@ async def _create_and_queue_run(
     current_user: User,
     session: AsyncSession,
     service: NovelistService,
+    source_pages: list[SourcePage] | None = None,
 ) -> NovelistRunRead:
     language, instructions = await service.resolve_and_save_preferences(
         agent_id=agent_id,
@@ -134,6 +94,7 @@ async def _create_and_queue_run(
         settings={
             "requested_by": current_user.id,
             "language": payload.language,
+            "source_pages": [page.model_dump() for page in source_pages or []],
         },
         request_payload=payload.model_dump(),
     )
@@ -208,7 +169,7 @@ async def start_novelist_run_from_upload(
         )
     await _get_novelist_agent_or_404(agent_id, session)
 
-    extracted_text = _extract_text_from_upload(file)
+    extracted_text, source_pages = _extract_source_from_upload(file)
     if not extracted_text:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -226,6 +187,7 @@ async def start_novelist_run_from_upload(
     return await _create_and_queue_run(
         agent_id=agent_id,
         payload=payload,
+        source_pages=source_pages,
         current_user=current_user,
         session=session,
         service=service,

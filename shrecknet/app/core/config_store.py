@@ -276,6 +276,8 @@ class Settings(BaseSettings):
     model_elder_character_incorporation: LLMModelTarget = Field(
         default_factory=lambda: LLMModelTarget(provider="", name="")
     )
+    novelist_analysis_context_tokens: int = Field(64000, ge=24000)
+    novelist_writer_context_tokens: int = Field(64000, ge=24000)
     model_novelist_analysis: LLMModelTarget = Field(
         default_factory=lambda: LLMModelTarget(provider="openai", name="gpt-5")
     )

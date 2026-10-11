@@ -71,3 +71,35 @@ def test_extract_text_from_upload_unsupported_extension_raises() -> None:
 
     with pytest.raises(HTTPException, match="Unsupported file type"):
         novelist_router._extract_text_from_upload(upload)
+
+
+def test_pdf_source_keeps_original_page_numbers_across_empty_pages(monkeypatch):
+    from app.integrations.novelist_source import extract_source
+    from app.jobs.novelist.source_interpreter import segment_source
+
+    class Page:
+        def __init__(self, value):
+            self.value = value
+        def extract_text(self):
+            return self.value
+
+    module = types.ModuleType('PyPDF2')
+    module.PdfReader = lambda _: types.SimpleNamespace(pages=[Page('Arrival'), Page(''), Page('Revelation')])
+    monkeypatch.setitem(sys.modules, 'PyPDF2', module)
+    text, pages = extract_source('session.pdf', b'pdf')
+    assert text == 'Arrival\n\nRevelation'
+    assert [(page.page, text[page.start:page.end]) for page in pages] == [(1, 'Arrival'), (3, 'Revelation')]
+    assert [p.pages for p in segment_source(text, pages=pages)] == [[1], [3]]
+
+
+def test_failed_pdf_page_extraction_does_not_silently_drop_source(monkeypatch):
+    from app.integrations.novelist_source import extract_source
+
+    class BrokenPage:
+        def extract_text(self):
+            raise ValueError('broken page')
+    module = types.ModuleType('PyPDF2')
+    module.PdfReader = lambda _: types.SimpleNamespace(pages=[BrokenPage()])
+    monkeypatch.setitem(sys.modules, 'PyPDF2', module)
+    with pytest.raises(ValueError, match='Could not extract PDF page 1'):
+        extract_source('session.pdf', b'pdf')

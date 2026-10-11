@@ -23,3 +23,11 @@ uvicorn app.main:app --reload --port 8100
 ## Local Databases
 Shrecknet database files should live physically in `shrecknet/databases/`.
 The standalone Docker stack binds that host folder into the container as `/data`, so the SQLite files remain visible and copyable from the repo checkout.
+
+## Novelist context configuration
+
+Novelist V5 plans dramatic beats globally and writes from precise source passages.
+`novelist_analysis_context_tokens` and `novelist_writer_context_tokens` default to
+64,000 (minimum 24,000); configure them through the runtime configuration API within
+the selected models' capacities. See the [Novelist contract](../Documentation/Agents/Novelist/Novelist.md)
+for context preflight, PDF provenance, debug files, and worker rollout.

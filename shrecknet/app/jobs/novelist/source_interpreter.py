@@ -1,97 +1,102 @@
-"""Stage 1 of Novelist v4: source interpretation into a compact story plan."""
-
+"""Index authoritative passages, then plan globally or synthesize factual windows."""
 from __future__ import annotations
-
+import re
 from typing import Any, Awaitable, Callable
 
-from app.jobs.novelist.prompts import (
-    build_reconciliation_prompt,
-    build_story_plan_prompt,
-)
+from app.schemas.novelist import SourcePage
+from app.jobs.novelist.context_budget import fits_context, require_context
+from app.jobs.novelist.prompts import build_inventory_prompt, build_reconciliation_prompt, build_story_plan_prompt
 from app.jobs.novelist.story_plan import (
-    STORY_PLAN_JSON_SCHEMA,
-    NarrativeStoryPlan,
-    SourceSegment,
-    validate_source_references,
+    INVENTORY_JSON_SCHEMA, STORY_PLAN_JSON_SCHEMA, NarrativeStoryPlan,
+    SourceInventory, SourceSegment, resolve_ranges, validate_source_references,
 )
 
-JsonCaller = Callable[[str, dict[str, Any], str], Awaitable[dict[str, Any]]]
+JsonCaller = Callable[..., Awaitable[dict[str, Any]]]
 
 
-def segment_source(text: str, *, max_chars: int = 12000) -> list[SourceSegment]:
-    """Split on paragraph boundaries, also bounding an oversized paragraph."""
-
-    paragraphs = [part.strip() for part in text.split("\n\n") if part.strip()]
-    if not paragraphs:
-        paragraphs = [text.strip()]
-    bounded: list[str] = []
-    for paragraph in paragraphs:
-        while len(paragraph) > max_chars:
-            split_at = paragraph.rfind(" ", 0, max_chars + 1)
-            if split_at < max_chars // 2:
-                split_at = max_chars
-            bounded.append(paragraph[:split_at].strip())
-            paragraph = paragraph[split_at:].strip()
-        if paragraph:
-            bounded.append(paragraph)
-
-    chunks: list[str] = []
-    buffer = ""
-    for paragraph in bounded:
-        if buffer and len(buffer) + len(paragraph) + 2 > max_chars:
-            chunks.append(buffer)
-            buffer = ""
-        buffer = f"{buffer}\n\n{paragraph}".strip()
-    if buffer:
-        chunks.append(buffer)
-    return [
-        SourceSegment(id=f"source-{index:04d}", text=chunk)
-        for index, chunk in enumerate(chunks, start=1)
-    ]
+def segment_source(text: str, *, max_chars: int = 1800, pages: list[SourcePage] | None = None) -> list[SourceSegment]:
+    """Keep exact text/offsets; paragraph reference units never become beat quotas."""
+    if max_chars < 1:
+        raise ValueError("max_chars must be positive")
+    segments = []
+    for paragraph in re.finditer(r'.+?(?:\n[ \t]*\n|\Z)', text, re.DOTALL):
+        start, stop = paragraph.span()
+        while start < stop:
+            end = min(start + max_chars, stop)
+            if end < stop:
+                boundary = text.rfind(' ', start + max_chars // 2, end)
+                if boundary >= 0:
+                    end = boundary + 1
+            segments.append(SourceSegment(
+                id=f"passage-{len(segments) + 1:06d}", text=text[start:end],
+                start=start, end=end,
+                pages=[page.page for page in pages or [] if page.start < end and page.end > start],
+            ))
+            start = end
+    return segments
 
 
 async def interpret_source(
-    *,
-    text: str,
-    source_type: str,
-    language: str,
-    instructions: str,
-    call_json: JsonCaller,
+    *, text: str, source_type: str, language: str, instructions: str,
+    call_json: JsonCaller, context_tokens: int = 64000, output_tokens: int = 6000,
+    pages: list[SourcePage] | None = None,
+    diagnostic: Callable[..., None] | None = None,
 ) -> tuple[NarrativeStoryPlan, list[SourceSegment]]:
-    """Build one story plan, using partial plans only when input is oversized."""
+    if any(page.end > len(text) for page in pages or []):
+        raise ValueError("PDF page offsets exceed canonical source length")
+    segments = segment_source(text, pages=pages)
+    if not segments or not text.strip():
+        raise ValueError("Novelist source contains no text")
 
-    segments = segment_source(text)
-    if len(segments) <= 4:
-        payload = await call_json(
-            build_story_plan_prompt(
-                source_type=source_type,
-                language=language,
-                instructions=instructions,
-                segments=segments,
-            ),
-            STORY_PLAN_JSON_SCHEMA,
-            "novelist.analysis.story_plan",
-        )
+    def plan_validator(value):
+        return validate_source_references(NarrativeStoryPlan.model_validate(value), segments)
+
+    prompt = build_story_plan_prompt(source_type=source_type, language=language, instructions=instructions, segments=segments)
+    if diagnostic:
+        diagnostic("source_index", indexing_version="paragraph-v1", passages=[s.model_dump() for s in segments])
+    if fits_context(prompt, STORY_PLAN_JSON_SCHEMA, context_tokens=context_tokens, output_tokens=output_tokens):
+        path = "global"
+        if diagnostic:
+            diagnostic("planning_path", path=path, context_tokens=context_tokens, output_tokens=output_tokens)
+        value = await call_json(prompt, STORY_PLAN_JSON_SCHEMA, "novelist.analysis.story_plan", validator=plan_validator)
     else:
-        partials: list[dict[str, Any]] = []
+        path = "inventory_synthesis"
+        if diagnostic:
+            diagnostic("planning_path", path=path, context_tokens=context_tokens, output_tokens=output_tokens)
+        # Reserve recovery headroom before packing windows. Each complete request,
+        # including the bounded repair, is checked again by the orchestrator.
+        window_context = int(context_tokens * 0.8)
+        windows: list[list[SourceSegment]] = []
+        current: list[SourceSegment] = []
         for segment in segments:
-            partials.append(
-                await call_json(
-                    build_story_plan_prompt(
-                        source_type=source_type,
-                        language=language,
-                        instructions=instructions,
-                        segments=[segment],
-                    ),
-                    STORY_PLAN_JSON_SCHEMA,
-                    "novelist.analysis.story_plan_chunk",
-                )
-            )
-        payload = await call_json(
-            build_reconciliation_prompt(segments=segments, partial_plans=partials),
-            STORY_PLAN_JSON_SCHEMA,
-            "novelist.analysis.story_plan_reconcile",
-        )
-
-    plan = NarrativeStoryPlan.model_validate(payload)
-    return validate_source_references(plan, segments), segments
+            candidate = current + [segment]
+            request = build_inventory_prompt(segments=candidate, source_type=source_type, language=language, instructions=instructions)
+            if current and not fits_context(request, INVENTORY_JSON_SCHEMA, context_tokens=window_context, output_tokens=output_tokens):
+                windows.append(current)
+                current = [segment]
+            else:
+                current = candidate
+        if current:
+            windows.append(current)
+        inventories = []
+        for window in windows:
+            def inventory_validator(value, window=window):
+                inventory = SourceInventory.model_validate(value)
+                for item in inventory.observations:
+                    resolve_ranges(item.source_ranges, window)
+                return inventory
+            request = build_inventory_prompt(segments=window, source_type=source_type, language=language, instructions=instructions)
+            if diagnostic:
+                diagnostic("inventory.request", prompt=request, schema=INVENTORY_JSON_SCHEMA)
+            require_context(request, INVENTORY_JSON_SCHEMA, context_tokens=context_tokens, output_tokens=output_tokens)
+            inventories.append(await call_json(request, INVENTORY_JSON_SCHEMA, "novelist.analysis.inventory", validator=inventory_validator))
+        prompt = build_reconciliation_prompt(segments=segments, partial_plans=inventories, language=language, instructions=instructions)
+        # An explicitly bounded failure is preferable to dropping inventories or
+        # sending a synthesis request that still exceeds the configured context.
+        if diagnostic:
+            diagnostic("synthesis.request", prompt=prompt, schema=STORY_PLAN_JSON_SCHEMA)
+        require_context(prompt, STORY_PLAN_JSON_SCHEMA, context_tokens=context_tokens, output_tokens=output_tokens)
+        value = await call_json(prompt, STORY_PLAN_JSON_SCHEMA, "novelist.analysis.story_plan_reconcile", validator=plan_validator)
+    if diagnostic:
+        diagnostic("planning_path", path=path, context_tokens=context_tokens, output_tokens=output_tokens)
+    return plan_validator(value), segments

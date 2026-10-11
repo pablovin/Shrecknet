@@ -1,40 +1,39 @@
-# Novelist V4 Generate Draft Pipeline
+# Novelist V5 Generate Draft Pipeline
 
-`NovelistOrchestrator` owns the single active Novelist pipeline. The task persists
-stage progress and final artifacts through the existing background-job mechanism.
+`NovelistOrchestrator` owns the active generation pipeline. The Celery task owns
+persistence and tracking. [The canonical contract](../Novelist.md) defines schemas,
+limits, configuration, source provenance, observability, and compatibility.
 
-1. `interpretation` calls the analysis role with the complete strict story-plan
-   JSON Schema and a fixed 3,000-token output budget. A malformed, incomplete,
-   oversized, or truncated result gets one retry at the same budget. The schema
-   bounds each summary to 1,000 characters, with no maximum beat count and
-   [additional field limits](../Novelist.md#structured-analysis-contract).
-2. Oversized sources are interpreted in bounded chunks and reconciled by the same
-   analysis role with the same schema. This branch exists only for input sizing.
-3. `continuity` loads optional previous-session text and compatible V3 or V4
-   previous-run context. Current source and its plan remain authoritative.
-4. `block_planning` groups ordered adjacent beats into 800–1,200-word sections and
-   carries their coarse source references forward.
-5. `writing` runs sequentially. The writer receives no JSON response schema; it
-   returns plain prose using relevant original source and the prior section tail.
-6. `quality_gate` checks completion and obvious structural failures locally. Only
-   an unusable section gets one focused retry.
-7. `merging` HTML-escapes model output, wraps paragraphs, inserts the title, and
-   saves `draft_text`.
+1. Backend indexing preserves the canonical source as ordered paragraphs/bounded
+   fragments with exact offsets and optional original PDF page provenance.
+2. `interpretation`: Stage 1 `build_story_plan_prompt` frames the complete session
+   globally when its prompt fits the configured analysis context. It returns one
+   compact dramatic plan, typically 8–10 beats, with inclusive passage ranges.
+3. Oversized-input branch: Stage 1a `build_inventory_prompt` extracts chronological
+   factual inventories from bounded windows. Stage 1b
+   `build_reconciliation_prompt` synthesizes one global dramatic plan from all
+   inventories and ordered passage IDs. If synthesis cannot fit, fail clearly;
+   do not drop windows. There are no parallel planning branches or local beat quotas.
+4. Stage 1r `build_analysis_retry_prompt` repairs malformed, truncated, schema-invalid,
+   duplicate-ID, or invalid-range output once. The initial and repair calls use
+   strict schemas and a 6,000-token budget. Recovery is subject to context checks.
+5. Backend range resolution and coverage diagnostics record selections, omissions,
+   and overlap. They do not independently verify semantic coverage.
+6. `continuity` loads lower-authority previous-session text and V3/V4/V5 context.
+7. `block_planning` creates one unit per beat, subdividing large source selections
+   under the same beat identity. Targets reflect dramatic importance.
+8. `writing`: Stage 2 `build_writer_prompt` runs sequentially with the overall plan,
+   assigned original passages, instructions, continuity, and previous prose tail.
+   Writer calls receive no JSON response schema and return plain prose.
+9. Local completion checks run per unit. Stage 2r `build_writer_retry_prompt` rewrites
+   an unusable unit once. `quality_gate` confirms all units were accepted.
+10. `merging` escapes prose/title and renders chapter HTML. Final artifacts are
+    versioned V5. No partial chapter is published on analysis or writing failure.
 
-V4 performs no normal-path LLM fidelity or correction call. A failed section or
-analysis contract fails the run rather than persisting partial public output.
-The same analysis budgets apply to chunk interpretation and reconciliation.
-Warnings include the usage tag, attempt, output budget, and validation error.
+There are no retained inactive prompts, normal-path LLM fidelity/correction calls,
+or independent coverage verifier. Prompts and responses, including failures and
+repairs, are saved incrementally in the local debug area before validation.
 
-Deploy the updated Celery workers to apply these limits, then submit a new run
-for any failed generation; failed runs are not automatically resumed. Per-field
-bounds do not guarantee that a complete plan fits within 3,000 tokens. Both
-attempts retain strict validation even when a provider ignores sizing constraints;
-no response is sliced to fit. Rolling back
-restores the previous limits without rewriting stored runs. Historical plans
-remain readable and usable as lower-authority continuity; public request/response
-shapes do not change.
-
-No database migration or backfill is required. Deployments should drain queued V3
-jobs before updating workers because the Celery task name is unchanged and queued
-payloads execute the code installed on the worker.
+Deploy rebuilt workers, drain old queues, and submit fresh runs for failed jobs.
+No database migration is needed; historical runs remain readable. Live semantic
+quality evaluation is separate from automated contract/regression tests.

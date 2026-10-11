@@ -1,228 +1,194 @@
-"""Prompts for the Novelist v4 chapter pipeline.
+"""Novelist V5 prompts in execution order.
 
-Execution order:
-1. ``build_story_plan_prompt`` frames source segments as a compact editorial
-   plan with bounded fields. Its JSON output becomes the planning and writing
-   input.
-2. ``build_analysis_retry_prompt`` repairs one malformed or truncated structured
-   result from either analysis stage while retaining the complete source prompt.
-3. ``build_reconciliation_prompt`` is used only for oversized sources. It
-   combines ordered partial plans into the same complete JSON contract.
-4. ``build_writer_prompt`` renders one planned block as plain literary prose.
-   Blocks run sequentially and receive a tail from the preceding accepted block.
-5. ``build_writer_retry_prompt`` repairs only an unusable writing response.
-
-Only narrative planning, its retry, and reconciliation return structured JSON.
-Writer and writer-retry prose can become public output after deterministic checks
-and backend-owned HTML rendering.
+Normal path: stage 1 global planning consumes all indexed passages and returns a
+source-linked dramatic plan. Oversized-input branch: stage 1a factual inventories
+consume transport windows; stage 1b globally synthesizes inventories into the same
+plan. Neither branch imposes a beat count on individual source windows. Stage 1r
+repairs any rejected structured call once, beside its shared analysis contract.
+Stage 2 writes ordered beat units; stage 2r replaces unusable prose once. Only
+accepted writing becomes public output, after backend validation and HTML escaping.
+There is no independent semantic verifier. Passage indexing, range resolution,
+coverage diagnostics, and writing-unit subdivision run deterministically.
 """
-
 from __future__ import annotations
-
 import json
 from typing import Any
-
-from app.jobs.novelist.story_plan import (
-    MAX_CAST_MEMBERS,
-    MAX_CONTINUITY_CHARS,
-    MAX_ID_CHARS,
-    MAX_NAME_CHARS,
-    MAX_SOURCE_IDS,
-    MAX_SUMMARY_CHARS,
-    MAX_TITLE_CHARS,
-    NarrativeStoryPlan,
-    SourceSegment,
-)
+from app.jobs.novelist.story_plan import NarrativeStoryPlan, SourceSegment
 
 
-# Purpose: keep every structured analysis response compact within 3,000 tokens.
-# Used by: build_story_plan_prompt and build_reconciliation_prompt, and their
-# build_analysis_retry_prompt variants through the complete original prompt.
-# Expected output: the same bounded story-plan object, without slicing content.
-_COMPACT_PLAN_CONTRACT = f"""Output sizing contract (limits are characters, not words):
-- title: null or at most {MAX_TITLE_CHARS} characters.
-- cast: 0–{MAX_CAST_MEMBERS} mappings; player and character are non-empty strings
-  of at most {MAX_NAME_CHARS} characters each. Include explicit mappings only.
-- beats: one or more ordered beats, with no maximum beat count. Each summary
-  is 1–{MAX_SUMMARY_CHARS} characters. Preserve key discoveries, decisions, and
-  outcomes in concise beats. Group related adjacent events where useful; do not
-  enumerate every utterance or minor action.
-- beat_id: unique, non-empty, at most {MAX_ID_CHARS} characters, in narrative order.
-- source_ids: 1–{MAX_SOURCE_IDS} relevant supplied IDs per beat; each ID is
-  non-empty and at most {MAX_ID_CHARS} characters. Never invent or shorten IDs.
-- importance: exactly major, supporting, or transition.
-- continuity_notes: null or at most {MAX_CONTINUITY_CHARS} characters.
-Every root, cast, and beat field is required; no additional keys are allowed.
-Return compact JSON with no indentation. Stay comfortably within the 3,000-token
-output budget; these are maxima, not targets. Preserve facts through concise
-planning rather than cutting off JSON or dropping required fields."""
+# Purpose: define dramatic scale and whole-source coverage consistently.
+# Used by: global planning and inventory synthesis, plus their recovery variants.
+# Output: compact source-faithful dramatic developments, usually 8–10 per session.
+_DRAMATIC_CONTRACT = """Read the complete source as one narrative. A story beat is a meaningful
+ dramatic development, NOT an individual paragraph, conversation, combat round,
+ or gameplay action. Combine related events around conflicts, turning points,
+ character decisions, revelations, stakes, resolutions, and consequences. Explain
+ what changes and why in each summary. Aim for approximately 8–10 beats for a
+ typical three-hour RPG session, adjusting to actual complexity; this is a soft
+ target, with no maximum beat count. Do not pad brief sources or merge unrelated
+ developments merely to meet a count. Exclude out-of-fiction discussions, rules,
+ and administrative details unless their fictional consequences matter. Smaller
+ relevant actions stay in original passages for the writer.
+ Before returning, review coverage from the beginning through the middle and the
+ final fictional development. Preserve unresolved endings. Do not invent missing
+ outcomes, motives, characters, or consequential events."""
+
+# Purpose: self-contained structured plan output and passage-reference contract.
+# Used by: stage 1 planning and stage 1b synthesis; inherited by repair.
+# Output: strict JSON matching NarrativeStoryPlan and SourceRange.
+_PLAN_CONTRACT = """Return exactly this complete JSON structure (all keys required, no extra keys):
+{"title":string|null,"cast":[{"player":string,"character":string}],
+ "beats":[{"beat_id":string,"summary":string,
+ "importance":"major"|"supporting"|"transition",
+ "source_ranges":[{"start_id":string,"end_id":string}]}],
+ "continuity_notes":string|null}
+Every root field and every nested field is required. title: null or at most 120
+characters; cast: 0–10 explicit player/character mappings, each name 1–60 characters;
+beats: one or more ordered dramatic developments, each summary 1–600 characters
+(prefer 1–3 concise sentences); beat_id: unique 1–32 character identifier in narrative
+order, such as beat-001; source_ranges: 1–8 inclusive ranges per beat, each endpoint
+an exact supplied passage ID of 1–32 characters. Never invent or shorten IDs.
+A range includes all indexed passages from start_id through end_id in source order.
+Use multiple ranges for separated evidence; never repeat an identical range.
+Shared passages between beats are allowed when necessary. Each range must run
+forward. continuity_notes: null or at most 2000 characters.
+Use null for absent title/continuity notes, [] for absent cast. Return compact JSON
+without indentation, prose, or Markdown. Keep the complete response within 6,000
+tokens. Field maxima are ceilings, not targets; shorten summaries before losing
+major developments or the ending."""
+
+# Purpose: describe the authoritative index, independent of transport windows.
+# Used by: planning, inventory, and writer input contracts.
+# Output: exact selection of supplied passage IDs, without invented page metadata.
+_PASSAGE_CONTRACT = """Passages are ordered objects: id is an immutable reference; text is verbatim
+canonical extracted text; start/end are inclusive/exclusive character offsets into
+that text; pages is an array of original PDF page numbers, empty when unavailable.
+Paragraphs and bounded transcript fragments are references, not automatic beats."""
 
 
-# Purpose: frame raw source as an ordered story plan.
-# Used by: source_interpreter, analysis stage 1.
-# Expected output: the complete story-plan JSON object documented below.
-def build_story_plan_prompt(
-    *, source_type: str, language: str, instructions: str, segments: list[SourceSegment]
-) -> str:
-    return f"""Stage 1 — Narrative Understanding (framing).
-
-Act as an editor organizing notes for a novelist. Understand who did what and in
-which order. Distinguish player/table discussion from fictional action and
-dialogue. Keep important discoveries, decisions, outcomes, character details,
-and transitions. Do not invent events or resolve ambiguity that the source does
-not resolve.
-
-Input contract:
-- source_type: a non-authoritative hint; allowed values are auto, transcript,
-  recap, notes, adventure, event_log, or narrative.
-- language: requested chapter language; it does not change source facts.
-- instructions: user constraints that apply to planning and writing.
-- source_segments: ordered objects with immutable `id` and verbatim `text`.
-
-Return exactly one JSON object with all four required root fields:
-{{
-  "title": string or null,
-  "cast": [{{"player": "player name", "character": "character name"}}],
-  "beats": [
-    {{
-      "beat_id": "beat-001",
-      "summary": "A concise source-faithful narrative event",
-      "importance": "major" or "supporting" or "transition",
-      "source_ids": ["source-0001"]
-    }}
-  ],
-  "continuity_notes": string or null
-}}
-
-Every root field and every beat field is required. `beats` and each `source_ids`
-array must be non-empty. Beat IDs must be unique and follow narrative order.
-Every source ID must come from source_segments. Use an empty array for `cast`
-when no player-to-character mapping exists. Do not return scenes, evidence
-claims, prose, Markdown, or any key not shown in the contract.
-
-{_COMPACT_PLAN_CONTRACT}
-
+# Purpose: globally frame the complete session into dramatic developments.
+# Used by: source_interpreter stage 1 when the entire prompt fits its budget.
+# Output: complete NarrativeStoryPlan JSON for validation and sequential writing.
+def build_story_plan_prompt(*, source_type: str, language: str, instructions: str, segments: list[SourceSegment]) -> str:
+    return f"""Stage 1 — Global Narrative Understanding (framing).
+{_DRAMATIC_CONTRACT}
+{_PLAN_CONTRACT}
+Input contract: source_type is a non-authoritative hint, one of auto, transcript,
+recap, notes, adventure, event_log, narrative. language is the requested writing
+language; instructions are user planning/style constraints. source_segments is
+all authoritative source passages in order. {_PASSAGE_CONTRACT}
 source_type={source_type}
 language={language or 'source language'}
 instructions={instructions or 'none'}
-source_segments={json.dumps([segment.model_dump() for segment in segments], ensure_ascii=False)}"""
+source_segments={json.dumps([s.model_dump() for s in segments], ensure_ascii=False)}"""
 
 
-# Purpose: repair one rejected story-plan or reconciliation response.
-# Used by: orchestrator after a malformed, incomplete, or truncated analysis call.
-# Expected output: the same complete JSON object required by the original prompt.
-def build_analysis_retry_prompt(
-    *,
-    original_prompt: str,
-    rejected: str,
-    error: Exception | None,
-    schema: dict[str, Any],
-) -> str:
-    return f"""{original_prompt}
+# Purpose: extract facts from one transport window without local chapter structure.
+# Used by: source_interpreter stage 1a only when the global prompt cannot fit.
+# Output: SourceInventory JSON; observations feed the global synthesis stage.
+def build_inventory_prompt(*, segments: list[SourceSegment], source_type: str, language: str, instructions: str) -> str:
+    return f"""Stage 1a — Factual Source Inventory (reasoning).
+This is a window of a larger source, not an independent chapter. Record concise
+chronological fictional developments, decisions, discoveries, consequences,
+unresolved threads, and explicit player/character mappings. Retain the ending of
+this window. Omit table chatter unless fictional consequences matter. Never
+invent facts. Do not impose an 8–10 observation count or create a chapter plan.
+Return exactly {{"observations":[{{"summary":string,"source_ranges":[{{"start_id":string,"end_id":string}}]}}],"cast":[{{"player":string,"character":string}}]}}.
+All fields required; no extra keys. observations: non-empty ordered array; summary:
+1–600 characters; source_ranges: 1–8 inclusive forward ranges of exact supplied IDs
+(1–32 characters each), with no identical duplicate ranges. cast: 0–10 explicit
+mappings, names 1–60 characters, [] if absent. For an entirely non-fiction window,
+record that fact with its range so the global planner can omit it. Compact JSON
+only, within 6,000 tokens. The output feeds global synthesis, never public prose.
+Input: source_type is an auto/transcript/recap/notes/adventure/event_log/narrative
+hint; language is requested chapter language; instructions are user constraints;
+source_segments is this ordered source window. {_PASSAGE_CONTRACT}
+source_type={source_type}
+language={language}
+instructions={instructions}
+source_segments={json.dumps([s.model_dump() for s in segments], ensure_ascii=False)}"""
 
-The previous structured response was unusable. Return the complete root object
-again, with every required field. Do not return a nested field by itself or omit
-nullable fields. Regenerate a more compact plan within the original sizing
-contract and 3,000-token budget. Group related events and shorten summaries
-without inventing facts. Return a complete JSON object, never a sliced response.
-rejected_response={rejected[:12000]}
-validation_error={error}
-required_json_schema={json.dumps(schema, ensure_ascii=False)}"""
 
-
-# Purpose: reconcile transport-sized partial plans without expanding them.
-# Used by: source_interpreter, analysis stage 1b for oversized inputs only.
-# Expected output: one complete story-plan JSON object with renumbered beats.
-def build_reconciliation_prompt(
-    *, segments: list[SourceSegment], partial_plans: list[dict[str, Any]]
-) -> str:
-    return f"""Stage 1b — Narrative Plan Reconciliation (framing).
-
-Combine the ordered partial plans into one compact, source-faithful plan. Remove
-duplication at chunk boundaries, preserve chronology, and renumber beat_id from
-beat-001. Preserve only supplied source_ids. Do not add events.
-
-Return exactly one JSON object with all required fields:
-{{"title": string|null, "cast": [{{"player":"...", "character":"..."}}], "beats":
-[{{"beat_id":"beat-001", "summary":"...", "importance":"major|supporting|transition",
-"source_ids":["source-0001"]}}], "continuity_notes": string|null}}
-
-Input contract:
-- source_segments: ordered objects with immutable id and verbatim text.
-- partial_plans: ordered story-plan objects from stage 1, each with title, cast,
-  beats, and continuity_notes; their facts are grounded in source_segments.
-The reconciled output becomes the chapter-wide planning and writing input.
-{_COMPACT_PLAN_CONTRACT}
-source_segments={json.dumps([segment.model_dump() for segment in segments], ensure_ascii=False)}
+# Purpose: build one chapter-wide dramatic structure from factual inventories.
+# Used by: source_interpreter stage 1b, only after all oversized-source windows.
+# Output: complete NarrativeStoryPlan; never concatenated local beat lists.
+def build_reconciliation_prompt(*, segments: list[SourceSegment], partial_plans: list[dict[str, Any]], language: str = "", instructions: str = "") -> str:
+    return f"""Stage 1b — Global Narrative Synthesis (framing).
+{_DRAMATIC_CONTRACT}
+{_PLAN_CONTRACT}
+Input: passage_ids is the complete ordered immutable index (text omitted for input
+sizing); partial_plans contains ordered factual inventories, NOT local chapter
+plans, each with observations (summary and inclusive source_ranges) and cast
+(player/character mappings). Preserve their facts, merge related developments
+across windows, remove duplication, and create ONE chapter-wide structure.
+language is requested chapter language; instructions are user constraints.
+This branch uses inventories rather than a single full-source reading.
+language={language}
+instructions={instructions}
+passage_ids={json.dumps([s.id for s in segments])}
 partial_plans={json.dumps(partial_plans, ensure_ascii=False)}"""
 
 
-# Purpose: render one story-plan block as continuous literary prose.
-# Used by: orchestrator, writing stage 2 for every block.
-# Expected output: plain prose paragraphs only, never JSON or HTML.
-def build_writer_prompt(
-    *,
-    plan: NarrativeStoryPlan,
-    block: dict[str, Any],
-    source_segments: list[SourceSegment],
-    language: str,
-    instructions: str,
-    continuity: dict[str, Any],
-    previous_tail: str,
-) -> str:
-    ending = (
-        "This is the final section. End with a complete, deliberate literary "
-        "conclusion; do not trail off or promise a later continuation."
-        if block["is_final"]
-        else "This is not the final section. End at a natural transition without summarizing the chapter."
-    )
+def _bounded_text(value: str, limit: int) -> str:
+    return value.encode("utf-8")[:limit].decode("utf-8", errors="ignore")
+
+
+# Purpose: regenerate rejected structured output under its original contract.
+# Used by: orchestrator stage 1r, immediately after any failed planning/inventory call.
+# Output: complete original JSON shape; schema is supplemental to the original text.
+def build_analysis_retry_prompt(*, original_prompt: str, rejected: str, error: Exception | None, schema: dict[str, Any]) -> str:
+    return f"""{original_prompt}
+Stage 1r — Structured Recovery (reasoning).
+Regenerate the complete original root object, including nullable fields. The
+previous output failed validation. Shorten summaries and combine related facts
+while preserving major developments and the ending. Stay within the 6,000-token
+budget. Fix invalid references using only supplied IDs. Never slice JSON.
+rejected_response={_bounded_text(rejected, 6000)}
+validation_error={_bounded_text(str(error), 2000)}
+required_json_schema={json.dumps(schema, ensure_ascii=False)}"""
+
+
+# Purpose: render one dramatic beat or bounded subdivision using original evidence.
+# Used by: orchestrator stage 2 sequentially; only accepted prose is published.
+# Output: plain prose paragraphs for local checks and backend HTML escaping.
+def build_writer_prompt(*, plan: NarrativeStoryPlan, block: dict[str, Any], source_segments: list[SourceSegment], language: str, instructions: str, continuity: dict[str, Any], previous_tail: str) -> str:
+    ending = ("This is the final writing unit. Give the source's ending a deliberate literary conclusion; preserve unresolved outcomes." if block["is_final"] else "End at a natural transition; do not conclude the chapter or consume later beats.")
     return f"""Stage 2 — Literary Writing (rendering).
-
-Write this material as a polished chapter of a published novel, not as a recap,
-screenplay, transcript, or retelling of gameplay. Use continuous literary prose,
-fully developed paragraphs, natural dialogue, sensory description, narrative
-transitions, and deliberate pacing. Dramatize important events instead of merely
-summarizing them.
-
-Avoid headings, bullet points, enumerations, repetitive rhetorical structures,
-and a cascade of isolated sentence paragraphs. Short paragraphs are allowed when
-dramatically appropriate. Preserve the actual characters, events, discoveries,
-decisions, chronology, and outcomes. You may enrich atmosphere and connective
-narration, but never invent consequential events or change the established story.
-
-Return plain prose paragraphs only. Do not return HTML, Markdown fences, a title,
-JSON, notes, or an explanation. Write in {language or 'the source language'} and
-target approximately {block['target_words']} words. {ending}
-
-Input contract:
-- complete_story_plan: the chapter-wide ordered editorial plan.
-- current_block: ordered beat IDs assigned to this prose section.
-- supporting_source_segments: verbatim source text relevant to those beats.
-- continuity: lower-authority prior-session context; it may guide continuity but
-  must not override or add facts to the current source.
-- previous_accepted_tail: the end of the preceding section, or empty for the first.
-- user_instructions: user-supplied style and content constraints.
-
+Write polished novel prose, not a recap, screenplay, transcript, or gameplay log.
+Use natural dialogue, atmosphere, developed paragraphs, and deliberate pacing.
+Preserve source facts, decisions, discoveries, chronology, and outcomes. Develop
+smaller relevant fictional actions in the supporting passages within the current
+beat. Do not invent consequential events, resolve uncertainties, or turn table
+chatter into fiction. Avoid repeating previous prose or writing future beats.
+A subdivision covers only its supplied passages; the whole beat may continue in
+another unit. Overall neighboring beat summaries guide transitions, not new facts.
+Return plain prose paragraphs only: no title, headings, bullets, JSON, HTML,
+Markdown fences, or commentary. Short dramatic paragraphs are allowed.
+Write in {language or 'the source language'}, targeting {block['target_words']} words.
+{ending}
+Input contract: complete_story_plan has title, cast, ordered beats (beat_id,
+summary, importance, source_ranges), and continuity_notes. current_block has
+block_id, assigned beat_ids, target_words, and is_final. supporting_source_segments
+are selected original passages. {_PASSAGE_CONTRACT}
+continuity contains lower-authority previous_session, previous_run_context, and
+authority_order; none may override current source. Previous-run references belong
+to another document and must never resolve here. previous_accepted_tail is the
+preceding accepted prose or empty. user_instructions are user style constraints.
 user_instructions={instructions or 'none'}
 complete_story_plan={plan.model_dump_json()}
 current_block={json.dumps(block, ensure_ascii=False)}
-supporting_source_segments={json.dumps([segment.model_dump() for segment in source_segments], ensure_ascii=False)}
+supporting_source_segments={json.dumps([s.model_dump() for s in source_segments], ensure_ascii=False)}
 continuity={json.dumps(continuity, ensure_ascii=False)}
 previous_accepted_tail={previous_tail or 'none'}"""
 
 
-# Purpose: retry a genuinely unusable prose section once.
-# Used by: orchestrator immediately after a failed deterministic completion check.
-# Expected output: replacement plain prose paragraphs only.
-def build_writer_retry_prompt(
-    *, original_prompt: str, rejected: str, errors: list[str]
-) -> str:
+# Purpose: replace an unusable literary unit once without changing its assignment.
+# Used by: orchestrator stage 2r following failed local prose checks.
+# Output: complete replacement plain prose paragraphs, never public until accepted.
+def build_writer_retry_prompt(*, original_prompt: str, rejected: str, errors: list[str]) -> str:
     return f"""{original_prompt}
-
-The previous rendering was unusable for these concrete reasons:
-{json.dumps(errors, ensure_ascii=False)}
-
-Rewrite the entire section once. Correct those failures while preserving the same
-story facts, order, language, instructions, and target length. Return plain prose
-paragraphs only.
-rejected_rendering={rejected[:12000]}"""
+Stage 2r — Literary Recovery (rendering).
+Rewrite the entire unit once to fix {json.dumps(errors, ensure_ascii=False)}.
+Preserve the same facts, assignment, order, language, and target length. Plain prose
+paragraphs only; never invent an ending.
+rejected_rendering={_bounded_text(rejected, 6000)}"""

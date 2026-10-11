@@ -36,7 +36,7 @@ def _plan_payload() -> dict:
                 "beat_id": "beat-001",
                 "summary": "Tamura reaches the village.",
                 "importance": "major",
-                "source_ids": ["source-0001"],
+                "source_ranges": [{"start_id": "passage-000001", "end_id": "passage-000001"}],
             }
         ],
         "continuity_notes": None,
@@ -47,9 +47,9 @@ def test_story_plan_schema_requires_every_declared_field() -> None:
     assert set(STORY_PLAN_JSON_SCHEMA["required"]) == set(
         STORY_PLAN_JSON_SCHEMA["properties"]
     )
-    beat_schema = STORY_PLAN_JSON_SCHEMA["properties"]["beats"]["items"]
+    beat_schema = STORY_PLAN_JSON_SCHEMA["$defs"]["StoryBeat"]
     assert set(beat_schema["required"]) == set(beat_schema["properties"])
-    cast_schema = STORY_PLAN_JSON_SCHEMA["properties"]["cast"]["items"]
+    cast_schema = STORY_PLAN_JSON_SCHEMA["$defs"]["CastMember"]
     assert cast_schema["additionalProperties"] is False
     assert set(cast_schema["required"]) == set(cast_schema["properties"])
     validate_json_schema(_plan_payload(), STORY_PLAN_JSON_SCHEMA)
@@ -59,7 +59,7 @@ def test_story_plan_rejects_unknown_source_reference() -> None:
     plan = NarrativeStoryPlan.model_validate(_plan_payload())
     with pytest.raises(ValueError, match="Unknown source IDs"):
         validate_source_references(
-            plan, [SourceSegment(id="source-9999", text="Other source")]
+            plan, [SourceSegment(id="passage-999999", text="Other source")]
         )
 
 
@@ -70,9 +70,9 @@ def _boundary_plan_payload() -> dict:
         "beats": [
             {
                 "beat_id": str(index).zfill(32),
-                "summary": "s" * 1000,
+                "summary": "s" * 600,
                 "importance": "major",
-                "source_ids": [str(i).zfill(32) for i in range(8)],
+                "source_ranges": [{"start_id": str(i).zfill(32), "end_id": str(i).zfill(32)} for i in range(8)],
             }
             for index in range(10)
         ],
@@ -96,7 +96,7 @@ def test_story_plan_has_no_maximum_beat_count() -> None:
     validate_json_schema(payload, STORY_PLAN_JSON_SCHEMA)
     plan = NarrativeStoryPlan.model_validate(payload)
     assert len(plan.beats) == 50
-    assert sum(len(block.beat_ids) for block in plan_blocks(plan.beats)) == 50
+    assert sum(len(block.beat_ids) for block in plan_blocks(plan.beats, [SourceSegment(id="passage-000001", text="source")])) == 50
 
 
 @pytest.mark.parametrize(
@@ -106,10 +106,10 @@ def test_story_plan_has_no_maximum_beat_count() -> None:
         (("cast",), [{"player": "p", "character": "c"}] * 11),
         (("cast", 0, "player"), "p" * 61),
         (("cast", 0, "character"), "c" * 61),
-        (("beats", 0, "summary"), "s" * 1001),
+        (("beats", 0, "summary"), "s" * 601),
         (("beats", 0, "beat_id"), "b" * 33),
-        (("beats", 0, "source_ids"), ["source-0001"] * 9),
-        (("beats", 0, "source_ids", 0), "s" * 33),
+        (("beats", 0, "source_ranges"), [{"start_id": "passage-000001", "end_id": "passage-000001"}] * 9),
+        (("beats", 0, "source_ranges", 0, "start_id"), "s" * 33),
         (("continuity_notes",), "n" * 2001),
     ],
 )
@@ -126,7 +126,7 @@ def test_story_plan_rejects_oversized_fields_in_schema_and_model(path, value) ->
 
 
 def test_all_analysis_prompts_include_the_compact_contract() -> None:
-    segments = [SourceSegment(id="source-0001", text="Tamura arrives.")]
+    segments = [SourceSegment(id="passage-000001", text="Tamura arrives.")]
     prompts = [
         build_story_plan_prompt(
             source_type="notes", language="en", instructions="", segments=segments
@@ -142,10 +142,10 @@ def test_all_analysis_prompts_include_the_compact_contract() -> None:
         )
         for request in (prompt, repair):
             assert "no maximum beat count" in request
-            assert "1–1000 characters" in request
-            assert "title: null or at most 120 characters" in request
-            assert "continuity_notes: null or at most 2000 characters" in request
-            assert "3,000-token" in request
+            assert "1–600 characters" in request
+            assert "title: null or at most 120 characters" in " ".join(request.split())
+            assert "continuity_notes: null or at most 2000 characters" in " ".join(request.split())
+            assert "6,000" in request
 
 
 def test_source_segmentation_bounds_a_single_oversized_paragraph() -> None:
@@ -160,17 +160,17 @@ def test_blocks_are_ordered_bounded_and_retain_source_ids() -> None:
             beat_id=f"beat-{index:03d}",
             summary=f"Event {index}",
             importance="major",
-            source_ids=[f"source-{index:04d}"],
+            source_ranges=[{"start_id": f"passage-{index:06d}", "end_id": f"passage-{index:06d}"}],
         )
         for index in range(1, 5)
     ]
-    blocks = plan_blocks(beats)
+    blocks = plan_blocks(beats, [SourceSegment(id=f"passage-{index:06d}", text="source") for index in range(1, 5)])
     assert [beat_id for block in blocks for beat_id in block.beat_ids] == [
         beat.beat_id for beat in beats
     ]
-    assert all(800 <= block.target_words <= 1200 for block in blocks)
+    assert all(200 <= block.target_words <= 700 for block in blocks)
     assert blocks[-1].is_final is True
-    assert blocks[0].source_ids == ["source-0001", "source-0002"]
+    assert blocks[0].source_ids == ["passage-000001"]
 
 
 def test_plain_prose_checks_and_backend_html_escaping() -> None:
@@ -227,7 +227,7 @@ async def test_analysis_sends_complete_schema_to_analysis_model_on_both_attempts
         assert call["model"] == orchestrator.analysis_model
         assert call["messages"][0]["role"] == "user"
     assert client.calls[1]["usage_tag"].endswith(".repair")
-    assert [call["max_tokens"] for call in client.calls] == [3000, 3000]
+    assert [call["max_tokens"] for call in client.calls] == [6000, 6000]
 
 
 @pytest.mark.asyncio
@@ -261,7 +261,7 @@ async def test_truncated_analysis_is_retried_even_when_json_is_valid(
         == _plan_payload()
     )
     assert len(client.calls) == 2
-    assert [call["max_tokens"] for call in client.calls] == [3000, 3000]
+    assert [call["max_tokens"] for call in client.calls] == [6000, 6000]
     assert client.calls[1]["usage_tag"] == f"{tag}.repair"
 
 
@@ -280,7 +280,7 @@ async def test_analysis_still_fails_after_truncating_the_bounded_retry() -> None
     with pytest.raises(RuntimeError, match="failed after one retry.*truncated"):
         await orchestrator._json("prompt", STORY_PLAN_JSON_SCHEMA, "tag")
     assert len(client.calls) == 2
-    assert [call["max_tokens"] for call in client.calls] == [3000, 3000]
+    assert [call["max_tokens"] for call in client.calls] == [6000, 6000]
 
 
 @pytest.mark.asyncio
@@ -289,7 +289,7 @@ async def test_analysis_repairs_provider_output_that_ignores_sizing_limits(
     repair_valid: bool,
 ) -> None:
     oversized = _plan_payload()
-    oversized["beats"][0]["summary"] = "s" * 1001
+    oversized["beats"][0]["summary"] = "s" * 601
     client = _StructuredClient(
         [
             {
@@ -308,7 +308,7 @@ async def test_analysis_repairs_provider_output_that_ignores_sizing_limits(
     else:
         with pytest.raises(RuntimeError, match="failed after one retry"):
             await orchestrator._json("prompt", STORY_PLAN_JSON_SCHEMA, "tag")
-    assert [call["max_tokens"] for call in client.calls] == [3000, 3000]
+    assert [call["max_tokens"] for call in client.calls] == [6000, 6000]
     assert all(
         call["response_format"]["json_schema"]["schema"] == STORY_PLAN_JSON_SCHEMA
         for call in client.calls
@@ -319,7 +319,7 @@ async def test_analysis_repairs_provider_output_that_ignores_sizing_limits(
 async def test_source_interpreter_passes_the_story_plan_schema() -> None:
     calls: list[tuple[dict, str]] = []
 
-    async def call_json(prompt: str, schema: dict, tag: str) -> dict:
+    async def call_json(prompt: str, schema: dict, tag: str, **kwargs) -> dict:
         assert "Every root field" in prompt
         calls.append((schema, tag))
         return _plan_payload()
@@ -337,36 +337,6 @@ async def test_source_interpreter_passes_the_story_plan_schema() -> None:
 
 
 @pytest.mark.asyncio
-async def test_long_source_uses_same_schema_for_chunks_and_reconciliation() -> None:
-    calls: list[tuple[dict, str]] = []
-
-    async def call_json(prompt: str, schema: dict, tag: str) -> dict:
-        calls.append((schema, tag))
-        source_id = "source-0001"
-        for candidate in range(1, 7):
-            value = f"source-{candidate:04d}"
-            if value in prompt:
-                source_id = value
-                break
-        payload = _plan_payload()
-        payload["beats"][0]["source_ids"] = [source_id]
-        return payload
-
-    await interpret_source(
-        text="\n\n".join("x" * 12000 for _ in range(5)),
-        source_type="notes",
-        language="en",
-        instructions="",
-        call_json=call_json,
-    )
-
-    assert len(calls) == 6
-    assert all(schema == STORY_PLAN_JSON_SCHEMA for schema, _ in calls)
-    assert [tag for _, tag in calls].count("novelist.analysis.story_plan_chunk") == 5
-    assert calls[-1][1] == "novelist.analysis.story_plan_reconcile"
-
-
-@pytest.mark.asyncio
 async def test_writer_receives_no_json_schema_and_retries_truncation() -> None:
     client = _StructuredClient(
         [
@@ -375,11 +345,11 @@ async def test_writer_receives_no_json_schema_and_retries_truncation() -> None:
         ]
     )
     orchestrator = NovelistOrchestrator(llm_client=client, model_policy=ModelPolicy())
-    block = plan_blocks(NarrativeStoryPlan.model_validate(_plan_payload()).beats)[0]
+    block = plan_blocks(NarrativeStoryPlan.model_validate(_plan_payload()).beats, [SourceSegment(id="passage-000001", text="Tamura reaches the village.")])[0]
     prose, attempts = await orchestrator._write_block(
         block=block,
         plan=NarrativeStoryPlan.model_validate(_plan_payload()),
-        segments=[SourceSegment(id="source-0001", text="Tamura reaches the village.")],
+        segments=[SourceSegment(id="passage-000001", text="Tamura reaches the village.")],
         continuity={},
         payload=type("Payload", (), {"language": "en", "instructions": ""})(),
         previous_tail="",
@@ -391,7 +361,7 @@ async def test_writer_receives_no_json_schema_and_retries_truncation() -> None:
 
 
 @pytest.mark.asyncio
-async def test_v4_workflow_renders_safe_html_without_fidelity_call() -> None:
+async def test_v5_workflow_renders_safe_html_without_fidelity_call() -> None:
     prose = (
         "Tamura crossed the winter road and entered the waiting village. " * 35
     ).strip()
@@ -415,7 +385,7 @@ async def test_v4_workflow_renders_safe_html_without_fidelity_call() -> None:
         ),
     )
 
-    assert result["artifacts"]["pipeline_version"] == "v4"
+    assert result["artifacts"]["pipeline_version"] == "v5"
     assert result["fidelity_status"] == "not_run"
     assert result["final_text_html"].startswith("<h1>Winter Road</h1>\n<p>")
     assert [call["usage_tag"] for call in client.calls] == [

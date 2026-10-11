@@ -1,130 +1,188 @@
 # Novelist Agent
 
-Novelist V4 turns transcripts, notes, recaps, Adventure output, event logs, and
-existing prose into a continuous literary chapter. Its implementation is owned by
-`shrecknet/app/jobs/novelist/`; `shrecknet/app/tasks/novelist.py` is the async
-entry point.
+Novelist V5 converts a complete RPG session, notes, recap, Adventure output,
+event log, or narrative into a literary chapter. The implementation belongs to
+`shrecknet/app/jobs/novelist/`; `shrecknet/app/tasks/novelist.py` coordinates
+persistence and background-job tracking.
 
-## Runtime contract
+## Narrative contract
 
-The only active execution path is:
+A beat is a meaningful dramatic development: establishing a situation, introducing
+conflict, raising stakes, making a decision, revealing information, resolving a
+conflict, or creating consequences. Paragraphs, conversations, combat rounds, and
+gameplay actions are not automatic beats. Related actions form one development;
+smaller relevant actions remain in original passages for the writer.
 
-```text
-source → compact story plan → continuity → deterministic writing blocks
-       → sequential plain prose → local completion checks → safe HTML rendering
+Planning targets approximately 8–10 beats for a typical three-hour RPG session.
+This is editorial guidance, not a minimum, maximum, or acceptance quota. Short
+sources may need fewer and complex stories more. Plans must cover the beginning,
+middle, and final fictional development without inventing outcomes or resolving
+uncertainty. Table chatter, administration, and rules explanations are excluded
+unless their fictional consequences matter.
+
+## Source index and references
+
+`segment_source` creates ordered `passage-000001` identifiers from paragraphs,
+splitting long paragraphs at text boundaries into fragments of at most 1,800
+characters. Transport windows do not redefine these reference units. Concatenating
+passage text reproduces the canonical input exactly, including whitespace.
+Artifacts record `source_index_version: "paragraph-v1"` and `source_segments`:
+
+```json
+{"id":"passage-000001","text":"Original passage\n\n","start":0,"end":18,"pages":[1]}
 ```
 
-The analysis model acts as an editor. It extracts a title, explicit cast mappings,
-ordered narrative beats, coarse source references, and optional continuity notes.
-It does not build an evidence ledger or classify individual claims. The writer
-model acts as a novelist and writes the planned material as prose.
+`start`/`end` are inclusive/exclusive character offsets in canonical extracted
+text. They are not PDF byte offsets or guaranteed visual paragraphs. `pages` lists
+original PDF page numbers and is empty for pasted text and non-PDF uploads. PDF
+extraction retains original page numbers even across empty pages. An exception
+extracting a page rejects the upload rather than silently losing that page.
+Image-only pages still require upstream OCR; this adapter does not perform OCR.
 
-The two model roles remain independently configurable through
-`model_novelist_analysis` and `model_novelist_writer`.
+The backend persists validated PDF page spans in run `settings.source_pages` and
+passes them to the job from the stored run. Public request models need no new
+fields. Historical uploads cannot acquire missing page provenance retroactively.
 
-## Structured analysis contract
-
-Analysis and long-input reconciliation use the same strict JSON Schema. Every
-object sets `additionalProperties: false`, and every property is required. Nullable
-fields are still required and use `null` when absent:
+Each new story plan has this strict JSON shape:
 
 ```json
 {
   "title": "The Road Through Winter",
-  "cast": [
-    {"player": "Pietro", "character": "Tamura"}
-  ],
-  "beats": [
-    {
-      "beat_id": "beat-001",
-      "summary": "Tamura reaches the isolated village.",
-      "importance": "major",
-      "source_ids": ["source-0001"]
-    }
-  ],
-  "continuity_notes": null
+  "cast": [{"player":"Pietro","character":"Tamura"}],
+  "beats": [{
+    "beat_id":"beat-001",
+    "summary":"The search for shelter becomes an investigation when the villagers reveal an abduction.",
+    "importance":"major",
+    "source_ranges":[{"start_id":"passage-000001","end_id":"passage-000006"}]
+  }],
+  "continuity_notes":null
 }
 ```
 
-`importance` is `major`, `supporting`, or `transition`. `beats` and each
-`source_ids` array must be non-empty. Beat IDs must be unique, and source IDs must
-identify source segments supplied to the analysis call. `cast` is an array rather
-than an arbitrary-key object so provider-native strict schemas can enumerate and
-require every nested field.
+All shown keys are required; additional properties are forbidden. `title` is null
+or at most 120 characters. `cast` has 0–10 explicit mappings with 1–60 character
+names. `beats` is non-empty with no count maximum. Each summary has 1–600 characters;
+unique `beat_id` values have 1–32 characters. `importance` is `major`, `supporting`,
+or `transition`. `continuity_notes` is null or at most 2,000 characters.
 
-Only analysis-model calls receive this JSON schema, on both the initial request and
-the bounded repair request. V4 does not use a schema-less provider fallback: a
-provider that rejects structured output fails the run clearly. Writer-model calls
-explicitly receive no response schema because they return plain prose. Analysis is
-parsed as one complete JSON document, checked against the schema, and retried once
-when it is malformed, incomplete, schema-invalid, or reports token-limit truncation.
-Both initial and repair analysis calls have a fixed 3,000-token output budget.
-These limits apply to direct planning, partial plans, and reconciliation. A repair
-that still fails validation or is truncated fails the run without publishing
-partial output. Providers may differ in enforcement; local JSON Schema and
-Pydantic validation reject oversized plans rather than slicing generated content.
+Each beat has 1–8 inclusive `source_ranges`, with exact 1–32 character passage IDs
+as endpoints. Ranges may be noncontiguous. Unknown IDs, reversed ranges, and
+identical duplicate ranges are rejected. Overlapping selections are deduplicated
+in source order. Different beats may share passages when context requires it.
+Backend resolution uses index positions, not lexical ID comparisons.
 
-The schema, Pydantic models, and analysis prompts share these sizing limits:
+## Planning and context budgets
 
-| Field | Limit |
-| --- | --- |
-| `beats` | One or more ordered beats; no maximum count |
-| `beats[].summary` | 1–1,000 characters |
-| `cast` | 0–10 explicit player/character mappings |
-| `cast[].player`, `cast[].character` | 1–60 characters each |
-| `title` | `null` or at most 120 characters |
-| `continuity_notes` | `null` or at most 2,000 characters |
-| `beats[].beat_id` | 1–32 characters, unique |
-| `beats[].source_ids` | 1–8 supplied references per beat |
-| `beats[].source_ids[]` | 1–32 characters |
+The normal path sends all indexed source passages in one global planning call.
+The source remains authoritative; subsequent writers receive relevant originals.
+For oversized input, bounded transport windows produce chronological factual
+inventories (`observations` with `summary` and `source_ranges`, plus explicit
+`cast`). They are not local chapter plans and have no local beat quota. One global
+synthesis combines all inventories and the ordered passage IDs into the chapter
+plan, without resending the entire oversized original. If even synthesis cannot
+fit, the run fails with an actionable context-budget error; inventories are never
+silently discarded or truncated.
 
-Prompts request compact JSON and group related adjacent events into concise beats,
-including during reconciliation and repair. Maxima are ceilings, not targets.
-These are per-field bounds, with no schema limit on total plan length or beat
-count. Writers still receive verbatim source for the selected references. The
-3,000-token generation limit remains a cap on each complete analysis response; a
-long plan can exceed it even when every field meets its character limit. Truncated
-responses are still rejected.
+Only analysis calls receive strict response schemas. The backend checks complete
+JSON, JSON Schema, Pydantic invariants, and range references inside one bounded
+repair loop. Invalid or token-truncated output gets one complete regeneration.
+Both initial and repair analysis calls allow 6,000 output tokens. There is no
+schema-less provider fallback or acceptance of partial JSON.
 
-For oversized input, source text is bounded into segments. Each segment produces a
-compact partial plan, and one analysis reconciliation call produces the final plan.
-The same schema and validation rules apply to partial and reconciled plans.
+`model_novelist_analysis` and `model_novelist_writer` remain independent targets.
+Context settings, exposed through the configuration API and Novelist configuration
+group, are:
 
-## Writing and completion checks
+| Setting | Default | Minimum |
+| --- | --- | --- |
+| `novelist_analysis_context_tokens` | 64,000 | 24,000 |
+| `novelist_writer_context_tokens` | 64,000 | 24,000 |
 
-Adjacent beats are grouped deterministically into sections targeting 800–1,200
-words. Each writer call receives the complete story plan, its assigned beats,
-relevant verbatim source segments, lower-authority continuity, user instructions,
-and the tail of the preceding accepted section. The final block is explicitly told
-to produce a complete literary conclusion.
+Set these capacities no higher than the selected provider/model supports. The
+worker does not infer context capacity from model names. Preflight conservatively
+counts UTF-8 bytes of prompt and serialized schema plus 256 framing units, reserves
+output tokens, and uses at most 80% of configured capacity. This is a deliberately
+conservative estimate, not an exact provider tokenizer. It may select the inventory
+path earlier than necessary. Every initial and repair request is checked. Oversized
+instructions, continuity, a single passage, repair, or synthesis can fail clearly.
+Inventory windows reserve additional headroom by packing against 80% of the
+analysis context setting. Writers reserve bounded recovery space when subdividing.
+Configuration uses the runtime config database; update through the configuration
+API and restart workers as needed to load code changes.
 
-The writer returns plain text. Local checks reject only unusable output: empty or
-token-truncated responses, unexpectedly short responses, list-shaped output,
-Markdown headings or fences, and model-produced HTML. One complete-section retry
-is permitted. Minor stylistic imperfections and legitimate short dramatic
-paragraphs do not trigger rewriting.
+## Writing and coverage
 
-The backend escapes the title and prose, wraps prose paragraphs in `<p>` elements,
-and inserts the `<h1>`. There is no mandatory LLM fidelity verification,
-correction, or re-verification stage.
+One writing unit normally corresponds to one dramatic beat. Oversized selections
+split into ordered units under the same `beat_id`; subdivision never creates new
+narrative beats. `block_count` counts actual writing units. Unsplittable prompt
+or passage overhead fails before sending an oversized request.
 
-## Persistence and compatibility
+Each writer receives the complete plan, its assignment, relevant verbatim
+passages, lower-authority continuity, instructions, and the preceding accepted
+prose tail (up to 1,800 characters). Neighboring summaries guide transitions.
+Writers develop smaller relevant actions in their passages while avoiding repeated
+material or consuming future beats. Importance targets are 700 words for `major`,
+450 for `supporting`, and 200 for `transition`; subdivisions divide that target
+with a floor of 150. Targets guide pacing, not exact word counts.
 
-V4 artifacts use `pipeline_version: "v4"` and contain `story_plan`,
-`source_segments`, `continuity`, `block_plan`, accepted plain-prose `blocks`, local
-quality results, timings, and LLM-call metadata. `draft_text` remains display-ready
-chapter HTML.
+Writer calls return plain prose with a 5,000-token output budget. Local checks
+reject empty/truncated output, output shorter than `max(40, 35% of target_words)`,
+list-shaped output, Markdown headings/fences, and HTML. One complete-unit retry is
+allowed. Failure never publishes a partial chapter. Backend escaping wraps accepted
+paragraphs in `<p>` and adds the escaped `<h1>` title.
 
-The request routes and payload remain backward compatible. Historical V1–V3 run
-artifacts are not rewritten. `previous_novelist_run_id` accepts a completed V4 run
-or a historical V3 run: V4 reuses its story plan as lower-authority continuity,
-while V3 reuses its evidence ledger. `previous_session_id` remains a graph-backed,
-lower-authority text lookup.
+Artifacts include `coverage.beat_passages`, `unreferenced_passages`, and
+`shared_passages`. These expose selection gaps/reuse without claiming semantic
+completeness: table chatter can legitimately be unreferenced. Planning includes a
+beginning-to-ending review; no mandatory independent fidelity model runs.
+`semantic_coverage` is `not_independently_verified`, `fidelity_status` is `not_run`,
+and `correction_count` is `0`. Real model quality should be evaluated against
+annotated sessions; deterministic tests do not prove dramatic significance.
 
-For response compatibility, `fidelity_status` is `not_run` and
-`correction_count` is `0` on V4 runs. Historical stage enum values and nullable V2
-diagnostic fields remain readable, but V4 does not emit fidelity or correction
-stages.
+## Local debug artifacts
 
-See [the endpoint contract](Endpoints/Novelist%20-%20Endpoints.md) and
-[the generation flow](Generate_Draft/Generate_Draft.md).
+Every new execution writes incremental JSON under
+`<SHRECKNET_DATA_DIR>/local_tests/novelist/<run_id>_<UTC timestamp>/`.
+The data root defaults to `/data`, with a fallback to the package's
+`shrecknet/databases/` directory. Compose exposes these on the host at
+`shrecknet/databases/local_tests/novelist/`. Worker logs include the selected path.
+Run IDs are sanitized and executions get isolated directories.
+
+Numbered snapshots retain full runtime inputs, source indexing and planning-path
+choices, stage artifacts, exact prompts and schemas, context budgets, unmodified
+client responses, validation results, retry requests/responses, final HTML, and
+terminal exceptions with traceback. Requests are saved before dispatch and
+responses before validation, so malformed and truncated outputs survive failure.
+Responses are what `ShreckLLMClient` returns, not raw provider HTTP bodies.
+`manifest.json` indexes snapshots with `running`, `completed`, or `failed`, run ID,
+and the last stage. A killed worker may leave `running` with previously written
+snapshots. Filesystem failures warn without changing generation outcomes.
+
+Files contain source material and generated text and live outside public media.
+There is no new HTTP download route. Remove them manually; deleting a database run
+does not remove its debug folder. Existing failures cannot be reconstructed;
+submit a new run after rebuilding workers to capture them.
+
+## Persistence, rollout, and compatibility
+
+New artifacts use `pipeline_version: "v5"`. They include the source index,
+`story_plan`, deterministic `coverage`, `planning`, `continuity`, writing
+`block_plan`, accepted prose `blocks`, local quality results, timings, and LLM-call
+metadata. `draft_text` remains safe chapter HTML. Historical V1–V4 records are
+not rewritten or parsed as V5 range plans.
+
+`previous_novelist_run_id` accepts completed V3, V4, and V5 records. V3 contributes
+its evidence ledger; V4/V5 contribute their story plan as lower-authority context.
+Previous-run reference IDs are never resolved against current passages.
+`previous_session_id` remains a graph-backed continuity lookup.
+
+No database table migration or backfill is required. Rebuild workers and drain
+queued jobs for the code cutover: the task name stays `novelist.generate_draft`.
+Queued payloads use the code installed on the worker. New configuration keys gain
+defaults without replacing stored model choices. Source indexing/debug capture
+increases local storage. Rollback leaves V5 JSON readable; older workers can still
+read runs but do not reuse V5 continuity. Failed runs require a fresh submission.
+
+See [the endpoint contract](Endpoints/Novelist%20-%20Endpoints.md),
+[the ordered generation flow](Generate_Draft/Generate_Draft.md), and
+[the implementation plan and evaluation status](Narrative%20Planning%20and%20Source%20References%20Plan.md).

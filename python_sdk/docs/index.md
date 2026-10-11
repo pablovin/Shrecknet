@@ -32,7 +32,7 @@ Official documentation for the async Shrecknet Python SDK.
 
 ## Novelist
 
-- [Novelist V4 guide](./novelist.md)
+- [Novelist V5 guide](./novelist.md)
 
 ## Comprehensive Example
 

@@ -29,7 +29,9 @@ Welcome to the Shrecknet documentation! This directory contains all organized do
 
 ## Novelist
 
-- [Novelist](./Agents/Novelist/Novelist.md) — evidence-led chapter generation contract
+- [Narrative planning and source references plan](./Agents/Novelist/Narrative%20Planning%20and%20Source%20References%20Plan.md) — V5 implementation record; live semantic evaluation remains pending
+
+- [Novelist](./Agents/Novelist/Novelist.md) — V5 dramatic planning, precise passage ranges, context budgets, and local debug artifacts
 - [Novelist endpoints](./Agents/Novelist/Endpoints/Novelist%20-%20Endpoints.md)
 - [Novelist pipeline](./Agents/Novelist/Generate_Draft/Generate_Draft.md)
 

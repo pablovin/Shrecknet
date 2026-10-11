@@ -1,4 +1,4 @@
-"""Local completion checks and safe HTML rendering for Novelist v4 prose."""
+"""Local completion checks and safe HTML rendering for Novelist v5 prose."""
 
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ def validate_prose_text(
     if normalized_finish in {"length", "max_tokens", "max_output_tokens"}:
         errors.append("generation was truncated at the output-token limit")
     word_count = len(stripped.split())
-    minimum_words = max(180, int(target_words * 0.35))
+    minimum_words = max(40, int(target_words * 0.35))
     if word_count < minimum_words:
         errors.append(
             f"response is unexpectedly short ({word_count} words; minimum {minimum_words})"

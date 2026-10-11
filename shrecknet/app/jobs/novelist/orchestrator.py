@@ -1,6 +1,6 @@
-"""Novelist v4 orchestration.
+"""Novelist v5 orchestration.
 
-Execution order: understand source -> load continuity -> plan adjacent writing
+Execution order: understand source -> load continuity -> plan beat writing
 blocks -> write and locally check plain-prose sections -> render safe chapter HTML.
 The analysis model receives the strict story-plan JSON Schema. The writer model
 never receives a JSON schema because its contract is plain literary prose.
@@ -12,6 +12,7 @@ import html
 import json
 import logging
 import time
+import traceback
 from typing import Any, Awaitable, Callable
 
 from jsonschema import validate as validate_json_schema
@@ -20,6 +21,8 @@ from app.integrations.llm.model_policy import LLMTask, ModelPolicy
 from app.integrations.llm.shreckllm_client import ShreckLLMClient
 from app.integrations.llm.structured_output import strict_json_schema
 from app.jobs.novelist.block_planner import WritingBlock, plan_blocks
+from app.jobs.novelist.debug_artifacts import NovelistDebugArtifacts
+from app.jobs.novelist.context_budget import input_cost, require_context
 from app.jobs.novelist.prompts import (
     build_analysis_retry_prompt,
     build_writer_prompt,
@@ -29,6 +32,9 @@ from app.jobs.novelist.prose_quality import prose_to_html, validate_prose_text
 from app.jobs.novelist.source_interpreter import interpret_source
 from app.jobs.novelist.story_plan import (
     STORY_PLAN_JSON_SCHEMA,
+    INVENTORY_JSON_SCHEMA,
+    SourceInventory,
+    coverage_diagnostics,
     NarrativeStoryPlan,
     SourceSegment,
 )
@@ -40,16 +46,19 @@ StageCallback = Callable[[NovelistStage, dict[str, Any]], Awaitable[None]]
 
 logger = logging.getLogger(__name__)
 
-ANALYSIS_MAX_TOKENS = 3000
+ANALYSIS_MAX_TOKENS = 6000
 WRITER_MAX_TOKENS = 5000
 
 
 class NovelistOrchestrator:
-    """Single authoritative implementation of the Novelist v4 pipeline."""
+    """Single authoritative implementation of the Novelist v5 pipeline."""
 
     def __init__(
-        self, *, llm_client: ShreckLLMClient, model_policy: ModelPolicy
+        self, *, llm_client: ShreckLLMClient, model_policy: ModelPolicy,
+        analysis_context_tokens: int = 64000, writer_context_tokens: int = 64000
     ) -> None:
+        self.analysis_context_tokens = analysis_context_tokens
+        self.writer_context_tokens = writer_context_tokens
         self.llm_client = llm_client
         self.analysis_model = getattr(
             model_policy, "model_novelist_analysis", None
@@ -58,19 +67,38 @@ class NovelistOrchestrator:
             model_policy, "model_novelist_writer", None
         ) or model_policy.get_model(LLMTask.SYNTHESIS)
         self.calls: list[dict[str, Any]] = []
+        self.debug = NovelistDebugArtifacts(None)
 
     @staticmethod
     def _model_name(model: Any) -> Any:
         return model.model_dump() if hasattr(model, "model_dump") else str(model)
 
+    async def _chat(self, **request: Any) -> Any:
+        """Save the exact caller request before waiting, then the unmodified response."""
+        tag = request["usage_tag"]
+        snapshot = {**request, "model": self._model_name(request["model"])}
+        self.debug.write(f"{tag}.request", request=snapshot)
+        try:
+            schema = (request.get("response_format") or {}).get("json_schema", {}).get("schema")
+            context = self.analysis_context_tokens if schema is not None else self.writer_context_tokens
+            require_context(request["messages"][0]["content"], schema,
+                            context_tokens=context, output_tokens=request["max_tokens"])
+            result = await self.llm_client.chat(**request)
+        except Exception as exc:
+            self.debug.write(f"{tag}.error", error=str(exc), traceback=traceback.format_exc())
+            raise
+        self.debug.write(f"{tag}.response", response=result)
+        return result
+
     async def _json(
-        self, prompt: str, schema: dict[str, Any], usage_tag: str
+        self, prompt: str, schema: dict[str, Any], usage_tag: str,
+        *, validator: Callable[[dict[str, Any]], Any] | None = None
     ) -> dict[str, Any]:
         """Call the analysis role with its schema and one bounded repair attempt."""
 
-        if schema != STORY_PLAN_JSON_SCHEMA:
-            raise ValueError("Novelist analysis calls must use STORY_PLAN_JSON_SCHEMA")
-        response_format = strict_json_schema("novelist_v4_story_plan", schema)
+        if schema not in (STORY_PLAN_JSON_SCHEMA, INVENTORY_JSON_SCHEMA):
+            raise ValueError("Unknown Novelist structured schema")
+        response_format = strict_json_schema("novelist_v5_inventory" if schema == INVENTORY_JSON_SCHEMA else "novelist_v5_story_plan", schema)
         rejected = ""
         last_error: Exception | None = None
         for attempt in range(2):
@@ -83,7 +111,8 @@ class NovelistOrchestrator:
                     error=last_error,
                     schema=schema,
                 )
-            result = await self.llm_client.chat(
+            self.debug.write("analysis.context", tag=attempt_tag, input_cost=input_cost(attempt_prompt, schema), context_tokens=self.analysis_context_tokens, output_tokens=ANALYSIS_MAX_TOKENS)
+            result = await self._chat(
                 model=self.analysis_model,
                 messages=[{"role": "user", "content": attempt_prompt}],
                 response_format=response_format,
@@ -115,9 +144,15 @@ class NovelistOrchestrator:
                 if not isinstance(parsed, dict):
                     raise ValueError("structured response must be a JSON object")
                 validate_json_schema(parsed, schema)
+                model_type = SourceInventory if schema == INVENTORY_JSON_SCHEMA else NarrativeStoryPlan
+                model_type.model_validate(parsed)
+                if validator:
+                    validator(parsed)
+                self.debug.write(f"{attempt_tag}.validation", accepted=True, parsed=parsed)
                 return parsed
             except Exception as exc:
                 last_error = exc
+                self.debug.write(f"{attempt_tag}.validation", accepted=False, error=str(exc))
                 logger.warning(
                     "novelist_story_plan_invalid tag=%s attempt=%s max_tokens=%s error=%s",
                     usage_tag,
@@ -132,7 +167,8 @@ class NovelistOrchestrator:
     async def _write(
         self, prompt: str, *, usage_tag: str
     ) -> tuple[str, dict[str, Any]]:
-        result = await self.llm_client.chat(
+        self.debug.write("writer.context", tag=usage_tag, input_cost=input_cost(prompt), context_tokens=self.writer_context_tokens, output_tokens=WRITER_MAX_TOKENS)
+        result = await self._chat(
             model=self.writer_model,
             messages=[{"role": "user", "content": prompt}],
             temperature=0.7,
@@ -202,6 +238,10 @@ class NovelistOrchestrator:
                 target_words=block.target_words,
                 finish_reason=metadata.get("finish_reason"),
             )
+            self.debug.write(
+                "writer.validation", block_id=block.block_id, attempt=attempt + 1,
+                accepted=not failures, errors=failures,
+            )
             if not failures:
                 return prose, attempt + 1
         raise RuntimeError(
@@ -216,10 +256,50 @@ class NovelistOrchestrator:
         conversation_id: str | None = None,
         stage_callback: StageCallback | None = None,
     ) -> dict[str, Any]:
+        self.calls = []
+        self.debug = NovelistDebugArtifacts.create(conversation_id)
+        self.debug.write(
+            "inputs", payload=payload.model_dump(),
+            previous_run_context=getattr(payload, "previous_run_context", None),
+            analysis_model=self._model_name(self.analysis_model),
+            writer_model=self._model_name(self.writer_model),
+        )
+        stage = NovelistStage.INGEST
+        self.debug.manifest(status="running", run_id=conversation_id, stage=stage.value)
+
+        async def traced_stage(current: NovelistStage, data: dict[str, Any]) -> None:
+            nonlocal stage
+            stage = current
+            self.debug.write(f"stage.{stage.value}", data=data)
+            self.debug.manifest(status="running", run_id=conversation_id, stage=stage.value)
+            if stage_callback:
+                await stage_callback(current, data)
+
+        try:
+            result = await self._execute(
+                agent=agent, payload=payload, conversation_id=conversation_id,
+                stage_callback=traced_stage,
+            )
+        except Exception as exc:
+            self.debug.write("failure", stage=stage.value, error=str(exc), traceback=traceback.format_exc())
+            self.debug.manifest(status="failed", run_id=conversation_id, stage=stage.value, error=str(exc))
+            raise
+        self.debug.write("result", result=result)
+        self.debug.manifest(status="completed", run_id=conversation_id, stage=NovelistStage.DONE.value)
+        return result
+
+    async def _execute(
+        self,
+        *,
+        agent: Agent,
+        payload: NovelistRunCreate,
+        conversation_id: str | None = None,
+        stage_callback: StageCallback | None = None,
+    ) -> dict[str, Any]:
         del agent, conversation_id
         started = time.monotonic()
         artifacts: dict[str, Any] = {
-            "pipeline_version": "v4",
+            "pipeline_version": "v5",
             "inputs": payload.model_dump(
                 exclude={"previous_session_text", "previous_session_summary"}
             ),
@@ -231,14 +311,25 @@ class NovelistOrchestrator:
         interpretation_started = time.monotonic()
         if stage_callback:
             await stage_callback(NovelistStage.INTERPRETATION, {"artifacts": artifacts})
+        def record_planning(step: str, **values: Any) -> None:
+            self.debug.write(step, **values)
+            if step == "planning_path":
+                artifacts.setdefault("planning", {})[step] = values
+
         plan, segments = await interpret_source(
-            text=payload.unstructured_text.strip(),
+            text=payload.unstructured_text,
             source_type=payload.source_type,
             language=payload.language or "",
             instructions=payload.instructions or "",
             call_json=self._json,
+            context_tokens=self.analysis_context_tokens,
+            output_tokens=ANALYSIS_MAX_TOKENS,
+            pages=getattr(payload, "source_pages", None),
+            diagnostic=record_planning,
         )
         artifacts["story_plan"] = plan.model_dump()
+        artifacts["source_index_version"] = "paragraph-v1"
+        artifacts["coverage"] = coverage_diagnostics(plan, segments)
         artifacts["source_segments"] = [segment.model_dump() for segment in segments]
         artifacts["timings_ms"]["interpretation"] = round(
             (time.monotonic() - interpretation_started) * 1000, 2
@@ -260,7 +351,15 @@ class NovelistOrchestrator:
         }
         artifacts["continuity"] = continuity
 
-        blocks = plan_blocks(plan.beats)
+        empty_block = {"block_id": "block-000", "beat_ids": [], "target_words": 700, "is_final": False}
+        base_prompt = build_writer_prompt(
+            plan=plan, block=empty_block, source_segments=[],
+            language=payload.language or "", instructions=payload.instructions or "",
+            continuity=continuity, previous_tail="𐍈" * 1800,
+        )
+        # Reserve 8 KiB for bounded writer recovery and framing variations.
+        available = int(self.writer_context_tokens * 0.8) - WRITER_MAX_TOKENS - input_cost(base_prompt) - 8192
+        blocks = plan_blocks(plan.beats, segments, max_source_bytes=available)
         artifacts["block_plan"] = [
             block.as_prompt_dict() | {"source_ids": block.source_ids}
             for block in blocks

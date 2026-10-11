@@ -52,3 +52,8 @@ Scripts share IDs via:
 - Invalid PDF path: ensure `SHRECKNET_PDF_PATH` exists and points to a `.pdf`
 - Agent mismatch: verify each agent is active and has correct job type
 - Timeouts: increase timeouts in scripts for slow environments
+
+The Novelist example reports the artifact version, dramatic beat count, writing-unit
+count, and passage coverage diagnostics before creating the story. It requires a
+completed generation and does not substitute raw input for a failed chapter. V5
+PDF uploads retain original page provenance; see the [Novelist SDK guide](../../docs/novelist.md).

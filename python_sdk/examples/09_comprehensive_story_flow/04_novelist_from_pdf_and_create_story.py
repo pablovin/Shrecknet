@@ -1,8 +1,8 @@
 import asyncio
 import os
 
-from shrecknet_client import NovelistRunCreate, OntologyInstanceCreate, OntologyInstanceEntity, Shrecknet
-from python_sdk.examples.09_comprehensive_story_flow._bootstrap import ensure_user_and_login, env, load_state, save_state
+from shrecknet_client import OntologyInstanceCreate, OntologyInstanceEntity, Shrecknet
+from _bootstrap import ensure_user_and_login, env, load_state, save_state
 
 
 async def main() -> None:
@@ -18,7 +18,14 @@ async def main() -> None:
         await sdk.novelist.wait_for_run(run.id, timeout_s=1200)
         run = await sdk.novelist.get_run(run.id)
 
-        draft = run.draft_text or run.request_payload.get("unstructured_text", "") if run.request_payload else ""
+        if run.status != "completed" or not run.draft_text:
+            raise RuntimeError(f"Novelist generation failed: {run.error_message or run.status}")
+        artifacts = run.artifacts or {}
+        print("pipeline_version:", run.pipeline_version)
+        print("dramatic_beats:", len(artifacts.get("story_plan", {}).get("beats", [])))
+        print("writing_units:", run.block_count)
+        print("coverage:", artifacts.get("coverage", {}))
+        draft = run.draft_text
         story = await sdk.ontology_instances.create(
             OntologyInstanceCreate(
                 ontology_id=ontology_id,

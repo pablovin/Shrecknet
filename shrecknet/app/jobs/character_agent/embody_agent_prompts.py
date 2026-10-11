@@ -1,14 +1,14 @@
 """Prompt contracts in CharacterAgent embodiment execution order.
 
 IDENTITY_DESCRIPTION_PROMPT resolves narrative grounding when absent and
-refreshes it after embodiment using scores, contributing evidence, bounded grounded
-perspectives, accepted psychology, separate versioned cross-scene Steadiness, and
+refreshes all three fields after each source bundle using scores, contributing
+evidence, bounded grounded perspectives, accepted psychology, separate versioned cross-scene Steadiness, and
 continuity-only prior text -> conditional psychological portrait. It never supplies
 new numerical trait evidence. Stage 0 uses character incorporation; Stage 1 and
 Stage 4 use scene interpretation; Stage 2 and Stage 3 use psychological
 interpretation, with independent target reasoning flags. This Stage 0 frames scene
-interpretation when missing and renders the final persisted portrait after
-processing; it adds no model stage.
+interpretation when missing and renders the resulting portrait before
+the next source begins; it adds no model stage.
 For each source scene chunk, PERSPECTIVE_PROMPT runs first:
     objective scenes -> psychologically distinctive subjective perspectives.
     A truncated response retries with PERSPECTIVE_TRUNCATION_RECOVERY_PROMPT.
@@ -29,8 +29,10 @@ Malformed/duplicate scene candidates are dropped individually;
 invalid output envelopes use the bounded validation retry budget. Validated chunk
 outputs are checkpointed and reused only when input fingerprints match; truncated
 psychological batches split until single scenes. Backend reducers validate and
-apply lifecycle/focus rules before acceptance. Trait aggregation remains
-deterministic. Prompts do not receive full scene history or produce public output.
+apply lifecycle/focus rules, then IDENTITY_DESCRIPTION_PROMPT refreshes the portrait
+from accumulated traits (including Steadiness), active aspects/goals, and bounded
+validated perspectives before source acceptance and the next bundle. Trait
+aggregation remains deterministic. Prompts do not receive full scene history or produce public output.
 """
 import json
 from app.schemas.character_agent import MAX_EMBODIMENT_JUSTIFICATION_LENGTH
@@ -52,7 +54,7 @@ IDENTITY_TRAIT_DESCRIPTION_CONTRACT = (
         for key in DIRECTIONAL_TRAITS
     ], ensure_ascii=False)
 )
-PROMPT_VERSION = "character-embodiment-v45-consolidation-justifications"
+PROMPT_VERSION = "character-embodiment-v46-source-evolution"
 
 # Purpose: Define consistency separately from the eight directional dimensions.
 # Used by: IDENTITY_DESCRIPTION_PROMPT, alongside IDENTITY_TRAIT_DESCRIPTION_CONTRACT.
@@ -68,15 +70,18 @@ IDENTITY_STEADINESS_CONTRACT = (
     }, ensure_ascii=False)
 )
 
-# Execution order: Stage 0, once when description is absent and once after
-# scene processing to refresh it from the resulting current state.
+# Execution order: Stage 0 when description is absent; repeated after Stage 4 and
+# deterministic reducers for every source, before the next source starts.
 # Purpose: Frame/render evidence-grounded conditional psychology without scoring traits.
 # Used by: EmbodyAgent.generate_identity_description.
 # Expected: identity_summary, psychological_summary, personality_traits.
 IDENTITY_DESCRIPTION_PROMPT = r"""You are constructing the psychological identity of a fictional character.
 PIPELINE POSITION: Stage 0 frames scene interpretation when identity is missing,
-then renders the final persistent identity after embodiment. Its output guides
+then renders the persistent identity after each completed source bundle, before
+the next bundle begins. Its output guides
 later interpretation and decision making; it does not extract new trait evidence.
+Goals and aspects contain only currently active entries; completed, abandoned,
+superseded goals and inactive aspects are excluded from these current-state lists.
 Create a concise, distinctive portrait that can guide how the character interprets
 events, thinks, and behaves. Ground it in the supplied canonical identity and
 psychological state. Do not invent history, motivations, relationships, or

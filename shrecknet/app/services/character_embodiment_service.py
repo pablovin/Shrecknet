@@ -510,11 +510,15 @@ class CharacterEmbodimentService:
     async def append_created_scenes(self, *, agent_id, entity_id, ontology_id,
                                     created_scene_ids, llm_client, settings):
         """Append newly authored scenes with the same chunk and profile rules as drafts."""
+        import asyncio
         from app.jobs.character_agent.embody_agent import EmbodyAgent
+        from app.jobs.character_agent.source_evolution import (
+            SourceState, finalize_source_state, _scene_analysis_chunks, _merge_chunk_analyses,
+        )
         from app.jobs.character_agent.embody_agent_prompts import PROMPT_VERSION
-        from app.jobs.character_agent.profile import _build_timeline, _apply_aspect_ops, _apply_goal_ops
+        from app.jobs.character_agent.profile import _build_timeline
         from app.schemas.character_agent import CharacterTimelineProjection, SceneInput
-        from app.services.character_trait_service import chunk_source_scenes, merge_evidence, scene_digest
+        from app.services.character_trait_service import chunk_source_scenes, scene_digest
         from app.services.character_agent_service import CharacterAgentService, _now
 
         inputs = await self.load_embodiment_input(entity_id, ontology_id)
@@ -541,6 +545,8 @@ class CharacterEmbodimentService:
                 raise ValueError("backdated scenes require CharacterAgent regeneration")
             if scenes:
                 groups.append({**group, "scenes": scenes})
+        if not groups:
+            return
         profile, evidence = inputs["trait_profile"], inputs["trait_evidence"]
         aspects, goals = inputs["current_aspects"], inputs["current_goals"]
         number = inputs["latest_revision"]
@@ -568,59 +574,73 @@ class CharacterEmbodimentService:
         )
         inputs["canonical_identity"]["identity_description"] = identity_description.model_dump(mode="json")
         recent_perspectives = []
-        for chunk in chunk_source_scenes(groups):
-            job = EmbodyAgent(llm_client=llm_client,
-                character_incorporation_model=settings.model_character_agent_character_incorporation,
-                scene_interpretation_model=settings.model_character_agent_scene_interpretation,
-                psychological_interpretation_model=settings.model_character_agent_psychological_interpretation,
-                validation_retries=settings.character_agent_embodiment_validation_retries)
-            scene_inputs = [SceneInput(**scene) for scene in chunk["scenes"]]
-            perspectives = await job.generate_perspectives(
-                source_entity_id=chunk["source_id"], source_entity_alias=chunk["source_alias"],
-                canonical_identity=inputs["canonical_identity"], current_trait_profile=profile,
-                current_aspects=aspects, current_goals=goals, scenes=scene_inputs)
-            analysis = await job.analyze(source_entity_id=chunk["source_id"], source_entity_alias=chunk["source_alias"],
+        for group in chunk_source_scenes(groups):
+            def make_job():
+                return EmbodyAgent(llm_client=llm_client,
+                    character_incorporation_model=settings.model_character_agent_character_incorporation,
+                    scene_interpretation_model=settings.model_character_agent_scene_interpretation,
+                    psychological_interpretation_model=settings.model_character_agent_psychological_interpretation,
+                    validation_retries=settings.character_agent_embodiment_validation_retries)
+
+            job = make_job()
+            scene_chunks = _scene_analysis_chunks(group)
+            chunk_jobs = [make_job() for _ in scene_chunks]
+            common = dict(
+                source_entity_id=group["source_id"], source_entity_alias=group["source_alias"],
                 canonical_identity=inputs["canonical_identity"], current_trait_profile=profile,
                 current_aspects=aspects, current_goals=goals,
-                scenes=scene_inputs, perspectives_result=perspectives)
+            )
+            # Finish perspectives before the two interpretation branches. No
+            # chunk may see a partially applied profile from its own source.
+            perspectives = await asyncio.gather(*[
+                chunk_job.generate_perspectives(**common, scenes=[SceneInput(**scene) for scene in chunk])
+                for chunk_job, chunk in zip(chunk_jobs, scene_chunks, strict=True)
+            ], return_exceptions=True)
+            for output in perspectives:
+                if isinstance(output, Exception):
+                    raise output
+            analyses = await asyncio.gather(*[
+                chunk_job.analyze(**common, scenes=[SceneInput(**scene) for scene in chunk],
+                                  perspectives_result=perspective)
+                for chunk_job, chunk, perspective in zip(chunk_jobs, scene_chunks, perspectives, strict=True)
+            ], return_exceptions=True)
+            for output in analyses:
+                if isinstance(output, Exception):
+                    raise output
+            analysis = _merge_chunk_analyses(analyses)
             result = await job.apply_profile_update(
                 analysis=analysis, current_trait_profile=profile,
                 current_trait_evidence=evidence, current_aspects=aspects,
-                current_goals=goals, batch_id=chunk["batch_id"])
-            recent_perspectives = (recent_perspectives + result.perspectives)[-PERSPECTIVE_LIMIT:]
+                current_goals=goals, batch_id=group["batch_id"])
+            candidate_perspectives = (recent_perspectives + result.perspectives)[-PERSPECTIVE_LIMIT:]
+            candidate = await finalize_source_state(
+                agent=job, state=SourceState(profile, evidence, aspects, goals, subtitle, identity_description),
+                result=result, canonical_identity=inputs["canonical_identity"],
+                perspectives=candidate_perspectives,
+            )
             timeline = CharacterTimelineProjection.model_validate_json(_build_timeline(
                 source_entity_id=entity_id, source_entity_alias=inputs["source_entity_alias"],
                 canonical_identity=inputs["canonical_identity"], current_trait_profile=profile,
                 current_aspects=aspects, current_goals=goals, current_subtitle=subtitle,
                 per_bundle_results=[result], starting_revision=number,
+                source_groups=[group],
             ))
             agent = (await service.get_agent(agent_id)).model_dump(mode="json")
             async def persist(tx):
                 await service._persist_timeline_tx(tx, agent, timeline, _now(), append=True,
                     provider=settings.model_character_agent_scene_interpretation.provider,
                     model=settings.model_character_agent_scene_interpretation.name, prompt_version=PROMPT_VERSION)
+                await tx.run(
+                    "MATCH (agent:CharacterAgent {id:$id}) SET agent.identity_description=$identity",
+                    id=agent_id, identity=json.dumps(candidate.identity.model_dump(mode="json"), ensure_ascii=False),
+                )
             await self.graph.execute_write(persist)
-            profile = result.trait_profile
-            evidence = merge_evidence(evidence, result.trait_evidence)
-            _apply_aspect_ops(aspects, result.aspect_updates, focused_ids=result.focused_aspects)
-            _apply_goal_ops(goals, result.goal_updates, focused_ids=result.focused_goals)
-            subtitle = timeline.revisions[-1].subtitle
+            profile, evidence = candidate.profile, candidate.evidence
+            aspects, goals, subtitle = candidate.aspects, candidate.goals, candidate.subtitle
+            identity_description = candidate.identity
+            inputs["canonical_identity"]["identity_description"] = identity_description.model_dump(mode="json")
+            recent_perspectives = candidate_perspectives
             number += 1
-
-        # Refresh the saved narrative foundation once after the complete append
-        # operation, using the final point profile, active aspects, and goals.
-        refreshed_identity = await identity_job.generate_identity_description(
-            canonical_identity=inputs["canonical_identity"], current_profile=profile,
-            current_aspects=aspects, current_goals=goals,
-            current_trait_evidence=evidence, current_perspectives=recent_perspectives,
-        )
-        async def persist_identity(tx):
-            await tx.run(
-                "MATCH (agent:CharacterAgent {id:$id}) SET agent.identity_description=$identity",
-                id=agent_id,
-                identity=json.dumps(refreshed_identity.model_dump(mode="json"), ensure_ascii=False),
-            )
-        await self.graph.execute_write(persist_identity)
 
     @staticmethod
     def read(draft: CharacterEmbodimentDraft) -> EmbodimentDraftRead:

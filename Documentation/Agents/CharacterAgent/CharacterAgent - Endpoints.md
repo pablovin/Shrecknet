@@ -419,8 +419,12 @@ existing profile and history reads continue to apply.
    history remains readable at `GET /jobs/{job_id}`.
 3. Review `proposal.identity_description` alongside `proposal.trait_profile`,
    aspects/goals, source evidence and timeline. The description is generated or
-   reused before scene processing, refreshed once from the final state, and
-   committed to the CharacterAgent when the draft is accepted.
+   reused before scene processing, then all three fields are refreshed after each
+   source's traits (including Steadiness), aspects, and goals are updated. The next
+   source receives this evolved state. A synthesis failure stops the pipeline;
+   compatible completed sources can be reused on retry. Source progress includes
+   Step 5, `Identity synthesis`, and the bundle is complete only after it succeeds.
+   The final description is committed to the CharacterAgent when the draft is accepted.
    The server-owned profile is the inference baseline; do not submit that entire
    read object as a write payload.
 4. For a new agent, submit the normal creation aggregate with the draft ID and

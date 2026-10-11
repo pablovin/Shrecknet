@@ -390,7 +390,7 @@ async def test_reviewed_update_appends_once_without_replacing_the_agent():
 
 
 @pytest.mark.asyncio
-async def test_embodiment_job_progress_uses_three_consistent_source_steps(monkeypatch):
+async def test_embodiment_job_progress_includes_source_identity_synthesis(monkeypatch):
     from app.tasks import character_embodiment
 
     published = []
@@ -411,8 +411,12 @@ async def test_embodiment_job_progress_uses_three_consistent_source_steps(monkey
     assert published[-1]["bundles"][0]["parallel"]["active_branches"] == [
         "Trait interpretation and aggregation"
     ]
+    await progress.stage(0, [5])
+    assert published[-1]["bundles"][0]["active_steps"] == [5]
+    assert published[-1]["bundles"][0]["status"] == "processing"
     await progress.complete(0)
     bundle = published[-1]["bundles"][0]
-    assert bundle["done_steps"] == [1, 2, 3]
+    assert bundle["done_steps"] == [1, 2, 3, 4, 5]
     assert bundle["active_steps"] == []
-    assert bundle["chunks"][0]["done_steps"] == [1, 2, 3, 4]
+    assert bundle["chunks"][0]["done_steps"] == [1, 2, 3]
+    assert bundle["chunks"][0]["status"] == "done"

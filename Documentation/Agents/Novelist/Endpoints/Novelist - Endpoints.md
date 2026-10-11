@@ -24,6 +24,12 @@ An explicit empty string clears it. Preferences are updated when a run is accept
 Unknown, incomplete, or unsupported historical runs contribute no previous-run
 context and do not override current source material.
 
+Story-plan analysis has one bounded retry. Token-truncated output receives a
+larger budget on that retry, as described in the
+[generation flow](../Generate_Draft/Generate_Draft.md). If it still fails, the run
+has `status: "failed"` and an `error_message`, without a partial chapter. Submit
+a new run after resolving the cause; failed runs do not resume automatically.
+
 `draft_text` remains safe, display-ready chapter HTML. V4 returns
 `pipeline_version: "v4"`, `block_count`, `fidelity_status: "not_run"`, and
 `correction_count: 0`. The fidelity fields remain present only for response

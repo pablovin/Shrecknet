@@ -58,7 +58,11 @@ behavior while preserving the same three identity fields. Steadiness is an inter
 synthesis input that may qualify consistency across independent scenes; it is not a
 ninth narrative trait or a separate query input. Unknown estimates produce no
 consistency claim. Existing descriptions are retained until an explicit embodiment
-refresh. See the [canonical synthesis contract](../../Documentation/Agents/CharacterAgent/CharacterAgent.md#chronological-identity-revisions)
+refresh. Embodiment refreshes all three identity fields after each chronological
+source bundle's traits (including Steadiness), aspects, and goals have been updated;
+the next source uses this evolved identity. A failed refresh prevents that source
+from completing. Drafts remain reviewable only after all sources succeed.
+See the [canonical synthesis contract](../../Documentation/Agents/CharacterAgent/CharacterAgent.md#chronological-identity-revisions)
 and [offline comparison workflow](../../Documentation/Agents/CharacterAgent/Dispositional%20Traits.md#behavioral-identity-evaluation).
 
 The referenced CharacterAgent must still be visible to the caller and active.

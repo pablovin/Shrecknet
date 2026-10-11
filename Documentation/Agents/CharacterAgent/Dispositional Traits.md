@@ -61,8 +61,10 @@ be deleted without regeneration. Old z-formatted profiles remain invalid.
 Stage 1 produces grounded subjective perspectives. Stage 2 psychology and Stage 3
 trait extraction then run in parallel for each chunk; source consolidation follows
 all chunks. The worker retains the existing model roles, chunking, retry budget,
-source revision boundaries, and one normal Stage 3 call per chunk. Final identity
-synthesis uses scored evidence and accepted psychology; it never extracts points.
+source revision boundaries, and one normal Stage 3 call per chunk. Identity
+synthesis follows each source's trait aggregation and aspect/goal
+consolidation, refreshes all three identity fields, and completes before the next
+source starts. It uses scored evidence and accepted psychology; it never extracts points.
 
 Stage 3 receives `target.alias`, context-only `identity_summary` and
 `psychological_summary`, and ordered scenes with `position`, canonical
@@ -221,7 +223,7 @@ from inferred 5 and preserve the same single deliberation call.
 
 ## Use, operations, and cutover
 
-The prompt version is `character-embodiment-v45-consolidation-justifications`; synthesis uses
+The prompt version is `character-embodiment-v46-source-evolution`; synthesis uses
 `evidence-synthesis-v3-weighted-scenes`. Prompt fingerprints invalidate old
 checkpoints. New snapshots store grouping; prior snapshot/ledger bytes are not
 rewritten. Optional scene provenance is additive and needs no SQL schema migration

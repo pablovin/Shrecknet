@@ -135,15 +135,27 @@ async def test_analysis_sends_complete_schema_to_analysis_model_on_both_attempts
         assert call["model"] == orchestrator.analysis_model
         assert call["messages"][0]["role"] == "user"
     assert client.calls[1]["usage_tag"].endswith(".repair")
+    assert [call["max_tokens"] for call in client.calls] == [6000, 6000]
 
 
 @pytest.mark.asyncio
-async def test_truncated_analysis_is_retried_even_when_json_is_valid() -> None:
+@pytest.mark.parametrize("finish_reason", ["length", "max_tokens", "max_output_tokens"])
+@pytest.mark.parametrize(
+    "tag",
+    [
+        "novelist.analysis.story_plan",
+        "novelist.analysis.story_plan_chunk",
+        "novelist.analysis.story_plan_reconcile",
+    ],
+)
+async def test_truncated_analysis_is_retried_even_when_json_is_valid(
+    finish_reason: str, tag: str
+) -> None:
     client = _StructuredClient(
         [
             {
                 "text": json.dumps(_plan_payload()),
-                "response_metadata": {"finish_reason": "length"},
+                "response_metadata": {"finish_reason": finish_reason},
             },
             {
                 "text": json.dumps(_plan_payload()),
@@ -153,10 +165,30 @@ async def test_truncated_analysis_is_retried_even_when_json_is_valid() -> None:
     )
     orchestrator = NovelistOrchestrator(llm_client=client, model_policy=ModelPolicy())
     assert (
-        await orchestrator._json("prompt", STORY_PLAN_JSON_SCHEMA, "tag")
+        await orchestrator._json("prompt", STORY_PLAN_JSON_SCHEMA, tag)
         == _plan_payload()
     )
     assert len(client.calls) == 2
+    assert [call["max_tokens"] for call in client.calls] == [6000, 12000]
+    assert client.calls[1]["usage_tag"] == f"{tag}.repair"
+
+
+@pytest.mark.asyncio
+async def test_analysis_still_fails_after_truncating_the_larger_retry() -> None:
+    client = _StructuredClient(
+        [
+            {
+                "text": '{"title": "Unfinished',
+                "response_metadata": {"finish_reason": "length"},
+            }
+            for _ in range(2)
+        ]
+    )
+    orchestrator = NovelistOrchestrator(llm_client=client, model_policy=ModelPolicy())
+    with pytest.raises(RuntimeError, match="failed after one retry.*truncated"):
+        await orchestrator._json("prompt", STORY_PLAN_JSON_SCHEMA, "tag")
+    assert len(client.calls) == 2
+    assert [call["max_tokens"] for call in client.calls] == [6000, 12000]
 
 
 @pytest.mark.asyncio

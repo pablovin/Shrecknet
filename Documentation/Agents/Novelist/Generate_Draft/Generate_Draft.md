@@ -4,7 +4,9 @@
 stage progress and final artifacts through the existing background-job mechanism.
 
 1. `interpretation` calls the analysis role with the complete strict story-plan
-   JSON Schema. A malformed, incomplete, or truncated result gets one retry.
+   JSON Schema and a 6,000-token output budget. A malformed, incomplete, or
+   truncated result gets one retry. Token truncation increases that retry's
+   output budget to 12,000 tokens; other validation failures retain 6,000 tokens.
 2. Oversized sources are interpreted in bounded chunks and reconciled by the same
    analysis role with the same schema. This branch exists only for input sizing.
 3. `continuity` loads optional previous-session text and compatible V3 or V4
@@ -20,6 +22,14 @@ stage progress and final artifacts through the existing background-job mechanism
 
 V4 performs no normal-path LLM fidelity or correction call. A failed section or
 analysis contract fails the run rather than persisting partial public output.
+The same analysis budgets apply to chunk interpretation and reconciliation.
+Warnings include the usage tag, attempt, output budget, and validation error.
+
+Deploy the updated Celery workers to apply these limits, then submit a new run
+for any failed generation; failed runs are not automatically resumed. Larger
+analysis responses can consume more tokens and take longer. The model/provider
+must support the requested output limit. Rolling back restores the previous
+limits without changing stored runs or public request/response contracts.
 
 No database migration or backfill is required. Deployments should drain queued V3
 jobs before updating workers because the Celery task name is unchanged and queued

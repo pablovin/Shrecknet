@@ -1,8 +1,8 @@
 """Scene-centric source-boundary CharacterAgent embodiment generation.
 
 The persistent identity description is loaded or generated once before scene
-work and refreshed once after all source bundles. Three LLM calls normally run
-for each source scene chunk:
+work and refreshed after each source bundle before the next source starts.
+Three LLM calls normally run for each source scene chunk:
   1. Character incorporation grounded by the identity description
   2. Psychological enrichment from canonical scenes, Stage 1 interpretation,
      and identity description, parallel with trait interpretation from canonical
@@ -14,7 +14,8 @@ shared profile reducers. Per-scene outputs allow one aspect event, one goal even
 and eight nullable trait slots; malformed candidates are dropped
 individually. Envelope/schema failures use the bounded retry budget, and
 truncation has explicit stage recovery. A source's chunks share one starting
-identity; source bundles run sequentially and each produces one revision.
+identity; source bundles run sequentially and each produces one revision and
+a complete refreshed narrative identity.
 """
 
 from __future__ import annotations
@@ -506,8 +507,10 @@ class EmbodyAgent:
         current_aspects: list[dict[str, Any]], current_goals: list[dict[str, Any]],
         current_trait_evidence: list[TraitEvidence] | None = None,
         current_perspectives: list[ScenePerspectiveOutput] | None = None,
+        source_entity_id: str | None = None,
+        source_entity_alias: str | None = None,
     ) -> IdentityDescription:
-        """Synthesize the persistent narrative identity once per embodiment phase."""
+        """Synthesize the narrative identity from one finalized source state or initial state."""
         payload = {
             "name": canonical_identity.get("alias") or "Character",
             "entity_type": canonical_identity.get("entity_type") or "Unknown",
@@ -520,10 +523,10 @@ class EmbodyAgent:
             ],
             "goals": [{"name": item.get("title") or item.get("name"),
                        "description": item.get("description")}
-                      for item in current_goals],
+                      for item in current_goals if item.get("status", "active") == "active"],
             "aspects": [{"name": item.get("name"), "type": item.get("category"),
                          "descriptor": item.get("description")}
-                        for item in current_aspects],
+                        for item in current_aspects if item.get("status", "active") == "active"],
             "traits": synthesis_traits(current_profile, current_trait_evidence or []),
             "steadiness": synthesis_steadiness(current_profile, current_trait_evidence or []),
             "grounded_perspectives": synthesis_perspectives(current_perspectives or []),
@@ -537,6 +540,7 @@ class EmbodyAgent:
             prompt=IDENTITY_DESCRIPTION_PROMPT, payload=payload,
             schema=_IdentityDescriptionOutput, stage="identity description",
             usage_tag="character_agent.embodiment.identity_description",
+            source_entity_id=source_entity_id, source_entity_alias=source_entity_alias,
             max_tokens=EMBODIMENT_LLM_MAX_TOKENS,
             model=self.character_incorporation_model,
         )

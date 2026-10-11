@@ -65,7 +65,9 @@ Shrecknet's trait registry and scoring rules remain authoritative.
 - `EmbodyAgent.generate_identity_description()` owns the model request. Both draft
   generation in `app/tasks/character_embodiment.py` and append processing in
   `app/services/character_embodiment_service.py` use it. Initialization generates
-  only when identity is absent; a final synthesis refreshes the persisted portrait.
+  only when identity is absent. The current source-evolution pipeline refreshes the
+  complete portrait after each source; see [Source Bundle Evolution Plan](Source%20Bundle%20Evolution%20Plan.md)
+  for the sequencing, checkpoint, and atomic append contract.
 - Decision making in `app/jobs/character_agent/decision_making.py` receives this
   portrait as its sole personality input, alongside caller context and retrieved
   subjective memories. Numerical traits, Steadiness, goals, and aspects are not

@@ -447,6 +447,9 @@ async def test_append_failure_never_writes_failed_source_and_preserves_prior_com
 
         async def chat(self, **kwargs):
             tag = kwargs["usage_tag"]
+            if tag.endswith("identity_description"):
+                self.calls.append(kwargs)
+                return json.dumps(identity)
             if "psychological_consolidation" in tag:
                 self.calls.append(kwargs)
                 self.consolidations += 1
@@ -463,7 +466,7 @@ async def test_append_failure_never_writes_failed_source_and_preserves_prior_com
         await service.append_created_scenes(agent_id="a", entity_id="e", ontology_id=1,
             created_scene_ids={scene["scene_id"] for scene in scene_values}, llm_client=Provider(), settings=Settings())
     assert graph.execute_write.await_count == int(prior_source)
-    assert len(inputs["current_goals"]) == int(prior_source)
+    assert len(inputs["current_goals"]) == 0  # Candidate transitions preserve loaded state.
     assert len(inputs["current_aspects"]) == 0
 
 

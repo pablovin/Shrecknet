@@ -39,7 +39,7 @@ saved effort values.
 
 | Configuration key | Calls using the target |
 | --- | --- |
-| `model_character_agent_character_incorporation` | Stage 0: initial identity description when missing, and final identity-summary refresh. |
+| `model_character_agent_character_incorporation` | Stage 0: initial identity description when missing, and identity-summary refresh after every source bundle. |
 | `model_character_agent_scene_interpretation` | Stage 1: subjective scene perspectives, including compact truncation recovery. Stage 4: source-level aspect/goal consolidation when events exist. |
 | `model_character_agent_psychological_interpretation` | Stage 2: emotions, beliefs, and aspect/goal candidate events. Stage 3: directional trait interpretation. |
 | `model_character_agent_decision_making` | One decision-making call in both character and neutral modes. |
@@ -113,7 +113,7 @@ in-flight job keeps its selected targets. Config edits do not require service
 restarts after all processes run compatible code. Startup prewarming and readiness
 include all four roles. Source/chunk checkpoint fingerprints include incorporation,
 scene, and psychological targets with their reasoning flags, and prompt version
-`character-embodiment-v45-consolidation-justifications` prevents old routing outputs being reused.
+`character-embodiment-v46-source-evolution` prevents old routing outputs being reused.
 
 ## Automatic migration and rollback
 

@@ -58,6 +58,11 @@ provider that rejects structured output fails the run clearly. Writer-model call
 explicitly receive no response schema because they return plain prose. Analysis is
 parsed as one complete JSON document, checked against the schema, and retried once
 when it is malformed, incomplete, schema-invalid, or reports token-limit truncation.
+The initial analysis output budget is 6,000 tokens. A token-truncated response
+gets a 12,000-token budget on its single repair attempt; other validation failures
+retain the initial budget. These limits apply to direct planning, partial plans,
+and reconciliation. A repair that still fails validation or is truncated fails
+the run without publishing partial output.
 
 For oversized input, source text is bounded into segments. Each segment produces a
 compact partial plan, and one analysis reconciliation call produces the final plan.

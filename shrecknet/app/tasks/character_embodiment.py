@@ -30,10 +30,10 @@ from app.models.character_embodiment import (
     CharacterEmbodimentDraftStatus,
 )
 from app.services.character_embodiment_service import CharacterEmbodimentService
-from app.schemas.character_agent import EmbodyAgentAnalysis, LLMCallRecord
+from app.schemas.character_agent import EmbodyAgentAnalysis, EmbodyAgentResult, LLMCallRecord
 from app.schemas.character_traits import TraitProfile, TraitEvidence
-from app.services.character_trait_service import chunk_source_scenes, merge_evidence
-from app.jobs.character_agent.profile import _build_timeline, _apply_aspect_ops, _apply_goal_ops, _stable_profile_id
+from app.services.character_trait_service import chunk_source_scenes
+from app.jobs.character_agent.profile import _build_timeline, _stable_profile_id
 from app.schemas.character_agent import (
     CharacterIdentityRevisionProjection,
     CharacterSourceProjection,
@@ -48,15 +48,21 @@ from app.schemas.character_agent import (
 from app.utils.async_helpers import run_async
 from app.utils.job_tracking import mark_job_done, mark_job_failed, mark_job_running, update_job_progress
 
+from app.jobs.character_agent.source_evolution import (
+    SCENE_ANALYSIS_CHUNK_SIZE, SourceState, finalize_source_state,
+    _scene_analysis_chunks, _merge_chunk_analyses, _merge_observations,
+)
+from app.services.character_trait_analysis import SYNTHESIS_VERSION
+
 STEP_NAME: dict[int, str] = {
     1: "Perspective",
     2: "Psychological enrichment",
     3: "Trait interpretation and aggregation",
     4: "Psychological consolidation",
+    5: "Identity synthesis",
 }
 
-SCENE_ANALYSIS_CHUNK_SIZE = 5
-CHECKPOINT_VERSION = 2
+CHECKPOINT_VERSION = 3
 
 
 def _checkpoint_digest(value: Any) -> str:
@@ -82,6 +88,23 @@ def _checkpoint_analysis(raw: Any, *, checkpoint_key: str) -> EmbodyAgentAnalysi
     try:
         return EmbodyAgentAnalysis.model_validate(raw["analysis"])
     except Exception:
+        return None
+
+
+def _checkpoint_completed(raw: Any, *, checkpoint_key: str,
+                          analysis: EmbodyAgentAnalysis, batch_id: str):
+    """Ignore incompatible or malformed finalized source transitions."""
+    if not isinstance(raw, dict) or raw.get("version") != CHECKPOINT_VERSION or raw.get("key") != checkpoint_key:
+        return None
+    try:
+        result = EmbodyAgentResult.model_validate(raw["completed"]["result"])
+        identity = IdentityDescription.model_validate(raw["completed"]["identity"])
+        if (result.source_entity_id != analysis.source_entity_id or result.batch_id != batch_id
+                or result.scene_input_digests != analysis.scene_input_digests
+                or result.perspectives != analysis.perspectives):
+            return None
+        return result, identity
+    except (KeyError, TypeError, ValueError):
         return None
 
 
@@ -227,15 +250,15 @@ class _EmbodimentProgress:
     async def chunk_complete(self, index: int, chunk_index: int) -> None:
         async with self.lock:
             chunk = self.chunks[index][chunk_index]
-            chunk["done_steps"] = [1, 2, 3, 4]
+            chunk["done_steps"] = [1, 2, 3]
             chunk["active_steps"] = []
             self.active[index] = sorted({
                 step
                 for item in self.chunks[index]
                 for step in item["active_steps"]
             })
-            if all(item["done_steps"] == [1, 2, 3, 4] for item in self.chunks[index]):
-                self.done[index].update({1, 2})
+            if all(item["done_steps"] == [1, 2, 3] for item in self.chunks[index]):
+                self.done[index].update({1, 2, 3})
             await self._publish(index, "processing")
 
     async def chunk_failed(
@@ -257,7 +280,7 @@ class _EmbodimentProgress:
 
     async def complete(self, index: int) -> None:
         async with self.lock:
-            self.done[index].update({1, 2, 3})
+            self.done[index].update({1, 2, 3, 4, 5})
             self.active[index] = []
             await self._publish(index, "done", stage="Source complete")
 
@@ -278,7 +301,7 @@ class _EmbodimentProgress:
                 "status": (
                     "failed" if item.get("error") else
                     "processing" if item["active_steps"] else
-                    "done" if item["done_steps"] == [1, 2] else "pending"
+                    "done" if item["done_steps"] == [1, 2, 3] else "pending"
                 ),
             }
             for item in self.chunks.get(index, [])
@@ -305,7 +328,7 @@ class _EmbodimentProgress:
         completed = sum(len(steps) for steps in self.done.values())
         active_credit = sum(0.5 for steps in self.active.values() if steps)
         calculated = 0.10 + 0.80 * (
-            (completed + active_credit) / max(self.total * 3, 1)
+            (completed + active_credit) / max(self.total * len(STEP_NAME), 1)
         )
         self.last_progress = min(0.90, max(self.last_progress, calculated))
         await update_job_progress(self.job_id, self.last_progress, {
@@ -315,19 +338,6 @@ class _EmbodimentProgress:
             "draft_id": self.draft_id,
             "bundles": list(self.bundles),
         })
-
-
-def _merge_observations(target: Any, source: Any) -> Any:
-    """Merge source observation lists into target in-place."""
-    list_fields = [
-        "recurring_behaviours", "motivations", "values", "fears",
-        "conflicts", "relationships", "contradictions", "evidence_gaps", "trait_evidence",
-    ]
-    for field in list_fields:
-        existing = list(getattr(target, field, None) or [])
-        new_vals = list(getattr(source, field, None) or [])
-        setattr(target, field, existing + new_vals)
-    return target
 
 
 def _exception_details(error: Exception) -> dict[str, Any]:
@@ -341,43 +351,6 @@ def _exception_details(error: Exception) -> dict[str, Any]:
                 return value
         candidate = getattr(candidate, "__cause__", None)
     return {"message": str(error), "error_type": type(error).__name__}
-
-
-def _scene_analysis_chunks(group: dict) -> list[list[dict]]:
-    """Partition one source's ordered raw scenes for scene-local LLM work."""
-    scenes = list(group["scenes"])
-    return [
-        scenes[index:index + SCENE_ANALYSIS_CHUNK_SIZE]
-        for index in range(0, len(scenes), SCENE_ANALYSIS_CHUNK_SIZE)
-    ]
-
-
-def _merge_chunk_analyses(analyses: list[EmbodyAgentAnalysis]) -> EmbodyAgentAnalysis:
-    """Merge validated scene-local chunk analyses before one profile update."""
-    if not analyses:
-        raise EmbodimentGenerationError("source has no scene analyses")
-    first = analyses[0]
-    observations = first.observations.model_copy(deep=True)
-    for analysis in analyses[1:]:
-        _merge_observations(observations, analysis.observations)
-    subtitle = next(
-        (analysis.subtitle_change for analysis in reversed(analyses)
-         if analysis.subtitle_change.operation != "retain"),
-        SubtitleChangeProposal(),
-    )
-    return first.model_copy(update={
-        "scene_input_digests": {
-            scene_id: digest
-            for analysis in analyses for scene_id, digest in analysis.scene_input_digests.items()
-        },
-        "perspectives": [item for analysis in analyses for item in analysis.perspectives],
-        "observations": observations,
-        "subtitle_change": subtitle,
-        "evidence_ids": set().union(*(analysis.evidence_ids for analysis in analyses)),
-        "profile_events": [item for analysis in analyses for item in analysis.profile_events],
-        "llm_calls": [item for analysis in analyses for item in analysis.llm_calls],
-        "observations_unavailable": any(analysis.observations_unavailable for analysis in analyses),
-    })
 
 
 async def _generate(*, draft_id: str, revision: int, job_id: int) -> dict:
@@ -448,7 +421,7 @@ async def _generate(*, draft_id: str, revision: int, job_id: int) -> dict:
             checkpoint_store = {}
         checkpoint_store = {
             key: value for key, value in checkpoint_store.items()
-            if key.startswith("source:")
+            if key.startswith("source:") or key == "initial_identity"
         }
 
         # Cumulative state that carries across bundles
@@ -507,11 +480,36 @@ async def _generate(*, draft_id: str, revision: int, job_id: int) -> dict:
                 except ValueError:
                     existing_identity = None
             existing_identity = IdentityDescription.model_validate(existing_identity) if existing_identity else None
-            identity_description = existing_identity or await initializer.generate_identity_description(
-                canonical_identity=inputs["canonical_identity"], current_profile=current_profile,
-                current_aspects=inputs["current_aspects"], current_goals=inputs["current_goals"],
-                current_trait_evidence=current_evidence,
-            )
+            initial_identity_key = _checkpoint_digest({
+                "version": CHECKPOINT_VERSION, "prompt": PROMPT_VERSION,
+                "synthesis": SYNTHESIS_VERSION, "canonical": inputs["canonical_identity"],
+                "profile": current_profile.model_dump(mode="json"),
+                "evidence": [item.model_dump(mode="json") for item in current_evidence],
+                "aspects": current_aspects, "goals": current_goals,
+                "model": settings.model_character_agent_character_incorporation.model_dump(mode="json"),
+            })
+            identity_description = existing_identity
+            if identity_description is None:
+                cached_initial = checkpoint_store.get("initial_identity", {})
+                try:
+                    if cached_initial.get("key") == initial_identity_key:
+                        identity_description = IdentityDescription.model_validate(cached_initial["identity"])
+                except (AttributeError, KeyError, ValueError):
+                    pass
+                if identity_description is None:
+                    identity_description = await initializer.generate_identity_description(
+                        canonical_identity=inputs["canonical_identity"], current_profile=current_profile,
+                        current_aspects=current_aspects, current_goals=current_goals,
+                        current_trait_evidence=current_evidence,
+                    )
+                    checkpoint_store["initial_identity"] = {
+                        "key": initial_identity_key, "identity": identity_description.model_dump(mode="json"),
+                    }
+                    await sql.refresh(draft)
+                    if draft.generation_revision != revision:
+                        return {"draft_id": draft_id, "status": "superseded"}
+                    draft.generation_checkpoints = json.dumps(checkpoint_store, ensure_ascii=False)
+                    await sql.commit()
             total_llm_calls += len(initializer.llm_calls)
             total_tokens_est += sum(item.total_tokens_est for item in initializer.llm_calls)
             inputs["canonical_identity"]["identity_description"] = identity_description.model_dump(mode="json")
@@ -525,19 +523,19 @@ async def _generate(*, draft_id: str, revision: int, job_id: int) -> dict:
 
                 checkpoint_material = {
                     "version": CHECKPOINT_VERSION,
+                    "canonical_identity": inputs["canonical_identity"],
                     "source_id": group["source_id"],
                     "batch_id": group["batch_id"],
-                    "scenes": [
-                        {"scene_id": scene["scene_id"], "name": scene["name"],
-                         "description": scene["description"], "created_at": scene["created_at"]}
-                        for scene in group["scenes"]
-                    ],
+                    "scenes": group["scenes"],
                     "profile": current_profile.model_dump(mode="json"),
                     "trait_evidence": [item.model_dump(mode="json") for item in current_evidence],
                     "aspects": current_aspects,
                     "goals": current_goals,
                     "identity_description": identity_description.model_dump(mode="json"),
                     "prompt_version": PROMPT_VERSION,
+                    "synthesis_version": SYNTHESIS_VERSION,
+                    "subtitle": current_subtitle,
+                    "perspectives": [p.model_dump(mode="json") for p in all_perspectives],
                     "chunk_size": SCENE_ANALYSIS_CHUNK_SIZE,
                     "models": {
                         "identity": settings.model_character_agent_character_incorporation.model_dump(mode="json"),
@@ -554,6 +552,7 @@ async def _generate(*, draft_id: str, revision: int, job_id: int) -> dict:
                     # The full-source aggregate is stale, but independently
                     # fingerprinted chunks may still match their exact inputs.
                     source_checkpoint.pop("analysis", None)
+                    source_checkpoint.pop("completed", None)
                     source_checkpoint["key"] = checkpoint_key
                 chunks_store = source_checkpoint.get("chunks")
                 if not isinstance(chunks_store, dict):
@@ -711,37 +710,43 @@ async def _generate(*, draft_id: str, revision: int, job_id: int) -> dict:
                     if not await persist_chunk_checkpoints():
                         return {"draft_id": draft_id, "status": "superseded"}
                 try:
-                    result = await agent.apply_profile_update(
-                        analysis=analysis,
-                        current_trait_profile=current_profile,
-                        current_trait_evidence=current_evidence, batch_id=group["batch_id"],
-                        current_aspects=current_aspects,
-                        current_goals=current_goals,
-                        on_stage=progress.callback(bi),
+                    completed = _checkpoint_completed(source_checkpoint, checkpoint_key=checkpoint_key,
+                                                      analysis=analysis, batch_id=group["batch_id"])
+                    if completed is None:
+                        result = await agent.apply_profile_update(
+                            analysis=analysis, current_trait_profile=current_profile,
+                            current_trait_evidence=current_evidence, batch_id=group["batch_id"],
+                            current_aspects=current_aspects, current_goals=current_goals,
+                            on_stage=progress.callback(bi),
+                        )
+                        cached_identity = None
+                    else:
+                        result, cached_identity = completed
+                    await progress.stage(bi, [5])
+                    next_state = await finalize_source_state(
+                        agent=agent,
+                        state=SourceState(current_profile, current_evidence, current_aspects,
+                                          current_goals, current_subtitle, identity_description),
+                        result=result, canonical_identity=inputs["canonical_identity"],
+                        perspectives=[*all_perspectives, *result.perspectives],
+                        identity=cached_identity,
                     )
-                    result = result.model_copy(update={
-                        "llm_calls": [*analysis.llm_calls, *agent.llm_calls],
-                    })
+                    if completed is None:
+                        result = result.model_copy(update={"llm_calls": [*analysis.llm_calls, *agent.llm_calls]})
+                        source_checkpoint["completed"] = {
+                            "result": result.model_dump(mode="json"),
+                            "identity": next_state.identity.model_dump(mode="json"),
+                        }
+                    if not await persist_chunk_checkpoints():
+                        return {"draft_id": draft_id, "status": "superseded"}
                 except Exception:
                     await progress.failed(bi)
                     raise
 
-                # Apply cumulative state updates in source order.
-                current_profile = result.trait_profile
-                current_evidence = merge_evidence(current_evidence, result.trait_evidence)
-                _apply_aspect_ops(
-                    current_aspects, result.aspect_updates,
-                    focused_ids=result.focused_aspects,
-                )
-                _apply_goal_ops(
-                    current_goals, result.goal_updates,
-                    focused_ids=result.focused_goals,
-                )
-                br_sub = result.subtitle_change
-                if br_sub.operation == "set":
-                    current_subtitle = br_sub.subtitle
-                elif br_sub.operation == "clear":
-                    current_subtitle = None
+                current_profile, current_evidence = next_state.profile, next_state.evidence
+                current_aspects, current_goals = next_state.aspects, next_state.goals
+                current_subtitle, identity_description = next_state.subtitle, next_state.identity
+                inputs["canonical_identity"]["identity_description"] = identity_description.model_dump(mode="json")
 
                 await progress.complete(bi)
 
@@ -758,18 +763,6 @@ async def _generate(*, draft_id: str, revision: int, job_id: int) -> dict:
                 total_tokens_est += result.total_tokens_est
                 total_semantic_corrections += agent.semantic_correction_count
                 per_bundle_results.append(result)
-
-            # Refresh once from the final accumulated identity after all scene
-            # chunks; the starting description grounded every stage above.
-            prior_identity_calls = len(initializer.llm_calls)
-            identity_description = await initializer.generate_identity_description(
-                canonical_identity=inputs["canonical_identity"], current_profile=current_profile,
-                current_aspects=current_aspects, current_goals=current_goals,
-                current_trait_evidence=current_evidence, current_perspectives=all_perspectives,
-            )
-            refresh_calls = initializer.llm_calls[prior_identity_calls:]
-            total_llm_calls += len(refresh_calls)
-            total_tokens_est += sum(item.total_tokens_est for item in refresh_calls)
 
         finally:
             await client.aclose()

@@ -177,7 +177,7 @@ class _EmotionLLMOutput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     arousal: int = Field(ge=0, le=100)
     valence: int = Field(ge=0, le=100)
-    description: str = Field(min_length=1, max_length=240)
+    description: str = Field(min_length=1, max_length=500)
 
 
 class _BeliefLLMOutput(BaseModel):

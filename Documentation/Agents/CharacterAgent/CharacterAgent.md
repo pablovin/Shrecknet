@@ -244,7 +244,7 @@ provider JSON Schema (`maxLength: 1500`), and Pydantic validator share
 `MAX_EMBODIMENT_JUSTIFICATION_LENGTH`. Draft aspect/goal proposals accept the
 same maximum so generation results survive timeline projection. Overlong output
 is rejected through the shared validation retry budget, never silently truncated.
-Prompt version `character-embodiment-v47-neutral-prior` invalidates
+Prompt version `character-embodiment-v48-emotion-length-tolerance` invalidates
 older intermediate checkpoints; accepted drafts and revisions need no backfill.
 It contains no lifecycle state engine. Validation, application, and timeline
 replay all use `_apply_aspect_ops` and `_apply_goal_ops` in `profile.py`; these
@@ -268,6 +268,16 @@ multiple documents, trailing prose, and nonstandard numeric values are rejected.
 Reference existence and lifecycle validity do not prove that natural-language
 scene evidence supports a psychological conclusion; the prompt must still ground
 that interpretation in the supplied events.
+
+Emotion descriptions in psychological enrichment target at most 240 characters
+in the prompt, while runtime validation and the provider JSON Schema accept
+1–500 characters. Descriptions within that range are retained unchanged; those
+over 500 characters use the existing validation replacement budget. Belief
+statements and profile-event descriptions retain their 300-character maximum.
+This tolerance requires no database migration or public API/SDK change. Restart
+embodiment workers after deployment to load the updated schema and prompt.
+The prompt version changes, so checkpoints from older prompt versions are
+regenerated when retrying a draft.
 
 `character_agent_embodiment_validation_retries` controls one shared replacement
 budget for JSON, schema, empty response, and semantic failures per generation
@@ -675,7 +685,7 @@ ten active goals; focus changes do not alter lifecycle status. See the
 for the migration and verification details.
 
 
-Prompt version `character-embodiment-v47-neutral-prior` participates
+Prompt version `character-embodiment-v48-emotion-length-tolerance` participates
 in source and chunk checkpoint fingerprints, so retries do not reuse outputs
 from older prompt versions. Generation output and persisted profile shapes remain
 unchanged; revision reads add derived `trait_history` details without a database
@@ -702,7 +712,7 @@ for request, polling, and output contracts.
 
 ### Reliability deployment and compatibility
 
-The LLM wire contract uses `character-embodiment-v47-neutral-prior`.
+The LLM wire contract uses `character-embodiment-v48-emotion-length-tolerance`.
 Stage 3 uses the compact source/reason contract. v4 profiles add revision-owned
 event grouping and baseline traits; API/worker/SDK readers must support v5 while retaining v3/v4 history. Numeric event positions and stored stable IDs
 remain unchanged.

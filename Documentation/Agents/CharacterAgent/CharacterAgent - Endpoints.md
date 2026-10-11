@@ -532,6 +532,12 @@ failures retain `provider_unavailable`, `provider_timeout` or `transport` catego
 and do not trigger content retries. Public job states, ownership and polling
 payloads remain unchanged.
 
+Psychological enrichment targets emotion descriptions of at most 240 characters
+and accepts up to 500 characters without truncation or correction. Longer
+descriptions use the schema-validation retry budget described above. See
+[Embodiment validation and recovery](CharacterAgent.md#embodiment-validation-and-recovery)
+for deployment and checkpoint compatibility.
+
 `GET /config/` and `GET /config/schema` expose the canonical retry name.
 Administrator-only `PUT /config/` accepts the deprecated
 `character_agent_embodiment_semantic_correction_attempts` alias for this

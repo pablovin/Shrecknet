@@ -244,7 +244,7 @@ Related: [Dispositional Traits](Dispositional%20Traits.md),
   baseline does not imply an observed preference, balance, or equal probabilities.
   Sparse grounding permits similar descriptions instead of invented uniqueness.
 - Synthesis version: `evidence-synthesis-v4-neutral-prior`; embodiment prompt:
-  `character-embodiment-v47-neutral-prior`; decision prompt:
+  `character-embodiment-v48-emotion-length-tolerance`; decision prompt:
   `character-decision-v4-neutral-prior`; draft checkpoint version: 4.
 - Explicit offline prompt overrides retain the historical sparse portrait schema
   to support frozen comparisons. Production generation uses the complete schema.

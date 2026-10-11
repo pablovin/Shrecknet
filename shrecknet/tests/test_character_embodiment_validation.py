@@ -81,6 +81,52 @@ async def test_invalid_output_regenerates_with_original_context(first, tmp_path)
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("length", [1, 240, 251, 500])
+async def test_emotion_description_tolerance_preserves_text_without_retry(length):
+    description = "x" * length
+    body = {"scene_enrichments": [{
+        "emotions": [{"arousal": 50, "valence": 50, "description": description}],
+        "beliefs": [], "profile_events": [],
+    }]}
+    binding = {"collection": "scene_enrichments", "scene_ids": ["s1"]}
+    Draft202012Validator(_model_output_schema(_SceneEnrichmentsLLMOutput, binding)).validate(body)
+    provider = Responses(json.dumps(body))
+    result = await agent(provider)._call(
+        prompt="contract", payload={}, schema=_SceneEnrichmentsLLMOutput,
+        stage="scene trait extraction", usage_tag="test", max_tokens=10000,
+        model="m", output_binding=binding,
+    )
+    assert result.scene_enrichments[0].emotions[0].description == description
+    assert len(provider.calls) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("length", [0, 501])
+async def test_invalid_emotion_description_length_uses_validation_retry(length):
+    body = {"scene_enrichments": [{
+        "emotions": [{"arousal": 50, "valence": 50, "description": "x" * length}],
+        "beliefs": [], "profile_events": [],
+    }]}
+    binding = {"collection": "scene_enrichments", "scene_ids": ["s1"]}
+    validator = Draft202012Validator(_model_output_schema(_SceneEnrichmentsLLMOutput, binding))
+    assert list(validator.iter_errors(body))
+    corrected = copy.deepcopy(body)
+    corrected["scene_enrichments"][0]["emotions"][0]["description"] = "A brief unease."
+    provider = Responses(json.dumps(body), json.dumps(corrected))
+    result = await agent(provider)._call(
+        prompt="contract", payload={}, schema=_SceneEnrichmentsLLMOutput,
+        stage="scene trait extraction", usage_tag="test", max_tokens=10000,
+        model="m", output_binding=binding,
+    )
+    assert result.scene_enrichments[0].emotions[0].description == "A brief unease."
+    assert len(provider.calls) == 2
+    correction = json.loads(provider.calls[1]["messages"][1]["content"])
+    error = correction["validation_errors"][0]
+    assert error["loc"] == ["scene_enrichments", 0, "emotions", 0, "description"]
+    assert error["type"] == ("string_too_short" if length == 0 else "string_too_long")
+
+
+@pytest.mark.asyncio
 async def test_json_then_semantic_error_exhausts_one_shared_budget():
     provider = Responses('{"broken":', VALID, VALID)
     job = agent(provider)

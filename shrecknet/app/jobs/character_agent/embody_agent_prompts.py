@@ -56,7 +56,7 @@ IDENTITY_TRAIT_DESCRIPTION_CONTRACT = (
         for key in DIRECTIONAL_TRAITS
     ], ensure_ascii=False)
 )
-PROMPT_VERSION = "character-embodiment-v47-neutral-prior"
+PROMPT_VERSION = "character-embodiment-v48-emotion-length-tolerance"
 
 # Purpose: Define consistency separately from the eight directional dimensions.
 # Used by: IDENTITY_DESCRIPTION_PROMPT, alongside IDENTITY_TRAIT_DESCRIPTION_CONTRACT.
@@ -409,9 +409,10 @@ reaction or conclusion, not a paraphrase or minor variation of the first.
 Do not fill available slots. Unsupported emotions or beliefs must remain [].
 
 Limits per scene: emotions 2, beliefs 2, and at most one profile event of each
-kind (one aspect and one goal). Text fields are at
-most 240 characters for emotion descriptions and 300 for belief statements or
-profile-event descriptions. All text fields must be nonempty.
+kind (one aspect and one goal). Aim for at most 240 characters per emotion
+description; the hard acceptance limit is 500 characters. Belief statements and
+profile-event descriptions must be at most 300 characters. All text fields must
+be nonempty.
 
 OUTPUT: {"scene_enrichments":[{"emotions":[{"arousal":0..100,"valence":0..100 (0 negative, 50 neutral, 100 positive),"description":"..."}],"beliefs":[{"statement":"...","confidence":0..100}],"profile_events":[{"kind":"aspect|goal","description":"brief significant evidence-grounded development"}]}]}.
 

@@ -265,7 +265,7 @@ from inferred 5 and preserve the same single deliberation call.
 
 ## Use, operations, and cutover
 
-The prompt version is `character-embodiment-v47-neutral-prior`; synthesis uses
+The prompt version is `character-embodiment-v48-emotion-length-tolerance`; synthesis uses
 `evidence-synthesis-v4-neutral-prior`. Prompt fingerprints invalidate old
 checkpoints. New snapshots store grouping; prior snapshot/ledger bytes are not
 rewritten. Optional scene provenance is additive and needs no SQL schema migration

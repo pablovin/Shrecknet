@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 from app.graphrag.semantic_v2.chunking import LosslessTokenChunker
 from app.graphrag.semantic_v2.renderers import SemanticDocumentRenderer
+from app.graphrag.semantic_v2.service import SemanticEmbeddingService
 
 
 class _WhitespaceTokenizer:
@@ -43,6 +44,29 @@ class _RendererChunker:
         del header
         words = text.split()
         return [" ".join(words[index:index + 10]) for index in range(0, len(words), 10)]
+
+
+def test_long_scene_description_is_fully_included_in_embedding_documents():
+    service = SemanticEmbeddingService.__new__(SemanticEmbeddingService)
+    service.chunker = _RendererChunker()
+    service.renderer = SemanticDocumentRenderer(service.chunker, long_text_threshold=512)
+    description = " ".join(f"scene-detail-{index}" for index in range(600)) + " FINAL-ACTION"
+
+    documents = service._render_sources(3, {}, {
+        "entities": [], "milestones": [], "scenes": [{
+            "id": "scene-1", "instance_id": "instance-1", "ontology_id": 3,
+            "name": "A long scene", "description": description,
+        }],
+    }, include_vocabulary=False)
+
+    assert len(description) > 2000
+    assert len(documents) > 1
+    embedded_words = " ".join(document.embedding_text for document in documents).split()
+    assert [word for word in embedded_words if word.startswith("scene-detail-") or word == "FINAL-ACTION"] == description.split()
+    assert all(document.source_node_id == "scene-1" for document in documents)
+    assert all(service.chunker.token_count(document.embedding_text) <= service.chunker.target_tokens for document in documents)
+    assert [document.chunk_index for document in documents] == list(range(len(documents)))
+    assert all(document.chunk_count == len(documents) for document in documents)
 
 
 def test_entity_renderer_keeps_neighbourhood_out_of_profile_and_chunks_long_text():

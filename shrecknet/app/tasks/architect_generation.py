@@ -697,7 +697,7 @@ async def _execute_generation(
                     payload = SceneCreate(
                         id=scene_id,
                         name=str(scene.get("effective_name") or scene.get("scene_name") or "Scene"),
-                        description=(scene.get("scene_description") or scene.get("scene_text") or "").strip()[:2000],
+                        description=(scene.get("scene_description") or scene.get("scene_text") or "").strip(),
                         created_by_type="agent",
                         created_by_author=author_id,
                         derived_from=SceneDerivedFrom(entity_instance_id=source_entity_id),

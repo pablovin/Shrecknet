@@ -133,6 +133,16 @@ This guarantees stable merge behavior when aliases are curated in frontend.
 
 - Consumes only canonicalized scene fields from Step 0.
 - Inserts approved scenes in scene_order sequence.
+- Persists the complete `scene_description`, trimming only surrounding whitespace;
+  falls back to the complete `scene_text` when the description is empty. Scene
+  descriptions have no character cutoff during generation.
+- Reconciles embeddings for created scenes after generation. Long descriptions
+  are split into lossless semantic documents rather than truncated; see
+  [scene embedding](../../../SceneCentricMemory/Embedding/SCENE_EMBEDDING.md).
+- Existing descriptions previously cut at 2,000 characters are not restored
+  automatically. Recover their full description from the reviewed proposal or
+  original source, update the existing scene, and reconcile its embeddings.
+  Re-embedding the shortened description alone cannot recover lost text.
 - Persists scene order links via preceded_by/followed_by semantics.
 - Persists Scene -> Entity RELATES_TO edges explicitly (new guarantee).
 - Uses strict related_to resolution: every related_to entity must resolve to an existing or newly created entity id.

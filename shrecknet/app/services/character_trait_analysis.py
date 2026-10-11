@@ -1,4 +1,4 @@
-"""Evidence selection for narrative synthesis and offline extraction diagnostics.
+"""Evidence-grounded identity context and offline extraction diagnostics.
 
 The diagnostic CLI reads an administrator-exported JSON ledger without network
 access: python -m app.services.character_trait_analysis INPUT.json OUTPUT.json.
@@ -11,9 +11,11 @@ from collections import defaultdict
 from pathlib import Path
 
 from app.schemas.character_traits import DIRECTIONAL_TRAITS, TraitEvidence, TraitProfile
-from app.services.character_trait_service import directional_items, merge_evidence, trait_history_details
+from app.services.character_trait_service import (
+    directional_items, merge_evidence, steadiness_estimate, trait_history_details,
+)
 
-SYNTHESIS_VERSION = 'evidence-synthesis-v1'
+SYNTHESIS_VERSION = 'evidence-synthesis-v2-behavioral-context'
 EXTRACTION_VERSION = 'diagnostic-observations-v1'
 EXAMPLE_LIMIT = 4
 EXAMPLE_CHARS = 600
@@ -88,6 +90,45 @@ def synthesis_perspectives(perspectives: list) -> list[dict]:
         'scene_id': item.scene_id, 'perspective_id': item.id,
         'source_type': item.source_type.value, 'perspective': item.perspective[:900],
     } for item in perspectives[-PERSPECTIVE_LIMIT:]]
+
+
+def synthesis_steadiness(profile: TraitProfile, evidence: list[TraitEvidence]) -> dict:
+    """Separate effective consistency from reproducible contributing inference.
+
+    Only recorded contributing perspectives may establish availability. Reuse the
+    scoring owner so manual values never masquerade as inferred consistency.
+    """
+    effective = profile.steadiness
+    inferred = profile.inferred_traits.get('steadiness') if effective.status == 'manual' else effective
+    result = {
+        'value': effective.point, 'status': effective.status,
+        'observation_count': effective.observation_count,
+        'availability': 'unavailable', 'reason': None, 'inferred_value': None,
+    }
+    if inferred is None or inferred.point is None:
+        result['reason'] = 'No inferred consistency estimate from comparable behavior.'
+        return result
+    if effective.observation_ids != inferred.observation_ids:
+        result['reason'] = 'Effective and inferred contributing perspectives disagree.'
+        return result
+    expected = set(inferred.observation_ids)
+    items = [item for item in evidence if item.evidence_kind == 'behavior'
+             and item.perspective_id in expected]
+    if {item.perspective_id for item in items} != expected:
+        result['reason'] = 'Contributing evidence is missing.'
+        return result
+    try:
+        for key in DIRECTIONAL_TRAITS:
+            directional_items(key, items)
+        reproduced = steadiness_estimate(items)
+    except ValueError:
+        result['reason'] = 'Contributing evidence is ambiguous.'
+        return result
+    if reproduced != inferred:
+        result['reason'] = 'Evidence does not reproduce the recorded consistency estimate.'
+        return result
+    result.update(availability='available', inferred_value=inferred.point)
+    return result
 
 
 def diagnostic_report(characters: list[dict]) -> dict:

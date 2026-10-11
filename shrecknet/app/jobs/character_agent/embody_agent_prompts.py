@@ -2,8 +2,10 @@
 
 IDENTITY_DESCRIPTION_PROMPT resolves narrative grounding when absent and
 refreshes it after embodiment using scores, contributing evidence, bounded grounded
-perspectives, accepted psychology, and continuity-only prior text; it never supplies
-new numerical trait evidence.
+perspectives, accepted psychology, separate comparable-context Steadiness, and
+continuity-only prior text -> conditional psychological portrait. It never supplies
+new numerical trait evidence. This Stage 0 frames scene interpretation when missing
+and renders the final persisted portrait after processing; it adds no model stage.
 For each source scene chunk, PERSPECTIVE_PROMPT runs first:
     objective scenes -> psychologically distinctive subjective perspectives.
     A truncated response retries with PERSPECTIVE_TRUNCATION_RECOVERY_PROMPT.
@@ -46,14 +48,31 @@ IDENTITY_TRAIT_DESCRIPTION_CONTRACT = (
         for key in DIRECTIONAL_TRAITS
     ], ensure_ascii=False)
 )
-PROMPT_VERSION = "character-embodiment-v41-eight-slot-trait-context"
+PROMPT_VERSION = "character-embodiment-v42-behavioral-identity"
+
+# Purpose: Define consistency separately from the eight directional dimensions.
+# Used by: IDENTITY_DESCRIPTION_PROMPT, alongside IDENTITY_TRAIT_DESCRIPTION_CONTRACT.
+# Expected: Cautious aggregate variability wording without inventing triggers.
+IDENTITY_STEADINESS_CONTRACT = (
+    "\nSeparate behavioral consistency construct:\n"
+    + json.dumps({
+        "name": "steadiness",
+        "definition": TRAIT_BY_KEY["steadiness"].definition,
+        "low_pole": TRAIT_BY_KEY["steadiness"].left_pole,
+        "high_pole": TRAIT_BY_KEY["steadiness"].right_pole,
+        "boundary_notes": TRAIT_BY_KEY["steadiness"].boundary_notes,
+    }, ensure_ascii=False)
+)
 
 # Execution order: Stage 0, once when description is absent and once after
 # scene processing to refresh it from the resulting current state.
-# Purpose: Synthesize narrative grounding without calculating traits.
+# Purpose: Frame/render evidence-grounded conditional psychology without scoring traits.
 # Used by: EmbodyAgent.generate_identity_description.
 # Expected: identity_summary, psychological_summary, personality_traits.
 IDENTITY_DESCRIPTION_PROMPT = r"""You are constructing the psychological identity of a fictional character.
+PIPELINE POSITION: Stage 0 frames scene interpretation when identity is missing,
+then renders the final persistent identity after embodiment. Its output guides
+later interpretation and decision making; it does not extract new trait evidence.
 Create a concise, distinctive portrait that can guide how the character interprets
 events, thinks, and behaves. Ground it in the supplied canonical identity and
 psychological state. Do not invent history, motivations, relationships, or
@@ -77,12 +96,14 @@ INPUT JSON:
     "evidence_examples": [{"id": "trait:example", "perspective_id": "perspective:example",
       "evidence_ids": ["scene:example"], "polarity": "low",
       "situation_type": "retaliation:enemy:ordinary", "justification": "Recorded action and diagnostic significance"}]}],
+  "steadiness": {"value": 7, "status": "provisional", "observation_count": 3,
+    "availability": "available", "reason": null, "inferred_value": 7},
   "grounded_perspectives": [{"scene_id": "example", "perspective_id": "perspective:example",
     "source_type": "participated", "perspective": "Validated subjective interpretation"}],
   "previous_identity_description": {"role": "continuity_only_not_evidence",
     "description": {"identity_summary": "Earlier summary", "psychological_summary": "Earlier psychology",
       "personality_traits": [{"trait": "forbearance", "description": "Earlier wording"}]}},
-  "synthesis_version": "evidence-synthesis-v1"
+  "synthesis_version": "evidence-synthesis-v2-behavioral-context"
 }
 
 Interpret each input field as follows:
@@ -111,6 +132,20 @@ Interpret each input field as follows:
   Preserve supported psychological continuity but correct unsupported prior claims.
   It is continuity context only, never new evidence or a reason to repeat a trait.
 - calculation_version and synthesis_version are provenance, not psychological facts.
+- steadiness is separate from traits and must never become a personality_traits
+  entry. value is an effective integer 1–9 or null; status is unknown, provisional,
+  supported, or manual; observation_count counts contributing perspectives, not
+  confidence. availability is available only when the supplied ledger reproduces
+  the inferred consistency estimate, otherwise unavailable with a reason string.
+  inferred_value is the reproduced integer or null. reason is null when available.
+  A manual value controls intended consistency without erasing conflicting inference.
+  If evidence is unavailable, do not claim observed consistency or invent its cause;
+  a known manual value may guide tentative authored consistency wording only.
+  Unknown means no consistency claim, and provisional requires tentative wording.
+  High means narrower and low broader observed variation in comparable situations.
+  This aggregate estimate is not per-trait variability; do not apply it to every
+  disposition or infer which situation changes behavior. It is not emotional
+  stability, morality, reliability, calmness, or model temperature.
 
 Score direction: 1–2 strong low-pole tendency; 3–4 moderate/slight low-pole
 tendency; 5 centered or mixed; 6–7 slight/moderate high-pole tendency; 8–9 strong
@@ -122,6 +157,25 @@ The effective numerical value determines direction and strength; supported
 psychology and scene evidence determine how it manifests in this character.
 Two diligent characters may share a score but differ in supported motivations;
 never invent control, anxiety, or other motives merely to differentiate them.
+
+Synthesize psychologically predictive, conditional tendencies:
+- Where supported, connect relevant circumstances, the character's interpretation
+  or expectation, established motives or goals, and likely responses. Do not infer
+  an internal cause from an action alone. If motives or triggers are absent, narrow
+  the statement rather than inventing a psychological mechanism.
+- Explain competing dispositions or goals only when evidence supports their
+  interaction. Two high scores alone do not establish conflict or which one wins.
+  Specific relationships, goals, knowledge, capability, and opportunity can outweigh
+  a general tendency. Include exceptions only when supported, never as a template.
+- Scores are positions on bipolar dimensions, not action probabilities or commands.
+  Describe low-pole preferences in the registry's own terms. Do not sanitize
+  exploitative, retaliatory, self-serving, or careless behavior into cooperation,
+  nor caricature every low score as dysfunction. Do not make all characters
+  conscientious, reasonable, or socially desirable.
+- Distinguish enduring motivations, temporary emotions, and recurring dispositions.
+  Psychological context may explain a supported choice but cannot establish new
+  objective actions. Use inclined to, tends to, or other natural conditional prose
+  rather than always/never claims inferred from numerical scores.
 
 OUTPUT JSON SCHEMA (return exactly this object shape):
 {
@@ -148,17 +202,21 @@ OUTPUT JSON SCHEMA (return exactly this object shape):
 Produce three components:
 1. identity_summary: one concise paragraph describing the character's
    background, role, defining characteristics, and what makes them recognizable.
-2. psychological_summary: one concise paragraph describing motivations, desires,
-   fears, values, internal conflicts, ambitions, and their distinctive outlook.
+2. psychological_summary: one concise paragraph explaining how established beliefs,
+   motivations, desires, fears, and values shape interpretations and responses.
+   Include supported internal conflicts and how circumstances affect competing
+   motives; allow unresolved tensions. Qualify aggregate consistency only when known.
 3. personality_traits: only the character's meaningfully supported dispositions.
    Each description should be brief, specific to this character, and explain how
-   that disposition appears in their attitudes or choices.
+   that disposition appears in their attitudes or choices in supported circumstances.
+   Include supported interactions or exceptions where useful, without requiring a
+   motive, activation condition, or exception when the evidence does not supply one.
 
 Write psychologically insightful, natural prose. Prefer distinctive details over
 exhaustive coverage. Reflect supported development in the supplied current
 state. Do not confuse temporary emotions with enduring dispositions. Avoid
 repetition between components. Omit unsupported traits; an empty array is valid.
-Return JSON only.""" + IDENTITY_TRAIT_DESCRIPTION_CONTRACT
+Return JSON only.""" + IDENTITY_TRAIT_DESCRIPTION_CONTRACT + IDENTITY_STEADINESS_CONTRACT
 
 # Execution order: Stage 1, after Stage 0; run for each chunk before Stage 2/3.
 # Stage 1: objective scenes to subjective perspectives.

@@ -42,6 +42,14 @@ queued = await sdk.character_agents.query(
 )
 ```
 
+New embodiment summaries connect supported circumstances, motives, and likely
+behavior while preserving the same three identity fields. Steadiness is an internal
+synthesis input that may qualify consistency in comparable situations; it is not a
+ninth narrative trait or a separate query input. Unknown estimates produce no
+consistency claim. Existing descriptions are retained until an explicit embodiment
+refresh. See the [canonical synthesis contract](../../Documentation/Agents/CharacterAgent/CharacterAgent.md#chronological-identity-revisions)
+and [offline comparison workflow](../../Documentation/Agents/CharacterAgent/Dispositional%20Traits.md#behavioral-identity-evaluation).
+
 The referenced CharacterAgent must still be visible to the caller and active.
 The public `generation` object contains only `temperature`. CharacterAgent query
 calls do not send an explicit output token cap to shreckLLM.

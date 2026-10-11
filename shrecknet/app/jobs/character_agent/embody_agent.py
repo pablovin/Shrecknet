@@ -28,7 +28,7 @@ import time
 from typing import Any, Callable, Literal
 
 from app.services.character_trait_analysis import (
-    synthesis_traits, synthesis_perspectives, bounded_previous_identity, SYNTHESIS_VERSION,
+    synthesis_traits, synthesis_steadiness, synthesis_perspectives, bounded_previous_identity, SYNTHESIS_VERSION,
 )
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, create_model, model_validator
@@ -530,6 +530,7 @@ class EmbodyAgent:
                          "descriptor": item.get("description")}
                         for item in current_aspects],
             "traits": synthesis_traits(current_profile, current_trait_evidence or []),
+            "steadiness": synthesis_steadiness(current_profile, current_trait_evidence or []),
             "grounded_perspectives": synthesis_perspectives(current_perspectives or []),
             "previous_identity_description": {
                 "role": "continuity_only_not_evidence",

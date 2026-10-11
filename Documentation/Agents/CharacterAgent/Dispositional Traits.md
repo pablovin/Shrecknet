@@ -282,7 +282,12 @@ Grounding validators, source/chunk call structure, and deterministic reducers re
 
 Final identity synthesis uses actual contributing behavioral examples, scores,
 statuses, high/low distributions, accepted current psychology, and bounded recent
-perspectives. Previous identity text provides continuity only. See
+perspectives. Separate Steadiness context qualifies comparable-context variability
+only when known; its inference availability is verified against contributing
+evidence. Synthesis connects supported circumstances, motives, and tendencies,
+including interactions and exceptions only when supported. Low-pole descriptions
+retain their own meanings rather than becoming uniformly positive. Previous
+identity text provides continuity only. See
 [CharacterAgent](CharacterAgent.md#chronological-identity-revisions) for the input
 budget, score interpretation, and authority rules.
 
@@ -329,8 +334,8 @@ Missing processing information is unknown, distinct from a processed scene with
 zero observations. Counts expose patterns; a high/low imbalance alone does not
 establish a bias.
 
-The prompt version is `character-embodiment-v41-eight-slot-trait-context`;
-synthesis context identifies `evidence-synthesis-v1`. Definition and evidence-policy
+The prompt version is `character-embodiment-v42-behavioral-identity`;
+synthesis context identifies `evidence-synthesis-v2-behavioral-context`. Definition and evidence-policy
 versions remain unchanged. Existing checkpoints include the prompt version in their
 fingerprint and cannot reuse outputs from the old prompt. Deploy API and workers
 together, then SDK/frontend consumers. No database migration is required. Decimal
@@ -389,3 +394,85 @@ python -m app.services.character_trait_evaluation \
 [{"trait":"...","polarity":"high|low","justification":"..."}] }` per fixture
 case. Empty observations are valid. Model replay requires a reachable shreckLLM
 service; failed inference does not publish a successful report.
+
+## Behavioral identity evaluation
+
+`tests/fixtures/identity_synthesis.json` contains 29 synthetic frozen synthesis
+inputs: both poles of all eight directional traits, unknown/sparse/mixed evidence,
+comparable-context consistency, equal diligence with different authored motives,
+supported and unsupported interactions, temporary state, manual/inferred conflict,
+a missing ledger, competing goals, and a non-diagnostic factual question.
+They are authored review cases, not evidence about real
+characters. `identity_synthesis_baseline.txt` preserves the complete v41 synthesis
+prompt and registry contract for comparison.
+
+Run from `shrecknet/` with a reachable configured shreckLLM service:
+
+```sh
+python -m app.services.character_identity_evaluation synthesis \
+  tests/fixtures/identity_synthesis.json baseline-identity.json --live \
+  --prompt-file tests/fixtures/identity_synthesis_baseline.txt
+python -m app.services.character_identity_evaluation synthesis \
+  tests/fixtures/identity_synthesis.json candidate-identity.json --live
+python -m app.services.character_identity_evaluation decisions \
+  tests/fixtures/identity_synthesis.json decision-comparison.json --live \
+  --baseline baseline-identity.json --candidate candidate-identity.json \
+  --trials 20 --temperature 0.7
+```
+
+Live synthesis uses the production request builder, validator, and retry budget.
+The baseline changes only its instance-local prompt; both versions receive
+identical frozen input. Live decisions use the production deliberation job with
+baseline, candidate, and neutral arms. Each case fixes options, knowledge,
+capability, and opportunity. Identity arms have identical empty memory lists;
+all situational knowledge is in the shared context. This isolates the portrait
+without changing normal gameplay's subjective memory retrieval. Trial order
+alternates. Neutral mode receives no identity or memories. No graph operations,
+profile writes, or production retrieval changes occur. At 29 cases and 20 trials,
+decision replay requests 1,740 deliberations before any repair calls; use an
+explicit smaller `--trials` value for a smoke check.
+
+Reports retain validated outputs, fixture/prompt hashes, configured model settings,
+temperatures, request counts including replacements/repair, synthesis token
+estimates, and portrait-report hashes for decisions. Seeds are not supplied by
+this runner and are recorded as null. Decision token totals are not estimated.
+Transport or validation failures raise and do not publish a successful report;
+there is no resumable partial replay. Existing report files are not removed on
+failure. Baseline and candidate reports must match the identical fixture hash.
+
+Captured-output review is offline and makes no inference calls:
+
+```sh
+python -m app.services.character_identity_evaluation synthesis \
+  tests/fixtures/identity_synthesis.json reviewed-identity.json --outputs portraits.json
+python -m app.services.character_identity_evaluation decisions \
+  tests/fixtures/identity_synthesis.json reviewed-decisions.json \
+  --outputs decisions.json --trials 20
+```
+
+`portraits.json` is an array of exactly one `{"case_id":"...",
+"identity_description":{"identity_summary":"...","psychological_summary":"...",
+"personality_traits":[]}}` per case. `decisions.json` has exactly one
+`{"case_id":"...","variant":"baseline|candidate|neutral","trial":0,
+"result":{"type":"json","content":{"action":"one fixture option"},
+"decision_basis":"concise public explanation"}}` per case, arm, and zero-based
+trial. Reports validate structures and summarize action counts; they do not
+automatically score prose or claim improvement. Captured-output provenance records
+the input hash and mode, not unverified model settings.
+
+Blindly review evidence fidelity, pole fidelity, supported conditional specificity,
+unsupported causes/exceptions, and repetition. Set acceptance criteria and trial
+budget before viewing comparisons. Compare repeated action distributions and
+character fit with uncertainty; identical choices may be appropriate, and a single
+generation cannot establish an improvement. Extraction evaluation above measures
+a separate stage. Live narrative comparison, decision trials, and a reviewed
+end-to-end pilot remain operational checks; fixture and mocked tests establish
+contracts, not scientific validity.
+
+The synthesis update requires no database migration, trait recalculation, or
+memory re-embedding and adds no normal production LLM calls. Deploy API and workers
+together. Existing portraits and ledgers remain unchanged until an explicit
+embodiment refresh; review a draft before replacing a pilot portrait and preserve
+an export. Prompt versions invalidate incompatible checkpoints. Rollback restores
+future generation behavior but does not restore accepted portraits automatically;
+restore saved portraits through an authorized maintenance path if needed.

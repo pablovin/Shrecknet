@@ -1,0 +1,4073 @@
+{
+  "version": "behavioral-identity-v1",
+  "cases": [
+    {
+      "case_id": "integrity-low",
+      "review_note": "Reflect the low pole of integrity without inventing causes, forcing an exception, or moral sanitization.",
+      "input": {
+        "canonical_identity": {
+          "alias": "Traveler",
+          "entity_type": "Character",
+          "authored_text": "A fictional traveler. No further motives are established.",
+          "properties": {}
+        },
+        "current_profile": {
+          "version": "dispositions-v3-points-perspectives",
+          "dispositional_traits": {
+            "integrity": {
+              "point": 3,
+              "status": "supported",
+              "observation_count": 3,
+              "observation_ids": [
+                "perspective:s0",
+                "perspective:s1",
+                "perspective:s2"
+              ]
+            },
+            "caution": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "presence": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "forbearance": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "diligence": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "curiosity": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "sharing": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "restlessness": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            }
+          },
+          "steadiness": {
+            "point": 7,
+            "status": "provisional",
+            "observation_count": 3,
+            "observation_ids": [
+              "perspective:s0",
+              "perspective:s1",
+              "perspective:s2"
+            ]
+          },
+          "inferred_traits": {},
+          "overrides": {}
+        },
+        "current_trait_evidence": [
+          {
+            "trait": "integrity",
+            "evidence_kind": "behavior",
+            "polarity": "low",
+            "situation_type": "exploitation:other:ordinary",
+            "justification": "Takes a safe untraceable profit by deceiving a stranger.",
+            "perspective_id": "perspective:s0",
+            "evidence_ids": [
+              "scene:s0"
+            ],
+            "id": "trait:0c81ab5796cec3da7822a1f4",
+            "source_group_id": "integrity-low",
+            "chronological_position": 0,
+            "policy_version": "point-evidence-v1",
+            "revision_id": null
+          },
+          {
+            "trait": "integrity",
+            "evidence_kind": "behavior",
+            "polarity": "low",
+            "situation_type": "exploitation:other:ordinary",
+            "justification": "Takes a safe untraceable profit by deceiving a stranger.",
+            "perspective_id": "perspective:s1",
+            "evidence_ids": [
+              "scene:s1"
+            ],
+            "id": "trait:d9ac7ea144d4525b5ce4ff4c",
+            "source_group_id": "integrity-low",
+            "chronological_position": 1,
+            "policy_version": "point-evidence-v1",
+            "revision_id": null
+          },
+          {
+            "trait": "integrity",
+            "evidence_kind": "behavior",
+            "polarity": "low",
+            "situation_type": "exploitation:other:ordinary",
+            "justification": "Takes a safe untraceable profit by deceiving a stranger.",
+            "perspective_id": "perspective:s2",
+            "evidence_ids": [
+              "scene:s2"
+            ],
+            "id": "trait:3248aa60a2ec45495437fc8a",
+            "source_group_id": "integrity-low",
+            "chronological_position": 2,
+            "policy_version": "point-evidence-v1",
+            "revision_id": null
+          }
+        ],
+        "current_goals": [],
+        "current_aspects": []
+      },
+      "decision": {
+        "query": "Choose one available action.",
+        "context": {
+          "situation": "A safe untraceable profit requires deceiving a stranger. You may refuse or deceive.",
+          "knowledge": "The stated facts are known; no hidden consequences.",
+          "capability": "Both options are feasible.",
+          "opportunity": "Both options are available now."
+        },
+        "options": [
+          "refuse",
+          "deceive"
+        ]
+      }
+    },
+    {
+      "case_id": "integrity-high",
+      "review_note": "Reflect the high pole of integrity without inventing causes, forcing an exception, or moral sanitization.",
+      "input": {
+        "canonical_identity": {
+          "alias": "Traveler",
+          "entity_type": "Character",
+          "authored_text": "A fictional traveler. No further motives are established.",
+          "properties": {}
+        },
+        "current_profile": {
+          "version": "dispositions-v3-points-perspectives",
+          "dispositional_traits": {
+            "integrity": {
+              "point": 7,
+              "status": "supported",
+              "observation_count": 3,
+              "observation_ids": [
+                "perspective:s0",
+                "perspective:s1",
+                "perspective:s2"
+              ]
+            },
+            "caution": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "presence": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "forbearance": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "diligence": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "curiosity": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "sharing": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "restlessness": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            }
+          },
+          "steadiness": {
+            "point": 7,
+            "status": "provisional",
+            "observation_count": 3,
+            "observation_ids": [
+              "perspective:s0",
+              "perspective:s1",
+              "perspective:s2"
+            ]
+          },
+          "inferred_traits": {},
+          "overrides": {}
+        },
+        "current_trait_evidence": [
+          {
+            "trait": "integrity",
+            "evidence_kind": "behavior",
+            "polarity": "high",
+            "situation_type": "exploitation:other:ordinary",
+            "justification": "Refuses safe untraceable profit at a stranger's expense.",
+            "perspective_id": "perspective:s0",
+            "evidence_ids": [
+              "scene:s0"
+            ],
+            "id": "trait:4a4226c7f0aea185debaf189",
+            "source_group_id": "integrity-high",
+            "chronological_position": 0,
+            "policy_version": "point-evidence-v1",
+            "revision_id": null
+          },
+          {
+            "trait": "integrity",
+            "evidence_kind": "behavior",
+            "polarity": "high",
+            "situation_type": "exploitation:other:ordinary",
+            "justification": "Refuses safe untraceable profit at a stranger's expense.",
+            "perspective_id": "perspective:s1",
+            "evidence_ids": [
+              "scene:s1"
+            ],
+            "id": "trait:4786f2c3f1aa7161b95e0233",
+            "source_group_id": "integrity-high",
+            "chronological_position": 1,
+            "policy_version": "point-evidence-v1",
+            "revision_id": null
+          },
+          {
+            "trait": "integrity",
+            "evidence_kind": "behavior",
+            "polarity": "high",
+            "situation_type": "exploitation:other:ordinary",
+            "justification": "Refuses safe untraceable profit at a stranger's expense.",
+            "perspective_id": "perspective:s2",
+            "evidence_ids": [
+              "scene:s2"
+            ],
+            "id": "trait:85bf1d9ea665442ac40cb302",
+            "source_group_id": "integrity-high",
+            "chronological_position": 2,
+            "policy_version": "point-evidence-v1",
+            "revision_id": null
+          }
+        ],
+        "current_goals": [],
+        "current_aspects": []
+      },
+      "decision": {
+        "query": "Choose one available action.",
+        "context": {
+          "situation": "A safe untraceable profit requires deceiving a stranger. You may refuse or deceive.",
+          "knowledge": "The stated facts are known; no hidden consequences.",
+          "capability": "Both options are feasible.",
+          "opportunity": "Both options are available now."
+        },
+        "options": [
+          "refuse",
+          "deceive"
+        ]
+      }
+    },
+    {
+      "case_id": "caution-low",
+      "review_note": "Reflect the low pole of caution without inventing causes, forcing an exception, or moral sanitization.",
+      "input": {
+        "canonical_identity": {
+          "alias": "Traveler",
+          "entity_type": "Character",
+          "authored_text": "A fictional traveler. No further motives are established.",
+          "properties": {}
+        },
+        "current_profile": {
+          "version": "dispositions-v3-points-perspectives",
+          "dispositional_traits": {
+            "integrity": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "caution": {
+              "point": 3,
+              "status": "supported",
+              "observation_count": 3,
+              "observation_ids": [
+                "perspective:s0",
+                "perspective:s1",
+                "perspective:s2"
+              ]
+            },
+            "presence": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "forbearance": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "diligence": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "curiosity": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "sharing": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "restlessness": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            }
+          },
+          "steadiness": {
+            "point": 7,
+            "status": "provisional",
+            "observation_count": 3,
+            "observation_ids": [
+              "perspective:s0",
+              "perspective:s1",
+              "perspective:s2"
+            ]
+          },
+          "inferred_traits": {},
+          "overrides": {}
+        },
+        "current_trait_evidence": [
+          {
+            "trait": "caution",
+            "evidence_kind": "behavior",
+            "polarity": "low",
+            "situation_type": "uncertain_threat:other:ordinary",
+            "justification": "Accepts uncertain exposure without seeking guarantees.",
+            "perspective_id": "perspective:s0",
+            "evidence_ids": [
+              "scene:s0"
+            ],
+            "id": "trait:1e8269966d20d1f3789628b2",
+            "source_group_id": "caution-low",
+            "chronological_position": 0,
+            "policy_version": "point-evidence-v1",
+            "revision_id": null
+          },
+          {
+            "trait": "caution",
+            "evidence_kind": "behavior",
+            "polarity": "low",
+            "situation_type": "uncertain_threat:other:ordinary",
+            "justification": "Accepts uncertain exposure without seeking guarantees.",
+            "perspective_id": "perspective:s1",
+            "evidence_ids": [
+              "scene:s1"
+            ],
+            "id": "trait:1220da72e35622cd87e5cf61",
+            "source_group_id": "caution-low",
+            "chronological_position": 1,
+            "policy_version": "point-evidence-v1",
+            "revision_id": null
+          },
+          {
+            "trait": "caution",
+            "evidence_kind": "behavior",
+            "polarity": "low",
+            "situation_type": "uncertain_threat:other:ordinary",
+            "justification": "Accepts uncertain exposure without seeking guarantees.",
+            "perspective_id": "perspective:s2",
+            "evidence_ids": [
+              "scene:s2"
+            ],
+            "id": "trait:92483c126ef57b5d83517300",
+            "source_group_id": "caution-low",
+            "chronological_position": 2,
+            "policy_version": "point-evidence-v1",
+            "revision_id": null
+          }
+        ],
+        "current_goals": [],
+        "current_aspects": []
+      },
+      "decision": {
+        "query": "Choose one available action.",
+        "context": {
+          "situation": "An unfamiliar crossing has uncertain risks. Protection is available after a short wait.",
+          "knowledge": "The stated facts are known; no hidden consequences.",
+          "capability": "Both options are feasible.",
+          "opportunity": "Both options are available now."
+        },
+        "options": [
+          "cross_now",
+          "seek_protection"
+        ]
+      }
+    },
+    {
+      "case_id": "caution-high",
+      "review_note": "Reflect the high pole of caution without inventing causes, forcing an exception, or moral sanitization.",
+      "input": {
+        "canonical_identity": {
+          "alias": "Traveler",
+          "entity_type": "Character",
+          "authored_text": "A fictional traveler. No further motives are established.",
+          "properties": {}
+        },
+        "current_profile": {
+          "version": "dispositions-v3-points-perspectives",
+          "dispositional_traits": {
+            "integrity": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "caution": {
+              "point": 7,
+              "status": "supported",
+              "observation_count": 3,
+              "observation_ids": [
+                "perspective:s0",
+                "perspective:s1",
+                "perspective:s2"
+              ]
+            },
+            "presence": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "forbearance": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "diligence": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "curiosity": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "sharing": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "restlessness": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            }
+          },
+          "steadiness": {
+            "point": 7,
+            "status": "provisional",
+            "observation_count": 3,
+            "observation_ids": [
+              "perspective:s0",
+              "perspective:s1",
+              "perspective:s2"
+            ]
+          },
+          "inferred_traits": {},
+          "overrides": {}
+        },
+        "current_trait_evidence": [
+          {
+            "trait": "caution",
+            "evidence_kind": "behavior",
+            "polarity": "high",
+            "situation_type": "uncertain_threat:other:ordinary",
+            "justification": "Obtains protection before accepting uncertain exposure.",
+            "perspective_id": "perspective:s0",
+            "evidence_ids": [
+              "scene:s0"
+            ],
+            "id": "trait:18a7fdec54d71096fcc9ee28",
+            "source_group_id": "caution-high",
+            "chronological_position": 0,
+            "policy_version": "point-evidence-v1",
+            "revision_id": null
+          },
+          {
+            "trait": "caution",
+            "evidence_kind": "behavior",
+            "polarity": "high",
+            "situation_type": "uncertain_threat:other:ordinary",
+            "justification": "Obtains protection before accepting uncertain exposure.",
+            "perspective_id": "perspective:s1",
+            "evidence_ids": [
+              "scene:s1"
+            ],
+            "id": "trait:15bcabd5ad46388b8a5161a6",
+            "source_group_id": "caution-high",
+            "chronological_position": 1,
+            "policy_version": "point-evidence-v1",
+            "revision_id": null
+          },
+          {
+            "trait": "caution",
+            "evidence_kind": "behavior",
+            "polarity": "high",
+            "situation_type": "uncertain_threat:other:ordinary",
+            "justification": "Obtains protection before accepting uncertain exposure.",
+            "perspective_id": "perspective:s2",
+            "evidence_ids": [
+              "scene:s2"
+            ],
+            "id": "trait:03c7e466dcc954f0240764d3",
+            "source_group_id": "caution-high",
+            "chronological_position": 2,
+            "policy_version": "point-evidence-v1",
+            "revision_id": null
+          }
+        ],
+        "current_goals": [],
+        "current_aspects": []
+      },
+      "decision": {
+        "query": "Choose one available action.",
+        "context": {
+          "situation": "An unfamiliar crossing has uncertain risks. Protection is available after a short wait.",
+          "knowledge": "The stated facts are known; no hidden consequences.",
+          "capability": "Both options are feasible.",
+          "opportunity": "Both options are available now."
+        },
+        "options": [
+          "cross_now",
+          "seek_protection"
+        ]
+      }
+    },
+    {
+      "case_id": "presence-low",
+      "review_note": "Reflect the low pole of presence without inventing causes, forcing an exception, or moral sanitization.",
+      "input": {
+        "canonical_identity": {
+          "alias": "Traveler",
+          "entity_type": "Character",
+          "authored_text": "A fictional traveler. No further motives are established.",
+          "properties": {}
+        },
+        "current_profile": {
+          "version": "dispositions-v3-points-perspectives",
+          "dispositional_traits": {
+            "integrity": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "caution": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "presence": {
+              "point": 3,
+              "status": "supported",
+              "observation_count": 3,
+              "observation_ids": [
+                "perspective:s0",
+                "perspective:s1",
+                "perspective:s2"
+              ]
+            },
+            "forbearance": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "diligence": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "curiosity": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "sharing": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "restlessness": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            }
+          },
+          "steadiness": {
+            "point": 7,
+            "status": "provisional",
+            "observation_count": 3,
+            "observation_ids": [
+              "perspective:s0",
+              "perspective:s1",
+              "perspective:s2"
+            ]
+          },
+          "inferred_traits": {},
+          "overrides": {}
+        },
+        "current_trait_evidence": [
+          {
+            "trait": "presence",
+            "evidence_kind": "behavior",
+            "polarity": "low",
+            "situation_type": "social_visibility:other:ordinary",
+            "justification": "Voluntarily stays away from social attention.",
+            "perspective_id": "perspective:s0",
+            "evidence_ids": [
+              "scene:s0"
+            ],
+            "id": "trait:cd1a76ee0c588f9c0b730948",
+            "source_group_id": "presence-low",
+            "chronological_position": 0,
+            "policy_version": "point-evidence-v1",
+            "revision_id": null
+          },
+          {
+            "trait": "presence",
+            "evidence_kind": "behavior",
+            "polarity": "low",
+            "situation_type": "social_visibility:other:ordinary",
+            "justification": "Voluntarily stays away from social attention.",
+            "perspective_id": "perspective:s1",
+            "evidence_ids": [
+              "scene:s1"
+            ],
+            "id": "trait:29a1a3d801f199e3ae31670d",
+            "source_group_id": "presence-low",
+            "chronological_position": 1,
+            "policy_version": "point-evidence-v1",
+            "revision_id": null
+          },
+          {
+            "trait": "presence",
+            "evidence_kind": "behavior",
+            "polarity": "low",
+            "situation_type": "social_visibility:other:ordinary",
+            "justification": "Voluntarily stays away from social attention.",
+            "perspective_id": "perspective:s2",
+            "evidence_ids": [
+              "scene:s2"
+            ],
+            "id": "trait:35e2270a70fdee5dc23a5037",
+            "source_group_id": "presence-low",
+            "chronological_position": 2,
+            "policy_version": "point-evidence-v1",
+            "revision_id": null
+          }
+        ],
+        "current_goals": [],
+        "current_aspects": []
+      },
+      "decision": {
+        "query": "Choose one available action.",
+        "context": {
+          "situation": "You are free to join a friendly gathering or spend the evening alone.",
+          "knowledge": "The stated facts are known; no hidden consequences.",
+          "capability": "Both options are feasible.",
+          "opportunity": "Both options are available now."
+        },
+        "options": [
+          "join",
+          "stay_alone"
+        ]
+      }
+    },
+    {
+      "case_id": "presence-high",
+      "review_note": "Reflect the high pole of presence without inventing causes, forcing an exception, or moral sanitization.",
+      "input": {
+        "canonical_identity": {
+          "alias": "Traveler",
+          "entity_type": "Character",
+          "authored_text": "A fictional traveler. No further motives are established.",
+          "properties": {}
+        },
+        "current_profile": {
+          "version": "dispositions-v3-points-perspectives",
+          "dispositional_traits": {
+            "integrity": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "caution": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "presence": {
+              "point": 7,
+              "status": "supported",
+              "observation_count": 3,
+              "observation_ids": [
+                "perspective:s0",
+                "perspective:s1",
+                "perspective:s2"
+              ]
+            },
+            "forbearance": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "diligence": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "curiosity": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "sharing": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "restlessness": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            }
+          },
+          "steadiness": {
+            "point": 7,
+            "status": "provisional",
+            "observation_count": 3,
+            "observation_ids": [
+              "perspective:s0",
+              "perspective:s1",
+              "perspective:s2"
+            ]
+          },
+          "inferred_traits": {},
+          "overrides": {}
+        },
+        "current_trait_evidence": [
+          {
+            "trait": "presence",
+            "evidence_kind": "behavior",
+            "polarity": "high",
+            "situation_type": "social_visibility:other:ordinary",
+            "justification": "Voluntarily approaches strangers and takes the floor.",
+            "perspective_id": "perspective:s0",
+            "evidence_ids": [
+              "scene:s0"
+            ],
+            "id": "trait:fe093d824bdc212f0fabeffa",
+            "source_group_id": "presence-high",
+            "chronological_position": 0,
+            "policy_version": "point-evidence-v1",
+            "revision_id": null
+          },
+          {
+            "trait": "presence",
+            "evidence_kind": "behavior",
+            "polarity": "high",
+            "situation_type": "social_visibility:other:ordinary",
+            "justification": "Voluntarily approaches strangers and takes the floor.",
+            "perspective_id": "perspective:s1",
+            "evidence_ids": [
+              "scene:s1"
+            ],
+            "id": "trait:39cba1969b28604a60d1021b",
+            "source_group_id": "presence-high",
+            "chronological_position": 1,
+            "policy_version": "point-evidence-v1",
+            "revision_id": null
+          },
+          {
+            "trait": "presence",
+            "evidence_kind": "behavior",
+            "polarity": "high",
+            "situation_type": "social_visibility:other:ordinary",
+            "justification": "Voluntarily approaches strangers and takes the floor.",
+            "perspective_id": "perspective:s2",
+            "evidence_ids": [
+              "scene:s2"
+            ],
+            "id": "trait:93e5bcf5cb3be0aba2a44de0",
+            "source_group_id": "presence-high",
+            "chronological_position": 2,
+            "policy_version": "point-evidence-v1",
+            "revision_id": null
+          }
+        ],
+        "current_goals": [],
+        "current_aspects": []
+      },
+      "decision": {
+        "query": "Choose one available action.",
+        "context": {
+          "situation": "You are free to join a friendly gathering or spend the evening alone.",
+          "knowledge": "The stated facts are known; no hidden consequences.",
+          "capability": "Both options are feasible.",
+          "opportunity": "Both options are available now."
+        },
+        "options": [
+          "join",
+          "stay_alone"
+        ]
+      }
+    },
+    {
+      "case_id": "forbearance-low",
+      "review_note": "Reflect the low pole of forbearance without inventing causes, forcing an exception, or moral sanitization.",
+      "input": {
+        "canonical_identity": {
+          "alias": "Traveler",
+          "entity_type": "Character",
+          "authored_text": "A fictional traveler. No further motives are established.",
+          "properties": {}
+        },
+        "current_profile": {
+          "version": "dispositions-v3-points-perspectives",
+          "dispositional_traits": {
+            "integrity": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "caution": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "presence": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "forbearance": {
+              "point": 3,
+              "status": "supported",
+              "observation_count": 3,
+              "observation_ids": [
+                "perspective:s0",
+                "perspective:s1",
+                "perspective:s2"
+              ]
+            },
+            "diligence": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "curiosity": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "sharing": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "restlessness": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            }
+          },
+          "steadiness": {
+            "point": 7,
+            "status": "provisional",
+            "observation_count": 3,
+            "observation_ids": [
+              "perspective:s0",
+              "perspective:s1",
+              "perspective:s2"
+            ]
+          },
+          "inferred_traits": {},
+          "overrides": {}
+        },
+        "current_trait_evidence": [
+          {
+            "trait": "forbearance",
+            "evidence_kind": "behavior",
+            "polarity": "low",
+            "situation_type": "provocation:other:ordinary",
+            "justification": "Retaliates after a freely avoidable insult.",
+            "perspective_id": "perspective:s0",
+            "evidence_ids": [
+              "scene:s0"
+            ],
+            "id": "trait:ae41305de6b8cdcabbb7babc",
+            "source_group_id": "forbearance-low",
+            "chronological_position": 0,
+            "policy_version": "point-evidence-v1",
+            "revision_id": null
+          },
+          {
+            "trait": "forbearance",
+            "evidence_kind": "behavior",
+            "polarity": "low",
+            "situation_type": "provocation:other:ordinary",
+            "justification": "Retaliates after a freely avoidable insult.",
+            "perspective_id": "perspective:s1",
+            "evidence_ids": [
+              "scene:s1"
+            ],
+            "id": "trait:11de78498555e6a250195057",
+            "source_group_id": "forbearance-low",
+            "chronological_position": 1,
+            "policy_version": "point-evidence-v1",
+            "revision_id": null
+          },
+          {
+            "trait": "forbearance",
+            "evidence_kind": "behavior",
+            "polarity": "low",
+            "situation_type": "provocation:other:ordinary",
+            "justification": "Retaliates after a freely avoidable insult.",
+            "perspective_id": "perspective:s2",
+            "evidence_ids": [
+              "scene:s2"
+            ],
+            "id": "trait:9d1d1dd082fe15745c90b5d5",
+            "source_group_id": "forbearance-low",
+            "chronological_position": 2,
+            "policy_version": "point-evidence-v1",
+            "revision_id": null
+          }
+        ],
+        "current_goals": [],
+        "current_aspects": []
+      },
+      "decision": {
+        "query": "Choose one available action.",
+        "context": {
+          "situation": "Someone insults you without consequences. You can let it pass or retaliate.",
+          "knowledge": "The stated facts are known; no hidden consequences.",
+          "capability": "Both options are feasible.",
+          "opportunity": "Both options are available now."
+        },
+        "options": [
+          "let_pass",
+          "retaliate"
+        ]
+      }
+    },
+    {
+      "case_id": "forbearance-high",
+      "review_note": "Reflect the high pole of forbearance without inventing causes, forcing an exception, or moral sanitization.",
+      "input": {
+        "canonical_identity": {
+          "alias": "Traveler",
+          "entity_type": "Character",
+          "authored_text": "A fictional traveler. No further motives are established.",
+          "properties": {}
+        },
+        "current_profile": {
+          "version": "dispositions-v3-points-perspectives",
+          "dispositional_traits": {
+            "integrity": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "caution": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "presence": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "forbearance": {
+              "point": 7,
+              "status": "supported",
+              "observation_count": 3,
+              "observation_ids": [
+                "perspective:s0",
+                "perspective:s1",
+                "perspective:s2"
+              ]
+            },
+            "diligence": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "curiosity": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "sharing": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "restlessness": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            }
+          },
+          "steadiness": {
+            "point": 7,
+            "status": "provisional",
+            "observation_count": 3,
+            "observation_ids": [
+              "perspective:s0",
+              "perspective:s1",
+              "perspective:s2"
+            ]
+          },
+          "inferred_traits": {},
+          "overrides": {}
+        },
+        "current_trait_evidence": [
+          {
+            "trait": "forbearance",
+            "evidence_kind": "behavior",
+            "polarity": "high",
+            "situation_type": "provocation:other:ordinary",
+            "justification": "Lets a freely avoidable insult pass without retaliation.",
+            "perspective_id": "perspective:s0",
+            "evidence_ids": [
+              "scene:s0"
+            ],
+            "id": "trait:4cdc8adeadf7ca1acd628db0",
+            "source_group_id": "forbearance-high",
+            "chronological_position": 0,
+            "policy_version": "point-evidence-v1",
+            "revision_id": null
+          },
+          {
+            "trait": "forbearance",
+            "evidence_kind": "behavior",
+            "polarity": "high",
+            "situation_type": "provocation:other:ordinary",
+            "justification": "Lets a freely avoidable insult pass without retaliation.",
+            "perspective_id": "perspective:s1",
+            "evidence_ids": [
+              "scene:s1"
+            ],
+            "id": "trait:660af73d267f87af3230d706",
+            "source_group_id": "forbearance-high",
+            "chronological_position": 1,
+            "policy_version": "point-evidence-v1",
+            "revision_id": null
+          },
+          {
+            "trait": "forbearance",
+            "evidence_kind": "behavior",
+            "polarity": "high",
+            "situation_type": "provocation:other:ordinary",
+            "justification": "Lets a freely avoidable insult pass without retaliation.",
+            "perspective_id": "perspective:s2",
+            "evidence_ids": [
+              "scene:s2"
+            ],
+            "id": "trait:273464ad5a0e8aa261e3b8be",
+            "source_group_id": "forbearance-high",
+            "chronological_position": 2,
+            "policy_version": "point-evidence-v1",
+            "revision_id": null
+          }
+        ],
+        "current_goals": [],
+        "current_aspects": []
+      },
+      "decision": {
+        "query": "Choose one available action.",
+        "context": {
+          "situation": "Someone insults you without consequences. You can let it pass or retaliate.",
+          "knowledge": "The stated facts are known; no hidden consequences.",
+          "capability": "Both options are feasible.",
+          "opportunity": "Both options are available now."
+        },
+        "options": [
+          "let_pass",
+          "retaliate"
+        ]
+      }
+    },
+    {
+      "case_id": "diligence-low",
+      "review_note": "Reflect the low pole of diligence without inventing causes, forcing an exception, or moral sanitization.",
+      "input": {
+        "canonical_identity": {
+          "alias": "Traveler",
+          "entity_type": "Character",
+          "authored_text": "A fictional traveler. No further motives are established.",
+          "properties": {}
+        },
+        "current_profile": {
+          "version": "dispositions-v3-points-perspectives",
+          "dispositional_traits": {
+            "integrity": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "caution": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "presence": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "forbearance": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "diligence": {
+              "point": 3,
+              "status": "supported",
+              "observation_count": 3,
+              "observation_ids": [
+                "perspective:s0",
+                "perspective:s1",
+                "perspective:s2"
+              ]
+            },
+            "curiosity": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "sharing": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "restlessness": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            }
+          },
+          "steadiness": {
+            "point": 7,
+            "status": "provisional",
+            "observation_count": 3,
+            "observation_ids": [
+              "perspective:s0",
+              "perspective:s1",
+              "perspective:s2"
+            ]
+          },
+          "inferred_traits": {},
+          "overrides": {}
+        },
+        "current_trait_evidence": [
+          {
+            "trait": "diligence",
+            "evidence_kind": "behavior",
+            "polarity": "low",
+            "situation_type": "unattended_duty:other:ordinary",
+            "justification": "Cuts corners on an unattended task despite time to complete it.",
+            "perspective_id": "perspective:s0",
+            "evidence_ids": [
+              "scene:s0"
+            ],
+            "id": "trait:9c26c43f20e522093f63c380",
+            "source_group_id": "diligence-low",
+            "chronological_position": 0,
+            "policy_version": "point-evidence-v1",
+            "revision_id": null
+          },
+          {
+            "trait": "diligence",
+            "evidence_kind": "behavior",
+            "polarity": "low",
+            "situation_type": "unattended_duty:other:ordinary",
+            "justification": "Cuts corners on an unattended task despite time to complete it.",
+            "perspective_id": "perspective:s1",
+            "evidence_ids": [
+              "scene:s1"
+            ],
+            "id": "trait:8d77de5ad67202a0e13dc63d",
+            "source_group_id": "diligence-low",
+            "chronological_position": 1,
+            "policy_version": "point-evidence-v1",
+            "revision_id": null
+          },
+          {
+            "trait": "diligence",
+            "evidence_kind": "behavior",
+            "polarity": "low",
+            "situation_type": "unattended_duty:other:ordinary",
+            "justification": "Cuts corners on an unattended task despite time to complete it.",
+            "perspective_id": "perspective:s2",
+            "evidence_ids": [
+              "scene:s2"
+            ],
+            "id": "trait:428dc416b3088de3d3343126",
+            "source_group_id": "diligence-low",
+            "chronological_position": 2,
+            "policy_version": "point-evidence-v1",
+            "revision_id": null
+          }
+        ],
+        "current_goals": [],
+        "current_aspects": []
+      },
+      "decision": {
+        "query": "Choose one available action.",
+        "context": {
+          "situation": "Nobody checks your task. You have enough time to finish properly or cut corners.",
+          "knowledge": "The stated facts are known; no hidden consequences.",
+          "capability": "Both options are feasible.",
+          "opportunity": "Both options are available now."
+        },
+        "options": [
+          "finish_properly",
+          "cut_corners"
+        ]
+      }
+    },
+    {
+      "case_id": "diligence-high",
+      "review_note": "Reflect the high pole of diligence without inventing causes, forcing an exception, or moral sanitization.",
+      "input": {
+        "canonical_identity": {
+          "alias": "Traveler",
+          "entity_type": "Character",
+          "authored_text": "A fictional traveler. No further motives are established.",
+          "properties": {}
+        },
+        "current_profile": {
+          "version": "dispositions-v3-points-perspectives",
+          "dispositional_traits": {
+            "integrity": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "caution": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "presence": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "forbearance": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "diligence": {
+              "point": 7,
+              "status": "supported",
+              "observation_count": 3,
+              "observation_ids": [
+                "perspective:s0",
+                "perspective:s1",
+                "perspective:s2"
+              ]
+            },
+            "curiosity": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "sharing": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "restlessness": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            }
+          },
+          "steadiness": {
+            "point": 7,
+            "status": "provisional",
+            "observation_count": 3,
+            "observation_ids": [
+              "perspective:s0",
+              "perspective:s1",
+              "perspective:s2"
+            ]
+          },
+          "inferred_traits": {},
+          "overrides": {}
+        },
+        "current_trait_evidence": [
+          {
+            "trait": "diligence",
+            "evidence_kind": "behavior",
+            "polarity": "high",
+            "situation_type": "unattended_duty:other:ordinary",
+            "justification": "Finishes an unattended task thoroughly despite delayed reward.",
+            "perspective_id": "perspective:s0",
+            "evidence_ids": [
+              "scene:s0"
+            ],
+            "id": "trait:f6a6208ef3e956f0d079d76f",
+            "source_group_id": "diligence-high",
+            "chronological_position": 0,
+            "policy_version": "point-evidence-v1",
+            "revision_id": null
+          },
+          {
+            "trait": "diligence",
+            "evidence_kind": "behavior",
+            "polarity": "high",
+            "situation_type": "unattended_duty:other:ordinary",
+            "justification": "Finishes an unattended task thoroughly despite delayed reward.",
+            "perspective_id": "perspective:s1",
+            "evidence_ids": [
+              "scene:s1"
+            ],
+            "id": "trait:b608740f376cb9bafc26c12c",
+            "source_group_id": "diligence-high",
+            "chronological_position": 1,
+            "policy_version": "point-evidence-v1",
+            "revision_id": null
+          },
+          {
+            "trait": "diligence",
+            "evidence_kind": "behavior",
+            "polarity": "high",
+            "situation_type": "unattended_duty:other:ordinary",
+            "justification": "Finishes an unattended task thoroughly despite delayed reward.",
+            "perspective_id": "perspective:s2",
+            "evidence_ids": [
+              "scene:s2"
+            ],
+            "id": "trait:1f710f2cf0c6a29d4e05308c",
+            "source_group_id": "diligence-high",
+            "chronological_position": 2,
+            "policy_version": "point-evidence-v1",
+            "revision_id": null
+          }
+        ],
+        "current_goals": [],
+        "current_aspects": []
+      },
+      "decision": {
+        "query": "Choose one available action.",
+        "context": {
+          "situation": "Nobody checks your task. You have enough time to finish properly or cut corners.",
+          "knowledge": "The stated facts are known; no hidden consequences.",
+          "capability": "Both options are feasible.",
+          "opportunity": "Both options are available now."
+        },
+        "options": [
+          "finish_properly",
+          "cut_corners"
+        ]
+      }
+    },
+    {
+      "case_id": "curiosity-low",
+      "review_note": "Reflect the low pole of curiosity without inventing causes, forcing an exception, or moral sanitization.",
+      "input": {
+        "canonical_identity": {
+          "alias": "Traveler",
+          "entity_type": "Character",
+          "authored_text": "A fictional traveler. No further motives are established.",
+          "properties": {}
+        },
+        "current_profile": {
+          "version": "dispositions-v3-points-perspectives",
+          "dispositional_traits": {
+            "integrity": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "caution": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "presence": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "forbearance": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "diligence": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "curiosity": {
+              "point": 3,
+              "status": "supported",
+              "observation_count": 3,
+              "observation_ids": [
+                "perspective:s0",
+                "perspective:s1",
+                "perspective:s2"
+              ]
+            },
+            "sharing": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "restlessness": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            }
+          },
+          "steadiness": {
+            "point": 7,
+            "status": "provisional",
+            "observation_count": 3,
+            "observation_ids": [
+              "perspective:s0",
+              "perspective:s1",
+              "perspective:s2"
+            ]
+          },
+          "inferred_traits": {},
+          "overrides": {}
+        },
+        "current_trait_evidence": [
+          {
+            "trait": "curiosity",
+            "evidence_kind": "behavior",
+            "polarity": "low",
+            "situation_type": "novelty:other:ordinary",
+            "justification": "Chooses a familiar route over a safe unfamiliar phenomenon.",
+            "perspective_id": "perspective:s0",
+            "evidence_ids": [
+              "scene:s0"
+            ],
+            "id": "trait:0dc729f2d83dc28a72b97473",
+            "source_group_id": "curiosity-low",
+            "chronological_position": 0,
+            "policy_version": "point-evidence-v1",
+            "revision_id": null
+          },
+          {
+            "trait": "curiosity",
+            "evidence_kind": "behavior",
+            "polarity": "low",
+            "situation_type": "novelty:other:ordinary",
+            "justification": "Chooses a familiar route over a safe unfamiliar phenomenon.",
+            "perspective_id": "perspective:s1",
+            "evidence_ids": [
+              "scene:s1"
+            ],
+            "id": "trait:e05120a22e079f8f4ee96c17",
+            "source_group_id": "curiosity-low",
+            "chronological_position": 1,
+            "policy_version": "point-evidence-v1",
+            "revision_id": null
+          },
+          {
+            "trait": "curiosity",
+            "evidence_kind": "behavior",
+            "polarity": "low",
+            "situation_type": "novelty:other:ordinary",
+            "justification": "Chooses a familiar route over a safe unfamiliar phenomenon.",
+            "perspective_id": "perspective:s2",
+            "evidence_ids": [
+              "scene:s2"
+            ],
+            "id": "trait:1d10631b2453715a7d6794f5",
+            "source_group_id": "curiosity-low",
+            "chronological_position": 2,
+            "policy_version": "point-evidence-v1",
+            "revision_id": null
+          }
+        ],
+        "current_goals": [],
+        "current_aspects": []
+      },
+      "decision": {
+        "query": "Choose one available action.",
+        "context": {
+          "situation": "A safe unfamiliar object lies beside the familiar route. You can investigate or continue.",
+          "knowledge": "The stated facts are known; no hidden consequences.",
+          "capability": "Both options are feasible.",
+          "opportunity": "Both options are available now."
+        },
+        "options": [
+          "investigate",
+          "continue"
+        ]
+      }
+    },
+    {
+      "case_id": "curiosity-high",
+      "review_note": "Reflect the high pole of curiosity without inventing causes, forcing an exception, or moral sanitization.",
+      "input": {
+        "canonical_identity": {
+          "alias": "Traveler",
+          "entity_type": "Character",
+          "authored_text": "A fictional traveler. No further motives are established.",
+          "properties": {}
+        },
+        "current_profile": {
+          "version": "dispositions-v3-points-perspectives",
+          "dispositional_traits": {
+            "integrity": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "caution": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "presence": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "forbearance": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "diligence": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "curiosity": {
+              "point": 7,
+              "status": "supported",
+              "observation_count": 3,
+              "observation_ids": [
+                "perspective:s0",
+                "perspective:s1",
+                "perspective:s2"
+              ]
+            },
+            "sharing": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "restlessness": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            }
+          },
+          "steadiness": {
+            "point": 7,
+            "status": "provisional",
+            "observation_count": 3,
+            "observation_ids": [
+              "perspective:s0",
+              "perspective:s1",
+              "perspective:s2"
+            ]
+          },
+          "inferred_traits": {},
+          "overrides": {}
+        },
+        "current_trait_evidence": [
+          {
+            "trait": "curiosity",
+            "evidence_kind": "behavior",
+            "polarity": "high",
+            "situation_type": "novelty:other:ordinary",
+            "justification": "Investigates a safe unfamiliar phenomenon.",
+            "perspective_id": "perspective:s0",
+            "evidence_ids": [
+              "scene:s0"
+            ],
+            "id": "trait:1140c3fbae6fc54aad1c2922",
+            "source_group_id": "curiosity-high",
+            "chronological_position": 0,
+            "policy_version": "point-evidence-v1",
+            "revision_id": null
+          },
+          {
+            "trait": "curiosity",
+            "evidence_kind": "behavior",
+            "polarity": "high",
+            "situation_type": "novelty:other:ordinary",
+            "justification": "Investigates a safe unfamiliar phenomenon.",
+            "perspective_id": "perspective:s1",
+            "evidence_ids": [
+              "scene:s1"
+            ],
+            "id": "trait:82f201eb8b5681b6aea298d3",
+            "source_group_id": "curiosity-high",
+            "chronological_position": 1,
+            "policy_version": "point-evidence-v1",
+            "revision_id": null
+          },
+          {
+            "trait": "curiosity",
+            "evidence_kind": "behavior",
+            "polarity": "high",
+            "situation_type": "novelty:other:ordinary",
+            "justification": "Investigates a safe unfamiliar phenomenon.",
+            "perspective_id": "perspective:s2",
+            "evidence_ids": [
+              "scene:s2"
+            ],
+            "id": "trait:2b5876889f6445da1f7b3518",
+            "source_group_id": "curiosity-high",
+            "chronological_position": 2,
+            "policy_version": "point-evidence-v1",
+            "revision_id": null
+          }
+        ],
+        "current_goals": [],
+        "current_aspects": []
+      },
+      "decision": {
+        "query": "Choose one available action.",
+        "context": {
+          "situation": "A safe unfamiliar object lies beside the familiar route. You can investigate or continue.",
+          "knowledge": "The stated facts are known; no hidden consequences.",
+          "capability": "Both options are feasible.",
+          "opportunity": "Both options are available now."
+        },
+        "options": [
+          "investigate",
+          "continue"
+        ]
+      }
+    },
+    {
+      "case_id": "sharing-low",
+      "review_note": "Reflect the low pole of sharing without inventing causes, forcing an exception, or moral sanitization.",
+      "input": {
+        "canonical_identity": {
+          "alias": "Traveler",
+          "entity_type": "Character",
+          "authored_text": "A fictional traveler. No further motives are established.",
+          "properties": {}
+        },
+        "current_profile": {
+          "version": "dispositions-v3-points-perspectives",
+          "dispositional_traits": {
+            "integrity": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "caution": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "presence": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "forbearance": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "diligence": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "curiosity": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "sharing": {
+              "point": 3,
+              "status": "supported",
+              "observation_count": 3,
+              "observation_ids": [
+                "perspective:s0",
+                "perspective:s1",
+                "perspective:s2"
+              ]
+            },
+            "restlessness": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            }
+          },
+          "steadiness": {
+            "point": 7,
+            "status": "provisional",
+            "observation_count": 3,
+            "observation_ids": [
+              "perspective:s0",
+              "perspective:s1",
+              "perspective:s2"
+            ]
+          },
+          "inferred_traits": {},
+          "overrides": {}
+        },
+        "current_trait_evidence": [
+          {
+            "trait": "sharing",
+            "evidence_kind": "behavior",
+            "polarity": "low",
+            "situation_type": "resource_allocation:other:ordinary",
+            "justification": "Keeps a larger share of jointly controlled resources.",
+            "perspective_id": "perspective:s0",
+            "evidence_ids": [
+              "scene:s0"
+            ],
+            "id": "trait:72595cee4e5a995a0342b49e",
+            "source_group_id": "sharing-low",
+            "chronological_position": 0,
+            "policy_version": "point-evidence-v1",
+            "revision_id": null
+          },
+          {
+            "trait": "sharing",
+            "evidence_kind": "behavior",
+            "polarity": "low",
+            "situation_type": "resource_allocation:other:ordinary",
+            "justification": "Keeps a larger share of jointly controlled resources.",
+            "perspective_id": "perspective:s1",
+            "evidence_ids": [
+              "scene:s1"
+            ],
+            "id": "trait:381c3c6b558c5b9e252883c2",
+            "source_group_id": "sharing-low",
+            "chronological_position": 1,
+            "policy_version": "point-evidence-v1",
+            "revision_id": null
+          },
+          {
+            "trait": "sharing",
+            "evidence_kind": "behavior",
+            "polarity": "low",
+            "situation_type": "resource_allocation:other:ordinary",
+            "justification": "Keeps a larger share of jointly controlled resources.",
+            "perspective_id": "perspective:s2",
+            "evidence_ids": [
+              "scene:s2"
+            ],
+            "id": "trait:c427275f50f568dd7ed32ac7",
+            "source_group_id": "sharing-low",
+            "chronological_position": 2,
+            "policy_version": "point-evidence-v1",
+            "revision_id": null
+          }
+        ],
+        "current_goals": [],
+        "current_aspects": []
+      },
+      "decision": {
+        "query": "Choose one available action.",
+        "context": {
+          "situation": "You control jointly earned resources and may divide equally or keep more.",
+          "knowledge": "The stated facts are known; no hidden consequences.",
+          "capability": "Both options are feasible.",
+          "opportunity": "Both options are available now."
+        },
+        "options": [
+          "divide_equally",
+          "keep_more"
+        ]
+      }
+    },
+    {
+      "case_id": "sharing-high",
+      "review_note": "Reflect the high pole of sharing without inventing causes, forcing an exception, or moral sanitization.",
+      "input": {
+        "canonical_identity": {
+          "alias": "Traveler",
+          "entity_type": "Character",
+          "authored_text": "A fictional traveler. No further motives are established.",
+          "properties": {}
+        },
+        "current_profile": {
+          "version": "dispositions-v3-points-perspectives",
+          "dispositional_traits": {
+            "integrity": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "caution": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "presence": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "forbearance": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "diligence": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "curiosity": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "sharing": {
+              "point": 7,
+              "status": "supported",
+              "observation_count": 3,
+              "observation_ids": [
+                "perspective:s0",
+                "perspective:s1",
+                "perspective:s2"
+              ]
+            },
+            "restlessness": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            }
+          },
+          "steadiness": {
+            "point": 7,
+            "status": "provisional",
+            "observation_count": 3,
+            "observation_ids": [
+              "perspective:s0",
+              "perspective:s1",
+              "perspective:s2"
+            ]
+          },
+          "inferred_traits": {},
+          "overrides": {}
+        },
+        "current_trait_evidence": [
+          {
+            "trait": "sharing",
+            "evidence_kind": "behavior",
+            "polarity": "high",
+            "situation_type": "resource_allocation:other:ordinary",
+            "justification": "Allocates jointly controlled resources evenly.",
+            "perspective_id": "perspective:s0",
+            "evidence_ids": [
+              "scene:s0"
+            ],
+            "id": "trait:720c7fe2a84471a85cef7501",
+            "source_group_id": "sharing-high",
+            "chronological_position": 0,
+            "policy_version": "point-evidence-v1",
+            "revision_id": null
+          },
+          {
+            "trait": "sharing",
+            "evidence_kind": "behavior",
+            "polarity": "high",
+            "situation_type": "resource_allocation:other:ordinary",
+            "justification": "Allocates jointly controlled resources evenly.",
+            "perspective_id": "perspective:s1",
+            "evidence_ids": [
+              "scene:s1"
+            ],
+            "id": "trait:d152a30dbc9ecdf2c5f0bbdb",
+            "source_group_id": "sharing-high",
+            "chronological_position": 1,
+            "policy_version": "point-evidence-v1",
+            "revision_id": null
+          },
+          {
+            "trait": "sharing",
+            "evidence_kind": "behavior",
+            "polarity": "high",
+            "situation_type": "resource_allocation:other:ordinary",
+            "justification": "Allocates jointly controlled resources evenly.",
+            "perspective_id": "perspective:s2",
+            "evidence_ids": [
+              "scene:s2"
+            ],
+            "id": "trait:249cae3892818554e3a89a60",
+            "source_group_id": "sharing-high",
+            "chronological_position": 2,
+            "policy_version": "point-evidence-v1",
+            "revision_id": null
+          }
+        ],
+        "current_goals": [],
+        "current_aspects": []
+      },
+      "decision": {
+        "query": "Choose one available action.",
+        "context": {
+          "situation": "You control jointly earned resources and may divide equally or keep more.",
+          "knowledge": "The stated facts are known; no hidden consequences.",
+          "capability": "Both options are feasible.",
+          "opportunity": "Both options are available now."
+        },
+        "options": [
+          "divide_equally",
+          "keep_more"
+        ]
+      }
+    },
+    {
+      "case_id": "restlessness-low",
+      "review_note": "Reflect the low pole of restlessness without inventing causes, forcing an exception, or moral sanitization.",
+      "input": {
+        "canonical_identity": {
+          "alias": "Traveler",
+          "entity_type": "Character",
+          "authored_text": "A fictional traveler. No further motives are established.",
+          "properties": {}
+        },
+        "current_profile": {
+          "version": "dispositions-v3-points-perspectives",
+          "dispositional_traits": {
+            "integrity": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "caution": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "presence": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "forbearance": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "diligence": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "curiosity": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "sharing": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "restlessness": {
+              "point": 3,
+              "status": "supported",
+              "observation_count": 3,
+              "observation_ids": [
+                "perspective:s0",
+                "perspective:s1",
+                "perspective:s2"
+              ]
+            }
+          },
+          "steadiness": {
+            "point": 7,
+            "status": "provisional",
+            "observation_count": 3,
+            "observation_ids": [
+              "perspective:s0",
+              "perspective:s1",
+              "perspective:s2"
+            ]
+          },
+          "inferred_traits": {},
+          "overrides": {}
+        },
+        "current_trait_evidence": [
+          {
+            "trait": "restlessness",
+            "evidence_kind": "behavior",
+            "polarity": "low",
+            "situation_type": "value_conflict:other:ordinary",
+            "justification": "Explicitly prefers tradition and stability over equally feasible change.",
+            "perspective_id": "perspective:s0",
+            "evidence_ids": [
+              "scene:s0"
+            ],
+            "id": "trait:8a60970668cdf528551707c0",
+            "source_group_id": "restlessness-low",
+            "chronological_position": 0,
+            "policy_version": "point-evidence-v1",
+            "revision_id": null
+          },
+          {
+            "trait": "restlessness",
+            "evidence_kind": "behavior",
+            "polarity": "low",
+            "situation_type": "value_conflict:other:ordinary",
+            "justification": "Explicitly prefers tradition and stability over equally feasible change.",
+            "perspective_id": "perspective:s1",
+            "evidence_ids": [
+              "scene:s1"
+            ],
+            "id": "trait:51949ff34ee28bb52153717f",
+            "source_group_id": "restlessness-low",
+            "chronological_position": 1,
+            "policy_version": "point-evidence-v1",
+            "revision_id": null
+          },
+          {
+            "trait": "restlessness",
+            "evidence_kind": "behavior",
+            "polarity": "low",
+            "situation_type": "value_conflict:other:ordinary",
+            "justification": "Explicitly prefers tradition and stability over equally feasible change.",
+            "perspective_id": "perspective:s2",
+            "evidence_ids": [
+              "scene:s2"
+            ],
+            "id": "trait:03992c4bcb6031e79f8cb2c4",
+            "source_group_id": "restlessness-low",
+            "chronological_position": 2,
+            "policy_version": "point-evidence-v1",
+            "revision_id": null
+          }
+        ],
+        "current_goals": [],
+        "current_aspects": []
+      },
+      "decision": {
+        "query": "Choose one available action.",
+        "context": {
+          "situation": "Equally feasible plans preserve an old tradition or replace it with a self-chosen novelty.",
+          "knowledge": "The stated facts are known; no hidden consequences.",
+          "capability": "Both options are feasible.",
+          "opportunity": "Both options are available now."
+        },
+        "options": [
+          "tradition",
+          "novelty"
+        ]
+      }
+    },
+    {
+      "case_id": "restlessness-high",
+      "review_note": "Reflect the high pole of restlessness without inventing causes, forcing an exception, or moral sanitization.",
+      "input": {
+        "canonical_identity": {
+          "alias": "Traveler",
+          "entity_type": "Character",
+          "authored_text": "A fictional traveler. No further motives are established.",
+          "properties": {}
+        },
+        "current_profile": {
+          "version": "dispositions-v3-points-perspectives",
+          "dispositional_traits": {
+            "integrity": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "caution": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "presence": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "forbearance": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "diligence": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "curiosity": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "sharing": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "restlessness": {
+              "point": 7,
+              "status": "supported",
+              "observation_count": 3,
+              "observation_ids": [
+                "perspective:s0",
+                "perspective:s1",
+                "perspective:s2"
+              ]
+            }
+          },
+          "steadiness": {
+            "point": 7,
+            "status": "provisional",
+            "observation_count": 3,
+            "observation_ids": [
+              "perspective:s0",
+              "perspective:s1",
+              "perspective:s2"
+            ]
+          },
+          "inferred_traits": {},
+          "overrides": {}
+        },
+        "current_trait_evidence": [
+          {
+            "trait": "restlessness",
+            "evidence_kind": "behavior",
+            "polarity": "high",
+            "situation_type": "value_conflict:other:ordinary",
+            "justification": "Explicitly prefers autonomy and novelty over equally feasible tradition.",
+            "perspective_id": "perspective:s0",
+            "evidence_ids": [
+              "scene:s0"
+            ],
+            "id": "trait:2daa7d436ffd0bc595dbc9f5",
+            "source_group_id": "restlessness-high",
+            "chronological_position": 0,
+            "policy_version": "point-evidence-v1",
+            "revision_id": null
+          },
+          {
+            "trait": "restlessness",
+            "evidence_kind": "behavior",
+            "polarity": "high",
+            "situation_type": "value_conflict:other:ordinary",
+            "justification": "Explicitly prefers autonomy and novelty over equally feasible tradition.",
+            "perspective_id": "perspective:s1",
+            "evidence_ids": [
+              "scene:s1"
+            ],
+            "id": "trait:c1e74dc6a85510a692c84494",
+            "source_group_id": "restlessness-high",
+            "chronological_position": 1,
+            "policy_version": "point-evidence-v1",
+            "revision_id": null
+          },
+          {
+            "trait": "restlessness",
+            "evidence_kind": "behavior",
+            "polarity": "high",
+            "situation_type": "value_conflict:other:ordinary",
+            "justification": "Explicitly prefers autonomy and novelty over equally feasible tradition.",
+            "perspective_id": "perspective:s2",
+            "evidence_ids": [
+              "scene:s2"
+            ],
+            "id": "trait:4179dfd9e5651b25ec4b72a5",
+            "source_group_id": "restlessness-high",
+            "chronological_position": 2,
+            "policy_version": "point-evidence-v1",
+            "revision_id": null
+          }
+        ],
+        "current_goals": [],
+        "current_aspects": []
+      },
+      "decision": {
+        "query": "Choose one available action.",
+        "context": {
+          "situation": "Equally feasible plans preserve an old tradition or replace it with a self-chosen novelty.",
+          "knowledge": "The stated facts are known; no hidden consequences.",
+          "capability": "Both options are feasible.",
+          "opportunity": "Both options are available now."
+        },
+        "options": [
+          "tradition",
+          "novelty"
+        ]
+      }
+    },
+    {
+      "case_id": "unknown",
+      "review_note": "No numerical dispositions or consistency claims; empty traits are appropriate.",
+      "input": {
+        "canonical_identity": {
+          "alias": "Traveler",
+          "entity_type": "Character",
+          "authored_text": "A fictional traveler. No further motives are established.",
+          "properties": {}
+        },
+        "current_profile": {
+          "version": "dispositions-v3-points-perspectives",
+          "dispositional_traits": {
+            "integrity": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "caution": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "presence": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "forbearance": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "diligence": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "curiosity": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "sharing": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "restlessness": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            }
+          },
+          "steadiness": {
+            "point": null,
+            "status": "unknown",
+            "observation_count": 0,
+            "observation_ids": []
+          },
+          "inferred_traits": {},
+          "overrides": {}
+        },
+        "current_trait_evidence": [],
+        "current_goals": [],
+        "current_aspects": []
+      },
+      "decision": {
+        "query": "Choose one action in the supplied situation.",
+        "context": {
+          "situation": "An unobserved, safe allocation allows you to take a larger share or divide equally.",
+          "knowledge": "You know both options are feasible and have no hidden consequences.",
+          "capability": "You can perform either action.",
+          "opportunity": "Both options are available now."
+        },
+        "options": [
+          "take_larger_share",
+          "divide_equally"
+        ]
+      }
+    },
+    {
+      "case_id": "sparse",
+      "review_note": "Tentative low integrity; no stable motive or consistency claim.",
+      "input": {
+        "canonical_identity": {
+          "alias": "Traveler",
+          "entity_type": "Character",
+          "authored_text": "A fictional traveler. No further motives are established.",
+          "properties": {}
+        },
+        "current_profile": {
+          "version": "dispositions-v3-points-perspectives",
+          "dispositional_traits": {
+            "integrity": {
+              "point": 4,
+              "status": "provisional",
+              "observation_count": 1,
+              "observation_ids": [
+                "perspective:s0"
+              ]
+            },
+            "caution": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "presence": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "forbearance": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "diligence": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "curiosity": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "sharing": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "restlessness": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            }
+          },
+          "steadiness": {
+            "point": null,
+            "status": "unknown",
+            "observation_count": 0,
+            "observation_ids": []
+          },
+          "inferred_traits": {},
+          "overrides": {}
+        },
+        "current_trait_evidence": [
+          {
+            "trait": "integrity",
+            "evidence_kind": "behavior",
+            "polarity": "low",
+            "situation_type": "exploitation:other:ordinary",
+            "justification": "Takes a safe untraceable profit by deceiving a stranger.",
+            "perspective_id": "perspective:s0",
+            "evidence_ids": [
+              "scene:s0"
+            ],
+            "id": "trait:2b902df52509c8fa7ca7d82a",
+            "source_group_id": "sparse",
+            "chronological_position": 0,
+            "policy_version": "point-evidence-v1",
+            "revision_id": null
+          }
+        ],
+        "current_goals": [],
+        "current_aspects": []
+      },
+      "decision": {
+        "query": "Choose one action in the supplied situation.",
+        "context": {
+          "situation": "An unobserved, safe allocation allows you to take a larger share or divide equally.",
+          "knowledge": "You know both options are feasible and have no hidden consequences.",
+          "capability": "You can perform either action.",
+          "opportunity": "Both options are available now."
+        },
+        "options": [
+          "take_larger_share",
+          "divide_equally"
+        ]
+      }
+    },
+    {
+      "case_id": "mixed",
+      "review_note": "Mixed retaliation/restraint; do not invent the cause of variation. Low aggregate Steadiness is not emotional instability.",
+      "input": {
+        "canonical_identity": {
+          "alias": "Traveler",
+          "entity_type": "Character",
+          "authored_text": "A fictional traveler. No further motives are established.",
+          "properties": {}
+        },
+        "current_profile": {
+          "version": "dispositions-v3-points-perspectives",
+          "dispositional_traits": {
+            "integrity": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "caution": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "presence": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "forbearance": {
+              "point": 5,
+              "status": "supported",
+              "observation_count": 6,
+              "observation_ids": [
+                "perspective:s0",
+                "perspective:s1",
+                "perspective:s2",
+                "perspective:s3",
+                "perspective:s4",
+                "perspective:s5"
+              ]
+            },
+            "diligence": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "curiosity": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "sharing": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "restlessness": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            }
+          },
+          "steadiness": {
+            "point": 3,
+            "status": "provisional",
+            "observation_count": 6,
+            "observation_ids": [
+              "perspective:s0",
+              "perspective:s1",
+              "perspective:s2",
+              "perspective:s3",
+              "perspective:s4",
+              "perspective:s5"
+            ]
+          },
+          "inferred_traits": {},
+          "overrides": {}
+        },
+        "current_trait_evidence": [
+          {
+            "trait": "forbearance",
+            "evidence_kind": "behavior",
+            "polarity": "low",
+            "situation_type": "retaliation:other:ordinary",
+            "justification": "Retaliates after a freely avoidable insult.",
+            "perspective_id": "perspective:s0",
+            "evidence_ids": [
+              "scene:s0"
+            ],
+            "id": "trait:64caa01c75bfab1f4b594dd9",
+            "source_group_id": "mixed",
+            "chronological_position": 0,
+            "policy_version": "point-evidence-v1",
+            "revision_id": null
+          },
+          {
+            "trait": "forbearance",
+            "evidence_kind": "behavior",
+            "polarity": "high",
+            "situation_type": "retaliation:other:ordinary",
+            "justification": "Lets a freely avoidable insult pass without retaliation.",
+            "perspective_id": "perspective:s1",
+            "evidence_ids": [
+              "scene:s1"
+            ],
+            "id": "trait:db0538e0615b8e04bf157b42",
+            "source_group_id": "mixed",
+            "chronological_position": 1,
+            "policy_version": "point-evidence-v1",
+            "revision_id": null
+          },
+          {
+            "trait": "forbearance",
+            "evidence_kind": "behavior",
+            "polarity": "low",
+            "situation_type": "retaliation:other:ordinary",
+            "justification": "Retaliates after a freely avoidable insult.",
+            "perspective_id": "perspective:s2",
+            "evidence_ids": [
+              "scene:s2"
+            ],
+            "id": "trait:97abd681781b622cec458c16",
+            "source_group_id": "mixed",
+            "chronological_position": 2,
+            "policy_version": "point-evidence-v1",
+            "revision_id": null
+          },
+          {
+            "trait": "forbearance",
+            "evidence_kind": "behavior",
+            "polarity": "high",
+            "situation_type": "retaliation:other:ordinary",
+            "justification": "Lets a freely avoidable insult pass without retaliation.",
+            "perspective_id": "perspective:s3",
+            "evidence_ids": [
+              "scene:s3"
+            ],
+            "id": "trait:1cf86d39e26e11f85534f18d",
+            "source_group_id": "mixed",
+            "chronological_position": 3,
+            "policy_version": "point-evidence-v1",
+            "revision_id": null
+          },
+          {
+            "trait": "forbearance",
+            "evidence_kind": "behavior",
+            "polarity": "low",
+            "situation_type": "retaliation:other:ordinary",
+            "justification": "Retaliates after a freely avoidable insult.",
+            "perspective_id": "perspective:s4",
+            "evidence_ids": [
+              "scene:s4"
+            ],
+            "id": "trait:b720adc5098b4f51546d2c0c",
+            "source_group_id": "mixed",
+            "chronological_position": 4,
+            "policy_version": "point-evidence-v1",
+            "revision_id": null
+          },
+          {
+            "trait": "forbearance",
+            "evidence_kind": "behavior",
+            "polarity": "high",
+            "situation_type": "retaliation:other:ordinary",
+            "justification": "Lets a freely avoidable insult pass without retaliation.",
+            "perspective_id": "perspective:s5",
+            "evidence_ids": [
+              "scene:s5"
+            ],
+            "id": "trait:0ed21a50629e227d8d90ea26",
+            "source_group_id": "mixed",
+            "chronological_position": 5,
+            "policy_version": "point-evidence-v1",
+            "revision_id": null
+          }
+        ],
+        "current_goals": [],
+        "current_aspects": []
+      },
+      "decision": {
+        "query": "Choose one available action.",
+        "context": {
+          "situation": "Someone insults you without consequences. You can let it pass or retaliate.",
+          "knowledge": "The stated facts are known; no hidden consequences.",
+          "capability": "Both options are feasible.",
+          "opportunity": "Both options are available now.",
+          "relationship": "The person who insulted you is an enemy."
+        },
+        "options": [
+          "let_pass",
+          "retaliate"
+        ]
+      }
+    },
+    {
+      "case_id": "comparable-contexts",
+      "review_note": "Restraint toward friends and retaliation toward enemies can coexist with supported within-context consistency.",
+      "input": {
+        "canonical_identity": {
+          "alias": "Traveler",
+          "entity_type": "Character",
+          "authored_text": "A fictional traveler. No further motives are established.",
+          "properties": {}
+        },
+        "current_profile": {
+          "version": "dispositions-v3-points-perspectives",
+          "dispositional_traits": {
+            "integrity": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "caution": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "presence": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "forbearance": {
+              "point": 5,
+              "status": "supported",
+              "observation_count": 6,
+              "observation_ids": [
+                "perspective:s0",
+                "perspective:s1",
+                "perspective:s2",
+                "perspective:s3",
+                "perspective:s4",
+                "perspective:s5"
+              ]
+            },
+            "diligence": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "curiosity": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "sharing": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "restlessness": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            }
+          },
+          "steadiness": {
+            "point": 7,
+            "status": "supported",
+            "observation_count": 6,
+            "observation_ids": [
+              "perspective:s0",
+              "perspective:s1",
+              "perspective:s2",
+              "perspective:s3",
+              "perspective:s4",
+              "perspective:s5"
+            ]
+          },
+          "inferred_traits": {},
+          "overrides": {}
+        },
+        "current_trait_evidence": [
+          {
+            "trait": "forbearance",
+            "evidence_kind": "behavior",
+            "polarity": "high",
+            "situation_type": "retaliation:friend:ordinary",
+            "justification": "Lets a freely avoidable insult pass without retaliation.",
+            "perspective_id": "perspective:s0",
+            "evidence_ids": [
+              "scene:s0"
+            ],
+            "id": "trait:7c75bf2c845faf474d58a596",
+            "source_group_id": "comparable-contexts",
+            "chronological_position": 0,
+            "policy_version": "point-evidence-v1",
+            "revision_id": null
+          },
+          {
+            "trait": "forbearance",
+            "evidence_kind": "behavior",
+            "polarity": "high",
+            "situation_type": "retaliation:friend:ordinary",
+            "justification": "Lets a freely avoidable insult pass without retaliation.",
+            "perspective_id": "perspective:s1",
+            "evidence_ids": [
+              "scene:s1"
+            ],
+            "id": "trait:ec72757953eedffd254b46c7",
+            "source_group_id": "comparable-contexts",
+            "chronological_position": 1,
+            "policy_version": "point-evidence-v1",
+            "revision_id": null
+          },
+          {
+            "trait": "forbearance",
+            "evidence_kind": "behavior",
+            "polarity": "high",
+            "situation_type": "retaliation:friend:ordinary",
+            "justification": "Lets a freely avoidable insult pass without retaliation.",
+            "perspective_id": "perspective:s2",
+            "evidence_ids": [
+              "scene:s2"
+            ],
+            "id": "trait:c587fe825668c4361a5c4317",
+            "source_group_id": "comparable-contexts",
+            "chronological_position": 2,
+            "policy_version": "point-evidence-v1",
+            "revision_id": null
+          },
+          {
+            "trait": "forbearance",
+            "evidence_kind": "behavior",
+            "polarity": "low",
+            "situation_type": "retaliation:enemy:ordinary",
+            "justification": "Retaliates after a freely avoidable insult.",
+            "perspective_id": "perspective:s3",
+            "evidence_ids": [
+              "scene:s3"
+            ],
+            "id": "trait:6b782def27954cee94b7d6ad",
+            "source_group_id": "comparable-contexts",
+            "chronological_position": 3,
+            "policy_version": "point-evidence-v1",
+            "revision_id": null
+          },
+          {
+            "trait": "forbearance",
+            "evidence_kind": "behavior",
+            "polarity": "low",
+            "situation_type": "retaliation:enemy:ordinary",
+            "justification": "Retaliates after a freely avoidable insult.",
+            "perspective_id": "perspective:s4",
+            "evidence_ids": [
+              "scene:s4"
+            ],
+            "id": "trait:d4cba9bff4033b27c2e0d2e4",
+            "source_group_id": "comparable-contexts",
+            "chronological_position": 4,
+            "policy_version": "point-evidence-v1",
+            "revision_id": null
+          },
+          {
+            "trait": "forbearance",
+            "evidence_kind": "behavior",
+            "polarity": "low",
+            "situation_type": "retaliation:enemy:ordinary",
+            "justification": "Retaliates after a freely avoidable insult.",
+            "perspective_id": "perspective:s5",
+            "evidence_ids": [
+              "scene:s5"
+            ],
+            "id": "trait:7018a57d5a2eb2cd4cba99d3",
+            "source_group_id": "comparable-contexts",
+            "chronological_position": 5,
+            "policy_version": "point-evidence-v1",
+            "revision_id": null
+          }
+        ],
+        "current_goals": [],
+        "current_aspects": []
+      },
+      "decision": {
+        "query": "Choose one available action.",
+        "context": {
+          "situation": "Someone insults you without consequences. You can let it pass or retaliate.",
+          "knowledge": "The stated facts are known; no hidden consequences.",
+          "capability": "Both options are feasible.",
+          "opportunity": "Both options are available now.",
+          "relationship": "The person who insulted you is an enemy."
+        },
+        "options": [
+          "let_pass",
+          "retaliate"
+        ]
+      }
+    },
+    {
+      "case_id": "equal-diligence-duty",
+      "review_note": "Equal diligence scores may manifest through the supplied motive; do not invent anxiety or control.",
+      "input": {
+        "canonical_identity": {
+          "alias": "Traveler",
+          "entity_type": "Character",
+          "authored_text": "A fictional traveler who completes work because of an enduring commitment to duty.",
+          "properties": {}
+        },
+        "current_profile": {
+          "version": "dispositions-v3-points-perspectives",
+          "dispositional_traits": {
+            "integrity": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "caution": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "presence": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "forbearance": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "diligence": {
+              "point": 7,
+              "status": "supported",
+              "observation_count": 3,
+              "observation_ids": [
+                "perspective:s0",
+                "perspective:s1",
+                "perspective:s2"
+              ]
+            },
+            "curiosity": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "sharing": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "restlessness": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            }
+          },
+          "steadiness": {
+            "point": 7,
+            "status": "provisional",
+            "observation_count": 3,
+            "observation_ids": [
+              "perspective:s0",
+              "perspective:s1",
+              "perspective:s2"
+            ]
+          },
+          "inferred_traits": {},
+          "overrides": {}
+        },
+        "current_trait_evidence": [
+          {
+            "trait": "diligence",
+            "evidence_kind": "behavior",
+            "polarity": "high",
+            "situation_type": "unattended_duty:other:ordinary",
+            "justification": "Finishes an unattended task thoroughly despite delayed reward.",
+            "perspective_id": "perspective:s0",
+            "evidence_ids": [
+              "scene:s0"
+            ],
+            "id": "trait:52980a3deb5330d113b78637",
+            "source_group_id": "equal-diligence-duty",
+            "chronological_position": 0,
+            "policy_version": "point-evidence-v1",
+            "revision_id": null
+          },
+          {
+            "trait": "diligence",
+            "evidence_kind": "behavior",
+            "polarity": "high",
+            "situation_type": "unattended_duty:other:ordinary",
+            "justification": "Finishes an unattended task thoroughly despite delayed reward.",
+            "perspective_id": "perspective:s1",
+            "evidence_ids": [
+              "scene:s1"
+            ],
+            "id": "trait:8045df12e6a0d2c1c7f5fabb",
+            "source_group_id": "equal-diligence-duty",
+            "chronological_position": 1,
+            "policy_version": "point-evidence-v1",
+            "revision_id": null
+          },
+          {
+            "trait": "diligence",
+            "evidence_kind": "behavior",
+            "polarity": "high",
+            "situation_type": "unattended_duty:other:ordinary",
+            "justification": "Finishes an unattended task thoroughly despite delayed reward.",
+            "perspective_id": "perspective:s2",
+            "evidence_ids": [
+              "scene:s2"
+            ],
+            "id": "trait:cbcebdb340512a24ab16ea96",
+            "source_group_id": "equal-diligence-duty",
+            "chronological_position": 2,
+            "policy_version": "point-evidence-v1",
+            "revision_id": null
+          }
+        ],
+        "current_goals": [],
+        "current_aspects": []
+      },
+      "decision": {
+        "query": "Choose one available action.",
+        "context": {
+          "situation": "Nobody checks your task. You have enough time to finish properly or cut corners.",
+          "knowledge": "The stated facts are known; no hidden consequences.",
+          "capability": "Both options are feasible.",
+          "opportunity": "Both options are available now."
+        },
+        "options": [
+          "finish_properly",
+          "cut_corners"
+        ]
+      }
+    },
+    {
+      "case_id": "equal-diligence-craft",
+      "review_note": "Equal diligence scores may manifest through the supplied motive; do not invent anxiety or control.",
+      "input": {
+        "canonical_identity": {
+          "alias": "Traveler",
+          "entity_type": "Character",
+          "authored_text": "A fictional traveler who completes work because of enduring pride in craftsmanship.",
+          "properties": {}
+        },
+        "current_profile": {
+          "version": "dispositions-v3-points-perspectives",
+          "dispositional_traits": {
+            "integrity": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "caution": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "presence": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "forbearance": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "diligence": {
+              "point": 7,
+              "status": "supported",
+              "observation_count": 3,
+              "observation_ids": [
+                "perspective:s0",
+                "perspective:s1",
+                "perspective:s2"
+              ]
+            },
+            "curiosity": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "sharing": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "restlessness": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            }
+          },
+          "steadiness": {
+            "point": 7,
+            "status": "provisional",
+            "observation_count": 3,
+            "observation_ids": [
+              "perspective:s0",
+              "perspective:s1",
+              "perspective:s2"
+            ]
+          },
+          "inferred_traits": {},
+          "overrides": {}
+        },
+        "current_trait_evidence": [
+          {
+            "trait": "diligence",
+            "evidence_kind": "behavior",
+            "polarity": "high",
+            "situation_type": "unattended_duty:other:ordinary",
+            "justification": "Finishes an unattended task thoroughly despite delayed reward.",
+            "perspective_id": "perspective:s0",
+            "evidence_ids": [
+              "scene:s0"
+            ],
+            "id": "trait:07dc8c59bd17073f9f6bed5c",
+            "source_group_id": "equal-diligence-craft",
+            "chronological_position": 0,
+            "policy_version": "point-evidence-v1",
+            "revision_id": null
+          },
+          {
+            "trait": "diligence",
+            "evidence_kind": "behavior",
+            "polarity": "high",
+            "situation_type": "unattended_duty:other:ordinary",
+            "justification": "Finishes an unattended task thoroughly despite delayed reward.",
+            "perspective_id": "perspective:s1",
+            "evidence_ids": [
+              "scene:s1"
+            ],
+            "id": "trait:2c67fa1a3bc6961dcb71d6da",
+            "source_group_id": "equal-diligence-craft",
+            "chronological_position": 1,
+            "policy_version": "point-evidence-v1",
+            "revision_id": null
+          },
+          {
+            "trait": "diligence",
+            "evidence_kind": "behavior",
+            "polarity": "high",
+            "situation_type": "unattended_duty:other:ordinary",
+            "justification": "Finishes an unattended task thoroughly despite delayed reward.",
+            "perspective_id": "perspective:s2",
+            "evidence_ids": [
+              "scene:s2"
+            ],
+            "id": "trait:86b2bcb4304c6cec4c224ce7",
+            "source_group_id": "equal-diligence-craft",
+            "chronological_position": 2,
+            "policy_version": "point-evidence-v1",
+            "revision_id": null
+          }
+        ],
+        "current_goals": [],
+        "current_aspects": []
+      },
+      "decision": {
+        "query": "Choose one available action.",
+        "context": {
+          "situation": "Nobody checks your task. You have enough time to finish properly or cut corners.",
+          "knowledge": "The stated facts are known; no hidden consequences.",
+          "capability": "Both options are feasible.",
+          "opportunity": "Both options are available now."
+        },
+        "options": [
+          "finish_properly",
+          "cut_corners"
+        ]
+      }
+    },
+    {
+      "case_id": "unsupported-interaction",
+      "review_note": "Independent caution and curiosity evidence does not establish dangerous-mystery conflict or which trait wins.",
+      "input": {
+        "canonical_identity": {
+          "alias": "Traveler",
+          "entity_type": "Character",
+          "authored_text": "A fictional traveler. No further motives are established.",
+          "properties": {}
+        },
+        "current_profile": {
+          "version": "dispositions-v3-points-perspectives",
+          "dispositional_traits": {
+            "integrity": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "caution": {
+              "point": 6,
+              "status": "provisional",
+              "observation_count": 1,
+              "observation_ids": [
+                "perspective:s0"
+              ]
+            },
+            "presence": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "forbearance": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "diligence": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "curiosity": {
+              "point": 6,
+              "status": "provisional",
+              "observation_count": 1,
+              "observation_ids": [
+                "perspective:s1"
+              ]
+            },
+            "sharing": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "restlessness": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            }
+          },
+          "steadiness": {
+            "point": null,
+            "status": "unknown",
+            "observation_count": 0,
+            "observation_ids": []
+          },
+          "inferred_traits": {},
+          "overrides": {}
+        },
+        "current_trait_evidence": [
+          {
+            "trait": "caution",
+            "evidence_kind": "behavior",
+            "polarity": "high",
+            "situation_type": "uncertain_threat:other:ordinary",
+            "justification": "Obtains protection before accepting uncertain exposure.",
+            "perspective_id": "perspective:s0",
+            "evidence_ids": [
+              "scene:s0"
+            ],
+            "id": "trait:50b1b6ca67a5d21d04db41ba",
+            "source_group_id": "unsupported-interaction",
+            "chronological_position": 0,
+            "policy_version": "point-evidence-v1",
+            "revision_id": null
+          },
+          {
+            "trait": "curiosity",
+            "evidence_kind": "behavior",
+            "polarity": "high",
+            "situation_type": "novelty:other:ordinary",
+            "justification": "Investigates a safe unfamiliar phenomenon.",
+            "perspective_id": "perspective:s1",
+            "evidence_ids": [
+              "scene:s1"
+            ],
+            "id": "trait:5227be1f66c5c42eb03e4eb6",
+            "source_group_id": "unsupported-interaction",
+            "chronological_position": 1,
+            "policy_version": "point-evidence-v1",
+            "revision_id": null
+          }
+        ],
+        "current_goals": [],
+        "current_aspects": []
+      },
+      "decision": {
+        "query": "Choose one available action.",
+        "context": {
+          "situation": "An unfamiliar ruin has uncertain dangers. You may enter now, obtain protection first, or leave.",
+          "knowledge": "There is no known fatal threat; protection reduces exposure but delays entry.",
+          "capability": "You can enter, obtain protection, or leave.",
+          "opportunity": "All three options are available."
+        },
+        "options": [
+          "enter_now",
+          "prepare_then_enter",
+          "leave"
+        ]
+      }
+    },
+    {
+      "case_id": "supported-interaction",
+      "review_note": "Preparation and investigation are supported together; anxiety or reassurance needs are not established.",
+      "input": {
+        "canonical_identity": {
+          "alias": "Traveler",
+          "entity_type": "Character",
+          "authored_text": "A fictional traveler. No further motives are established.",
+          "properties": {}
+        },
+        "current_profile": {
+          "version": "dispositions-v3-points-perspectives",
+          "dispositional_traits": {
+            "integrity": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "caution": {
+              "point": 6,
+              "status": "provisional",
+              "observation_count": 1,
+              "observation_ids": [
+                "perspective:s0"
+              ]
+            },
+            "presence": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "forbearance": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "diligence": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "curiosity": {
+              "point": 6,
+              "status": "provisional",
+              "observation_count": 1,
+              "observation_ids": [
+                "perspective:s0"
+              ]
+            },
+            "sharing": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "restlessness": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            }
+          },
+          "steadiness": {
+            "point": null,
+            "status": "unknown",
+            "observation_count": 0,
+            "observation_ids": []
+          },
+          "inferred_traits": {},
+          "overrides": {}
+        },
+        "current_trait_evidence": [
+          {
+            "trait": "caution",
+            "evidence_kind": "behavior",
+            "polarity": "high",
+            "situation_type": "uncertain_threat:other:ordinary",
+            "justification": "Obtains protective equipment before investigating an uncertain ruin.",
+            "perspective_id": "perspective:s0",
+            "evidence_ids": [
+              "scene:s0"
+            ],
+            "id": "trait:d314373f9190682e74858a06",
+            "source_group_id": "supported-interaction",
+            "chronological_position": 0,
+            "policy_version": "point-evidence-v1",
+            "revision_id": null
+          },
+          {
+            "trait": "curiosity",
+            "evidence_kind": "behavior",
+            "polarity": "high",
+            "situation_type": "novelty:other:ordinary",
+            "justification": "Investigates an unfamiliar ruin after obtaining protective equipment.",
+            "perspective_id": "perspective:s0",
+            "evidence_ids": [
+              "scene:s0"
+            ],
+            "id": "trait:b5e85017b65483eadd55ffe8",
+            "source_group_id": "supported-interaction",
+            "chronological_position": 0,
+            "policy_version": "point-evidence-v1",
+            "revision_id": null
+          }
+        ],
+        "current_goals": [],
+        "current_aspects": []
+      },
+      "decision": {
+        "query": "Choose one available action.",
+        "context": {
+          "situation": "An unfamiliar ruin has uncertain dangers. You may enter now, obtain protection first, or leave.",
+          "knowledge": "There is no known fatal threat; protection reduces exposure but delays entry.",
+          "capability": "You can enter, obtain protection, or leave.",
+          "opportunity": "All three options are available."
+        },
+        "options": [
+          "enter_now",
+          "prepare_then_enter",
+          "leave"
+        ]
+      }
+    },
+    {
+      "case_id": "temporary-state",
+      "review_note": "Temporary fear is not enduring caution or a numerical trait.",
+      "input": {
+        "canonical_identity": {
+          "alias": "Traveler",
+          "entity_type": "Character",
+          "authored_text": "A traveler felt fear during one unexpected collapse. No recurring disposition is established.",
+          "properties": {}
+        },
+        "current_profile": {
+          "version": "dispositions-v3-points-perspectives",
+          "dispositional_traits": {
+            "integrity": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "caution": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "presence": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "forbearance": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "diligence": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "curiosity": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "sharing": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "restlessness": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            }
+          },
+          "steadiness": {
+            "point": null,
+            "status": "unknown",
+            "observation_count": 0,
+            "observation_ids": []
+          },
+          "inferred_traits": {},
+          "overrides": {}
+        },
+        "current_trait_evidence": [],
+        "current_goals": [],
+        "current_aspects": []
+      },
+      "decision": {
+        "query": "Choose one action in the supplied situation.",
+        "context": {
+          "situation": "An unobserved, safe allocation allows you to take a larger share or divide equally.",
+          "knowledge": "You know both options are feasible and have no hidden consequences.",
+          "capability": "You can perform either action.",
+          "opportunity": "Both options are available now."
+        },
+        "options": [
+          "take_larger_share",
+          "divide_equally"
+        ]
+      }
+    },
+    {
+      "case_id": "manual-conflict",
+      "review_note": "Manual low integrity controls direction; do not rewrite high-pole observations to agree. Manual low Steadiness conflicts with inferred narrow variation.",
+      "input": {
+        "canonical_identity": {
+          "alias": "Traveler",
+          "entity_type": "Character",
+          "authored_text": "A fictional traveler. No further motives are established.",
+          "properties": {}
+        },
+        "current_profile": {
+          "version": "dispositions-v3-points-perspectives",
+          "dispositional_traits": {
+            "integrity": {
+              "point": 1,
+              "status": "manual",
+              "observation_count": 3,
+              "observation_ids": [
+                "perspective:s0",
+                "perspective:s1",
+                "perspective:s2"
+              ]
+            },
+            "caution": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "presence": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "forbearance": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "diligence": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "curiosity": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "sharing": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "restlessness": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            }
+          },
+          "steadiness": {
+            "point": 1,
+            "status": "manual",
+            "observation_count": 3,
+            "observation_ids": [
+              "perspective:s0",
+              "perspective:s1",
+              "perspective:s2"
+            ]
+          },
+          "inferred_traits": {
+            "integrity": {
+              "point": 7,
+              "status": "supported",
+              "observation_count": 3,
+              "observation_ids": [
+                "perspective:s0",
+                "perspective:s1",
+                "perspective:s2"
+              ]
+            },
+            "steadiness": {
+              "point": 7,
+              "status": "provisional",
+              "observation_count": 3,
+              "observation_ids": [
+                "perspective:s0",
+                "perspective:s1",
+                "perspective:s2"
+              ]
+            }
+          },
+          "overrides": {
+            "integrity": {
+              "point": 1,
+              "reason": "Frozen author preference"
+            },
+            "steadiness": {
+              "point": 1,
+              "reason": "Frozen author preference"
+            }
+          }
+        },
+        "current_trait_evidence": [
+          {
+            "trait": "integrity",
+            "evidence_kind": "behavior",
+            "polarity": "high",
+            "situation_type": "exploitation:other:ordinary",
+            "justification": "Refuses safe untraceable profit at a stranger's expense.",
+            "perspective_id": "perspective:s0",
+            "evidence_ids": [
+              "scene:s0"
+            ],
+            "id": "trait:9e80414b2b202f287de8a907",
+            "source_group_id": "manual-conflict",
+            "chronological_position": 0,
+            "policy_version": "point-evidence-v1",
+            "revision_id": null
+          },
+          {
+            "trait": "integrity",
+            "evidence_kind": "behavior",
+            "polarity": "high",
+            "situation_type": "exploitation:other:ordinary",
+            "justification": "Refuses safe untraceable profit at a stranger's expense.",
+            "perspective_id": "perspective:s1",
+            "evidence_ids": [
+              "scene:s1"
+            ],
+            "id": "trait:8373cf6579fac180a46b6615",
+            "source_group_id": "manual-conflict",
+            "chronological_position": 1,
+            "policy_version": "point-evidence-v1",
+            "revision_id": null
+          },
+          {
+            "trait": "integrity",
+            "evidence_kind": "behavior",
+            "polarity": "high",
+            "situation_type": "exploitation:other:ordinary",
+            "justification": "Refuses safe untraceable profit at a stranger's expense.",
+            "perspective_id": "perspective:s2",
+            "evidence_ids": [
+              "scene:s2"
+            ],
+            "id": "trait:e3d425ab1e85ac165bd3cd9a",
+            "source_group_id": "manual-conflict",
+            "chronological_position": 2,
+            "policy_version": "point-evidence-v1",
+            "revision_id": null
+          }
+        ],
+        "current_goals": [],
+        "current_aspects": []
+      },
+      "decision": {
+        "query": "Choose one action in the supplied situation.",
+        "context": {
+          "situation": "An unobserved, safe allocation allows you to take a larger share or divide equally.",
+          "knowledge": "You know both options are feasible and have no hidden consequences.",
+          "capability": "You can perform either action.",
+          "opportunity": "Both options are available now."
+        },
+        "options": [
+          "take_larger_share",
+          "divide_equally"
+        ]
+      }
+    },
+    {
+      "case_id": "missing-ledger",
+      "review_note": "Recorded estimates exist but contributing evidence is absent; do not invent causes or observed consistency.",
+      "input": {
+        "canonical_identity": {
+          "alias": "Traveler",
+          "entity_type": "Character",
+          "authored_text": "A fictional traveler. No further motives are established.",
+          "properties": {}
+        },
+        "current_profile": {
+          "version": "dispositions-v3-points-perspectives",
+          "dispositional_traits": {
+            "integrity": {
+              "point": 7,
+              "status": "supported",
+              "observation_count": 3,
+              "observation_ids": [
+                "perspective:s0",
+                "perspective:s1",
+                "perspective:s2"
+              ]
+            },
+            "caution": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "presence": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "forbearance": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "diligence": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "curiosity": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "sharing": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "restlessness": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            }
+          },
+          "steadiness": {
+            "point": 7,
+            "status": "provisional",
+            "observation_count": 3,
+            "observation_ids": [
+              "perspective:s0",
+              "perspective:s1",
+              "perspective:s2"
+            ]
+          },
+          "inferred_traits": {},
+          "overrides": {}
+        },
+        "current_trait_evidence": [],
+        "current_goals": [],
+        "current_aspects": []
+      },
+      "decision": {
+        "query": "Choose one action in the supplied situation.",
+        "context": {
+          "situation": "An unobserved, safe allocation allows you to take a larger share or divide equally.",
+          "knowledge": "You know both options are feasible and have no hidden consequences.",
+          "capability": "You can perform either action.",
+          "opportunity": "Both options are available now."
+        },
+        "options": [
+          "take_larger_share",
+          "divide_equally"
+        ]
+      }
+    },
+    {
+      "case_id": "competing-goals",
+      "review_note": "Established desire for discovery competes with the explicitly higher priority of companion safety; do not infer a score guarantees an action.",
+      "input": {
+        "canonical_identity": {
+          "alias": "Traveler",
+          "entity_type": "Character",
+          "authored_text": "A traveler who values discovery but explicitly puts companion safety ahead of it.",
+          "properties": {}
+        },
+        "current_profile": {
+          "version": "dispositions-v3-points-perspectives",
+          "dispositional_traits": {
+            "integrity": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "caution": {
+              "point": 6,
+              "status": "provisional",
+              "observation_count": 1,
+              "observation_ids": [
+                "perspective:s0"
+              ]
+            },
+            "presence": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "forbearance": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "diligence": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "curiosity": {
+              "point": 6,
+              "status": "provisional",
+              "observation_count": 1,
+              "observation_ids": [
+                "perspective:s0"
+              ]
+            },
+            "sharing": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "restlessness": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            }
+          },
+          "steadiness": {
+            "point": null,
+            "status": "unknown",
+            "observation_count": 0,
+            "observation_ids": []
+          },
+          "inferred_traits": {},
+          "overrides": {}
+        },
+        "current_trait_evidence": [
+          {
+            "trait": "caution",
+            "evidence_kind": "behavior",
+            "polarity": "high",
+            "situation_type": "uncertain_threat:other:ordinary",
+            "justification": "Obtains protective equipment before investigating an uncertain ruin.",
+            "perspective_id": "perspective:s0",
+            "evidence_ids": [
+              "scene:s0"
+            ],
+            "id": "trait:d314373f9190682e74858a06",
+            "source_group_id": "supported-interaction",
+            "chronological_position": 0,
+            "policy_version": "point-evidence-v1",
+            "revision_id": null
+          },
+          {
+            "trait": "curiosity",
+            "evidence_kind": "behavior",
+            "polarity": "high",
+            "situation_type": "novelty:other:ordinary",
+            "justification": "Investigates an unfamiliar ruin after obtaining protective equipment.",
+            "perspective_id": "perspective:s0",
+            "evidence_ids": [
+              "scene:s0"
+            ],
+            "id": "trait:b5e85017b65483eadd55ffe8",
+            "source_group_id": "supported-interaction",
+            "chronological_position": 0,
+            "policy_version": "point-evidence-v1",
+            "revision_id": null
+          }
+        ],
+        "current_goals": [
+          {
+            "title": "Explore the ruin",
+            "description": "Learn what the unfamiliar ruin contains."
+          },
+          {
+            "title": "Protect my companion",
+            "description": "Avoid exposing my companion to uncertain danger; this takes priority over discovery."
+          }
+        ],
+        "current_aspects": []
+      },
+      "decision": {
+        "query": "Choose one available action.",
+        "context": {
+          "situation": "An unfamiliar ruin has uncertain dangers. Your companion must accompany you if you enter; protection reduces danger but does not remove it.",
+          "knowledge": "There is no known fatal threat; protection reduces exposure but delays entry.",
+          "capability": "You can enter, obtain protection, or leave.",
+          "opportunity": "All three options are available."
+        },
+        "options": [
+          "enter_now",
+          "prepare_then_enter",
+          "leave"
+        ]
+      }
+    },
+    {
+      "case_id": "non-diagnostic",
+      "review_note": "A factual answer is not a personality test; do not require identity variants to differ.",
+      "input": {
+        "canonical_identity": {
+          "alias": "Traveler",
+          "entity_type": "Character",
+          "authored_text": "A fictional traveler. No further motives are established.",
+          "properties": {}
+        },
+        "current_profile": {
+          "version": "dispositions-v3-points-perspectives",
+          "dispositional_traits": {
+            "integrity": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "caution": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "presence": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "forbearance": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "diligence": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "curiosity": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "sharing": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            },
+            "restlessness": {
+              "point": null,
+              "status": "unknown",
+              "observation_count": 0,
+              "observation_ids": []
+            }
+          },
+          "steadiness": {
+            "point": null,
+            "status": "unknown",
+            "observation_count": 0,
+            "observation_ids": []
+          },
+          "inferred_traits": {},
+          "overrides": {}
+        },
+        "current_trait_evidence": [],
+        "current_goals": [],
+        "current_aspects": []
+      },
+      "decision": {
+        "query": "Which direction is the marked exit?",
+        "context": {
+          "situation": "The same clearly legible map marks the exit EAST and a sealed wall WEST.",
+          "knowledge": "The map is known to be accurate.",
+          "capability": "You can read both labels.",
+          "opportunity": "You can answer either direction; no movement is required."
+        },
+        "options": [
+          "east",
+          "west"
+        ]
+      }
+    }
+  ]
+}

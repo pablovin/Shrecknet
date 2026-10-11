@@ -116,6 +116,40 @@ pass accumulated evidence into final synthesis. There are no additional producti
 LLM calls, although the bounded extra input can increase token usage. Output remains
 `identity_summary`, `psychological_summary`, and `personality_traits`.
 
+Stage 0 connects supported circumstances, interpretations, established motives,
+and likely responses. `identity_summary` retains background and recognizable
+identity; `psychological_summary` explains how beliefs, goals, values, and fears
+shape responses and competing motives; each `personality_traits` description
+expresses a supported directional tendency in relevant circumstances. Interactions
+and exceptions are included only when supported: two high scores do not establish
+a conflict or which tendency wins, and an action alone does not establish its
+psychological cause. Missing motives or triggers yield narrower statements.
+Specific knowledge, capability, opportunity, relationships, and goals may outweigh
+a general tendency. Low poles retain their registry meanings, including selfish
+or retaliatory behavior where supported, without moral sanitization. Temporary
+emotions do not become enduring dispositions.
+
+The model input also includes a separate `steadiness` object with `value` (1–9 or
+null), `status`, `observation_count`, `availability`, `reason`, and `inferred_value`
+(1–9 or null). `synthesis_steadiness()` uses only recorded contributing
+perspectives and the same `steadiness_estimate()` reducer as scoring. Availability
+is `available` only when the behavioral ledger reproduces the recorded inferred
+estimate; missing, ambiguous, or inconsistent evidence yields `unavailable` with
+a reason and null `inferred_value`. Unknown estimates are unavailable. Manual
+values remain effective while their separate inferred value can disagree; a manual
+value without reproducible inference may guide tentative authored wording, but
+does not establish observed consistency. Counts measure contributing perspectives,
+not confidence. No raw consistency evidence is added to the model payload.
+
+High Steadiness describes narrower observed variation and low Steadiness broader
+variation in comparable situations. This aggregate is not per-trait variance or
+evidence of triggers, causes, emotional stability, morality, or reliability.
+Unknown values permit no consistency claim; provisional values require tentative
+wording. Steadiness is never a ninth `personality_traits` entry and never changes
+model temperature. The shared registry supplies its definition and poles to the
+prompt. See [controlled synthesis evaluation](Dispositional%20Traits.md#behavioral-identity-evaluation)
+for frozen cases and comparison commands.
+
 Trait interpretation receives `identity_summary` and `psychological_summary`
 from the persisted `identity_description` as context, but excludes its
 `personality_traits`. Trait evidence must come from canonical scenes. Stage 3
@@ -575,7 +609,7 @@ ten active goals; focus changes do not alter lifecycle status. See the
 for the migration and verification details.
 
 
-Prompt version `character-embodiment-v41-eight-slot-trait-context` participates
+Prompt version `character-embodiment-v42-behavioral-identity` participates
 in source and chunk checkpoint fingerprints, so retries do not reuse outputs
 from older prompt versions. Generation output and persisted profile shapes remain
 unchanged; revision reads add derived `trait_history` details without a database

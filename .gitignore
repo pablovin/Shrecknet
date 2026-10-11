@@ -39,6 +39,7 @@ data/
 databases/
 *.json
 !shrecknet/tests/fixtures/trait_discrimination.json
+!shrecknet/tests/fixtures/identity_synthesis.json
 !configs/*.json
 !shreckCompanion/configs/
 !shreckCompanion/configs/*.json

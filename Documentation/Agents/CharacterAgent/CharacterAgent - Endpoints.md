@@ -307,6 +307,14 @@ Reads also return `identity_description`, an object with `identity_summary`,
 It is server-generated during embodiment, is included in the reviewed draft
 proposal, and is stored when that draft is accepted. Legacy agents without the
 property return `null`; it is not part of caller-supplied create/update fields.
+Newly synthesized summaries describe supported conditional behavior: psychology
+explains established interpretations and motives, while directional trait prose
+describes tendencies in relevant circumstances. Separate internal Steadiness input
+may qualify comparable-context consistency; it does not add an output trait or
+numeric summary field. Unknown or unavailable evidence does not establish observed
+consistency. The response shape, authorization, and draft acceptance flow are
+unchanged; deployment does not rewrite existing descriptions. See
+[identity synthesis](CharacterAgent.md#chronological-identity-revisions).
 
 Authenticated metadata: `GET /character-agents/trait-definitions` returns the
 registry and 1–9 point scale.

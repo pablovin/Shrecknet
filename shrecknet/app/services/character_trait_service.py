@@ -166,7 +166,8 @@ def trait_history_details(profile: TraitProfile, evidence: list[TraitEvidence]) 
     return result
 
 
-def _steadiness(evidence: list[TraitEvidence]) -> TraitEstimate:
+def steadiness_estimate(evidence: list[TraitEvidence]) -> TraitEstimate:
+    """Estimate within-context consistency from repeated comparable behavior."""
     groups = defaultdict(list)
     for item in sorted(evidence, key=lambda value: (value.chronological_position, value.id)):
         if item.evidence_kind == 'behavior' and item.situation_type != 'unspecified':
@@ -207,7 +208,7 @@ def update_profile(
                 observation_ids=list(estimate.observation_ids)))
         else:
             _set(result, key, estimate)
-    spread = _steadiness(evidence)
+    spread = steadiness_estimate(evidence)
     if 'steadiness' in result.overrides:
         result.inferred_traits['steadiness'] = spread
         _set(result, 'steadiness', TraitEstimate(point=result.overrides['steadiness'].point,

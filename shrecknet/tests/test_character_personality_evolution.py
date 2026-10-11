@@ -9,7 +9,7 @@ from app.services.character_trait_service import (
     _rounded, apply_manual_edits, directional_details, trait_history_details, update_profile,
 )
 from app.services.character_trait_analysis import (
-    bounded_previous_identity, diagnostic_report, representative_evidence, synthesis_traits,
+    bounded_previous_identity, diagnostic_report, representative_evidence, synthesis_traits, synthesis_steadiness, SYNTHESIS_VERSION,
 )
 from test_character_traits import evidence
 
@@ -76,6 +76,58 @@ def test_synthesis_examples_are_bounded_diverse_contrasting_and_deterministic():
     assert len(previous['identity_summary']) == 1800
 
 
+@pytest.mark.parametrize('values', [(1, 1, 1), (1, -1, 1, -1, 1, -1)])
+def test_synthesis_steadiness_reproduces_comparable_context_without_directional_entry(values):
+    items = evidence(values, trait='forbearance')
+    profile, _ = update_profile(TraitProfile(), items)
+    context = synthesis_steadiness(profile, items)
+    assert context == {
+        'value': profile.steadiness.point, 'status': 'provisional',
+        'observation_count': len(items), 'availability': 'available',
+        'reason': None, 'inferred_value': profile.steadiness.point,
+    }
+    assert (context['value'] > 5) == (len(values) == 3)
+    assert 'steadiness' not in {row['name'] for row in synthesis_traits(profile, items)}
+
+
+def test_synthesis_steadiness_unknown_and_manual_without_behavior_remain_unavailable():
+    unknown = synthesis_steadiness(TraitProfile(), [])
+    assert unknown['value'] is None and unknown['status'] == 'unknown'
+    assert unknown['availability'] == 'unavailable' and unknown['inferred_value'] is None
+    profile = apply_manual_edits(TraitProfile(), {'steadiness': TraitEdit(point=9, reason='Author choice')})
+    manual = synthesis_steadiness(profile, [])
+    assert manual['value'] == 9 and manual['status'] == 'manual'
+    assert manual['availability'] == 'unavailable' and manual['observation_count'] == 0
+
+
+def test_synthesis_steadiness_manual_preserves_conflicting_inference_and_snapshot_scope():
+    first = evidence((1,) * 3, trait='forbearance', situation_type='retaliation:friend:ordinary')
+    second = evidence((-1,) * 3, trait='forbearance', offset=3, situation_type='retaliation:enemy:ordinary')
+    items = first + second
+    profile, _ = update_profile(TraitProfile(), items)
+    manual = apply_manual_edits(profile, {'steadiness': TraitEdit(point=1, reason='Author choice')})
+    future = evidence((1, -1, 1), trait='forbearance', offset=6)
+    context = synthesis_steadiness(manual, items + future)
+    assert context['value'] == 1 and context['inferred_value'] == 7
+    assert context['status'] == 'manual' and context['availability'] == 'available'
+    assert context['observation_count'] == 6
+    assert synthesis_steadiness(profile, items)['status'] == 'supported'
+    assert synthesis_steadiness(manual, items[:-1])['reason'] == 'Contributing evidence is missing.'
+    assert synthesis_steadiness(manual, items + [first[0]])['reason'] == 'Contributing evidence is ambiguous.'
+    altered = [item.model_copy(deep=True) for item in items]
+    altered[0].situation_type = 'unspecified'
+    assert synthesis_steadiness(manual, altered)['reason'] == 'Evidence does not reproduce the recorded consistency estimate.'
+
+
+def test_synthesis_steadiness_reproduces_multi_trait_windows_and_deduplicated_perspectives():
+    items = evidence((1,) * 16) + evidence((-1,) * 16, trait='caution')
+    profile, _ = update_profile(TraitProfile(), items)
+    context = synthesis_steadiness(profile, items)
+    assert context['availability'] == 'available'
+    assert context['observation_count'] == 12
+    assert context['inferred_value'] == profile.steadiness.point
+
+
 @pytest.mark.asyncio
 async def test_identity_generation_uses_one_existing_call_with_evidence_and_continuity():
     from test_character_embodiment import FakeLLM, _agent, _canonical
@@ -99,7 +151,9 @@ async def test_identity_generation_uses_one_existing_call_with_evidence_and_cont
     assert payload['previous_identity_description']['description'] == old
     assert len(payload['grounded_perspectives']) == 6
     assert payload['grounded_perspectives'][0]['scene_id'] == 's4'
-    assert payload['synthesis_version'] == 'evidence-synthesis-v1'
+    assert payload['synthesis_version'] == SYNTHESIS_VERSION
+    assert payload['steadiness'] == synthesis_steadiness(profile, items)
+    assert len(payload['traits']) == 8
 
 
 def test_diagnostics_count_duplicates_separate_authored_and_compare_shared_scenes():
@@ -220,6 +274,26 @@ async def test_identity_initialization_accepts_empty_evidence_without_invented_c
     assert all(trait['value'] is None and trait['evidence_examples'] == []
                and trait['observation_count'] == 0 for trait in payload['traits'])
     assert payload['previous_identity_description']['description'] is None
+    assert payload['steadiness']['value'] is None
+    assert payload['steadiness']['availability'] == 'unavailable'
+
+
+@pytest.mark.asyncio
+async def test_identity_validation_retry_preserves_separate_consistency_context():
+    from test_character_embodiment import _agent, _canonical
+    from test_character_agent_decision_making import FakeLLM
+    portrait = {'identity_summary': 'Identity', 'psychological_summary': 'Psychology', 'personality_traits': []}
+    llm = FakeLLM(['{}', json.dumps(portrait)])
+    items = evidence((1,) * 3)
+    profile, _ = update_profile(TraitProfile(), items)
+    result = await _agent(llm).generate_identity_description(canonical_identity=_canonical(),
+        current_profile=profile, current_aspects=[], current_goals=[], current_trait_evidence=items)
+    first, retry = [json.loads(call['messages'][1]['content']) for call in llm.calls]
+    assert result.model_dump(mode='json') == portrait
+    assert retry['original_input'] == first
+    assert first['steadiness']['value'] == 7
+    assert first['steadiness']['availability'] == 'available'
+    assert len(llm.calls) == 2
 
 
 @pytest.mark.asyncio

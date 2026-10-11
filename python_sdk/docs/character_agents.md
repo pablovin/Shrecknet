@@ -73,11 +73,19 @@ current = await sdk.character_agents.get_model_config()
 updated = await sdk.character_agents.update_model_config(
     CharacterAgentModelConfigUpdate(
         model_character_agent_psychological_interpretation=LLMModelTarget(
-            provider="openrouter", name="your-configured-model", reasoning=True
+            provider="openrouter", name="your-configured-model", reasoning=True,
+            reasoning_effort="low"
         )
     )
 )
 ```
+
+`LLMModelTarget.reasoning_effort` is optional (`None` by default) and accepts
+`minimal`, `low`, `medium`, `high`, `xhigh`, or `max`. OpenRouter uses it only when
+`reasoning=True`; `None` preserves the existing `high` effort. Model support varies.
+Other providers ignore effort. Invalid values fail SDK validation. The boolean
+controls disabling reasoning; `none` is not an effort option. Omitting effort
+when replacing a target resets it to the default.
 
 These administrator methods call Shrecknet's `/config/` endpoint, not shreckLLM's
 provider configuration. Other roles remain unchanged. Each supplied role replaces

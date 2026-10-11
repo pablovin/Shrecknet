@@ -23,7 +23,7 @@ async def test_model_configuration_read_and_partial_update_use_shrecknet_config(
     initial = await api.get_model_config()
     assert client.calls[-1][:2] == ('GET', '/config/')
     assert initial.model_character_agent_decision_making.reasoning is False
-    change = LLMModelTarget(provider='openrouter', name='selected-model', reasoning=True)
+    change = LLMModelTarget(provider='openrouter', name='selected-model', reasoning=True, reasoning_effort='low')
     result = await api.update_model_config(CharacterAgentModelConfigUpdate(
         model_character_agent_psychological_interpretation=change))
     assert client.calls[-1] == ('PUT', '/config/', {'json': {
@@ -38,3 +38,9 @@ def test_sdk_rejects_retired_models_and_bad_reasoning():
         CharacterAgentModelConfigUpdate(model_character_agent_framing={'provider': '', 'name': ''})
     with pytest.raises(ValueError):
         LLMModelTarget(provider='openrouter', name='m', reasoning='invalid')
+
+
+@pytest.mark.parametrize('effort', ['invalid', 'none', 'LOW', 1])
+def test_sdk_rejects_invalid_reasoning_effort(effort):
+    with pytest.raises(ValueError):
+        LLMModelTarget(provider='openrouter', name='model', reasoning_effort=effort)

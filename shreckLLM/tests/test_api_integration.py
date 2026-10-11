@@ -754,11 +754,13 @@ async def test_chat_service_forwards_reasoning_to_provider_adapter(monkeypatch, 
                 provider_id="ollama",
                 model="gemma3:4b",
                 reasoning=True,
+                reasoning_effort="low",
                 messages=[{"role": "user", "content": "hello"}],
             ),
             history=[],
         )
         assert captured["reasoning"] is True
+        assert captured["reasoning_effort"] == "low"
     finally:
         await service.aclose()
 

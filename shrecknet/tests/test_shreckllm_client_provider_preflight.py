@@ -84,13 +84,14 @@ async def test_elder_call_logs_preflight_header_and_records_wait(capsys, monkeyp
     monkeypatch.setattr(client, "wait_for_chat_job", wait)
 
     answer = await client.chat(
-        model={"provider": "deepinfra", "name": "Qwen/Qwen3", "reasoning": True},
+        model={"provider": "deepinfra", "name": "Qwen/Qwen3", "reasoning": True, "reasoning_effort": "low"},
         messages=[{"role": "user", "content": "A substantial Elder question"}],
         usage_tag="elder.v2.trace-1.synthesize",
     )
 
     assert answer == "answer"
     assert submitted_payload["reasoning"] is True
+    assert submitted_payload["reasoning_effort"] == "low"
     console = capsys.readouterr().out
     assert "[ELDER_LLM_REQUEST] stage=synthesize" in console
     assert "input_tokens_est=" in console

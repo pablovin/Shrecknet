@@ -5,7 +5,7 @@ import logging
 import os
 import secrets
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
 from fastapi.responses import FileResponse
@@ -20,6 +20,7 @@ from app.core.config_store import (
     LLM_TARGET_FIELDS,
     VALIDATION_RETRIES,
     LLMModelTarget,
+    ReasoningEffort,
     Settings,
     normalize_validation_retry_settings,
     get_settings,
@@ -626,6 +627,14 @@ def get_config_schema() -> dict[str, Any]:
                 "default": False,
                 "label": "Reasoning",
                 "help": "Request provider-native model reasoning when supported.",
+            },
+            "reasoning_effort": {
+                "type": "string",
+                "nullable": True,
+                "default": None,
+                "enum": list(get_args(ReasoningEffort)),
+                "label": "Reasoning effort",
+                "help": "OpenRouter effort when reasoning is enabled; unset uses high. Model support varies.",
             },
         }
         field_meta[field_name] = row

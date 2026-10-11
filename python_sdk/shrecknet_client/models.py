@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -32,11 +32,12 @@ class World(BaseModel):
 
 
 class LLMModelTarget(BaseModel):
-    """Provider target with an independent provider-native reasoning flag."""
+    """Provider target with reasoning enablement and optional OpenRouter effort."""
     model_config = {"extra": "forbid"}
     provider: str
     name: str
     reasoning: bool = False
+    reasoning_effort: Literal["minimal", "low", "medium", "high", "xhigh", "max"] | None = None
 
 
 class CharacterAgentModelConfig(BaseModel):

@@ -2,7 +2,7 @@
 
 SHRECKNET_TOKEN=... python 02_model_configuration.py
 SHRECKNET_TOKEN=... python 02_model_configuration.py --role psychological_interpretation \
-    --provider openrouter --model your-configured-model --reasoning
+    --provider openrouter --model your-configured-model --reasoning --reasoning-effort low
 """
 import argparse
 import asyncio
@@ -19,11 +19,12 @@ async def main():
     parser.add_argument('--provider')
     parser.add_argument('--model')
     parser.add_argument('--reasoning', action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--reasoning-effort", choices=["minimal", "low", "medium", "high", "xhigh", "max"])
     args = parser.parse_args()
     if args.role and (not args.provider or not args.model):
         parser.error('--role requires --provider and --model')
-    if not args.role and (args.provider or args.model):
-        parser.error('--provider and --model require --role')
+    if not args.role and (args.provider or args.model or args.reasoning_effort):
+        parser.error('--provider, --model, and --reasoning-effort require --role')
     token = os.environ.get('SHRECKNET_TOKEN')
     if not token:
         parser.error('Set SHRECKNET_TOKEN to an administrator bearer token')
@@ -31,7 +32,8 @@ async def main():
         if args.role:
             payload = CharacterAgentModelConfigUpdate(**{
                 f'model_character_agent_{args.role}': LLMModelTarget(
-                    provider=args.provider, name=args.model, reasoning=args.reasoning),
+                    provider=args.provider, name=args.model, reasoning=args.reasoning,
+                    reasoning_effort=args.reasoning_effort),
             })
             result = await sdk.character_agents.update_model_config(payload)
         else:

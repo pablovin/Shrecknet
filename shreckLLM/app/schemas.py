@@ -1,8 +1,11 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
+
+
+ReasoningEffort = Literal["minimal", "low", "medium", "high", "xhigh", "max"]
 
 
 class ChatMessage(BaseModel):
@@ -14,6 +17,7 @@ class ChatRequest(BaseModel):
     provider_id: str = Field(min_length=1)
     model: str = Field(min_length=1)
     reasoning: bool = False
+    reasoning_effort: ReasoningEffort | None = None
     messages: list[ChatMessage] = Field(min_length=1)
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)
     conversation_id: str | None = None

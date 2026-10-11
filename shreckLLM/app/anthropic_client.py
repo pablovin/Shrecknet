@@ -13,7 +13,7 @@ from app.errors import (
     ProviderPermissionError,
     ProviderTimeoutError,
 )
-from app.schemas import ChatMessage
+from app.schemas import ChatMessage, ReasoningEffort
 
 
 class AnthropicClient:
@@ -111,12 +111,13 @@ class AnthropicClient:
         messages: list[ChatMessage],
         temperature: float,
         reasoning: bool = False,
+        reasoning_effort: ReasoningEffort | None = None,
         max_tokens: int | None = None,
         response_format: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         if self._client is None:
             raise DependencyUnavailableError("anthropic is not configured")
-        del reasoning
+        del reasoning, reasoning_effort
         if response_format is not None:
             raise ProviderBadRequestError("anthropic does not support response_format")
 

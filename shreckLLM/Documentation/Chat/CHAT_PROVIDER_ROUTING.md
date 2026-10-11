@@ -170,12 +170,27 @@ latency guarantee.
 
 Every OpenRouter request also sends the request's boolean `reasoning` choice in
 the provider's native `reasoning` body field. Enabled requests send
-`{"enabled": true, "effort": "high"}` so reasoning-capable models use
-OpenRouter's high-effort normalization. Disabled requests send
-`{"enabled": false}`. The public default is `false`. OpenRouter may translate
-`high` to a model's supported effort level or reasoning-token budget; the exact
+`{"enabled": true, "effort": "<reasoning_effort>"}`. The optional top-level
+`reasoning_effort` accepts `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`;
+omitting it or sending `null` preserves the existing `high` effort.
+Disabled requests send
+`{"enabled": false}` and omit effort, even if a value is supplied.
+The public reasoning default is `false`. OpenRouter may translate effort
+to a model's supported effort level or reasoning-token budget; the exact
 reasoning behavior and token use remain model-dependent. Provider adapters that
 do not support a native reasoning control accept the public flag and ignore it.
+
+Models with mandatory reasoning reject `reasoning: false`. For OpenRouter's
+HTTP 400 rejection stating that reasoning is mandatory, shreckLLM reports
+`openrouter requires reasoning for this model; set reasoning=true`. Set the
+request or configured model target's `reasoning` to `true` and submit again;
+the adapter does not automatically enable reasoning or retry this rejection.
+`POST /chat` returns HTTP 400 with this detail; queued `/chat/jobs` requests
+finish with `status: "failed"` and the same message in `error`.
+Other provider HTTP 400 rejections report `<provider_id> rejected request`;
+only errors indicating a missing model are classified as `model not found`.
+No database migration is required; restart shreckLLM after deploying the adapter
+update. Existing request fields and the default reasoning choice remain compatible.
 
 ## Request schema
 ```json
@@ -183,6 +198,7 @@ do not support a native reasoning control accept the public flag and ignore it.
   "provider_id": "ollama|ollama_cloud|openai|anthropic|deepinfra|openrouter",
   "model": "optional explicit model",
   "reasoning": false,
+  "reasoning_effort": null,
   "messages": [{"role": "user", "content": "..."}],
   "temperature": 0.7,
   "max_tokens": 512,
@@ -203,7 +219,13 @@ without it.
 
 `reasoning` is valid for every provider and defaults to `false`. It expresses
 caller intent without claiming that every provider or model can honor it.
-OpenRouter receives its native control with high effort when enabled.
+OpenRouter receives its native control with the selected effort when enabled.
+The boolean remains the on/off control; `none` is rejected as an effort value.
+Invalid effort values return HTTP 422 for both `POST /chat` and `POST /chat/jobs`.
+Model-specific effort support is validated by OpenRouter; a model may reject
+a valid gateway value it does not support. Higher effort can increase reasoning
+token usage and latency. Other adapters ignore effort. See
+[OpenRouter reasoning controls](https://openrouter.ai/docs/guides/best-practices/reasoning-tokens).
 Unsupported adapters ignore the flag rather than rejecting an otherwise valid
 request.
 

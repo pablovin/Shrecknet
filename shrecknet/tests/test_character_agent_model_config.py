@@ -10,7 +10,7 @@ from app.core import config_store as config
 
 
 def target(name, reasoning=False):
-    return {'provider': 'openrouter', 'name': name, 'reasoning': reasoning}
+    return {'provider': 'openrouter', 'name': name, 'reasoning': reasoning, 'reasoning_effort': None}
 
 
 @pytest.fixture
@@ -58,7 +58,7 @@ def test_migration_preserves_roles_reasoning_and_is_idempotent(isolated_config, 
     assert stored(isolated_config) == first
 
 
-@pytest.mark.parametrize('canonical', [target('explicit', True), {'provider': '', 'name': '', 'reasoning': True}])
+@pytest.mark.parametrize('canonical', [target('explicit', True), {'provider': '', 'name': '', 'reasoning': True, 'reasoning_effort': None}])
 def test_explicit_new_targets_win_even_when_blank(isolated_config, canonical):
     store({'model_character_agent_deliberation': target('old-decision'),
            'model_character_agent_scene_interpretation': target('old-scene'),
@@ -110,6 +110,9 @@ def test_four_targets_are_frontend_editable_with_individual_reasoning(isolated_c
         assert meta['frontend_editable'] is True and meta['change_impact'] == 'hot'
         assert meta['value_fields']['reasoning']['type'] == 'boolean'
         assert meta['value_fields']['reasoning']['default'] is False
+        effort = meta['value_fields']['reasoning_effort']
+        assert effort['default'] is None and effort['nullable'] is True
+        assert effort['enum'] == ['minimal', 'low', 'medium', 'high', 'xhigh', 'max']
     assert not set(config.RETIRED_CHARACTER_AGENT_MODELS) & set(schema['field_meta'])
 
 
@@ -211,3 +214,39 @@ async def test_embodiment_routes_every_stage_to_its_distinct_target(reasoning):
         role = call['usage_tag'].split('.')[-1]
         assert call['model'] == expected[role]
         assert call['model'].reasoning == expected[role].reasoning
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider,name", [("openrouter", "test-model"), ("", "")])
+@pytest.mark.parametrize("effort", [None, "minimal", "low", "medium", "high", "xhigh", "max"])
+async def test_reasoning_effort_survives_config_save_reload(isolated_config, provider, name, effort):
+    key = 'model_character_agent_character_incorporation'
+    value = {'provider': provider, 'name': name, 'reasoning': True, 'reasoning_effort': effort}
+    result = await configurations.put_config({key: value})
+    assert result[key] == value
+    assert getattr(config.reload_settings(), key).model_dump() == value
+    assert config.get_settings().model_character_agent_decision_making.reasoning_effort is None
+
+
+@pytest.mark.parametrize('effort', ['invalid', 'none', 'LOW', 1])
+def test_invalid_reasoning_effort_does_not_persist(isolated_config, effort):
+    before = config.get_settings().model_dump()
+    with pytest.raises(HTTPException) as exc:
+        configurations._validate_updates({'model_character_agent_decision_making':
+            {**target('model'), 'reasoning_effort': effort}})
+    assert exc.value.status_code == 400
+    assert config.reload_settings().model_dump() == before
+
+
+def test_old_target_without_effort_defaults_to_none(isolated_config):
+    key = 'model_character_agent_character_incorporation'
+    store({key: {'provider': 'openrouter', 'name': 'legacy', 'reasoning': True}})
+    result = getattr(config.load_settings(), key)
+    assert result.reasoning is True and result.reasoning_effort is None
+
+
+def test_effort_is_preserved_when_normalizing_legacy_target(isolated_config):
+    key = 'model_character_agent_character_incorporation'
+    store({key: {'provider': 'openrouter', 'name': 'legacy', 'reasoning_effort': 'low'}})
+    result = getattr(config.load_settings(), key)
+    assert result.reasoning is False and result.reasoning_effort == 'low'

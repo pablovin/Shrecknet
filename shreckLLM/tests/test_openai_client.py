@@ -1,9 +1,12 @@
 from datetime import datetime, timezone
 
 import pytest
+import httpx
+from openai import BadRequestError
 
 from app import openai_client
 from app.config_store import ProviderDefaults
+from app.errors import InvalidModelError, ProviderBadRequestError
 from app.schemas import ChatMessage
 from app.service import ChatService
 
@@ -172,7 +175,8 @@ async def test_openai_chat_does_not_send_deepinfra_service_tier(monkeypatch) -> 
 
 
 @pytest.mark.asyncio
-async def test_openrouter_chat_uses_latency_routing_and_native_reasoning_flag(monkeypatch) -> None:
+@pytest.mark.parametrize("effort", [None, "minimal", "low", "medium", "high", "xhigh", "max"])
+async def test_openrouter_chat_uses_latency_routing_and_native_reasoning_flag(monkeypatch, effort) -> None:
     captured = {}
 
     class Response:
@@ -199,17 +203,18 @@ async def test_openrouter_chat_uses_latency_routing_and_native_reasoning_flag(mo
     )
     await client.chat(
         model="anthropic/claude-sonnet-4",
-        messages=[ChatMessage(role="user", content="hello")], temperature=0.3, reasoning=True,
+        messages=[ChatMessage(role="user", content="hello")], temperature=0.3, reasoning=True, reasoning_effort=effort,
     )
     assert captured["model"] == "anthropic/claude-sonnet-4"
     assert captured["extra_body"] == {
-        "reasoning": {"enabled": True, "effort": "high"},
+        "reasoning": {"enabled": True, "effort": effort or "high"},
         "provider": {"sort": "latency", "allow_fallbacks": True},
     }
 
 
 @pytest.mark.asyncio
-async def test_openrouter_chat_disables_reasoning_by_default(monkeypatch) -> None:
+@pytest.mark.parametrize("effort", [None, "low"])
+async def test_openrouter_chat_disables_reasoning_by_default(monkeypatch, effort) -> None:
     captured = {}
 
     class Response:
@@ -241,12 +246,73 @@ async def test_openrouter_chat_disables_reasoning_by_default(monkeypatch) -> Non
         model="anthropic/claude-sonnet-4",
         messages=[ChatMessage(role="user", content="hello")],
         temperature=0.3,
+        reasoning_effort=effort,
     )
 
     assert captured["extra_body"] == {
         "reasoning": {"enabled": False},
         "provider": {"sort": "latency", "allow_fallbacks": True},
     }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider_id", ["openai", "deepinfra", "openrouter"])
+@pytest.mark.parametrize(
+    ("message", "expected_error", "expected_message"),
+    [
+        ("Unsupported temperature", ProviderBadRequestError, "rejected request"),
+        ("Model not found", InvalidModelError, "model not found"),
+        (
+            "Reasoning is mandatory for this endpoint and cannot be disabled.",
+            ProviderBadRequestError,
+            None,
+        ),
+    ],
+)
+async def test_chat_classifies_provider_bad_requests(
+    monkeypatch, provider_id, message, expected_error, expected_message
+) -> None:
+    calls = []
+    response = httpx.Response(
+        400, request=httpx.Request("POST", "https://example.test/chat/completions")
+    )
+    upstream_error = BadRequestError(
+        message, response=response, body={"error": {"message": message, "code": 400}}
+    )
+
+    class Completions:
+        async def create(self, **kwargs):
+            calls.append(kwargs)
+            raise upstream_error
+
+    class Chat:
+        completions = Completions()
+
+    class FakeAsyncOpenAI:
+        def __init__(self, **_kwargs):
+            self.chat = Chat()
+
+    monkeypatch.setattr(openai_client, "AsyncOpenAI", FakeAsyncOpenAI)
+    client = openai_client.OpenAIClient(
+        api_key="secret", timeout_s=45, provider_id=provider_id
+    )
+    if expected_message is None:
+        expected_message = (
+            "openrouter requires reasoning for this model; set reasoning=true"
+            if provider_id == "openrouter" else f"{provider_id} rejected request"
+        )
+    with pytest.raises(expected_error, match=expected_message) as exc_info:
+        await client.chat(
+            model="anthropic/claude-sonnet-5.5",
+            messages=[ChatMessage(role="user", content="hello")],
+            temperature=0.3,
+        )
+
+    assert type(exc_info.value) is expected_error
+    assert exc_info.value.__cause__ is upstream_error
+    assert len(calls) == 1
+    if provider_id == "openrouter":
+        assert calls[0]["extra_body"]["reasoning"] == {"enabled": False}
 
 
 def test_retry_after_seconds_supports_seconds_and_http_dates() -> None:
@@ -262,3 +328,13 @@ def test_retry_after_seconds_supports_seconds_and_http_dates() -> None:
         exc,
         now=datetime(2015, 10, 21, 7, 28, 0, tzinfo=timezone.utc),
     ) == 10.0
+
+
+@pytest.mark.parametrize("effort", ["invalid", "none", "LOW", 1])
+def test_chat_request_rejects_invalid_reasoning_effort(effort):
+    from app.schemas import ChatRequest
+
+    with pytest.raises(ValueError):
+        ChatRequest(provider_id="openrouter", model="test",
+                    messages=[{"role": "user", "content": "hello"}],
+                    reasoning_effort=effort)

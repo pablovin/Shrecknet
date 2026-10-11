@@ -16,7 +16,7 @@ from app.errors import (
     ProviderPermissionError,
     ProviderTimeoutError,
 )
-from app.schemas import ChatMessage
+from app.schemas import ChatMessage, ReasoningEffort
 
 logger = logging.getLogger(__name__)
 
@@ -206,6 +206,7 @@ class OpenAIClient:
         messages: list[ChatMessage],
         temperature: float,
         reasoning: bool = False,
+        reasoning_effort: ReasoningEffort | None = None,
         max_tokens: int | None = None,
         response_format: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
@@ -230,7 +231,7 @@ class OpenAIClient:
         if self.provider_id == "openrouter":
             reasoning_config: dict[str, Any] = {"enabled": bool(reasoning)}
             if reasoning:
-                reasoning_config["effort"] = "high"
+                reasoning_config["effort"] = reasoning_effort or "high"
             kwargs["extra_body"] = {
                 "reasoning": reasoning_config,
                 "provider": {"sort": "latency", "allow_fallbacks": True},
@@ -256,7 +257,15 @@ class OpenAIClient:
                 status_code,
                 type(exc).__name__,
             )
-            if status_code == 400 or ("model" in text and "not" in text and "found" in text):
+            if (
+                self.provider_id == "openrouter"
+                and status_code == 400
+                and "reasoning is mandatory" in text
+            ):
+                raise ProviderBadRequestError(
+                    "openrouter requires reasoning for this model; set reasoning=true"
+                ) from exc
+            if "model" in text and "not" in text and "found" in text:
                 raise InvalidModelError("model not found") from exc
             if status_code == 401:
                 raise ProviderAuthenticationError(f"{self.provider_id} authentication failed") from exc

@@ -110,6 +110,7 @@ class ShreckLLMClient:
             "provider_id": target.provider,
             "model": target.name,
             "reasoning": target.reasoning,
+            "reasoning_effort": target.reasoning_effort,
             "messages": messages,
             "temperature": temperature,
             "conversation_id": conversation_id,
@@ -318,7 +319,10 @@ class ShreckLLMClient:
             provider = str(model.get("provider") or "openai").strip() or "openai"
             name = str(model.get("name") or "gpt-5-nano").strip() or "gpt-5-nano"
             reasoning = model.get("reasoning", False)
-            return LLMModelTarget(provider=provider, name=name, reasoning=reasoning)
+            return LLMModelTarget(
+                provider=provider, name=name, reasoning=reasoning,
+                reasoning_effort=model.get("reasoning_effort"),
+            )
         return LLMModelTarget(provider="openai", name="gpt-5-nano")
 
     @staticmethod

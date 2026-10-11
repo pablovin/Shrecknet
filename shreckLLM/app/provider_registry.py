@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
-from app.schemas import ChatMessage
+from app.schemas import ChatMessage, ReasoningEffort
 
 
 class ProviderAdapter(Protocol):
@@ -15,6 +15,7 @@ class ProviderAdapter(Protocol):
         messages: list[ChatMessage],
         temperature: float,
         reasoning: bool = False,
+        reasoning_effort: ReasoningEffort | None = None,
         max_tokens: int | None = None,
         response_format: dict[str, Any] | None = None,
     ) -> dict[str, Any]: ...

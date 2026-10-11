@@ -10,7 +10,7 @@ from app.errors import (
     ProviderOverloadedError,
     ProviderTimeoutError,
 )
-from app.schemas import ChatMessage
+from app.schemas import ChatMessage, ReasoningEffort
 
 
 class OllamaClient:
@@ -69,10 +69,11 @@ class OllamaClient:
         messages: list[ChatMessage],
         temperature: float,
         reasoning: bool = False,
+        reasoning_effort: ReasoningEffort | None = None,
         max_tokens: int | None = None,
         response_format: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        del reasoning
+        del reasoning, reasoning_effort
         options: dict[str, Any] = {"temperature": float(temperature)}
         if max_tokens is not None:
             options["num_predict"] = int(max_tokens)

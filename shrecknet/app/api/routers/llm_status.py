@@ -59,6 +59,7 @@ async def get_service_status(
             "provider": provider_id,
             "model": model_name,
             "reasoning": getattr(target, "reasoning", False),
+            "reasoning_effort": getattr(target, "reasoning_effort", None),
             "provider_active": provider_active,
             "model_available": model_available,
             "active": provider_active and (model_available is not False),

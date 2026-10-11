@@ -1493,6 +1493,8 @@ class ChatService:
             "reasoning": request.reasoning,
             "max_tokens": request.max_tokens,
         }
+        if request.reasoning_effort is not None:
+            adapter_kwargs["reasoning_effort"] = request.reasoning_effort
         if request.response_format is not None:
             adapter_kwargs["response_format"] = request.response_format
         provider_call_start = time.monotonic()

@@ -73,8 +73,8 @@ shows the required keys, not actual scores):
 "curiosity":{"value":null,"status":"unknown"},
 "sharing":{"value":null,"status":"unknown"},
 "restlessness":{"value":null,"status":"unknown"}},
-"steadiness":{"value":null,"status":"unknown","observation_count":0,
-"availability":"unavailable","reason":"No inferred consistency estimate from comparable behavior.",
+"steadiness":{"calculation_version":"cross-scene-steadiness-v2","value":null,"status":"unknown","observation_count":0,
+"availability":"unavailable","reason":"No inferred consistency estimate from independent repeat evidence.",
 "inferred_value":null}}
 All eight disposition entries are required in identity mode. Each value
 is an integer 1–9 or null; each status is unknown|provisional|supported|manual.
@@ -86,14 +86,21 @@ Provisional means tentative inference; supported means recurring observations;
 manual means effective authored direction. Unknown scores leave supported prose
 usable. Do not invent values for unknown scores.
 
-Steadiness has the same value/status meanings, a nonnegative observation_count
+Steadiness additionally permits status baseline: value 5 with zero observations
+and unavailable inference, a neutral computational prior, not measured consistency.
+Its calculation_version is cross-scene-steadiness-v2 or comparable-steadiness-v1;
+the latter explicitly identifies the historical comparable-circumstances construct.
+Steadiness otherwise has the same value/status meanings, a nonnegative observation_count
 (contributing perspectives, not confidence), availability available|unavailable,
 reason (string or null), and inferred_value (integer 1–9 or null). Available means
 backend evidence reproduces inferred consistency; unavailable requires null
 inferred_value and permits no claim of observed consistency. Manual value can
 still guide tentative authored variability without proving observations.
 Provisional inference requires tentative interpretation. High Steadiness describes
-narrower and low Steadiness broader variation in comparable circumstances. It is
+narrower and low Steadiness broader variation across independent scenes under
+the new policy; older estimates concern comparable circumstances. Cross-scene
+consistency cannot distinguish unstable dispositions from stable context-sensitive
+behavior. It is
 an aggregate, not per-trait variance, calmness, morality, reliability, a trigger,
 a temperature setting, or permission to randomly override a choice.
 

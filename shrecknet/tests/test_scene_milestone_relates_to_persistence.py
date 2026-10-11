@@ -145,3 +145,42 @@ async def test_create_milestone_persists_milestone_relates_to_edges(monkeypatch)
         call for call in tx.calls if "MERGE (milestone)-[:RELATES_TO {label: $label}]->(entity)" in call[0]
     ]
     assert len(relates_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_scene_event_provenance_is_persisted_and_updates_are_explicit(monkeypatch):
+    from app.schemas.ontology_instance import SceneUpdate
+    tx = _RecordingTx()
+    service = OntologyInstanceService(sql_session=None, graph_session=_RecordingGraphSession(tx))
+
+    async def fake_get_scene(*args):
+        return {'id': 'scene-1'}
+
+    monkeypatch.setattr(service, 'get_scene', fake_get_scene)
+    from types import SimpleNamespace
+    async def milestones(*args):
+        return [SimpleNamespace(id='begin', boundary_type='begin'), SimpleNamespace(id='end', boundary_type='end')]
+    monkeypatch.setattr(service, 'list_milestones', milestones)
+    original_run = tx.run
+    async def run(query, **params):
+        if 'AS derived_count' in query:
+            return _FakeResult(rows=[{'derived_count': 1}])
+        return await original_run(query, **params)
+    monkeypatch.setattr(tx, 'run', run)
+    payload = SceneCreate(id='scene-1', name='Retelling', description='A retelling.',
+        created_by_type='human', created_by_author='reviewer',
+        derived_from={'entity_instance_id': 'entity-1'},
+        observation_group_id='event-42', independence_status='unresolved')
+    await service.create_scene('inst-1', payload, trigger_background_jobs=False)
+    creation = next(params for query, params in tx.calls if 'CREATE (inst)-[:HAS_SCENE]' in query)
+    assert creation['observation_group_id'] == 'event-42'
+    assert creation['independence_status'] == 'unresolved'
+    from app.tasks.neo4j_embedding import embed_reconciliation as embedding
+    monkeypatch.setattr(embedding, 'apply_async', lambda **kwargs: None)
+    tx.calls.clear()
+    await service.update_scene('inst-1', 'scene-1', SceneUpdate(name='Renamed'))
+    assert not any('scene.observation_group_id =' in query for query, _ in tx.calls)
+    tx.calls.clear()
+    await service.update_scene('inst-1', 'scene-1', SceneUpdate(observation_group_id=None, independence_status='independent'))
+    update = next(params for query, params in tx.calls if 'scene.observation_group_id =' in query)
+    assert update['observation_group_id'] is None and update['independence_status'] == 'independent'

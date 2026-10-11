@@ -125,7 +125,7 @@ it sends no raw observations or provenance IDs. `available` requires the ledger
 to reproduce the recorded inferred estimate. Missing, conflicting, or malformed
 evidence produces `unavailable` and null `inferred_value`. Counts measure
 contributing perspectives, not confidence. High Steadiness describes narrower
-and low Steadiness broader variation in comparable circumstances; it is neither
+and low Steadiness broader variation across independent scenes (legacy v3: comparable circumstances); it is neither
 per-trait variance nor emotional calmness. Unknown values support no consistency
 claim. Provisional estimates are tentative. Manual values may supply tentative
 authored variability without proving observed consistency. Steadiness never
@@ -216,3 +216,18 @@ stored there. V1 provides no cancellation endpoint or query-specific expiry.
 The former `/query` and `/query-jobs/{job_id}` paths remain as compatibility
 aliases; new clients should use `/decision-making` and
 `/decision-making-jobs/{job_id}`.
+
+### Weighted evidence and baseline Steadiness
+
+New profiles use `dispositions-v4-weighted-scenes`; v3 profiles remain readable.
+Canonical evidence has weight 2, scene-anchored perspective evidence weight 1,
+with one strongest observation per event and trait. New Steadiness measures
+observed cross-scene dispositional consistency and starts at point 5 with status
+`baseline`, zero observations, and unavailable inference. Baseline is a neutral
+computational prior, distinct from an inferred 5. Repeated observations produce
+provisional/supported estimates; manual overrides preserve underlying inference.
+Cross-scene consistency cannot distinguish unstable dispositions from stable
+context-sensitive behavior. Event groups prevent reviewed duplicate retellings
+from increasing support. See the canonical
+[trait contract](../Dispositional%20Traits.md)
+for formulas, thresholds, provenance, and rollout.

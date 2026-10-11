@@ -1017,6 +1017,8 @@ class CharacterAgentQueryJobRead(_StrictModel):
 # ── EmbodyAgent atomic service schemas ──────────────────────────────────
 
 class SceneInput(_StrictModel):
+    observation_group_id: str | None = Field(default=None, min_length=1)
+    independence_status: Literal['independent', 'unresolved'] = 'independent'
     scene_id: str
     name: str
     description: str

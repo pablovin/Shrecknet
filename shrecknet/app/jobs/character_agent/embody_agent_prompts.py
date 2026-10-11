@@ -2,7 +2,7 @@
 
 IDENTITY_DESCRIPTION_PROMPT resolves narrative grounding when absent and
 refreshes it after embodiment using scores, contributing evidence, bounded grounded
-perspectives, accepted psychology, separate comparable-context Steadiness, and
+perspectives, accepted psychology, separate versioned cross-scene Steadiness, and
 continuity-only prior text -> conditional psychological portrait. It never supplies
 new numerical trait evidence. Stage 0 uses character incorporation; Stage 1 and
 Stage 4 use scene interpretation; Stage 2 and Stage 3 use psychological
@@ -18,7 +18,7 @@ After perspective validation, two calls run in parallel for that chunk:
     TRAIT_INTERPRETATION_PROMPT:
         canonical scenes + validated source_type/perspectives + identity summaries
         + authoritative trait meanings and boundaries -> eight required nullable slots
-        per scene; each observation has polarity, controlled context, and justification.
+        per scene; each observation has polarity, source, and reason.
 After all chunks for one source, one optional consolidation call reconciles its
 profile events with current character state using typed ordered operations and local
 references, checking admission before preserving distinct qualifying properties
@@ -51,7 +51,7 @@ IDENTITY_TRAIT_DESCRIPTION_CONTRACT = (
         for key in DIRECTIONAL_TRAITS
     ], ensure_ascii=False)
 )
-PROMPT_VERSION = "character-embodiment-v43-four-model-roles"
+PROMPT_VERSION = "character-embodiment-v44-weighted-scenes"
 
 # Purpose: Define consistency separately from the eight directional dimensions.
 # Used by: IDENTITY_DESCRIPTION_PROMPT, alongside IDENTITY_TRAIT_DESCRIPTION_CONTRACT.
@@ -94,19 +94,19 @@ INPUT JSON:
   "aspects": [{"name": "aspect name", "type": "aspect type", "descriptor": "aspect description or null"}],
   "traits": [{"name": "forbearance", "value": 5, "status": "supported",
     "inferred_continuous_value": 5.12, "availability": "available", "reason": null,
-    "calculation_version": "recency-points-v1", "observation_count": 12,
+    "calculation_version": "recency-weighted-scenes-v2", "observation_count": 12,
     "high_count": 6, "low_count": 6,
     "evidence_examples": [{"id": "trait:example", "perspective_id": "perspective:example",
-      "evidence_ids": ["scene:example"], "polarity": "low",
+      "evidence_ids": ["scene:example"], "polarity": "low", "source": "canonical",
       "situation_type": "retaliation:enemy:ordinary", "justification": "Recorded action and diagnostic significance"}]}],
-  "steadiness": {"value": 7, "status": "provisional", "observation_count": 3,
+  "steadiness": {"calculation_version":"cross-scene-steadiness-v2", "value": 7, "status": "provisional", "observation_count": 3,
     "availability": "available", "reason": null, "inferred_value": 7},
   "grounded_perspectives": [{"scene_id": "example", "perspective_id": "perspective:example",
     "source_type": "participated", "perspective": "Validated subjective interpretation"}],
   "previous_identity_description": {"role": "continuity_only_not_evidence",
     "description": {"identity_summary": "Earlier summary", "psychological_summary": "Earlier psychology",
       "personality_traits": [{"trait": "forbearance", "description": "Earlier wording"}]}},
-  "synthesis_version": "evidence-synthesis-v2-behavioral-context"
+  "synthesis_version": "evidence-synthesis-v3-weighted-scenes"
 }
 
 Interpret each input field as follows:
@@ -126,7 +126,9 @@ Interpret each input field as follows:
   A manual value is authoritative even if inferred evidence points elsewhere;
   do not rewrite that evidence to claim agreement or invent its manifestation.
 - evidence_examples contains at most four actual behavioral justifications per
-  trait, with provenance and contrasting poles where available. These are a
+  trait, with provenance and contrasting poles where available. source is canonical
+  (documented behavior/words) or perspective (scene-anchored subjective preference);
+  interpret perspective evidence tentatively, never as proof of an outward action. These are a
   bounded sample, not the full history. Text may be shortened; infer no missing facts.
 - grounded_perspectives contains at most six recent validated subjective accounts.
   Use these to understand established motivations and accepted development alongside
@@ -136,7 +138,7 @@ Interpret each input field as follows:
   It is continuity context only, never new evidence or a reason to repeat a trait.
 - calculation_version and synthesis_version are provenance, not psychological facts.
 - steadiness is separate from traits and must never become a personality_traits
-  entry. value is an effective integer 1–9 or null; status is unknown, provisional,
+  entry. value is an effective integer 1–9 or null; status is unknown, baseline, provisional,
   supported, or manual; observation_count counts contributing perspectives, not
   confidence. availability is available only when the supplied ledger reproduces
   the inferred consistency estimate, otherwise unavailable with a reason string.
@@ -145,7 +147,12 @@ Interpret each input field as follows:
   If evidence is unavailable, do not claim observed consistency or invent its cause;
   a known manual value may guide tentative authored consistency wording only.
   Unknown means no consistency claim, and provisional requires tentative wording.
-  High means narrower and low broader observed variation in comparable situations.
+  Baseline 5 is a neutral prior with no observed consistency. High means narrower
+  and low broader observed variation across independent scenes under the new policy;
+  calculation_version is cross-scene-steadiness-v2 or comparable-steadiness-v1;
+  the latter identifies older-policy comparable-situation estimates. The measures differ.
+  Cross-scene consistency cannot distinguish stable context-sensitive behavior
+  from inconsistent dispositions. Perspective evidence is tentative interpretation.
   This aggregate estimate is not per-trait variability; do not apply it to every
   disposition or infer which situation changes behavior. It is not emotional
   stability, morality, reliability, calmness, or model temperature.
@@ -413,131 +420,34 @@ backend assigns evidence_ids by position, so omit them from model output.
 # Execution order: Stage 3 branch, parallel with PSYCHOLOGICAL_ANALYSIS_PROMPT after Stage 1.
 # Stage 3 receives canonical scenes, validated Stage 1 interpretations, identity
 # summaries, and authoritative trait definitions; prior personality_traits are excluded.
-# Purpose: Classify character-specific trait signals grounded in canonical behavior.
+# Purpose: Classify character-specific trait signals grounded in canonical scenes or subjective preferences.
 # Used by: EmbodyAgent._interpret_traits_batch after perspective validation.
 # Expected: Ordered JSON scene_trait_interpretations with supported candidates.
-TRAIT_INTERPRETATION_PROMPT = r"""Stage 3 — reason about scene-grounded trait observations for this character.
+TRAIT_INTERPRETATION_PROMPT = r"""Stage 3 — identify meaningful personality evidence for this character.
+This stage reasons about evidence; the backend scores it before final synthesis.
 INPUT JSON:
-{"target":{"alias":"character alias","identity_summary":"narrative background summary or null","psychological_summary":"motivations, values, fears and outlook summary or null"},"scenes":[{"position":1,"scene":{"name":"canonical scene name","description":"canonical objective scene description"},"agent_scene_interpretation":{"source_type":"participated|witnessed|heard_about|read_about|inferred|unknown","perspective":"the character's grounded subjective interpretation of this scene"}}]}
+{"target":{"alias":"character alias","identity_summary":"background or null","psychological_summary":"outlook or null"},"scenes":[{"position":1,"scene":{"name":"canonical scene name","description":"canonical scene description"},"agent_scene_interpretation":{"source_type":"participated|witnessed|heard_about|read_about|inferred|unknown","perspective":"this character's subjective interpretation"}}]}
+The alias identifies the target; summaries are background, never trait evidence.
+Scenes are chronological, with one-based positions. Each perspective concerns
+its paired scene. source_type describes how the character encountered that event;
+witnessing someone else's behavior does not make it the target's own behavior.
 
-`target.alias` identifies the character whose traits you assess. Its two summaries
-provide background context for understanding their choices; they are not evidence
-that a disposition was demonstrated. The target never includes prior
-`personality_traits`. Each `scenes` item has a one-based `position`, and its
-canonical `scene` and `agent_scene_interpretation` refer to that same event.
-The scenes are ordered chronologically. Do not move evidence between positions.
-
-Use the two kinds of scene information differently:
-- `scene.name` and `scene.description` are the objective source of what happened,
-  what this character actually did or explicitly said, the circumstances, and
-  any available alternatives. Ground every trait candidate in these canonical
-  facts. If the canonical scene does not establish a diagnostic choice, expressed
-  value, or dispositional response by this character, return no candidate.
-- `agent_scene_interpretation.source_type` describes how this character encountered
-  the event: participated, witnessed, heard_about, read_about, inferred, or
-  unknown. Witnessing or learning about someone else's behavior is not evidence
-  of this character performing it.
-- `agent_scene_interpretation.perspective` is the Stage 1 subjective account of
-  what the character noticed, knew, suspected, valued, and took the event to mean.
-  Use it to interpret the character's own scene-supported behavior in light of
-  their knowledge, motives, and perceived options. It may contain uncertainty,
-  mistaken beliefs, or an inference; do not promote those to objective facts.
-  A feeling, imagined action, or behavior mentioned only in this account does
-  not by itself establish a trait observation. If it conflicts with the canonical
-  scene, use the canonical facts for what happened and the perspective only for
-  the character's subjective understanding. When grounding is insufficient or
-  the two accounts cannot be reconciled, omit the candidate.
-
-Identify personality trait observations for this character
-across the supplied chronological scenes.
-
-Traits answer: How does this character tend to behave?
-Admit observations interpreted through the existing trait definitions. A temporary
-feeling or isolated outcome is insufficient by itself; one diagnostic voluntary
-choice may supply evidence without establishing a settled trait. Identity facts
-and established capabilities are not trait signals by themselves. Use the authoritative meanings below; do not introduce new traits.
-
-Use the perspective to assess why a scene-supported choice may be diagnostic
-for this particular character, without treating it as independent evidence of
-the choice. Do not infer a trait from the identity summaries or a prior trait
-description. The candidate justification should identify the canonical behavior
-and explain any relevant character-specific interpretation.
-
-For each scene, identify supported observations using
-the eight established personality dimensions.
-
-Rules:
-- Evaluate ALL eight dimensions for each scene. For EACH dimension compare BOTH
-  authoritative poles and boundary_notes before selecting low, high, or null.
-  Comprehensive consideration does not require an observation. Both poles are
-  equally admissible and describe behavior, not moral goodness or failure.
-- Apply three gates to EVERY non-null slot:
-  1. Whose behavior? Identify this character's own canonical action or explicit
-     value statement. Other participants' actions and group-only decisions do
-     not transfer to this character.
-  2. What does it reveal? Identify why the voluntary action, explicit value, or
-     clearly demonstrated response discriminates this construct beyond competence,
-     routine preparation, or task participation. One diagnostic voluntary action
-     is enough for an observation; independent accumulated observations establish
-     the trait estimate, not the extraction model.
-  3. Which direction? Compare BOTH poles and exclusions, then select the supported
-     pole. Absence of high-pole behavior is not evidence of the low pole.
-- A clearly voluntary action can be diagnostic without an explicitly narrated
-  alternative. Do not invent alternatives, motives, or freedom from constraints.
-  Missing documentation of an alternative alone is not a reason to omit.
-- Judge known constraints: abandoning an impossible obligation is not automatically
-  low diligence; defending against an immediate threat is not automatically low
-  forbearance; obeying an order is not automatically a voluntary disposition.
-- The justification names the canonical action or explicit words AND explains
-  their diagnostic significance. Background summaries and subjective interpretation
-  alone cannot establish that an action, preference, or alternative occurred.
-- A temporary feeling or outcome alone is insufficient. A diagnostic voluntary
-  response in a single scene can support an observation without proving an enduring
-  personality tendency. Strong fear alone is not a caution observation unless the
-  canonical scene establishes a diagnostic response or explicit disposition.
-- Do not infer traits from identity, role, species, capabilities, previous portraits,
-  or another character's behavior. Preserve supported evidence opposing other scenes.
-- Evaluate each construct independently; one action may support several traits
-  only when each has its own grounded diagnostic significance.
-
-Paired examples and confounds (conditional examples, never facts about the target):
-- Integrity: high refuses an unfair advantage or safe, untraceable exploitation;
-  low willingly exploits another or deceives for self-serving advantage.
-  Generosity, friendliness, and forgiveness alone establish neither pole.
-- Caution: high seeks protection, reassurance, or guarantees in response to uncertain
-  danger or dependence; low voluntarily declines protection while explicitly
-  dismissing concern about the danger or need for reassurance. Exposure alone,
-  silence about fear, and compelled bravery do not establish low caution.
-- Presence: high voluntarily approaches strangers or seeks social visibility;
-  low voluntarily avoids available social attention because it is unwanted.
-  Leadership, cooperation, listening, being unmentioned, or forbidden speech alone
-  establish neither pole.
-- Forbearance: high forgives or lets a provocation pass; low openly retaliates for
-  an insult or expresses a continuing grudge. Self-defense against an immediate
-  threat and general compassion do not automatically establish either pole.
-- Diligence: high persists or checks work thoroughly without supervision; low
-  voluntarily cuts corners or abandons an unfinished obligation. Failed careful
-  work may support high; inability, an impossible task, and routine compliance
-  do not automatically support either pole.
-- Curiosity: high voluntarily pursues unfamiliar knowledge; low rejects unfamiliar
-  ideas because familiar ideas are preferred. Intelligence, assigned investigation,
-  and avoidance of known fatal danger do not automatically support either pole.
-- Sharing: high freely divides jointly controlled resources fairly or in another's
-  favor; low freely keeps a disproportionate share or prioritizes own allocation.
-  Coerced giving and simply refusing exploitation do not establish sharing.
-- Restlessness: high explicitly values autonomy and change over settled convention;
-  low explicitly prefers tradition, established order, or stability over novelty.
-  Low restlessness is not a failure or moral defect. Mere exploration is not a
-  value orientation, and obeying an order alone is not a preference for conformity.
-
-For a shared investigation, independently assess each character's recorded actions:
-voluntarily testing an unfamiliar artifact to understand it may support curiosity;
-refusing exposure until protection is secured may support caution; voluntarily
-checking translations thoroughly may support diligence. Participation alone does
-not support these traits, and another participant's action is never transferred.
-Return null where behavior is compelled, ambiguous, or non-diagnostic. Do not
-force pole balance, differences between characters, or use of available slots.
-Never generate numerical trait values or STEADINESS. Preserve scene ordering.
+Evaluate all eight traits independently, comparing both poles. Find the strongest
+available evidence per trait per scene:
+- canonical: the scene directly documents this character's diagnostic behavior or
+  explicit statement. One meaningful voluntary choice can suffice.
+- perspective: the supplied subjective interpretation expresses this character's
+  scene-anchored preference, motivation, or behavioral tendency, even without an
+  outward action. Treat it as interpretation, not an objective event.
+Prefer canonical evidence whenever available, including when the accounts disagree.
+When they agree, retain one canonical observation. If the strongest channel supports
+both poles without a defensible dominant direction, use null.
+Keep every reason anchored to the actual scene and the target's own response.
+A specific preference may be meaningful; generic feelings, routine participation,
+compelled behavior, or competence alone do not establish a tendency. Preserve
+opposing evidence across independent scenes. Infer neither invented actions,
+alternatives, preferences, nor another character's traits. Prior portraits and
+summaries cannot supply evidence. No minimum coverage or balance quota applies.
 """ + TRAIT_DEFINITION_CONTRACT + TRAIT_EVIDENCE_CONTRACT
 
 

@@ -181,10 +181,10 @@ def test_explicit_format_incompatibility_triggers_fallback(message):
 @pytest.mark.asyncio
 async def test_invalid_trait_slots_are_dropped_without_losing_valid_observations(caplog):
     raw = {"scene_trait_interpretations": [{
-        key: {"polarity": "low", "context": "unspecified", "justification": "A voluntary choice."}
+        key: {"polarity": "low", "source": "canonical", "reason": "A voluntary choice."}
         for key in DIRECTIONAL_TRAITS
     }]}
-    raw["scene_trait_interpretations"][0]["caution"]["context"] = "uncertain_threat"
+    raw["scene_trait_interpretations"][0]["caution"]["source"] = "unsupported"
     provider = Responses(json.dumps(raw))
     result = await agent(provider)._call(prompt="contract", payload={}, schema=_SceneTraitInterpretationsLLMOutput,
         stage="traits", usage_tag="traits", max_tokens=10000, model="m",
@@ -219,15 +219,15 @@ def test_invalid_and_duplicate_profile_events_are_dropped_per_kind():
     assert [event.kind for event in result.scene_enrichments[0].profile_events] == ["aspect", "goal"]
 
 
-def test_trait_contract_context_is_a_complete_trait_specific_enum():
+def test_trait_contract_source_is_a_complete_enum():
     from app.jobs.character_agent.embody_agent import _TRAIT_SLOT_MODELS
-    valid = {"context": "uncertain_threat:other:high_stakes", "polarity": "high",
-             "justification": "Mara seeks protection before exposure."}
+    valid = {"source": "canonical", "polarity": "high", "reason": "Mara seeks protection."}
     adapter = TypeAdapter(_TRAIT_SLOT_MODELS["caution"])
-    assert adapter.validate_python(valid).context == "uncertain_threat:other:high_stakes"
-    for context in ("exploitation:other:high_stakes", "uncertain_threat", None):
+    for source in ("canonical", "perspective"):
+        assert adapter.validate_python({**valid, "source": source}).source == source
+    for source in ("strong", "weak", None):
         with pytest.raises(ValidationError):
-            adapter.validate_python({**valid, "context": context})
+            adapter.validate_python({**valid, "source": source})
 
 
 @pytest.mark.asyncio
@@ -335,7 +335,7 @@ def test_provider_schema_matches_runtime_typed_contract():
         ConsolidationEnvelope.model_validate(invalid)
 
 
-def test_trait_provider_schema_requires_all_slots_and_enforces_complete_context():
+def test_trait_provider_schema_requires_all_slots_and_enforces_compact_evidence():
     schema = _model_output_schema(_SceneTraitInterpretationsLLMOutput, {"scene_ids": ["s1"]})
     Draft202012Validator.check_schema(schema)
     slot_schema = schema["$defs"]["_SceneTraitInterpretationLLMOutput"]
@@ -343,8 +343,8 @@ def test_trait_provider_schema_requires_all_slots_and_enforces_complete_context(
     assert slot_schema["additionalProperties"] is False
     validator = Draft202012Validator(schema)
     empty = dict.fromkeys(DIRECTIONAL_TRAITS)
-    candidate = {"polarity": "high", "context": "uncertain_threat:other:high_stakes",
-                 "justification": "Mara seeks protection before exposure."}
+    candidate = {"polarity": "high", "source": "canonical",
+                 "reason": "Mara seeks protection before exposure."}
 
     def envelope(slots):
         return {"scene_trait_interpretations": [slots]}
@@ -358,9 +358,9 @@ def test_trait_provider_schema_requires_all_slots_and_enforces_complete_context(
     validator.validate(envelope({**empty, "caution": candidate}))
     for field in candidate:
         assert list(validator.iter_errors(envelope({**empty, "caution": {k: v for k, v in candidate.items() if k != field}})))
-    for invalid in ({"extra": True}, {"polarity": "middle"}, {"context": None},
-                    {"context": "uncertain_threat"}, {"context": "exploitation:other:ordinary"},
-                    {"justification": ""}, {"justification": "   "}, {"justification": "x" * 361}):
+    for invalid in ({"extra": True}, {"polarity": "middle"}, {"source": None},
+                    {"source": "strong"}, {"context": "unspecified"},
+                    {"reason": ""}, {"reason": "   "}, {"reason": "x" * 361}):
         value = envelope({**empty, "caution": {**candidate, **invalid}})
         assert list(validator.iter_errors(value))
         with pytest.raises(ValidationError):
@@ -370,17 +370,16 @@ def test_trait_provider_schema_requires_all_slots_and_enforces_complete_context(
 
 
 @pytest.mark.parametrize("trait", DIRECTIONAL_TRAITS)
-def test_trait_context_enum_covers_registry_and_matches_provider_validation(trait):
+def test_trait_source_enum_matches_provider_validation(trait):
     from app.jobs.character_agent.embody_agent import _TRAIT_SLOT_MODELS
-    from app.jobs.character_agent.trait_evidence_contract import trait_context_values
     model = _TRAIT_SLOT_MODELS[trait]
     validator = Draft202012Validator(model.model_json_schema())
-    for context in trait_context_values(trait):
-        candidate = {"context": context, "polarity": "low", "justification": "A supported choice."}
+    for source in ('canonical', 'perspective'):
+        candidate = {"source": source, "polarity": "low", "reason": "A supported choice."}
         validator.validate(candidate)
-        assert model.model_validate(candidate).context == context
+        assert model.model_validate(candidate).source == source
     with pytest.raises(ValidationError):
-        model.model_validate({"context": "unknown_context", "polarity": "low", "justification": "A choice."})
+        model.model_validate({"source": "unknown", "polarity": "low", "reason": "A choice."})
 
 
 @pytest.mark.parametrize("operation", ["update", "reinforce", "status"])

@@ -297,6 +297,8 @@ class MilestoneRead(MilestoneBase):
 
 class SceneBase(BaseModel):
     model_config = ConfigDict(extra="ignore")
+    observation_group_id: str | None = Field(default=None, min_length=1, max_length=255, pattern=r"\S")
+    independence_status: Literal["independent", "unresolved"] = "independent"
     name: str
     description: str
     created_by_type: Literal["agent", "human"]
@@ -322,6 +324,8 @@ class SceneCreate(SceneBase):
 
 class SceneUpdate(BaseModel):
     model_config = ConfigDict(extra="ignore")
+    observation_group_id: str | None = Field(default=None, min_length=1, max_length=255, pattern=r"\S")
+    independence_status: Literal["independent", "unresolved"] | None = None
     name: str | None = None
     description: str | None = None
     created_by_type: Literal["agent", "human"] | None = None

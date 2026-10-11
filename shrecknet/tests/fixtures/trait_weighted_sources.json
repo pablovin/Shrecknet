@@ -1,0 +1,341 @@
+{
+  "version": "weighted-scene-sources-v1",
+  "cases": [
+    {
+      "case_id": "perspective-integrity-low",
+      "scene_id": "perspective-integrity-low",
+      "target": "Mira",
+      "scene": "At the market Mira considers an unfair deal at Leon's expense.",
+      "perspective": "I would take the unfair gain for myself.",
+      "expected": [
+        [
+          "integrity",
+          "low"
+        ]
+      ],
+      "expected_sources": {
+        "integrity": "perspective"
+      },
+      "review_note": "Authored expectation: review diagnostic preference, source grounding and unintended other traits; no outward action is asserted."
+    },
+    {
+      "case_id": "perspective-integrity-high",
+      "scene_id": "perspective-integrity-high",
+      "target": "Mira",
+      "scene": "At the market Mira considers an unfair deal at Leon's expense.",
+      "perspective": "I prefer to refuse the unfair gain even if it costs me.",
+      "expected": [
+        [
+          "integrity",
+          "high"
+        ]
+      ],
+      "expected_sources": {
+        "integrity": "perspective"
+      },
+      "review_note": "Authored expectation: review diagnostic preference, source grounding and unintended other traits; no outward action is asserted."
+    },
+    {
+      "case_id": "perspective-caution-low",
+      "scene_id": "perspective-caution-low",
+      "target": "Mira",
+      "scene": "Mira learns of uncertain supernatural danger from an artifact.",
+      "perspective": "I feel no need for protection or reassurance against this uncertainty.",
+      "expected": [
+        [
+          "caution",
+          "low"
+        ]
+      ],
+      "expected_sources": {
+        "caution": "perspective"
+      },
+      "review_note": "Authored expectation: review diagnostic preference, source grounding and unintended other traits; no outward action is asserted."
+    },
+    {
+      "case_id": "perspective-caution-high",
+      "scene_id": "perspective-caution-high",
+      "target": "Mira",
+      "scene": "Mira learns of uncertain supernatural danger from an artifact.",
+      "perspective": "I prefer protection and reassurance before exposure to the artifact.",
+      "expected": [
+        [
+          "caution",
+          "high"
+        ]
+      ],
+      "expected_sources": {
+        "caution": "perspective"
+      },
+      "review_note": "Authored expectation: review diagnostic preference, source grounding and unintended other traits; no outward action is asserted."
+    },
+    {
+      "case_id": "perspective-presence-low",
+      "scene_id": "perspective-presence-low",
+      "target": "Mira",
+      "scene": "Mira arrives at an optional gathering of strangers.",
+      "perspective": "I would rather stay apart; their attention and company are unwanted.",
+      "expected": [
+        [
+          "presence",
+          "low"
+        ]
+      ],
+      "expected_sources": {
+        "presence": "perspective"
+      },
+      "review_note": "Authored expectation: review diagnostic preference, source grounding and unintended other traits; no outward action is asserted."
+    },
+    {
+      "case_id": "perspective-presence-high",
+      "scene_id": "perspective-presence-high",
+      "target": "Mira",
+      "scene": "Mira arrives at an optional gathering of strangers.",
+      "perspective": "I want to approach people and enjoy their company and attention.",
+      "expected": [
+        [
+          "presence",
+          "high"
+        ]
+      ],
+      "expected_sources": {
+        "presence": "perspective"
+      },
+      "review_note": "Authored expectation: review diagnostic preference, source grounding and unintended other traits; no outward action is asserted."
+    },
+    {
+      "case_id": "perspective-forbearance-low",
+      "scene_id": "perspective-forbearance-low",
+      "target": "Mira",
+      "scene": "Leon insults Mira; the confrontation is over.",
+      "perspective": "I want to make Leon pay; I hold a grudge over his insult.",
+      "expected": [
+        [
+          "forbearance",
+          "low"
+        ]
+      ],
+      "expected_sources": {
+        "forbearance": "perspective"
+      },
+      "review_note": "Authored expectation: review diagnostic preference, source grounding and unintended other traits; no outward action is asserted."
+    },
+    {
+      "case_id": "perspective-forbearance-high",
+      "scene_id": "perspective-forbearance-high",
+      "target": "Mira",
+      "scene": "Leon insults Mira; the confrontation is over.",
+      "perspective": "I prefer to forgive Leon and let his insult pass.",
+      "expected": [
+        [
+          "forbearance",
+          "high"
+        ]
+      ],
+      "expected_sources": {
+        "forbearance": "perspective"
+      },
+      "review_note": "Authored expectation: review diagnostic preference, source grounding and unintended other traits; no outward action is asserted."
+    },
+    {
+      "case_id": "perspective-diligence-low",
+      "scene_id": "perspective-diligence-low",
+      "target": "Mira",
+      "scene": "Mira has an unfinished obligation she can freely complete.",
+      "perspective": "I prefer to cut corners and leave this work unfinished.",
+      "expected": [
+        [
+          "diligence",
+          "low"
+        ]
+      ],
+      "expected_sources": {
+        "diligence": "perspective"
+      },
+      "review_note": "Authored expectation: review diagnostic preference, source grounding and unintended other traits; no outward action is asserted."
+    },
+    {
+      "case_id": "perspective-diligence-high",
+      "scene_id": "perspective-diligence-high",
+      "target": "Mira",
+      "scene": "Mira has an unfinished obligation she can freely complete.",
+      "perspective": "I want to plan the remaining work and fulfill my obligation thoroughly.",
+      "expected": [
+        [
+          "diligence",
+          "high"
+        ]
+      ],
+      "expected_sources": {
+        "diligence": "perspective"
+      },
+      "review_note": "Authored expectation: review diagnostic preference, source grounding and unintended other traits; no outward action is asserted."
+    },
+    {
+      "case_id": "perspective-curiosity-low",
+      "scene_id": "perspective-curiosity-low",
+      "target": "Mira",
+      "scene": "Mira encounters an unfamiliar puzzle during free time.",
+      "perspective": "I prefer familiar puzzles and have no interest in this unfamiliar idea.",
+      "expected": [
+        [
+          "curiosity",
+          "low"
+        ]
+      ],
+      "expected_sources": {
+        "curiosity": "perspective"
+      },
+      "review_note": "Authored expectation: review diagnostic preference, source grounding and unintended other traits; no outward action is asserted."
+    },
+    {
+      "case_id": "perspective-curiosity-high",
+      "scene_id": "perspective-curiosity-high",
+      "target": "Mira",
+      "scene": "Mira encounters an unfamiliar puzzle during free time.",
+      "perspective": "I want to explore this unfamiliar puzzle to understand its ideas.",
+      "expected": [
+        [
+          "curiosity",
+          "high"
+        ]
+      ],
+      "expected_sources": {
+        "curiosity": "perspective"
+      },
+      "review_note": "Authored expectation: review diagnostic preference, source grounding and unintended other traits; no outward action is asserted."
+    },
+    {
+      "case_id": "perspective-sharing-low",
+      "scene_id": "perspective-sharing-low",
+      "target": "Mira",
+      "scene": "Mira considers dividing jointly controlled rewards with Leon.",
+      "perspective": "I want the larger share because I prioritize my own allocation.",
+      "expected": [
+        [
+          "sharing",
+          "low"
+        ]
+      ],
+      "expected_sources": {
+        "sharing": "perspective"
+      },
+      "review_note": "Authored expectation: review diagnostic preference, source grounding and unintended other traits; no outward action is asserted."
+    },
+    {
+      "case_id": "perspective-sharing-high",
+      "scene_id": "perspective-sharing-high",
+      "target": "Mira",
+      "scene": "Mira considers dividing jointly controlled rewards with Leon.",
+      "perspective": "I prefer a fair division that benefits us both.",
+      "expected": [
+        [
+          "sharing",
+          "high"
+        ]
+      ],
+      "expected_sources": {
+        "sharing": "perspective"
+      },
+      "review_note": "Authored expectation: review diagnostic preference, source grounding and unintended other traits; no outward action is asserted."
+    },
+    {
+      "case_id": "perspective-restlessness-low",
+      "scene_id": "perspective-restlessness-low",
+      "target": "Mira",
+      "scene": "Mira considers keeping a traditional arrangement or freely changing it.",
+      "perspective": "I value the stability and tradition of the established arrangement.",
+      "expected": [
+        [
+          "restlessness",
+          "low"
+        ]
+      ],
+      "expected_sources": {
+        "restlessness": "perspective"
+      },
+      "review_note": "Authored expectation: review diagnostic preference, source grounding and unintended other traits; no outward action is asserted."
+    },
+    {
+      "case_id": "perspective-restlessness-high",
+      "scene_id": "perspective-restlessness-high",
+      "target": "Mira",
+      "scene": "Mira considers keeping a traditional arrangement or freely changing it.",
+      "perspective": "I value autonomy and change over the settled arrangement.",
+      "expected": [
+        [
+          "restlessness",
+          "high"
+        ]
+      ],
+      "expected_sources": {
+        "restlessness": "perspective"
+      },
+      "review_note": "Authored expectation: review diagnostic preference, source grounding and unintended other traits; no outward action is asserted."
+    },
+    {
+      "case_id": "canonical-agreement",
+      "scene_id": "canonical-agreement",
+      "target": "Mira",
+      "scene": "Mira chooses protection against uncertain supernatural danger.",
+      "perspective": "I prefer protection against that threat.",
+      "expected": [
+        [
+          "caution",
+          "high"
+        ]
+      ],
+      "expected_sources": {
+        "caution": "canonical"
+      },
+      "review_note": "Review source precedence and grounding; invented action and prior-portrait repetition are not evidence."
+    },
+    {
+      "case_id": "canonical-conflict",
+      "scene_id": "canonical-conflict",
+      "target": "Mira",
+      "scene": "Mira explicitly says the uncertain danger causes no worry and rejects offered reassurance.",
+      "perspective": "I prefer protection and reassurance.",
+      "expected": [
+        [
+          "caution",
+          "low"
+        ]
+      ],
+      "expected_sources": {
+        "caution": "canonical"
+      },
+      "review_note": "Review source precedence and grounding; invented action and prior-portrait repetition are not evidence."
+    },
+    {
+      "case_id": "invented-action",
+      "scene_id": "invented-action",
+      "target": "Mira",
+      "scene": "Mira hears Leon insult another guest; no response by Mira is recorded.",
+      "perspective": "I retaliated against Leon to make him pay.",
+      "expected": [],
+      "expected_sources": {},
+      "review_note": "Review source precedence and grounding; invented action and prior-portrait repetition are not evidence."
+    },
+    {
+      "case_id": "generic-feeling",
+      "scene_id": "generic-feeling",
+      "target": "Mira",
+      "scene": "Mira is briefly startled by a loud noise.",
+      "perspective": "I felt startled.",
+      "expected": [],
+      "expected_sources": {},
+      "review_note": "Review source precedence and grounding; invented action and prior-portrait repetition are not evidence."
+    },
+    {
+      "case_id": "prior-portrait-echo",
+      "scene_id": "prior-portrait-echo",
+      "target": "Mira",
+      "scene": "Mira silently observes the weather.",
+      "perspective": "My established personality description says I am generous.",
+      "expected": [],
+      "expected_sources": {},
+      "review_note": "Review source precedence and grounding; invented action and prior-portrait repetition are not evidence."
+    }
+  ]
+}

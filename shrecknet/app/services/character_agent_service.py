@@ -37,7 +37,7 @@ from app.schemas.character_agent import (
 )
 
 
-from app.schemas.character_traits import TraitProfile, TraitEvidence, DIRECTIONAL_TRAITS, TraitHistoryEstimate
+from app.schemas.character_traits import TraitProfile, TraitEvidence, DIRECTIONAL_TRAITS, TraitHistoryEstimate, SPEC_VERSION
 from app.services.character_trait_service import apply_manual_edits, POLICY_VERSION, trait_history_details, merge_evidence
 from app.services.character_trait_analysis import decision_personality_context
 from app.graphrag.embedding_service import EmbeddingService
@@ -1447,6 +1447,7 @@ class CharacterAgentService:
                         invalid = True
                     cursor += 1
                 value.trait_history = ({key: TraitHistoryEstimate(
+                    calculation_version=('recency-weighted-scenes-v2' if value.trait_profile.version == SPEC_VERSION else 'recency-points-v1'),
                     reason='Revision evidence is invalid; regeneration is required.')
                     for key in DIRECTIONAL_TRAITS} if invalid else
                     trait_history_details(value.trait_profile, ledger))

@@ -381,3 +381,16 @@ rather than as new `Event` nodes.
 `SemanticDocument` is not canonical world memory. It is a disposable, rebuildable V2 retrieval projection connected from an `EntityInstance`, `Scene`, or `Milestone` through `HAS_SEMANTIC_DOCUMENT`. Ontology vocabulary documents are ontology-scoped because their canonical definitions live in SQL.
 
 Canonical graph writes must never depend on semantic documents being present. See the V2 embedding reference for its properties, indexes, rendering rules, and lifecycle.
+
+### Character trait event provenance
+
+Scene properties `observation_group_id` (nullable nonblank string, maximum 255
+characters) and `independence_status` (`independent|unresolved`, default independent)
+provide reviewed event equivalence for CharacterAgent trait scoring. Give retellings
+of the same observation opportunity the same group ID within an ontology. Mark
+suspected duplicates unresolved until reviewed. `DERIVED_FROM` remains source
+provenance and does not establish event equivalence. These optional properties
+require no new node/relationship type or SQL migration. Edits to processed scene
+provenance require explicit CharacterAgent regeneration; accepted history is not
+rewritten. See [the trait contract](../../Agents/CharacterAgent/Dispositional%20Traits.md#independent-event-grouping)
+for exact-copy fallback, exclusions, snapshot ownership, and limits.

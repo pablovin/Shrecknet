@@ -20,7 +20,7 @@ def test_continuous_precision_preserves_integer_and_pole_symmetry(n):
     raw = directional_details('integrity', high)
     opposite = directional_details('integrity', low)
     profile, _ = update_profile(TraitProfile(), high)
-    assert raw.inferred_continuous_value == pytest.approx(5 + 4 * n / (n + 4))
+    assert raw.inferred_continuous_value == pytest.approx(5 + 4 * (2*n) / (2*n + 4))
     assert raw.inferred_continuous_value + opposite.inferred_continuous_value == pytest.approx(10)
     assert profile.estimate('integrity').point == _rounded(raw.inferred_continuous_value)
     assert raw.high_count == n and raw.low_count == 0
@@ -29,7 +29,7 @@ def test_continuous_precision_preserves_integer_and_pole_symmetry(n):
 
 
 def test_plateaus_unknowns_rounding_and_overrides_remain_distinct():
-    seven, twentyseven = evidence((1,) * 7), evidence((1,) * 27)
+    seven, twentyseven = evidence((1,) * 7), evidence((1,) * 10)
     first, _ = update_profile(TraitProfile(), seven)
     later, _ = update_profile(TraitProfile(), twentyseven)
     assert first.estimate('integrity').point == later.estimate('integrity').point == 8
@@ -40,7 +40,7 @@ def test_plateaus_unknowns_rounding_and_overrides_remain_distinct():
     details = trait_history_details(manual, twentyseven)['integrity']
     assert manual.estimate('integrity').point == 2
     assert details.inferred_continuous_value > 8
-    assert details.high_count == 27
+    assert details.high_count == 10
     assert trait_history_details(TraitProfile(), [])['integrity'].high_count == 0
 
 
@@ -54,13 +54,13 @@ def test_snapshot_selection_excludes_later_evidence_and_detects_missing_ledger()
     assert missing.availability == 'unavailable' and missing.inferred_continuous_value is None
     assert missing.high_count is None
     ambiguous = trait_history_details(profile, first + [first[0]])['integrity']
-    assert ambiguous.availability == 'unavailable'
+    assert ambiguous.availability == 'available'  # identical replay is idempotent
 
 
 def test_synthesis_examples_are_bounded_diverse_contrasting_and_deterministic():
     items = evidence((1, -1, 1, 1, 1, 1, 1, 1))
     items[1].justification = 'Recorded retaliation. ' * 1000
-    items[2].situation_type = 'self_serving_deception:other:ordinary'
+    items[2].source = 'perspective'
     profile, _ = update_profile(TraitProfile(), items)
     traits = synthesis_traits(profile, items)
     integrity = next(trait for trait in traits if trait['name'] == 'integrity')
@@ -83,6 +83,7 @@ def test_synthesis_steadiness_reproduces_comparable_context_without_directional_
     context = synthesis_steadiness(profile, items)
     assert context == {
         'value': profile.steadiness.point, 'status': 'provisional',
+        'calculation_version': 'cross-scene-steadiness-v2',
         'observation_count': len(items), 'availability': 'available',
         'reason': None, 'inferred_value': profile.steadiness.point,
     }
@@ -92,7 +93,7 @@ def test_synthesis_steadiness_reproduces_comparable_context_without_directional_
 
 def test_synthesis_steadiness_unknown_and_manual_without_behavior_remain_unavailable():
     unknown = synthesis_steadiness(TraitProfile(), [])
-    assert unknown['value'] is None and unknown['status'] == 'unknown'
+    assert unknown['value'] == 5 and unknown['status'] == 'baseline'
     assert unknown['availability'] == 'unavailable' and unknown['inferred_value'] is None
     profile = apply_manual_edits(TraitProfile(), {'steadiness': TraitEdit(point=9, reason='Author choice')})
     manual = synthesis_steadiness(profile, [])
@@ -108,15 +109,15 @@ def test_synthesis_steadiness_manual_preserves_conflicting_inference_and_snapsho
     manual = apply_manual_edits(profile, {'steadiness': TraitEdit(point=1, reason='Author choice')})
     future = evidence((1, -1, 1), trait='forbearance', offset=6)
     context = synthesis_steadiness(manual, items + future)
-    assert context['value'] == 1 and context['inferred_value'] == 7
+    assert context['value'] == 1 and context['inferred_value'] == 4
     assert context['status'] == 'manual' and context['availability'] == 'available'
     assert context['observation_count'] == 6
-    assert synthesis_steadiness(profile, items)['status'] == 'supported'
+    assert synthesis_steadiness(profile, items)['status'] == 'provisional'
     assert synthesis_steadiness(manual, items[:-1])['reason'] == 'Contributing evidence is missing.'
-    assert synthesis_steadiness(manual, items + [first[0]])['reason'] == 'Contributing evidence is ambiguous.'
+    assert synthesis_steadiness(manual, items + [first[0]]) == context
     altered = [item.model_copy(deep=True) for item in items]
     altered[0].situation_type = 'unspecified'
-    assert synthesis_steadiness(manual, altered)['reason'] == 'Evidence does not reproduce the recorded consistency estimate.'
+    assert synthesis_steadiness(manual, altered) == context  # contexts no longer affect inference
 
 
 def test_synthesis_steadiness_reproduces_multi_trait_windows_and_deduplicated_perspectives():
@@ -210,9 +211,11 @@ async def test_paginated_revision_read_uses_prior_ledger_without_future_leakage(
 
 def test_prompt_contracts_explain_gates_poles_and_continuity():
     from app.jobs.character_agent.embody_agent_prompts import IDENTITY_DESCRIPTION_PROMPT, TRAIT_INTERPRETATION_PROMPT
-    assert all(gate in TRAIT_INTERPRETATION_PROMPT for gate in ('Whose behavior?', 'What does it reveal?', 'Which direction?'))
-    assert 'Participation alone does' in TRAIT_INTERPRETATION_PROMPT
-    assert 'Both poles are equally admissible' in TRAIT_INTERPRETATION_PROMPT
+    assert 'Evaluate all eight traits independently' in TRAIT_INTERPRETATION_PROMPT
+    assert 'Prefer canonical evidence' in TRAIT_INTERPRETATION_PROMPT
+    assert 'perspective:' in TRAIT_INTERPRETATION_PROMPT
+    assert 'Steadiness' not in TRAIT_INTERPRETATION_PROMPT
+    assert 2500 <= len(TRAIT_INTERPRETATION_PROMPT) <= 4000
     assert '1–2 strong low-pole' in IDENTITY_DESCRIPTION_PROMPT
     assert '8–9 strong' in IDENTITY_DESCRIPTION_PROMPT
     assert 'continuity context only, never new evidence' in IDENTITY_DESCRIPTION_PROMPT
@@ -274,7 +277,8 @@ async def test_identity_initialization_accepts_empty_evidence_without_invented_c
     assert all(trait['value'] is None and trait['evidence_examples'] == []
                and trait['observation_count'] == 0 for trait in payload['traits'])
     assert payload['previous_identity_description']['description'] is None
-    assert payload['steadiness']['value'] is None
+    assert payload['steadiness']['value'] == 5
+    assert payload['steadiness']['status'] == 'baseline'
     assert payload['steadiness']['availability'] == 'unavailable'
 
 
@@ -312,3 +316,78 @@ async def test_invalid_legacy_ledger_keeps_snapshots_readable_with_unavailable_i
     row = (await CharacterAgentService(None, Graph()).list_identity_revisions('a', 0, 100))[0]
     assert row.trait_profile.estimate('integrity').point is None
     assert all(detail.availability == 'unavailable' for detail in row.trait_history.values())
+
+
+def test_source_aware_evaluation_reports_wrong_source():
+    from app.services.character_trait_evaluation import score_cases
+    fixture = json.loads((Path(__file__).parent / 'fixtures/trait_weighted_sources.json').read_text())
+    outputs = [{'case_id': case['case_id'], 'observations': [
+        {'trait': trait, 'polarity': pole, 'source': case['expected_sources'][trait],
+         'justification': 'Authored fixture contract, not live output.'}
+        for trait, pole in case['expected']]} for case in fixture['cases']]
+    report = score_cases(fixture['cases'], outputs)
+    assert report['passed_cases'] == 21 and report['source_error_count'] == 0
+    outputs[0]['observations'][0]['source'] = 'canonical'
+    report = score_cases(fixture['cases'], outputs)
+    assert report['passed_cases'] == 20 and report['source_error_count'] == 1
+
+
+def test_snapshot_group_mapping_reproduces_retained_legacy_evidence():
+    from app.services.character_trait_service import steadiness_estimate
+    original = evidence((1, 1, 1, 1), trait='caution')
+    resolved = [item.model_copy(update={'observation_group_id': 'same' if i < 2 else f'event-{i}'})
+                for i, item in enumerate(original)]
+    profile, _ = update_profile(TraitProfile(), resolved)
+    assert profile.estimate('caution').observation_count == 3
+    assert trait_history_details(profile, original)['caution'].availability == 'available'
+    assert synthesis_steadiness(profile, original)['inferred_value'] == steadiness_estimate(resolved).point
+    assert all(item.observation_group_id is None for item in original)
+    assert synthesis_steadiness(profile, original[:-1])['availability'] == 'unavailable'
+
+
+def test_representative_retelling_preserves_original_event_recency_in_history():
+    original = evidence((1, -1, 1))
+    original[0].source = 'perspective'
+    original[0].observation_group_id = original[2].observation_group_id = 'retold-event'
+    profile, _ = update_profile(TraitProfile(), original)
+    details = trait_history_details(profile, original)['integrity']
+    from app.services.character_trait_service import directional_details
+    assert details.availability == 'available'
+    assert details.inferred_continuous_value == directional_details('integrity', original).inferred_continuous_value
+
+
+def test_mixed_retellings_and_windows_reproduce_revision_snapshots():
+    """History and synthesis must reconstruct every estimate, including event anchors."""
+    import random
+    from app.schemas.character_traits import TraitObservation
+    from app.services.character_trait_service import ground_observations
+    rng = random.Random(17)
+    for _ in range(24):
+        scene_ids = [f'scene-{i}' for i in range(40)]
+        perspective_ids = [f'perspective-{i}' for i in range(40)]
+        observations = []
+        for i, (scene, perspective) in enumerate(zip(scene_ids, perspective_ids)):
+            event = f'event-{rng.randrange(24)}'
+            for trait in ('caution', 'integrity', 'presence'):
+                if rng.random() < .75:
+                    observations.append(TraitObservation(trait=trait,
+                        polarity=rng.choice(('high', 'low')), source=rng.choice(('canonical', 'perspective')),
+                        observation_group_id=event, perspective_id=perspective,
+                        evidence_ids=[f'scene:{scene}'], justification='Frozen synthetic event evidence.'))
+        ledger = ground_observations(observations, scene_ids=scene_ids,
+            perspective_ids=perspective_ids, source_group_id='source')
+        profile, _ = update_profile(TraitProfile(), ledger)
+        assert all(detail.availability == 'available' for detail in trait_history_details(profile, ledger).values())
+        consistency = synthesis_steadiness(profile, ledger)
+        assert consistency['availability'] == ('unavailable' if profile.steadiness.status == 'baseline' else 'available')
+
+
+def test_event_recency_anchor_can_come_from_another_trait():
+    from app.services.character_trait_service import directional_details
+    ledger = evidence((1,), trait='presence') + evidence((-1, 1), trait='caution', offset=1)
+    ledger[0].observation_group_id = ledger[2].observation_group_id = 'original-event'
+    profile, _ = update_profile(TraitProfile(), ledger)
+    assert profile.observation_group_positions['original-event'] == 0
+    history = trait_history_details(profile, ledger)['caution']
+    assert history.availability == 'available'
+    assert history.inferred_continuous_value == directional_details('caution', ledger).inferred_continuous_value

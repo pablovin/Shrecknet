@@ -434,6 +434,8 @@ async def _generate(*, draft_id: str, revision: int, job_id: int) -> dict:
                 all_scene_inputs.append(SceneInput(
                     scene_id=s["scene_id"], name=s["name"],
                     description=s["description"], created_at=s["created_at"],
+                    observation_group_id=s.get("observation_group_id"),
+                    independence_status=s.get("independence_status") or "independent",
                 ))
 
         # Checkpoints are draft-local and only reused when all scene inputs,

@@ -93,3 +93,31 @@ async def test_sdk_metadata_and_evidence_paths():
     assert client.calls[0][1]=='/character-agents/trait-definitions'
     assert client.calls[1][1]=='/character-agents/a1/trait-evidence'
     assert client.calls[1][2]['params']['revision']==3
+
+
+def test_sdk_reads_weighted_and_legacy_profiles_with_baseline():
+    import pytest
+    from pydantic import ValidationError
+    from shrecknet_client.character_traits import TraitProfile, TraitEvidence
+    keys = ('integrity', 'caution', 'presence', 'forbearance', 'diligence', 'curiosity', 'sharing', 'restlessness')
+    profile = dict(version='dispositions-v4-weighted-scenes',
+        dispositional_traits={key: dict(point=None, status='unknown', observation_count=0) for key in keys},
+        steadiness=dict(point=5, status='baseline', observation_count=0),
+        observation_groups={'p': 'reviewed-event'}, unresolved_observation_ids=[])
+    parsed = TraitProfile.model_validate(profile)
+    assert parsed.steadiness.status == 'baseline'
+    assert parsed.observation_groups == {'p': 'reviewed-event'}
+    legacy = {**profile, 'version': 'dispositions-v3-points-perspectives',
+              'steadiness': dict(point=None, status='unknown', observation_count=0)}
+    assert TraitProfile.model_validate(legacy).steadiness.point is None
+    profile['dispositional_traits']['caution'] = dict(point=5, status='baseline', observation_count=0)
+    with pytest.raises(ValidationError):
+        TraitProfile.model_validate(profile)
+    item = TraitEvidence(id='t', trait='caution', evidence_kind='behavior', situation_type='unspecified',
+        polarity='high', justification='A preference.', perspective_id='p', evidence_ids=['scene:s'],
+        source_group_id='source', chronological_position=0, policy_version='point-evidence-v2-weighted-scenes',
+        source='perspective', observation_group_id='event', independence_status='independent')
+    assert item.source == 'perspective' and item.observation_group_id == 'event'
+    missing_source = item.model_dump(exclude={'source'})
+    with pytest.raises(ValidationError, match='explicit source'):
+        TraitEvidence.model_validate(missing_source)

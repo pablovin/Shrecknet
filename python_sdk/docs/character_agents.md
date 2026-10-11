@@ -50,7 +50,7 @@ queued = await sdk.character_agents.query(
 
 New embodiment summaries connect supported circumstances, motives, and likely
 behavior while preserving the same three identity fields. Steadiness is an internal
-synthesis input that may qualify consistency in comparable situations; it is not a
+synthesis input that may qualify consistency across independent scenes; it is not a
 ninth narrative trait or a separate query input. Unknown estimates produce no
 consistency claim. Existing descriptions are retained until an explicit embodiment
 refresh. See the [canonical synthesis contract](../../Documentation/Agents/CharacterAgent/CharacterAgent.md#chronological-identity-revisions)
@@ -281,11 +281,11 @@ Emotions and beliefs remain linked to their originating perspective; beliefs
 are historical snapshots without lifecycle status. The server applies the draft's generated profile during
 creation; submit only changed point selections in `trait_edits`, with reasons.
 Evidence continues accumulating beneath a manual override. STEADINESS is inferred
-separately from repeated comparable behavior and never controls query temperature.
+separately from independent repeated within-trait observations and never controls query temperature.
 
-This is a breaking contract requiring trait evidence and profiles to be
-regenerated from source material with matching backend/worker/SDK versions.
-Old z-format trait data is not accepted by the point-based runtime. Starting
+Old z-format trait data requires regeneration with matching backend/worker/SDK
+versions. Existing v3 point profiles remain readable without regeneration; v4
+adoption occurs on a new deterministic source update. Starting
 a draft for an already embodied entity replaces its existing identity. See the
 [canonical personality documentation](../../Documentation/Agents/CharacterAgent/Dispositional%20Traits.md)
 and [runnable lifecycle example](../examples/10_character_agent/01_dispositional_lifecycle.py).
@@ -306,3 +306,18 @@ fields, availability/reason, and calculation version. Older responses default to
 an empty map. These read-only values do not alter effective profile integers or
 manual overrides. Unknown estimates are null; unavailable evidence must not become
 a midpoint. See [continuous history and diagnostics](../../Documentation/Agents/CharacterAgent/Dispositional%20Traits.md#continuous-revision-history).
+
+### Weighted evidence and baseline Steadiness
+
+New profiles use `dispositions-v4-weighted-scenes`; v3 profiles remain readable.
+Canonical evidence has weight 2, scene-anchored perspective evidence weight 1,
+with one strongest observation per event and trait. New Steadiness measures
+observed cross-scene dispositional consistency and starts at point 5 with status
+`baseline`, zero observations, and unavailable inference. Baseline is a neutral
+computational prior, distinct from an inferred 5. Repeated observations produce
+provisional/supported estimates; manual overrides preserve underlying inference.
+Cross-scene consistency cannot distinguish unstable dispositions from stable
+context-sensitive behavior. Event groups prevent reviewed duplicate retellings
+from increasing support. See the canonical
+[trait contract](../../Documentation/Agents/CharacterAgent/Dispositional%20Traits.md)
+for formulas, thresholds, provenance, and rollout.

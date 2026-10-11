@@ -167,3 +167,17 @@ No description.
 ### `delete_impact(self, character_agent_id, perspective_id, impact_id)`
 
 No description.
+
+## Weighted profile compatibility
+
+The SDK reads both `dispositions-v3-points-perspectives` and
+`dispositions-v4-weighted-scenes`. New profile grouping fields are
+`observation_groups` and `unresolved_observation_ids`. Evidence adds `source`,
+`observation_group_id`, and `independence_status`; old evidence defaults to canonical.
+Only Steadiness permits `baseline`: point 5, zero observations, and no inferred
+consistency claim. Upgrade strict clients before deploying new responses.
+See [the canonical trait contract](../../../Documentation/Agents/CharacterAgent/Dispositional%20Traits.md).
+
+`observation_group_positions` snapshots the earliest recorded event-group position
+across traits, preserving event recency when a stronger retelling becomes the
+representative or historical reads select only contributing perspectives.

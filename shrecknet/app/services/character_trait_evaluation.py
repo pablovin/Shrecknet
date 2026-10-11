@@ -25,6 +25,10 @@ def score_cases(cases: list[dict], outputs: list[dict]) -> dict:
         expected = {tuple(pair) for pair in case['expected']}
         allowed = {tuple(pair) for pair in case.get('allowed', case['expected'])}
         actual = {(item['trait'], item['polarity']) for item in observations}
+        expected_sources = case.get('expected_sources', {})
+        source_errors = [item['trait'] for item in observations
+                         if item['trait'] in expected_sources
+                         and item.get('source') != expected_sources[item['trait']]]
         matched, unsupported, missed = actual & expected, actual - allowed, expected - actual
         tp, fp, fn = tp + len(matched), fp + len(unsupported), fn + len(missed)
         for pole, counts in by_pole.items():
@@ -33,13 +37,15 @@ def score_cases(cases: list[dict], outputs: list[dict]) -> dict:
                 counts[name] += sum(direction == pole for _, direction in pairs)
         results.append({
             'case_id': case['case_id'], 'target': case['target'],
-            'passed': not unsupported and not missed and len(observations) <= len(DIRECTIONAL_TRAITS)
+            'source_errors': source_errors,
+            'passed': not unsupported and not missed and not source_errors and len(observations) <= len(DIRECTIONAL_TRAITS)
                 and len({item['trait'] for item in observations}) == len(observations),
             'unsupported': sorted(unsupported), 'missed': sorted(missed),
             'observations': observations, 'review_note': case['review_note'],
         })
     return {'report_version': 1, 'case_count': len(cases),
             'passed_cases': sum(row['passed'] for row in results),
+            'source_error_count': sum(len(row['source_errors']) for row in results),
             'matched_required': tp, 'unsupported_candidates': fp, 'missed_required': fn,
             'counts_by_pole': by_pole,
             'scenes_without_observations': sum(not row['observations'] for row in results),
@@ -92,7 +98,7 @@ async def replay_cases(cases: list[dict], prompt_file: Path | None = None) -> tu
     return output, {'prompt_version': PROMPT_VERSION if not prompt_file else 'custom-baseline',
                     'prompt_sha256': hashlib.sha256(prompt.encode()).hexdigest(),
                     'model': settings.model_character_agent_psychological_interpretation.model_dump(mode='json'),
-                    'llm_calls': calls, 'total_tokens_est': tokens}
+                    'llm_calls': calls, 'total_tokens_est': tokens, 'fixed_prompt_characters': len(prompt)}
 
 
 def main() -> None:

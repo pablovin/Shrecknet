@@ -66,8 +66,8 @@ from app.schemas.character_agent import (
 
 
 from app.schemas.character_traits import TraitProfile, TraitEvidence, DIRECTIONAL_TRAITS
-from app.jobs.character_agent.trait_evidence_contract import trait_context_values
 from app.services.character_trait_service import (
+    scene_observation_group,
     ground_observations, merge_evidence, update_profile, validate_scene_grounding, scene_digest,
 )
 
@@ -180,23 +180,15 @@ class _ProfileEventLLMOutput(BaseModel):
 
 
 class _TraitCandidateLLMOutput(BaseModel):
-    """Only model-owned evidence fields; each trait specializes the context enum."""
+    """Compact model-owned evidence; provenance and weights belong to the backend."""
 
     model_config = ConfigDict(extra="forbid")
     polarity: Literal["low", "high"]
-    context: str
-    justification: str = Field(min_length=1, max_length=360, pattern=r"\S")
+    source: Literal["canonical", "perspective"]
+    reason: str = Field(min_length=1, max_length=360, pattern=r"\S")
 
 
-_TRAIT_SLOT_MODELS = {
-    key: create_model(
-        f"_{key.title()}ObservationLLMOutput",
-        __base__=_TraitCandidateLLMOutput,
-        context=(Literal[trait_context_values(key)], ...),
-    )
-    for key in DIRECTIONAL_TRAITS
-}
-
+_TRAIT_SLOT_MODELS = {key: _TraitCandidateLLMOutput for key in DIRECTIONAL_TRAITS}
 
 class _SceneEnrichmentLLMOutput(BaseModel):
     """Bounded psychological-analysis content without persistence references."""
@@ -774,8 +766,9 @@ class EmbodyAgent:
                 value = {
                     "trait": trait,
                     "polarity": candidate.polarity,
-                    "situation_type": candidate.context,
-                    "justification": candidate.justification,
+                    "source": candidate.source,
+                    "situation_type": "unspecified",
+                    "justification": candidate.reason,
                 }
                 value.update(evidence_kind="behavior", perspective_id=perspective.id,
                              evidence_ids=[f"scene:{scene_id}"])
@@ -898,6 +891,11 @@ class EmbodyAgent:
         # The two second-wave branches already contain all source-local evidence.
         # Construct observations in the backend so no additional reconstruction
         # call can reintroduce raw scenes or an accumulated evidence history.
+        # Bind event equivalence from backend inputs, never from model output.
+        for scene, candidates in zip(scenes, trait_candidates, strict=True):
+            for candidate in candidates:
+                candidate['observation_group_id'] = scene_observation_group(scene.model_dump())
+                candidate['independence_status'] = scene.independence_status
         observations = EmbodimentObservationsOutput(
             trait_evidence=[
                 candidate

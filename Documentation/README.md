@@ -4,6 +4,9 @@ Welcome to the Shrecknet documentation! This directory contains all organized do
 
 ## CharacterAgent
 
+- [Weighted trait evidence embodiment plan](./Agents/CharacterAgent/Weighted%20Trait%20Evidence%20Embodiment%20Plan.md) — implementation record for compact Stage 3, weighted scoring, baseline/evolving cross-scene Steadiness, and event deduplication; live evaluation and pilot remain pending
+- [Experiential trait evidence plan](./Agents/CharacterAgent/Experiential%20Trait%20Evidence%20Plan.md) — proposed Stage 3 experiment with separate provisional psychological support, unchanged scoring, and evaluation gates
+
 - [CharacterAgent](./Agents/CharacterAgent/CharacterAgent.md)
 - [CharacterAgent Decision Making](./Agents/CharacterAgent/Query/Query.md)
 - [CharacterAgent endpoints](./Agents/CharacterAgent/CharacterAgent%20-%20Endpoints.md)

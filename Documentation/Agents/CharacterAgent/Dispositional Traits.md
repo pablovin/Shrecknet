@@ -1,10 +1,9 @@
 # CharacterAgent dispositional traits
 
-CharacterAgent uses eight directional personality points and a separate
-STEADINESS point. The runtime contract is `app/schemas/character_traits.py`;
-`GET /character-agents/trait-definitions` supplies names, poles, construct
-boundaries, diagnostic situations, and the 1–9 scale. These are narrative
-engineering estimates, not population-calibrated personality measurements.
+CharacterAgent uses eight directional personality points and separate STEADINESS.
+The authoritative contracts live in `app/schemas/character_traits.py` and the
+reducers in `app/services/character_trait_service.py`. These are narrative
+engineering estimates, not calibrated psychological measurements.
 
 ## Constructs
 
@@ -20,387 +19,272 @@ engineering estimates, not population-calibrated personality measurements.
 | CURIOSITY | Openness — HEXACO | Goes and looks at the strange thing. | Prefers familiar routes and finds unfamiliar or unconventional things off-putting. | Investigates, seeks information, explores unfamiliar phenomena, and enjoys unconventional ideas. | novelty, exploration, puzzle, unknown_information | Not intelligence or successful understanding. Known fatal danger confounds avoidance. One investigation does not establish restlessness or low caution. |
 | SHARING | Social Value Orientation — SVO | When jointly controlled resources are divided, moves the allocation toward the other party, including costless giving. | Keeps the larger share, maximizes own allocation, or values being ahead. | Divides evenly or in the other party's favor; may maximize joint benefit. | resource_allocation, spoils, rewards | Giving/allocating, not refraining from exploitation. Do not automatically infer integrity. |
 | RESTLESSNESS | Openness-to-Change vs Conservation — Schwartz values | Values the new and self-chosen over the settled, traditional, and safe. | Values security, order, tradition, conformity, and stability. | Values novelty, autonomy, stimulation, self-direction, and change for its own sake. | value_conflict, recurring_value_preference | A motivational value orientation, not simple exploration. Requires explicit value choices or recurring motivated preferences. |
-| STEADINESS | Behavioural consistency / spread of the behavioural distribution | Behaves similarly when genuinely comparable circumstances recur. | Broader variation around the same dispositional centres. | Narrower variation; dispositions predict behavior more tightly in comparable situations. | Repeated comparable behavior only | A second moment, not a situation predictor, morality, calmness, or model temperature. Requires repeated comparable behavior. |
+| STEADINESS | Behavioural consistency / spread of the behavioural distribution | Expresses the same personality dispositions consistently across independent scenes. | Broader variation around the same dispositional centres. | Narrower variation; dispositions express the same direction across independent scenes. | Repeated independent scenes | Observed cross-scene consistency cannot distinguish unstable dispositions from stable context-sensitive behavior. Baseline 5 is a computational prior, not observed consistency. |
 
 <!-- END GENERATED TRAIT DEFINITIONS -->
 
 ## Profile and graph representation
 
-`CharacterAgent.trait_profile` and each `CharacterIdentityRevision.trait_profile`
-store versioned JSON with `dispositional_traits` and separate `steadiness`.
-Every estimate contains only `point` (strict integer 1–9 or null), `status`
-(`unknown|provisional|supported|manual`), `observation_count`, and
-`observation_ids`. Unknown means null, never an implicit point 5. Point 5 with
-opposing evidence means a mixed or context-dependent record; binary observations
-cannot prove an inherently average disposition. The eight directional slots are
-always present. `inferred_traits` and `overrides` preserve the underlying estimate
-when an administrator sets a manual point. Clearing an override restores the
-current inference; actor and reason are recorded in `CharacterIdentityChange`.
+New profiles use `dispositions-v4-weighted-scenes`; existing
+`dispositions-v3-points-perspectives` snapshots remain readable. Every profile
+contains eight `dispositional_traits`, separate `steadiness`, `inferred_traits`,
+and audited `overrides`. Estimates contain `point` (integer 1–9 or null), `status`,
+`observation_count`, and `observation_ids`. Directional statuses are
+`unknown|provisional|supported|manual`; unknown requires null. Steadiness also
+supports `baseline`, requiring point 5 and zero observations. Baseline is a
+computational prior, distinct from an inferred 5 with mixed observations.
 
-Every `observation_id` is an owned `ScenePerspective.id`, never `Scene.id` or a
-trait-evidence record ID. `observation_count` equals the number of distinct IDs
-used in that estimate. `ScenePerspective-[:PROJECTS_ON]->Scene` retains canonical
-scene provenance. `CharacterIdentityRevision.trait_evidence` stores compact
-observations; `CharacterIdentityChange` records profile transitions. The backend
-preassigns perspective IDs in the draft before aggregation and writes the same
-IDs on acceptance. Revision entries hold their assigned revision ID. A referenced
-perspective cannot be deleted without regenerating the derived trait history.
-The active policy is `point-evidence-v1`. Revision evidence must cite a
-`ScenePerspective.id` created in its source batch and that perspective's
-canonical scene; the backend rejects mismatched or duplicate references before
-writing the timeline. Old z-formatted payloads and profiles
-are rejected by the new runtime schema.
+Observation IDs remain owned `ScenePerspective.id` references. After event grouping,
+one representative perspective identifies each contributing independent opportunity;
+a group supporting several traits counts once for Steadiness. Raw ledger records
+retain every scene/perspective reference. `observation_groups` maps perspective IDs
+to event groups in the profile; `unresolved_observation_ids` snapshots exclusions.
+`observation_group_positions` snapshots the earliest recorded position across
+traits, so stronger retellings retain event recency in historical reads.
+These preserve grouping when new revisions use retained legacy evidence, without
+rewriting earlier ledger rows. Old snapshots ignore these new mapping defaults.
+
+`CharacterIdentityRevision.trait_evidence` stores revision-owned JSON. New records
+use `point-evidence-v2-weighted-scenes`, with `source` (`canonical|perspective`),
+`observation_group_id`, `independence_status` (`independent|unresolved`), existing
+`justification`, provenance, and `situation_type: unspecified`. Legacy records
+remain readable, defaulting source to canonical under the new reducer because the
+old admission policy was canonical-only. `authored_disposition` remains unscored.
+
+The backend validates source-batch perspective ownership and the perspective's
+canonical scene before timeline writes. Raw evidence is administrator-only;
+existing visibility and ontology isolation apply. Referenced perspectives cannot
+be deleted without regeneration. Old z-formatted profiles remain invalid.
 
 ## Extraction and evidence
 
-Traits answer **How does this character tend to behave?** Admit evidence of a
-behavioral tendency through the existing construct definitions. A temporary
-reaction or isolated outcome is insufficient by itself; a diagnostic voluntary
-choice can supply evidence without establishing a settled trait. Identity facts
-and established capabilities alone do not establish trait observations. This
-admission wording does not change the constructs, scales, or reducers. For the
-boundaries with aspects and goals, see the [CharacterAgent profile admission
-contract](CharacterAgent.md#evidence-grounded-embodiment).
+Stage 1 produces grounded subjective perspectives. Stage 2 psychology and Stage 3
+trait extraction then run in parallel for each chunk; source consolidation follows
+all chunks. The worker retains the existing model roles, chunking, retry budget,
+source revision boundaries, and one normal Stage 3 call per chunk. Final identity
+synthesis uses scored evidence and accepted psychology; it never extracts points.
 
-```mermaid
-flowchart TD
-    A[Persistent identity_description] --> B[Stage 0: load or generate narrative grounding]
-    C[Canonical scene] --> D[Stage 1: grounded subjective perspective]
-    C --> F[Stage 3: categorical trait interpretation]
-    D --> E[Backend scene binding and perspective ID]
-    T[Authoritative trait meanings] --> F
-    E --> G[Stage 2: psychological enrichment]
-    E --> F
-    F --> H[Backend validates, binds and deduplicates trait evidence]
-    H --> I
-    I --> J[Directional and STEADINESS reducers]
-    J --> K[Point profile and audited changes]
-```
+Stage 3 receives `target.alias`, context-only `identity_summary` and
+`psychological_summary`, and ordered scenes with `position`, canonical
+`scene.name`/`scene.description`, and validated `agent_scene_interpretation`
+(`source_type`, `perspective`). It receives no prior `personality_traits`.
 
-`identity_description` contains narrative summaries and trait descriptions,
-without points or polarity. It is loaded once per embodiment job, or generated
-from the entity and current profile if absent, and supplied to perspective and
-psychological stages. Stage 3 receives `identity_summary` and
-`psychological_summary` as context, but not `personality_traits`. Trait
-observations must be grounded in canonical scenes, using the authoritative
-`IDENTITY_TRAIT_DESCRIPTION_CONTRACT` meanings. After all
-scenes are processed, the identity description is refreshed once from the final
-current state. It never contributes authored trait evidence to the numerical
-profile.
-
-Stage 1 binds one subjective perspective to each canonical scene. The backend
-validates scene order and evidence references, then assigns the perspective ID.
-Stage 2 handles emotions, beliefs, aspects, and goals in parallel with Stage 3.
-Each source is one revision boundary. Its scenes are analyzed in chunks of at
-most five, using one shared source-start identity. All perspective chunks finish
-before psychological enrichment and trait interpretation run in parallel for
-each chunk. The backend merges chunk results in scene order and performs one
-deterministic source update. A source with `n` chunks normally makes `3n` LLM
-calls. Identity-description generation adds a call if the field is absent and
-one refresh call per embodiment job; repairs and provider retries
-may add calls.
-Stage 3 sees each canonical scene and its validated Stage 1 `source_type` and
-`perspective`, plus the two narrative summaries as context and the authoritative
-trait meanings. The canonical scene establishes what happened, the character's
-actions and words, circumstances, and available alternatives. The perspective
-helps interpret the character's knowledge, motives, beliefs, and perceived options;
-its subjective claims do not establish canonical behavior. A candidate needs
-scene-supported behavior or an explicitly expressed value from this character.
-If perspective and scene conflict, canonical facts govern what happened; omit
-the candidate if the trait signal cannot be grounded. Mere witnessing or hearing
-about another person's behavior does not make it the character's behavior. Stage 3
-receives no prior `personality_traits`, and summaries cannot establish trait evidence.
-Each internal model-facing scene result has exactly the eight required directional
-trait keys. Each slot is null or an object containing exactly `polarity`, `context`,
-and a nonblank `justification` of at most 360 characters. All eight dimensions are
-considered; zero through eight observations may be emitted, with no three-trait cap.
-Null means no supported observation, not missing comparison metadata.
-
-`context` is one trait-specific enum generated by `trait_context_values` from
-`TRAIT_BY_KEY[trait].diagnostic_situations`, `friend|enemy|other`, and
-`ordinary|high_stakes`, plus `unspecified`. Both the provider JSON Schema and Python
-validate the same complete values. There are no independently nullable context
-fields or cross-field completeness rule. The backend maps `context` directly to
-persisted `situation_type`, then supplies the trait from its slot key, `perspective_id`,
-evidence ID, source/revision ownership, chronological position, and policy version.
-Existing persistence, API, SDK, directional scoring, and STEADINESS formats remain
-unchanged. Specified contexts can continue accumulating STEADINESS evidence;
-`unspecified` contributes only to the directional estimate. Select it whenever any
-comparison detail cannot be grounded, without discarding an otherwise diagnostic action.
-
-For example, a scene result may contain:
+Each scene returns all eight nullable trait slots. A non-null slot contains exactly
+`polarity: low|high`, `source: canonical|perspective`, and nonblank `reason` of at
+most 360 characters. The wrapper is `scene_trait_interpretations`, with exactly one
+result per input scene in the same order. For example:
 
 ```json
-{
-  "integrity": null,
-  "caution": {"polarity": "low", "context": "uncertain_threat:other:high_stakes",
-              "justification": "Voluntarily declines offered protection and explicitly dismisses concern about the danger."},
-  "presence": null,
-  "forbearance": null,
-  "diligence": null,
-  "curiosity": null,
-  "sharing": null,
-  "restlessness": null
-}
+{"scene_trait_interpretations":[{
+  "integrity":null,
+  "caution":{"polarity":"high","source":"perspective",
+             "reason":"Johnny prefers protection against the rite's influence."},
+  "presence":null,"forbearance":null,"diligence":null,"curiosity":null,
+  "sharing":null,"restlessness":null
+}]}
 ```
 
-The complete model response wraps ordered results in `scene_trait_interpretations`.
-The LLM never supplies points, confidence, identifiers, or a STEADINESS observation.
-`TRAIT_DEFINITION_CONTRACT` includes definitions, both poles, and `boundary_notes`
-from the authoritative registry. `TRAIT_EVIDENCE_CONTRACT` specifies the full output
-and admission rules. One diagnostic voluntary action or explicit value statement
-can supply an observation without establishing a settled trait. An alternative
-need not be explicitly narrated; the model must not invent alternatives, motives,
-or freedom from constraints. Known compulsion, immediate necessity, impossible
-obligations, and ambiguous attribution can make actions non-diagnostic. Temporary
-feelings or outcomes alone are insufficient, while a diagnostic response in one
-scene can count without proving an enduring tendency.
+Canonical means directly documented diagnostic behavior or explicit words by this
+character, weight 2. Perspective means a character-specific scene-anchored
+preference, motivation, or tendency in the supplied subjective interpretation,
+weight 1. The backend assigns weights and maps `reason` to ledger `justification`.
+These are reliability conventions, not scientific ratios.
 
-Malformed non-null observations are individually replaced with null and logged
-with scene and trait; other valid slots survive. Missing required slots, extra
-keys, wrong scene count, and malformed envelopes use the bounded validation retry
-budget. Duplicate JSON keys remain rejected. Native structured output is requested;
-the existing explicit unsupported-format fallback retains backend validation.
+Evaluate all dimensions independently and select the strongest source per trait
+per scene. Canonical wins agreement or disagreement between channels; agreeing
+channels produce one strong observation. Opposing poles within the strongest
+channel without a defensible dominant direction yield null. Perspective evidence
+can express a preference without an outward action; it cannot invent actions,
+events, alternatives, or preferences, contradict facts, borrow another character's
+behavior, or repeat a prior portrait as evidence. Generic feelings, compelled
+behavior, routine participation, and competence alone are insufficient.
 
-Do not extract from compelled or ambiguous action, group-only or witnessed
-behavior, an unavailable alternative, or a behavior that does not reveal the
-construct. The narrative `identity_description` never creates trait evidence
-or a provisional point. The backend admits at most
-one observation per trait and perspective; retries and duplicate descriptions
-cannot multiply support. Opposing observations are retained. All-null scene
-results are normal.
+The compact definitions come from the authoritative registry and retain five
+construct distinctions. No context enums, stakes, relationship classifications,
+numerical strengths, confidence, identifiers, or Steadiness enter the Stage 3
+output. Runtime and provider schemas enforce the same compact shape. Malformed
+candidates become null individually with logging; missing slots, extra envelope
+keys, and wrong scene counts retain bounded correction behavior. Structural
+validation cannot prove psychological or semantic grounding.
 
-`situation_type` is either `unspecified` or
-`<diagnostic>:<relationship>:<stakes>`. The diagnostic value must belong to the
-trait registry. Relationship is `friend|enemy|other`; stakes is
-`ordinary|high_stakes`. Use `unspecified` if circumstances are insufficient for
-comparison. It still contributes to the directional trait but cannot affect
-STEADINESS. Distinct friend and enemy contexts are never collapsed into one
-consistency group.
+## Independent event grouping
+
+A canonical scene is the first deduplication boundary, not proof of event
+independence. Scene create/update/read payloads support `observation_group_id`
+(nullable nonblank string, at most 255 characters) and `independence_status`
+(`independent|unresolved`, default independent). Assign the same reviewed group ID
+to different scene records retelling the same event, within the same ontology.
+Use unresolved for suspected duplicates or unresolved observation attribution;
+those event/trait groups contribute no directional or Steadiness support.
+
+Explicit groups take precedence. Otherwise a normalized full-description digest
+conservatively groups exact copied descriptions; empty descriptions fall back to
+scene identity. A digest detects exact copies, not paraphrased retellings.
+Paraphrases and partial overlaps require reviewed explicit event grouping. Sharing
+a `DERIVED_FROM` source or participants does not establish event equivalence.
+There is no semantic deduplication model call or claim of automatic paraphrase
+recognition. Separate actual events with identical descriptions need distinct
+explicit group IDs to avoid conservative merging. Do not group whole overlapping
+scenes when their trait observations concern different events.
+
+Within a group/trait, retain the strongest source once; conflicting equal-strength
+observations exclude that group/trait. Preserve raw records for audit. Group recency
+uses its earliest recorded chronological position, so later imports of retellings
+cannot refresh it. Comparisons remain local to the character/ontology. Retained
+legacy observations resolve against current scene provenance for a new computation;
+the resulting profile snapshots the mapping. Changing provenance for processed
+scenes changes their digest and requires explicit regeneration, rather than
+silently rewriting accepted history.
 
 ## Directional calculation
 
-For one trait, let eligible observations be ordered oldest to newest. The newest
-observation of that trait has `k=0`; older ones have `k=1,2,...`. High polarity
-has `x=+1`, low polarity has `x=-1`. Defaults are recency `rho=0.9` and smoothing
-`lambda=4`:
+For deduplicated chronological observations of one trait, let `s_i` be +1/high or
+-1/low, `q_i` be 2/canonical or 1/perspective, and
+`r_i = 0.9 ** (n - i - 1)` for zero-based index `i`:
 
 ```text
-w_i       = rho^k_i
-mu        = sum(w_i * x_i) / sum(w_i)
-raw       = 5 + 4 * mu * n / (n + lambda)
-point     = clamp(round_half_away_from_5(raw), 1, 9)
+mean = sum(r_i * q_i * s_i) / sum(r_i * q_i)
+mass = sum(q_i)
+continuous_value = 5 + 4 * mean * mass / (mass + 4)
 ```
 
-`n` is the number of distinct eligible perspective IDs for that trait. Recency
-sets direction; actual observation count controls movement from point 5. Ties
-at an exact half point round away from 5, symmetrically at both poles. With
-only same-pole scene observations, 1, 5, 10, and 28 observations yield points
-6, 7, 8, and 9 (or 4, 3, 2, and 1 for low). A long run of new opposite choices
-can reverse an older personality. With `rho=1`, this becomes
-`5 + 4(H-L)/(H+L+4)` before rounding. This scoring rule is versioned policy,
-not a validated psychological scale.
-
-Only scene perspective observations contribute to the directional calculation.
-With no eligible scene observations, the trait remains `unknown`; one eligible
-perspective remains `provisional`; two or more make a directional estimate
-`supported`. Legacy `authored_disposition` records do not contribute to points.
+Round away from 5 at ties and bound integers to 1–9. Empty evidence yields unknown.
+Counts remain independent opportunities, never mass. One canonical high yields
+6.333333… before rounding; one perspective high yields 5.8. Both are provisional
+with count 1. Supported requires two independent observations with some canonical
+evidence, or three independent perspective-only observations. Opposing evidence
+may support a mixed estimate near 5. Thresholds are engineering choices.
 
 ## STEADINESS calculation
 
-STEADINESS measures variation *within* comparable contexts, not morality,
-calmness, or the average directional trait. Group observations by exact
-`(trait, situation_type)`; exclude `unspecified`. Within each group take at most
-the newest 12 observations. A group qualifies with at least three independent
-perspectives. If none qualify, STEADINESS is unknown. For each group compute
-recency-weighted high and low masses `H_g` and `L_g`:
+New-policy Steadiness means observed cross-scene dispositional consistency.
+It cannot distinguish unstable dispositions from stable context-sensitive behavior;
+it is not equivalent to the legacy comparable-circumstances construct.
+
+For each trait take its latest 12 independent observations. A trait needs at least
+two observations to contribute. Compute high/low totals using the same recency
+and source weights, then disagreement within that trait:
 
 ```text
-d_g              = 2 * min(H_g, L_g) / (H_g + L_g)
-D                = sum((H_g + L_g) * d_g) / sum(H_g + L_g)
-raw              = 5 + 4 * (1 - 2 * D) * m / (m + 4)
-steadiness_point = clamp(round_half_away_from_5(raw), 1, 9)
+H_t = sum(r_i * q_i for high observations)
+L_t = sum(r_i * q_i for low observations)
+D_t = 2 * min(H_t, L_t) / (H_t + L_t)
+c_t = min(4, sum(q_i for observations after the first in the trait window))
+M = sum(c_t)
+D = sum(c_t * D_t) / M
+S = 5 + 4 * (1 - 2 * D) * M / (M + 4)
 ```
 
-`m` is the number of distinct contributing perspectives. Three identical
-comparable observations yield provisional point 7, not an apparently certain 9.
-At least six observations across two qualifying context groups make the estimate
-`supported`. A character who always forgives friends and always retaliates
-against enemies can therefore be consistent. Binary polarity and a compact
-context catalog lose nuance; use `unspecified` when comparison is not grounded.
-With enough comparable evidence, the smoothed consistency scale can reach both
-points 1 and 9; a three-observation group cannot produce either extreme.
-STEADINESS never controls sampling temperature.
+Use the same rounding and bounds. The first observation anchors comparison;
+subsequent independent opportunities provide repeat mass. The per-trait cap of 4
+applies to disagreement averaging and smoothing. Never compare high Caution with
+low Integrity. A singleton trait contributes no repeat support. Twenty observations
+of one trait alone cannot make Steadiness supported or overwhelm all other series.
 
-## Use, operations, and cutover
-
-Decision making uses the persisted `identity_description` for supported motives
-and character-specific meaning. With `use_character_identity=true` (the default),
-it always adds compact effective values/statuses for all eight directions and separate
-Steadiness verified by `synthesis_steadiness()`. Registry definitions and both
-poles remain authoritative. Directional scores are ordinal tendencies, not
-calibrated probabilities or percentiles. Manual values control direction when
-an older portrait disagrees, without establishing new motives. Steadiness guides
-comparable-context variability without controlling temperature or randomly
-overriding choices. Missing/obsolete profiles keep portrait-only behavior with
-unknown values. See [decision input, fallback, and rollout rules](Query/Query.md#personality-and-situational-deliberation).
-Trait estimates remain available for profile display and evidence audit.
-The administrator evidence endpoint is
-`GET /character-agents/{agent_id}/trait-evidence`; its records have
-`perspective_id`, `polarity`, `situation_type`, `justification`, and backend
-provenance. Each evidence record is stored on its `CharacterIdentityRevision`
-with `revision_id`, `source_group_id`, batch ownership, and the originating
-perspective plus `scene:<scene_id>` reference. The revision is also connected to
-its source entity through `CONSOLIDATED_FROM`. This maps every retained trait
-observation back to the source and scene that produced it. STEADINESS is derived
-from those same contextual observations and appears as its own trait change and
-revision estimate; it does not require a separate model-generated score.
-Revisions allow reconstruction and audit. Manual edits use
-`{"point": 7, "reason": "..."}`; `point: null` clears an override.
-
-Deployment of this breaking contract requires a backup and regeneration of
-traits from authored identity and source scenes/perspectives. Old
-`expression_z` records cannot be faithfully converted by rounding. Old-format
-revisions may be archived outside the active path but must not supply current
-aggregation, API responses, edits, or query context. A character without source
-material has unknown traits until regeneration. For an existing old-format
-agent, export the graph backup, delete that CharacterAgent through the normal
-administrator endpoint, start a new embodiment draft for its canonical entity,
-and accept the regenerated agent. Do not append new point revisions to its old
-z history. Restore the backup for rollback.
-The [redesign plan](Point-Based%20Traits%20Redesign%20Plan.md) records acceptance
-criteria and the full verification matrix; the [endpoint page](CharacterAgent%20-%20Endpoints.md)
-records HTTP details.
-
-
-## Diagnostic extraction and narrative synthesis
-
-Scene extraction applies three gates to each candidate: whose behavior, what makes
-it diagnostic beyond competence or task participation, and which authoritative
-pole it supports. The existing justification identifies the character's canonical
-action and its diagnostic significance. Investigation, preparation, and coordination
-do not automatically produce curiosity, diligence, or presence. All eight
-dimensions compare both authoritative poles and construct boundaries,
-with paired diagnostic examples and confounds. Both poles are admissible; no
-balance quota or artificial character differences are imposed.
-Ambiguous, compelled, or non-diagnostic behavior yields no observation. The
-required eight-slot schema permits all supported traits from one scene.
-Grounding validators, source/chunk call structure, and deterministic reducers remain.
-
-Final identity synthesis uses actual contributing behavioral examples, scores,
-statuses, high/low distributions, accepted current psychology, and bounded recent
-perspectives. Separate Steadiness context qualifies comparable-context variability
-only when known; its inference availability is verified against contributing
-evidence. Synthesis connects supported circumstances, motives, and tendencies,
-including interactions and exceptions only when supported. Low-pole descriptions
-retain their own meanings rather than becoming uniformly positive. Previous
-identity text provides continuity only. See
-[CharacterAgent](CharacterAgent.md#chronological-identity-revisions) for the input
-budget, score interpretation, and authority rules.
+With no repeat support, skip division and return point 5/status baseline/count 0.
+With some repeat support, calculate provisional Steadiness. Supported requires at
+least two traits with three independent observations each and six unique event
+groups across the eligible series. Multiple traits from one event cannot inflate
+that cross-event threshold. Perspective-only series can qualify after independent
+corroboration. An inferred rounded 5 retains its provisional/supported status.
+Manual overrides preserve inference; clearing them restores inference or baseline.
 
 ## Continuous revision history
 
-Revision reads add `trait_history`, a read-only map for the eight directional
-traits. Each entry contains `inferred_continuous_value`, `high_count`, `low_count`,
-`observation_count`, `availability`, `reason`, and
-`calculation_version: "recency-points-v1"`. The calculation shares the existing
-recency-weighted mean and `n / (n + 4)` smoothing with integer consolidation;
-no formula, status, rounding, or persisted profile changes occur. Counts are
-unweighted and are not confidence intervals. Unknown with complete empty evidence
-has a null estimate and zero counts. Missing or inconsistent contributing evidence
-has `availability: "unavailable"` and null numerical details.
+`trait_history` is a read-only map for the eight directional traits. It contains
+`inferred_continuous_value`, unweighted `high_count`/`low_count`/`observation_count`,
+`availability`, `reason`, and `calculation_version`. New snapshots use
+`recency-weighted-scenes-v2`; v3 snapshots retain `recency-points-v1`, uniform
+weights and `n/(n+4)` smoothing, original statuses, and old Steadiness verification.
+History dispatches by the snapshot profile version, uses only its contributing
+IDs and revision-owned grouping, includes earlier ledger pages, and excludes future
+revisions. Missing or non-reproducing evidence yields unavailable/null details.
+Effective manual integers remain distinct from underlying continuous inference.
 
-Each revision uses only ledger records introduced through that revision and only
-its recorded contributing perspective IDs. Earlier pages of the ledger are included
-when revision pagination starts partway through history. Evidence added later is
-excluded. Manual overrides keep the effective integer in `trait_profile` while
-`trait_history` describes underlying inference. Steadiness remains a separate
-integer calculation and is absent from this map. Public revision reads expose
-these aggregate details under existing visibility rules; raw evidence remains
-administrator-only. The numerical character sheet and downstream integer analyses
-retain their existing behavior.
+## Diagnostic extraction and narrative synthesis
+
+Synthesis receives bounded source-labeled evidence examples and effective scores.
+Perspective-derived evidence remains tentative interpretation. Source diversity
+replaces artificial context diversity. Public `personality_traits` retains its
+existing score/status admission rules. Prior portraits remain continuity-only.
+Steadiness is separate and never a ninth narrative trait or model-temperature input.
+Its synthesis/decision `calculation_version` identifies `cross-scene-steadiness-v2`
+or legacy `comparable-steadiness-v1`, so the model can distinguish the constructs.
+
+Baseline projects value 5, status baseline, unavailable inference, null
+`inferred_value`, and an explanatory reason. It permits no observed-consistency
+claim. Provisional/supported consistency is available only when the versioned
+reducer reproduces the snapshot. Missing/corrupt inference is unavailable, not
+silently relabeled baseline. Manual values remain effective without proving
+observed consistency. The typed decision context and prompts distinguish baseline
+from inferred 5 and preserve the same single deliberation call.
+
+## Use, operations, and cutover
+
+The prompt version is `character-embodiment-v44-weighted-scenes`; synthesis uses
+`evidence-synthesis-v3-weighted-scenes`. Prompt fingerprints invalidate old
+checkpoints. New snapshots store grouping; prior snapshot/ledger bytes are not
+rewritten. Optional scene provenance is additive and needs no SQL schema migration
+or new graph node type. Scene provenance edits on processed data require explicit
+regeneration. Existing-agent refreshes retain processed scenes; a changed prompt
+does not backfill perspective evidence. An ordinary source update adopts the new
+scoring policy for retained evidence, potentially changing points and Steadiness.
+
+Deploy matching API/workers and upgraded SDK/frontend consumers together: strict
+older clients may reject the new profile version, baseline enum, and added fields.
+No frontend implementation lives in this repository. Review a pilot draft before
+acceptance; preserve exported profiles, ledgers, revisions, grouping, and portraits.
+Old code may reject new records. Rollback requires dual-version readers or restoring
+the saved data with its matching release; code rollback does not undo accepted
+portraits or weighted snapshots. No automatic regeneration or migration runs.
 
 ## Offline diagnostics and rollout
 
-Run from `shrecknet/`:
+From `shrecknet/`, use the existing diagnostics without model calls:
 
 ```sh
 python -m app.services.character_trait_analysis ledger.json report.json
 ```
 
-Input is `{"characters":[{"character_id":"stable-id","name":"optional",
-"extraction_version":"optional prompt version","processed_scene_ids":["scene-id"],
-"evidence":[/* exported TraitEvidence objects */]}]}`. Export private ledgers only
-through existing administrator-authorized reads. `processed_scene_ids` is optional
-and must come from processing records, not inferred absence in the evidence ledger.
-The report contains per-character and aggregate high/low counts by trait, total
-behavioral observations, separate authored evidence counts, duplicate counts,
-scene coverage, and shared-scene justification comparisons. Identical duplicate
-records are counted once; conflicting or duplicate perspective evidence is rejected.
-Missing processing information is unknown, distinct from a processed scene with
-zero observations. Counts expose patterns; a high/low imbalance alone does not
-establish a bias.
-
-The prompt version is `character-embodiment-v43-four-model-roles`;
-synthesis context identifies `evidence-synthesis-v2-behavioral-context`. Definition and evidence-policy
-versions remain unchanged. Existing checkpoints include the prompt version in their
-fingerprint and cannot reuse outputs from the old prompt. Deploy API and workers
-together, then SDK/frontend consumers. No database migration is required. Decimal
-history is available from existing ledgers without inference calls. Existing
-observations and narratives are not rewritten on deployment: review a draft for a selected character before acceptance. Existing-agent drafts
-retain processed scene evidence and append newly eligible scenes; they do not
-retroactively re-extract old observations merely because the prompt changed.
-Use offline replay to inspect revised extraction on exported canonical scenes
-before planning a full rebuild. Preserve a backup/export of the original ledger
-and revisions for any full regeneration; no automatic rebuild or deletion occurs
-on deployment. Frozen adventure analysis results remain unchanged. Re-extraction
-requires LLM stages; reporting and decimal history do not. Rollback restores earlier prompts/UI while
-retaining compatible integer profiles and ledgers.
-
+Input contains `characters` with character IDs, optional names/extraction versions,
+exported `evidence`, and optional `processed_scene_ids`. Export private evidence
+through administrator-authorized reads. Diagnostics include raw source/pole counts,
+independent trait-observation counts, unresolved records, duplicate-record counts,
+processing coverage, and shared-scene reasons. Raw count and independent support
+are intentionally separate. Counts do not prove psychological validity.
 
 ### Frozen extraction evaluation
 
-`shrecknet/tests/fixtures/trait_discrimination.json` contains 34 synthetic cases:
-both poles of all eight traits, three character-specific views of a shared artifact
-scene, five original non-diagnostic/attribution cases, and ten additional cases
-covering single actions without explicitly enumerated alternatives, confounds,
-perspective-only behavior, and eight independently supported traits in one scene. These are authored reference
-expectations requiring review, not actual evidence for Ernst, Johnny, or Johan.
-The replay command uses the configured extraction model and existing validator;
-it supplies frozen subjective perspectives and never writes profiles or scenes.
+`trait_discrimination.json` retains the original 34 authored reference cases.
+`trait_weighted_sources.json` adds 21 source-aware cases: both poles of every
+perspective-derived trait, canonical agreement/conflict, invented actions, generic
+feelings, and prior-portrait echoes. These are synthetic review expectations, not
+real character evidence. The evaluator checks optional `expected_sources` as well
+as trait/polarity, and records source errors and actual reasons.
+
+Run offline with captured outputs or explicitly opt into model replay:
 
 ```sh
-python -m app.services.character_trait_evaluation \
-  tests/fixtures/trait_discrimination.json current-report.json --live
-python -m app.services.character_trait_evaluation \
-  tests/fixtures/trait_discrimination.json baseline-report.json --live \
-  --prompt-file /path/to/previous-complete-extraction-prompt.txt
+python -m app.services.character_trait_evaluation tests/fixtures/trait_weighted_sources.json report.json --outputs outputs.json
+python -m app.services.character_trait_evaluation tests/fixtures/trait_weighted_sources.json report.json --live
 ```
 
-The baseline prompt file must include its full authoritative trait contract and
-use the current eight-slot response schema. A six-field historical prompt cannot
-be replayed through the new parser; compare its captured observations with
-`--outputs`, or run that baseline with its matching code version.
-Use identical fixture bytes and configured model/settings for each comparison;
-LLM variability means one run is a review aid, not a statistically established
-quality claim. Reports record fixture/prompt hashes, model settings, LLM calls,
-estimated tokens, unsupported/missed candidates overall and separately by pole, scenes without
-observations, and actual justifications.
-Inspect action attribution, diagnostic significance, low/high direction, and
-unsupported motivations manually. Do not require equal pole distributions or
-artificial differences between characters.
+Captured outputs contain exactly one `case_id` and `observations` array per case;
+observations contain `trait`, `polarity`, `source`, and ledger `justification`.
+Replay uses the production extractor and configured model without graph/profile
+writes. Semantic grounding, preferences, source precedence, and construct boundaries
+require review beyond structural tests. Review real Johnny material only with his
+actual canonical scenes and perspectives; neither profile density nor balanced
+pole distributions are acceptance targets.
 
-For existing captured outputs, score without network or LLM calls:
-
-```sh
-python -m app.services.character_trait_evaluation \
-  tests/fixtures/trait_discrimination.json scored-report.json --outputs outputs.json
-```
-
-`outputs.json` is an array with exactly one `{ "case_id": "...", "observations":
-[{"trait":"...","polarity":"high|low","justification":"..."}] }` per fixture
-case. Empty observations are valid. Model replay requires a reachable shreckLLM
-service; failed inference does not publish a successful report.
+The frozen v43 prompt is `trait_interpretation_baseline_v43.txt`. Its old context
+output cannot be replayed through the compact parser: run it with matching v43
+code or compare captured old outputs. Use identical fixture bytes and model settings
+for valid comparisons. Fixed prompt characters decreased from **20,779 to 3,784**;
+this excludes provider schema and scene inputs. Record full request tokens, latency,
+failures, and repair calls separately; no live quality or cost improvement is claimed
+from prompt length alone. Live comparisons and pilot acceptance remain operational
+checks, not automatically executed by tests.
 
 ## Behavioral identity evaluation
 

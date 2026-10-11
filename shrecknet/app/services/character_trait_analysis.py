@@ -11,13 +11,13 @@ from collections import defaultdict
 from pathlib import Path
 
 from app.schemas.character_traits import (
-    DIRECTIONAL_TRAITS, TraitEvidence, TraitProfile, DecisionPersonalityContext,
+    DIRECTIONAL_TRAITS, SPEC_VERSION, LEGACY_SPEC_VERSION, TraitEvidence, TraitProfile, DecisionPersonalityContext,
 )
 from app.services.character_trait_service import (
-    directional_items, merge_evidence, steadiness_estimate, trait_history_details,
+    directional_items, legacy_directional_items, observation_group, snapshot_evidence, merge_evidence, steadiness_estimate, trait_history_details,
 )
 
-SYNTHESIS_VERSION = 'evidence-synthesis-v2-behavioral-context'
+SYNTHESIS_VERSION = 'evidence-synthesis-v3-weighted-scenes'
 EXTRACTION_VERSION = 'diagnostic-observations-v1'
 EXAMPLE_LIMIT = 4
 EXAMPLE_CHARS = 600
@@ -61,7 +61,7 @@ def bounded_previous_identity(value) -> dict | None:
 
 
 def representative_evidence(items: list[TraitEvidence]) -> list[TraitEvidence]:
-    """First retain the newest of each pole, then diversify diagnostic situations."""
+    """First retain the newest of each pole, then diversify evidence sources."""
     ordered = sorted(items, key=lambda item: (item.chronological_position, item.id), reverse=True)
     selected = []
     for pole in ('high', 'low'):
@@ -71,7 +71,7 @@ def representative_evidence(items: list[TraitEvidence]) -> list[TraitEvidence]:
     for item in ordered:
         if len(selected) >= EXAMPLE_LIMIT:
             break
-        if item not in selected and item.situation_type not in {prior.situation_type for prior in selected}:
+        if item not in selected and item.source not in {prior.source for prior in selected}:
             selected.append(item)
     for item in ordered:
         if len(selected) >= EXAMPLE_LIMIT:
@@ -82,12 +82,13 @@ def representative_evidence(items: list[TraitEvidence]) -> list[TraitEvidence]:
 
 
 def synthesis_traits(profile: TraitProfile, evidence: list[TraitEvidence]) -> list[dict]:
+    evidence = snapshot_evidence(profile, evidence)
     details = trait_history_details(profile, evidence)
     result = []
     for key in DIRECTIONAL_TRAITS:
         estimate, detail = profile.estimate(key), details[key]
         ids = set(estimate.observation_ids)
-        items = directional_items(key, [item for item in evidence if item.perspective_id in ids]) \
+        items = (legacy_directional_items if profile.version == LEGACY_SPEC_VERSION else directional_items)(key, [item for item in evidence if item.perspective_id in ids]) \
             if detail.availability == 'available' else []
         result.append({
             'name': key, 'value': estimate.point, 'status': estimate.status,
@@ -95,6 +96,7 @@ def synthesis_traits(profile: TraitProfile, evidence: list[TraitEvidence]) -> li
             'evidence_examples': [{
                 'id': item.id, 'perspective_id': item.perspective_id,
                 'evidence_ids': item.evidence_ids, 'polarity': item.polarity,
+                'source': item.source,
                 'situation_type': item.situation_type,
                 'justification': item.justification[:EXAMPLE_CHARS],
             } for item in representative_evidence(items)],
@@ -116,15 +118,20 @@ def synthesis_steadiness(profile: TraitProfile, evidence: list[TraitEvidence]) -
     Only recorded contributing perspectives may establish availability. Reuse the
     scoring owner so manual values never masquerade as inferred consistency.
     """
+    evidence = snapshot_evidence(profile, evidence)
     effective = profile.steadiness
     inferred = profile.inferred_traits.get('steadiness') if effective.status == 'manual' else effective
     result = {
         'value': effective.point, 'status': effective.status,
+        'calculation_version': 'comparable-steadiness-v1' if profile.version == LEGACY_SPEC_VERSION else 'cross-scene-steadiness-v2',
         'observation_count': effective.observation_count,
         'availability': 'unavailable', 'reason': None, 'inferred_value': None,
     }
+    if inferred is not None and inferred.status == 'baseline':
+        result['reason'] = 'Baseline 5 is a computational prior; no independent repeat evidence.'
+        return result
     if inferred is None or inferred.point is None:
-        result['reason'] = 'No inferred consistency estimate from comparable behavior.'
+        result['reason'] = 'No inferred consistency estimate from independent repeat evidence.'
         return result
     if effective.observation_ids != inferred.observation_ids:
         result['reason'] = 'Effective and inferred contributing perspectives disagree.'
@@ -135,10 +142,14 @@ def synthesis_steadiness(profile: TraitProfile, evidence: list[TraitEvidence]) -
     if {item.perspective_id for item in items} != expected:
         result['reason'] = 'Contributing evidence is missing.'
         return result
+    if profile.version == SPEC_VERSION:
+        groups = {observation_group(item) for item in items}
+        items = [item for item in evidence if item.evidence_kind == 'behavior' and observation_group(item) in groups]
     try:
-        for key in DIRECTIONAL_TRAITS:
-            directional_items(key, items)
-        reproduced = steadiness_estimate(items)
+        if profile.version == LEGACY_SPEC_VERSION:
+            for key in DIRECTIONAL_TRAITS:
+                legacy_directional_items(key, items)
+        reproduced = steadiness_estimate(items, version=profile.version)
     except ValueError:
         result['reason'] = 'Contributing evidence is ambiguous.'
         return result
@@ -162,9 +173,6 @@ def diagnostic_report(characters: list[dict]) -> dict:
         raw = [TraitEvidence.model_validate(item) for item in character.get('evidence', [])]
         evidence = merge_evidence([], raw)
         behavior = [item for item in evidence if item.evidence_kind == 'behavior']
-        # Also reject conflicting trait evidence bound to the same perspective.
-        for key in DIRECTIONAL_TRAITS:
-            directional_items(key, behavior)
         counts = {key: {'high': 0, 'low': 0} for key in DIRECTIONAL_TRAITS}
         known_processed = character.get('processed_scene_ids')
         processed = set(known_processed or [])
@@ -191,6 +199,9 @@ def diagnostic_report(characters: list[dict]) -> dict:
             'observation_count': len(behavior), 'counts_by_trait': counts,
             'authored_disposition_count': len(evidence) - len(behavior),
             'duplicate_record_count': len(raw) - len(evidence),
+            'independent_trait_observation_count': sum(len(directional_items(key, behavior)) for key in DIRECTIONAL_TRAITS),
+            'unresolved_record_count': sum(item.independence_status == 'unresolved' for item in behavior),
+            'source_counts': {source: sum(item.source == source for item in behavior) for source in ('canonical', 'perspective')},
             'processed_scene_count': len(processed) if known_processed is not None else None,
             'observed_scene_count': len(observed_scenes),
             'scenes_without_observations': len(processed - observed_scenes) if known_processed is not None else None,

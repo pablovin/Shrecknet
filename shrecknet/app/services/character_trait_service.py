@@ -8,7 +8,7 @@ from decimal import Decimal, ROUND_HALF_UP
 from typing import Iterable
 
 from app.schemas.character_traits import (
-    DIRECTIONAL_TRAITS, EVIDENCE_POLICY_VERSION, TraitChange, TraitEdit, TraitEstimate,
+    DIRECTIONAL_TRAITS, EVIDENCE_POLICY_VERSION, SPEC_VERSION, LEGACY_SPEC_VERSION, TraitChange, TraitEdit, TraitEstimate,
     TraitEvidence, TraitObservation, TraitProfile, TraitHistoryEstimate,
 )
 
@@ -16,7 +16,11 @@ POLICY_VERSION = EVIDENCE_POLICY_VERSION
 RECENCY = 0.9
 SMOOTHING = 4
 STEADINESS_WINDOW = 12
-MIN_COMPARABLE = 3
+MIN_COMPARABLE = 3  # Historical v3 policy only.
+STEADINESS_REPEAT_CAP = 4
+MIN_STEADINESS_TRAITS = 2
+MIN_STEADINESS_SERIES = 3
+MIN_STEADINESS_EVENTS = 6
 
 
 def validate_scene_grounding(items, scene_ids: list[str]) -> None:
@@ -105,7 +109,7 @@ def _rounded(value: float) -> int:
     return max(1, min(9, 5 + (magnitude if displacement >= 0 else -magnitude)))
 
 
-def directional_items(key: str, evidence: list[TraitEvidence]) -> list[TraitEvidence]:
+def legacy_directional_items(key: str, evidence: list[TraitEvidence]) -> list[TraitEvidence]:
     items = [item for item in evidence if item.trait == key and item.evidence_kind == 'behavior']
     items.sort(key=lambda item: (item.chronological_position, item.id))
     if len({item.perspective_id for item in items}) != len(items):
@@ -113,9 +117,9 @@ def directional_items(key: str, evidence: list[TraitEvidence]) -> list[TraitEvid
     return items
 
 
-def directional_details(key: str, evidence: list[TraitEvidence]) -> TraitHistoryEstimate:
+def legacy_directional_details(key: str, evidence: list[TraitEvidence]) -> TraitHistoryEstimate:
     """The shared continuous calculation used by consolidation and read models."""
-    items = directional_items(key, evidence)
+    items = legacy_directional_items(key, evidence)
     if not items:
         return TraitHistoryEstimate(availability='available', high_count=0,
                                    low_count=0, observation_count=0)
@@ -130,19 +134,104 @@ def directional_details(key: str, evidence: list[TraitEvidence]) -> TraitHistory
         availability='available', high_count=high, low_count=n - high, observation_count=n)
 
 
+def observation_group(item: TraitEvidence) -> str:
+    """Backend event equivalence; legacy rows fall back to their canonical scene."""
+    return item.observation_group_id or next(
+        (ref for ref in item.evidence_ids if ref.startswith('scene:')), item.perspective_id or item.id)
+
+
+def evidence_weight(item: TraitEvidence) -> int:
+    return 2 if item.source == 'canonical' else 1
+
+
+def directional_items(key: str, evidence: list[TraitEvidence]) -> list[TraitEvidence]:
+    """Resolve strongest evidence once per independent event and trait.
+
+    Unresolved attribution and equally strong conflicting retellings are excluded.
+    Group recency uses its earliest recorded position, never the latest retelling.
+    """
+    groups = defaultdict(list)
+    positions = {}
+    for item in evidence:
+        if item.evidence_kind == 'behavior':
+            group = observation_group(item)
+            positions[group] = min(positions.get(group, item.chronological_position), item.chronological_position)
+    for item in evidence:
+        if item.trait == key and item.evidence_kind == 'behavior':
+            groups[observation_group(item)].append(item)
+    result = []
+    for items in groups.values():
+        if any(item.independence_status == 'unresolved' for item in items):
+            continue
+        strongest = max(evidence_weight(item) for item in items)
+        candidates = [item for item in items if evidence_weight(item) == strongest]
+        if len({item.polarity for item in candidates}) != 1:
+            continue
+        chosen = min(candidates, key=lambda item: (item.chronological_position, item.id))
+        result.append(chosen.model_copy(update={'chronological_position': positions[observation_group(chosen)]}))
+    return sorted(result, key=lambda item: (item.chronological_position, item.id))
+
+
+def directional_details(key: str, evidence: list[TraitEvidence], *, version: str = SPEC_VERSION) -> TraitHistoryEstimate:
+    if version == LEGACY_SPEC_VERSION:
+        return legacy_directional_details(key, evidence)
+    items = directional_items(key, evidence)
+    calculation = 'recency-weighted-scenes-v2'
+    if not items:
+        return TraitHistoryEstimate(availability='available', high_count=0,
+            low_count=0, observation_count=0, calculation_version=calculation)
+    n = len(items)
+    weights = [RECENCY ** (n - i - 1) * evidence_weight(item) for i, item in enumerate(items)]
+    mean = sum(weight * (1 if item.polarity == 'high' else -1)
+               for weight, item in zip(weights, items, strict=True)) / sum(weights)
+    mass = sum(evidence_weight(item) for item in items)
+    high = sum(item.polarity == 'high' for item in items)
+    return TraitHistoryEstimate(inferred_continuous_value=5 + 4 * mean * mass / (mass + SMOOTHING),
+        availability='available', high_count=high, low_count=n-high, observation_count=n,
+        calculation_version=calculation)
+
+
 def _directional(key: str, evidence: list[TraitEvidence]) -> TraitEstimate:
     details = directional_details(key, evidence)
     if details.inferred_continuous_value is None:
         return TraitEstimate()
-    ids = [item.perspective_id for item in directional_items(key, evidence)]
-    n = details.observation_count
+    items = directional_items(key, evidence)
+    ids = [item.perspective_id for item in items]
+    n = len(items)
+    supported = n >= 2 and (any(item.source == 'canonical' for item in items) or n >= 3)
     return TraitEstimate(point=_rounded(details.inferred_continuous_value),
-        status='supported' if n >= 2 else 'provisional',
-        observation_count=n, observation_ids=ids)
+        status='supported' if supported else 'provisional', observation_count=n, observation_ids=ids)
+
+
+def snapshot_evidence(profile: TraitProfile, evidence: list[TraitEvidence]) -> list[TraitEvidence]:
+    """Apply revision-owned equivalence without rewriting historical ledger rows."""
+    if profile.version == LEGACY_SPEC_VERSION:
+        return evidence
+    unresolved = set(profile.unresolved_observation_ids)
+    return [item.model_copy(update={
+        'observation_group_id': profile.observation_groups.get(item.perspective_id, item.observation_group_id),
+        'independence_status': 'unresolved' if item.perspective_id in unresolved else item.independence_status,
+        'chronological_position': profile.observation_group_positions.get(
+            profile.observation_groups.get(item.perspective_id, observation_group(item)), item.chronological_position),
+    }) for item in evidence]
+
+
+def scene_observation_group(scene: dict) -> str:
+    """Explicit event identity, conservative exact-copy grouping, then scene identity.
+
+    The content digest detects exact copies only; paraphrased retellings require
+    a reviewed observation_group_id. All comparisons are agent/ontology-local.
+    """
+    if scene.get('observation_group_id'):
+        return scene['observation_group_id']
+    material = ' '.join(scene.get('description', '').split())
+    return 'content:' + hashlib.sha256(material.encode()).hexdigest() if material else f"scene:{scene['scene_id']}"
 
 
 def trait_history_details(profile: TraitProfile, evidence: list[TraitEvidence]) -> dict[str, TraitHistoryEstimate]:
     """Resolve only each snapshot's contributing evidence, including under overrides."""
+    evidence = snapshot_evidence(profile, evidence)
+    calculation = 'recency-points-v1' if profile.version == LEGACY_SPEC_VERSION else 'recency-weighted-scenes-v2'
     result = {}
     for key in DIRECTIONAL_TRAITS:
         effective = profile.estimate(key)
@@ -150,23 +239,32 @@ def trait_history_details(profile: TraitProfile, evidence: list[TraitEvidence]) 
         items = [item for item in evidence if item.trait == key
                  and item.evidence_kind == 'behavior' and item.perspective_id in expected]
         if {item.perspective_id for item in items} != expected:
-            result[key] = TraitHistoryEstimate(reason='Contributing evidence is missing.')
+            result[key] = TraitHistoryEstimate(calculation_version=calculation, reason='Contributing evidence is missing.')
             continue
+        if profile.version == SPEC_VERSION:
+            groups = {observation_group(item) for item in items}
+            items = [item for item in evidence if item.trait == key and item.evidence_kind == 'behavior'
+                     and observation_group(item) in groups]
+            if {item.perspective_id for item in directional_items(key, items)} != expected:
+                result[key] = TraitHistoryEstimate(calculation_version=calculation,
+                    reason='Contributing evidence is ambiguous.')
+                continue
         try:
-            details = directional_details(key, items)
+            details = directional_details(key, items, version=profile.version)
         except ValueError:
-            result[key] = TraitHistoryEstimate(reason='Contributing evidence is ambiguous.')
+            result[key] = TraitHistoryEstimate(calculation_version=calculation, reason='Contributing evidence is ambiguous.')
             continue
         inferred = profile.inferred_traits.get(key) if effective.status == 'manual' else effective
         raw = details.inferred_continuous_value
-        if inferred is not None and inferred.point != (_rounded(raw) if raw is not None else None):
-            result[key] = TraitHistoryEstimate(reason='Evidence does not reproduce the recorded estimate.')
+        if inferred is not None and (inferred.point != (_rounded(raw) if raw is not None else None)
+                                     or inferred.observation_count != details.observation_count):
+            result[key] = TraitHistoryEstimate(calculation_version=calculation, reason='Evidence does not reproduce the recorded estimate.')
         else:
             result[key] = details
     return result
 
 
-def steadiness_estimate(evidence: list[TraitEvidence]) -> TraitEstimate:
+def legacy_steadiness_estimate(evidence: list[TraitEvidence]) -> TraitEstimate:
     """Estimate within-context consistency from repeated comparable behavior."""
     groups = defaultdict(list)
     for item in sorted(evidence, key=lambda value: (value.chronological_position, value.id)):
@@ -194,11 +292,53 @@ def steadiness_estimate(evidence: list[TraitEvidence]) -> TraitEstimate:
         observation_count=m, observation_ids=ids)
 
 
+def steadiness_estimate(evidence: list[TraitEvidence], *, version: str = SPEC_VERSION) -> TraitEstimate:
+    """Capped, evidence-weighted within-trait consistency across independent events."""
+    if version == LEGACY_SPEC_VERSION:
+        return legacy_steadiness_estimate(evidence)
+    series = [directional_items(key, evidence)[-STEADINESS_WINDOW:] for key in DIRECTIONAL_TRAITS]
+    series = [items for items in series if len(items) >= 2]
+    if not series:
+        return TraitEstimate(point=5, status='baseline')
+    mass, disagreement = 0.0, 0.0
+    included = {}
+    for items in series:
+        n = len(items)
+        high = sum(RECENCY ** (n-i-1) * evidence_weight(item)
+                   for i, item in enumerate(items) if item.polarity == 'high')
+        low = sum(RECENCY ** (n-i-1) * evidence_weight(item)
+                  for i, item in enumerate(items) if item.polarity == 'low')
+        support = min(STEADINESS_REPEAT_CAP, sum(evidence_weight(item) for item in items[1:]))
+        mass += support
+        disagreement += support * 2 * min(high, low) / (high + low)
+        for item in items:
+            group = observation_group(item)
+            prior = included.get(group)
+            if prior is None or (item.chronological_position, item.id) < (prior.chronological_position, prior.id):
+                included[group] = item
+    ids = [item.perspective_id for item in sorted(included.values(), key=lambda item: (item.chronological_position, item.id))]
+    supported = (sum(len(items) >= MIN_STEADINESS_SERIES for items in series) >= MIN_STEADINESS_TRAITS
+                 and len(included) >= MIN_STEADINESS_EVENTS)
+    value = 5 + 4 * (1 - 2 * disagreement / mass) * mass / (mass + SMOOTHING)
+    return TraitEstimate(point=_rounded(value), status='supported' if supported else 'provisional',
+                         observation_count=len(ids), observation_ids=ids)
+
+
 def update_profile(
     profile: TraitProfile, evidence: list[TraitEvidence],
     *, source_group_id: str | None = None,
 ) -> tuple[TraitProfile, list[TraitChange]]:
     result = profile.model_copy(deep=True)
+    result.version = SPEC_VERSION
+    result.observation_groups = {item.perspective_id: observation_group(item) for item in evidence if item.perspective_id}
+    result.observation_group_positions = {}
+    for item in evidence:
+        if item.evidence_kind == 'behavior':
+            group = observation_group(item)
+            result.observation_group_positions[group] = min(
+                result.observation_group_positions.get(group, item.chronological_position), item.chronological_position)
+    result.unresolved_observation_ids = sorted({item.perspective_id for item in evidence if item.perspective_id and item.independence_status == 'unresolved'})
+    evidence = snapshot_evidence(result, evidence)
     for key in DIRECTIONAL_TRAITS:
         estimate = _directional(key, evidence)
         if key in result.overrides:
@@ -231,6 +371,10 @@ def update_profile(
 
 def scene_digest(scene: dict) -> str:
     material = {key: scene.get(key) for key in ("scene_id", "name", "description", "created_at")}
+    # Preserve old digests when optional provenance is absent.
+    for key in ("observation_group_id", "independence_status"):
+        if scene.get(key) is not None and not (key == "independence_status" and scene[key] == "independent"):
+            material[key] = scene[key]
     return hashlib.sha256(json.dumps(material, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
 

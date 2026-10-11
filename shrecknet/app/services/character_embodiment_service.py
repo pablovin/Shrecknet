@@ -437,6 +437,8 @@ class CharacterEmbodimentService:
                    coalesce(scene.name, scene.id) AS name,
                    coalesce(scene.description, '') AS description,
                    toString(scene.created_at) AS created_at,
+                   scene.observation_group_id AS observation_group_id,
+                   scene.independence_status AS independence_status,
                    source.entity_instance_id AS source_id,
                    coalesce(source.alias, source.entity_instance_id) AS source_alias
             ORDER BY coalesce(toString(scene.created_at), ''), scene.id
@@ -447,6 +449,8 @@ class CharacterEmbodimentService:
         groups: dict[str, dict[str, Any]] = {}
         async for row in scene_rows:
             s = {
+                "observation_group_id": row.get("observation_group_id"),
+                "independence_status": row.get("independence_status") or "independent",
                 "scene_id": str(row["scene_id"]),
                 "name": str(row["name"]),
                 "description": str(row["description"]),
@@ -471,6 +475,20 @@ class CharacterEmbodimentService:
                 g["source_id"] or "",
             ),
         )
+
+        # Resolve retained legacy evidence against current explicit scene provenance.
+        # The next profile snapshots this mapping; old revision ledger bytes remain intact.
+        from app.services.character_trait_service import scene_observation_group
+        scene_by_id = {scene['scene_id']: scene for scene in scenes}
+        resolved_evidence = []
+        for item in trait_evidence:
+            scene_id = next((ref.removeprefix('scene:') for ref in item.evidence_ids if ref.startswith('scene:')), None)
+            scene = scene_by_id.get(scene_id)
+            resolved_evidence.append(item.model_copy(update={
+                'observation_group_id': scene_observation_group(scene),
+                'independence_status': scene.get('independence_status') or 'independent',
+            }) if scene else item)
+        trait_evidence = resolved_evidence
 
         return {
             "canonical_identity": canonical_identity,

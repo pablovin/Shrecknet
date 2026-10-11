@@ -48,8 +48,8 @@ Administrators retain access to both visibility levels. Private agents return
 ### Legacy graph nodes
 
 Nodes may retain unrelated retired personality properties; public projection
-omits them. A missing `trait_profile` projects to the current all-unknown point
-profile. An old z-formatted `trait_profile` is invalid and requires regeneration
+omits them. A missing `trait_profile` projects to eight unknown directional estimates
+and baseline Steadiness 5. An old z-formatted `trait_profile` is invalid and requires regeneration
 from source material before the agent can be read or queried under the new
 contract. Missing `visibility` remains private. Creation and updates accept only
 the current fields.
@@ -147,7 +147,10 @@ does not establish observed consistency. Counts measure contributing perspective
 not confidence. No raw consistency evidence is added to the model payload.
 
 High Steadiness describes narrower observed variation and low Steadiness broader
-variation in comparable situations. This aggregate is not per-trait variance or
+variation across independent scenes under the new policy; legacy v3 estimates
+retain their comparable-situations meaning. Cross-scene consistency cannot distinguish
+stable context-sensitive behavior from inconsistent dispositions. Baseline 5 is a
+computational prior with no observed-consistency claim. This aggregate is not per-trait variance or
 evidence of triggers, causes, emotional stability, morality, or reliability.
 Unknown values permit no consistency claim; provisional values require tentative
 wording. Steadiness is never a ninth `personality_traits` entry and never changes
@@ -157,13 +160,11 @@ for frozen cases and comparison commands.
 
 Trait interpretation receives `identity_summary` and `psychological_summary`
 from the persisted `identity_description` as context, but excludes its
-`personality_traits`. Trait evidence must come from canonical scenes. Stage 3
-also receives each validated `source_type` and `perspective` from Stage 1 to
-understand what the character knew, suspected, valued, and perceived as options.
-The interpretation cannot establish behavior absent from, or contradicted by,
-the canonical scene; insufficient grounding produces no candidate. The prompt
-includes the authoritative trait descriptions from
-`IDENTITY_TRAIT_DESCRIPTION_CONTRACT`.
+`personality_traits`. Stage 3 admits canonical behavior/explicit statements (weight
+2) or scene-anchored subjective preferences/motivations (weight 1), choosing one
+strongest observation per trait per scene. It cannot invent actions or transfer
+another character's behavior. Summaries provide context, never evidence. See
+[Dispositional Traits](Dispositional%20Traits.md) for the versioned rules.
 All scenes from a `DERIVED_FROM` source form one chronological
 source bundle and yield one source-level revision. The worker partitions each
 source's ordered scenes into chunks of at most five. All Perspective calls finish
@@ -593,25 +594,14 @@ in its `event_references`. This semantic decision belongs
 to the consolidation prompt; backend validators check references, provenance,
 shape, and lifecycle, but cannot prove natural-language equivalence.
 
-Stage 3 returns all eight required directional trait slots per scene, each null
-or an observation with exactly `polarity`, `context`, and `justification`.
-`context` is a complete trait-specific enum generated from the registry, or
-`unspecified`. The provider schema and Python enforce identical context values;
-no separately nullable relationship/stakes fields or three-trait cap remain.
-Definitions, both poles, construct boundaries, paired examples, and confounds guide
-selection. A single diagnostic voluntary action can supply an observation without
-an explicitly narrated alternative or proof of an enduring disposition. Neither
-subjective-only behavior nor group participation supplies canonical evidence.
-
-Malformed profile event candidates and duplicate same-kind candidates are dropped
-individually; other valid scene enrichments remain usable. Malformed non-null
-trait observations become null individually and are logged by scene and trait.
-Missing trait slots and invalid envelopes require bounded correction; they are
-never silently treated as unsupported traits. An all-null result is valid.
-The backend maps context to existing `situation_type` and binds all provenance.
-`unspecified` retains directional evidence; specified contexts continue to support
-STEADINESS with the existing exact-context reducer. See the
-[trait contract](Dispositional%20Traits.md#extraction-and-evidence) for the full wire.
+Stage 3 returns all eight required nullable directional slots per scene. Non-null
+slots contain exactly `polarity`, `source`, and `reason`; no context classifications
+or Steadiness are supplied to the extraction model. Malformed individual candidates
+become null; missing slots/envelope errors retain bounded correction. Backend
+binding, event deduplication, evidence weighting, and both reducers follow the
+[trait contract](Dispositional%20Traits.md#extraction-and-evidence). New profiles use
+`dispositions-v4-weighted-scenes`, with baseline/evolving cross-scene Steadiness
+and revision-owned event grouping; historical v3 revisions retain old calculations.
 It does not produce final aspects/goals or lifecycle statuses. Stage 4 may add,
 materially update, reinforce, deactivate/reactivate aspects, resolve/reactivate
 goals, and refresh focus. It preserves history and never resolves an item only
@@ -621,7 +611,7 @@ ten active goals; focus changes do not alter lifecycle status. See the
 for the migration and verification details.
 
 
-Prompt version `character-embodiment-v43-four-model-roles` participates
+Prompt version `character-embodiment-v44-weighted-scenes` participates
 in source and chunk checkpoint fingerprints, so retries do not reuse outputs
 from older prompt versions. Generation output and persisted profile shapes remain
 unchanged; revision reads add derived `trait_history` details without a database
@@ -648,9 +638,11 @@ for request, polling, and output contracts.
 
 ### Reliability deployment and compatibility
 
-The LLM wire contract uses `character-embodiment-v32-typed-trait-context`.
-Public drafts, reviewed create/update requests, numeric event positions, stored
-stable IDs, timeline projections, and SDK models retain their existing shapes.
+The LLM wire contract uses `character-embodiment-v44-weighted-scenes`.
+Stage 3 uses the compact source/reason contract. v4 profiles add revision-owned
+event grouping and baseline Steadiness; API/worker/SDK readers must support these
+additions while retaining v3 history. Numeric event positions and stored stable IDs
+remain unchanged.
 No graph/database backfill is required. The configuration-key migration above is
 automatic; an existing custom retry limit is preserved. Completed source
 analyses and individually validated chunk outputs are checkpointed in the SQL

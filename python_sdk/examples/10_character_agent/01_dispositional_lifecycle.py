@@ -39,6 +39,7 @@ async def main(args):
             name=proposal['name'], background_story=proposal['background_story'], subtitle=proposal.get('subtitle'),
             aspects=[CharacterAgentEmbeddedAspect.model_validate(item) for item in proposal['aspects']],
             goals=[CharacterAgentEmbeddedGoal.model_validate(item) for item in proposal['goals']]))
+        print('Steadiness (baseline is a neutral prior):', agent.trait_profile.steadiness.model_dump())
         print('Inferred integrity:', agent.trait_profile.dispositional_traits['integrity'].model_dump())
         print('Evidence:', [item.model_dump() for item in await sdk.character_agents.list_trait_evidence(agent.id)])
         await sdk.character_agents.update(agent.id, CharacterAgentUpdate(trait_edits={

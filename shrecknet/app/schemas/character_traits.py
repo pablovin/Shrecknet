@@ -1,7 +1,7 @@
 """Authoritative dispositional constructs, scale, and evidence boundary contracts.
 
 Eight directional points describe recurring choices; STEADINESS describes
-within-context consistency. All estimates are engineering judgments.
+observed cross-scene dispositional consistency. All estimates are engineering judgments.
 """
 from __future__ import annotations
 
@@ -13,8 +13,9 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 TraitKey = Literal['integrity', 'caution', 'presence', 'forbearance', 'diligence', 'curiosity', 'sharing', 'restlessness']
 SlotKey = Literal['integrity', 'caution', 'presence', 'forbearance', 'diligence', 'curiosity', 'sharing', 'restlessness', 'steadiness']
-SPEC_VERSION = 'dispositions-v3-points-perspectives'
-EVIDENCE_POLICY_VERSION = 'point-evidence-v1'
+LEGACY_SPEC_VERSION = 'dispositions-v3-points-perspectives'
+SPEC_VERSION = 'dispositions-v4-weighted-scenes'
+EVIDENCE_POLICY_VERSION = 'point-evidence-v2-weighted-scenes'
 
 @dataclass(frozen=True)
 class TraitDefinition:
@@ -27,6 +28,22 @@ class TraitDefinition:
     diagnostic_situations: tuple[str, ...]
     boundary_notes: str
     kind: str = 'directional'
+
+    @property
+    def compact_poles(self) -> tuple[str, str]:
+        return COMPACT_POLES[self.key]
+
+# Compact model-facing poles remain owned by the authoritative construct registry.
+COMPACT_POLES = {
+    'integrity': ('Exploits others for personal gain', 'Rejects unfair advantage, even at a cost'),
+    'caution': ('Fearless, little need for reassurance', 'Sensitive to threats, seeks security and reassurance'),
+    'presence': ('Avoids social attention and company', 'Socially bold, seeks interaction and visibility'),
+    'forbearance': ('Retaliates, holds grudges', 'Forgives, compromises, tolerates provocation'),
+    'diligence': ('Cuts corners, impulsive, disorganized', 'Plans, persists, fulfills obligations thoroughly'),
+    'curiosity': ('Prefers familiar ideas and experiences', 'Explores unfamiliar ideas and information'),
+    'sharing': ('Favors own share of resources', 'Favors fair or mutually beneficial allocation'),
+    'restlessness': ('Values stability, tradition and order', 'Values autonomy, novelty and change'),
+}
 
 TRAIT_DEFINITIONS = (
     TraitDefinition('integrity', 'INTEGRITY', 'Honesty-Humility — HEXACO',
@@ -78,10 +95,10 @@ TRAIT_DEFINITIONS = (
         ('value_conflict', 'recurring_value_preference'),
         'A motivational value orientation, not simple exploration. Requires explicit value choices or recurring motivated preferences.'),
     TraitDefinition('steadiness', 'STEADINESS', 'Behavioural consistency / spread of the behavioural distribution',
-        'Behaves similarly when genuinely comparable circumstances recur.',
+        'Expresses the same personality dispositions consistently across independent scenes.',
         'Broader variation around the same dispositional centres.',
-        'Narrower variation; dispositions predict behavior more tightly in comparable situations.',
-        (), 'A second moment, not a situation predictor, morality, calmness, or model temperature. Requires repeated comparable behavior.', 'spread'),
+        'Narrower variation; dispositions express the same direction across independent scenes.',
+        (), 'Observed cross-scene consistency cannot distinguish unstable dispositions from stable context-sensitive behavior. Baseline 5 is a computational prior, not observed consistency.', 'spread'),
 )
 DIRECTIONAL_TRAITS = tuple(d.key for d in TRAIT_DEFINITIONS if d.kind == 'directional')
 TRAIT_BY_KEY = {d.key: d for d in TRAIT_DEFINITIONS}
@@ -95,7 +112,7 @@ def trait_metadata() -> dict[str, Any]:
                 'format': '<diagnostic>:<relationship>:<stakes> or unspecified',
                 'relationships': ['friend', 'enemy', 'other'],
                 'stakes': ['ordinary', 'high_stakes'],
-                'unspecified': 'directional evidence only; excluded from steadiness',
+                'unspecified': 'legacy context; new extraction does not classify situations',
             }}
 
 
@@ -105,7 +122,7 @@ class StrictModel(BaseModel):
 
 class TraitEstimate(StrictModel):
     point: int | None = Field(default=None, ge=1, le=9, strict=True)
-    status: Literal['unknown', 'provisional', 'supported', 'manual'] = 'unknown'
+    status: Literal['unknown', 'baseline', 'provisional', 'supported', 'manual'] = 'unknown'
     observation_count: int = Field(default=0, ge=0)
     observation_ids: list[str] = Field(default_factory=list)
 
@@ -117,6 +134,8 @@ class TraitEstimate(StrictModel):
             raise ValueError('unknown must have null point; estimated states require a point')
         if self.status == 'unknown' and self.observation_count:
             raise ValueError('unknown estimate cannot cite contributing perspectives')
+        if self.status == 'baseline' and (self.point != 5 or self.observation_count):
+            raise ValueError('baseline requires point 5 and no observations')
         if self.status == 'supported' and self.observation_count < 2:
             raise ValueError('supported estimate requires independent perspectives')
         return self
@@ -141,14 +160,28 @@ class TraitHistoryEstimate(StrictModel):
 class TraitProfile(StrictModel):
     version: str = SPEC_VERSION
     dispositional_traits: dict[TraitKey, TraitEstimate] = Field(default_factory=lambda: {key: TraitEstimate() for key in DIRECTIONAL_TRAITS})
-    steadiness: TraitEstimate = Field(default_factory=TraitEstimate)
+    steadiness: TraitEstimate = Field(default_factory=lambda: TraitEstimate(point=5, status='baseline'))
+    observation_groups: dict[str, str] = Field(default_factory=dict)
+    observation_group_positions: dict[str, int] = Field(default_factory=dict)
+    unresolved_observation_ids: list[str] = Field(default_factory=list)
     inferred_traits: dict[SlotKey, TraitEstimate] = Field(default_factory=dict)
     overrides: dict[SlotKey, TraitEdit] = Field(default_factory=dict)
 
+    @model_validator(mode='before')
+    @classmethod
+    def legacy_defaults(cls, value):
+        if isinstance(value, dict) and value.get('version') == LEGACY_SPEC_VERSION and 'steadiness' not in value:
+            value = {**value, 'steadiness': TraitEstimate().model_dump()}
+        return value
+
     @model_validator(mode='after')
     def complete(self):
-        if self.version != SPEC_VERSION or set(self.dispositional_traits) != set(DIRECTIONAL_TRAITS):
+        if self.version not in {SPEC_VERSION, LEGACY_SPEC_VERSION} or set(self.dispositional_traits) != set(DIRECTIONAL_TRAITS):
             raise ValueError('profile must contain the current eight directional dispositions')
+        if any(value.status == 'baseline' for value in self.dispositional_traits.values()):
+            raise ValueError('baseline is only valid for Steadiness')
+        if any(value.status == 'baseline' for key, value in self.inferred_traits.items() if key != 'steadiness'):
+            raise ValueError('baseline is only valid for Steadiness')
         return self
 
     def estimate(self, key: str) -> TraitEstimate:
@@ -162,7 +195,10 @@ class TraitObservation(StrictModel):
     trait: TraitKey
     evidence_kind: Literal['behavior', 'authored_disposition'] = 'behavior'
     polarity: Literal['low', 'high']
-    situation_type: str = Field(min_length=1)
+    source: Literal['canonical', 'perspective'] = 'canonical'
+    observation_group_id: str | None = Field(default=None, min_length=1)
+    independence_status: Literal['independent', 'unresolved'] = 'independent'
+    situation_type: str = Field(default='unspecified', min_length=1)
     justification: str = Field(min_length=1)
     perspective_id: str | None = None
     evidence_ids: list[str] = Field(default_factory=list)
@@ -188,8 +224,17 @@ class TraitEvidence(TraitObservation):
     id: str
     source_group_id: str
     chronological_position: int = Field(ge=0)
-    policy_version: Literal['point-evidence-v1']
+    policy_version: Literal['point-evidence-v1', 'point-evidence-v2-weighted-scenes']
     revision_id: str | None = None
+
+    @model_validator(mode='before')
+    @classmethod
+    def explicit_weighted_source(cls, value):
+        if (isinstance(value, dict)
+                and value.get('policy_version') == EVIDENCE_POLICY_VERSION
+                and 'source' not in value):
+            raise ValueError('weighted evidence requires an explicit source')
+        return value
 
 
 class TraitChange(StrictModel):
@@ -217,6 +262,8 @@ class DecisionDisposition(StrictModel):
 class DecisionSteadiness(DecisionDisposition):
     """Aggregate spread kept distinct from the eight directional constructs."""
 
+    status: Literal["unknown", "baseline", "provisional", "supported", "manual"]
+    calculation_version: Literal["comparable-steadiness-v1", "cross-scene-steadiness-v2"] = "cross-scene-steadiness-v2"
     observation_count: int = Field(ge=0, strict=True)
     availability: Literal["available", "unavailable"]
     reason: str | None
@@ -224,6 +271,8 @@ class DecisionSteadiness(DecisionDisposition):
 
     @model_validator(mode="after")
     def verified_inference(self):
+        if self.status == "baseline" and (self.value != 5 or self.observation_count or self.availability != "unavailable"):
+            raise ValueError("baseline requires 5 without observed consistency")
         if self.availability == "available":
             if self.inferred_value is None or self.value is None or self.observation_count < 2:
                 raise ValueError("available consistency requires contributing inference")

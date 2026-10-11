@@ -2662,6 +2662,8 @@ class OntologyInstanceService:
         milestones = await self.list_milestones(props.get("instance_id") or "", scene_id)
 
         return SceneRead(
+            observation_group_id=props.get("observation_group_id"),
+            independence_status=props.get("independence_status") or "independent",
             id=scene_id,
             instance_id=props.get("instance_id") or "",
             ontology_id=ontology_id,
@@ -2906,6 +2908,8 @@ class OntologyInstanceService:
         scene_relations = await relations_result.single() or {}
         milestone_reads = await self._scene_graph_milestones(scene_id, milestones)
         return SceneRead(
+            observation_group_id=scene_node.get("observation_group_id"),
+            independence_status=scene_node.get("independence_status") or "independent",
             id=scene_id, instance_id=instance_id, ontology_id=ontology_id,
             name=str(scene_node.get("name") or ""), description=str(scene_node.get("description") or ""),
             created_by_type=scene_node.get("created_by_type") or "human",
@@ -3126,6 +3130,8 @@ class OntologyInstanceService:
                     ontology_id: $ontology_id,
                     name: $name,
                     description: $description,
+                    observation_group_id: $observation_group_id,
+                    independence_status: $independence_status,
                     created_by_type: $created_by_type,
                     created_by_author: $created_by_author,
                     created_at: $created_at,
@@ -3137,6 +3143,8 @@ class OntologyInstanceService:
                 ontology_id=ontology_id,
                 name=payload.name,
                 description=payload.description,
+                observation_group_id=payload.observation_group_id,
+                independence_status=payload.independence_status,
                 created_by_type=payload.created_by_type,
                 created_by_author=payload.created_by_author,
                 created_at=now_str,
@@ -3311,6 +3319,11 @@ class OntologyInstanceService:
             updates["created_by_type"] = payload.created_by_type
         if payload.created_by_author is not None:
             updates["created_by_author"] = payload.created_by_author
+
+        if 'observation_group_id' in payload.model_fields_set:
+            updates['observation_group_id'] = payload.observation_group_id
+        if payload.independence_status is not None:
+            updates['independence_status'] = payload.independence_status
 
         if payload.derived_from is not None:
             await self._validate_scene_derived_from(

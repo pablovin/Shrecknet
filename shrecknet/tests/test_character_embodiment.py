@@ -71,7 +71,7 @@ def _canonical(overrides=None):
 def scenes(count, offset=0):
     return [SceneInput(
         scene_id=f"s{i}", name="Choice",
-        description="Mara faces a meaningful choice.", created_at=f"{i:03}",
+        description=f"Mara faces meaningful choice {i}.", created_at=f"{i:03}",
     ) for i in range(offset, offset + count)]
 
 
@@ -96,8 +96,8 @@ class BatchLLM:
         if tag.endswith("trait_interpretation"):
             return json.dumps({"scene_trait_interpretations": [
                 {**dict.fromkeys(DIRECTIONAL_TRAITS), "integrity": {
-                    "polarity": "high", "context": "exploitation:other:ordinary",
-                    "justification": "Refuses a safe unfair advantage.",
+                    "polarity": "high", "source": "canonical",
+                    "reason": "Refuses a safe unfair advantage.",
                 }} for _ in payload["scenes"]
             ]})
         raise AssertionError(f"Unexpected LLM call: {tag}")
@@ -267,17 +267,17 @@ def test_prompt_contracts_describe_the_new_execution_order():
     assert "impacts" not in PSYCHOLOGICAL_ANALYSIS_PROMPT
     assert "perspective" in PERSPECTIVE_PROMPT
     assert "trait" in TRAIT_INTERPRETATION_PROMPT.lower()
-    assert '"context"' in TRAIT_INTERPRETATION_PROMPT
-    assert "boundary_notes" in TRAIT_INTERPRETATION_PROMPT
+    assert '"source"' in TRAIT_INTERPRETATION_PROMPT
+    assert "Integrity is not Sharing" in TRAIT_INTERPRETATION_PROMPT
     assert '"situation_type"' not in TRAIT_INTERPRETATION_PROMPT
-    assert "diagnostic voluntary action" in TRAIT_INTERPRETATION_PROMPT
+    assert "meaningful voluntary choice" in TRAIT_INTERPRETATION_PROMPT
     assert '"personality_traits"' not in TRAIT_INTERPRETATION_PROMPT
-    assert "Established personality dimensions and meanings" in TRAIT_INTERPRETATION_PROMPT
+    assert "Traits (low | high)" in TRAIT_INTERPRETATION_PROMPT
     assert "agent_scene_interpretation" in TRAIT_INTERPRETATION_PROMPT
-    assert "objective source of what happened" in TRAIT_INTERPRETATION_PROMPT
-    assert "subjective account" in TRAIT_INTERPRETATION_PROMPT
-    assert "If it conflicts with the canonical" in TRAIT_INTERPRETATION_PROMPT
-    assert "behavior mentioned only in this account" in TRAIT_INTERPRETATION_PROMPT
+    assert 'directly documents' in TRAIT_INTERPRETATION_PROMPT
+    assert 'subjective interpretation' in TRAIT_INTERPRETATION_PROMPT
+    assert 'including when the accounts disagree' in TRAIT_INTERPRETATION_PROMPT
+    assert 'Infer neither invented actions' in TRAIT_INTERPRETATION_PROMPT
     assert "Select one primary emotion and one primary belief when supported" in PSYCHOLOGICAL_ANALYSIS_PROMPT
     assert "Do not fill available slots" in PSYCHOLOGICAL_ANALYSIS_PROMPT
     for prompt in (PSYCHOLOGICAL_ANALYSIS_PROMPT, PSYCHOLOGICAL_CONSOLIDATION_PROMPT):
@@ -300,10 +300,9 @@ def test_prompt_contracts_describe_the_new_execution_order():
     assert PROMPT_VERSION != "character-embodiment-v36-distinct-aspect-facts"
     assert "independently actionable" not in PSYCHOLOGICAL_ANALYSIS_PROMPT
     assert "independently actionable" not in PSYCHOLOGICAL_CONSOLIDATION_PROMPT
-    assert "Traits answer: How does this character tend to behave?" in TRAIT_INTERPRETATION_PROMPT
-    assert "One diagnostic voluntary action" in TRAIT_INTERPRETATION_PROMPT
-    assert "explicitly narrated alternative" in TRAIT_INTERPRETATION_PROMPT
-    assert "no three-trait cap" in TRAIT_INTERPRETATION_PROMPT
+    assert "Evaluate all eight traits independently" in TRAIT_INTERPRETATION_PROMPT
+    assert "One meaningful voluntary choice can suffice" in TRAIT_INTERPRETATION_PROMPT
+    assert "Zero through eight non-null" in TRAIT_INTERPRETATION_PROMPT
     assert "First qualify each event" in PSYCHOLOGICAL_CONSOLIDATION_PROMPT
     assert "Reject weak candidates even if Stage 2 proposed them" in PSYCHOLOGICAL_CONSOLIDATION_PROMPT
 
@@ -361,14 +360,13 @@ async def test_trait_interpretation_payload_pairs_scenes_with_perspectives_witho
 
 @pytest.mark.asyncio
 async def test_all_eight_trait_slots_bind_and_reduce_without_a_scene_cap():
-    from app.jobs.character_agent.trait_evidence_contract import trait_context_values
     from app.schemas.character_traits import TraitObservation
     from app.services.character_trait_service import ground_observations, update_profile
 
     slots = {
         key: {"polarity": "low" if index % 2 else "high",
-              "context": "unspecified" if key == "sharing" else trait_context_values(key)[1],
-              "justification": "The character's recorded voluntary action supports this pole."}
+              "source": "canonical",
+              "reason": "The character's recorded voluntary action supports this pole."}
         for index, key in enumerate(DIRECTIONAL_TRAITS)
     }
     perspectives = [ScenePerspectiveOutput(
@@ -400,12 +398,33 @@ async def test_all_eight_trait_slots_bind_and_reduce_without_a_scene_cap():
         assert profile.estimate(key).point == (3 if index % 2 else 7)
         assert profile.estimate(key).observation_count == 3
         assert profile.estimate(key).status == "supported"
-    assert profile.steadiness.point == 7
+    assert profile.steadiness.point == 9
     assert profile.steadiness.observation_count == 3
     assert {change.trait for change in changes} == {*DIRECTIONAL_TRAITS, "steadiness"}
 
 
-def test_extraction_prompt_includes_all_authoritative_construct_boundaries():
+def test_extraction_prompt_includes_all_authoritative_compact_poles():
     from app.schemas.character_traits import TRAIT_BY_KEY
     for key in DIRECTIONAL_TRAITS:
-        assert json.dumps(TRAIT_BY_KEY[key].boundary_notes, ensure_ascii=False) in TRAIT_INTERPRETATION_PROMPT
+        assert all(pole in TRAIT_INTERPRETATION_PROMPT for pole in TRAIT_BY_KEY[key].compact_poles)
+
+
+@pytest.mark.asyncio
+async def test_backend_binds_duplicate_event_provenance_without_extraction_fields():
+    from app.services.character_trait_service import scene_observation_group
+    supplied = scenes(2)
+    supplied[0].description = 'Mara refuses an unfair offer.'
+    supplied[1].description = 'Mara   refuses an unfair offer.'
+    assert scene_observation_group(supplied[0].model_dump()) == scene_observation_group(supplied[1].model_dump())
+    supplied[0].observation_group_id = supplied[1].observation_group_id = 'reviewed-event'
+    supplied[1].independence_status = 'unresolved'
+    llm = BatchLLM()
+    analysis = await _agent(llm).analyze(source_entity_id='source', source_entity_alias='Source',
+        scenes=supplied, canonical_identity=_canonical(), current_trait_profile=TraitProfile(),
+        current_aspects=[], current_goals=[])
+    assert {item.observation_group_id for item in analysis.observations.trait_evidence} == {'reviewed-event'}
+    assert analysis.observations.trait_evidence[1].independence_status == 'unresolved'
+    extraction = next(call for call in llm.calls if call['usage_tag'].endswith('trait_interpretation'))
+    payload = json.loads(extraction['messages'][1]['content'])
+    assert 'observation_group_id' not in json.dumps(payload)
+    assert 'independence_status' not in json.dumps(payload)

@@ -23,7 +23,7 @@ class TraitHistoryEstimate(StrictModel):
 
 class TraitEstimate(StrictModel):
     point: int | None = Field(ge=1, le=9, strict=True)
-    status: Literal['unknown', 'provisional', 'supported', 'manual']
+    status: Literal['unknown', 'baseline', 'provisional', 'supported', 'manual']
     observation_count: int = Field(ge=0)
     observation_ids: list[str] = Field(default_factory=list)
 
@@ -35,14 +35,19 @@ class TraitEstimate(StrictModel):
             raise ValueError('unknown must have null point')
         if self.status == 'unknown' and self.observation_count:
             raise ValueError('unknown estimate cannot cite contributing perspectives')
+        if self.status == 'baseline' and (self.point != 5 or self.observation_count):
+            raise ValueError('baseline requires 5 and no contributing observations')
         if self.status == 'supported' and self.observation_count < 2:
             raise ValueError('supported estimate requires independent perspectives')
         return self
 
 class TraitProfile(StrictModel):
-    version: Literal['dispositions-v3-points-perspectives']
+    version: Literal['dispositions-v3-points-perspectives', 'dispositions-v4-weighted-scenes']
     dispositional_traits: dict[TraitKey, TraitEstimate]
     steadiness: TraitEstimate
+    observation_groups: dict[str, str] = Field(default_factory=dict)
+    observation_group_positions: dict[str, int] = Field(default_factory=dict)
+    unresolved_observation_ids: list[str] = Field(default_factory=list)
     inferred_traits: dict[SlotKey, TraitEstimate] = Field(default_factory=dict)
     overrides: dict[SlotKey, TraitEdit] = Field(default_factory=dict)
 
@@ -53,12 +58,19 @@ class TraitProfile(StrictModel):
             'diligence', 'curiosity', 'sharing', 'restlessness',
         }:
             raise ValueError('profile requires all eight directional traits')
+        if any(item.status == 'baseline' for item in self.dispositional_traits.values()):
+            raise ValueError('baseline is only valid for Steadiness')
+        if any(item.status == 'baseline' for key, item in self.inferred_traits.items() if key != 'steadiness'):
+            raise ValueError('baseline is only valid for Steadiness')
         return self
 
 class TraitEvidence(StrictModel):
     id: str
     trait: TraitKey
     evidence_kind: Literal['behavior', 'authored_disposition']
+    source: Literal['canonical', 'perspective'] = 'canonical'
+    observation_group_id: str | None = None
+    independence_status: Literal['independent', 'unresolved'] = 'independent'
     situation_type: str
     polarity: Literal['low', 'high']
     justification: str
@@ -68,3 +80,12 @@ class TraitEvidence(StrictModel):
     chronological_position: int
     policy_version: str
     revision_id: str | None = None
+
+    @model_validator(mode='before')
+    @classmethod
+    def explicit_weighted_source(cls, value):
+        if (isinstance(value, dict)
+                and value.get('policy_version') == 'point-evidence-v2-weighted-scenes'
+                and 'source' not in value):
+            raise ValueError('weighted evidence requires an explicit source')
+        return value

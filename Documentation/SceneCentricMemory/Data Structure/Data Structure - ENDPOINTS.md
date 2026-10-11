@@ -104,3 +104,22 @@ Example:
 ## Event Write Deprecation (important for frontend)
 
 Legacy event write endpoints are blocked and return conflict/deprecation responses. Use Scene and Milestone write endpoints for new UI flows.
+
+## Trait observation event provenance
+
+Scene create/update/read payloads at `/ontology-instances/{instance_id}/scenes`
+and `/ontology-instances/{instance_id}/scenes/{scene_id}` additionally support:
+
+```json
+{"observation_group_id":"reviewed-event-42","independence_status":"independent"}
+```
+
+`observation_group_id` is nullable, nonblank when present, and at most 255 characters.
+An explicit null in a scene update clears it; omission preserves it.
+`independence_status` is `independent` or `unresolved`, defaulting to independent
+on creation/legacy reads; omission or null in updates preserves it. Existing
+scene authorization and instance isolation apply. Assign shared IDs to reviewed
+retellings; shared source entities alone do not prove a shared event. Unresolved
+observations do not contribute to CharacterAgent trait/Steadiness support.
+Changing provenance on processed scenes requires explicit regeneration, with no
+automatic historical rewrite. See [the canonical trait contract](../../Agents/CharacterAgent/Dispositional%20Traits.md#independent-event-grouping).

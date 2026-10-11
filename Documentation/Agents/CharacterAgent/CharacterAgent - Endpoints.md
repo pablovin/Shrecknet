@@ -69,7 +69,7 @@ Example response:
     "status": "active",
     "visibility": "public",
     "trait_profile": {
-      "version": "dispositions-v3-points-perspectives",
+      "version": "dispositions-v4-weighted-scenes",
       "dispositional_traits": {
         "integrity": {"point": null, "status": "unknown", "observation_count": 0, "observation_ids": []},
         "caution": {"point": null, "status": "unknown", "observation_count": 0, "observation_ids": []},
@@ -80,8 +80,9 @@ Example response:
         "sharing": {"point": null, "status": "unknown", "observation_count": 0, "observation_ids": []},
         "restlessness": {"point": null, "status": "unknown", "observation_count": 0, "observation_ids": []}
       },
-      "steadiness": {"point": null, "status": "unknown", "observation_count": 0, "observation_ids": []},
-      "overrides": {}, "inferred_traits": {}
+      "steadiness": {"point": 5, "status": "baseline", "observation_count": 0, "observation_ids": []},
+      "overrides": {}, "inferred_traits": {},
+      "observation_groups": {}, "unresolved_observation_ids": []
     },
     "id": "agent-8c01",
     "embodied_entity_instance_id": "entity-mara",
@@ -318,7 +319,7 @@ property return `null`; it is not part of caller-supplied create/update fields.
 Newly synthesized summaries describe supported conditional behavior: psychology
 explains established interpretations and motives, while directional trait prose
 describes tendencies in relevant circumstances. Separate internal Steadiness input
-may qualify comparable-context consistency; it does not add an output trait or
+may qualify observed cross-scene consistency (legacy v3 retains comparable-context meaning); it does not add an output trait or
 numeric summary field. Unknown or unavailable evidence does not establish observed
 consistency. The response shape, authorization, and draft acceptance flow are
 unchanged; deployment does not rewrite existing descriptions. See
@@ -370,12 +371,18 @@ remain in the profile; the decimal is inferred separately. Unknown has a null
 estimate with zero counts; missing/inconsistent evidence has `availability:
 "unavailable"`, a reason, and null numeric details. Steadiness is not included.
 Existing visibility, pagination, and raw-evidence permissions are unchanged.
-Older clients may ignore this field. See [Dispositional Traits](Dispositional%20Traits.md#continuous-revision-history).
+New v4 snapshots use `recency-weighted-scenes-v2`; v3 retains the example's
+`recency-points-v1`. Counts are unweighted independent opportunities. New profiles
+add `observation_groups` and `unresolved_observation_ids` for revision-stable grouping.
+Steadiness additionally admits `baseline` (point 5/count 0); inference remains
+unavailable until independent repeats exist. Strict older SDKs require upgrade;
+dual-version readers preserve historical v3 snapshots. See [Dispositional Traits](Dispositional%20Traits.md#continuous-revision-history).
 
 `GET /character-agents/{agent_id}/trait-evidence` is administrator-only. Filters:
 `trait` (directional key), `revision` (inclusive cutoff), `skip` (default 0), and
 `limit` (default 100, maximum 500). It returns structured observations with
-perspective IDs, polarity, context, justification, and revision provenance.
+perspective IDs, polarity, source (`canonical|perspective`), event grouping,
+independence status, justification, legacy `situation_type`, and revision provenance.
 It includes observations even when they do not change the rounded point. Raw trait
 observations are not included in public revision responses. Visibility rules for
 existing profile and history reads continue to apply.
@@ -468,7 +475,7 @@ Scenes retain `DERIVED_FROM` source grouping and deterministic time order. A sou
 Each chunk has two LLM waves and three normal calls:
 
 1. **Character incorporation** uses `PERSPECTIVE_PROMPT` with the chunk's canonical scenes and identity description. It returns one psychologically distinctive subjective `perspective` and `source_type` per scene. The perspective reflects established personality, values, fears, motivations, and beliefs, and captures supported internal change.
-2. **Psychological enrichment** uses `PSYCHOLOGICAL_ANALYSIS_PROMPT` with canonical scene context, the preceding perspective, and identity description. It returns scene-owned emotions, beliefs, and at most one aspect event and one goal event per scene. In parallel, **Trait interpretation** receives the same scene and validated character `source_type` and `perspective`, plus narrative identity summaries and trait definitions. It uses canonical facts to establish the character's behavior and the subjective perspective to interpret their knowledge and perceived options, returning all eight required nullable directional trait slots per scene. Each non-null slot contains `polarity`, one trait-specific enum `context`, and `justification`; there is no three-trait cap. Context maps to the existing persisted `situation_type`, including `unspecified` for directional evidence without STEADINESS comparison. The public endpoint payloads and response models are unchanged. See [trait extraction](Dispositional%20Traits.md#extraction-and-evidence) for admission rules and the internal wire contract.
+2. **Psychological enrichment** uses `PSYCHOLOGICAL_ANALYSIS_PROMPT` with canonical scenes, perspectives, and identity, returning selective emotions/beliefs and at most one aspect and goal event per scene. In parallel, **Trait interpretation** evaluates eight required nullable slots per scene. Non-null slots contain `polarity`, `source: canonical|perspective`, and `reason`. Canonical evidence receives backend weight 2, perspective evidence weight 1; agreeing channels count once. The backend groups duplicate events and calculates both directional traits and cross-scene Steadiness. No context classification or Steadiness reaches extraction. See [trait extraction](Dispositional%20Traits.md#extraction-and-evidence).
 
 Malformed profile-event and trait candidates are discarded individually, and duplicate profile-event kinds or trait keys are discarded after the first valid candidate. Other valid candidates and scene outputs continue. An invalid scene wrapper or incorrect number of scene results still fails validation.
 

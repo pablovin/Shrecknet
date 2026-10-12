@@ -79,9 +79,9 @@ async def test_more_than_four_passages_still_get_one_global_read():
     result, passages = await interpret_source(text=text, source_type='notes', language='en', instructions='', call_json=call)
     assert len(calls) == 1
     assert json.loads(calls[0][0].split('source_segments=', 1)[1]) == [p.model_dump() for p in passages]
-    assert 'candidate developments' in calls[0][0]
+    assert 'compact narrative plan' in calls[0][0]
     assert 'final fictional development' in calls[0][0]
-    assert len(result.beats) == 1  # A soft editorial target, never a hard quota.
+    assert len(result.beats) == 1  # Brief sources need not reach the soft 8–10 target.
 
 
 @pytest.mark.asyncio
@@ -324,8 +324,7 @@ def test_director_rejects_invalid_assignments_identities_and_fact_references(mut
     elif mutation == 'wrong_fact':
         value['arcs'][0]['unresolved_facts'][0]['fact_index'] = 99
     elif mutation == 'include_gameplay':
-        value['excluded_beat_ids'] = []
-        value['arcs'][2]['beat_ids'].insert(0, 'beat-007')
+        candidate.beats[0].material = 'gameplay'
     elif mutation == 'drop_mixed':
         value['arcs'][0]['beat_ids'].remove('beat-001')
         value['excluded_beat_ids'].append('beat-001')
@@ -541,3 +540,67 @@ async def test_recorded_identity_conflict_is_eliminated_at_analysis_boundaries(t
     # Redundant legacy model output is forbidden rather than silently trusted.
     with pytest.raises(ValueError, match='Extra inputs'):
         CandidateExtraction.model_validate(dict(value, cast=recorded['cast']))
+
+
+@pytest.mark.parametrize('count,accepted', [(1, True), (10, True), (12, True), (13, False), (42, False)])
+def test_current_narrative_plan_enforces_whole_source_beat_limit(count, accepted):
+    from jsonschema import validate, ValidationError as SchemaError
+    value = plan()
+    value['beats'] = [dict(value['beats'][0], beat_id=f'beat-{i:03d}') for i in range(1, count + 1)]
+    if accepted:
+        validate(value, STORY_PLAN_JSON_SCHEMA)
+        assert len(CandidateExtraction.model_validate(value).beats) == count
+    else:
+        with pytest.raises(SchemaError):
+            validate(value, STORY_PLAN_JSON_SCHEMA)
+        with pytest.raises(ValidationError):
+            CandidateExtraction.model_validate(value)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('synthesis', [False, True])
+async def test_passage_sized_plan_is_replanned_within_twelve_beats_without_losing_ending(tmp_path, monkeypatch, synthesis):
+    """Contract replay of the 42-beat failure shape, not a live generation claim."""
+    from app.jobs.novelist import source_interpreter
+    monkeypatch.setenv('SHRECKNET_DATA_DIR', str(tmp_path))
+    fixture = session9()
+    valid = fixture['candidate']
+    invalid = json.loads(json.dumps(valid))
+    invalid['beats'] = [dict(valid['beats'][i % len(valid['beats'])], beat_id=f'beat-{i+1:03d}') for i in range(42)]
+    if synthesis:
+        original_fits = source_interpreter.fits_context
+        monkeypatch.setattr(source_interpreter, 'fits_context', lambda prompt, schema, **kw: False if schema == STORY_PLAN_JSON_SCHEMA else original_fits(prompt, schema, **kw))
+    class PlanningClient(Client):
+        async def chat(self, **request):
+            if request['usage_tag'] == 'novelist.analysis.inventory':
+                self.calls.append(request)
+                # Inventories are factual working material; the global cap applies to synthesis.
+                return {'text': json.dumps({'identities': valid['identities'], 'observations': [{key: beat[key] for key in ('summary', 'source_ranges', 'material', 'confirmed_facts', 'unresolved_facts')} for beat in valid['beats']]}), 'response_metadata': {'finish_reason': 'stop'}}
+            return await super().chat(**request)
+    client = PlanningClient([invalid, valid])
+    runner = NovelistOrchestrator(llm_client=client, model_policy=ModelPolicy())
+    candidate, segments = await interpret_source(text=fixture['source_text'], source_type='notes', language='en', instructions=fixture['instructions'], call_json=runner._json)
+    assert len(candidate.beats) == 12 and len(segments) == 44
+    assert candidate.model_dump() == valid
+    assert candidate.beats[-1].source_ranges[-1].end_id == segments[-1].id
+    assert candidate.beats[-1].confirmed_facts == valid['beats'][-1]['confirmed_facts']
+    assert any('actual treatment is not confirmed' in fact for beat in candidate.beats for fact in beat.unresolved_facts)
+    assert any('death is not confirmed' in fact for beat in candidate.beats for fact in beat.unresolved_facts)
+    assert not any(beat.material == 'gameplay' for beat in candidate.beats)
+    repair = client.calls[-1]
+    assert repair['usage_tag'] == ('novelist.analysis.story_plan_reconcile.repair' if synthesis else 'novelist.analysis.story_plan.repair')
+    assert all(call['max_tokens'] == 6000 for call in client.calls)
+    assert 'Do not take the first 12 beats' in repair['messages'][0]['content']
+    assert 'maxItems' in json.dumps(repair['response_format'])
+
+
+@pytest.mark.asyncio
+async def test_repeated_oversized_plan_fails_before_director_and_writers(tmp_path, monkeypatch):
+    monkeypatch.setenv('SHRECKNET_DATA_DIR', str(tmp_path))
+    value = plan()
+    value['beats'] = [dict(value['beats'][0], beat_id=f'beat-{i:03d}') for i in range(1, 43)]
+    client = Client([value, value])
+    runner = NovelistOrchestrator(llm_client=client, model_policy=ModelPolicy())
+    with pytest.raises(RuntimeError, match='failed after one retry'):
+        await runner.execute(agent=None, payload=NovelistRunCreate(unstructured_text='Source'))
+    assert [call['usage_tag'] for call in client.calls] == ['novelist.analysis.story_plan', 'novelist.analysis.story_plan.repair']

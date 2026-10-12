@@ -331,7 +331,7 @@ class NovelistOrchestrator:
         started = time.monotonic()
         artifacts: dict[str, Any] = {
             "pipeline_version": "v5",
-            "pipeline_revision": "narrative-director-v2",
+            "pipeline_revision": "narrative-director-v3",
             "inputs": payload.model_dump(
                 exclude={"previous_session_text", "previous_session_summary"}
             ),

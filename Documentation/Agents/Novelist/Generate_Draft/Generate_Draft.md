@@ -7,16 +7,21 @@ observability, compatibility, and local-check limitations.
 1. Backend indexing preserves all canonical text, exact offsets, and available PDF
    page provenance as `paragraph-v1` passages.
 2. `interpretation`: Stage 1 `build_story_plan_prompt` frames the whole source into
-   `CandidateExtraction`: ordered candidates, source ranges, material classification,
+   `CandidateExtraction`: 1–12 narrative developments for the complete source,
+   usually 8–10; related actions share a beat and pure gameplay is omitted.
+   The plan retains source ranges, material classification,
    confirmed/unresolved facts, and explicit/ambiguous/GM identities.
 3. Oversized branch: Stage 1a `build_inventory_prompt` gathers factual evidence from
    bounded windows; Stage 1b `build_reconciliation_prompt` synthesizes every inventory
-   into one candidate extraction. No local arc quotas or parallel branches run.
+   into one narrative plan with at most 12 beats across all windows.
+   The cap is not applied per window. No local arc quotas or parallel branches run.
    Over-budget synthesis fails without dropping windows.
 4. Backend source-reference validation runs inside the structured repair boundary.
    `build_analysis_retry_prompt` regenerates a complete rejected structured result
    once, for extraction, inventories, synthesis, or Director. Initial and repair
    analysis calls use strict schemas, preflight, and 6,000 output tokens.
+   Over-limit plans are replanned globally, preserving later outcomes; the backend
+   never takes the first 12 beats or mechanically merges unrelated developments.
 5. Stage 2 `build_director_prompt` reasons over candidate JSON, original instructions,
    and language only. `direct_story` returns validated chronological arcs and exact
    fact references. Python derives canonical cast and ambiguous/GM restrictions
@@ -36,7 +41,7 @@ observability, compatibility, and local-check limitations.
     Stage 3r `build_writer_retry_prompt` replaces a rejected unit once. Only accepted
     prose becomes continuity. Exhausted repair never publishes a partial chapter.
 11. `quality_gate` confirms all units passed local checks; `merging` escapes title/prose
-    into safe chapter HTML. Artifacts remain V5 with revision `narrative-director-v2`.
+    into safe chapter HTML. Artifacts remain V5 with revision `narrative-director-v3`.
 
 Prompts have no retained inactive variants or mandatory semantic reviewer. Debug
 snapshots retain requests before dispatch, responses before validation, metrics,

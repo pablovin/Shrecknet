@@ -1,6 +1,6 @@
 # Novelist Narrative Director: Design and Evaluation
 
-Status: implemented as the focused V5 revision `narrative-director-v2`. The
+Status: implemented as the focused V5 revision `narrative-director-v3`. The
 [runtime contract](Novelist.md) and [ordered flow](Generate_Draft/Generate_Draft.md)
 are authoritative. Live generation/token/latency and prose-quality comparison
 remain pending; the annotated context projection below is not a live-model result.
@@ -35,6 +35,10 @@ Director facts reference candidate statements by beat ID and zero-based fact
 index. This avoids rewriting uncertainty during grouping. Validation rejects
 missing, duplicated, unknown, or reordered assignments; omitted facts; invented
 cast mappings; resolved ambiguous identities; and gameplay-only writing assignments.
+Global extraction and inventory synthesis produce 1–12 narrative developments,
+usually 8–10, regardless of source paragraph count. Pure gameplay is omitted and
+related combat actions share a development. Over-limit plans are rejected and
+replanned once; no tail is discarded.
 These are structural guarantees, not proof that the model interpreted the PDF
 correctly. Extraction must preserve the evidence the Director needs.
 
@@ -51,8 +55,10 @@ The original instructions identify Pablo as DM, Pietro as Tamura, Laura as Lynel
 and Enrico as Cwenhild or Asterius. The annotated fixture preserves that ambiguity,
 possible healing, and unconfirmed death after falling. It retains Arthur's
 recognition, the battles, Gawain's inconclusive duel, Ban's arrival, Lot's retreat,
-and the land grants while excluding gameplay-only calculations. Mixed candidates
-retain their fictional consequences.
+and the land grants while excluding gameplay-only calculations. The compact
+reference plan contains 12 developments across 44 passages and five
+Director arcs. Mixed candidates retain their fictional consequences; the archers’
+engagement and Gawain’s duel each combine their related actions into one beat.
 
 Automated replay validates reference/accounting and minimal context boundaries,
 bounded repair, accepted-only transitions, source/output subdivisions, historical
@@ -77,7 +83,7 @@ UTF-8 lengths of exact saved writer prompts.
 | --- | ---: | ---: |
 | Normal calls | 16 | 7 (1 extraction + 1 Director + 5 writers) |
 | Writing units | 15 | 5 |
-| Writer prompt bytes | 201,739 | 37,298 |
+| Writer prompt bytes | 201,739 | 37,071 |
 | Input tokens | 52,382 | Pending real provider execution |
 | Output tokens | 11,547 | Pending real provider execution |
 | Chapter length | 7741 generated words | 4,490 target words; actual prose pending |
@@ -86,7 +92,7 @@ UTF-8 lengths of exact saved writer prompts.
 
 The context projection uses the human-authored five-arc plan, current prompt
 builders, and a 700-ASCII-character transition tail after the first unit. It
-reduces repeated writer input by approximately 81.5%, without increasing context or
+reduces repeated writer input by approximately 81.6%, without increasing context or
 output-token settings. It is not a measured reduction in provider tokens, latency,
 or total chapter-generation cost. Changed chapter-length targets also require
 reporting generated word counts during quality comparison.

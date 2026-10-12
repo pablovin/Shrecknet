@@ -1,7 +1,8 @@
 """Novelist V5 prompts in execution order.
 
-Stage 1 frames the source as candidate evidence. Oversized sources use stage 1a
-factual inventories then stage 1b global synthesis. Stage 2 directs only candidate
+Stage 1 frames the source as a compact narrative plan of at most 12 beats.
+Oversized sources use stage 1a factual inventories then stage 1b global synthesis
+into the same bounded plan. Stage 2 directs only candidate
 JSON, instructions and language into chronological arcs. Structured recovery
 regenerates any rejected analysis stage once. Stage 3 renders sequential arc units;
 stage 3r replaces rejected prose once. Only accepted prose becomes continuity or
@@ -12,25 +13,37 @@ identities. There are no parallel branches, inactive prompts or semantic critic 
 from __future__ import annotations
 import json
 from typing import Any
-from app.jobs.novelist.story_plan import CandidateExtraction, DirectedStoryPlan, SourceSegment
+from app.jobs.novelist.story_plan import MAX_NARRATIVE_BEATS, CandidateExtraction, DirectedStoryPlan, SourceSegment
 
 
 # Purpose: define dramatic scale and whole-source coverage consistently.
 # Used by: global planning and inventory synthesis, plus their recovery variants.
-# Output: compact candidate developments with complete fictional evidence, no quota.
-_DRAMATIC_CONTRACT = """Read the complete source as one narrative. A story beat is a meaningful
+# Output: compact narrative plan, usually 8–10 beats and never more than 12.
+_DRAMATIC_CONTRACT = f"""Read the complete source as one narrative. A story beat is a meaningful
  dramatic development, NOT an individual paragraph, conversation, combat round,
  or gameplay action. Combine related events around conflicts, turning points,
  character decisions, revelations, stakes, resolutions, and consequences. Explain
- what changes and why in each summary. Extract candidate developments without imposing the final chapter structure,
- with no maximum beat count. Do not pad brief sources or merge unrelated
- developments merely to meet a count. Identify gameplay-only material as gameplay; mixed developments must retain their
- fictional consequences separately from rules/administration. Preserve possible
+ what changes and why in each summary. Produce a compact narrative plan, not a
+ passage-by-passage evidence inventory. Aim for approximately 8–10 beats for a
+ typical full session, with a hard maximum of {MAX_NARRATIVE_BEATS} beats for the COMPLETE source,
+ regardless of paragraph, page, combat round or transport-window count. Brief
+ sources may need fewer beats; never pad to reach a target. A battle's approach,
+ exchanges and outcome normally form one development, not separate beats per roll.
+ Choose the most meaningful narrative boundaries while retaining major outcomes
+ and uncertainties. Smaller actions remain available through source_ranges for
+ the writer; one beat can span many passages. Do not drop the ending to meet the limit.
+ Exclude table chatter, pure rules, dice, technical issues, character-sheet changes
+ and reward-point calculations from the plan. For mixed material, extract only
+ fictional developments and consequences, not an account of administering the game.
+ Preserve possible
  healing as unresolved, never confirmed treatment, and falling damage without an
  explicit death as unresolved survival, never a death. Record identity ambiguity
  explicitly; apply user mappings, exclude the GM, and never guess a character.
- The Director cannot see original passages: retain all important facts and doubts
- in confirmed_facts/unresolved_facts, including the ending.
+ The Director receives this narrative plan and combines its beats into writing arcs.
+ Keep confirmed_facts/unresolved_facts concise: retain consequential facts and
+ doubts needed for grouping, including the ending, rather than every source detail.
+ The summary explains the development; fact arrays identify key outcomes and
+ uncertainties without repeating whole summaries or recording every action.
  Before returning, review coverage from the beginning through the middle and the
  final fictional development. Preserve unresolved endings. Do not invent missing
  outcomes, motives, characters, or consequential events."""
@@ -57,7 +70,7 @@ record alternative characters as ambiguous and explicit DM/GM roles as gm.
 Never emit a cast field: the backend derives it only from confirmed identities.
 Never resolve an ambiguous identity or include the GM as a fictional character.
 title: null or at most 120 characters;
-beats: one or more ordered dramatic developments, each summary 1–600 characters
+beats: 1–__MAX_NARRATIVE_BEATS__ ordered dramatic developments for the complete source, each summary 1–600 characters
 (prefer 1–3 concise sentences); beat_id: unique 1–32 character identifier in narrative
 order, such as beat-001; source_ranges: 1–8 inclusive ranges per beat, each endpoint
 an exact supplied passage ID of 1–32 characters. Never invent or shorten IDs.
@@ -68,7 +81,7 @@ forward. continuity_notes: null or at most 2000 characters.
 Use null for absent title/continuity notes, [] for absent identities. Return compact JSON
 without indentation, prose, or Markdown. Keep the complete response within 6,000
 tokens. Field maxima are ceilings, not targets; shorten summaries before losing
-major developments or the ending."""
+major developments or the ending.""".replace("__MAX_NARRATIVE_BEATS__", str(MAX_NARRATIVE_BEATS))
 
 # Purpose: describe the authoritative index, independent of transport windows.
 # Used by: candidate planning and factual inventory input contracts.
@@ -105,7 +118,9 @@ This is a window of a larger source, not an independent chapter. Record concise
 chronological fictional developments, decisions, discoveries, consequences,
 unresolved threads, and explicit player/character mappings. Retain the ending of
 this window. Omit table chatter unless fictional consequences matter. Never
-invent facts. Do not impose an 8–10 observation count or create a chapter plan.
+invent facts. Combine related observations across passages; omit pure rules,
+technical issues and administration, retaining fictional consequences from mixed
+material. Do not impose the global beat limit on this window or create a chapter plan.
 Return exactly {{"observations":[{{"summary":string,"source_ranges":[{{"start_id":string,"end_id":string}}],"material":"fiction"|"mixed"|"gameplay","confirmed_facts":[string],"unresolved_facts":[string]}}],"identities":[{{"player":string,"character":string|null,"status":"confirmed"|"ambiguous"|"gm"}}]}}.
 Facts: each array has 0–12 strings of 1–300 characters, [] if absent. Keep possible
 healing, unconfirmed deaths and other doubts unresolved. material classifies
@@ -127,7 +142,7 @@ instructions={instructions}
 source_segments={json.dumps([s.model_dump() for s in segments], ensure_ascii=False)}"""
 
 
-# Purpose: synthesize chapter-wide candidate evidence from factual inventories.
+# Purpose: synthesize one compact narrative plan from all factual inventories.
 # Used by: source_interpreter stage 1b, only after all oversized-source windows.
 # Output: complete CandidateExtraction; never concatenated local outlines.
 def build_reconciliation_prompt(*, segments: list[SourceSegment], partial_plans: list[dict[str, Any]], language: str = "", instructions: str = "") -> str:
@@ -139,7 +154,9 @@ sizing); partial_plans contains ordered factual inventories, NOT local chapter
 plans, each with observations (summary, source_ranges, material, confirmed_facts,
 unresolved_facts), and identities (player, nullable
 character, status confirmed/ambiguous/gm). Preserve their facts, merge related developments
-across windows, remove duplication, and create ONE chapter-wide structure.
+across windows, remove duplication, and create ONE chapter-wide narrative plan.
+The beat maximum applies globally, not per window. Never concatenate local
+observation lists into beats or discard later inventories to meet the limit.
 language is requested chapter language; instructions are user constraints.
 This branch uses inventories rather than a single full-source reading.
 language={language}
@@ -156,9 +173,17 @@ def _bounded_text(value: str, limit: int) -> str:
 # Used by: orchestrator after any failed extraction, inventory, synthesis or Director call.
 # Output: complete original JSON shape; the provider receives its schema separately.
 def build_analysis_retry_prompt(*, original_prompt: str, rejected: str, error: Exception | None, schema: dict[str, Any]) -> str:
+    planning_recovery = (
+        f"Rebuild the whole-source narrative plan with at most {MAX_NARRATIVE_BEATS} beats. "
+        "Combine related actions into meaningful developments, omit pure game administration, "
+        "and use source ranges to retain supporting details. Do not take the first "
+        f"{MAX_NARRATIVE_BEATS} beats or drop later outcomes.\n"
+        if schema.get("properties", {}).get("beats", {}).get("maxItems") == MAX_NARRATIVE_BEATS
+        else ""
+    )
     return f"""{original_prompt}
 Structured Recovery (reasoning).
-Regenerate the complete original root object, including nullable fields. The
+{planning_recovery}Regenerate the complete original root object, including nullable fields. The
 previous output failed validation. Shorten summaries and combine related facts
 while preserving major developments and the ending. Stay within the 6,000-token
 budget. Fix invalid references using only supplied IDs. Never slice JSON.
@@ -174,7 +199,8 @@ validation_error={_bounded_text(str(error), 2000)}
 def build_director_prompt(*, candidate: CandidateExtraction, instructions: str, language: str) -> str:
     return f"""Stage 2 — Narrative Director (reasoning).
 Only candidate_extraction, user_instructions and language are available. Candidate
-extraction has title, continuity_notes, identities(player,
+extraction is a compact whole-source narrative plan with 1–12 beats, not a list
+of individual source paragraphs. It has title, continuity_notes, identities(player,
 character,status confirmed/ambiguous/gm), and chronological beats(beat_id,summary,
 importance major/supporting/transition, source_ranges(start_id,end_id), material
 fiction/mixed/gameplay, confirmed_facts and unresolved_facts arrays of statements).

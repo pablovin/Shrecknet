@@ -2,6 +2,9 @@
 
 - Derive cast and Director identity restrictions from a single validated identity
   list; prevent contradictory duplicate mappings from failing otherwise valid analysis.
+- Restore compact whole-source narrative planning with a validated 12-beat maximum
+  for extraction and oversized synthesis. Replan over-limit output once without
+  dropping the ending; keep the existing 6,000-token output allowance.
 - Extract certainty and identity evidence before a compact editorial Director call.
 - Write Director-owned arcs with relevant source passages and a 700-character
   accepted-prose transition tail; retain bounded context/output subdivisions.

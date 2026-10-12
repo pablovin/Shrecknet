@@ -87,7 +87,7 @@ def test_story_plan_accepts_all_sizing_boundaries() -> None:
     assert NarrativeStoryPlan.model_validate(payload).model_dump() == payload
 
 
-def test_story_plan_has_no_maximum_beat_count() -> None:
+def test_historical_story_plan_retains_unbounded_beat_count() -> None:
     payload = _plan_payload()
     payload["beats"] = [
         dict(payload["beats"][0], beat_id=f"beat-{index:03d}")
@@ -97,7 +97,6 @@ def test_story_plan_has_no_maximum_beat_count() -> None:
     validate_json_schema(payload, STORY_PLAN_JSON_SCHEMA)
     plan = NarrativeStoryPlan.model_validate(payload)
     assert len(plan.beats) == 50
-    assert sum(len(block.beat_ids) for block in plan_blocks(DirectedStoryPlan.model_validate(directed_payload(candidate_payload(payload))), CandidateExtraction.model_validate(candidate_payload(payload)), [SourceSegment(id="passage-000001", text="source")])) == 50
 
 
 @pytest.mark.parametrize(
@@ -142,7 +141,8 @@ def test_all_analysis_prompts_include_the_compact_contract() -> None:
             schema=STORY_PLAN_JSON_SCHEMA,
         )
         for request in (prompt, repair):
-            assert "no maximum beat count" in request
+            assert "hard maximum of 12 beats" in request
+            assert "passage-by-passage evidence inventory" in request
             assert "1–600 characters" in request
             assert "title: null or at most 120 characters" in " ".join(request.split())
             assert "continuity_notes: null or at most 2000 characters" in " ".join(request.split())

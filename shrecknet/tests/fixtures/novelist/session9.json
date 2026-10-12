@@ -152,47 +152,18 @@
         "unresolved_facts": []
       },
       {
-        "beat_id": "beat-007",
-        "summary": "The table calculates passion bonuses and initial morale.",
-        "importance": "supporting",
-        "source_ranges": [
-          {
-            "start_id": "passage-000011",
-            "end_id": "passage-000012"
-          }
-        ],
-        "material": "gameplay",
-        "confirmed_facts": [],
-        "unresolved_facts": []
-      },
-      {
         "beat_id": "beat-008",
-        "summary": "The mounted fighters face five Cambrian archers.",
+        "summary": "The mounted fighters defeat five Cambrian archers despite wounded horses.",
         "importance": "supporting",
         "source_ranges": [
           {
             "start_id": "passage-000013",
-            "end_id": "passage-000016"
-          }
-        ],
-        "material": "mixed",
-        "confirmed_facts": [
-          "Five Cambrian archers oppose the group."
-        ],
-        "unresolved_facts": []
-      },
-      {
-        "beat_id": "beat-009",
-        "summary": "The archers are defeated despite wounded horses.",
-        "importance": "major",
-        "source_ranges": [
-          {
-            "start_id": "passage-000017",
             "end_id": "passage-000021"
           }
         ],
         "material": "mixed",
         "confirmed_facts": [
+          "Five Cambrian archers oppose the group.",
           "Lynelle stays mounted when her horse is hurt.",
           "Cwenhild blocks an arrow with a shield.",
           "All five archers are killed and their longbows taken."
@@ -222,33 +193,18 @@
       },
       {
         "beat_id": "beat-011",
-        "summary": "Sannan retreats and Gawain challenges the group.",
+        "summary": "Sannan retreats; Tamura accepts Gawain’s challenge and their duel ends without a decisive victory.",
         "importance": "major",
         "source_ranges": [
           {
             "start_id": "passage-000029",
-            "end_id": "passage-000030"
-          }
-        ],
-        "material": "mixed",
-        "confirmed_facts": [
-          "Count Sannan retreats.",
-          "Prince Gawain offers a Clash of Champions and the group accepts."
-        ],
-        "unresolved_facts": []
-      },
-      {
-        "beat_id": "beat-012",
-        "summary": "Tamura meets Gawain in a mounted charge followed by swordplay.",
-        "importance": "major",
-        "source_ranges": [
-          {
-            "start_id": "passage-000031",
             "end_id": "passage-000035"
           }
         ],
         "material": "mixed",
         "confirmed_facts": [
+          "Count Sannan retreats.",
+          "Prince Gawain offers a Clash of Champions and the group accepts.",
           "Tamura strikes Gawain during the charge.",
           "Gawain parries the subsequent sword attack and the duel ends."
         ],
@@ -323,12 +279,10 @@
     ],
     [
       "beat-008",
-      "beat-009",
       "beat-010"
     ],
     [
-      "beat-011",
-      "beat-012"
+      "beat-011"
     ],
     [
       "beat-013",
@@ -336,7 +290,7 @@
       "beat-015"
     ]
   ],
-  "annotation_status": "Human-authored corrected candidate evidence and arc groups for deterministic regression; not an actual model extraction or semantic-quality result.",
+  "annotation_status": "Human-authored corrected candidate evidence and arc groups for deterministic regression; not an actual model extraction or semantic-quality result. Compact reference plan: 12 whole-session narrative developments; related combat actions combined and pure gameplay omitted. This remains human annotation, not a live model result.",
   "directed_plan": {
     "title": "The Battle of Badgrain",
     "canonical_cast": [
@@ -436,7 +390,6 @@
         "importance": "supporting",
         "beat_ids": [
           "beat-008",
-          "beat-009",
           "beat-010"
         ],
         "confirmed_facts": [
@@ -445,16 +398,16 @@
             "fact_index": 0
           },
           {
-            "beat_id": "beat-009",
-            "fact_index": 0
-          },
-          {
-            "beat_id": "beat-009",
+            "beat_id": "beat-008",
             "fact_index": 1
           },
           {
-            "beat_id": "beat-009",
+            "beat_id": "beat-008",
             "fact_index": 2
+          },
+          {
+            "beat_id": "beat-008",
+            "fact_index": 3
           },
           {
             "beat_id": "beat-010",
@@ -467,7 +420,7 @@
         ],
         "unresolved_facts": [
           {
-            "beat_id": "beat-009",
+            "beat_id": "beat-008",
             "fact_index": 0
           },
           {
@@ -481,8 +434,7 @@
         "outline": "Sannan’s retreat gives way to Gawain’s challenge and Tamura’s inconclusive duel.",
         "importance": "major",
         "beat_ids": [
-          "beat-011",
-          "beat-012"
+          "beat-011"
         ],
         "confirmed_facts": [
           {
@@ -494,17 +446,17 @@
             "fact_index": 1
           },
           {
-            "beat_id": "beat-012",
-            "fact_index": 0
+            "beat_id": "beat-011",
+            "fact_index": 2
           },
           {
-            "beat_id": "beat-012",
-            "fact_index": 1
+            "beat_id": "beat-011",
+            "fact_index": 3
           }
         ],
         "unresolved_facts": [
           {
-            "beat_id": "beat-012",
+            "beat_id": "beat-011",
             "fact_index": 0
           }
         ]
@@ -551,8 +503,6 @@
         "unresolved_facts": []
       }
     ],
-    "excluded_beat_ids": [
-      "beat-007"
-    ]
+    "excluded_beat_ids": []
   }
 }

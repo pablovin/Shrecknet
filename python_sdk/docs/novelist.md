@@ -21,7 +21,7 @@ sending `None`) reuses the saved value; send an empty string to clear it.
 Refined V5 extracts candidate evidence, directs it into chronological narrative
 arcs, then writes one unit per arc. Session 9 guidance is approximately 4–6 arcs,
 not a hard quota. `block_count` includes bounded context/output subdivisions.
-Artifacts retain `pipeline_version: "v5"`, add revision `narrative-director-v2`,
+Artifacts retain `pipeline_version: "v5"`, add revision `narrative-director-v3`,
 `candidate_extraction`, `directed_story_plan`, and call usage/efficiency diagnostics.
 Existing `artifacts.story_plan.beats[].source_ranges` remain inclusive
 `start_id`/`end_id` references; `source_segments` maps them to text, offsets, and
@@ -32,3 +32,8 @@ Worker context settings and debug files are described in the
 [canonical Novelist contract](../../Documentation/Agents/Novelist/Novelist.md).
 Creation payloads and SDK calls are unchanged. Failed runs do not resume; submit
 a new run after resolving context, provider, or output-validation failures.
+
+Current runs extract 1–12 whole-source narrative beats (usually 8–10), regardless
+of PDF page or paragraph count, before the Director groups them into writing arcs.
+The same maximum applies to oversized-document synthesis; historical records
+remain readable with their original counts. No SDK payload or model change is needed.

@@ -52,9 +52,15 @@ run with an actionable `error_message`; adjust the documented role context
 settings only within the selected model's supported capacity.
 
 Refined runs retain `pipeline_version: "v5"` and add artifact revision
-`narrative-director-v2`, `candidate_extraction`, `directed_story_plan`, and per-call
+`narrative-director-v3`, `candidate_extraction`, `directed_story_plan`, and per-call
 usage/efficiency diagnostics. Existing `story_plan` fields remain compatible.
 Director progress remains `interpretation`; an `analysis_step` detail identifies
 it without adding a persisted stage enum. Director failure follows the same
 asynchronous failed-run contract. No new creation fields or model configuration
 are required. Historical V5 runs retain their beat-unit meaning and artifacts.
+
+New runs validate a whole-source narrative plan of at most 12 beats, including
+oversized-document synthesis. Over-limit plans get one complete regeneration;
+exhausted repair fails the background job before writing. Source paragraph/page
+count does not determine beat count. Historical artifacts retain their original
+shape and counts. See the [canonical contract](../Novelist.md).

@@ -13,9 +13,15 @@ conflict, or creating consequences. Paragraphs, conversations, combat rounds, an
 gameplay actions are not automatic beats. Related actions form one development;
 smaller relevant actions remain in original passages for the writer.
 
-Extraction produces candidate evidence, not the final literary outline. It records
-fiction, mixed fiction/gameplay, and gameplay-only developments, confirmed facts,
-unresolved possibilities, and explicit identity evidence. A possible treatment is
+Extraction produces a compact, whole-source narrative plan with 1–12 meaningful
+beats, usually 8–10 for a full session. The maximum applies to the entire source,
+independently of page, paragraph, combat-round, or transport-window counts. Brief
+sources may use fewer beats. Related actions form one development; source ranges
+retain smaller details for writers. The Director combines these planned developments
+into the final literary arcs. Extraction omits pure rules, dice, technical issues,
+character-sheet administration, and reward-point calculations. Mixed material
+retains fictional consequences only, with concise confirmed facts, unresolved
+possibilities, and explicit identity evidence. A possible treatment is
 not a completed healing; falling damage is not evidence of death. Explicit user
 mappings take precedence during extraction. Ambiguous players retain a null
 character; the GM is identified and excluded from fiction.
@@ -67,7 +73,9 @@ fields. Historical uploads cannot acquire missing page provenance retroactively.
 
 All shown keys are required; additional properties are forbidden. `title` is null
 or at most 120 characters. `cast` has 0–10 explicit mappings with 1–60 character
-names. `beats` is non-empty with no count maximum. Each summary has 1–600 characters;
+names. Historical `story_plan` records have no enforced beat-count maximum;
+new runs project the validated 1–12 candidate beats into this legacy shape.
+Each summary has 1–600 characters;
 unique `beat_id` values have 1–32 characters. `importance` is `major`, `supporting`,
 or `transition`. `continuity_notes` is null or at most 2,000 characters.
 
@@ -81,7 +89,8 @@ Backend resolution uses index positions, not lexical ID comparisons.
 
 `artifacts.candidate_extraction` contains `title`, `beats`, `continuity_notes`,
 and `identities`. It does not contain `cast`.
-Each beat additionally requires `material` (`fiction`, `mixed`, or `gameplay`),
+`CandidateExtraction.beats` has a schema and Pydantic maximum of 12. Each beat
+additionally requires `material` (`fiction`, `mixed`, or `gameplay`),
 `confirmed_facts`, and `unresolved_facts`. Each fact array holds 0–12 statements of
 1–300 characters. Identities have unique `player` names and this shape:
 
@@ -152,6 +161,10 @@ silently discarded or truncated.
 Extraction, inventories, synthesis, and the Director receive strict response schemas. The backend checks complete
 JSON, JSON Schema, Pydantic invariants, and range references inside one bounded
 repair loop. Invalid or token-truncated output gets one complete regeneration.
+Plans with more than 12 beats are rejected inside the same repair loop. Recovery
+replans the complete source, combining related developments and preserving the
+ending; it never slices the first 12 beats. The global cap also applies to oversized
+inventory synthesis, not to individual window observations.
 Every initial and repair analysis call allows 6,000 output tokens. There is no
 schema-less provider fallback or acceptance of partial JSON.
 
@@ -266,7 +279,7 @@ submit a new run after rebuilding workers to capture them.
 ## Persistence, rollout, and compatibility
 
 New artifacts use `pipeline_version: "v5"` and
-`pipeline_revision: "narrative-director-v2"`. They include the source index,
+`pipeline_revision: "narrative-director-v3"`. They include the source index,
 `story_plan`, deterministic `coverage`, `planning`, `continuity`, writing
 `block_plan`, accepted prose `blocks`, local quality results, timings, and LLM-call
 metadata. `draft_text` remains safe chapter HTML. Historical V1–V4 records are
@@ -291,8 +304,13 @@ See [the endpoint contract](Endpoints/Novelist%20-%20Endpoints.md),
 [the ordered generation flow](Generate_Draft/Generate_Draft.md), and
 [the implementation plan and evaluation status](Narrative%20Planning%20and%20Source%20References%20Plan.md).
 
-Revision `narrative-director-v2` removes redundant identity fields from internal
-LLM responses. Historical `narrative-director-v1` artifacts remain readable without
-backfill; public request/response models and the legacy `story_plan` projection
-are unchanged. Rebuild/restart API and worker containers, then resubmit failed runs.
-No database migration or additional LLM calls are required.
+Revision `narrative-director-v2` removed redundant identity fields from internal
+LLM responses. Revision `narrative-director-v3` restores compact narrative planning
+and enforces the 12-beat whole-source maximum. Historical `narrative-director-v1`
+and `narrative-director-v2` artifacts remain readable without revalidation or
+backfill; public request/response models and the
+legacy `story_plan` shape are unchanged. Rebuild/restart API and worker containers,
+then resubmit failed runs. No database migration, new settings, extra analysis
+stages, or larger output-token budgets are required. A 12-beat cap guarantees plan
+size, not semantic quality or freedom from token truncation; live model evaluation
+must still verify narrative grouping, coverage, and fidelity.

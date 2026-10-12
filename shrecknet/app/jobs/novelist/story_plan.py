@@ -8,6 +8,7 @@ from typing import Annotated, Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 MAX_SUMMARY_CHARS = 600
+MAX_NARRATIVE_BEATS = 12
 MAX_CAST_MEMBERS = 10
 MAX_NAME_CHARS = 60
 MAX_TITLE_CHARS = 120
@@ -171,8 +172,8 @@ class IdentityEvidenceEnvelope(BaseModel):
 
 
 class CandidateExtraction(StoryPlanContent, IdentityEvidenceEnvelope):
-    """LLM evidence envelope; legacy cast is derived exclusively from identities."""
-    beats: list[CandidateBeat] = Field(min_length=1)
+    """Compact narrative plan; legacy cast is derived exclusively from identities."""
+    beats: list[CandidateBeat] = Field(min_length=1, max_length=MAX_NARRATIVE_BEATS)
 
     def legacy_plan(self) -> NarrativeStoryPlan:
         return NarrativeStoryPlan(

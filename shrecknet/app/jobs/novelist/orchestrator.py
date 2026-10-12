@@ -38,7 +38,7 @@ from app.jobs.novelist.story_plan import (
     coverage_diagnostics,
     NarrativeStoryPlan,
     SourceSegment, CandidateExtraction, EvidenceInventory, DirectedStoryPlan,
-    CANDIDATE_JSON_SCHEMA, EVIDENCE_INVENTORY_JSON_SCHEMA, DIRECTED_PLAN_JSON_SCHEMA,
+    CANDIDATE_JSON_SCHEMA, EVIDENCE_INVENTORY_JSON_SCHEMA, DIRECTOR_SELECTION_JSON_SCHEMA, DirectedStorySelection,
 )
 from app.models.agent import Agent
 from app.models.novelist import NovelistStage
@@ -130,7 +130,7 @@ class NovelistOrchestrator:
             (INVENTORY_JSON_SCHEMA, SourceInventory, "novelist_v5_inventory"),
             (CANDIDATE_JSON_SCHEMA, CandidateExtraction, "novelist_v5_candidate"),
             (EVIDENCE_INVENTORY_JSON_SCHEMA, EvidenceInventory, "novelist_v5_evidence_inventory"),
-            (DIRECTED_PLAN_JSON_SCHEMA, DirectedStoryPlan, "novelist_v5_directed"),
+            (DIRECTOR_SELECTION_JSON_SCHEMA, DirectedStorySelection, "novelist_v5_directed_selection"),
         ]
         contract = next((item for item in contracts if item[0] == schema), None)
         if contract is None:
@@ -331,7 +331,7 @@ class NovelistOrchestrator:
         started = time.monotonic()
         artifacts: dict[str, Any] = {
             "pipeline_version": "v5",
-            "pipeline_revision": "narrative-director-v1",
+            "pipeline_revision": "narrative-director-v2",
             "inputs": payload.model_dump(
                 exclude={"previous_session_text", "previous_session_summary"}
             ),

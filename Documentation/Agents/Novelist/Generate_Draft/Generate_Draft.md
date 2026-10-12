@@ -19,7 +19,8 @@ observability, compatibility, and local-check limitations.
    analysis calls use strict schemas, preflight, and 6,000 output tokens.
 5. Stage 2 `build_director_prompt` reasons over candidate JSON, original instructions,
    and language only. `direct_story` returns validated chronological arcs and exact
-   fact references. No original passages, historical continuity, or prose reach it.
+   fact references. Python derives canonical cast and ambiguous/GM restrictions
+   from candidate identities before validation. No original passages, historical continuity, or prose reach it.
    Director activity uses the existing `interpretation` progress stage.
 6. Backend validation checks candidate accounting, chronology, identity restrictions,
    gameplay exclusions, and fact references; it does not verify semantic fidelity.
@@ -35,7 +36,7 @@ observability, compatibility, and local-check limitations.
     Stage 3r `build_writer_retry_prompt` replaces a rejected unit once. Only accepted
     prose becomes continuity. Exhausted repair never publishes a partial chapter.
 11. `quality_gate` confirms all units passed local checks; `merging` escapes title/prose
-    into safe chapter HTML. Artifacts remain V5 with revision `narrative-director-v1`.
+    into safe chapter HTML. Artifacts remain V5 with revision `narrative-director-v2`.
 
 Prompts have no retained inactive variants or mandatory semantic reviewer. Debug
 snapshots retain requests before dispatch, responses before validation, metrics,

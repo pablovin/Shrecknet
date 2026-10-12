@@ -47,10 +47,9 @@ class CastMember(BaseModel):
     character: str = Field(min_length=1, max_length=MAX_NAME_CHARS)
 
 
-class NarrativeStoryPlan(BaseModel):
+class StoryPlanContent(BaseModel):
     model_config = ConfigDict(extra="forbid")
     title: str | None = Field(max_length=MAX_TITLE_CHARS)
-    cast: list[CastMember] = Field(max_length=MAX_CAST_MEMBERS)
     beats: list[StoryBeat] = Field(min_length=1)
     continuity_notes: str | None = Field(max_length=MAX_CONTINUITY_CHARS)
 
@@ -60,6 +59,11 @@ class NarrativeStoryPlan(BaseModel):
         if len(ids) != len(set(ids)):
             raise ValueError("beat_id values must be unique")
         return self
+
+
+class NarrativeStoryPlan(StoryPlanContent):
+    """Stable historical/artifact contract; cast is derived for new extractions."""
+    cast: list[CastMember] = Field(max_length=MAX_CAST_MEMBERS)
 
 
 class Observation(BaseModel):
@@ -97,13 +101,13 @@ def resolve_ranges(ranges: list[SourceRange], segments: list[SourceSegment]) -> 
     return [segment for index, segment in enumerate(segments) if index in selected]
 
 
-def validate_source_references(plan: NarrativeStoryPlan, source_segments: list[SourceSegment]) -> NarrativeStoryPlan:
+def validate_source_references(plan: StoryPlanContent, source_segments: list[SourceSegment]) -> StoryPlanContent:
     for beat in plan.beats:
         resolve_ranges(beat.source_ranges, source_segments)
     return plan
 
 
-def coverage_diagnostics(plan: NarrativeStoryPlan, segments: list[SourceSegment]) -> dict[str, Any]:
+def coverage_diagnostics(plan: StoryPlanContent, segments: list[SourceSegment]) -> dict[str, Any]:
     counts = dict.fromkeys((segment.id for segment in segments), 0)
     mapping = {}
     for beat in plan.beats:
@@ -144,25 +148,31 @@ class CandidateBeat(StoryBeat):
     unresolved_facts: list[FactText] = Field(max_length=12)
 
 
-def validate_identity_evidence(cast: list[CastMember], identities: list[IdentityEvidence]) -> None:
-    names = [identity.player.casefold() for identity in identities]
-    if len(names) != len(set(names)):
-        raise ValueError("Identity evidence must have unique player names")
-    expected = {(identity.player, identity.character) for identity in identities if identity.status == "confirmed"}
-    actual = [(member.player, member.character) for member in cast]
-    if len(actual) != len(set(actual)) or set(actual) != expected:
-        raise ValueError("Cast mappings must match exactly the confirmed identity evidence")
-
-
-class CandidateExtraction(NarrativeStoryPlan):
-    """Internal evidence envelope; legacy story_plan artifacts retain their shape."""
-    beats: list[CandidateBeat] = Field(min_length=1)
+class IdentityEvidenceEnvelope(BaseModel):
+    """One identity authority; cast is a backend projection, never model output."""
+    model_config = ConfigDict(extra="forbid")
     identities: list[IdentityEvidence] = Field(max_length=MAX_CAST_MEMBERS)
 
     @model_validator(mode="after")
     def validate_identities(self):
-        validate_identity_evidence(self.cast, self.identities)
+        seen: set[str] = set()
+        for identity in self.identities:
+            name = identity.player.casefold()
+            if name in seen:
+                raise ValueError(f"Identity evidence must have unique player names: {identity.player}")
+            seen.add(name)
         return self
+
+    @property
+    def cast(self) -> list[CastMember]:
+        return [CastMember(player=identity.player, character=identity.character)
+                for identity in self.identities
+                if identity.status == "confirmed" and identity.character is not None]
+
+
+class CandidateExtraction(StoryPlanContent, IdentityEvidenceEnvelope):
+    """LLM evidence envelope; legacy cast is derived exclusively from identities."""
+    beats: list[CandidateBeat] = Field(min_length=1)
 
     def legacy_plan(self) -> NarrativeStoryPlan:
         return NarrativeStoryPlan(
@@ -177,14 +187,8 @@ class EvidenceObservation(Observation):
     unresolved_facts: list[FactText] = Field(max_length=12)
 
 
-class EvidenceInventory(SourceInventory):
+class EvidenceInventory(IdentityEvidenceEnvelope):
     observations: list[EvidenceObservation] = Field(min_length=1)
-    identities: list[IdentityEvidence] = Field(max_length=MAX_CAST_MEMBERS)
-
-    @model_validator(mode="after")
-    def validate_identities(self):
-        validate_identity_evidence(self.cast, self.identities)
-        return self
 
 
 class FactReference(BaseModel):
@@ -203,19 +207,24 @@ class DirectedArc(BaseModel):
     unresolved_facts: list[FactReference]
 
 
-class DirectedStoryPlan(BaseModel):
-    """Editorial grouping; facts and passages are inherited by reference, never rewritten."""
+class DirectedStorySelection(BaseModel):
+    """Director output contains editorial choices, without duplicated identities."""
     model_config = ConfigDict(extra="forbid")
     title: str | None = Field(max_length=MAX_TITLE_CHARS)
-    canonical_cast: list[CastMember] = Field(max_length=MAX_CAST_MEMBERS)
-    identity_restrictions: list[IdentityEvidence] = Field(max_length=MAX_CAST_MEMBERS)
     arcs: list[DirectedArc] = Field(min_length=1)
     excluded_beat_ids: list[str]
+
+
+class DirectedStoryPlan(DirectedStorySelection):
+    """Backend-enriched plan; identities are inherited from validated extraction."""
+    canonical_cast: list[CastMember] = Field(max_length=MAX_CAST_MEMBERS)
+    identity_restrictions: list[IdentityEvidence] = Field(max_length=MAX_CAST_MEMBERS)
 
 
 CANDIDATE_JSON_SCHEMA = CandidateExtraction.model_json_schema()
 EVIDENCE_INVENTORY_JSON_SCHEMA = EvidenceInventory.model_json_schema()
 DIRECTED_PLAN_JSON_SCHEMA = DirectedStoryPlan.model_json_schema()
+DIRECTOR_SELECTION_JSON_SCHEMA = DirectedStorySelection.model_json_schema()
 
 
 def validate_directed_plan(plan: DirectedStoryPlan, candidate: CandidateExtraction) -> DirectedStoryPlan:
@@ -232,7 +241,7 @@ def validate_directed_plan(plan: DirectedStoryPlan, candidate: CandidateExtracti
     required = [identity for identity in candidate.identities if identity.status != "confirmed"]
     if plan.identity_restrictions != required:
         raise ValueError("Preserve every ambiguous/GM identity restriction without resolving it")
-    allowed = {(identity.player, identity.character) for identity in candidate.identities if identity.status == "confirmed"}
+    allowed = {(member.player, member.character) for member in candidate.cast}
     actual = [(member.player, member.character) for member in plan.canonical_cast]
     if len(actual) != len(set(actual)) or set(actual) != allowed:
         raise ValueError("Canonical cast must preserve exactly the confirmed mappings")

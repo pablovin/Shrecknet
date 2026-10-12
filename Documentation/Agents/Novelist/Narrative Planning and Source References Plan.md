@@ -1,6 +1,6 @@
 # Novelist Narrative Director: Design and Evaluation
 
-Status: implemented as the focused V5 revision `narrative-director-v1`. The
+Status: implemented as the focused V5 revision `narrative-director-v2`. The
 [runtime contract](Novelist.md) and [ordered flow](Generate_Draft/Generate_Draft.md)
 are authoritative. Live generation/token/latency and prose-quality comparison
 remain pending; the annotated context projection below is not a live-model result.

@@ -79,7 +79,8 @@ Backend resolution uses index positions, not lexical ID comparisons.
 
 ## Candidate extraction and directed plan
 
-`artifacts.candidate_extraction` retains the legacy plan fields plus `identities`.
+`artifacts.candidate_extraction` contains `title`, `beats`, `continuity_notes`,
+and `identities`. It does not contain `cast`.
 Each beat additionally requires `material` (`fiction`, `mixed`, or `gameplay`),
 `confirmed_facts`, and `unresolved_facts`. Each fact array holds 0–12 statements of
 1–300 characters. Identities have unique `player` names and this shape:
@@ -90,8 +91,8 @@ Each beat additionally requires `material` (`fiction`, `mixed`, or `gameplay`),
 
 `status` is `confirmed`, `ambiguous`, or `gm`. Only confirmed identities have a
 nonempty `character`; the others require null. Names are at most 60 characters,
-with at most ten identity entries. Candidate cast mappings require confirmed
-identity evidence. Simple explicit instruction lines (`Pietro is Tamura`,
+with at most ten identity entries. The backend derives legacy `story_plan.cast` exclusively from confirmed
+identity evidence; ambiguous players and the GM never enter it. Simple explicit instruction lines (`Pietro is Tamura`,
 `Laura plays Lynelle`, `Pablo is the DM`, `Enrico is Cwenhild or Asterius`)
 are checked locally inside extraction repair; a Director cannot endorse a cast
 that contradicts those instructions. First-name instructions may match extracted
@@ -99,7 +100,10 @@ full player names. Unrecognized free-form wording remains an LLM contract.
 Extraction and oversized factual inventories use the same
 certainty/material fields, so synthesis must preserve evidence and uncertainty.
 
-`artifacts.directed_story_plan` has the following complete structured shape:
+`artifacts.directed_story_plan` has the following complete structured shape.
+The Director returns only `title`, `arcs`, and `excluded_beat_ids`; Python copies
+`canonical_cast` and `identity_restrictions` from validated candidate identities,
+so the model cannot introduce contradictory duplicate mappings:
 
 ```json
 {
@@ -139,7 +143,7 @@ The normal path sends all indexed source passages in one global planning call.
 The source remains authoritative; subsequent writers receive relevant originals.
 For oversized input, bounded transport windows produce chronological factual
 inventories (`observations` with `summary` and `source_ranges`, plus explicit
-`cast`). They are not local chapter plans and have no local beat quota. One global
+`identities`). They are not local chapter plans and have no local beat quota. One global
 synthesis combines all inventories and the ordered passage IDs into the candidate
 extraction, without resending the entire oversized original. If even synthesis cannot
 fit, the run fails with an actionable context-budget error; inventories are never
@@ -262,7 +266,7 @@ submit a new run after rebuilding workers to capture them.
 ## Persistence, rollout, and compatibility
 
 New artifacts use `pipeline_version: "v5"` and
-`pipeline_revision: "narrative-director-v1"`. They include the source index,
+`pipeline_revision: "narrative-director-v2"`. They include the source index,
 `story_plan`, deterministic `coverage`, `planning`, `continuity`, writing
 `block_plan`, accepted prose `blocks`, local quality results, timings, and LLM-call
 metadata. `draft_text` remains safe chapter HTML. Historical V1–V4 records are
@@ -286,3 +290,9 @@ read runs but do not reuse V5 continuity. Failed runs require a fresh submission
 See [the endpoint contract](Endpoints/Novelist%20-%20Endpoints.md),
 [the ordered generation flow](Generate_Draft/Generate_Draft.md), and
 [the implementation plan and evaluation status](Narrative%20Planning%20and%20Source%20References%20Plan.md).
+
+Revision `narrative-director-v2` removes redundant identity fields from internal
+LLM responses. Historical `narrative-director-v1` artifacts remain readable without
+backfill; public request/response models and the legacy `story_plan` projection
+are unchanged. Rebuild/restart API and worker containers, then resubmit failed runs.
+No database migration or additional LLM calls are required.

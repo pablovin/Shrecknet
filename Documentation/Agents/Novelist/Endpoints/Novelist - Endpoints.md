@@ -52,7 +52,7 @@ run with an actionable `error_message`; adjust the documented role context
 settings only within the selected model's supported capacity.
 
 Refined runs retain `pipeline_version: "v5"` and add artifact revision
-`narrative-director-v1`, `candidate_extraction`, `directed_story_plan`, and per-call
+`narrative-director-v2`, `candidate_extraction`, `directed_story_plan`, and per-call
 usage/efficiency diagnostics. Existing `story_plan` fields remain compatible.
 Director progress remains `interpretation`; an `analysis_step` detail identifies
 it without adding a persisted stage enum. Director failure follows the same

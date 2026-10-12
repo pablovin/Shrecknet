@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 import pytest
-from novelist_test_support import candidate_payload, directed_payload
+from novelist_test_support import candidate_payload, directed_payload, director_selection
 
 from app.integrations.llm.model_policy import ModelPolicy
 from app.jobs.novelist.debug_artifacts import NovelistDebugArtifacts
@@ -80,7 +80,7 @@ async def test_success_records_writer_retry_and_final_html(tmp_path, monkeypatch
     plan = candidate_payload(plan)
     client = Client([
         {'text': json.dumps(plan), 'response_metadata': {'finish_reason': 'stop'}},
-        {'text': json.dumps(directed_payload(plan)), 'response_metadata': {'finish_reason': 'stop'}},
+        {'text': json.dumps(director_selection(directed_payload(plan))), 'response_metadata': {'finish_reason': 'stop'}},
         {'text': 'Truncated prose', 'response_metadata': {'finish_reason': 'length'}},
         {'text': 'word ' * 300, 'response_metadata': {'finish_reason': 'stop'}},
     ])

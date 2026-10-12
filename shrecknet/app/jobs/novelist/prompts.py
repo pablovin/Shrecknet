@@ -6,7 +6,8 @@ JSON, instructions and language into chronological arcs. Structured recovery
 regenerates any rejected analysis stage once. Stage 3 renders sequential arc units;
 stage 3r replaces rejected prose once. Only accepted prose becomes continuity or
 public HTML. Indexing, reference validation, subdivisions and merging are backend
-steps. There are no parallel branches, inactive prompts or semantic critic calls.
+steps, including deriving cast and Director identity restrictions from extraction
+identities. There are no parallel branches, inactive prompts or semantic critic calls.
 """
 from __future__ import annotations
 import json
@@ -38,7 +39,7 @@ _DRAMATIC_CONTRACT = """Read the complete source as one narrative. A story beat 
 # Used by: stage 1 planning and stage 1b synthesis; inherited by repair.
 # Output: strict JSON matching CandidateExtraction and SourceRange.
 _PLAN_CONTRACT = """Return exactly this complete JSON structure (all keys required, no extra keys):
-{"title":string|null,"cast":[{"player":string,"character":string}],
+{"title":string|null,
  "beats":[{"beat_id":string,"summary":string,
  "importance":"major"|"supporting"|"transition",
  "source_ranges":[{"start_id":string,"end_id":string}],
@@ -51,9 +52,11 @@ confirmed_facts and unresolved_facts each contain 0–12 concise statements of 1
 characters. Unresolved statements must explicitly preserve uncertainty. Empty
 arrays mean none. identities has 0–10 unique player names (1–60 characters),
 character is a 1–60 character name only for confirmed identities and null for
-ambiguous or gm. Record explicit instruction mappings as confirmed evidence;
-cast must agree with confirmed identities. Never resolve an ambiguous identity. title: null or at most 120
-characters; cast: 0–10 explicit player/character mappings, each name 1–60 characters;
+ambiguous or gm. Record unambiguous instruction mappings as confirmed evidence;
+record alternative characters as ambiguous and explicit DM/GM roles as gm.
+Never emit a cast field: the backend derives it only from confirmed identities.
+Never resolve an ambiguous identity or include the GM as a fictional character.
+title: null or at most 120 characters;
 beats: one or more ordered dramatic developments, each summary 1–600 characters
 (prefer 1–3 concise sentences); beat_id: unique 1–32 character identifier in narrative
 order, such as beat-001; source_ranges: 1–8 inclusive ranges per beat, each endpoint
@@ -62,7 +65,7 @@ A range includes all indexed passages from start_id through end_id in source ord
 Use multiple ranges for separated evidence; never repeat an identical range.
 Shared passages between beats are allowed when necessary. Each range must run
 forward. continuity_notes: null or at most 2000 characters.
-Use null for absent title/continuity notes, [] for absent cast. Return compact JSON
+Use null for absent title/continuity notes, [] for absent identities. Return compact JSON
 without indentation, prose, or Markdown. Keep the complete response within 6,000
 tokens. Field maxima are ceilings, not targets; shorten summaries before losing
 major developments or the ending."""
@@ -103,7 +106,7 @@ chronological fictional developments, decisions, discoveries, consequences,
 unresolved threads, and explicit player/character mappings. Retain the ending of
 this window. Omit table chatter unless fictional consequences matter. Never
 invent facts. Do not impose an 8–10 observation count or create a chapter plan.
-Return exactly {{"observations":[{{"summary":string,"source_ranges":[{{"start_id":string,"end_id":string}}],"material":"fiction"|"mixed"|"gameplay","confirmed_facts":[string],"unresolved_facts":[string]}}],"cast":[{{"player":string,"character":string}}],"identities":[{{"player":string,"character":string|null,"status":"confirmed"|"ambiguous"|"gm"}}]}}.
+Return exactly {{"observations":[{{"summary":string,"source_ranges":[{{"start_id":string,"end_id":string}}],"material":"fiction"|"mixed"|"gameplay","confirmed_facts":[string],"unresolved_facts":[string]}}],"identities":[{{"player":string,"character":string|null,"status":"confirmed"|"ambiguous"|"gm"}}]}}.
 Facts: each array has 0–12 strings of 1–300 characters, [] if absent. Keep possible
 healing, unconfirmed deaths and other doubts unresolved. material classifies
 fiction, mixed content or gameplay-only. identities: 0–10 unique players, names
@@ -111,8 +114,8 @@ fiction, mixed content or gameplay-only. identities: 0–10 unique players, name
 explicit user mappings and preserve ambiguity/GM exclusions for global synthesis.
 All fields required; no extra keys. observations: non-empty ordered array; summary:
 1–600 characters; source_ranges: 1–8 inclusive forward ranges of exact supplied IDs
-(1–32 characters each), with no identical duplicate ranges. cast: 0–10 explicit
-mappings, names 1–60 characters, [] if absent. For an entirely non-fiction window,
+(1–32 characters each), with no identical duplicate ranges. Never emit cast; the
+backend derives confirmed mappings from identities. For an entirely non-fiction window,
 record that fact with its range so the global planner can omit it. Compact JSON
 only, within 6,000 tokens. The output feeds global synthesis, never public prose.
 Input: source_type is an auto/transcript/recap/notes/adventure/event_log/narrative
@@ -134,7 +137,7 @@ def build_reconciliation_prompt(*, segments: list[SourceSegment], partial_plans:
 Input: passage_ids is the complete ordered immutable index (text omitted for input
 sizing); partial_plans contains ordered factual inventories, NOT local chapter
 plans, each with observations (summary, source_ranges, material, confirmed_facts,
-unresolved_facts), cast (player/character), and identities (player, nullable
+unresolved_facts), and identities (player, nullable
 character, status confirmed/ambiguous/gm). Preserve their facts, merge related developments
 across windows, remove duplication, and create ONE chapter-wide structure.
 language is requested chapter language; instructions are user constraints.
@@ -166,11 +169,12 @@ validation_error={_bounded_text(str(error), 2000)}
 
 # Purpose: editorial grouping without original source or historical prose.
 # Used by: narrative_director stage 2, plus the adjacent structured recovery helper.
-# Output: strict DirectedStoryPlan JSON; only stage 3 may produce public prose.
+# Output: strict DirectedStorySelection JSON; the backend adds cast/restrictions.
+# Only stage 3 may produce public prose.
 def build_director_prompt(*, candidate: CandidateExtraction, instructions: str, language: str) -> str:
     return f"""Stage 2 — Narrative Director (reasoning).
 Only candidate_extraction, user_instructions and language are available. Candidate
-extraction has title, cast(player/character), continuity_notes, identities(player,
+extraction has title, continuity_notes, identities(player,
 character,status confirmed/ambiguous/gm), and chronological beats(beat_id,summary,
 importance major/supporting/transition, source_ranges(start_id,end_id), material
 fiction/mixed/gameplay, confirmed_facts and unresolved_facts arrays of statements).
@@ -182,14 +186,13 @@ arcs, not fixed groups of three. Session 9 typically needs about 4–6 meaningfu
 arcs, but never force a quota or omit an outcome to achieve it. Keep recognition,
 battles, duels, arrivals, retreats and grants when present. Preserve uncertainties.
 Return exactly this complete JSON; every key required; no extra properties:
-{{"title":string|null,"canonical_cast":[{{"player":string,"character":string}}],
-"identity_restrictions":[{{"player":string,"character":null,"status":"ambiguous"|"gm"}}],
+{{"title":string|null,
 "arcs":[{{"arc_id":string,"outline":string,"importance":"major"|"supporting"|"transition",
 "beat_ids":[string],"confirmed_facts":[{{"beat_id":string,"fact_index":integer}}],
 "unresolved_facts":[{{"beat_id":string,"fact_index":integer}}]}}],"excluded_beat_ids":[string]}}.
-title is null or <=120 characters. canonical_cast contains exactly all confirmed
-candidate identities, names 1–60 characters, <=10 mappings. identity_restrictions
-copies every ambiguous/gm candidate identity in order, character null, <=10 entries.
+title is null or <=120 characters. Do not return canonical_cast or
+identity_restrictions: the backend derives both from candidate identities.
+Use confirmed mappings when grouping, preserve ambiguous identities, and exclude GM.
 arcs is nonempty. arc_id is unique, 1–32 characters. outline is one short sentence,
 1–300 characters. beat_ids is nonempty and references exact candidate beat IDs.
 Every candidate beat is assigned once or excluded once; only gameplay-only beats
@@ -197,7 +200,7 @@ may be excluded and all gameplay-only beats must be excluded. All assigned beat
 IDs and arcs preserve candidate order. Fact references use zero-based indices into
 the named candidate beat's corresponding confirmed_facts or unresolved_facts array.
 Each arc must reference every fact of its assigned beats exactly once, without
-changing certainty. Arrays may be empty when no facts/exclusions/identities exist.
+changing certainty. Fact/exclusion arrays may be empty when none exist.
 Return compact JSON within 6,000 tokens. The plan feeds backend arc assignments.
 language={language or 'source language'}
 user_instructions={instructions or 'none'}

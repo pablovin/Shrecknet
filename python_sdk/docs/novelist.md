@@ -21,7 +21,7 @@ sending `None`) reuses the saved value; send an empty string to clear it.
 Refined V5 extracts candidate evidence, directs it into chronological narrative
 arcs, then writes one unit per arc. Session 9 guidance is approximately 4–6 arcs,
 not a hard quota. `block_count` includes bounded context/output subdivisions.
-Artifacts retain `pipeline_version: "v5"`, add revision `narrative-director-v1`,
+Artifacts retain `pipeline_version: "v5"`, add revision `narrative-director-v2`,
 `candidate_extraction`, `directed_story_plan`, and call usage/efficiency diagnostics.
 Existing `artifacts.story_plan.beats[].source_ranges` remain inclusive
 `start_id`/`end_id` references; `source_segments` maps them to text, offsets, and

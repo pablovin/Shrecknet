@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 
 import pytest
-from novelist_test_support import candidate_payload, directed_payload
+from novelist_test_support import candidate_payload, directed_payload, director_selection
 from jsonschema import ValidationError as JSONSchemaValidationError
 from jsonschema import validate as validate_json_schema
 from pydantic import ValidationError
@@ -375,7 +375,7 @@ async def test_v5_workflow_renders_safe_html_without_fidelity_call() -> None:
                 "text": json.dumps(candidate_payload(_plan_payload())),
                 "response_metadata": {"finish_reason": "stop"},
             },
-            {"text": json.dumps(directed_payload(candidate_payload(_plan_payload()))), "response_metadata": {"finish_reason": "stop"}},
+            {"text": json.dumps(director_selection(directed_payload(candidate_payload(_plan_payload())))), "response_metadata": {"finish_reason": "stop"}},
             {"text": prose, "response_metadata": {"finish_reason": "stop"}},
         ]
     )

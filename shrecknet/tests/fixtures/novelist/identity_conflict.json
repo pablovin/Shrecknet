@@ -1,0 +1,83 @@
+{
+  "provenance": "Identity fields only from failed run aacd1040-c38c-4df2-9efe-a8fad479012b; initial and repair responses.",
+  "responses": [
+    {
+      "response_file": "009_novelist_analysis_story_plan_response.json",
+      "cast": [
+        {
+          "player": "Pietro",
+          "character": "Tamura"
+        },
+        {
+          "player": "Enrico",
+          "character": "Cwenhild"
+        },
+        {
+          "player": "Laura",
+          "character": "Lynelle"
+        }
+      ],
+      "identities": [
+        {
+          "player": "Pietro",
+          "character": "Tamura",
+          "status": "confirmed"
+        },
+        {
+          "player": "Enrico",
+          "character": null,
+          "status": "ambiguous"
+        },
+        {
+          "player": "Laura",
+          "character": "Lynelle",
+          "status": "confirmed"
+        },
+        {
+          "player": "Pablo",
+          "character": null,
+          "status": "gm"
+        }
+      ]
+    },
+    {
+      "response_file": "014_novelist_analysis_story_plan_repair_response.json",
+      "cast": [
+        {
+          "player": "Pietro",
+          "character": "Tamura"
+        },
+        {
+          "player": "Enrico",
+          "character": "Cwenhild"
+        },
+        {
+          "player": "Laura",
+          "character": "Lynelle"
+        }
+      ],
+      "identities": [
+        {
+          "player": "Pietro",
+          "character": "Tamura",
+          "status": "confirmed"
+        },
+        {
+          "player": "Enrico",
+          "character": null,
+          "status": "ambiguous"
+        },
+        {
+          "player": "Laura",
+          "character": "Lynelle",
+          "status": "confirmed"
+        },
+        {
+          "player": "Pablo",
+          "character": null,
+          "status": "gm"
+        }
+      ]
+    }
+  ]
+}

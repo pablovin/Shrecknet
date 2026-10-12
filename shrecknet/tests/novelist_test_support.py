@@ -4,7 +4,7 @@ from copy import deepcopy
 
 def candidate_payload(legacy):
     value = deepcopy(legacy)
-    value['identities'] = [dict(member, status='confirmed') for member in value['cast']]
+    value['identities'] = [dict(member, status='confirmed') for member in value.pop('cast')]
     for beat in value['beats']:
         beat.update(material='fiction', confirmed_facts=[beat['summary']], unresolved_facts=[])
     return value
@@ -14,7 +14,7 @@ def directed_payload(candidate, groups=None):
     by_id = {beat['beat_id']: beat for beat in candidate['beats']}
     groups = groups or [[beat_id] for beat_id in by_id if by_id[beat_id]['material'] != 'gameplay']
     return {
-        'title': candidate['title'], 'canonical_cast': candidate['cast'],
+        'title': candidate['title'], 'canonical_cast': [{key: identity[key] for key in ('player', 'character')} for identity in candidate['identities'] if identity['status'] == 'confirmed'],
         'identity_restrictions': [identity for identity in candidate['identities'] if identity['status'] != 'confirmed'],
         'arcs': [{
             'arc_id': f'arc-{i:03d}', 'outline': f'Narrative development {i}.',
@@ -24,3 +24,8 @@ def directed_payload(candidate, groups=None):
         } for i, ids in enumerate(groups, 1)],
         'excluded_beat_ids': [beat_id for beat_id in by_id if by_id[beat_id]['material'] == 'gameplay'],
     }
+
+
+def director_selection(plan):
+    """The LLM chooses arcs; identity projections are added by the backend."""
+    return {key: deepcopy(plan[key]) for key in ('title', 'arcs', 'excluded_beat_ids')}

@@ -1,5 +1,7 @@
 # Unreleased — Novelist V5 Narrative Director
 
+- Derive cast and Director identity restrictions from a single validated identity
+  list; prevent contradictory duplicate mappings from failing otherwise valid analysis.
 - Extract certainty and identity evidence before a compact editorial Director call.
 - Write Director-owned arcs with relevant source passages and a 700-character
   accepted-prose transition tail; retain bounded context/output subdivisions.
